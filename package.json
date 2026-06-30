@@ -1,0 +1,58 @@
+{
+  "name": "satr",
+  "productName": "Satr",
+  "version": "2.2.0",
+  "description": "سطر — تطبيق سطح مكتب عربي لأدوات الذكاء الاصطناعي في سطر الأوامر (Claude Code وغيرها) بدعم RTL كامل",
+  "main": "electron/main.js",
+  "author": "Moxa",
+  "license": "MIT",
+  "scripts": {
+    "prestart": "node scripts/update-csp.js",
+    "start": "electron .",
+    "predist": "node scripts/update-csp.js",
+    "dist": "electron-builder --win",
+    "predist:dir": "node scripts/update-csp.js",
+    "dist:dir": "electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "ai.satr.app",
+    "productName": "Satr",
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "!**/@anthropic-ai/claude-agent-sdk-win32-x64/**",
+      "!**/@anthropic-ai/claude-agent-sdk-*/**"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "سطر — Satr",
+      "uninstallDisplayName": "سطر — Satr",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerLanguages": [
+        "ar_SA"
+      ]
+    }
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.176"
+  }
+}
