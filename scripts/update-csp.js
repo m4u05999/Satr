@@ -18,8 +18,11 @@ const crypto = require('crypto');
 const file = path.join(__dirname, '..', 'src', 'index.html');
 const html = fs.readFileSync(file, 'utf8');
 
+// محلّل HTML في المتصفح يطبّع CRLF/CR إلى LF أثناء التفكيك، وهاش CSP يُحسب على النص
+// المُطبَّع — لذا نطبّع مثله قبل الهش، وإلا فشلت المطابقة على نسخة عمل CRLF
+// (git core.autocrlf=true على ويندوز يسحب الملف بـ CRLF بينما المستودع LF).
 const hashOf = (s) =>
-  "'sha256-" + crypto.createHash('sha256').update(s, 'utf8').digest('base64') + "'";
+  "'sha256-" + crypto.createHash('sha256').update(s.replace(/\r\n?/g, '\n'), 'utf8').digest('base64') + "'";
 
 // يلتقط الكتل المضمّنة فقط (<style> و <script> بدون سمات) — الملفات الخارجية تغطيها 'self'
 function inlineHashes(tag) {

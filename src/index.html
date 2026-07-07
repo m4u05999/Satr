@@ -2,8 +2,9 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-Pxw7LGzZMN1HD9BuBfZ8c24jl4spAQxjnBvvcOn1lLQ='; script-src 'self' 'sha256-fjHswn3SmEANmqnQ3Zl8veF/LYRR3y0zYx0ZqjS253s='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-nhSeA2KAGSkRxy5BOFP4ZcuRFDoF82/mhcn9ZbN3izU='; script-src 'self' 'sha256-I/6tUrLcxFLJ9omHCGCpsUBRFUIjAPWqoK0u4Pso7P0='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
+<link rel="stylesheet" href="vendor/xterm.css">
 <style>
   :root {
     --bg: #0E1116;
@@ -361,6 +362,20 @@
   .ctx-cat-tok { font-size: 12px; color: var(--text-dim); font-family: var(--mono); direction: ltr; }
   .ctx-cat-bar { height: 5px; border-radius: 4px; background: var(--surface-2); overflow: hidden; margin-top: 5px; }
   .ctx-cat-bar > span { display: block; height: 100%; background: var(--gold); opacity: .75; }
+
+  /* ===== الطرفية المدمجة (المرحلة 8) ===== */
+  #termPanel { display: flex; flex-direction: column; height: 42vh; min-height: 180px; border-top: 1px solid var(--border); background: #0B0E13; }
+  #termPanel[hidden] { display: none; }
+  .term-head { display: flex; align-items: center; gap: 10px; padding: 4px 14px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--text-dim); }
+  .term-head .term-title { color: var(--gold); font-weight: 600; }
+  .term-head .term-shell { font-family: var(--mono); direction: ltr; }
+  .term-head .spacer { flex: 1; }
+  .term-head button { font-size: 12px; padding: 2px 10px; }
+  /* منطقة xterm — شبكة LTR قياسية (عرض BiDi يأتي في 8.2) */
+  #termHost { flex: 1; min-height: 0; direction: ltr; padding: 4px 8px; }
+  #termHost .xterm { height: 100%; }
+  #termExited { display: none; padding: 8px 14px; border-top: 1px solid var(--border); background: rgba(226,99,93,.08); color: var(--red); font-size: 13px; align-items: center; gap: 10px; }
+  #termExited.show { display: flex; }
 </style>
 </head>
 <body>
@@ -414,6 +429,7 @@
       </select>
     </div>
     <button id="newSession">جلسة جديدة</button>
+    <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
   </div>
 </header>
 
@@ -428,6 +444,19 @@
     </div>
   </div>
 </main>
+
+<!-- الطرفية المدمجة (المرحلة 8.1): عارض xterm.js قياسي — عرض BiDi يأتي في 8.2 -->
+<section id="termPanel" aria-label="الطرفية المدمجة" hidden>
+  <div class="term-head">
+    <span class="term-title">الطرفية</span>
+    <span class="term-shell" id="termShell"></span>
+    <span class="spacer"></span>
+    <button id="termRestart" type="button" title="إنهاء الصدفة الحالية وبدء واحدة جديدة">إعادة تشغيل</button>
+    <button id="termClose" type="button" title="إخفاء اللوحة (الصدفة تبقى تعمل)">✕</button>
+  </div>
+  <div id="termHost"></div>
+  <div id="termExited"><span>انتهت جلسة الطرفية.</span><button id="termRestart2" type="button">بدء جلسة جديدة</button></div>
+</section>
 
 <div id="permOverlay" role="dialog" aria-modal="true" aria-labelledby="permTitle">
   <div class="perm-box">
@@ -499,6 +528,8 @@
   </div>
 </footer>
 
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
 <script>
 (function () {
   'use strict';
@@ -1721,6 +1752,73 @@
   });
 
   sendBtn.addEventListener('click', send);
+
+  // ---------- الطرفية المدمجة (المرحلة 8.1) ----------
+  // نسخة xterm.js حقيقية واحدة (محرك الحالة — انظر docs/PHASE8-DESIGN.md). في 8.1
+  // العارض القياسي فقط (بلا عربية بعد — مقصود)؛ عرض BiDi يُبنى فوق نفس النسخة في 8.2.
+  const termPanel = $('termPanel'), termHost = $('termHost'), termExited = $('termExited');
+  let term = null;      // نسخة xterm.js (تُنشأ عند أول فتح)
+  let termFit = null;   // ملحق الملاءمة
+  let termId = null;    // معرّف جلسة pty الحيّة (null = لا جلسة)
+
+  // إنشاء نسخة xterm.js مرة واحدة وربط قنواتها
+  function ensureTerm() {
+    if (term) return;
+    term = new Terminal({
+      fontFamily: "'Cascadia Mono', 'Consolas', monospace",
+      fontSize: 13.5,
+      scrollback: 5000,
+      theme: { background: '#0B0E13', foreground: '#E8E3D8', cursor: '#D9A441' },
+    });
+    termFit = new FitAddon.FitAddon();
+    term.loadAddon(termFit);
+    term.open(termHost);
+    // كل ما يكتبه المستخدم داخل العارض يذهب خاماً إلى pty (إدخال خام كامل في 8.1)
+    term.onData((data) => { if (termId) window.satr.termInput(termId, data); });
+    term.onResize(({ cols, rows }) => { if (termId) window.satr.termResize(termId, cols, rows); });
+    // أحداث pty من العملية الرئيسية (قناة satr:term المستقلة)
+    window.satr.onTerm((ev) => {
+      if (!ev || ev.id !== termId) return;
+      if (ev.type === 'data') term.write(ev.data);
+      else if (ev.type === 'exit') { termId = null; termExited.classList.add('show'); }
+    });
+  }
+
+  // بدء جلسة pty (أو استرجاع الحيّة) في مجلد المشروع الحالي
+  async function startTermSession() {
+    ensureTerm();
+    termFit.fit();
+    const r = await window.satr.termStart($('cwd').value.trim(), term.cols, term.rows);
+    if (!r || !r.ok) {
+      term.writeln('\x1b[31m' + ((r && r.message) || 'تعذّر بدء الطرفية') + '\x1b[0m');
+      return;
+    }
+    termId = r.id;
+    termExited.classList.remove('show');
+    if (r.shell) $('termShell').textContent = r.shell;
+    if (!r.existing) term.reset(); // جلسة جديدة = شاشة نظيفة
+    term.focus();
+  }
+
+  async function restartTermSession() {
+    if (termId) { await window.satr.termKill(termId); termId = null; }
+    await startTermSession();
+  }
+
+  $('termToggle').addEventListener('click', () => {
+    const opening = termPanel.hidden;
+    termPanel.hidden = !opening;
+    if (opening) startTermSession();
+  });
+  $('termClose').addEventListener('click', () => { termPanel.hidden = true; }); // الصدفة تبقى حيّة
+  $('termRestart').addEventListener('click', restartTermSession);
+  $('termRestart2').addEventListener('click', restartTermSession);
+
+  // ملاءمة الأبعاد عند تغيير حجم النافذة واللوحة مفتوحة
+  window.addEventListener('resize', () => {
+    if (!termPanel.hidden && termFit) termFit.fit();
+  });
+
   input.focus();
 })();
 </script>

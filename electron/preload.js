@@ -26,4 +26,14 @@ contextBridge.exposeInMainWorld('satr', {
     ipcRenderer.on('satr:event', handler);
     return () => ipcRenderer.removeListener('satr:event', handler);
   },
+  // الطرفية المدمجة (المرحلة 8) — قناة أحداث مستقلة عالية الإنتاجية satr:term
+  termStart: (cwd, cols, rows) => ipcRenderer.invoke('satr:termStart', { cwd, cols, rows }),
+  termInput: (id, data) => ipcRenderer.invoke('satr:termInput', { id, data }),
+  termResize: (id, cols, rows) => ipcRenderer.invoke('satr:termResize', { id, cols, rows }),
+  termKill: (id) => ipcRenderer.invoke('satr:termKill', { id }),
+  onTerm: (callback) => {
+    const handler = (_e, obj) => callback(obj);
+    ipcRenderer.on('satr:term', handler);
+    return () => ipcRenderer.removeListener('satr:term', handler);
+  },
 });

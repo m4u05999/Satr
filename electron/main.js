@@ -14,6 +14,7 @@ const files = require('./files');
 const skills = require('./skills');
 const agent = require('./agent');
 const bgprocs = require('./bgprocs');
+const term = require('./term');
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
@@ -295,6 +296,40 @@ ipcMain.handle('satr:stop', () => {
   return { ok: true };
 });
 
+// ---------- الطرفية العربية المدمجة (المرحلة 8) ----------
+// أحداث الطرفية عالية الإنتاجية تمرّ بقناة مستقلة satr:term (لا satr:event) —
+// انظر «الطرفية العربية المدمجة» في CLAUDE.md وdocs/PHASE8-DESIGN.md.
+const SAFE_TERM_ID = /^term_[0-9]{1,12}$/;
+const MAX_TERM_INPUT = 1024 * 1024; // سقف كتابة واحدة إلى pty (نص ≤ 1م.ب)
+
+term.setNotifier((obj) => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:term', obj);
+});
+
+ipcMain.handle('satr:termStart', (event, p) => {
+  const cwd = typeof (p && p.cwd) === 'string' ? p.cwd : '';
+  const cols = Number.isInteger(p && p.cols) ? p.cols : 0;
+  const rows = Number.isInteger(p && p.rows) ? p.rows : 0;
+  return term.startTerm(cwd, cols, rows);
+});
+
+ipcMain.handle('satr:termInput', (event, p) => {
+  if (!p || typeof p.id !== 'string' || !SAFE_TERM_ID.test(p.id)) return { ok: false, error: 'bad_id' };
+  if (typeof p.data !== 'string' || !p.data.length || p.data.length > MAX_TERM_INPUT)
+    return { ok: false, error: 'bad_data' };
+  return term.writeTerm(p.id, p.data);
+});
+
+ipcMain.handle('satr:termResize', (event, p) => {
+  if (!p || typeof p.id !== 'string' || !SAFE_TERM_ID.test(p.id)) return { ok: false, error: 'bad_id' };
+  return term.resizeTerm(p.id, p.cols | 0, p.rows | 0);
+});
+
+ipcMain.handle('satr:termKill', (event, p) => {
+  if (!p || typeof p.id !== 'string' || !SAFE_TERM_ID.test(p.id)) return { ok: false, error: 'bad_id' };
+  return term.killTerm(p.id);
+});
+
 // ---------- عمليات الخلفية المعمّرة (خوادم التطوير ونحوها) ----------
 // مستقلة عن الدور: تُسرد وتُقتل حتى بعد انتهاء التشغيل واختفاء زرّ الإيقاف.
 const SAFE_BG_ID = /^bg_[0-9]{1,12}$/;
@@ -369,9 +404,10 @@ app.on('window-all-closed', () => {
   stopAll();
   // إنهاء عمليات الخلفية المتتبَّعة كي لا تبقى خوادم تطوير بلا واجهة تديرها بعد الإغلاق
   bgprocs.killAll();
+  term.killAll(); // صدفة الطرفية المدمجة تموت مع «سطر» (المرحلة 8)
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => bgprocs.killAll());
+app.on('before-quit', () => { bgprocs.killAll(); term.killAll(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
