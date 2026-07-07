@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-d8T9UiVAMzTdpuZj6y5MaqL0LreRnLGWwsR1oXlNXnc='; script-src 'self' 'sha256-eofnEUjbj98IlFMk/af6CRLJ+6uWkXTBYNMhu8XMioU='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-MYNuD08aFP6IoSffXsPsv/MJPrL9K0Q/4rPEjlIBprA='; script-src 'self' 'sha256-kniD5cIdvFxCr3omHPYM4QQg6RXPRkzraCqaOCrzTqI='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -120,19 +120,23 @@
   .msg.assistant .bubble { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 18px; }
 
   .md { unicode-bidi: plaintext; }
-  /* كل كتلة تحلّ اتجاهها الأساسي بنفسها من أول حرف قوي —
+  /* الفقرات تحلّ اتجاهها الأساسي بنفسها من أول حرف قوي —
      unicode-bidi لا يُورَّث، فتطبيقه على الحاوية وحدها لا يكفي
      للأسطر المختلطة (عربي + مسارات/أكواد LTR) داخل القوائم والفقرات */
-  .md p, .md h1, .md h2, .md h3, .md td, .md th { unicode-bidi: plaintext; }
+  .md p { unicode-bidi: plaintext; }
   .md > * { margin-bottom: .6em; }
   .md > *:last-child { margin-bottom: 0; }
+  /* العناوين وخلايا الجداول: أساس RTL ثابت (لا plaintext) — عنوان أو خلية تبدأ
+     برمز/كلمة إنجليزية كانت تنقلب LTR وتلتصق يساراً بينما جاراتها يميناً فيتشتت
+     الجدول (لقطة مالك المشروع). الإنجليزية تنضمّ داخل الأساس RTL كمقاطع مدمجة */
+  .md h1, .md h2, .md h3, .md th, .md td { direction: rtl; unicode-bidi: isolate; }
   .md h1, .md h2, .md h3 { color: var(--gold); font-size: 1.08em; margin-top: .4em; }
   /* القائمة وعلاماتها (الأرقام/النقاط) تتبع RTL صراحةً: لو حُلّ اتجاه .md إلى LTR
      (رسالة تبدأ بإنجليزي/مسار) ترث القائمة LTR فتقفز العلامات لليسار. ملاحظة:
      لا نضع plaintext على <li> لأنه ينقل صندوق العلامة لجهة اتجاه محتوى العنصر؛
      بدلاً منه يلفّ المُحوِّل محتوى كل عنصر بـ <bdi> ليحلّ اتجاه نصه وحده دون مساس بالعلامة */
   .md ul, .md ol { padding-inline-start: 1.4em; direction: rtl; }
-  /* الجداول: RTL صراحةً (العمود الأول يميناً)، وكل خلية تحلّ اتجاه محتواها بـ <bdi>.
+  /* الجداول: RTL صراحةً (العمود الأول يميناً) وخلاياها أساس RTL ثابت (انظر أعلاه).
      display:block + overflow-x للجداول الأعرض من الفقاعة (تنزلق أفقياً بدل الانكسار) */
   .md table { border-collapse: collapse; margin: .5em 0; direction: rtl; display: block; overflow-x: auto; max-width: 100%; }
   .md th, .md td { border: 1px solid var(--border); padding: 5px 11px; font-size: .93em; text-align: start; vertical-align: top; }
@@ -863,12 +867,13 @@
       } else if (isTableStart(lines, i)) {                // جدول أنابيب
         const head = splitRow(lines[i]);
         i += 2; // تخطي الرأس وسطر الفاصل
-        // <bdi> لكل خلية: تحلّ اتجاهها من محتواها (عربي RTL، كود/أرقام LTR)
+        // الخلايا بأساس RTL ثابت من CSS (لا <bdi>): خلية تبدأ بإنجليزية كانت تنقلب
+        // LTR وتلتصق يساراً فيتشتت الجدول — الإنجليزية تنضمّ داخل الأساس RTL طبيعياً
         let html = '<table><thead><tr>' +
-          head.map((c) => '<th><bdi>' + inlineMD(c) + '</bdi></th>').join('') + '</tr></thead><tbody>';
+          head.map((c) => '<th>' + inlineMD(c) + '</th>').join('') + '</tr></thead><tbody>';
         while (i < lines.length && lines[i].trim() !== '' && lines[i].includes('|') && !HR_RE.test(lines[i])) {
           const cells = splitRow(lines[i]);
-          html += '<tr>' + cells.map((c) => '<td><bdi>' + inlineMD(c) + '</bdi></td>').join('') + '</tr>';
+          html += '<tr>' + cells.map((c) => '<td>' + inlineMD(c) + '</td>').join('') + '</tr>';
           i++;
         }
         out.push(html + '</tbody></table>');
