@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-Te+OPLR+C/n3z0dHrAihgak5rsc60/0KCxysyE3dEE8='; script-src 'self' 'sha256-WOV1Vu+3J+bKQcwkj48IWFUwD5KX9ZzVP3PQWlq6FSQ='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-FgWcLMUR+I4DEU0mjAbybYuw118BpTRBMelzFzxJQJI='; script-src 'self' 'sha256-L7De5B+PRovOzU7UPhdxTaPK/iBK7ugTfgcaCWsQ6dA='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -132,6 +132,13 @@
      لا نضع plaintext على <li> لأنه ينقل صندوق العلامة لجهة اتجاه محتوى العنصر؛
      بدلاً منه يلفّ المُحوِّل محتوى كل عنصر بـ <bdi> ليحلّ اتجاه نصه وحده دون مساس بالعلامة */
   .md ul, .md ol { padding-inline-start: 1.4em; direction: rtl; }
+  /* الجداول: RTL صراحةً (العمود الأول يميناً)، وكل خلية تحلّ اتجاه محتواها بـ <bdi>.
+     display:block + overflow-x للجداول الأعرض من الفقاعة (تنزلق أفقياً بدل الانكسار) */
+  .md table { border-collapse: collapse; margin: .5em 0; direction: rtl; display: block; overflow-x: auto; max-width: 100%; }
+  .md th, .md td { border: 1px solid var(--border); padding: 5px 11px; font-size: .93em; text-align: start; vertical-align: top; }
+  .md th { background: var(--surface-2); color: var(--gold); font-weight: 600; white-space: nowrap; }
+  .md tbody tr:nth-child(even) { background: rgba(255,255,255,.025); }
+  .md hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
   .md code { font-family: var(--mono); background: var(--bg); padding: 1px 6px; border-radius: 5px; font-size: .88em; direction: ltr; unicode-bidi: embed; }
   .md pre { direction: ltr; text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; overflow-x: auto; line-height: 1.55; }
   .md pre code { background: none; padding: 0; }
@@ -807,6 +814,21 @@
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, '$1<em>$2</em>');
   }
+  // فاصل أفقي: --- أو *** أو ___ (لا يتعارض مع القوائم: علامتها يليها فراغ)
+  const HR_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
+  // سطر فاصل رأس الجدول: |---|:---:|--- إلخ
+  const TSEP_RE = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$/;
+  // بداية جدول: سطر فيه | يليه سطر فاصل
+  function isTableStart(lines, i) {
+    return lines[i].includes('|') && i + 1 < lines.length && TSEP_RE.test(lines[i + 1]);
+  }
+  // تقسيم صف الجدول إلى خلايا (يتسامح مع | البادئة/الذيلية)
+  function splitRow(s) {
+    let t = s.trim();
+    if (t.startsWith('|')) t = t.slice(1);
+    if (t.endsWith('|')) t = t.slice(0, -1);
+    return t.split('|').map((c) => c.trim());
+  }
   function renderMD(text) {
     const out = [];
     const lines = text.split('\n');
@@ -823,6 +845,21 @@
         const lvl = line.match(/^#+/)[0].length;
         out.push('<h' + lvl + '>' + inlineMD(line.replace(/^#+\s*/, '')) + '</h' + lvl + '>');
         i++;
+      } else if (HR_RE.test(line)) {                      // فاصل أفقي
+        out.push('<hr>');
+        i++;
+      } else if (isTableStart(lines, i)) {                // جدول أنابيب
+        const head = splitRow(lines[i]);
+        i += 2; // تخطي الرأس وسطر الفاصل
+        // <bdi> لكل خلية: تحلّ اتجاهها من محتواها (عربي RTL، كود/أرقام LTR)
+        let html = '<table><thead><tr>' +
+          head.map((c) => '<th><bdi>' + inlineMD(c) + '</bdi></th>').join('') + '</tr></thead><tbody>';
+        while (i < lines.length && lines[i].trim() !== '' && lines[i].includes('|') && !HR_RE.test(lines[i])) {
+          const cells = splitRow(lines[i]);
+          html += '<tr>' + cells.map((c) => '<td><bdi>' + inlineMD(c) + '</bdi></td>').join('') + '</tr>';
+          i++;
+        }
+        out.push(html + '</tbody></table>');
       } else if (/^\s*[-*]\s+/.test(line)) {              // قائمة نقطية
         const items = [];
         // <bdi> يحلّ اتجاه نص العنصر وحده ويعزله عن صندوق العلامة (انظر CSS القائمة)
@@ -840,7 +877,9 @@
         i++;
       } else {                                            // فقرة
         const buf = [];
-        while (i < lines.length && lines[i].trim() !== '' && !/^(```|#{1,3}\s|\s*[-*]\s+|\s*\d+[.)]\s+)/.test(lines[i])) {
+        while (i < lines.length && lines[i].trim() !== '' &&
+               !/^(```|#{1,3}\s|\s*[-*]\s+|\s*\d+[.)]\s+)/.test(lines[i]) &&
+               !HR_RE.test(lines[i]) && !isTableStart(lines, i)) {
           buf.push(inlineMD(lines[i])); i++;
         }
         out.push('<p>' + buf.join('<br>') + '</p>');
