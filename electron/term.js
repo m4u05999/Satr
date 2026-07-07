@@ -70,9 +70,21 @@ function startTerm(cwd, cols, rows) {
   const shell = defaultShell();
   const id = 'term_' + (++seq);
 
+  // ترميز UTF-8 للكونسول (chcp 65001 بالاتجاهين): خرج البرامج يصل UTF-8 سليماً بلا
+  // هذا، لكن **صدى الإدخال** العربي يمر بصفحة ترميز conhost القديمة فيصير «؟؟؟» —
+  // ثبت بالتجربة (لقطة قبول 8.2). نضبطه عند الإقلاع بلا ضجيج في أول الشاشة.
+  let args = [];
+  const shellLower = shell.toLowerCase();
+  if (shellLower.includes('powershell') || shellLower.includes('pwsh')) {
+    args = ['-NoExit', '-Command',
+      '[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8'];
+  } else if (shellLower.includes('cmd')) {
+    args = ['/K', 'chcp 65001 >nul'];
+  }
+
   let proc;
   try {
-    proc = pty.spawn(shell, [], {
+    proc = pty.spawn(shell, args, {
       name: 'xterm-256color',
       cols: c,
       rows: r,

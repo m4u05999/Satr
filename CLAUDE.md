@@ -241,8 +241,10 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
   - preload يكشف: `termStart/termInput/termResize/termKill/onTerm` فقط.
 - **دورة الحياة**: pty يُقتل في `window-all-closed`/`before-quit` (نفس فلسفة bgprocs)،
   وخروج الصدفة يصل الواجهة كحدث `exit` فتعرض «انتهت الجلسة» وزرّ إعادة تشغيل.
-- **الترميز**: خرج pty يصل نصاً UTF-8 جاهزاً — ConPTY يتخاطب UTF-16 داخلياً وnode-pty
-  يحوّله؛ ثبت عملياً أن لا حاجة لحقن `chcp 65001` (التحقق البصري للعربية في 8.2).
+- **الترميز (تصحيح مثبت بالتجربة)**: خرج البرامج يصل UTF-8 سليماً بلا ضبط، لكن **صدى
+  الإدخال** العربي يمر بصفحة ترميز conhost القديمة فيصير «؟؟؟». الحل في term.js: PowerShell
+  يُشغَّل بـ `-NoExit -Command [Console]::InputEncoding=[Console]::OutputEncoding=UTF8`
+  (وcmd بـ `/K chcp 65001 >nul`) — تحقق آلي: `ARABIC_ECHO=true QMARKS=false`.
 - **البناء (حرج)**: `npmRebuild: false` في package.json — node-pty 1.1.0 يشحن prebuilds
   تعمل تحت Electron 33 كما هي (تحقق حيّ)، وإعادة البناء تتطلب Visual Studio غير موجود
   على جهاز التطوير. electron-builder يفكّ node-pty تلقائياً إلى `app.asar.unpacked`
