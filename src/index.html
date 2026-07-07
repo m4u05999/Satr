@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-87k/lclAS6D9ZhC9pdCL5JPJs4+jRu8JCmFNsQPTCv8='; script-src 'self' 'sha256-NB5JsevMuMqJ5DgxetmO4zspI6qoA0FgJZ1GV8+2y9c='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-PKonJNB7aeC8AT1MJmE91++PzBV9yJ2enOqmhWdsoIQ='; script-src 'self' 'sha256-VfHVlg9arTO8rRO2HkP3g9dhvVjxTGheQtENG1Iwb3M='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -401,9 +401,29 @@
   .term-head .term-shell { font-family: var(--mono); direction: ltr; }
   .term-head .spacer { flex: 1; }
   .term-head button { font-size: 12px; padding: 2px 10px; }
-  /* منطقة xterm — شبكة LTR قياسية (عرض BiDi يأتي في 8.2) */
-  #termHost { flex: 1; min-height: 0; direction: ltr; padding: 4px 8px; }
-  #termHost .xterm { height: 100%; }
+  /* منطقة العرض: عارضان فوق بعضهما لنفس محرك xterm.js (docs/PHASE8-DESIGN.md)
+     - #termGrid: شبكة xterm القياسية (LTR) — للشاشة البديلة ولوضع «شبكي» اليدوي
+     - #termBidi: إسقاط HTML نافذي من Buffer — العربية مشكّلة RTL (الافتراضي)
+     في وضع BiDi تُخفى الشبكة بـ opacity لا visibility: حقل إدخال xterm المخفي يجب أن
+     يبقى قابلاً للتركيز كي تصل الكتابة للـ pty (حتى يأتي سطر الإدخال HTML في 8.3) */
+  #termHost { flex: 1; min-height: 0; direction: ltr; position: relative; }
+  #termGrid, #termBidi { position: absolute; inset: 0; }
+  #termGrid { padding: 4px 8px; }
+  #termGrid .xterm { height: 100%; }
+  #termHost.mode-bidi #termGrid { opacity: 0; pointer-events: none; }
+  #termHost.mode-grid #termBidi { display: none; }
+  #termBidi {
+    overflow-y: auto; z-index: 2; background: #0B0E13;
+    /* لاتيني من Cascadia/Consolas؛ العربية تسقط إلى Segoe UI فتتشكل حروفها */
+    font-family: 'Cascadia Mono', 'Consolas', 'Segoe UI', monospace;
+    font-size: 13px;
+  }
+  #bidiSpacer { position: relative; min-height: 100%; }
+  .bidi-line {
+    position: absolute; left: 8px; right: 8px; height: 20px;
+    line-height: 20px; white-space: pre; overflow: hidden;
+    color: #E8E3D8; /* dir=auto يُضبط من JS: سطر عربي يبدأ يميناً وسطر لاتيني يساراً */
+  }
   #termExited { display: none; padding: 8px 14px; border-top: 1px solid var(--border); background: rgba(226,99,93,.08); color: var(--red); font-size: 13px; align-items: center; gap: 10px; }
   #termExited.show { display: flex; }
 </style>
@@ -494,10 +514,14 @@
     <span class="term-title">الطرفية</span>
     <span class="term-shell" id="termShell"></span>
     <span class="spacer"></span>
+    <button id="termView" type="button" title="تبديل العارض: عربي (BiDi) / شبكي (xterm)">العرض: عربي</button>
     <button id="termRestart" type="button" title="إنهاء الصدفة الحالية وبدء واحدة جديدة">إعادة تشغيل</button>
     <button id="termClose" type="button" title="إخفاء اللوحة (الصدفة تبقى تعمل)">✕</button>
   </div>
-  <div id="termHost"></div>
+  <div id="termHost" class="mode-bidi">
+    <div id="termGrid"></div>
+    <div id="termBidi"><div id="bidiSpacer"></div></div>
+  </div>
   <div id="termExited"><span>انتهت جلسة الطرفية.</span><button id="termRestart2" type="button">بدء جلسة جديدة</button></div>
 </section>
 
@@ -1815,7 +1839,10 @@
     });
     termFit = new FitAddon.FitAddon();
     term.loadAddon(termFit);
-    term.open(termHost);
+    term.open($('termGrid')); // الشبكة تُركَّب في طبقتها؛ عرض BiDi إسقاط من نفس الـ Buffer
+    // كل كتابة مُحلَّلة تعلّم عرض BiDi «متسخاً» — المزامنة مُجمَّعة بـ rAF (انظر أدناه)
+    term.onWriteParsed(scheduleBidiSync);
+    term.onResize(scheduleBidiSync);
     // كل ما يكتبه المستخدم داخل العارض يذهب خاماً إلى pty (إدخال خام كامل في 8.1)
     term.onData((data) => { if (termId) window.satr.termInput(termId, data); });
     term.onResize(({ cols, rows }) => { if (termId) window.satr.termResize(termId, cols, rows); });
@@ -1842,6 +1869,7 @@
     if (r.shell) $('termShell').textContent = r.shell;
     if (!r.existing) term.reset(); // جلسة جديدة = شاشة نظيفة
     term.focus();
+    scheduleBidiSync(); // مزامنة أولية لعرض BiDi (reset لا يمرّ بـ onWriteParsed)
   }
 
   async function restartTermSession() {
@@ -1891,6 +1919,141 @@
       document.addEventListener('mouseup', onUp);
     });
   })();
+
+  // ---------- عرض BiDi للمخرجات (المرحلة 8.2) ----------
+  // إسقاط HTML «نافذي» للقراءة فقط من Buffer نسخة xterm.js الوحيدة:
+  // لا يُرسم إلا ما يظهر في نافذة التمرير (+هامش) — أداء محدود بحجم الشاشة لا بحجم
+  // الـ scrollback، وقصّ الأسطر القديمة يتولاه سقف scrollback في xterm نفسه (5000).
+  // كل سطر عنصر بـ dir=auto: أول حرف قوي يحدد الاتجاه، والمتصفح يتولى BiDi والتشكيل.
+  const LINE_H = 20;      // ارتفاع السطر بالبكسل — ثابت ليصح حساب النافذة والفاصل
+  const OVERSCAN = 12;    // أسطر إضافية فوق/تحت النافذة لتمرير سلس
+  const DEF_FG = '#E8E3D8', DEF_BG = '#0B0E13';
+  const termBidiEl = $('termBidi'), bidiSpacer = $('bidiSpacer');
+  const bidiEls = new Map(); // فهرس السطر في الـ Buffer → {el, key}
+  let bidiRaf = 0, bidiPinned = true, cellObj = null, bidiMode = true;
+
+  // لوحة ألوان xterm-256: 0–15 من الثيم، 16–231 مكعب ألوان، 232–255 رماديات
+  const PALETTE256 = (() => {
+    const p = ['#0B0E13', '#E2635D', '#7FB069', '#D9A441', '#6E9ECF', '#B07FB0', '#5FA8A8', '#C9C4B8',
+               '#5A6470', '#F08A84', '#9CCB86', '#E8BE6A', '#8FB8E8', '#CFA0CF', '#7FC4C4', '#E8E3D8'];
+    const lv = [0, 95, 135, 175, 215, 255];
+    for (let r = 0; r < 6; r++) for (let g = 0; g < 6; g++) for (let b = 0; b < 6; b++)
+      p.push('rgb(' + lv[r] + ',' + lv[g] + ',' + lv[b] + ')');
+    for (let i = 0; i < 24; i++) { const v = 8 + i * 10; p.push('rgb(' + v + ',' + v + ',' + v + ')'); }
+    return p;
+  })();
+
+  function rgbCss(v) { return 'rgb(' + ((v >> 16) & 255) + ',' + ((v >> 8) & 255) + ',' + (v & 255) + ')'; }
+
+  // يستخرج مقاطع السطر مجمعةً بنمط موحّد (لون + سمات) + مفتاح بصمة للتحديث التفريقي
+  function extractLine(line) {
+    const segs = [];
+    let cur = null, key = '';
+    for (let x = 0; x < line.length; x++) {
+      cellObj = line.getCell(x, cellObj);
+      if (!cellObj) break;
+      if (cellObj.getWidth() === 0) continue; // النصف الثاني لحرف عريض (CJK)
+      const chars = cellObj.getChars() || ' ';
+      let fg = null, bg = null;
+      if (cellObj.isFgPalette()) fg = PALETTE256[cellObj.getFgColor()] || null;
+      else if (cellObj.isFgRGB()) fg = rgbCss(cellObj.getFgColor());
+      if (cellObj.isBgPalette()) bg = PALETTE256[cellObj.getBgColor()] || null;
+      else if (cellObj.isBgRGB()) bg = rgbCss(cellObj.getBgColor());
+      if (cellObj.isInverse()) { const f = fg || DEF_FG; fg = bg || DEF_BG; bg = f; }
+      const style = (fg || '') + '|' + (bg || '') + '|' +
+        (cellObj.isBold() ? 'b' : '') + (cellObj.isDim() ? 'd' : '') +
+        (cellObj.isItalic() ? 'i' : '') + (cellObj.isUnderline() ? 'u' : '') +
+        (cellObj.isInvisible() ? 'h' : '');
+      if (!cur || cur.style !== style) {
+        cur = { style, fg, bg, flags: style.split('|')[2], text: '' };
+        segs.push(cur);
+      }
+      cur.text += chars;
+    }
+    // قصّ الفراغ الذيلي عديم النمط (الفراغ الملوّن الخلفية يبقى — قد يكون مقصوداً)
+    while (segs.length) {
+      const last = segs[segs.length - 1];
+      if (last.bg) break;
+      last.text = last.text.replace(/ +$/, '');
+      if (last.text) break;
+      segs.pop();
+    }
+    for (const s of segs) key += s.style + '\u0001' + s.text + '\u0002';
+    return { key, segs };
+  }
+
+  // يعيد بناء عنصر السطر من مقاطعه (يُستدعى فقط عند تغيّر البصمة)
+  function buildBidiLine(el, segs) {
+    el.textContent = '';
+    for (const s of segs) {
+      if (!s.style.replace(/\|/g, '')) { el.appendChild(document.createTextNode(s.text)); continue; }
+      const span = document.createElement('span');
+      span.textContent = s.text;
+      if (s.fg) span.style.color = s.fg;
+      if (s.bg) span.style.backgroundColor = s.bg;
+      const f = s.flags || '';
+      if (f.includes('b')) span.style.fontWeight = '600';
+      if (f.includes('d')) span.style.opacity = '0.55';
+      if (f.includes('i')) span.style.fontStyle = 'italic';
+      if (f.includes('u')) span.style.textDecoration = 'underline';
+      if (f.includes('h')) span.style.visibility = 'hidden';
+      el.appendChild(span);
+    }
+  }
+
+  // مزامنة النافذة المرئية: تُرسم/تُحدَّث الأسطر الظاهرة فقط، والبصمة تمنع إعادة بناء ما لم يتغير
+  function bidiSync() {
+    bidiRaf = 0;
+    if (!term || !bidiMode || termPanel.hidden) return;
+    const buf = term.buffer.active;
+    const total = buf.length;
+    bidiSpacer.style.height = (total * LINE_H) + 'px';
+    if (bidiPinned) termBidiEl.scrollTop = termBidiEl.scrollHeight; // ملتصق بالذيل
+    const first = Math.max(0, Math.floor(termBidiEl.scrollTop / LINE_H) - OVERSCAN);
+    const last = Math.min(total - 1, Math.ceil((termBidiEl.scrollTop + termBidiEl.clientHeight) / LINE_H) + OVERSCAN);
+    for (const [i, rec] of bidiEls) {
+      if (i < first || i > last) { rec.el.remove(); bidiEls.delete(i); }
+    }
+    for (let i = first; i <= last; i++) {
+      let rec = bidiEls.get(i);
+      if (!rec) {
+        const el = document.createElement('div');
+        el.className = 'bidi-line';
+        el.dir = 'auto'; // سطر عربي يُحلّ RTL ويبدأ يميناً، ولاتيني LTR يساراً
+        el.style.top = (i * LINE_H) + 'px';
+        bidiSpacer.appendChild(el);
+        rec = { el, key: null };
+        bidiEls.set(i, rec);
+      }
+      const line = buf.getLine(i);
+      if (!line) continue;
+      const r = extractLine(line);
+      if (r.key !== rec.key) { rec.key = r.key; buildBidiLine(rec.el, r.segs); }
+    }
+  }
+
+  function scheduleBidiSync() {
+    if (!bidiRaf) bidiRaf = requestAnimationFrame(bidiSync);
+  }
+
+  // الالتصاق بالذيل: يظل ما دام المستخدم عند الأسفل، وينفك حين يمرّر لأعلى
+  termBidiEl.addEventListener('scroll', () => {
+    bidiPinned = termBidiEl.scrollTop + termBidiEl.clientHeight >= termBidiEl.scrollHeight - LINE_H * 1.5;
+    scheduleBidiSync();
+  });
+  // النقر في عرض BiDi يعيد التركيز لحقل xterm المخفي كي تصل الكتابة للـ pty
+  termBidiEl.addEventListener('click', () => { if (term && !window.getSelection().toString()) term.focus(); });
+
+  // تبديل العارض يدوياً (التبديل التلقائي مع الشاشة البديلة في 8.4)
+  function setTermView(bidi) {
+    bidiMode = bidi;
+    termHost.classList.toggle('mode-bidi', bidi);
+    termHost.classList.toggle('mode-grid', !bidi);
+    $('termView').textContent = bidi ? 'العرض: عربي' : 'العرض: شبكي';
+    if (bidi) { bidiPinned = true; scheduleBidiSync(); }
+    if (term) term.focus();
+  }
+  $('termView').addEventListener('click', () => setTermView(!bidiMode));
 
   // لوحة الإعدادات المنبثقة (⚙): تُفتح وتُغلق بالزر، وتُغلق بالنقر خارجها أو بـ Escape
   const settingsPop = $('settingsPop'), settingsBtn = $('settingsBtn');
