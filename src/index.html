@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-FgWcLMUR+I4DEU0mjAbybYuw118BpTRBMelzFzxJQJI='; script-src 'self' 'sha256-L7De5B+PRovOzU7UPhdxTaPK/iBK7ugTfgcaCWsQ6dA='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-d8T9UiVAMzTdpuZj6y5MaqL0LreRnLGWwsR1oXlNXnc='; script-src 'self' 'sha256-eofnEUjbj98IlFMk/af6CRLJ+6uWkXTBYNMhu8XMioU='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -445,6 +445,11 @@
   #termInput:focus { border-color: var(--gold); }
   #termInput:disabled { opacity: .5; }
   #termInputHint { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+  /* شريط تنبيه التبديل التلقائي (8.4) */
+  #termNotice { display: none; align-items: center; gap: 8px; padding: 5px 12px; border-top: 1px solid var(--border); background: var(--gold-soft); color: var(--gold); font-size: 12px; }
+  #termNotice.show { display: flex; }
+  #termNotice .spacer { flex: 1; }
+  #termNotice button { font-size: 11.5px; padding: 2px 9px; }
 </style>
 </head>
 <body>
@@ -540,6 +545,13 @@
   <div id="termHost">
     <div id="termGrid"></div>
     <div id="termBidi"><div id="bidiSpacer"></div></div>
+  </div>
+  <!-- تنبيه التبديل التلقائي (8.4): يظهر عند إطلاق تطبيق يعكس العربية بنفسه -->
+  <div id="termNotice">
+    <span id="termNoticeText"></span>
+    <span class="spacer"></span>
+    <button id="termNoticeBack" type="button">العرض العربي</button>
+    <button id="termNoticeClose" type="button" title="إخفاء">✕</button>
   </div>
   <!-- سطر الإدخال (8.3): عابر — يُفرَّغ عند الإرسال وصدى الصدفة هو المعروض الوحيد -->
   <div id="termInputRow">
@@ -1900,6 +1912,11 @@
     // كل كتابة مُحلَّلة تعلّم عرض BiDi «متسخاً» — المزامنة مُجمَّعة بـ rAF (انظر أدناه)
     term.onWriteParsed(scheduleBidiSync);
     term.onResize(scheduleBidiSync);
+    // التبديل التلقائي (المرحلة 8.4): الشاشة البديلة (vim/htop/less) ⇐ العارض الشبكي،
+    // والعودة للشاشة العادية تسترجع اختيار المستخدم (auto=true فلا يُمسّ userView)
+    term.buffer.onBufferChange((buf) => {
+      setTermView(buf.type === 'alternate' ? false : userView, true);
+    });
     // كل ما يكتبه المستخدم داخل العارض يذهب خاماً إلى pty (إدخال خام كامل في 8.1)
     term.onData((data) => { if (termId) window.satr.termInput(termId, data); });
     term.onResize(({ cols, rows }) => { if (termId) window.satr.termResize(termId, cols, rows); });
@@ -2102,17 +2119,35 @@
   // النقر في عرض BiDi يركّز سطر الإدخال (ما لم يكن المستخدم يحدد نصاً للنسخ)
   termBidiEl.addEventListener('click', () => { if (!window.getSelection().toString()) $('termInput').focus(); });
 
-  // تبديل العارض يدوياً (التبديل التلقائي مع الشاشة البديلة في 8.4)
-  function setTermView(bidi) {
+  // تبديل العارض (المرحلة 8.4): يدوي بالزر، وتلقائي مع الشاشة البديلة وأوامر معروفة.
+  // userView = اختيار المستخدم للشاشة العادية؛ التبديل التلقائي (auto=true) لا يمسّه
+  // فتعود الشاشة العادية دائماً لما اختاره المستخدم.
+  let userView = true;
+  function setTermView(bidi, auto) {
+    if (!auto) userView = bidi;
     bidiMode = bidi;
     termPanel.classList.toggle('mode-bidi', bidi);
     termPanel.classList.toggle('mode-grid', !bidi);
     $('termView').textContent = bidi ? 'العرض: عربي' : 'العرض: شبكي';
     // لوحة المفاتيح: في العربي لسطر الإدخال HTML، وفي الشبكي لحقل xterm (إدخال خام)
-    if (bidi) { bidiPinned = true; scheduleBidiSync(); $('termInput').focus(); }
-    else if (term) term.focus();
+    if (bidi) { bidiPinned = true; scheduleBidiSync(); hideTermNotice(); if (!termPanel.hidden) $('termInput').focus(); }
+    else if (term && !termPanel.hidden) term.focus();
   }
   $('termView').addEventListener('click', () => setTermView(!bidiMode));
+
+  // شريط تنبيه التبديل التلقائي (لأوامر تعكس العربية بنفسها مثل claude التفاعلي)
+  function showTermNotice(text) {
+    $('termNoticeText').textContent = text;
+    $('termNotice').classList.add('show');
+  }
+  function hideTermNotice() { $('termNotice').classList.remove('show'); }
+  $('termNoticeBack').addEventListener('click', () => setTermView(true));
+  $('termNoticeClose').addEventListener('click', hideTermNotice);
+
+  // تطبيقات معروفة تُخرج العربية بترتيب بصري معكوس (ترقيع للطرفيات LTR الغبية) —
+  // تظهر معكوسة في عرض BiDi الحقيقي (انعكاس مزدوج، انظر وثيقة التصميم)، وترسم في
+  // الشاشة العادية فلا يلتقطها onBufferChange ⇐ نبدّل عند إطلاقها من سطر الإدخال
+  const VISUAL_ORDER_APPS = new Set(['claude']);
 
   // ---------- سطر الإدخال (المرحلة 8.3) ----------
   // الحقل «عابر»: يُفرَّغ عند الإرسال، وصدى الصدفة هو النسخة المعروضة الوحيدة —
@@ -2140,6 +2175,12 @@
       const v = termInputEl.value;
       termInputEl.value = '';
       ptySend(v + '\r'); // حقل فارغ ⇐ \r خام («اضغط أي مفتاح» ومحثّات كثيرة)
+      // أمر معروف بعكس العربية بصرياً ⇐ تبديل تلقائي للعارض الشبكي مع تنبيه (8.4)
+      const cmd = v.trim().split(/\s+/)[0].toLowerCase();
+      if (bidiMode && VISUAL_ORDER_APPS.has(cmd)) {
+        setTermView(false, true);
+        showTermNotice('بُدّل للعرض الشبكي: «' + cmd + '» يرسم العربية بنفسه فيظهر معكوساً في العرض العربي.');
+      }
       return;
     }
     // أسهم التاريخ: تمرَّر للصدفة فقط والحقل فارغ (غير ذلك: تحرير محلي بمؤشر المتصفح)
