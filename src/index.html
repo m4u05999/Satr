@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-PKonJNB7aeC8AT1MJmE91++PzBV9yJ2enOqmhWdsoIQ='; script-src 'self' 'sha256-VfHVlg9arTO8rRO2HkP3g9dhvVjxTGheQtENG1Iwb3M='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-Te+OPLR+C/n3z0dHrAihgak5rsc60/0KCxysyE3dEE8='; script-src 'self' 'sha256-WOV1Vu+3J+bKQcwkj48IWFUwD5KX9ZzVP3PQWlq6FSQ='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -404,14 +404,15 @@
   /* منطقة العرض: عارضان فوق بعضهما لنفس محرك xterm.js (docs/PHASE8-DESIGN.md)
      - #termGrid: شبكة xterm القياسية (LTR) — للشاشة البديلة ولوضع «شبكي» اليدوي
      - #termBidi: إسقاط HTML نافذي من Buffer — العربية مشكّلة RTL (الافتراضي)
-     في وضع BiDi تُخفى الشبكة بـ opacity لا visibility: حقل إدخال xterm المخفي يجب أن
-     يبقى قابلاً للتركيز كي تصل الكتابة للـ pty (حتى يأتي سطر الإدخال HTML في 8.3) */
+     منذ 8.3: في وضع BiDi الإخفاء بـ visibility (لوحة المفاتيح صارت لسطر الإدخال HTML
+     فلا حاجة لتركيز حقل xterm المخفي)، وصنف الوضع على #termPanel ليتحكم بصف الإدخال */
   #termHost { flex: 1; min-height: 0; direction: ltr; position: relative; }
   #termGrid, #termBidi { position: absolute; inset: 0; }
   #termGrid { padding: 4px 8px; }
   #termGrid .xterm { height: 100%; }
-  #termHost.mode-bidi #termGrid { opacity: 0; pointer-events: none; }
-  #termHost.mode-grid #termBidi { display: none; }
+  #termPanel.mode-bidi #termGrid { visibility: hidden; pointer-events: none; }
+  #termPanel.mode-grid #termBidi { display: none; }
+  #termPanel.mode-grid #termInputRow { display: none; } /* الشبكي: إدخال خام عبر xterm مباشرة */
   #termBidi {
     overflow-y: auto; z-index: 2; background: #0B0E13;
     /* لاتيني من Cascadia/Consolas؛ العربية تسقط إلى Segoe UI فتتشكل حروفها */
@@ -426,6 +427,17 @@
   }
   #termExited { display: none; padding: 8px 14px; border-top: 1px solid var(--border); background: rgba(226,99,93,.08); color: var(--red); font-size: 13px; align-items: center; gap: 10px; }
   #termExited.show { display: flex; }
+  /* سطر الإدخال (المرحلة 8.3): حقل HTML حقيقي — عربية مثالية أثناء الكتابة، والمؤشر
+     مؤشر المتصفح («المؤشر الملعون» محلول جذرياً — قرار الصدى في وثيقة التصميم §8.2) */
+  #termInputRow { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--surface); }
+  #termInput {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 12px; color: var(--text); outline: none;
+    font-family: 'Cascadia Mono', 'Consolas', 'Segoe UI', monospace; font-size: 13px;
+  }
+  #termInput:focus { border-color: var(--gold); }
+  #termInput:disabled { opacity: .5; }
+  #termInputHint { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -507,7 +519,7 @@
 </main>
 
 <!-- الطرفية المدمجة (المرحلة 8.1): عارض xterm.js قياسي — عرض BiDi يأتي في 8.2 -->
-<section id="termPanel" aria-label="الطرفية المدمجة" hidden>
+<section id="termPanel" class="mode-bidi" aria-label="الطرفية المدمجة" hidden>
   <div id="termResizer" title="اسحب لتغيير الارتفاع"></div>
   <div class="term-head">
     <span class="term-dot" id="termDot" aria-hidden="true"></span>
@@ -518,9 +530,15 @@
     <button id="termRestart" type="button" title="إنهاء الصدفة الحالية وبدء واحدة جديدة">إعادة تشغيل</button>
     <button id="termClose" type="button" title="إخفاء اللوحة (الصدفة تبقى تعمل)">✕</button>
   </div>
-  <div id="termHost" class="mode-bidi">
+  <div id="termHost">
     <div id="termGrid"></div>
     <div id="termBidi"><div id="bidiSpacer"></div></div>
+  </div>
+  <!-- سطر الإدخال (8.3): عابر — يُفرَّغ عند الإرسال وصدى الصدفة هو المعروض الوحيد -->
+  <div id="termInputRow">
+    <input type="text" id="termInput" dir="auto" spellcheck="false"
+           placeholder="اكتب أمراً… (Enter ينفّذ — Ctrl+C يقطع — ▲▼ التاريخ والحقل فارغ)">
+    <span id="termInputHint" aria-hidden="true">Tab لا يُكمل هنا</span>
   </div>
   <div id="termExited"><span>انتهت جلسة الطرفية.</span><button id="termRestart2" type="button">بدء جلسة جديدة</button></div>
 </section>
@@ -1850,7 +1868,7 @@
     window.satr.onTerm((ev) => {
       if (!ev || ev.id !== termId) return;
       if (ev.type === 'data') term.write(ev.data);
-      else if (ev.type === 'exit') { termId = null; termExited.classList.add('show'); $('termDot').classList.add('dead'); }
+      else if (ev.type === 'exit') { termId = null; termExited.classList.add('show'); $('termDot').classList.add('dead'); $('termInput').disabled = true; }
     });
   }
 
@@ -1868,7 +1886,8 @@
     $('termDot').classList.remove('dead');
     if (r.shell) $('termShell').textContent = r.shell;
     if (!r.existing) term.reset(); // جلسة جديدة = شاشة نظيفة
-    term.focus();
+    $('termInput').disabled = false;
+    if (bidiMode) $('termInput').focus(); else term.focus();
     scheduleBidiSync(); // مزامنة أولية لعرض BiDi (reset لا يمرّ بـ onWriteParsed)
   }
 
@@ -2041,19 +2060,68 @@
     bidiPinned = termBidiEl.scrollTop + termBidiEl.clientHeight >= termBidiEl.scrollHeight - LINE_H * 1.5;
     scheduleBidiSync();
   });
-  // النقر في عرض BiDi يعيد التركيز لحقل xterm المخفي كي تصل الكتابة للـ pty
-  termBidiEl.addEventListener('click', () => { if (term && !window.getSelection().toString()) term.focus(); });
+  // النقر في عرض BiDi يركّز سطر الإدخال (ما لم يكن المستخدم يحدد نصاً للنسخ)
+  termBidiEl.addEventListener('click', () => { if (!window.getSelection().toString()) $('termInput').focus(); });
 
   // تبديل العارض يدوياً (التبديل التلقائي مع الشاشة البديلة في 8.4)
   function setTermView(bidi) {
     bidiMode = bidi;
-    termHost.classList.toggle('mode-bidi', bidi);
-    termHost.classList.toggle('mode-grid', !bidi);
+    termPanel.classList.toggle('mode-bidi', bidi);
+    termPanel.classList.toggle('mode-grid', !bidi);
     $('termView').textContent = bidi ? 'العرض: عربي' : 'العرض: شبكي';
-    if (bidi) { bidiPinned = true; scheduleBidiSync(); }
-    if (term) term.focus();
+    // لوحة المفاتيح: في العربي لسطر الإدخال HTML، وفي الشبكي لحقل xterm (إدخال خام)
+    if (bidi) { bidiPinned = true; scheduleBidiSync(); $('termInput').focus(); }
+    else if (term) term.focus();
   }
   $('termView').addEventListener('click', () => setTermView(!bidiMode));
+
+  // ---------- سطر الإدخال (المرحلة 8.3) ----------
+  // الحقل «عابر»: يُفرَّغ عند الإرسال، وصدى الصدفة هو النسخة المعروضة الوحيدة —
+  // لا ازدواج بالبناء (قرار الصدى المثبّت في وثيقة التصميم §8.2). عقد المفاتيح §8.3:
+  const termInputEl = $('termInput');
+
+  function ptySend(data) {
+    if (termId) window.satr.termInput(termId, data);
+    bidiPinned = true; // أي إرسال يعيد الالتصاق بذيل الخرج
+    scheduleBidiSync();
+  }
+
+  termInputEl.addEventListener('keydown', (e) => {
+    if (!termId) return;
+    // Ctrl+C يقطع دائماً (والحقل غير فارغ: يفرّغه أيضاً) — Ctrl+Z وCtrl+D تمريران خامان
+    if (e.ctrlKey && !e.shiftKey && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'c') { e.preventDefault(); termInputEl.value = ''; ptySend('\x03'); return; }
+      if (k === 'z') { e.preventDefault(); ptySend('\x1a'); return; }
+      if (k === 'd') { e.preventDefault(); ptySend('\x04'); return; }
+      return; // بقية اختصارات Ctrl (نسخ/لصق…) تبقى للمتصفح
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const v = termInputEl.value;
+      termInputEl.value = '';
+      ptySend(v + '\r'); // حقل فارغ ⇐ \r خام («اضغط أي مفتاح» ومحثّات كثيرة)
+      return;
+    }
+    // أسهم التاريخ: تمرَّر للصدفة فقط والحقل فارغ (غير ذلك: تحرير محلي بمؤشر المتصفح)
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && termInputEl.value === '') {
+      e.preventDefault();
+      ptySend(e.key === 'ArrowUp' ? '\x1b[A' : '\x1b[B');
+      return;
+    }
+    // إكمال Tab مستحيل بالبناء في وضع الأسطر (الصدفة لم ترَ البادئة) — حدّ موثّق
+    if (e.key === 'Tab') { e.preventDefault(); return; }
+  });
+
+  // لصق متعدد الأسطر: يُمرَّر خاماً للـ pty فوراً (الصدفة تنفّذ أسطره كما لو طُبعت) —
+  // اللصق العادي أحادي السطر يدخل الحقل محلياً كالمعتاد
+  termInputEl.addEventListener('paste', (e) => {
+    const text = e.clipboardData ? e.clipboardData.getData('text') : '';
+    if (text && /\r|\n/.test(text) && termId) {
+      e.preventDefault();
+      ptySend(text.replace(/\r?\n/g, '\r'));
+    }
+  });
 
   // لوحة الإعدادات المنبثقة (⚙): تُفتح وتُغلق بالزر، وتُغلق بالنقر خارجها أو بـ Escape
   const settingsPop = $('settingsPop'), settingsBtn = $('settingsBtn');
