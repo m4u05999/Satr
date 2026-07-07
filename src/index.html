@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-nhSeA2KAGSkRxy5BOFP4ZcuRFDoF82/mhcn9ZbN3izU='; script-src 'self' 'sha256-I/6tUrLcxFLJ9omHCGCpsUBRFUIjAPWqoK0u4Pso7P0='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-87k/lclAS6D9ZhC9pdCL5JPJs4+jRu8JCmFNsQPTCv8='; script-src 'self' 'sha256-NB5JsevMuMqJ5DgxetmO4zspI6qoA0FgJZ1GV8+2y9c='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -104,7 +104,10 @@
   .thread { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
   .empty { text-align: center; color: var(--text-dim); margin-top: 12vh; }
   .empty .big { font-size: 40px; font-weight: 700; color: var(--gold); margin-bottom: 10px; }
-  .empty p { max-width: 500px; margin: 6px auto; font-size: 14px; }
+  .empty p { max-width: 500px; margin: 6px auto; font-size: 14px; unicode-bidi: plaintext; }
+  .empty .hints { max-width: 340px; margin: 14px auto 0; text-align: right; font-size: 13.5px; display: flex; flex-direction: column; gap: 7px; }
+  .empty .hints > span { display: flex; align-items: baseline; gap: 8px; }
+  .empty .hints kbd { min-width: 52px; text-align: center; }
   .empty kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px; font-family: var(--mono); font-size: 12px; }
 
   .msg { display: flex; flex-direction: column; gap: 6px; }
@@ -161,7 +164,28 @@
   }
   #send { background: var(--gold); color: #1A1408; border: none; font-weight: 600; padding: 12px 22px; border-radius: 12px; }
   #send.stop { background: var(--red); color: #fff; }
-  .statusline { max-width: 880px; margin: 8px auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); direction: ltr; }
+  /* شريط الحالة عربي RTL — المعرّفات والأرقام اللاتينية تنعزل LTR تلقائياً بخوارزمية BiDi */
+  .statusline { max-width: 880px; margin: 8px auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
+  .statusline span { unicode-bidi: plaintext; }
+
+  /* أشرطة تمرير موحّدة على الثيم الداكن (بدل افتراضي Chromium الفاتح) */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 6px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+  /* لوحة الإعدادات المنبثقة (النموذج/المحرك/الصلاحيات) — تُطوى خلف ⚙ لتخفيف الشريط العلوي */
+  .settings-wrap { position: relative; }
+  #settingsPop {
+    position: absolute; top: calc(100% + 8px); left: 0; z-index: 60;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 300px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+  }
+  #settingsPop[hidden] { display: none; }
+  #settingsPop .field { justify-content: space-between; }
+  #settingsPop select { min-width: 190px; }
+  #settingsBtn.active { border-color: var(--gold); background: var(--gold-soft); }
 
   /* قائمة / المنبثقة (و @ تشاركها التموضع) */
   #slashMenu, #fileMenu {
@@ -364,9 +388,15 @@
   .ctx-cat-bar > span { display: block; height: 100%; background: var(--gold); opacity: .75; }
 
   /* ===== الطرفية المدمجة (المرحلة 8) ===== */
-  #termPanel { display: flex; flex-direction: column; height: 42vh; min-height: 180px; border-top: 1px solid var(--border); background: #0B0E13; }
+  #termPanel { display: flex; flex-direction: column; height: 42vh; min-height: 140px; border-top: 1px solid var(--border); background: #0B0E13; position: relative; }
   #termPanel[hidden] { display: none; }
+  /* مقبض سحب لتغيير ارتفاع اللوحة — الارتفاع يُحفظ في localStorage */
+  #termResizer { position: absolute; top: -3px; left: 0; right: 0; height: 7px; cursor: ns-resize; z-index: 5; }
+  #termResizer:hover, #termResizer.dragging { background: linear-gradient(to bottom, transparent 2px, var(--gold) 3px, var(--gold) 4px, transparent 5px); }
   .term-head { display: flex; align-items: center; gap: 10px; padding: 4px 14px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--text-dim); }
+  .term-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
+  .term-dot.dead { background: var(--red); }
+  #termToggle.active { border-color: var(--gold); background: var(--gold-soft); }
   .term-head .term-title { color: var(--gold); font-weight: 600; }
   .term-head .term-shell { font-family: var(--mono); direction: ltr; }
   .term-head .spacer { flex: 1; }
@@ -402,34 +432,40 @@
       <input type="text" id="cwd" placeholder="اختر مجلداً…" spellcheck="false">
       <button id="pickFolder" title="اختيار مجلد">📁</button>
     </div>
-    <div class="field">
-      <label for="model">النموذج</label>
-      <select id="model">
-        <option value="">الافتراضي</option>
-        <option value="claude-fable-5">Fable 5</option>
-        <option value="opus">Opus</option>
-        <option value="sonnet">Sonnet</option>
-        <option value="haiku">Haiku</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="engine">المحرك</label>
-      <select id="engine">
-        <option value="sdk">SDK — بث وأذونات حية</option>
-        <option value="cli">CLI — احتياطي</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="perm">الصلاحيات</label>
-      <select id="perm">
-        <option value="acceptEdits">قبول التعديلات تلقائياً</option>
-        <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
-        <option value="default">افتراضي</option>
-        <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
-      </select>
-    </div>
     <button id="newSession">جلسة جديدة</button>
     <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
+    <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
+    <div class="settings-wrap">
+      <button id="settingsBtn" title="الإعدادات">⚙</button>
+      <div id="settingsPop" hidden>
+        <div class="field">
+          <label for="model">النموذج</label>
+          <select id="model">
+            <option value="">الافتراضي</option>
+            <option value="claude-fable-5">Fable 5</option>
+            <option value="opus">Opus</option>
+            <option value="sonnet">Sonnet</option>
+            <option value="haiku">Haiku</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="engine">المحرك</label>
+          <select id="engine">
+            <option value="sdk">SDK — بث وأذونات حية</option>
+            <option value="cli">CLI — احتياطي</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="perm">الصلاحيات</label>
+          <select id="perm">
+            <option value="acceptEdits">قبول التعديلات تلقائياً</option>
+            <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
+            <option value="default">افتراضي</option>
+            <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
+          </select>
+        </div>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -440,14 +476,21 @@
     <div class="empty" id="empty">
       <div class="big">سطر</div>
       <p>تطبيق عربي لـ Claude Code — اكتب بالعربية وكل شيء يظهر بالاتجاه الصحيح.</p>
-      <p>اكتب <kbd>/</kbd> في بداية السطر لقائمة الأوامر، و<kbd>@</kbd> لإدراج ملف من المشروع، والصق صورة بـ <kbd>Ctrl</kbd>+<kbd>V</kbd>.</p>
+      <div class="hints">
+        <span><kbd>/</kbd> قائمة الأوامر (في بداية السطر)</span>
+        <span><kbd>@</kbd> إدراج ملف من المشروع</span>
+        <span><kbd>Ctrl+V</kbd> لصق صورة من الحافظة</span>
+        <span><kbd>🖥️</kbd> الطرفية المدمجة (من الشريط العلوي)</span>
+      </div>
     </div>
   </div>
 </main>
 
 <!-- الطرفية المدمجة (المرحلة 8.1): عارض xterm.js قياسي — عرض BiDi يأتي في 8.2 -->
 <section id="termPanel" aria-label="الطرفية المدمجة" hidden>
+  <div id="termResizer" title="اسحب لتغيير الارتفاع"></div>
   <div class="term-head">
+    <span class="term-dot" id="termDot" aria-hidden="true"></span>
     <span class="term-title">الطرفية</span>
     <span class="term-shell" id="termShell"></span>
     <span class="spacer"></span>
@@ -523,7 +566,7 @@
     <button id="send">إرسال</button>
   </div>
   <div class="statusline">
-    <span id="sessionInfo">no session</span>
+    <span id="sessionInfo">لا جلسة</span>
     <span id="costInfo"></span>
   </div>
 </footer>
@@ -975,7 +1018,7 @@
           m.className = 'meta';
           m.textContent = [dur, cost ? '$' + cost.toFixed(4) : ''].filter(Boolean).join(' · ');
           if (m.textContent) w.appendChild(m);
-          $('costInfo').textContent = totalCost ? 'total: $' + totalCost.toFixed(4) : '';
+          $('costInfo').textContent = totalCost ? 'الكلفة: $' + totalCost.toFixed(4) : '';
         }
       },
       error(text) {
@@ -1023,7 +1066,7 @@
       block.compacted(ev.compact_metadata);
     } else if (ev.type === 'system' && ev.session_id) {
       sessionId = ev.session_id;
-      $('sessionInfo').textContent = 'session: ' + sessionId.slice(0, 8);
+      $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8);
     } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
       for (const c of ev.message.content) {
         if (c.type === 'text' && c.text && c.text.trim()) block.addText(c.text);
@@ -1038,7 +1081,7 @@
     } else if (ev.type === 'result') {
       if (ev.session_id) {
         sessionId = ev.session_id;
-        $('sessionInfo').textContent = 'session: ' + sessionId.slice(0, 8);
+        $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8);
       }
       if (ev.is_error && ev.result) block.error(String(ev.result));
       block.finish(ev);
@@ -1252,7 +1295,7 @@
   function newSession() {
     sessionId = null; totalCost = 0; currentBlock = null;
     pendingImages = []; renderAttachments();
-    $('sessionInfo').textContent = 'no session';
+    $('sessionInfo').textContent = 'لا جلسة';
     $('costInfo').textContent = '';
     thread.innerHTML = '<div class="empty" id="empty"><div class="big">سطر</div><p>جلسة جديدة — اكتب طلبك الأول.</p></div>';
   }
@@ -1337,7 +1380,7 @@
     if (!data || data.error) { addNotice('✗ تعذّر فتح الجلسة'); return; }
     newSession();
     sessionId = s.id; // الرسالة القادمة ستُرسل بـ --resume على هذه الجلسة
-    $('sessionInfo').textContent = 'session: ' + s.id.slice(0, 8);
+    $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8);
     if (data.cwd) { $('cwd').value = data.cwd; localStorage.setItem('satr_cwd', data.cwd); }
     hideEmpty();
     if (data.total > data.messages.length)
@@ -1780,7 +1823,7 @@
     window.satr.onTerm((ev) => {
       if (!ev || ev.id !== termId) return;
       if (ev.type === 'data') term.write(ev.data);
-      else if (ev.type === 'exit') { termId = null; termExited.classList.add('show'); }
+      else if (ev.type === 'exit') { termId = null; termExited.classList.add('show'); $('termDot').classList.add('dead'); }
     });
   }
 
@@ -1795,6 +1838,7 @@
     }
     termId = r.id;
     termExited.classList.remove('show');
+    $('termDot').classList.remove('dead');
     if (r.shell) $('termShell').textContent = r.shell;
     if (!r.existing) term.reset(); // جلسة جديدة = شاشة نظيفة
     term.focus();
@@ -1805,12 +1849,13 @@
     await startTermSession();
   }
 
-  $('termToggle').addEventListener('click', () => {
-    const opening = termPanel.hidden;
-    termPanel.hidden = !opening;
-    if (opening) startTermSession();
-  });
-  $('termClose').addEventListener('click', () => { termPanel.hidden = true; }); // الصدفة تبقى حيّة
+  function setTermOpen(open) {
+    termPanel.hidden = !open;
+    $('termToggle').classList.toggle('active', open);
+    if (open) startTermSession();
+  }
+  $('termToggle').addEventListener('click', () => setTermOpen(termPanel.hidden));
+  $('termClose').addEventListener('click', () => setTermOpen(false)); // الصدفة تبقى حيّة
   $('termRestart').addEventListener('click', restartTermSession);
   $('termRestart2').addEventListener('click', restartTermSession);
 
@@ -1818,6 +1863,45 @@
   window.addEventListener('resize', () => {
     if (!termPanel.hidden && termFit) termFit.fit();
   });
+
+  // سحب مقبض اللوحة لتغيير ارتفاعها — يُحفظ في localStorage ويُسترجع عند الإقلاع
+  const savedTermH = parseInt(localStorage.getItem('satr_term_height'), 10);
+  if (savedTermH >= 140) termPanel.style.height = savedTermH + 'px';
+  (function () {
+    const resizer = $('termResizer');
+    let startY = 0, startH = 0, raf = 0;
+    function onMove(e) {
+      // السحب لأعلى يزيد الارتفاع (اللوحة ملتصقة بالأسفل)
+      const h = Math.min(Math.max(startH + (startY - e.clientY), 140), Math.round(window.innerHeight * 0.8));
+      termPanel.style.height = h + 'px';
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (termFit) termFit.fit(); });
+    }
+    function onUp() {
+      resizer.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem('satr_term_height', String(termPanel.offsetHeight));
+      if (termFit) termFit.fit();
+    }
+    resizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      startY = e.clientY; startH = termPanel.offsetHeight;
+      resizer.classList.add('dragging');
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  })();
+
+  // لوحة الإعدادات المنبثقة (⚙): تُفتح وتُغلق بالزر، وتُغلق بالنقر خارجها أو بـ Escape
+  const settingsPop = $('settingsPop'), settingsBtn = $('settingsBtn');
+  function setSettingsOpen(open) {
+    settingsPop.hidden = !open;
+    settingsBtn.classList.toggle('active', open);
+  }
+  settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); setSettingsOpen(settingsPop.hidden); });
+  settingsPop.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => { if (!settingsPop.hidden) setSettingsOpen(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !settingsPop.hidden) setSettingsOpen(false); });
 
   input.focus();
 })();
