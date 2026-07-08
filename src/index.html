@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-6LSuJkm634MdLcxClQT9bVLAWLLIRCWZ2K9CPD6gFps='; script-src 'self' 'sha256-O4Vrh6SNYlcLi8iR7OmtGujzZxHos5XAGfHNWbXFGy0='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-6LSuJkm634MdLcxClQT9bVLAWLLIRCWZ2K9CPD6gFps='; script-src 'self' 'sha256-DEbGx5S6ZzXPyzu6+I/uZdngn92IuuP3a+0i7mhhyCw='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -666,6 +666,8 @@
   const $ = (id) => document.getElementById(id);
   const main = $('main'), thread = $('thread'), input = $('input'), sendBtn = $('send');
   let sessionId = null, totalCost = 0, busy = false, currentBlock = null;
+  let sessionCwd = null;     // المجلد الذي وُلدت فيه الجلسة الحالية (جلسات Claude Code مرتبطة بمجلدها)
+  let lastSentPrompt = '';   // آخر طلب أُرسل — يُستعاد للمحرّر عند فشل استئناف جلسة ميتة
   let bgProcs = []; // عمليات الخلفية المعمّرة المعروضة في شريط «قيد التشغيل»
   let gated = true; // محجوب حتى يؤكّد فحص أول التشغيل توفّر Claude Code (مانع إطلاق)
 
@@ -1180,6 +1182,18 @@
     };
   }
 
+  // تعافٍ من جلسة ميتة: Claude Code لم يعد يجد المحادثة (حُذفت، أو عُلّق معرّفها
+  // بمجلد آخر قبل إصلاح الوقاية) — نصفّر الجلسة ونعيد الطلب للمحرّر بدل التكرار للأبد
+  function deadSessionRecovery(text) {
+    if (!/No conversation found with session ID/i.test(String(text || ''))) return false;
+    sessionId = null;
+    sessionCwd = null;
+    $('sessionInfo').textContent = 'لا جلسة';
+    if (lastSentPrompt && !input.value.trim()) input.value = lastSentPrompt;
+    addNotice('⚠ الجلسة السابقة لم تعد محفوظة لدى Claude Code — بدأت جلسة جديدة وأعدت طلبك إلى المحرّر: اضغط إرسال');
+    return true;
+  }
+
   // ---------- استقبال أحداث Claude من العملية الرئيسية ----------
   window.satr.onEvent((ev) => {
     // طلبات الأذونات تُعالج دائماً ولو كانت الكتلة منتهية
@@ -1221,10 +1235,14 @@
         sessionId = ev.session_id;
         $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8);
       }
-      if (ev.is_error && ev.result) block.error(String(ev.result));
+      if (ev.is_error && ev.result) {
+        if (deadSessionRecovery(ev.result)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
+        else block.error(String(ev.result));
+      }
       block.finish(ev);
     } else if (ev.type === 'spawn_error') {
-      block.error('فشل تشغيل أمر claude — تأكد أنه مثبت ومسجّل دخوله.\n' + (ev.text || ''));
+      if (deadSessionRecovery(ev.text)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
+      else block.error('فشل تشغيل أمر claude — تأكد أنه مثبت ومسجّل دخوله.\n' + (ev.text || ''));
       endRun();
     } else if (ev.type === 'proc_done') {
       block.finish(null);
@@ -1350,6 +1368,16 @@
       images = [];
     }
     if (!prompt && !images.length) return;
+    // وقاية: جلسات Claude Code مرتبطة بمجلدها — تغيير مجلد المشروع مع جلسة حيّة
+    // يجعل --resume يفشل بـ «No conversation found» (لقطة قبول). مجلد جديد ⇐ جلسة جديدة.
+    const cwdNow = $('cwd').value.trim();
+    if (sessionId && sessionCwd && cwdNow !== sessionCwd) {
+      sessionId = null;
+      $('sessionInfo').textContent = 'لا جلسة';
+      addNotice('📁 تغيّر مجلد المشروع — بدأت جلسة جديدة (جلسات Claude Code مرتبطة بمجلدها)');
+    }
+    sessionCwd = cwdNow;
+    lastSentPrompt = prompt;
     input.value = ''; autoResize(); closeSlash(); closeFiles();
     pendingImages = []; renderAttachments();
     addUserMsg(prompt, images.map((i) => i.dataUrl));
@@ -1520,6 +1548,7 @@
     sessionId = s.id; // الرسالة القادمة ستُرسل بـ --resume على هذه الجلسة
     $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8);
     if (data.cwd) { $('cwd').value = data.cwd; localStorage.setItem('satr_cwd', data.cwd); }
+    sessionCwd = $('cwd').value.trim(); // الجلسة المستأنفة مرتبطة بمجلدها هذا
     hideEmpty();
     if (data.total > data.messages.length)
       addNotice('عرض آخر ' + data.messages.length + ' من أصل ' + data.total + ' رسالة');
