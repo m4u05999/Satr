@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-IDE2RUau4n/6qD8/3S7lTCA7dTG+gWaHBrRy2uJ8wVw='; script-src 'self' 'sha256-XwozMyzol5UZrMcNjusfoQIGlqxHKraXn2VstgizeoM='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-IDE2RUau4n/6qD8/3S7lTCA7dTG+gWaHBrRy2uJ8wVw='; script-src 'self' 'sha256-ARPRtVy0EfS14a0xyRVcmezQpk0gb8V4SeMIlwuOmfg='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -2642,7 +2642,7 @@
       // علامة الالتقاط __SATR_ (السطر المُغلّف وسطرا البداية/النهاية) يُعرض فارغاً —
       // فيرى المستخدم الخرج النظيف فقط. أمر مستخدم حقيقي لا يحوي هذه العلامة.
       if (line.translateToString(true).indexOf('__SATR_') >= 0) {
-        if (rec.key !== ' satr') { rec.key = ' satr'; rec.el.textContent = ''; }
+        if (rec.key !== 'satr') { rec.key = 'satr'; rec.el.textContent = ''; }
         continue;
       }
       const r = extractLine(line, tab.cellRef);
