@@ -206,6 +206,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
   const options = {
     cwd,
     includePartialMessages: true,
+    // الوكلاء الفرعيون (المرحلة 14.2): تمرير نصوص الوكيل كرسائل بـ parent_tool_use_id
+    // فتعرضها الواجهة سجلاً متداخلاً تحت بطاقة الوكيل (بدونه تصل أدواته فقط)
+    forwardSubagentText: true,
     // خطّافات قبل/بعد التعديل لالتقاط الفرق وتمكين التراجع (المرحلة 3)
     hooks: {
       PreToolUse: [{ hooks: [preToolUse] }],

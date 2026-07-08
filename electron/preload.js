@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('satr', {
   mcpAction: (cwd, name, action) => ipcRenderer.invoke('satr:mcpAction', { cwd, name, action }),
   contextUsage: (cwd, sessionId) => ipcRenderer.invoke('satr:contextUsage', { cwd, sessionId }),
   listCommands: (cwd) => ipcRenderer.invoke('satr:listCommands', cwd),
+  listAgents: (cwd) => ipcRenderer.invoke('satr:listAgents', cwd),
   permission: (id, allow, always) => ipcRenderer.invoke('satr:permission', { id, allow, always }),
   undoEdit: (id) => ipcRenderer.invoke('satr:undoEdit', id),
   listBgProcs: () => ipcRenderer.invoke('satr:listBgProcs'),

@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-6n5FjuVfsrt7CSqRgHljffS/tPQAoCCK/aVKMx+urNQ='; script-src 'self' 'sha256-5D7dlNAYyXPk9JyfdBBKweTw+/HvpieetrKXevorKNA='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-Bszqh/EczwTMj9U85aWcMjNIlC6EQ8HLl+zQGSa+j0U='; script-src 'self' 'sha256-OZaVOVWsNZh0i/HTCSekOU/B8n4I38xwHJUHeUpi414='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -388,14 +388,34 @@
   .compact-card .sub { color: var(--text-dim); font-size: 12px; }
 
   /* ===== لوحتا الموصّلات (/موصلات) والسياق (/سياق) ===== */
-  #mcpPanel, #contextPanel {
+  /* بطاقة الوكيل الفرعي (المرحلة 14.2): رأس بحالة + أدوات متداخلة + سجل نصي حي */
+  .agent-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  .agent-head { display: flex; align-items: baseline; gap: 8px; padding: 7px 12px; font-size: 12.5px; background: var(--gold-soft); }
+  .agent-head .aname { color: var(--gold); font-weight: 600; white-space: nowrap; }
+  .agent-head .adesc { color: var(--text-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; text-align: start; }
+  .agent-head .state { flex: none; font-size: 12px; color: var(--text-dim); }
+  .agent-card.done .agent-head .state { color: var(--green); }
+  .agent-tools { display: flex; flex-direction: column; gap: 5px; padding: 7px 12px; max-height: 132px; overflow-y: auto; }
+  .agent-tools:empty { display: none; }
+  .agent-text { padding: 4px 14px 10px; font-size: 13px; color: var(--text-dim); max-height: 190px; overflow-y: auto; border-top: 1px dashed var(--border); }
+  .agent-text:empty { display: none; }
+  .agents-flow { display: flex; flex-direction: column; gap: 8px; }
+  .agents-flow:empty { display: none; }
+  /* صفوف لوحة /وكلاء */
+  .agent-row { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .agent-row .aname { font-family: var(--mono); direction: ltr; unicode-bidi: embed; color: var(--gold); font-size: 13px; }
+  .agent-row .abadge { font-size: 10.5px; border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; color: var(--text-dim); margin-inline-start: 8px; }
+  .agent-row .adesc { font-size: 12.5px; color: var(--text-dim); margin-top: 4px; unicode-bidi: plaintext; }
+  .agent-row .ameta { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; direction: ltr; text-align: right; font-family: var(--mono); }
+
+  #mcpPanel, #contextPanel, #agentsPanel {
     position: fixed; top: 0; bottom: 0; right: 0; width: 420px; max-width: 92vw;
     background: var(--surface); border-inline-start: 1px solid var(--border);
     box-shadow: -10px 0 34px rgba(0,0,0,.5); z-index: 80;
     transform: translateX(100%); transition: transform .18s ease;
     display: flex; flex-direction: column;
   }
-  #mcpPanel.open, #contextPanel.open { transform: translateX(0); }
+  #mcpPanel.open, #contextPanel.open, #agentsPanel.open { transform: translateX(0); }
   .panel-head button.refresh { font-size: 12px; padding: 3px 10px; color: var(--text); }
   .panel-head-actions { display: flex; gap: 6px; }
 
@@ -641,6 +661,17 @@
     </span>
   </div>
   <div class="panel-list" id="mcpList"></div>
+</aside>
+
+<aside id="agentsPanel" aria-label="الوكلاء الفرعيون">
+  <div class="panel-head">
+    <span>الوكلاء الفرعيون</span>
+    <span class="panel-head-actions">
+      <button id="refreshAgents" class="refresh" title="تحديث">تحديث</button>
+      <button id="closeAgents" title="إغلاق">✕</button>
+    </span>
+  </div>
+  <div class="panel-list" id="agentsList"></div>
 </aside>
 
 <aside id="contextPanel" aria-label="استخدام السياق">
@@ -1083,13 +1114,17 @@
     toolsWrap.style.display = 'none';
     toolsHead.addEventListener('click', () => toolsWrap.classList.toggle('collapsed'));
     let toolCount = 0;
+    // بطاقات الوكلاء الفرعيين (المرحلة 14.2): أداة الإطلاق (Task/Agent) تصير بطاقة،
+    // وكل ما يصل بـ parent_tool_use_id يتوجّه داخلها (أدوات متداخلة + سجل نصي حي)
+    const agentsFlow = document.createElement('div'); agentsFlow.className = 'agents-flow';
+    const agentCards = {}; // tool_use_id للإطلاق → { el, tools, text, buf }
     const diffs = document.createElement('div'); diffs.className = 'diffs';
     const bubble = document.createElement('div'); bubble.className = 'bubble';
     const md = document.createElement('div'); md.className = 'md'; md.dir = 'auto';
     bubble.appendChild(md); bubble.style.display = 'none';
     const status = document.createElement('div');
     status.className = 'thinking'; status.textContent = 'يعمل';
-    w.appendChild(toolsWrap); w.appendChild(diffs); w.appendChild(bubble); w.appendChild(status);
+    w.appendChild(toolsWrap); w.appendChild(agentsFlow); w.appendChild(diffs); w.appendChild(bubble); w.appendChild(status);
     thread.appendChild(w); scrollDown();
 
     let fullText = '';
@@ -1101,8 +1136,36 @@
       md.innerHTML = renderMD(partial ? (fullText ? fullText + '\n\n' + partial : partial) : fullText);
       scrollDown();
     }
+    // إنشاء بطاقة وكيل فرعي عند استدعاء أداة الإطلاق (Task/Agent)
+    function createAgentCard(id, inp) {
+      const card = document.createElement('div');
+      card.className = 'agent-card';
+      const head = document.createElement('div');
+      head.className = 'agent-head';
+      head.innerHTML = '<span class="aname"></span><span class="adesc"></span><span class="state">⋯</span>';
+      const type = (inp && (inp.subagent_type || inp.agent_type || '')) || '';
+      head.querySelector('.aname').textContent = '🤖 وكيل فرعي' + (type ? ' · ' + type : '');
+      head.querySelector('.adesc').textContent =
+        (inp && (inp.description || (typeof inp.prompt === 'string' ? inp.prompt.split('\n')[0] : ''))) || '';
+      const nested = document.createElement('div'); nested.className = 'agent-tools';
+      const text = document.createElement('div'); text.className = 'agent-text';
+      card.appendChild(head); card.appendChild(nested); card.appendChild(text);
+      agentsFlow.appendChild(card);
+      agentCards[id] = { el: card, tools: nested, text, buf: '' };
+      if (id) toolEls[id] = card; // toolDone يعلّم البطاقة ✓/✗ عبر .state داخلها
+    }
+
     return {
-      addText(t) {
+      addText(t, parentId) {
+        // نص وكيل فرعي (forwardSubagentText) ⇐ سجل بطاقته المتداخل لا النص الرئيسي
+        const card = parentId ? agentCards[parentId] : null;
+        if (card) {
+          card.buf += (card.buf ? '\n\n' : '') + t;
+          card.text.innerHTML = renderMD(card.buf);
+          card.text.scrollTop = card.text.scrollHeight;
+          scrollDown();
+          return;
+        }
         // الرسالة المكتملة تحل محل النص الجزئي المتراكم لنفس الكتلة
         partial = '';
         fullText += (fullText ? '\n\n' : '') + t;
@@ -1113,19 +1176,32 @@
         const now = Date.now();
         if (now - lastRender > 80) { lastRender = now; renderNow(); } // خنق إعادة الرسم
       },
-      addTool(id, name, inp) {
+      addTool(id, name, inp, parentId) {
+        const card = parentId ? agentCards[parentId] : null;
+        // إطلاق وكيل فرعي من الخيط الرئيسي ⇐ بطاقة وكيل (لا رقاقة عادية)
+        if (!card && (name === 'Task' || name === 'Agent')) {
+          createAgentCard(id, inp);
+          scrollDown();
+          return;
+        }
         const el = document.createElement('div');
         el.className = 'tool';
         el.innerHTML = '<span class="name"></span><span class="detail"></span><span class="state">⋯</span>';
         el.querySelector('.name').textContent = name;
         el.querySelector('.detail').textContent = toolDetail(inp);
-        tools.appendChild(el);
         if (id) toolEls[id] = el;
-        // إظهار المجموعة عند أول أداة + تحديث العدّاد + التصاق القائمة بآخر إجراء
-        toolCount++;
-        toolsLabel.textContent = 'الإجراءات (' + toolCount + ')';
-        toolsWrap.style.display = '';
-        tools.scrollTop = tools.scrollHeight;
+        if (card) {
+          // أداة متداخلة من وكيل فرعي ⇐ داخل بطاقة وكيلها، ملتصقة بآخر إجراء
+          card.tools.appendChild(el);
+          card.tools.scrollTop = card.tools.scrollHeight;
+        } else {
+          tools.appendChild(el);
+          // إظهار المجموعة عند أول أداة + تحديث العدّاد + التصاق القائمة بآخر إجراء
+          toolCount++;
+          toolsLabel.textContent = 'الإجراءات (' + toolCount + ')';
+          toolsWrap.style.display = '';
+          tools.scrollTop = tools.scrollHeight;
+        }
         scrollDown();
       },
       toolDone(id, isError) {
@@ -1249,9 +1325,10 @@
       sessionId = ev.session_id;
       $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8);
     } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
+      // parent_tool_use_id (المرحلة 14.2): رسائل الوكيل الفرعي تتوجه لبطاقة وكيلها
       for (const c of ev.message.content) {
-        if (c.type === 'text' && c.text && c.text.trim()) block.addText(c.text);
-        else if (c.type === 'tool_use') block.addTool(c.id, c.name, c.input);
+        if (c.type === 'text' && c.text && c.text.trim()) block.addText(c.text, ev.parent_tool_use_id);
+        else if (c.type === 'tool_use') block.addTool(c.id, c.name, c.input, ev.parent_tool_use_id);
       }
     } else if (ev.type === 'user' && ev.message && Array.isArray(ev.message.content)) {
       for (const c of ev.message.content) {
@@ -1467,6 +1544,7 @@
     { cmd: '/جديدة',   en: '/new',    desc: 'بدء جلسة جديدة (مسح المحادثة الحالية)', run: () => newSession() },
     { cmd: '/جلسات',   en: '/sessions', desc: 'تصفح الجلسات المحفوظة واستئنافها',     run: () => openSessions() },
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', run: () => openSkills() },
+    { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', run: () => openAgents() },
     { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل',  run: () => openMcp() },
     { cmd: '/سياق',    en: '/context', desc: 'عرض امتلاء نافذة السياق وتوزيع الرموز',     run: () => openContext() },
     { cmd: '/ضغط',     en: '/compact', desc: 'ضغط المحادثة (تلخيصها) لتوفير السياق',      run: () => compactConversation() },
@@ -1637,6 +1715,43 @@
       '<p>يبدأ الملف بمقدمة <code>name</code> و<code>description</code> ثم تعليمات المهارة — ثم أعِد فتح هذه اللوحة.</p>' +
       '</div>';
   }
+
+  // ---------- لوحة /وكلاء: الوكلاء الفرعيون المكتشفون (قراءة فقط — المرحلة 14.2) ----------
+  const agentsPanel = $('agentsPanel'), agentsListEl = $('agentsList');
+
+  async function openAgents() {
+    agentsPanel.classList.add('open');
+    agentsListEl.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
+    const list = await window.satr.listAgents($('cwd').value.trim());
+    agentsListEl.innerHTML = '';
+    if (!Array.isArray(list) || !list.length) {
+      agentsListEl.innerHTML =
+        '<div class="hint"><p>لا وكلاء فرعيين بعد.</p>' +
+        '<p>أنشئ ملفاً في <code>‎.claude/agents/&lt;name&gt;.md</code> بمقدمة ' +
+        '<code>name</code> و<code>description</code> (واختيارياً <code>tools</code> و' +
+        '<code>model</code>)، وجسم الملف هو برومبت الوكيل — والنموذج يستدعيه تلقائياً ' +
+        'حين يناسب وصفه المهمة، وتظهر أعماله بطاقةً متداخلة في المحادثة.</p></div>';
+      return;
+    }
+    for (const a of list) {
+      const row = document.createElement('div');
+      row.className = 'agent-row';
+      const top = document.createElement('div');
+      const nm = document.createElement('span'); nm.className = 'aname'; nm.textContent = a.name;
+      const badge = document.createElement('span'); badge.className = 'abadge';
+      badge.textContent = a.source === 'project' ? 'المشروع' : 'المستخدم';
+      top.appendChild(nm); top.appendChild(badge);
+      const desc = document.createElement('div'); desc.className = 'adesc';
+      desc.textContent = a.description || '(بلا وصف)';
+      const meta = document.createElement('div'); meta.className = 'ameta';
+      meta.textContent = (a.model ? a.model + ' · ' : '') +
+        (a.tools && a.tools.length ? a.tools.join(', ') : 'يرث كل أدوات الجلسة');
+      row.appendChild(top); row.appendChild(desc); row.appendChild(meta);
+      agentsListEl.appendChild(row);
+    }
+  }
+  $('closeAgents').addEventListener('click', () => agentsPanel.classList.remove('open'));
+  $('refreshAgents').addEventListener('click', openAgents);
 
   async function openSkills() {
     skillsPanel.classList.add('open');

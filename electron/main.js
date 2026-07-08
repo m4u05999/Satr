@@ -12,6 +12,7 @@ const { spawn } = require('child_process');
 const sessions = require('./sessions');
 const files = require('./files');
 const skills = require('./skills');
+const agentsList = require('./agents');
 const agent = require('./agent');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
@@ -390,6 +391,13 @@ ipcMain.handle('satr:mcpAction', (event, p) => {
 });
 
 // ---------- استخدام نافذة السياق للوحة /سياق (عبر getContextUsage في SDK) ----------
+
+// ---------- سرد الوكلاء الفرعيين للوحة /وكلاء (قراءة فقط — المرحلة 14.2) ----------
+
+ipcMain.handle('satr:listAgents', (event, cwd) => {
+  const dir = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : os.homedir();
+  return agentsList.listAgents(dir);
+});
 
 // ---------- قائمة أوامر «/» من CLI لمزامنة قائمة الواجهة (قراءة فقط) ----------
 
