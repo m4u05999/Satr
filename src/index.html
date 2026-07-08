@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-Bszqh/EczwTMj9U85aWcMjNIlC6EQ8HLl+zQGSa+j0U='; script-src 'self' 'sha256-OZaVOVWsNZh0i/HTCSekOU/B8n4I38xwHJUHeUpi414='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-Bszqh/EczwTMj9U85aWcMjNIlC6EQ8HLl+zQGSa+j0U='; script-src 'self' 'sha256-wA9a8QBDDiRjLLfxyY8aRyzLes/++RylGIoysAiutu8='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -1969,17 +1969,51 @@
   const CLI_CMD_EXCLUDE = new Set(['clear', 'compact', 'context']);
   let cliCommands = [], cliCmdsCwd = null, cliCmdsLoading = false;
 
+  // تعريب السطر المطويّ للأوامر المضمّنة المعروفة (قاعدة «العربية أولاً») —
+  // الوصف الإنجليزي الكامل يبقى في التوسيع (الدرس المصغّر الأصلي)، وأي أمر جديد
+  // غير معروف هنا يظهر بوصفه الإنجليزي بدل أن يُحجب. مهارات المستخدم تمرّ بوصف كاتبها.
+  const CLI_CMD_AR = {
+    'verify': 'تحقق أن تعديلاً برمجياً يعمل فعلاً بتشغيل التطبيق ومراقبة سلوكه',
+    'code-review': 'مراجعة التغييرات الحالية بحثاً عن أخطاء وفرص تبسيط',
+    'review': 'مراجعة طلب سحب (Pull Request)',
+    'security-review': 'مراجعة أمنية كاملة للتغييرات المعلقة على الفرع الحالي',
+    'simplify': 'تبسيط الكود المتغيّر: إعادة استخدام وتنظيف وكفاءة (ثم تطبيق الإصلاحات)',
+    'debug': 'تشخيص علّة: جمع الأدلة وفرضيات السبب الجذري ثم الإصلاح',
+    'init': 'إنشاء ملف CLAUDE.md بتوثيق قاعدة الكود لهذا المشروع',
+    'run': 'تشغيل تطبيق المشروع ومعاينة تغيير يعمل فعلياً',
+    'batch': 'تنفيذ مهام متكررة على ملفات كثيرة دفعة واحدة بالتوازي',
+    'loop': 'تكرار أمر أو مهمة على فترات زمنية (أو بوتيرة ذاتية)',
+    'schedule': 'جدولة وكلاء سحابيين يعملون بمواعيد دورية (روتينات)',
+    're-fresh': 'بدء جلسة نظيفة بسياق مُلخّص لمهمتك التالية (تسليم منظم)',
+    'update-config': 'ضبط إعدادات Claude Code عبر settings.json (أذونات/خطافات/متغيرات)',
+    'fewer-permission-prompts': 'تقليل مطالبات الأذونات بإنشاء قائمة سماح من استخدامك الفعلي',
+    'reload-skills': 'إعادة تحميل المهارات المكتشفة من القرص',
+    'keybindings-help': 'تخصيص اختصارات لوحة المفاتيح',
+    'claude-api': 'مرجع Claude API: النماذج والأسعار والبث واستخدام الأدوات',
+    'usage': 'تقرير استخدام حسابك وحدود خطتك',
+    'usage-credits': 'رصيد الاستخدام الإضافي المتبقي',
+    'extra-usage': 'إعدادات الاستخدام الإضافي بعد بلوغ حدود الخطة',
+    'insights': 'رؤى وإحصاءات من استخدامك لـ Claude Code',
+    'design-sync': 'دفع نظام تصميم React إلى claude.ai/design',
+    'run-skill-generator': 'مولّد مهارات: إنشاء مهارة جديدة بمعالج تفاعلي',
+    'heapdump': 'تفريغ ذاكرة عملية Node لتشخيص تسريباتها',
+    'goal': 'تحديد هدف الجلسة لتوجيه عمل النموذج',
+    'team-onboarding': 'تهيئة إعدادات الفريق المشتركة',
+  };
+
   function cliToItem(c) {
     const insert = '/' + c.name + ' ';
     const full = (c.description || '').trim();
-    // السطر المطويّ: أول سطر فقط، بلا رموز وسائط خام ([...] و<...>) — قصّه يتولاه CSS
-    const short = full.split('\n')[0].replace(/[\[<][^\]>]*[\]>]/g, '').replace(/\s{2,}/g, ' ').trim();
+    // السطر المطويّ: التعريب المُراجَع إن وُجد، وإلا أول سطر من وصف CLI
+    // (بلا رموز وسائط خام [...] و<...>) — قصّه يتولاه CSS
+    const ar = CLI_CMD_AR[c.name] || '';
+    const short = ar || full.split('\n')[0].replace(/[\[<][^\]>]*[\]>]/g, '').replace(/\s{2,}/g, ' ').trim();
     return {
       cmd: '/' + c.name,
       en: c.aliases && c.aliases.length ? '/' + c.aliases.join(' /') : '',
       desc: short,
-      // الوصف الكامل درسٌ مصغّر لجمهورنا المتعلم — يبقى متاحاً بالتوسيع لا مفروضاً
-      descFull: full + (c.argumentHint ? '\n\nالوسائط: ' + c.argumentHint : ''),
+      // الوصف الكامل درسٌ مصغّر لجمهورنا المتعلم — بالتوسيع: التعريب ثم الأصل الإنجليزي
+      descFull: (ar ? ar + '\n\n' : '') + full + (c.argumentHint ? '\n\nالوسائط: ' + c.argumentHint : ''),
       cli: true,
       // إدراج الأمر في المحرّر (مع إتاحة الوسائط) — الإرسال بـ Enter كدور عادي
       run: () => {
