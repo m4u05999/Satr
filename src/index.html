@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-MYNuD08aFP6IoSffXsPsv/MJPrL9K0Q/4rPEjlIBprA='; script-src 'self' 'sha256-kniD5cIdvFxCr3omHPYM4QQg6RXPRkzraCqaOCrzTqI='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-1lYTsA+KFUHprdWBOKJgeZG5GL+oUZWq20347keoXDA='; script-src 'self' 'sha256-kniD5cIdvFxCr3omHPYM4QQg6RXPRkzraCqaOCrzTqI='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -422,6 +422,12 @@
   #termGrid { padding: 4px 8px; }
   #termGrid .xterm { height: 100%; }
   #termPanel.mode-bidi #termGrid { visibility: hidden; pointer-events: none; }
+  /* الشبكي «أمين للخلايا» (مثبت من لقطة قبول): عارض xterm هنا HTML لا كانفس، فالمتصفح
+     كان يعيد تطبيق BiDi على نصوص الصفوف ويقلب ما رتّبته تطبيقات TUI (مثل claude) في
+     الخلايا بترتيب بصري — فتنعكس مرتين حتى في الشبكي. bidi-override يجمّد ترتيب العرض
+     على ترتيب الخلايا حرفياً كطرفية حقيقية: خرج claude العربي يُقرأ صحيحاً هنا،
+     والعربي المنطقي (echo عادي) يُقرأ معكوساً هنا كأي طرفية — ولهذا العرض العربي موجود */
+  #termGrid .xterm-rows, #termGrid .xterm-rows span { direction: ltr; unicode-bidi: bidi-override; }
   #termPanel.mode-grid #termBidi { display: none; }
   #termPanel.mode-grid #termInputRow { display: none; } /* الشبكي: إدخال خام عبر xterm مباشرة */
   #termBidi {
