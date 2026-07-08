@@ -73,6 +73,12 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
    - `skills` (لوحة /مهارات): `'all'` أو مصفوفة أسماء مفعّلة. تُنقّى في main.js
      (`sanitizeSkills` + `SAFE_SKILL`) وتُمرَّر كخيار `skills` للـ SDK في agent.js. محرك
      **sdk** فقط (مسار cli لا يضبطها). انظر «لوحة المهارات» أدناه.
+   - `effort` (⚙ — المرحلة 14.4): مستوى جهد التفكير `low|medium|high|xhigh|max` أو فارغ
+     (الافتراضي). يُنقّى بـ `EFFORT_LEVELS` في main.js ويُمرَّر كخيار `effort` — الـ SDK
+     يخفّضه صامتاً إن لم يدعمه النموذج. محرك **sdk** فقط.
+   - `extraDirs` (⚙ «مجلدات إضافية» — المرحلة 14.4): مصفوفة مسارات يصل إليها النموذج
+     بجانب cwd. تُنقّى في main.js (`sanitizeExtraDirs`: مجلد موجود فعلاً، سقف 10)
+     وتُمرَّر `additionalDirectories`. تُحفظ في localStorage (`satr_extra_dirs`). sdk فقط.
 2. حسب `engine` (قائمة «المحرك» في الواجهة، الافتراضي `sdk`):
    - **sdk** (المرحلة 2): `electron/agent.js` يستدعي `query()` من `@anthropic-ai/claude-agent-sdk`
      بإدخال بثّي (مولّد يبقى مفتوحاً حتى نهاية الدور — شرط عمل `interrupt()`)

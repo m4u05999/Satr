@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-Bszqh/EczwTMj9U85aWcMjNIlC6EQ8HLl+zQGSa+j0U='; script-src 'self' 'sha256-CWnX4ISzp+k8xv2IyKARIf22Pu2hKAEWaoifZHg0ei4='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-P5yH6KzR2uYWR4U4cSSsMgAl0KJI69IdPWIN6NOTxdE='; script-src 'self' 'sha256-HCGG9/6oQQ2V305PJmACUoXlKREs/6CYAg299xx2S3A='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -209,6 +209,16 @@
   #settingsPop .field { justify-content: space-between; }
   #settingsPop select { min-width: 190px; }
   #settingsBtn.active { border-color: var(--gold); background: var(--gold-soft); }
+  /* المجلدات الإضافية داخل ⚙ (المرحلة 14.4) */
+  .settings-dirs { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+  .dirs-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-dim); }
+  .dirs-head button { font-size: 12px; padding: 3px 10px; }
+  #dirChips { display: flex; flex-direction: column; gap: 5px; }
+  #dirChips:empty::after { content: 'لا مجلدات إضافية — النموذج يرى مجلد المشروع فقط'; font-size: 11.5px; color: var(--text-dim); }
+  .dir-chip { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 4px 9px; }
+  .dir-chip .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; text-align: left; font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+  .dir-chip .rm { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 0 3px; font-size: 12px; }
+  .dir-chip .rm:hover { color: var(--red); }
 
   /* قائمة / المنبثقة (و @ تشاركها التموضع) */
   #slashMenu, #fileMenu {
@@ -569,6 +579,24 @@
             <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
           </select>
         </div>
+        <div class="field">
+          <label for="effort">جهد التفكير</label>
+          <select id="effort" title="كم يفكّر النموذج قبل الرد — الأعلى أدق وأبطأ وأكلف (يُخفَّض صامتاً إن لم يدعمه النموذج)">
+            <option value="">الافتراضي</option>
+            <option value="low">منخفض — أسرع وأرخص</option>
+            <option value="medium">متوسط</option>
+            <option value="high">مرتفع</option>
+            <option value="max">أقصى — للمهام المعقدة</option>
+          </select>
+        </div>
+        <!-- مجلدات إضافية (المرحلة 14.4): تُمنح للنموذج وصولاً بجانب مجلد المشروع -->
+        <div class="settings-dirs">
+          <div class="dirs-head">
+            <span>مجلدات إضافية</span>
+            <button id="addDir" type="button" title="منح النموذج وصولاً لمجلد آخر بجانب مجلد المشروع">📁 إضافة</button>
+          </div>
+          <div id="dirChips"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -718,7 +746,7 @@
   let gated = true; // محجوب حتى يؤكّد فحص أول التشغيل توفّر Claude Code (مانع إطلاق)
 
   // ---------- إعدادات محفوظة ----------
-  ['cwd', 'model', 'perm', 'engine'].forEach((id) => {
+  ['cwd', 'model', 'perm', 'engine', 'effort'].forEach((id) => {
     const el = $(id);
     const saved = localStorage.getItem('satr_' + id);
     if (saved !== null) el.value = saved;
@@ -1505,6 +1533,8 @@
       permissionMode: $('perm').value,
       engine,
       skills: skillsSel,
+      effort: $('effort').value,
+      extraDirs: extraDirs.slice(),
       images: images.map((i) => ({ media_type: i.media_type, data: i.data })),
     });
     if (r && r.error) {
@@ -2599,6 +2629,41 @@
       ptySend(text.replace(/\r?\n/g, '\r'));
     }
   });
+
+  // ---------- المجلدات الإضافية (المرحلة 14.4) ----------
+  // تُمنح للنموذج وصولاً بجانب مجلد المشروع (additionalDirectories في SDK) —
+  // تُدار من ⚙ وتُحفظ في localStorage، والتحقق النهائي (وجود المجلد) في main.js
+  let extraDirs = [];
+  try { extraDirs = JSON.parse(localStorage.getItem('satr_extra_dirs') || '[]'); } catch { extraDirs = []; }
+  if (!Array.isArray(extraDirs)) extraDirs = [];
+
+  function renderDirChips() {
+    const box = $('dirChips');
+    box.textContent = '';
+    for (const d of extraDirs) {
+      const chip = document.createElement('div');
+      chip.className = 'dir-chip';
+      const p = document.createElement('span'); p.className = 'path'; p.textContent = d; p.title = d;
+      const rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button'; rm.textContent = '✕';
+      rm.title = 'إزالة';
+      rm.addEventListener('click', () => {
+        extraDirs = extraDirs.filter((x) => x !== d);
+        localStorage.setItem('satr_extra_dirs', JSON.stringify(extraDirs));
+        renderDirChips();
+      });
+      chip.appendChild(p); chip.appendChild(rm);
+      box.appendChild(chip);
+    }
+  }
+  $('addDir').addEventListener('click', async () => {
+    const p = await window.satr.pickFolder();
+    if (p && !extraDirs.includes(p) && extraDirs.length < 10) {
+      extraDirs.push(p);
+      localStorage.setItem('satr_extra_dirs', JSON.stringify(extraDirs));
+      renderDirChips();
+    }
+  });
+  renderDirChips();
 
   // لوحة الإعدادات المنبثقة (⚙): تُفتح وتُغلق بالزر، وتُغلق بالنقر خارجها أو بـ Escape
   const settingsPop = $('settingsPop'), settingsBtn = $('settingsBtn');

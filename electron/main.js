@@ -166,6 +166,22 @@ const MCP_ACTIONS = new Set(['reconnect', 'enable', 'disable']);
 // تنقية اختيار المهارات القادم من الواجهة قبل تمريره للـ SDK:
 // 'all' = كل المكتشفة، مصفوفة أسماء = المُفعَّل فقط (تُفلتر بـ SAFE_SKILL)،
 // أي شيء آخر = الافتراضي 'all'. مصفوفة فارغة تبقى فارغة (= لا مهارات مفعّلة).
+// مستويات جهد التفكير المقبولة (المرحلة 14.4) — القيمة تُمرَّر لخيار effort في SDK
+// (الـ SDK يخفّضها صامتاً إن لم يدعمها النموذج المختار)
+const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+
+// المجلدات الإضافية (المرحلة 14.4): مصفوفة مسارات — يُقبل الموجود كمجلد فقط، بسقف 10
+function sanitizeExtraDirs(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const d of arr.slice(0, 10)) {
+    if (typeof d !== 'string' || !d.trim()) continue;
+    const t = d.trim();
+    try { if (fs.statSync(t).isDirectory()) out.push(t); } catch { /* غير موجود — يُسقط */ }
+  }
+  return out;
+}
+
 function sanitizeSkills(s) {
   if (s === 'all') return 'all';
   if (Array.isArray(s)) return s.filter((x) => typeof x === 'string' && SAFE_SKILL.test(x)).slice(0, 200);
@@ -284,6 +300,8 @@ ipcMain.handle('satr:send', async (event, payload) => {
       model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
       permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
       skills: sanitizeSkills(payload.skills),
+      effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
+      extraDirs: sanitizeExtraDirs(payload.extraDirs),
     }, cwd, emit);
     return { started: true, engine: 'sdk' };
   } catch (e) {

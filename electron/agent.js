@@ -106,7 +106,7 @@ const alwaysAllowed = new Set();
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
  */
-async function start({ prompt, images, sessionId, model, permissionMode, skills }, cwd, emit) {
+async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs }, cwd, emit) {
   const { query } = await loadSdk();
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
@@ -250,6 +250,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
   // النموذج يجعله يطرح أسئلته نصّاً في المحادثة، فيجيب المستخدم بالكتابة في المحرّر —
   // وهو السلوك الطبيعي الذي يدعمه «سطر» أصلاً. (disallowedTools يزيل الأداة كلياً.)
   options.disallowedTools = ['AskUserQuestion'];
+  // جهد التفكير (المرحلة 14.4): منقّى في main.js — الـ SDK يخفّضه صامتاً إن لم يدعمه النموذج
+  if (effort) options.effort = effort;
+  // مجلدات إضافية يصل إليها النموذج بجانب cwd (منقّاة في main.js: موجودة فعلاً، بسقف 10)
+  if (Array.isArray(extraDirs) && extraDirs.length) options.additionalDirectories = extraDirs;
 
   const q = query({ prompt: promptStream(), options });
 
