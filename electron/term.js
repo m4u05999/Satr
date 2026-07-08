@@ -161,6 +161,24 @@ function listTerms() {
   return Array.from(terminals.values()).map((t) => ({ id: t.id, shell: t.shell }));
 }
 
+// ---------- طرفية النموذج المخصّصة (المرحلة 16.2 — أداة run_in_terminal) ----------
+// تبويب واحد يملكه النموذج، يرى فيه المستخدم كل ما يشغّله حياً معزولاً عن تبويباته.
+// يُعاد استخدامه عبر أدوار الجلسة؛ يُنشأ عند أول استدعاء للأداة.
+let modelTermId = null;
+
+// يضمن وجود طرفية النموذج (يعيد الحيّة أو ينشئ واحدة)، ويعيد { id, shell, created }
+function ensureModelTerm(cwd) {
+  if (modelTermId && terminals.has(modelTermId)) {
+    return { ok: true, id: modelTermId, shell: terminals.get(modelTermId).shell, created: false };
+  }
+  const r = startTerm(cwd, 120, 30);
+  if (!r.ok) return r;
+  modelTermId = r.id;
+  return { ok: true, id: r.id, shell: r.shell, created: true };
+}
+
+function getModelTermId() { return (modelTermId && terminals.has(modelTermId)) ? modelTermId : null; }
+
 // ---------- تشغيل أمر مع التقاط خرجه (المرحلة 16 — أداة run_in_terminal) ----------
 // يشغّل أمراً في طرفية مرئية موجودة فيراه المستخدم حياً، ويلتقط خرجه ليعيده للنموذج.
 // الالتقاط عبر «علامة نهاية» فريدة تُطبع بعد الأمر: نجمع الخرج حتى تظهر، ثم نستخرج
@@ -258,6 +276,10 @@ function killAll() {
     try { t.proc.kill(); } catch (e) {}
   }
   terminals.clear();
+  modelTermId = null;
 }
 
-module.exports = { setNotifier, startTerm, writeTerm, resizeTerm, killTerm, listTerms, runCapture, killAll };
+module.exports = {
+  setNotifier, startTerm, writeTerm, resizeTerm, killTerm, listTerms,
+  runCapture, ensureModelTerm, getModelTermId, killAll,
+};

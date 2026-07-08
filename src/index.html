@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-IDE2RUau4n/6qD8/3S7lTCA7dTG+gWaHBrRy2uJ8wVw='; script-src 'self' 'sha256-9WzakzqopOFlmK6SYM+emWgRszWl08Q7SZrH27B5zeo='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-IDE2RUau4n/6qD8/3S7lTCA7dTG+gWaHBrRy2uJ8wVw='; script-src 'self' 'sha256-qJMWhAmG8I0vL9yfJsyeQJA5heLAaiTjrC83nMbK1Yk='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -1334,6 +1334,12 @@
       renderBgBar();
       return;
     }
+    // طرفية النموذج (16.2): أداة run_in_terminal أنشأت pty — نتبنّاه كتبويب مرئي.
+    // مستقل عن الدور (قد يصل قبل currentBlock) فيُعالَج قبل حارس الكتلة.
+    if (ev.type === 'model_term' && ev.id) {
+      adoptModelTerm(ev.id, ev.shell);
+      return;
+    }
     const block = currentBlock;
     if (!block || block.done) return;
     if (ev.type === 'stream_text') {
@@ -2395,6 +2401,18 @@
     if (ok) { tab.term.reset(); scheduleBidiSync(); applyTabView(tab); }
   }
 
+  // تبنّي طرفية النموذج (المرحلة 16.2): pty أنشأته العملية الرئيسية لأداة run_in_terminal —
+  // نعرضه كتبويب «🤖 النموذج» ليرى المستخدم ما يشغّله النموذج حياً. لا نستدعي termStart
+  // (الـ pty موجود)، فقط نربط xterm بمعرّفه؛ الموجّه satr:term يوصل خرجه إليه.
+  function adoptModelTerm(id, shell) {
+    if (tabs.some((t) => t.id === id)) return; // مُتبنّى أصلاً
+    if (termPanel.hidden) setTermOpen(true); // افتح اللوحة ليراه المستخدم
+    const tab = makeTab();
+    tab.id = id; tab.shell = shell || ''; tab.isModel = true;
+    renderTabs();
+    activateTab(tab);
+  }
+
   // رسم شريط التبويبات
   function renderTabs() {
     const bar = $('termTabs');
@@ -2403,7 +2421,7 @@
       const el = document.createElement('div');
       el.className = 'term-tab' + (t === active ? ' active' : '') + (t.exited ? ' dead' : '');
       const dot = document.createElement('span'); dot.className = 'tdot'; dot.setAttribute('aria-hidden', 'true');
-      const lbl = document.createElement('span'); lbl.textContent = 'طرفية ' + (i + 1);
+      const lbl = document.createElement('span'); lbl.textContent = t.isModel ? '🤖 النموذج' : 'طرفية ' + (i + 1);
       const x = document.createElement('button'); x.className = 'tx'; x.type = 'button'; x.textContent = '✕'; x.title = 'إغلاق';
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t); });
       el.appendChild(dot); el.appendChild(lbl); el.appendChild(x);

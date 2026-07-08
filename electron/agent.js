@@ -17,6 +17,7 @@ const { execSync } = require('child_process');
 
 const { computeDiff } = require('./diff');
 const bgprocs = require('./bgprocs');
+const term = require('./term');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -254,6 +255,37 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   if (effort) options.effort = effort;
   // مجلدات إضافية يصل إليها النموذج بجانب cwd (منقّاة في main.js: موجودة فعلاً، بسقف 10)
   if (Array.isArray(extraDirs) && extraDirs.length) options.additionalDirectories = extraDirs;
+
+  // أداة run_in_terminal (المرحلة 16.2): تشغيل أمر في طرفية النموذج المرئية بدل Bash الخفي،
+  // فيرى المستخدم ما يجري حياً. خادم MCP داخل العملية (createSdkMcpServer). **أمان**: الأداة
+  // تمر بـ canUseTool مثل أي أداة (لا تُضاف لـ alwaysAllowed) — مربع الإذن العربي يعمل عليها،
+  // فالعرض المرئي لا يخفّف التنفيذ. الـ pty يعيش في نفس العملية فنستدعي term مباشرة.
+  const sdk = await loadSdk();
+  let z;
+  try { z = require('zod'); } catch (e) { z = null; }
+  if (sdk.createSdkMcpServer && sdk.tool && z) {
+    const termTool = sdk.tool(
+      'run_in_terminal',
+      'شغّل أمر صدفة في الطرفية المرئية للمستخدم (PowerShell) وأعد خرجه. استعمله لتشغيل ' +
+      'المشروع أو الاختبارات أو أي أمر يريد المستخدم رؤيته حياً بدل تنفيذ خفي. سطر واحد؛ ' +
+      'التطبيقات التفاعلية طويلة العمر (خوادم بلا نهاية) ستُقطع بمهلة.',
+      { command: z.string().describe('أمر الصدفة المراد تشغيله (سطر واحد)') },
+      async (args) => {
+        const ensured = term.ensureModelTerm(cwd);
+        if (!ensured.ok) return { content: [{ type: 'text', text: 'تعذّر فتح طرفية النموذج: ' + (ensured.message || ensured.error) }], isError: true };
+        if (ensured.created) emit({ type: 'model_term', id: ensured.id, shell: ensured.shell, cwd });
+        // مهلة للأمر — الخوادم التفاعلية تُقطع بها فيبقى الخرج حتى تلك اللحظة
+        const r = await term.runCapture(ensured.id, args.command, { timeoutMs: 120000 });
+        if (!r.ok) return { content: [{ type: 'text', text: 'تعذّر التشغيل: ' + (r.message || r.error) }], isError: true };
+        const head = (r.timedOut ? '[انتهت المهلة — قد يكون أمراً طويلاً/تفاعلياً]\n' : '') +
+          'exit code: ' + (r.exitCode === null ? 'غير معروف' : r.exitCode) + '\n---\n';
+        return { content: [{ type: 'text', text: head + (r.output || '(لا خرج)') }], isError: r.exitCode !== 0 && r.exitCode !== null };
+      }
+    );
+    options.mcpServers = Object.assign({}, options.mcpServers, {
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool] }),
+    });
+  }
 
   const q = query({ prompt: promptStream(), options });
 
