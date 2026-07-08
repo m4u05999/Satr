@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-IDE2RUau4n/6qD8/3S7lTCA7dTG+gWaHBrRy2uJ8wVw='; script-src 'self' 'sha256-ARPRtVy0EfS14a0xyRVcmezQpk0gb8V4SeMIlwuOmfg='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-gvN4eqVv7sthteWxgxiSU0vFxLtT6u/2oyMyNGxz3n0='; script-src 'self' 'sha256-GZT4bPlVGBByg/gijNUPlvYs8nvc6VxXKe7ffEOWmIE='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -325,6 +325,20 @@
   .skill-hint code { font-family: var(--mono); direction: ltr; background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 
   /* ===== مربع حوار الأذونات ===== */
+  /* إشعار التحديث التلقائي (المرحلة 17) — شريط لطيف أسفل يسار، لا يقاطع */
+  #updateToast {
+    position: fixed; bottom: 16px; left: 16px; z-index: 90; max-width: 380px;
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    background: var(--surface-2); border: 1px solid var(--gold); border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5); font-size: 13px; color: var(--text);
+  }
+  #updateToast[hidden] { display: none; }
+  #updateToast .upd-ico { color: var(--gold); flex: none; }
+  #updateToast #updateText { flex: 1; unicode-bidi: plaintext; }
+  #updateToast button { font-size: 12px; padding: 3px 10px; }
+  #updateToast #updateRestart { background: var(--green); color: #10250D; border: none; font-weight: 600; }
+  #updateToast #updateDismiss { background: none; border: none; color: var(--text-dim); cursor: pointer; }
+
   #permOverlay {
     position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 100;
     display: none; align-items: center; justify-content: center;
@@ -657,6 +671,14 @@
   </div>
   <div id="termExited"><span>انتهت جلسة الطرفية.</span><button id="termRestart2" type="button">بدء جلسة جديدة</button></div>
 </section>
+
+<!-- إشعار التحديث التلقائي (المرحلة 17): يظهر أسفل النافذة، لا يقاطع العمل -->
+<div id="updateToast" hidden>
+  <span class="upd-ico" aria-hidden="true">⬇</span>
+  <span id="updateText"></span>
+  <button id="updateRestart" type="button" hidden>أعد التشغيل الآن</button>
+  <button id="updateDismiss" type="button" title="إخفاء">✕</button>
+</div>
 
 <div id="permOverlay" role="dialog" aria-modal="true" aria-labelledby="permTitle">
   <div class="perm-box">
@@ -1320,6 +1342,26 @@
     return true;
   }
 
+  // ---------- التحديث التلقائي (المرحلة 17) ----------
+  // إشعار لا يقاطع: «متوفر» ⇐ يُنزَّل خلفياً ⇐ «جاهز» ⇐ زرّ «أعد التشغيل الآن».
+  function handleUpdateEvent(ev) {
+    const toast = $('updateToast'), txt = $('updateText'), restart = $('updateRestart');
+    if (ev.phase === 'available') {
+      txt.textContent = 'يتوفّر تحديث' + (ev.version ? ' (' + ev.version + ')' : '') + ' — يجري تنزيله…';
+      restart.hidden = true; toast.hidden = false;
+    } else if (ev.phase === 'progress') {
+      txt.textContent = 'تنزيل التحديث… ' + (ev.percent || 0) + '٪';
+      restart.hidden = true; toast.hidden = false;
+    } else if (ev.phase === 'ready') {
+      txt.textContent = 'التحديث' + (ev.version ? ' (' + ev.version + ')' : '') + ' جاهز.';
+      restart.hidden = false; toast.hidden = false;
+    } else if (ev.phase === 'error') {
+      toast.hidden = true; // فشل صامت — لا نزعج المستخدم (يبقى التثبيت اليدوي متاحاً)
+    }
+  }
+  $('updateRestart').addEventListener('click', () => window.satr.restartUpdate());
+  $('updateDismiss').addEventListener('click', () => { $('updateToast').hidden = true; });
+
   // ---------- استقبال أحداث Claude من العملية الرئيسية ----------
   window.satr.onEvent((ev) => {
     // طلبات الأذونات تُعالج دائماً ولو كانت الكتلة منتهية
@@ -1338,6 +1380,11 @@
     // مستقل عن الدور (قد يصل قبل currentBlock) فيُعالَج قبل حارس الكتلة.
     if (ev.type === 'model_term' && ev.id) {
       adoptModelTerm(ev.id, ev.shell);
+      return;
+    }
+    // التحديث التلقائي (17): مستقل عن الدور — إشعار لطيف أسفل النافذة
+    if (ev.type === 'update') {
+      handleUpdateEvent(ev);
       return;
     }
     const block = currentBlock;

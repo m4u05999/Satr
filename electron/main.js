@@ -16,6 +16,7 @@ const agentsList = require('./agents');
 const agent = require('./agent');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
+const updater = require('./updater');
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
@@ -77,6 +78,10 @@ function createWindow() {
     mainWindow = null;
     stopAll();
   });
+
+  // التحديث التلقائي (المرحلة 17): يُفحص بعد الإقلاع، ويبثّ أحداثه للواجهة عبر emit.
+  // لا يعمل إلا في النسخة المحزومة (updater.js يحرس app.isPackaged) فلا يعكّر npm start.
+  updater.initUpdater(app, emitToWindow);
 }
 
 function killCurrent() {
@@ -372,6 +377,9 @@ ipcMain.handle('satr:undoEdit', (event, id) => {
   if (typeof id !== 'string' || !SAFE_EDIT_ID.test(id)) return { ok: false, error: 'bad_id' };
   return agent.undoEdit(id);
 });
+
+// ---------- التحديث التلقائي (المرحلة 17) — رد الواجهة على «أعد التشغيل الآن» ----------
+ipcMain.handle('satr:restartUpdate', () => { updater.quitAndInstall(); return { ok: true }; });
 
 // ---------- متصفح الجلسات (قراءة فقط — التحقق من المدخلات داخل sessions.js) ----------
 
