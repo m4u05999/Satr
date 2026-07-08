@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-riItWTYMzc6Y/pcPnYzj3WlRzvi7yDUFT8cRozqnTmM='; script-src 'self' 'sha256-s6fmemoTzxk3Zb6bg6AmjssPeBucMUgKkBwqn0eWn3k='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-6n5FjuVfsrt7CSqRgHljffS/tPQAoCCK/aVKMx+urNQ='; script-src 'self' 'sha256-5D7dlNAYyXPk9JyfdBBKweTw+/HvpieetrKXevorKNA='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -218,14 +218,26 @@
     box-shadow: 0 8px 30px rgba(0,0,0,.5); display: none; z-index: 50;
   }
   #slashMenu.open, #fileMenu.open { display: block; }
-  .slash-item { padding: 9px 14px; cursor: pointer; display: flex; gap: 12px; align-items: baseline; }
-  .slash-item .cmd { font-family: var(--mono); color: var(--gold); font-size: 13px; direction: ltr; min-width: 90px; }
-  .slash-item .desc { font-size: 12.5px; color: var(--text-dim); }
+  .slash-item { cursor: pointer; }
+  .slash-row { padding: 9px 14px; display: flex; gap: 12px; align-items: baseline; }
+  .slash-item .cmd { font-family: var(--mono); color: var(--gold); font-size: 13px; direction: ltr; min-width: 90px; flex: none; }
+  /* سطر واحد مقصوص لكل الأوامر — الوصف الكامل بالتوسيع (قرار قبول 14.1) */
+  .slash-item .desc { font-size: 12.5px; color: var(--text-dim); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; text-align: start; }
   .slash-item.active, .slash-item:hover { background: var(--gold-soft); }
   .slash-item.active .desc { color: var(--text); }
-  /* أوامر CLI المتزامنة (مهارات مضمّنة + مهاراتك): لون مميز + وصف يحلّ اتجاهه بنفسه */
+  /* أوامر CLI المتزامنة (مهارات مضمّنة + مهاراتك): لون مميز */
   .slash-item.cli .cmd { color: var(--green); }
-  .slash-item.cli .desc { unicode-bidi: plaintext; }
+  /* سهم التوسيع + الوصف الكامل (درس مصغّر): أكورديون، ⇄ توسّع المحدد */
+  .slash-expand { flex: none; color: var(--text-dim); font-size: 11px; padding: 0 4px; transition: transform .15s; }
+  .slash-item.expanded .slash-expand { transform: rotate(180deg); color: var(--gold); }
+  .slash-desc-full {
+    display: block; padding: 0 14px 10px; margin-top: -3px;
+    font-size: 12.5px; color: var(--text-dim); line-height: 1.7;
+    white-space: pre-wrap; unicode-bidi: plaintext; text-align: start;
+  }
+  .slash-item.expanded .desc { visibility: hidden; } /* الكامل يحلّ محله — بلا قفزة تخطيط */
+  .slash-foot { display: flex; gap: 12px; padding: 7px 14px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--gold); cursor: pointer; position: sticky; bottom: 0; background: var(--surface-2); }
+  .slash-foot .foot-hint { color: var(--text-dim); cursor: default; margin-inline-start: auto; }
 
   /* عناصر منصّة @ — اسم الملف ذهبي ومساره مخفّت، كلاهما LTR أحادي المسافة */
   .file-item { padding: 8px 14px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; direction: ltr; }
@@ -1271,7 +1283,9 @@
   const bgBar = $('bgBar'), bgChips = $('bgChips');
 
   // المدة المنقضية بصيغة m:ss أو h:mm:ss
-  function fmtAge(ms) {
+  // مدة منقضية بصيغة m:ss أو h:mm:ss — سُمّيت fmtDur بعد أن داستها fmtAge الثانية
+  // (دالة الجلسات، تتوقع طابعاً زمنياً لا مدة) بالرفع فظهر «قبل 20642 يوم» في الشريط
+  function fmtDur(ms) {
     const s = Math.max(0, Math.floor(ms / 1000));
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
     const pad = (n) => String(n).padStart(2, '0');
@@ -1290,7 +1304,7 @@
       cmd.className = 'cmd'; cmd.textContent = p.command;
       const age = document.createElement('span');
       age.className = 'age'; age.dataset.start = String(p.startedAt);
-      age.textContent = fmtAge(Date.now() - p.startedAt);
+      age.textContent = fmtDur(Date.now() - p.startedAt);
       const kill = document.createElement('button');
       kill.className = 'kill'; kill.type = 'button'; kill.textContent = '✕';
       kill.setAttribute('aria-label', 'إيقاف العملية');
@@ -1308,7 +1322,7 @@
   // تحديث الزمن المنقضي كل ثانية دون إعادة بناء الشرائح
   setInterval(() => {
     bgChips.querySelectorAll('.age[data-start]').forEach((el) => {
-      el.textContent = fmtAge(Date.now() - Number(el.dataset.start));
+      el.textContent = fmtDur(Date.now() - Number(el.dataset.start));
     });
   }, 1000);
 
@@ -1842,10 +1856,15 @@
 
   function cliToItem(c) {
     const insert = '/' + c.name + ' ';
+    const full = (c.description || '').trim();
+    // السطر المطويّ: أول سطر فقط، بلا رموز وسائط خام ([...] و<...>) — قصّه يتولاه CSS
+    const short = full.split('\n')[0].replace(/[\[<][^\]>]*[\]>]/g, '').replace(/\s{2,}/g, ' ').trim();
     return {
       cmd: '/' + c.name,
       en: c.aliases && c.aliases.length ? '/' + c.aliases.join(' /') : '',
-      desc: (c.description || '') + (c.argumentHint ? '  ⟨' + c.argumentHint + '⟩' : ''),
+      desc: short,
+      // الوصف الكامل درسٌ مصغّر لجمهورنا المتعلم — يبقى متاحاً بالتوسيع لا مفروضاً
+      descFull: full + (c.argumentHint ? '\n\nالوسائط: ' + c.argumentHint : ''),
       cli: true,
       // إدراج الأمر في المحرّر (مع إتاحة الوسائط) — الإرسال بـ Enter كدور عادي
       run: () => {
@@ -1877,6 +1896,17 @@
     return COMMANDS.concat(cliCommands.map(cliToItem));
   }
 
+  // توسيع أوصاف أوامر CLI (قرار قبول 14.1): أكورديون — أمر واحد موسّع، وزرّ «توسيع
+  // الكل» في ذيل القائمة. التوسيع لا يسرق Enter (الاختيار دائماً إدراج) ولا الأسهم ▲▼.
+  let slashExpandedCmd = null, slashExpandAll = false;
+
+  function toggleSlashExpand(c) {
+    if (!c || !c.cli) return;
+    slashExpandAll = false;
+    slashExpandedCmd = slashExpandedCmd === c.cmd ? null : c.cmd;
+    openSlash(input.value.startsWith('/') ? input.value.slice(1) : '');
+  }
+
   function openSlash(filter) {
     ensureCliCommands();
     const f = (filter || '').toLowerCase();
@@ -1886,22 +1916,61 @@
     if (!slashFiltered.length) return closeSlash();
     slashIndex = Math.min(slashIndex, slashFiltered.length - 1);
     slashMenu.innerHTML = '';
+    let hasCli = false;
     slashFiltered.forEach((c, i) => {
+      const expanded = c.cli && (slashExpandAll || slashExpandedCmd === c.cmd);
       const el = document.createElement('div');
-      el.className = 'slash-item' + (i === slashIndex ? ' active' : '') + (c.cli ? ' cli' : '');
+      el.className = 'slash-item' + (i === slashIndex ? ' active' : '') + (c.cli ? ' cli' : '') + (expanded ? ' expanded' : '');
       el.setAttribute('role', 'option');
-      el.innerHTML = '<span class="cmd"></span><span class="desc"></span>';
-      el.querySelector('.cmd').textContent = c.cmd + (c.en ? ' · ' + c.en : '');
-      el.querySelector('.desc').textContent = c.desc;
+      const row = document.createElement('div');
+      row.className = 'slash-row';
+      row.innerHTML = '<span class="cmd"></span><span class="desc"></span>';
+      row.querySelector('.cmd').textContent = c.cmd + (c.en ? ' · ' + c.en : '');
+      row.querySelector('.desc').textContent = c.desc;
+      el.appendChild(row);
+      if (c.cli) {
+        hasCli = true;
+        const ex = document.createElement('span');
+        ex.className = 'slash-expand';
+        ex.textContent = '⌄';
+        ex.title = 'الوصف الكامل';
+        // mousedown على السهم يوسّع فقط — لا يُدرج الأمر
+        ex.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); toggleSlashExpand(c); });
+        row.appendChild(ex);
+        if (expanded) {
+          const fd = document.createElement('div');
+          fd.className = 'slash-desc-full';
+          fd.textContent = c.descFull || c.desc;
+          el.appendChild(fd);
+        }
+      }
       el.addEventListener('mousedown', (e) => { e.preventDefault(); pickSlash(i); });
       slashMenu.appendChild(el);
     });
+    // ذيل القائمة: توسيع/طيّ كل أوصاف أوامر CLI (الأوصاف دروس مصغّرة لمن يتعلم الأدوات)
+    if (hasCli) {
+      const foot = document.createElement('div');
+      foot.className = 'slash-foot';
+      const all = document.createElement('span');
+      all.textContent = slashExpandAll ? 'طيّ الكل' : 'توسيع الكل';
+      all.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        slashExpandAll = !slashExpandAll;
+        slashExpandedCmd = null;
+        openSlash(input.value.startsWith('/') ? input.value.slice(1) : '');
+      });
+      const hint = document.createElement('span');
+      hint.className = 'foot-hint';
+      hint.textContent = '⇄ يوسّع المحدد';
+      foot.appendChild(all); foot.appendChild(hint);
+      slashMenu.appendChild(foot);
+    }
     slashMenu.classList.add('open');
     // مع القائمة الطويلة (أوامر CLI المتزامنة): أبقِ العنصر النشط ظاهراً أثناء التنقل
     const act = slashMenu.querySelector('.active');
     if (act) act.scrollIntoView({ block: 'nearest' });
   }
-  function closeSlash() { slashMenu.classList.remove('open'); slashIndex = 0; }
+  function closeSlash() { slashMenu.classList.remove('open'); slashIndex = 0; slashExpandedCmd = null; slashExpandAll = false; }
   function pickSlash(i) {
     const c = slashFiltered[i];
     closeSlash();
@@ -2022,6 +2091,11 @@
       if (e.key === 'ArrowUp')   { e.preventDefault(); slashIndex = (slashIndex - 1 + slashFiltered.length) % slashFiltered.length; openSlash(input.value.slice(1)); return; }
       if (e.key === 'Enter')     { e.preventDefault(); pickSlash(slashIndex); return; }
       if (e.key === 'Escape')    { e.preventDefault(); closeSlash(); return; }
+      // ⇄ على عنصر CLI محدد: توسيع/طيّ وصفه الكامل (لا يسرق Enter ولا ▲▼)
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const c = slashFiltered[slashIndex];
+        if (c && c.cli) { e.preventDefault(); toggleSlashExpand(c); return; }
+      }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });
