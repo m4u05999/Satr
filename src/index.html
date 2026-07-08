@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-P5yH6KzR2uYWR4U4cSSsMgAl0KJI69IdPWIN6NOTxdE='; script-src 'self' 'sha256-siLV/uYFzduo5N3b3e47QsGI76ixLC1tM1hVzJmj0Jg='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-IDE2RUau4n/6qD8/3S7lTCA7dTG+gWaHBrRy2uJ8wVw='; script-src 'self' 'sha256-9WzakzqopOFlmK6SYM+emWgRszWl08Q7SZrH27B5zeo='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -469,35 +469,42 @@
   .term-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
   .term-dot.dead { background: var(--red); }
   #termToggle.active { border-color: var(--gold); background: var(--gold-soft); }
-  .term-head .term-title { color: var(--gold); font-weight: 600; }
   .term-head .term-shell { font-family: var(--mono); direction: ltr; }
   .term-head .spacer { flex: 1; }
   .term-head button { font-size: 12px; padding: 2px 10px; }
-  /* منطقة العرض: عارضان فوق بعضهما لنفس محرك xterm.js (docs/PHASE8-DESIGN.md)
-     - #termGrid: شبكة xterm القياسية (LTR) — للشاشة البديلة ولوضع «شبكي» اليدوي
-     - #termBidi: إسقاط HTML نافذي من Buffer — العربية مشكّلة RTL (الافتراضي)
-     منذ 8.3: في وضع BiDi الإخفاء بـ visibility (لوحة المفاتيح صارت لسطر الإدخال HTML
-     فلا حاجة لتركيز حقل xterm المخفي)، وصنف الوضع على #termPanel ليتحكم بصف الإدخال */
+  /* شريط التبويبات (المرحلة 15.2): تبويب لكل طرفية + زر ＋ */
+  #termTabs { display: flex; gap: 4px; overflow-x: auto; max-width: 55%; }
+  .term-tab { display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; border: 1px solid var(--border); border-radius: 7px 7px 0 0; background: var(--bg); color: var(--text-dim); cursor: pointer; white-space: nowrap; font-size: 12px; }
+  .term-tab.active { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  .term-tab .tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex: none; }
+  .term-tab.dead .tdot { background: var(--red); }
+  .term-tab .tx { border: none; background: none; color: var(--text-dim); cursor: pointer; padding: 0 2px; font-size: 12px; line-height: 1; }
+  .term-tab .tx:hover { color: var(--red); }
+  #termNew { font-size: 15px; padding: 1px 9px; line-height: 1; flex: none; }
+  /* منطقة العرض: عرض (‎.term-view) لكل تبويب، النشط وحده ظاهر. داخل كل عرض عارضان
+     لنفس محرك xterm.js (docs/PHASE8-DESIGN.md): tv-grid شبكة قياسية، tv-bidi إسقاط RTL.
+     الإخفاء في BiDi بـ visibility (لوحة المفاتيح لسطر الإدخال)، وصنف الوضع على #termPanel */
   #termHost { flex: 1; min-height: 0; direction: ltr; position: relative; }
-  #termGrid, #termBidi { position: absolute; inset: 0; }
-  #termGrid { padding: 4px 8px; }
-  #termGrid .xterm { height: 100%; }
-  #termPanel.mode-bidi #termGrid { visibility: hidden; pointer-events: none; }
+  .term-view { position: absolute; inset: 0; }
+  .term-view:not(.active) { display: none; }
+  .tv-grid, .tv-bidi { position: absolute; inset: 0; }
+  .tv-grid { padding: 4px 8px; }
+  .tv-grid .xterm { height: 100%; }
+  #termPanel.mode-bidi .term-view.active .tv-grid { visibility: hidden; pointer-events: none; }
   /* الشبكي «أمين للخلايا» (مثبت من لقطة قبول): عارض xterm هنا HTML لا كانفس، فالمتصفح
      كان يعيد تطبيق BiDi على نصوص الصفوف ويقلب ما رتّبته تطبيقات TUI (مثل claude) في
      الخلايا بترتيب بصري — فتنعكس مرتين حتى في الشبكي. bidi-override يجمّد ترتيب العرض
-     على ترتيب الخلايا حرفياً كطرفية حقيقية: خرج claude العربي يُقرأ صحيحاً هنا،
-     والعربي المنطقي (echo عادي) يُقرأ معكوساً هنا كأي طرفية — ولهذا العرض العربي موجود */
-  #termGrid .xterm-rows, #termGrid .xterm-rows span { direction: ltr; unicode-bidi: bidi-override; }
-  #termPanel.mode-grid #termBidi { display: none; }
+     على ترتيب الخلايا حرفياً كطرفية حقيقية */
+  .tv-grid .xterm-rows, .tv-grid .xterm-rows span { direction: ltr; unicode-bidi: bidi-override; }
+  #termPanel.mode-grid .term-view.active .tv-bidi { display: none; }
   #termPanel.mode-grid #termInputRow { display: none; } /* الشبكي: إدخال خام عبر xterm مباشرة */
-  #termBidi {
+  .tv-bidi {
     overflow-y: auto; z-index: 2; background: #0B0E13;
     /* لاتيني من Cascadia/Consolas؛ العربية تسقط إلى Segoe UI فتتشكل حروفها */
     font-family: 'Cascadia Mono', 'Consolas', 'Segoe UI', monospace;
     font-size: 13px;
   }
-  #bidiSpacer { position: relative; min-height: 100%; }
+  .tv-spacer { position: relative; min-height: 100%; }
   .bidi-line {
     position: absolute; left: 8px; right: 8px; height: 20px;
     line-height: 20px; white-space: pre; overflow: hidden;
@@ -624,17 +631,17 @@
   <div id="termResizer" title="اسحب لتغيير الارتفاع"></div>
   <div class="term-head">
     <span class="term-dot" id="termDot" aria-hidden="true"></span>
-    <span class="term-title">الطرفية</span>
+    <!-- شريط التبويبات (المرحلة 15.2): تبويب لكل طرفية + زر ＋ لواحدة جديدة -->
+    <div id="termTabs"></div>
+    <button id="termNew" type="button" title="طرفية جديدة">＋</button>
     <span class="term-shell" id="termShell"></span>
     <span class="spacer"></span>
     <button id="termView" type="button" title="تبديل العارض: عربي (BiDi) / شبكي (xterm)">العرض: عربي</button>
     <button id="termRestart" type="button" title="إنهاء الصدفة الحالية وبدء واحدة جديدة">إعادة تشغيل</button>
-    <button id="termClose" type="button" title="إخفاء اللوحة (الصدفة تبقى تعمل)">✕</button>
+    <button id="termClose" type="button" title="إخفاء اللوحة (الطرفيات تبقى تعمل)">✕</button>
   </div>
-  <div id="termHost">
-    <div id="termGrid"></div>
-    <div id="termBidi"><div id="bidiSpacer"></div></div>
-  </div>
+  <!-- مضيف الطرفيات: عرض (‎.term-view) لكل تبويب يُنشأ ديناميكياً، النشط وحده ظاهر -->
+  <div id="termHost"></div>
   <!-- تنبيه التبديل التلقائي (8.4): يظهر عند إطلاق تطبيق يعكس العربية بنفسه -->
   <div id="termNotice">
     <span id="termNoticeText"></span>
@@ -2285,97 +2292,178 @@
 
   sendBtn.addEventListener('click', send);
 
-  // ---------- الطرفية المدمجة (المرحلة 8.1) ----------
-  // نسخة xterm.js حقيقية واحدة (محرك الحالة — انظر docs/PHASE8-DESIGN.md). في 8.1
-  // العارض القياسي فقط (بلا عربية بعد — مقصود)؛ عرض BiDi يُبنى فوق نفس النسخة في 8.2.
+  // ---------- الطرفية المدمجة متعددة التبويبات (المرحلة 15) ----------
+  // كل تبويب كائن مستقل: نسخة xterm.js (محرك الحالة) + عرضاه (شبكي + إسقاط BiDi) +
+  // معرّف pty + حالة عرض خاصة. النشط وحده ظاهر. الرأس وسطر الإدخال والتنبيه تعمل على
+  // التبويب النشط. الخلفية (term.js) متعددة منذ 15.1. التصميم في docs/PHASE8-DESIGN.md.
   const termPanel = $('termPanel'), termHost = $('termHost'), termExited = $('termExited');
-  let term = null;      // نسخة xterm.js (تُنشأ عند أول فتح)
-  let termFit = null;   // ملحق الملاءمة
-  let termId = null;    // معرّف جلسة pty الحيّة (null = لا جلسة)
+  const tabs = [];       // كل التبويبات الحيّة (بترتيب العرض)
+  let active = null;     // التبويب النشط
+  let tabSeq = 0;
 
-  // إنشاء نسخة xterm.js مرة واحدة وربط قنواتها
-  function ensureTerm() {
-    if (term) return;
-    term = new Terminal({
+  // إنشاء تبويب: نسخة xterm + عرضه (طبقتا شبكة وBiDi) + ربط قنواته. بلا pty بعد.
+  function makeTab() {
+    const view = document.createElement('div'); view.className = 'term-view';
+    const grid = document.createElement('div'); grid.className = 'tv-grid';
+    const bidi = document.createElement('div'); bidi.className = 'tv-bidi';
+    const spacer = document.createElement('div'); spacer.className = 'tv-spacer';
+    bidi.appendChild(spacer); view.appendChild(grid); view.appendChild(bidi);
+    termHost.appendChild(view);
+
+    const term = new Terminal({
       fontFamily: "'Cascadia Mono', 'Consolas', monospace",
-      fontSize: 13.5,
-      scrollback: 5000,
+      fontSize: 13.5, scrollback: 5000,
       theme: { background: '#0B0E13', foreground: '#E8E3D8', cursor: '#D9A441' },
     });
-    termFit = new FitAddon.FitAddon();
-    term.loadAddon(termFit);
-    term.open($('termGrid')); // الشبكة تُركَّب في طبقتها؛ عرض BiDi إسقاط من نفس الـ Buffer
-    // كل كتابة مُحلَّلة تعلّم عرض BiDi «متسخاً» — المزامنة مُجمَّعة بـ rAF (انظر أدناه)
-    term.onWriteParsed(scheduleBidiSync);
-    term.onResize(scheduleBidiSync);
-    // التبديل التلقائي (المرحلة 8.4): الشاشة البديلة (vim/htop/less) ⇐ العارض الشبكي،
-    // والعودة للشاشة العادية تسترجع اختيار المستخدم (auto=true فلا يُمسّ userView)
+    const fit = new FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open(grid);
+
+    const tab = {
+      tabId: 'tab_' + (++tabSeq), id: null, term, fit, view, grid, bidi, spacer,
+      shell: '', exited: false,
+      bidiEls: new Map(), pinned: true, mode: true, userView: true, cellObj: null,
+      tabEl: null,
+    };
+
+    // كل كتابة مُحلَّلة ⇐ مزامنة عرض BiDi للتبويب النشط فقط (الخلفية تحدّث buffer صامتاً)
+    term.onWriteParsed(() => { if (tab === active) scheduleBidiSync(); });
+    term.onResize(() => { if (tab === active) scheduleBidiSync(); });
+    // التبديل التلقائي (8.4): الشاشة البديلة ⇐ شبكي، والعودة تسترجع اختيار المستخدم
     term.buffer.onBufferChange((buf) => {
-      setTermView(buf.type === 'alternate' ? false : userView, true);
+      setTabView(tab, buf.type === 'alternate' ? false : tab.userView, true);
     });
-    // كل ما يكتبه المستخدم داخل العارض يذهب خاماً إلى pty (إدخال خام كامل في 8.1)
-    term.onData((data) => { if (termId) window.satr.termInput(termId, data); });
-    term.onResize(({ cols, rows }) => { if (termId) window.satr.termResize(termId, cols, rows); });
-    // أحداث pty من العملية الرئيسية (قناة satr:term المستقلة)
-    window.satr.onTerm((ev) => {
-      if (!ev || ev.id !== termId) return;
-      if (ev.type === 'data') term.write(ev.data);
-      else if (ev.type === 'exit') { termId = null; termExited.classList.add('show'); $('termDot').classList.add('dead'); $('termInput').disabled = true; }
+    // إدخال العارض الشبكي الخام ⇐ pty هذا التبويب
+    term.onData((data) => { if (tab.id) window.satr.termInput(tab.id, data); });
+    term.onResize(({ cols, rows }) => { if (tab.id) window.satr.termResize(tab.id, cols, rows); });
+    // التصاق الذيل لعرض BiDi هذا التبويب
+    bidi.addEventListener('scroll', () => {
+      if (tab !== active) return;
+      tab.pinned = bidi.scrollTop + bidi.clientHeight >= bidi.scrollHeight - LINE_H * 1.5;
+      scheduleBidiSync();
     });
+    bidi.addEventListener('click', () => { if (!window.getSelection().toString()) $('termInput').focus(); });
+
+    tabs.push(tab);
+    return tab;
   }
 
-  // ملاءمة واعية بالوضع (إصلاح فقدان الأسطر عند تغيير الحجم — لقطة قبول):
-  // ConPTY يعيد رسم شاشته عند كل resize فيدوس ما سحبه xterm من scrollback إلى النافذة
-  // (تحقق آلي: cursorHome+repaint بلا 3J). في العرض العربي لا حاجة لمطابقة الصفوف
-  // لارتفاع اللوحة أصلاً (الإسقاط يعرض من الـ Buffer ما يشاء) — فنغيّر الأعمدة فقط
-  // عند تغيّر العرض، ولا نلمس pty عند سحب الارتفاع. الشبكي يحتاج الملاءمة الكاملة (TUI).
-  function fitTerm() {
-    if (!term || !termFit) return;
-    if (bidiMode) {
-      const d = termFit.proposeDimensions();
-      if (d && d.cols && d.cols !== term.cols) term.resize(d.cols, term.rows);
-    } else {
-      termFit.fit();
-    }
-  }
-
-  // بدء جلسة pty في مجلد المشروع الحالي.
-  // 15.1: الخلفية صارت متعددة (كل termStart ينشئ طرفية) — فنحرس هنا كي تبقى الواجهة
-  // بطرفية واحدة: إن وُجدت طرفية حيّة (termId) لا ننشئ ثانية، فقط نلائم ونركّز.
-  // (تعدد التبويبات يأتي في 15.2 حيث تدير الواجهة عدة معرّفات.)
-  async function startTermSession() {
-    ensureTerm();
-    if (termId) { fitTerm(); if (bidiMode) $('termInput').focus(); else term.focus(); return; }
-    termFit.fit(); // أول إنشاء: ملاءمة كاملة قبل ولادة pty
-    const r = await window.satr.termStart($('cwd').value.trim(), term.cols, term.rows);
+  // بدء pty لتبويب (يفيت أولاً ليولد بأبعاد صحيحة)
+  async function startTabPty(tab) {
+    tab.fit.fit();
+    const r = await window.satr.termStart($('cwd').value.trim(), tab.term.cols, tab.term.rows);
     if (!r || !r.ok) {
-      term.writeln('\x1b[31m' + ((r && r.message) || 'تعذّر بدء الطرفية') + '\x1b[0m');
-      return;
+      tab.term.writeln('\x1b[31m' + ((r && r.message) || 'تعذّر بدء الطرفية') + '\x1b[0m');
+      return false;
     }
-    termId = r.id;
-    termExited.classList.remove('show');
-    $('termDot').classList.remove('dead');
-    if (r.shell) $('termShell').textContent = r.shell;
-    term.reset(); // طرفية جديدة = شاشة نظيفة
-    $('termInput').disabled = false;
-    if (bidiMode) $('termInput').focus(); else term.focus();
-    scheduleBidiSync(); // مزامنة أولية لعرض BiDi (reset لا يمرّ بـ onWriteParsed)
+    tab.id = r.id; tab.shell = r.shell || '';
+    tab.exited = false;
+    renderTabs();
+    return true;
+  }
+
+  // تفعيل تبويب: إظهاره وإخفاء الباقي، ومزامنة الرأس وسطر الإدخال ووضع العرض
+  function activateTab(tab) {
+    if (!tab) return;
+    active = tab;
+    for (const t of tabs) t.view.classList.toggle('active', t === tab);
+    renderTabs();
+    $('termShell').textContent = tab.shell;
+    $('termDot').classList.toggle('dead', tab.exited);
+    $('termInput').disabled = tab.exited;
+    termExited.classList.toggle('show', tab.exited);
+    applyTabView(tab); // يضبط #termPanel + زر العرض + التركيز + المزامنة
+  }
+
+  function closeTab(tab) {
+    if (tab.id) window.satr.termKill(tab.id);
+    try { tab.term.dispose(); } catch (e) {}
+    tab.view.remove();
+    const idx = tabs.indexOf(tab);
+    if (idx >= 0) tabs.splice(idx, 1);
+    if (tab === active) {
+      if (tabs.length) activateTab(tabs[Math.max(0, idx - 1)]);
+      else { active = null; setTermOpen(false); } // آخر تبويب أُغلق ⇒ اطوِ اللوحة
+    } else { renderTabs(); }
+  }
+
+  async function newTab() {
+    if (tabs.length >= 8) { showTermNotice('بلغت الحد الأقصى للطرفيات (8) — أغلق واحدة أولاً.'); return; }
+    const tab = makeTab();
+    activateTab(tab);
+    const ok = await startTabPty(tab);
+    if (ok) { tab.term.reset(); scheduleBidiSync(); applyTabView(tab); }
+  }
+
+  // رسم شريط التبويبات
+  function renderTabs() {
+    const bar = $('termTabs');
+    bar.textContent = '';
+    tabs.forEach((t, i) => {
+      const el = document.createElement('div');
+      el.className = 'term-tab' + (t === active ? ' active' : '') + (t.exited ? ' dead' : '');
+      const dot = document.createElement('span'); dot.className = 'tdot'; dot.setAttribute('aria-hidden', 'true');
+      const lbl = document.createElement('span'); lbl.textContent = 'طرفية ' + (i + 1);
+      const x = document.createElement('button'); x.className = 'tx'; x.type = 'button'; x.textContent = '✕'; x.title = 'إغلاق';
+      x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t); });
+      el.appendChild(dot); el.appendChild(lbl); el.appendChild(x);
+      el.addEventListener('click', () => { if (t !== active) activateTab(t); });
+      t.tabEl = el;
+      bar.appendChild(el);
+    });
+  }
+
+  // ملاءمة واعية بالوضع للتبويب النشط (إصلاح فقدان الأسطر عند تغيير الحجم — لقطة قبول):
+  // في العربي نغيّر الأعمدة فقط (سحب الارتفاع لا يلمس pty)، والشبكي يحتاج ملاءمة كاملة (TUI).
+  function fitTerm() {
+    const tab = active;
+    if (!tab) return;
+    if (tab.mode) {
+      const d = tab.fit.proposeDimensions();
+      if (d && d.cols && d.cols !== tab.term.cols) tab.term.resize(d.cols, tab.term.rows);
+    } else {
+      tab.fit.fit();
+    }
   }
 
   async function restartTermSession() {
-    if (termId) { await window.satr.termKill(termId); termId = null; }
-    await startTermSession();
+    const tab = active;
+    if (!tab) return;
+    if (tab.id) { await window.satr.termKill(tab.id); tab.id = null; }
+    tab.exited = false;
+    tab.term.reset();
+    const ok = await startTabPty(tab);
+    if (ok) { activateTab(tab); scheduleBidiSync(); }
   }
 
   function setTermOpen(open) {
     termPanel.hidden = !open;
     $('termToggle').classList.toggle('active', open);
-    if (open) startTermSession();
+    if (open) {
+      if (!tabs.length) newTab();          // أول فتح: أنشئ تبويباً
+      else { fitTerm(); activateTab(active || tabs[0]); }
+    }
   }
   $('termToggle').addEventListener('click', () => setTermOpen(termPanel.hidden));
-  $('termClose').addEventListener('click', () => setTermOpen(false)); // الصدفة تبقى حيّة
+  $('termClose').addEventListener('click', () => setTermOpen(false)); // الطرفيات تبقى حيّة
+  $('termNew').addEventListener('click', newTab);
   $('termRestart').addEventListener('click', restartTermSession);
   $('termRestart2').addEventListener('click', restartTermSession);
+
+  // موجّه أحداث pty: يوزّع بالمعرّف على تبويبه (الخلفية متعددة منذ 15.1)
+  window.satr.onTerm((ev) => {
+    if (!ev) return;
+    const tab = tabs.find((t) => t.id === ev.id);
+    if (!tab) return;
+    if (ev.type === 'data') tab.term.write(ev.data); // يحدّث buffer حتى لو التبويب خلفي
+    else if (ev.type === 'exit') {
+      tab.exited = true;
+      renderTabs();
+      if (tab === active) {
+        termExited.classList.add('show'); $('termDot').classList.add('dead'); $('termInput').disabled = true;
+      }
+    }
+  });
 
   // ملاءمة الأبعاد عند تغيير حجم النافذة واللوحة مفتوحة (واعية بالوضع)
   window.addEventListener('resize', () => {
@@ -2420,9 +2508,7 @@
   const LINE_H = 20;      // ارتفاع السطر بالبكسل — ثابت ليصح حساب النافذة والفاصل
   const OVERSCAN = 12;    // أسطر إضافية فوق/تحت النافذة لتمرير سلس
   const DEF_FG = '#E8E3D8', DEF_BG = '#0B0E13';
-  const termBidiEl = $('termBidi'), bidiSpacer = $('bidiSpacer');
-  const bidiEls = new Map(); // فهرس السطر في الـ Buffer → {el, key}
-  let bidiRaf = 0, bidiPinned = true, cellObj = null, bidiMode = true;
+  let bidiRaf = 0;        // إسقاط BiDi يُزامَن للتبويب النشط فقط (حالته داخل الكائن)
 
   // لوحة ألوان xterm-256: 0–15 من الثيم، 16–231 مكعب ألوان، 232–255 رماديات
   const PALETTE256 = (() => {
@@ -2437,10 +2523,11 @@
 
   function rgbCss(v) { return 'rgb(' + ((v >> 16) & 255) + ',' + ((v >> 8) & 255) + ',' + (v & 255) + ')'; }
 
-  // يستخرج مقاطع السطر مجمعةً بنمط موحّد (لون + سمات) + مفتاح بصمة للتحديث التفريقي
-  function extractLine(line) {
+  // يستخرج مقاطع السطر مجمعةً بنمط موحّد (لون + سمات) + مفتاح بصمة للتحديث التفريقي.
+  // cell كائن خلية معاد استخدامه (يُمرَّر من التبويب) لتقليل التخصيص
+  function extractLine(line, cellRef) {
     const segs = [];
-    let cur = null, key = '';
+    let cur = null, key = '', cellObj = cellRef.c;
     for (let x = 0; x < line.length; x++) {
       cellObj = line.getCell(x, cellObj);
       if (!cellObj) break;
@@ -2471,6 +2558,7 @@
       segs.pop();
     }
     for (const s of segs) key += s.style + '\u0001' + s.text + '\u0002';
+    cellRef.c = cellObj;
     return { key, segs };
   }
 
@@ -2493,11 +2581,14 @@
     }
   }
 
-  // مزامنة النافذة المرئية: تُرسم/تُحدَّث الأسطر الظاهرة فقط، والبصمة تمنع إعادة بناء ما لم يتغير
+  // مزامنة عرض BiDi للتبويب النشط: تُرسم الأسطر الظاهرة فقط، والبصمة تمنع إعادة بناء
+  // ما لم يتغير. كل حالة الإسقاط (bidiEls/pinned/cellObj) داخل كائن التبويب.
   function bidiSync() {
     bidiRaf = 0;
-    if (!term || !bidiMode || termPanel.hidden) return;
-    const buf = term.buffer.active;
+    const tab = active;
+    if (!tab || !tab.mode || termPanel.hidden) return;
+    const buf = tab.term.buffer.active;
+    const spacer = tab.spacer, host = tab.bidi, bidiEls = tab.bidiEls;
     // قصّ الذيل الفارغ: صفوف نافذة xterm الخالية أسفل المؤشر لا تُحتسب — الالتصاق
     // بالذيل يضع سطر الموجّه أسفل اللوحة بلا مساحة ميتة (لقطة قبول: تكبير اللوحة)
     const cursorAbs = buf.baseY + buf.cursorY;
@@ -2508,13 +2599,14 @@
       lastIdx--;
     }
     const total = lastIdx + 1;
-    bidiSpacer.style.height = (total * LINE_H) + 'px';
-    if (bidiPinned) termBidiEl.scrollTop = termBidiEl.scrollHeight; // ملتصق بالذيل
-    const first = Math.max(0, Math.floor(termBidiEl.scrollTop / LINE_H) - OVERSCAN);
-    const last = Math.min(total - 1, Math.ceil((termBidiEl.scrollTop + termBidiEl.clientHeight) / LINE_H) + OVERSCAN);
+    spacer.style.height = (total * LINE_H) + 'px';
+    if (tab.pinned) host.scrollTop = host.scrollHeight; // ملتصق بالذيل
+    const first = Math.max(0, Math.floor(host.scrollTop / LINE_H) - OVERSCAN);
+    const last = Math.min(total - 1, Math.ceil((host.scrollTop + host.clientHeight) / LINE_H) + OVERSCAN);
     for (const [i, rec] of bidiEls) {
       if (i < first || i > last) { rec.el.remove(); bidiEls.delete(i); }
     }
+    if (!tab.cellRef) tab.cellRef = { c: null };
     for (let i = first; i <= last; i++) {
       let rec = bidiEls.get(i);
       if (!rec) {
@@ -2522,13 +2614,13 @@
         el.className = 'bidi-line';
         el.dir = 'auto'; // سطر عربي يُحلّ RTL ويبدأ يميناً، ولاتيني LTR يساراً
         el.style.top = (i * LINE_H) + 'px';
-        bidiSpacer.appendChild(el);
+        spacer.appendChild(el);
         rec = { el, key: null };
         bidiEls.set(i, rec);
       }
       const line = buf.getLine(i);
       if (!line) continue;
-      const r = extractLine(line);
+      const r = extractLine(line, tab.cellRef);
       if (r.key !== rec.key) { rec.key = r.key; buildBidiLine(rec.el, r.segs); }
     }
   }
@@ -2537,34 +2629,34 @@
     if (!bidiRaf) bidiRaf = requestAnimationFrame(bidiSync);
   }
 
-  // الالتصاق بالذيل: يظل ما دام المستخدم عند الأسفل، وينفك حين يمرّر لأعلى
-  termBidiEl.addEventListener('scroll', () => {
-    bidiPinned = termBidiEl.scrollTop + termBidiEl.clientHeight >= termBidiEl.scrollHeight - LINE_H * 1.5;
-    scheduleBidiSync();
-  });
-  // النقر في عرض BiDi يركّز سطر الإدخال (ما لم يكن المستخدم يحدد نصاً للنسخ)
-  termBidiEl.addEventListener('click', () => { if (!window.getSelection().toString()) $('termInput').focus(); });
-
-  // تبديل العارض (المرحلة 8.4): يدوي بالزر، وتلقائي مع الشاشة البديلة وأوامر معروفة.
-  // userView = اختيار المستخدم للشاشة العادية؛ التبديل التلقائي (auto=true) لا يمسّه
-  // فتعود الشاشة العادية دائماً لما اختاره المستخدم.
-  let userView = true;
-  function setTermView(bidi, auto) {
-    if (!auto) userView = bidi;
-    bidiMode = bidi;
-    termPanel.classList.toggle('mode-bidi', bidi);
-    termPanel.classList.toggle('mode-grid', !bidi);
-    $('termView').textContent = bidi ? 'العرض: عربي' : 'العرض: شبكي';
-    // لوحة المفاتيح: في العربي لسطر الإدخال HTML، وفي الشبكي لحقل xterm (إدخال خام)
-    if (bidi) { bidiPinned = true; scheduleBidiSync(); hideTermNotice(); if (!termPanel.hidden) $('termInput').focus(); }
-    else {
-      // الدخول للشبكي: ملاءمة كاملة — الصفوف قد تكون أقل من ارتفاع اللوحة بعد سحب
-      // في الوضع العربي (حيث لا نلمس pty)، وتطبيقات TUI تحتاج الشبكة مطابقة فعلاً
-      if (termFit) termFit.fit();
-      if (term && !termPanel.hidden) term.focus();
+  // تطبيق وضع العرض للتبويب على واجهة اللوحة المشتركة (يُستدعى عند التفعيل والتبديل)
+  function applyTabView(tab) {
+    termPanel.classList.toggle('mode-bidi', tab.mode);
+    termPanel.classList.toggle('mode-grid', !tab.mode);
+    $('termView').textContent = tab.mode ? 'العرض: عربي' : 'العرض: شبكي';
+    if (tab.mode) {
+      tab.pinned = tab.pinned !== false;
+      // أعد بناء إسقاط التبويب من الصفر (قد يكون تبويباً بُدّل إليه للتوّ)
+      for (const [, rec] of tab.bidiEls) rec.el.remove();
+      tab.bidiEls.clear();
+      scheduleBidiSync();
+      hideTermNotice();
+      if (!termPanel.hidden) $('termInput').focus();
+    } else {
+      tab.fit.fit(); // الشبكي: ملاءمة كاملة (TUI تحتاج شبكة مطابقة)
+      if (!termPanel.hidden) tab.term.focus();
     }
   }
-  $('termView').addEventListener('click', () => setTermView(!bidiMode));
+
+  // تبديل عرض تبويب (المرحلة 8.4): userView اختيار المستخدم، التبديل التلقائي لا يمسّه
+  function setTabView(tab, bidi, auto) {
+    if (!auto) tab.userView = bidi;
+    tab.mode = bidi;
+    if (tab === active) applyTabView(tab);
+  }
+  // اختصار: تبديل عرض التبويب النشط (يستعمله الزر والتنبيه والإدخال)
+  function setTermView(bidi, auto) { if (active) setTabView(active, bidi, auto); }
+  $('termView').addEventListener('click', () => { if (active) setTermView(!active.mode); });
 
   // شريط تنبيه التبديل التلقائي (لأوامر تعكس العربية بنفسها مثل claude التفاعلي)
   function showTermNotice(text) {
@@ -2586,13 +2678,13 @@
   const termInputEl = $('termInput');
 
   function ptySend(data) {
-    if (termId) window.satr.termInput(termId, data);
-    bidiPinned = true; // أي إرسال يعيد الالتصاق بذيل الخرج
+    if (active && active.id) window.satr.termInput(active.id, data);
+    if (active) active.pinned = true; // أي إرسال يعيد الالتصاق بذيل الخرج
     scheduleBidiSync();
   }
 
   termInputEl.addEventListener('keydown', (e) => {
-    if (!termId) return;
+    if (!active || !active.id) return;
     // Ctrl+C يقطع دائماً (والحقل غير فارغ: يفرّغه أيضاً) — Ctrl+Z وCtrl+D تمريران خامان
     if (e.ctrlKey && !e.shiftKey && !e.altKey) {
       const k = e.key.toLowerCase();
@@ -2608,7 +2700,7 @@
       ptySend(v + '\r'); // حقل فارغ ⇐ \r خام («اضغط أي مفتاح» ومحثّات كثيرة)
       // أمر معروف بعكس العربية بصرياً ⇐ تبديل تلقائي للعارض الشبكي مع تنبيه (8.4)
       const cmd = v.trim().split(/\s+/)[0].toLowerCase();
-      if (bidiMode && VISUAL_ORDER_APPS.has(cmd)) {
+      if (active.mode && VISUAL_ORDER_APPS.has(cmd)) {
         setTermView(false, true);
         showTermNotice('بُدّل للعرض الشبكي: «' + cmd + '» يرسم العربية بنفسه فيظهر معكوساً في العرض العربي.');
       }
@@ -2628,7 +2720,7 @@
   // اللصق العادي أحادي السطر يدخل الحقل محلياً كالمعتاد
   termInputEl.addEventListener('paste', (e) => {
     const text = e.clipboardData ? e.clipboardData.getData('text') : '';
-    if (text && /\r|\n/.test(text) && termId) {
+    if (text && /\r|\n/.test(text) && active && active.id) {
       e.preventDefault();
       ptySend(text.replace(/\r?\n/g, '\r'));
     }
