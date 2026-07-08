@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-P5yH6KzR2uYWR4U4cSSsMgAl0KJI69IdPWIN6NOTxdE='; script-src 'self' 'sha256-HCGG9/6oQQ2V305PJmACUoXlKREs/6CYAg299xx2S3A='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-P5yH6KzR2uYWR4U4cSSsMgAl0KJI69IdPWIN6NOTxdE='; script-src 'self' 'sha256-siLV/uYFzduo5N3b3e47QsGI76ixLC1tM1hVzJmj0Jg='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -2339,10 +2339,14 @@
     }
   }
 
-  // بدء جلسة pty (أو استرجاع الحيّة) في مجلد المشروع الحالي
+  // بدء جلسة pty في مجلد المشروع الحالي.
+  // 15.1: الخلفية صارت متعددة (كل termStart ينشئ طرفية) — فنحرس هنا كي تبقى الواجهة
+  // بطرفية واحدة: إن وُجدت طرفية حيّة (termId) لا ننشئ ثانية، فقط نلائم ونركّز.
+  // (تعدد التبويبات يأتي في 15.2 حيث تدير الواجهة عدة معرّفات.)
   async function startTermSession() {
     ensureTerm();
-    if (termId) fitTerm(); else termFit.fit(); // أول إنشاء: ملاءمة كاملة قبل ولادة pty
+    if (termId) { fitTerm(); if (bidiMode) $('termInput').focus(); else term.focus(); return; }
+    termFit.fit(); // أول إنشاء: ملاءمة كاملة قبل ولادة pty
     const r = await window.satr.termStart($('cwd').value.trim(), term.cols, term.rows);
     if (!r || !r.ok) {
       term.writeln('\x1b[31m' + ((r && r.message) || 'تعذّر بدء الطرفية') + '\x1b[0m');
@@ -2352,7 +2356,7 @@
     termExited.classList.remove('show');
     $('termDot').classList.remove('dead');
     if (r.shell) $('termShell').textContent = r.shell;
-    if (!r.existing) term.reset(); // جلسة جديدة = شاشة نظيفة
+    term.reset(); // طرفية جديدة = شاشة نظيفة
     $('termInput').disabled = false;
     if (bidiMode) $('termInput').focus(); else term.focus();
     scheduleBidiSync(); // مزامنة أولية لعرض BiDi (reset لا يمرّ بـ onWriteParsed)

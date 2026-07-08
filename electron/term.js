@@ -1,10 +1,11 @@
 /**
  * سطر 2.0 — الطرفية العربية المدمجة (المرحلة 8)
  *
- * دورة حياة pseudoterminal واحد عبر node-pty (ConPTY على ويندوز 10 1809+).
- * التصميم الكامل في docs/PHASE8-DESIGN.md — هذه الوحدة هي «العقد» الموثّق في CLAUDE.md:
- *   - طرفية واحدة في الـ MVP: startTerm يعيد الجلسة الحيّة إن وُجدت بدل إنشاء ثانية.
- *   - البايتات تصل الواجهة عبر notifier (قناة satr:term المستقلة عالية الإنتاجية).
+ * دورة حياة عدة pseudoterminals عبر node-pty (ConPTY على ويندوز 10 1809+) — المرحلة 15.
+ * التصميم في docs/PHASE8-DESIGN.md؛ هذه الوحدة هي «العقد» الموثّق في CLAUDE.md:
+ *   - تعدد الطرفيات (المرحلة 15): سجلّ Map بمعرّفات، بسقف MAX_TERMS. كل استدعاء
+ *     startTerm ينشئ طرفية جديدة (تتبّع أي منها نشطة مسؤولية الواجهة).
+ *   - البايتات تصل الواجهة عبر notifier مع معرّف الطرفية (قناة satr:term المستقلة).
  *   - القتل مضمون عند إغلاق التطبيق (main.js يستدعي killAll في window-all-closed/before-quit).
  *
  * ملاحظة اعتمادية: node-pty استثناء «أصلي» واعٍ وموثَّق (القاعدة 5 في CLAUDE.md).
@@ -20,9 +21,10 @@ const IS_WIN = process.platform === 'win32';
 let pty = null;        // وحدة node-pty (تحميل كسول)
 let ptyLoadError = null;
 
-// الجلسة الحيّة الوحيدة: { id, proc, shell } أو null
-let current = null;
+// سجلّ الطرفيات الحيّة: id → { id, proc, shell } (المرحلة 15 — تعدد الطرفيات)
+const terminals = new Map();
 let seq = 0;
+const MAX_TERMS = 8; // سقف أمان: يمنع تسريب العمليات إن أساءت الواجهة الاستدعاء
 
 // دالة بثّ الأحداث للواجهة — يضبطها main.js (نفس نمط bgprocs.setNotifier)
 let notify = () => {};
@@ -57,11 +59,13 @@ function defaultShell() {
 }
 
 /**
- * بدء الطرفية (أو إعادة الجلسة الحيّة إن وُجدت — طرفية واحدة في الـ MVP).
+ * بدء طرفية جديدة (المرحلة 15 — كل استدعاء ينشئ واحدة، بسقف MAX_TERMS).
  * cwd/cols/rows منقّاة مسبقاً في main.js، ونعيد التحقق دفاعياً هنا.
  */
 function startTerm(cwd, cols, rows) {
-  if (current) return { ok: true, id: current.id, shell: current.shell, existing: true };
+  if (terminals.size >= MAX_TERMS) {
+    return { ok: false, error: 'too_many', message: 'بلغت الحد الأقصى للطرفيات (' + MAX_TERMS + ') — أغلق واحدة أولاً.' };
+  }
 
   if (!loadPty()) {
     // التفاصيل (مسارات النظام) للسجل فقط — الواجهة تتلقى رسالة عامة (مراجعة muraji-amn)
@@ -110,13 +114,13 @@ function startTerm(cwd, cols, rows) {
     return { ok: false, error: 'spawn_failed', message: 'تعذّر تشغيل الصدفة — أعد المحاولة أو راجع سجل التشغيل.' };
   }
 
-  current = { id, proc, shell };
+  terminals.set(id, { id, proc, shell });
 
-  // خرج pty نص UTF-8 (node-pty يتكفّل بالفك) — يُبثّ كما هو، والواجهة تكتبه في xterm.js
+  // خرج pty نص UTF-8 (node-pty يتكفّل بالفك) — يُبثّ مع معرّف طرفيته لتوجّهه الواجهة
   proc.onData((data) => notify({ type: 'data', id, data }));
   proc.onExit(({ exitCode }) => {
-    // خروج الصدفة (exit أو انهيار): نظّف الحالة وأخبر الواجهة لتعرض «انتهت الجلسة»
-    if (current && current.id === id) current = null;
+    // خروج الصدفة (exit أو انهيار): أزِل الطرفية وأخبر الواجهة لتعرض «انتهت الجلسة»
+    terminals.delete(id);
     notify({ type: 'exit', id, exitCode });
   });
 
@@ -126,36 +130,43 @@ function startTerm(cwd, cols, rows) {
 // كتابة خام إلى pty — البيانات آمنة لأنها تذهب لمجرى الطرفية لا لوسائط spawn.
 // تحقق دفاعي مكرر لتنقية main.js تحسّباً لإعادة هيكلة مستقبلية (مراجعة muraji-amn)
 function writeTerm(id, data) {
-  if (!current || current.id !== id) return { ok: false, error: 'no_term' };
+  const t = terminals.get(id);
+  if (!t) return { ok: false, error: 'no_term' };
   if (typeof data !== 'string' || !data.length || data.length > 1024 * 1024)
     return { ok: false, error: 'bad_data' };
-  try { current.proc.write(data); } catch (e) { return { ok: false, error: 'write_failed' }; }
+  try { t.proc.write(data); } catch (e) { return { ok: false, error: 'write_failed' }; }
   return { ok: true };
 }
 
 function resizeTerm(id, cols, rows) {
-  if (!current || current.id !== id) return { ok: false, error: 'no_term' };
+  const t = terminals.get(id);
+  if (!t) return { ok: false, error: 'no_term' };
   if (!Number.isInteger(cols) || !Number.isInteger(rows)) return { ok: false, error: 'bad_size' };
   if (cols < 2 || cols > 500 || rows < 2 || rows > 500) return { ok: false, error: 'bad_size' };
-  try { current.proc.resize(cols, rows); } catch (e) { /* تغيير حجم بعد الموت — غير مهم */ }
+  try { t.proc.resize(cols, rows); } catch (e) { /* تغيير حجم بعد الموت — غير مهم */ }
   return { ok: true };
 }
 
 function killTerm(id) {
-  if (!current || current.id !== id) return { ok: false, error: 'no_term' };
-  const proc = current.proc;
-  current = null;
+  const t = terminals.get(id);
+  if (!t) return { ok: false, error: 'no_term' };
+  terminals.delete(id);
   // ConPTY يُنهي شجرة العمليات المرتبطة به عند إغلاق الـ pty
-  try { proc.kill(); } catch (e) {}
+  try { t.proc.kill(); } catch (e) {}
   return { ok: true };
 }
 
-// قتل مضمون عند إغلاق التطبيق (window-all-closed / before-quit) — نفس فلسفة bgprocs
-function killAll() {
-  if (!current) return;
-  const proc = current.proc;
-  current = null;
-  try { proc.kill(); } catch (e) {}
+// قائمة معرّفات الطرفيات الحيّة (للواجهة: استرجاع أو تشخيص)
+function listTerms() {
+  return Array.from(terminals.values()).map((t) => ({ id: t.id, shell: t.shell }));
 }
 
-module.exports = { setNotifier, startTerm, writeTerm, resizeTerm, killTerm, killAll };
+// قتل مضمون لكل الطرفيات عند إغلاق التطبيق (window-all-closed / before-quit)
+function killAll() {
+  for (const t of terminals.values()) {
+    try { t.proc.kill(); } catch (e) {}
+  }
+  terminals.clear();
+}
+
+module.exports = { setNotifier, startTerm, writeTerm, resizeTerm, killTerm, listTerms, killAll };
