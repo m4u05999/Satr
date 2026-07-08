@@ -20,6 +20,8 @@ electron/agent.js    ← محرك Claude Agent SDK: بث جزئي + اعتراض
                         بدل حزم ثنائي ثانٍ ~234م.ب — لذا المثبّت يبقى ~79م.ب. resolveClaudeBin
                         يحدد المسار، والبناء يستثني claude-agent-sdk-win32-x64 من الحزمة.
                         يمرّر أيضاً خيار skills للـ SDK: 'all' أو مصفوفة الأسماء المختارة من لوحة /مهارات.
+                        ويمنع AskUserQuestion عبر disallowedTools: أداة اختيار تفاعلية لا يوفّر «سطر»
+                        واجهتها (canUseTool سماح/رفض فقط) فكانت تعلّق — منعها يجعل النموذج يسأل نصّاً.
                         كما يوفّر withControlQuery: تشغيل عابر لاستدعاء «دوال التحكّم» في SDK
                         (mcpServerStatus/reconnectMcpServer/toggleMcpServer/getContextUsage) للوحتي
                         /موصلات و /سياق — مولّد إدخال ينتظر فقط ليُبقي العملية حيّة، ثم close+q.close())

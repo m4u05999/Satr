@@ -241,6 +241,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
   // مضمون (انظر توثيق خيار skills في الـ SDK). مصفوفة فارغة = لا مهارات مفعّلة.
   options.skills = (skills === 'all' || Array.isArray(skills)) ? skills : 'all';
 
+  // AskUserQuestion أداة تفاعلية تعرض قائمة خيارات قابلة للنقر وتنتظر اختيار المستخدم —
+  // تتطلب واجهة اختيار حية لا يوفّرها «سطر» (canUseTool يعطي سماح/رفض فقط، لا يعيد نتيجة
+  // اختيار). فبدونها كان مربع الإذن يعرض JSON السؤال ويعلّق بلا وسيلة للرد. منعها من سياق
+  // النموذج يجعله يطرح أسئلته نصّاً في المحادثة، فيجيب المستخدم بالكتابة في المحرّر —
+  // وهو السلوك الطبيعي الذي يدعمه «سطر» أصلاً. (disallowedTools يزيل الأداة كلياً.)
+  options.disallowedTools = ['AskUserQuestion'];
+
   const q = query({ prompt: promptStream(), options });
 
   // حلقة الاستهلاك تعمل في الخلفية؛ الأحداث تصل الواجهة تباعاً
