@@ -13,6 +13,7 @@
 
 const fs = require('fs');
 const os = require('os');
+const path = require('path');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -38,11 +39,19 @@ function loadPty() {
   return pty;
 }
 
+// الصدف المسموحة لتجاوز SATR_SHELL — قائمة سماح باسم الملف الأساسي
+// (اكتشاف مراجعة الوكيل muraji-amn: القيمة كانت تمرّ لـ pty.spawn بلا تنقية)
+const ALLOWED_SHELLS = new Set(['powershell.exe', 'pwsh.exe', 'cmd.exe']);
+
 // الصدفة الافتراضية: PowerShell على ويندوز (أغنى من cmd)، وإلا صدفة النظام
 function defaultShell() {
   if (IS_WIN) {
-    // COMSPEC احتياط مضمون؛ powershell.exe موجود في كل ويندوز 10+
-    return process.env.SATR_SHELL || 'powershell.exe';
+    const want = (process.env.SATR_SHELL || '').trim();
+    if (want) {
+      if (ALLOWED_SHELLS.has(path.basename(want).toLowerCase())) return want;
+      console.error('[term] تجاهل SATR_SHELL — ليست صدفة معروفة:', want);
+    }
+    return 'powershell.exe'; // موجود في كل ويندوز 10+
   }
   return process.env.SHELL || '/bin/bash';
 }
@@ -55,7 +64,9 @@ function startTerm(cwd, cols, rows) {
   if (current) return { ok: true, id: current.id, shell: current.shell, existing: true };
 
   if (!loadPty()) {
-    return { ok: false, error: 'pty_load_failed', message: 'تعذّر تحميل مكوّن الطرفية (node-pty): ' + ptyLoadError };
+    // التفاصيل (مسارات النظام) للسجل فقط — الواجهة تتلقى رسالة عامة (مراجعة muraji-amn)
+    console.error('[term] فشل تحميل node-pty:', ptyLoadError);
+    return { ok: false, error: 'pty_load_failed', message: 'تعذّر تحميل مكوّن الطرفية — أعد تثبيت «سطر» أو راجع سجل التشغيل.' };
   }
 
   let dir = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : os.homedir();
@@ -89,11 +100,14 @@ function startTerm(cwd, cols, rows) {
       cols: c,
       rows: r,
       cwd: dir,
+      // البيئة كاملة عمداً (سلوك كل الطرفيات المدمجة: PATH وإعدادات المطور ضرورية) —
+      // يعني أن مفاتيح API في بيئة «سطر» تصل للصدفة، وهي صدفة المستخدم نفسه بنفس صلاحياته
       env: process.env,
       useConpty: true, // ConPTY — المتطلب الموثّق: ويندوز 10 1809+
     });
   } catch (e) {
-    return { ok: false, error: 'spawn_failed', message: 'تعذّر تشغيل الصدفة: ' + String((e && e.message) || e) };
+    console.error('[term] فشل تشغيل الصدفة:', (e && e.message) || e);
+    return { ok: false, error: 'spawn_failed', message: 'تعذّر تشغيل الصدفة — أعد المحاولة أو راجع سجل التشغيل.' };
   }
 
   current = { id, proc, shell };
@@ -109,9 +123,12 @@ function startTerm(cwd, cols, rows) {
   return { ok: true, id, shell };
 }
 
-// كتابة خام إلى pty — البيانات آمنة لأنها تذهب لمجرى الطرفية لا لوسائط spawn
+// كتابة خام إلى pty — البيانات آمنة لأنها تذهب لمجرى الطرفية لا لوسائط spawn.
+// تحقق دفاعي مكرر لتنقية main.js تحسّباً لإعادة هيكلة مستقبلية (مراجعة muraji-amn)
 function writeTerm(id, data) {
   if (!current || current.id !== id) return { ok: false, error: 'no_term' };
+  if (typeof data !== 'string' || !data.length || data.length > 1024 * 1024)
+    return { ok: false, error: 'bad_data' };
   try { current.proc.write(data); } catch (e) { return { ok: false, error: 'write_failed' }; }
   return { ok: true };
 }
