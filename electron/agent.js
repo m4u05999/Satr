@@ -369,4 +369,25 @@ async function contextUsage(cwd, sessionId) {
   }
 }
 
-module.exports = { start, undoEdit, mcpStatus, mcpAction, contextUsage, resolveClaudeBin };
+// قائمة أوامر «/» التي يفهمها CLI في هذا المشروع (مهارات مضمّنة + مهارات المستخدم/المشروع
+// وأوامر أساسية) — لمزامنة قائمة «/» في الواجهة (تكافؤ الدفعة الثانية، البند 1).
+// تشغيل عابر يحمّل مصادر الإعدادات نفسها فيرى ما تراه جلسة حقيقية. القائمة تُلتقط عند
+// init؛ تحديثات منتصف الجلسة تصل الواجهة عبر حدث system/commands_changed (يُمرَّر أصلاً).
+async function listCommands(cwd) {
+  try {
+    const cmds = await withControlQuery(cwd, null, (q) => q.supportedCommands());
+    return {
+      ok: true,
+      commands: (Array.isArray(cmds) ? cmds : []).map((c) => ({
+        name: String(c.name || ''),
+        description: String(c.description || ''),
+        argumentHint: String(c.argumentHint || ''),
+        aliases: Array.isArray(c.aliases) ? c.aliases.map(String) : [],
+      })),
+    };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+module.exports = { start, undoEdit, mcpStatus, mcpAction, contextUsage, listCommands, resolveClaudeBin };

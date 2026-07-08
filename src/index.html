@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-6LSuJkm634MdLcxClQT9bVLAWLLIRCWZ2K9CPD6gFps='; script-src 'self' 'sha256-DEbGx5S6ZzXPyzu6+I/uZdngn92IuuP3a+0i7mhhyCw='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-riItWTYMzc6Y/pcPnYzj3WlRzvi7yDUFT8cRozqnTmM='; script-src 'self' 'sha256-s6fmemoTzxk3Zb6bg6AmjssPeBucMUgKkBwqn0eWn3k='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -223,6 +223,9 @@
   .slash-item .desc { font-size: 12.5px; color: var(--text-dim); }
   .slash-item.active, .slash-item:hover { background: var(--gold-soft); }
   .slash-item.active .desc { color: var(--text); }
+  /* أوامر CLI المتزامنة (مهارات مضمّنة + مهاراتك): لون مميز + وصف يحلّ اتجاهه بنفسه */
+  .slash-item.cli .cmd { color: var(--green); }
+  .slash-item.cli .desc { unicode-bidi: plaintext; }
 
   /* عناصر منصّة @ — اسم الملف ذهبي ومساره مخفّت، كلاهما LTR أحادي المسافة */
   .file-item { padding: 8px 14px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; direction: ltr; }
@@ -1214,7 +1217,21 @@
       if (ev.text) block.addDelta(ev.text);
       return;
     }
-    if (ev.type === 'system' && ev.subtype === 'compact_boundary') {
+    if (ev.type === 'system' && ev.subtype === 'commands_changed') {
+      // دفعة تحديث لقائمة أوامر CLI منتصف الجلسة (مهارات اكتُشفت أثناء العمل) —
+      // تحل محل القائمة المخزنة بالكامل (supportedCommands تُلتقط عند init فقط)
+      if (Array.isArray(ev.commands)) {
+        cliCommands = ev.commands
+          .map((c) => ({
+            name: String(c.name || ''),
+            description: String(c.description || ''),
+            argumentHint: String(c.argumentHint || ''),
+            aliases: Array.isArray(c.aliases) ? c.aliases.map(String) : [],
+          }))
+          .filter((c) => c.name && !CLI_CMD_EXCLUDE.has(c.name));
+        cliCmdsCwd = $('cwd').value.trim();
+      }
+    } else if (ev.type === 'system' && ev.subtype === 'compact_boundary') {
       block.compacted(ev.compact_metadata);
     } else if (ev.type === 'system' && ev.session_id) {
       sessionId = ev.session_id;
@@ -1816,9 +1833,54 @@
     }
   }
 
+  // ---------- مزامنة أوامر CLI (تكافؤ الدفعة الثانية — البند 1) ----------
+  // supportedCommands() يعيد ما يفهمه CLI في هذا المشروع: مهارات مضمّنة (verify/
+  // code-review/init/…) ومهارات المستخدم وأوامر أساسية. تُعرض في قائمة «/» وتُرسل
+  // كدور عادي (نمط /ضغط المثبت). تُستبعد ما له نسخة عربية أصلية أفضل في «سطر».
+  const CLI_CMD_EXCLUDE = new Set(['clear', 'compact', 'context']);
+  let cliCommands = [], cliCmdsCwd = null, cliCmdsLoading = false;
+
+  function cliToItem(c) {
+    const insert = '/' + c.name + ' ';
+    return {
+      cmd: '/' + c.name,
+      en: c.aliases && c.aliases.length ? '/' + c.aliases.join(' /') : '',
+      desc: (c.description || '') + (c.argumentHint ? '  ⟨' + c.argumentHint + '⟩' : ''),
+      cli: true,
+      // إدراج الأمر في المحرّر (مع إتاحة الوسائط) — الإرسال بـ Enter كدور عادي
+      run: () => {
+        input.value = insert;
+        autoResize();
+        input.focus();
+        input.setSelectionRange(insert.length, insert.length);
+      },
+    };
+  }
+
+  // جلب كسول لكل cwd: القائمة الأصلية تظهر فوراً، وأوامر CLI تلحق حين تصل
+  function ensureCliCommands() {
+    const cwd = $('cwd').value.trim();
+    if (cliCmdsCwd === cwd || cliCmdsLoading) return;
+    cliCmdsLoading = true;
+    window.satr.listCommands(cwd).then((r) => {
+      cliCmdsLoading = false;
+      cliCmdsCwd = cwd;
+      if (r && r.ok) {
+        cliCommands = r.commands.filter((c) => c.name && !CLI_CMD_EXCLUDE.has(c.name));
+        // إن كانت القائمة مفتوحة الآن أعد بناءها لتشمل الواصل حديثاً
+        if (slashOpenNow() && input.value.startsWith('/')) openSlash(input.value.slice(1));
+      }
+    }).catch(() => { cliCmdsLoading = false; });
+  }
+
+  function allSlashCommands() {
+    return COMMANDS.concat(cliCommands.map(cliToItem));
+  }
+
   function openSlash(filter) {
+    ensureCliCommands();
     const f = (filter || '').toLowerCase();
-    slashFiltered = COMMANDS.filter((c) =>
+    slashFiltered = allSlashCommands().filter((c) =>
       !f || c.cmd.includes(f) || c.en.toLowerCase().includes('/' + f) || c.en.toLowerCase().includes(f) || c.desc.includes(f)
     );
     if (!slashFiltered.length) return closeSlash();
@@ -1826,15 +1888,18 @@
     slashMenu.innerHTML = '';
     slashFiltered.forEach((c, i) => {
       const el = document.createElement('div');
-      el.className = 'slash-item' + (i === slashIndex ? ' active' : '');
+      el.className = 'slash-item' + (i === slashIndex ? ' active' : '') + (c.cli ? ' cli' : '');
       el.setAttribute('role', 'option');
       el.innerHTML = '<span class="cmd"></span><span class="desc"></span>';
-      el.querySelector('.cmd').textContent = c.cmd + ' · ' + c.en;
+      el.querySelector('.cmd').textContent = c.cmd + (c.en ? ' · ' + c.en : '');
       el.querySelector('.desc').textContent = c.desc;
       el.addEventListener('mousedown', (e) => { e.preventDefault(); pickSlash(i); });
       slashMenu.appendChild(el);
     });
     slashMenu.classList.add('open');
+    // مع القائمة الطويلة (أوامر CLI المتزامنة): أبقِ العنصر النشط ظاهراً أثناء التنقل
+    const act = slashMenu.querySelector('.active');
+    if (act) act.scrollIntoView({ block: 'nearest' });
   }
   function closeSlash() { slashMenu.classList.remove('open'); slashIndex = 0; }
   function pickSlash(i) {

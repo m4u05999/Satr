@@ -391,6 +391,13 @@ ipcMain.handle('satr:mcpAction', (event, p) => {
 
 // ---------- استخدام نافذة السياق للوحة /سياق (عبر getContextUsage في SDK) ----------
 
+// ---------- قائمة أوامر «/» من CLI لمزامنة قائمة الواجهة (قراءة فقط) ----------
+
+ipcMain.handle('satr:listCommands', (event, cwd) => {
+  const dir = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : os.homedir();
+  return agent.listCommands(dir);
+});
+
 ipcMain.handle('satr:contextUsage', (event, p) => {
   const dir = typeof (p && p.cwd) === 'string' && p.cwd.trim() ? p.cwd.trim() : os.homedir();
   const sid = p && typeof p.sessionId === 'string' && SAFE_SESSION.test(p.sessionId) ? p.sessionId : null;
