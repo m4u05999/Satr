@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-R/JwoJW21eesVjoPE9Ff+TcvCnZWNheevhzgdJda/Gs='; script-src 'self' 'sha256-O4Vrh6SNYlcLi8iR7OmtGujzZxHos5XAGfHNWbXFGy0='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-6LSuJkm634MdLcxClQT9bVLAWLLIRCWZ2K9CPD6gFps='; script-src 'self' 'sha256-O4Vrh6SNYlcLi8iR7OmtGujzZxHos5XAGfHNWbXFGy0='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -316,10 +316,14 @@
     color: var(--text); background: var(--bg); border-radius: 6px; padding: 2px 8px;
   }
   .perm-box .perm-detail {
-    font-family: var(--mono); direction: ltr; text-align: left;
+    font-family: var(--mono); text-align: start;
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 8px 10px; margin: 10px 0 0; font-size: 12px;
-    max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+    max-height: 180px; overflow: auto; white-space: pre-wrap;
+    /* plaintext: كل سطر يحلّ اتجاهه بنفسه (أمر لاتيني LTR، رسالة عربية RTL) بدل
+       فرض LTR على الكل. overflow-wrap بدل word-break: يلفّ الرموز الطويلة دون
+       كسر الحروف العربية في منتصف الكلمة (كان يشوّه رسائل الـ commit العربية) */
+    unicode-bidi: plaintext; overflow-wrap: anywhere;
   }
   .perm-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
   .perm-actions .allow { background: var(--green); color: #10250D; border: none; font-weight: 600; }
