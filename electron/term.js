@@ -161,6 +161,97 @@ function listTerms() {
   return Array.from(terminals.values()).map((t) => ({ id: t.id, shell: t.shell }));
 }
 
+// ---------- تشغيل أمر مع التقاط خرجه (المرحلة 16 — أداة run_in_terminal) ----------
+// يشغّل أمراً في طرفية مرئية موجودة فيراه المستخدم حياً، ويلتقط خرجه ليعيده للنموذج.
+// الالتقاط عبر «علامة نهاية» فريدة تُطبع بعد الأمر: نجمع الخرج حتى تظهر، ثم نستخرج
+// رمز الخروج منها. مصمَّم للأوامر السطرية؛ التطبيقات التفاعلية تُعالَج بالمهلة.
+
+// تنقية بايتات التحكم من الأمر (حقن ANSI/تحكم في نص الأمر) — يُبقى المحارف المطبوعة
+// والتبويب فقط. حدّ الطول احترازي (الأمر يذهب لمجرى pty لا لوسائط spawn أصلاً).
+function sanitizeCommand(cmd) {
+  if (typeof cmd !== 'string') return '';
+  // إزالة C0 و DEL و C1 (عدا لا شيء) — لا أسطر جديدة داخل الأمر (سطر واحد)
+  return cmd.replace(/[\x00-\x08\x0A-\x1F\x7F-\x9F]/g, '').slice(0, 8000);
+}
+
+const MAX_CAPTURE = 512 * 1024;   // سقف خرج ملتقَط (يحمي ذاكرة النموذج والعملية)
+const DEFAULT_CAP_TIMEOUT = 120000; // مهلة افتراضية للأمر (قابلة للتخصيص من المستدعي)
+
+function runCapture(id, command, opts) {
+  return new Promise((resolve) => {
+    const t = terminals.get(id);
+    if (!t) return resolve({ ok: false, error: 'no_term', message: 'لا توجد طرفية بهذا المعرّف.' });
+    const clean = sanitizeCommand(command);
+    if (!clean.trim()) return resolve({ ok: false, error: 'empty', message: 'أمر فارغ.' });
+
+    const timeoutMs = Number.isInteger(opts && opts.timeoutMs) && opts.timeoutMs > 0
+      ? Math.min(opts.timeoutMs, 600000) : DEFAULT_CAP_TIMEOUT;
+
+    // علامتا بداية/نهاية فريدتان: الخرج الحقيقي بينهما حصراً. كلٌّ سطر مستقل في المخرج
+    // (مطابقة تامة)، بينما صدى سطر الأمر يحوي العلامتين داخل نصّ الأمر فلا يطابق تماماً —
+    // يحلّ مشكلة التفاف صدى الأمر عبر الأسطر (تحقق قبول 16.1).
+    const tok = '__SATR_' + Math.random().toString(36).slice(2) + Date.now().toString(36) + '__';
+    const mBeg = tok + 'B', mEnd = tok + 'E';
+    const sh = (t.shell || '').toLowerCase();
+    let line;
+    if (sh.includes('powershell') || sh.includes('pwsh')) {
+      // رمز الخروج رقمي دائماً: نصفّر $LASTEXITCODE قبل الأمر كي لا يحمل قيمة دور سابق
+      // (cmdlets لا تضبطه)، وبعده نسقط لـ $? لو بقي $null (أمر أصلي لم يُشغَّل)
+      line = '$global:LASTEXITCODE=0; Write-Output "' + mBeg + '"; ' + clean +
+        ' ; $c=$LASTEXITCODE; if($c -eq $null){$c=if($?){0}else{1}}; Write-Output ("' + mEnd + ':"+$c)\r';
+    } else if (sh.includes('cmd')) {
+      line = 'echo ' + mBeg + ' & ' + clean + ' & echo ' + mEnd + ':%ERRORLEVEL%\r';
+    } else {
+      line = 'printf "%s\\n" "' + mBeg + '"; ' + clean + ' ; printf "%s:%s\\n" "' + mEnd + '" "$?"\r';
+    }
+
+    const endRe = new RegExp(mEnd + ':(-?\\d+)'); // اكتمال + رمز الخروج
+    let buf = '';
+    let settled = false;
+    let disp = null;
+    let timer = null;
+
+    function finish(res) {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      try { if (disp && disp.dispose) disp.dispose(); } catch (e) {}
+      resolve(res);
+    }
+
+    // الخرج النظيف = الأسطر بين علامة البداية (كسطر مستقل مطابق) وعلامة النهاية.
+    // نزع ANSI أولاً؛ ثم آخر سطر يساوي mBeg تماماً هو البداية الحقيقية (لا صدى الأمر).
+    function cleanOutput(raw) {
+      const s = raw.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').replace(/\r/g, '');
+      const lines = s.split('\n');
+      let bi = -1;
+      for (let i = lines.length - 1; i >= 0; i--) { if (lines[i].trim() === mBeg) { bi = i; break; } }
+      let out = bi >= 0 ? lines.slice(bi + 1) : lines;
+      out = out.filter((l) => l.indexOf(mEnd) < 0 && l.indexOf(mBeg) < 0); // احترازاً
+      return out.join('\n').trim().slice(0, MAX_CAPTURE);
+    }
+
+    // مِقبس مؤقت على نفس مجرى الخرج (المِقبس الدائم notify يبقى — المستخدم يرى حياً)
+    disp = t.proc.onData((data) => {
+      if (buf.length < MAX_CAPTURE + 8192) buf += data;
+      const m = buf.match(endRe);
+      if (m) finish({ ok: true, exitCode: parseInt(m[1], 10), output: cleanOutput(buf.slice(0, m.index)) });
+    });
+
+    timer = setTimeout(() => {
+      finish({ ok: true, timedOut: true, exitCode: null, output: cleanOutput(buf),
+        note: 'انتهت المهلة (' + Math.round(timeoutMs / 1000) + 'ث) — قد يكون أمراً تفاعلياً أو طويلاً؛ الخرج حتى الآن أعلاه.' });
+    }, timeoutMs);
+
+    // اللصق المُقوّس (bracketed paste): PSReadLine يعالج المحتوى كوحدة لصق بلا إعادة رسم
+    // ولا إسقاط محارف للأسطر الطويلة (تحقق قبول 16.1: الحقن الخام يُسقط محارف السطر الطويل)
+    const CR = line.slice(-1) === '\r' ? '\r' : '';
+    const body = CR ? line.slice(0, -1) : line;
+    try { t.proc.write('\x1b[200~' + body + '\x1b[201~' + CR); }
+    catch (e) { finish({ ok: false, error: 'write_failed', message: 'تعذّرت الكتابة للطرفية.' }); }
+  });
+}
+
 // قتل مضمون لكل الطرفيات عند إغلاق التطبيق (window-all-closed / before-quit)
 function killAll() {
   for (const t of terminals.values()) {
@@ -169,4 +260,4 @@ function killAll() {
   terminals.clear();
 }
 
-module.exports = { setNotifier, startTerm, writeTerm, resizeTerm, killTerm, listTerms, killAll };
+module.exports = { setNotifier, startTerm, writeTerm, resizeTerm, killTerm, listTerms, runCapture, killAll };
