@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-1lYTsA+KFUHprdWBOKJgeZG5GL+oUZWq20347keoXDA='; script-src 'self' 'sha256-kniD5cIdvFxCr3omHPYM4QQg6RXPRkzraCqaOCrzTqI='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-1lYTsA+KFUHprdWBOKJgeZG5GL+oUZWq20347keoXDA='; script-src 'self' 'sha256-q2rtUCNVcZonFlyuMHWRvqF+6i3bN5WoG8UOiX7mXhw='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -1939,10 +1939,25 @@
     });
   }
 
+  // ملاءمة واعية بالوضع (إصلاح فقدان الأسطر عند تغيير الحجم — لقطة قبول):
+  // ConPTY يعيد رسم شاشته عند كل resize فيدوس ما سحبه xterm من scrollback إلى النافذة
+  // (تحقق آلي: cursorHome+repaint بلا 3J). في العرض العربي لا حاجة لمطابقة الصفوف
+  // لارتفاع اللوحة أصلاً (الإسقاط يعرض من الـ Buffer ما يشاء) — فنغيّر الأعمدة فقط
+  // عند تغيّر العرض، ولا نلمس pty عند سحب الارتفاع. الشبكي يحتاج الملاءمة الكاملة (TUI).
+  function fitTerm() {
+    if (!term || !termFit) return;
+    if (bidiMode) {
+      const d = termFit.proposeDimensions();
+      if (d && d.cols && d.cols !== term.cols) term.resize(d.cols, term.rows);
+    } else {
+      termFit.fit();
+    }
+  }
+
   // بدء جلسة pty (أو استرجاع الحيّة) في مجلد المشروع الحالي
   async function startTermSession() {
     ensureTerm();
-    termFit.fit();
+    if (termId) fitTerm(); else termFit.fit(); // أول إنشاء: ملاءمة كاملة قبل ولادة pty
     const r = await window.satr.termStart($('cwd').value.trim(), term.cols, term.rows);
     if (!r || !r.ok) {
       term.writeln('\x1b[31m' + ((r && r.message) || 'تعذّر بدء الطرفية') + '\x1b[0m');
@@ -1973,9 +1988,9 @@
   $('termRestart').addEventListener('click', restartTermSession);
   $('termRestart2').addEventListener('click', restartTermSession);
 
-  // ملاءمة الأبعاد عند تغيير حجم النافذة واللوحة مفتوحة
+  // ملاءمة الأبعاد عند تغيير حجم النافذة واللوحة مفتوحة (واعية بالوضع)
   window.addEventListener('resize', () => {
-    if (!termPanel.hidden && termFit) termFit.fit();
+    if (!termPanel.hidden) fitTerm();
   });
 
   // سحب مقبض اللوحة لتغيير ارتفاعها — يُحفظ في localStorage ويُسترجع عند الإقلاع
@@ -1988,14 +2003,16 @@
       // السحب لأعلى يزيد الارتفاع (اللوحة ملتصقة بالأسفل)
       const h = Math.min(Math.max(startH + (startY - e.clientY), 140), Math.round(window.innerHeight * 0.8));
       termPanel.style.height = h + 'px';
-      if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (termFit) termFit.fit(); });
+      // في العربي: لا يُلمس pty (سحب الارتفاع كان يدمّر scrollback عبر إعادة رسم ConPTY)
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; fitTerm(); scheduleBidiSync(); });
     }
     function onUp() {
       resizer.classList.remove('dragging');
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       localStorage.setItem('satr_term_height', String(termPanel.offsetHeight));
-      if (termFit) termFit.fit();
+      fitTerm();
+      scheduleBidiSync();
     }
     resizer.addEventListener('mousedown', (e) => {
       e.preventDefault();
@@ -2092,7 +2109,16 @@
     bidiRaf = 0;
     if (!term || !bidiMode || termPanel.hidden) return;
     const buf = term.buffer.active;
-    const total = buf.length;
+    // قصّ الذيل الفارغ: صفوف نافذة xterm الخالية أسفل المؤشر لا تُحتسب — الالتصاق
+    // بالذيل يضع سطر الموجّه أسفل اللوحة بلا مساحة ميتة (لقطة قبول: تكبير اللوحة)
+    const cursorAbs = buf.baseY + buf.cursorY;
+    let lastIdx = buf.length - 1;
+    while (lastIdx > cursorAbs) {
+      const l = buf.getLine(lastIdx);
+      if (l && l.translateToString(true) !== '') break;
+      lastIdx--;
+    }
+    const total = lastIdx + 1;
     bidiSpacer.style.height = (total * LINE_H) + 'px';
     if (bidiPinned) termBidiEl.scrollTop = termBidiEl.scrollHeight; // ملتصق بالذيل
     const first = Math.max(0, Math.floor(termBidiEl.scrollTop / LINE_H) - OVERSCAN);
@@ -2142,7 +2168,12 @@
     $('termView').textContent = bidi ? 'العرض: عربي' : 'العرض: شبكي';
     // لوحة المفاتيح: في العربي لسطر الإدخال HTML، وفي الشبكي لحقل xterm (إدخال خام)
     if (bidi) { bidiPinned = true; scheduleBidiSync(); hideTermNotice(); if (!termPanel.hidden) $('termInput').focus(); }
-    else if (term && !termPanel.hidden) term.focus();
+    else {
+      // الدخول للشبكي: ملاءمة كاملة — الصفوف قد تكون أقل من ارتفاع اللوحة بعد سحب
+      // في الوضع العربي (حيث لا نلمس pty)، وتطبيقات TUI تحتاج الشبكة مطابقة فعلاً
+      if (termFit) termFit.fit();
+      if (term && !termPanel.hidden) term.focus();
+    }
   }
   $('termView').addEventListener('click', () => setTermView(!bidiMode));
 
