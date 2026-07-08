@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-Bszqh/EczwTMj9U85aWcMjNIlC6EQ8HLl+zQGSa+j0U='; script-src 'self' 'sha256-wA9a8QBDDiRjLLfxyY8aRyzLes/++RylGIoysAiutu8='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-Bszqh/EczwTMj9U85aWcMjNIlC6EQ8HLl+zQGSa+j0U='; script-src 'self' 'sha256-CWnX4ISzp+k8xv2IyKARIf22Pu2hKAEWaoifZHg0ei4='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -1725,12 +1725,16 @@
     const list = await window.satr.listAgents($('cwd').value.trim());
     agentsListEl.innerHTML = '';
     if (!Array.isArray(list) || !list.length) {
+      const cwdNow = $('cwd').value.trim();
       agentsListEl.innerHTML =
-        '<div class="hint"><p>لا وكلاء فرعيين بعد.</p>' +
-        '<p>أنشئ ملفاً في <code>‎.claude/agents/&lt;name&gt;.md</code> بمقدمة ' +
+        '<div class="hint"><p>لا وكلاء فرعيين في المسارين المفحوصين:</p>' +
+        '<p><code>' + (cwdNow ? esc(cwdNow) + '\\.claude\\agents\\' : '(لم تختر مجلد مشروع — وكلاء المشروع تحتاج مجلداً 📁)') + '</code><br>' +
+        '<code>~\\.claude\\agents\\</code> (وكلاء المستخدم — تظهر في كل المشاريع)</p>' +
+        '<p>أنشئ ملف <code>&lt;name&gt;.md</code> في أحدهما بمقدمة ' +
         '<code>name</code> و<code>description</code> (واختيارياً <code>tools</code> و' +
         '<code>model</code>)، وجسم الملف هو برومبت الوكيل — والنموذج يستدعيه تلقائياً ' +
-        'حين يناسب وصفه المهمة، وتظهر أعماله بطاقةً متداخلة في المحادثة.</p></div>';
+        'حين يناسب وصفه المهمة، وتظهر أعماله بطاقةً متداخلة في المحادثة.</p>' +
+        '<p>💡 مستودع «سطر» نفسه فيه وكيل نموذجي: اختر مجلده ثم أعد الفتح.</p></div>';
       return;
     }
     for (const a of list) {
