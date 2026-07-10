@@ -37,6 +37,21 @@ function safeParse(s) {
   catch { return {}; }
 }
 
+// «موافقة دائمة» لأداة (2.2) — لعمر التطبيق، مشتركة بين مزوّدي عائلة openai
+// (نفس نموذج alwaysAllowed في agent.js لمسار SDK)
+const alwaysAllowed = new Set();
+
+// نسخة عرض لوسائط الأداة في مربع الإذن — تقصّ الحقول الطويلة (content ضخم مثلاً)
+// حتى لا ينفجر المربع؛ التنفيذ يستعمل الوسائط الكاملة وبطاقة diff تعرض التفاصيل بعده
+function displayInput(args) {
+  const out = {};
+  for (const k of Object.keys(args || {})) {
+    const v = args[k];
+    out[k] = (typeof v === 'string' && v.length > 800) ? v.slice(0, 800) + '… (+' + (v.length - 800) + ')' : v;
+  }
+  return out;
+}
+
 function make(config) {
   const { id: providerId, host, path: apiPath, keyName, defaultModel, label } = config;
   const histories = new Map(); // session_id -> رسائل بصيغة OpenAI (كاش حيّ فوق القرص)
@@ -47,7 +62,9 @@ function make(config) {
   }
 
   function start(input, cwd, emit) {
-    const { prompt, sessionId, model } = input;
+    const { prompt, sessionId, model, permissionMode } = input;
+    // acceptEdits/bypassPermissions تمرّان الكتابة بلا سؤال (نفس دلالة أوضاع SDK)
+    const autoAllowWrites = permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions';
 
     const apiKey = resolveKey();
     if (!apiKey) {
@@ -73,6 +90,20 @@ function make(config) {
     let aborted = false;
     let currentReq = null;
     let toolsOk = true; // يُعطَّل بعد رفض المزوّد للأدوات (نموذج لا يدعم tool-calling)
+
+    // ---------- الإذن العربي لأدوات الكتابة والتنفيذ (2.2/2.3) ----------
+    // نفس عقد مسار SDK: permission_request للواجهة، والرد يصل عبر resolvePermission
+    // على مقبض التشغيل (main.js يوجّه satr:permission إلى المقبض الجاري أياً كان محركه).
+    // طبقات: 'write' يعفيها acceptEdits/«موافقة دائمة»؛ 'exec' موافقة إلزامية كل مرة
+    // (bypassPermissions وحده يعفيها — العرض المرئي في الطرفية لا يخفّف التنفيذ)
+    const pendingPerms = new Map(); // id → { resolve, name }
+    function askPermission(callId, name, args, tier) {
+      if (permissionMode === 'bypassPermissions') return Promise.resolve(true);
+      if (tier === 'write' && (autoAllowWrites || alwaysAllowed.has(name))) return Promise.resolve(true);
+      const id = String(callId);
+      emit({ type: 'permission_request', id, tool: name, input: displayInput(args) });
+      return new Promise((resolve) => { pendingPerms.set(id, { resolve, name }); });
+    }
 
     // طلب واحد للمزوّد: يبثّ النص حيّاً ويجمع نداءات الأدوات المتدفقة (SSE)
     function requestOnce(messages, withTools) {
@@ -195,7 +226,19 @@ function make(config) {
           });
           for (const c of r.calls) {
             if (aborted) return;
-            const out = await tools.run(c.name, cwd, safeParse(c.args));
+            const parsed = safeParse(c.args);
+            const tier = tools.permissionTier(c.name);
+            let out;
+            if (tier) {
+              // أداة كتابة/تنفيذ (2.2/2.3): موافقة المستخدم أولاً — الرفض يعود للنموذج نصاً
+              const allowed = await askPermission(c.id, c.name, parsed, tier);
+              if (aborted) return;
+              out = allowed
+                ? await tools.run(c.name, cwd, parsed, { emit, id: c.id })
+                : { ok: false, content: 'رفض المستخدم هذا الإجراء — لا تعاود المحاولة نفسها؛ اشرح ما كنت ستفعله أو اقترح بديلاً' };
+            } else {
+              out = await tools.run(c.name, cwd, parsed);
+            }
             emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: c.id, is_error: !out.ok }] } });
             messages.push({ role: 'tool', tool_call_id: c.id, content: out.content });
           }
@@ -225,8 +268,21 @@ function make(config) {
     return {
       stop() {
         aborted = true;
+        // إنهاء أي إذن معلّق بالرفض حتى لا تبقى الحلقة منتظرة للأبد
+        for (const [, p] of pendingPerms) { try { p.resolve(false); } catch (e) {} }
+        pendingPerms.clear();
         try { if (currentReq) currentReq.destroy(); } catch (e) {}
         return Promise.resolve();
+      },
+      // رد الواجهة على مربع الإذن (main.js يوجّهه إلى المقبض الجاري)
+      resolvePermission(id, allow, always) {
+        const p = pendingPerms.get(id);
+        if (!p) return false;
+        pendingPerms.delete(id);
+        // «موافقة دائمة» لعمر التطبيق — لا تسري على أدوات التنفيذ (exec إلزامي كل مرة)
+        if (allow && always && tools.permissionTier(p.name) !== 'exec') alwaysAllowed.add(p.name);
+        p.resolve(!!allow);
+        return true;
       },
     };
   }

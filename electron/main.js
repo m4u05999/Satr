@@ -17,6 +17,7 @@ const agent = require('./agent');
 const adapters = require('./adapters');
 const inject = require('./inject');
 const chats = require('./chats');
+const agentTools = require('./tools'); // أدوات المحوّلات (2.1/2.2) — للتراجع عن تعديلاتها
 const features = require('./features');
 const keys = require('./keys');
 const bgprocs = require('./bgprocs');
@@ -376,10 +377,16 @@ ipcMain.handle('satr:killBgProc', (event, id) => {
   return bgprocs.kill(id);
 });
 
-// رد الواجهة على طلب إذن أداة (محرك SDK)
+// رد الواجهة على طلب إذن أداة — يوجَّه للمقبض الجاري أياً كان محركه:
+// محرك SDK (currentRun) أو محوّل بحلقة وكيل (currentCliRun منذ 2.2)
 ipcMain.handle('satr:permission', (event, p) => {
-  if (!currentRun || !p || typeof p.id !== 'string') return { ok: false };
-  return { ok: currentRun.resolvePermission(p.id, !!p.allow, !!p.always) };
+  if (!p || typeof p.id !== 'string') return { ok: false };
+  let ok = false;
+  if (currentRun) ok = currentRun.resolvePermission(p.id, !!p.allow, !!p.always);
+  if (!ok && currentCliRun && typeof currentCliRun.resolvePermission === 'function') {
+    ok = currentCliRun.resolvePermission(p.id, !!p.allow, !!p.always);
+  }
+  return { ok };
 });
 
 // ---------- التراجع عن تعديل ملف (المرحلة 3) ----------
@@ -388,7 +395,11 @@ ipcMain.handle('satr:permission', (event, p) => {
 const SAFE_EDIT_ID = /^[A-Za-z0-9_:.-]{1,128}$/;
 ipcMain.handle('satr:undoEdit', (event, id) => {
   if (typeof id !== 'string' || !SAFE_EDIT_ID.test(id)) return { ok: false, error: 'bad_id' };
-  return agent.undoEdit(id);
+  // لقطات SDK أولاً ثم لقطات أدوات المحوّلات (2.2) — المعرّفات لا تتصادم
+  const r = agent.undoEdit(id);
+  if (r && r.ok) return r;
+  const r2 = agentTools.undoEdit(id);
+  return (r2 && r2.ok) ? r2 : r;
 });
 
 // ---------- التحديث التلقائي (المرحلة 17) — رد الواجهة على «أعد التشغيل الآن» ----------

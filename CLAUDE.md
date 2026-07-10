@@ -44,16 +44,27 @@ electron/inject.js   ← حقن @الملفات للمحوّلات (الدفعة
                        تنبيهات «📎 أُرفق…»/«⚠️ لم يُرفق…»
 electron/adapters/   ← طبقة المحوّلات/المزوّدين (المرحلة 5): سجلّ قابل للحقن + عقد موحّد
                        index.js (register/get/list) + claude-cli.js (مسار claude -p المنقول) +
-                       gemini.js (Gemini عبر REST مباشر) + openai-compatible.js (مصنع لأي
-                       endpoint متوافق OpenAI: DeepSeek/Qwen/GLM…). محرك SDK يبقى خاصاً في
+                       gemini.js (REST مباشر + حلقة وكيل بصيغته — 2.4) + openai-compatible.js
+                       (مصنع لأي endpoint متوافق OpenAI: DeepSeek/Qwen/GLM… + حلقة وكيل
+                       2.1–2.3 بالأذونات العربية). محرك SDK يبقى خاصاً في
                        agent.js (لا يُلفّ). انظر «طبقة المحوّلات والمزوّدين» أدناه + docs/ARCHITECTURE.md
 electron/keys.js     ← مخزن أسرار «سطر» (~/.satr/keys.json): get/names/set/remove — بذرة إدارة
                        مفاتيح المزوّدين (نقطة الربط §4.3). القيم لا تُعاد للواجهة أبداً
-electron/tools.js    ← أدوات الوكيل للمحوّلات العمياء (الدفعة 2.1): defs() تعريفات بصيغة
-                       OpenAI tools + run(name, cwd, args) تنفيذ محلي يعيد {ok, content}.
-                       قراءة فقط حالياً: read_file (عبر files.readText المؤمَّنة) و
-                       list_files (عبر files.listFiles). سقف نتيجة 48ك. الكتابة/التنفيذ
-                       بأذونات عربية في 2.2/2.3
+electron/tools.js    ← أدوات الوكيل للمحوّلات العمياء (الدفعتان 2.1/2.2): defs() تعريفات
+                       بصيغة OpenAI tools + run(name, cwd, args, ctx) تنفيذ محلي يعيد
+                       {ok, content}. القراءة: read_file/list_files (فوق files.js المؤمَّنة،
+                       سقف نتيجة 48ك، بلا إذن — تطابق Claude Code). الكتابة (2.2):
+                       write_file/edit_file/delete_file — needsPermission() يوجب مربع الإذن العربي
+                       (delete_file أُضيف لأن حذف الأسماء العربية عبر صدفة del/rm هشّ؛
+                       resolveExisting يتسامح مع تطبيع Unicode NFC/NFD فيصيب الملف القائم).
+                       (يسأل المحوّل قبل التنفيذ)، وctx {emit, id} يُصدر file_edit
+                       (نفس عقد SDK: بطاقة diff + تراجع) بلقطات editSnapshots خاصة
+                       وundoEdit() نظيرة agent.undoEdit (main.js يجرّب الاثنين).
+                       حدود: 1م.ب/كتابة، لا تعديل ملف >2م.ب أو ثنائي. والتنفيذ (2.3):
+                       run_command في طرفية النموذج المرئية (term.ensureModelTerm +
+                       runCapture — نفس مسار run_in_terminal للمرحلة 16) بطبقة إذن 'exec'
+                       إلزامية كل مرة (لا «موافقة دائمة» ولا يعفيها acceptEdits —
+                       bypassPermissions وحده). permissionTier() تعيد write/exec/null
 electron/chats.js    ← ذاكرة المحوّلات على القرص (الدفعة 1.3): load/save لسجلّ محادثات REST
                        في ~/.satr/chats/<provider>/<session>.json بصيغة المحوّل الأصلية.
                        تنقية regex صارمة للمعرّفات، سقف 50 جلسة/مزوّد (تنظيف بالأقدم)،
@@ -175,16 +186,26 @@ result`)، فالواجهة لا تتغيّر.
 - **`adapters/openai-compatible.js`**: **مصنع** `make(config)` لأي endpoint متوافق مع OpenAI
   Chat Completions (بثّ `choices[].delta.content` + `[DONE]`). DeepSeek/Qwen/GLM/Kimi كلها
   بنفس البروتوكول ⇒ إضافة مزوّد = سطر `register()` واحد. متحقَّق حيّاً بالبروتوكول.
-- **حلقة الوكيل (الدفعة 2.1 — عائلة openai فقط حالياً)**: الطلب يعلن أدوات «سطر»
+- **حلقة الوكيل (الدفعات 2.1–2.4 — عائلتا openai وgemini)**: الطلب يعلن أدوات «سطر»
   (`electron/tools.js`)؛ النموذج يطلب أداة ⇒ المحوّل ينفّذها محلياً ويعيد النتيجة برسالة
   `role:"tool"` ويعاود الطلب (سقف 8 جولات/دور). البثّ للواجهة بنفس عقد أحداث SDK
   (`tool_use`/`tool_result` في رسائل assistant/user) ⇒ بطاقات الأدوات تظهر بصفر تغيير
   واجهة. نموذج يرفض الأدوات (4xx أول طلب، مثل بعض نسخ R1) ⇒ يُعاد الطلب مرة واحدة
   دونها (تدهور رشيق لدردشة عادية). رسائل الأدوات تُحفظ في الذاكرة (1.3) بصيغتها،
   والقصّ يسقط رسائل tool اليتيمة من المقدمة (المزوّد يرفضها بلا نداء يسبقها).
-- **حدود موثّقة**: نص فقط (لا صور/diff/إذن حيّ في هذه المحوّلات — تلك حصرية لمحرك SDK)؛
-  أدوات القراءة فقط (2.1) — الكتابة والتنفيذ مع الأذونات العربية في 2.2/2.3؛ Gemini بلا
-  أدوات بعد (تعميم الحلقة له في 2.4).
+- **أدوات الكتابة بالأذونات العربية (الدفعة 2.2)**: write_file/edit_file تمرّ بمربع
+  الإذن العربي **قبل** التنفيذ — المحوّل يبثّ `permission_request` (نفس عقد SDK؛ نسخة
+  العرض تقصّ الحقول الطويلة) وينتظر `resolvePermission` على مقبض التشغيل (main.js يوجّه
+  `satr:permission` للمقبض الجاري أياً كان محركه). «موافقة دائمة» لعمر التطبيق (Set
+  مشترك لعائلة openai)، وأوضاع acceptEdits/bypassPermissions تعفي من السؤال، والرفض
+  يعود للنموذج نصاً (لا يكرر المحاولة). التنفيذ يُصدر `file_edit` فتظهر بطاقة diff
+  و«تراجع» يعمل عبر لقطات tools.js (satr:undoEdit يجرّب agent ثم tools). إيقاف الدور
+  يفكّ أي إذن معلّق بالرفض.
+- **تعميم الحلقة لـ Gemini (الدفعة 2.4)**: gemini.js يملك الحلقة نفسها بصيغته
+  (functionDeclarations/functionCall/functionResponse — أداة بلا وسائط تُحذف parameters
+  كلياً لأنه يرفض OBJECT فارغ الخصائص، والمعرّفات تُولَّد محلياً `gm_…` لأنه لا يصدرها)
+  وبنفس طبقات الإذن وعقد الأحداث. إضافة مزوّد جديد لأي من العائلتين = يرث الوكيل كاملاً.
+- **حدود موثّقة**: نص فقط (لا صور في هذه المحوّلات — حصرية لمحرك SDK).
 - **الذاكرة (الدفعة 1.3)**: سجلّ المحادثة كاش حيّ (Map) فوق **قرص** (`electron/chats.js` —
   `~/.satr/chats/<provider>/<session>.json`) فتُستأنف المحادثة بعد إعادة تشغيل «سطر».
   مؤشر «آخر جلسة» على **القرص أيضاً** (`<provider>/last.txt` يكتبه `chats.save`) — **ليس

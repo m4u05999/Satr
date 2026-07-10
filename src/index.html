@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-aq6YbQQ/NGxdDk5yFZUg4ikigReQ+YEFXnxYCUNviOw='; script-src 'self' 'sha256-Ac6J/IVbRJCDV//DXIWUw1pYxj2Qjdowz6uaVXCWzUM='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-aq6YbQQ/NGxdDk5yFZUg4ikigReQ+YEFXnxYCUNviOw='; script-src 'self' 'sha256-Qo5N7W6koYAVUPKgz8CIaUCu1kOAFVQea3SSKCGl7/I='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -708,7 +708,7 @@
 <div id="permOverlay" role="dialog" aria-modal="true" aria-labelledby="permTitle">
   <div class="perm-box">
     <h3 id="permTitle">🔐 طلب إذن لاستخدام أداة</h3>
-    <p>يطلب Claude Code استخدام الأداة <span class="tool-name" id="permTool"></span></p>
+    <p>يطلب النموذج استخدام الأداة <span class="tool-name" id="permTool"></span></p>
     <div class="perm-detail" id="permDetail" dir="ltr"></div>
     <div class="perm-actions">
       <button class="allow" id="permAllow">موافقة</button>
@@ -1264,7 +1264,7 @@
     file.className = 'diff-file'; file.dir = 'ltr'; file.textContent = ev.rel;
     const tag = document.createElement('span');
     tag.className = 'diff-tag';
-    tag.textContent = ev.isNew ? 'ملف جديد' : (ev.tool === 'Write' ? 'كتابة' : 'تعديل');
+    tag.textContent = ev.isDelete ? 'حُذف' : (ev.isNew ? 'ملف جديد' : (ev.tool === 'Write' || ev.tool === 'write_file' ? 'كتابة' : 'تعديل'));
     const counts = document.createElement('span');
     counts.className = 'diff-counts'; counts.dir = 'ltr';
     const a = document.createElement('span'); a.className = 'a'; a.textContent = '+' + ev.added;
@@ -1336,11 +1336,22 @@
     return box;
   }
 
+  // اسم المحرك المعروض في رأس الرد — يتبع المحرك المختار (لا يُنسب DeepSeek لـ Claude)
+  function engineLabel() {
+    const e = $('engine').value;
+    if (e === 'sdk') return 'Claude Code';
+    if (e === 'cli') return 'Claude Code (CLI)';
+    const p = providersCache.find((x) => x.name === e);
+    return (p && p.label) ? p.label : (e || 'النموذج');
+  }
+
   function newAssistantBlock() {
     hideEmpty();
     const w = document.createElement('div');
     w.className = 'msg assistant';
-    w.innerHTML = '<div class="who">Claude Code</div>';
+    const who = document.createElement('div'); who.className = 'who';
+    who.textContent = engineLabel(); // نص لا HTML (اسم المحرك آمن لكن textContent أنظف)
+    w.appendChild(who);
     // مجموعة الإجراءات القابلة للطيّ: مخفية حتى أول أداة، وتنطوي عند انتهاء الدور
     const toolsWrap = document.createElement('div'); toolsWrap.className = 'tools-wrap';
     const toolsHead = document.createElement('div'); toolsHead.className = 'tools-head';

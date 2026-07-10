@@ -15,10 +15,58 @@
  * النموذج فيشرحها للمستخدم بلغته.
  */
 
+const fs = require('fs');
+const path = require('path');
 const files = require('./files');
+const inject = require('./inject'); // resolveInside — تحقق مسار موحّد
+const { computeDiff } = require('./diff');
+const term = require('./term'); // طرفية النموذج المرئية (2.3) — نفس مفرد المرحلة 16
 
-const MAX_RESULT = 48 * 1024; // سقف نتيجة الأداة (محارف) — حماية سياق النموذج
-const MAX_LIST = 1500;        // سقف أسطر list_files
+const MAX_RESULT = 48 * 1024;  // سقف نتيجة الأداة (محارف) — حماية سياق النموذج
+const MAX_LIST = 1500;         // سقف أسطر list_files
+const MAX_WRITE = 1024 * 1024; // سقف محتوى كتابة واحد (1م.ب)
+const MAX_EDIT_SRC = 2 * 1024 * 1024; // لا تعديل على ملف أكبر (حماية ذاكرة + تراجع مضمون)
+
+// ---------- أدوات الكتابة (الدفعة 2.2): إذن عربي إلزامي + diff + تراجع ----------
+// نفس نموذج agent.js: لقطة «قبل» لكل تعديل تعيش بعد الدور ليعمل «تراجع» لاحقاً.
+const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'delete_file']);
+const editSnapshots = new Map(); // call_id → { file_path, before|null }
+const MAX_SNAPSHOTS = 40;
+
+function rememberSnapshot(id, snap) {
+  editSnapshots.set(id, snap);
+  while (editSnapshots.size > MAX_SNAPSHOTS) {
+    editSnapshots.delete(editSnapshots.keys().next().value);
+  }
+}
+
+// «تراجع» عن تعديل أداة محوّل — نظير agent.undoEdit (main.js يجرّب الاثنين)
+function undoEdit(id) {
+  const snap = editSnapshots.get(id);
+  if (!snap) return { ok: false, error: 'expired' };
+  try {
+    if (snap.before == null) {
+      try { fs.unlinkSync(snap.file_path); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    } else {
+      fs.writeFileSync(snap.file_path, snap.before, 'utf8');
+    }
+    editSnapshots.delete(id);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+// طبقة إذن الأداة (المحوّل يسأل قبل التنفيذ — مربع الإذن العربي):
+// 'write' = كتابة ملفات (يعفيها acceptEdits و«موافقة دائمة»)
+// 'exec'  = تنفيذ أوامر (2.3 — موافقة إلزامية كل مرة؛ bypassPermissions وحده يعفيها)
+// null    = قراءة بلا إذن (تطابق Claude Code)
+function permissionTier(name) {
+  if (WRITE_TOOLS.has(name)) return 'write';
+  if (name === 'run_command') return 'exec';
+  return null;
+}
+function needsPermission(name) { return permissionTier(name) !== null; }
 
 // تعريفات الأدوات المعلنة للنموذج (بروتوكول OpenAI Chat Completions)
 const DEFS = [
@@ -44,6 +92,67 @@ const DEFS = [
       parameters: { type: 'object', properties: {} },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'write_file',
+      description: "Create a new file or completely overwrite an existing file in the user's project. The user is asked for permission first. Prefer edit_file for small changes to existing files.",
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative file path inside the project' },
+          content: { type: 'string', description: 'Full new content of the file' },
+        },
+        required: ['path', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_file',
+      description: "Delete a file from the user's project. The user is asked for permission first. This is reliable for any filename (including Arabic names) — prefer it over shell commands like del/rm for deleting files.",
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative file path inside the project' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_command',
+      description: "Run a single-line shell command (PowerShell on Windows) in the user's visible terminal and return its output. The user must approve each command. Long-running interactive apps (servers) will be cut by the timeout.",
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'One-line shell command to run' },
+          timeout_seconds: { type: 'number', description: 'Optional timeout in seconds (default 120, max 600)' },
+        },
+        required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_file',
+      description: "Edit an existing file by exact string replacement. old_string must match the file content exactly (including whitespace) and must be unique unless replace_all is true. The user is asked for permission first.",
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative file path inside the project' },
+          old_string: { type: 'string', description: 'Exact text to replace' },
+          new_string: { type: 'string', description: 'Replacement text' },
+          replace_all: { type: 'boolean', description: 'Replace every occurrence (default false)' },
+        },
+        required: ['path', 'old_string', 'new_string'],
+      },
+    },
+  },
 ];
 
 function defs() { return DEFS; }
@@ -56,11 +165,58 @@ const READ_ERRORS = {
   error: 'تعذّرت قراءة الملف',
 };
 
+// حلّ مسار داخل cwd مع تسامح تطبيع Unicode (حرج للأسماء العربية): إن لم يوجد المسار
+// حرفياً، نطابق أسماء المجلد بعد التطبيع (NFC) — يعالج اختلاف NFC/NFD بين ما يكتبه
+// النموذج وما هو مخزَّن فعلاً على القرص. يعيد المسار المطلق الفعلي أو الأصلي.
+function resolveExisting(cwd, rel) {
+  const abs = inject.resolveInside(cwd, rel);
+  if (!abs) return null;
+  if (fs.existsSync(abs)) return abs;
+  try {
+    const dir = path.dirname(abs);
+    const base = path.basename(abs);
+    const want = base.normalize('NFC');
+    for (const name of fs.readdirSync(dir)) {
+      if (name.normalize('NFC') === want) return path.join(dir, name);
+    }
+  } catch { /* المجلد غير موجود — يبقى المسار الأصلي */ }
+  return abs;
+}
+
+// قراءة «قبل» لملف تعديل: null = ملف جديد؛ يرمي إن كان ثنائياً أو ضخماً
+function readBefore(abs) {
+  let st;
+  try { st = fs.statSync(abs); } catch { return null; } // غير موجود — ملف جديد
+  if (!st.isFile()) throw new Error('المسار ليس ملفاً');
+  if (st.size > MAX_EDIT_SRC) throw new Error('الملف أكبر من حدّ التعديل (2م.ب)');
+  const buf = fs.readFileSync(abs);
+  if (inject.looksBinary(buf)) throw new Error('ملف ثنائي — لا يُعدَّل نصاً');
+  return buf.toString('utf8');
+}
+
+// كتابة + لقطة تراجع + بطاقة diff للواجهة (نفس عقد file_edit في مسار SDK)
+function commitWrite(ctx, cwd, toolName, rel, abs, before, after) {
+  fs.mkdirSync(path.dirname(abs), { recursive: true }); // مجلدات وسيطة (داخل cwd حتماً)
+  fs.writeFileSync(abs, after, 'utf8');
+  const id = (ctx && ctx.id) || ('tool_' + Math.random().toString(36).slice(2));
+  rememberSnapshot(id, { file_path: abs, before });
+  if (ctx && typeof ctx.emit === 'function') {
+    const d = computeDiff(before == null ? '' : before, after);
+    ctx.emit({
+      type: 'file_edit', id, tool: toolName,
+      rel, isNew: before == null,
+      added: d.added, removed: d.removed, lines: d.lines, truncated: d.truncated,
+    });
+  }
+}
+
 /**
  * تنفيذ أداة باسمها — يعيد دائماً { ok, content } والمحتوى نص يُعاد للنموذج
  * (الفشل نص خطأ عربي، لا استثناء — النموذج يصحح مساره بنفسه).
+ * ctx (اختياري): { emit, id } — لبطاقات diff وربطها ببطاقة الأداة (أدوات الكتابة).
+ * ⚠️ أدوات الكتابة يجب ألا تُستدعى إلا بعد موافقة المستخدم (needsPermission في المحوّل).
  */
-async function run(name, cwd, args) {
+async function run(name, cwd, args, ctx) {
   try {
     if (name === 'read_file') {
       const rel = args && typeof args.path === 'string' ? args.path.trim() : '';
@@ -80,10 +236,93 @@ async function run(name, cwd, args) {
       if (list.length > MAX_LIST) content += '\n…(' + (list.length - MAX_LIST) + ' ملفاً آخر لم يُعرض)';
       return { ok: true, content };
     }
+    if (name === 'write_file') {
+      const rel = args && typeof args.path === 'string' ? args.path.trim() : '';
+      const content = args && typeof args.content === 'string' ? args.content : null;
+      if (!rel || content == null) return { ok: false, content: 'خطأ: الوسيطتان path و content مطلوبتان' };
+      if (content.length > MAX_WRITE) return { ok: false, content: 'خطأ: المحتوى أكبر من سقف الكتابة (1م.ب)' };
+      const abs = resolveExisting(cwd, rel); // تسامح تطبيع (يصيب الملف العربي القائم لا نسخة مكرّرة)
+      if (!abs) return { ok: false, content: 'خطأ: ' + READ_ERRORS.outside };
+      const before = readBefore(abs); // يرمي للثنائي/الضخم — يلتقطه catch أدناه
+      commitWrite(ctx, cwd, name, rel.replace(/\\/g, '/'), abs, before, content);
+      const n = content.split('\n').length;
+      return { ok: true, content: (before == null ? 'أُنشئ الملف ' : 'استُبدل محتوى الملف ') + rel + ' (' + n + ' سطراً)' };
+    }
+    if (name === 'edit_file') {
+      const rel = args && typeof args.path === 'string' ? args.path.trim() : '';
+      const oldStr = args && typeof args.old_string === 'string' ? args.old_string : '';
+      const newStr = args && typeof args.new_string === 'string' ? args.new_string : null;
+      if (!rel || !oldStr || newStr == null) return { ok: false, content: 'خطأ: الوسائط path و old_string و new_string مطلوبة' };
+      const abs = resolveExisting(cwd, rel); // تسامح تطبيع (أسماء عربية)
+      if (!abs) return { ok: false, content: 'خطأ: ' + READ_ERRORS.outside };
+      const before = readBefore(abs);
+      if (before == null) return { ok: false, content: 'خطأ: الملف غير موجود — استخدم write_file لإنشاء ملف جديد' };
+      const count = before.split(oldStr).length - 1;
+      if (count === 0) return { ok: false, content: 'خطأ: النص المطلوب استبداله غير موجود في الملف — اقرأ الملف مجدداً وطابق النص حرفياً' };
+      if (count > 1 && !(args && args.replace_all)) {
+        return { ok: false, content: 'خطأ: النص يتكرر ' + count + ' مرات — وسّع السياق ليكون فريداً أو مرّر replace_all: true' };
+      }
+      const after = (args && args.replace_all) ? before.split(oldStr).join(newStr) : before.replace(oldStr, newStr);
+      if (after.length > MAX_WRITE * 2) return { ok: false, content: 'خطأ: الناتج أكبر من الحد المسموح' };
+      commitWrite(ctx, cwd, name, rel.replace(/\\/g, '/'), abs, before, after);
+      return { ok: true, content: 'عُدّل الملف ' + rel + (count > 1 ? ' (' + count + ' مواضع)' : '') };
+    }
+    if (name === 'delete_file') {
+      const rel = args && typeof args.path === 'string' ? args.path.trim() : '';
+      if (!rel) return { ok: false, content: 'خطأ: الوسيطة path مطلوبة' };
+      const abs = resolveExisting(cwd, rel); // تسامح تطبيع (أسماء عربية)
+      if (!abs) return { ok: false, content: 'خطأ: ' + READ_ERRORS.outside };
+      let st;
+      try { st = fs.statSync(abs); } catch { return { ok: false, content: 'خطأ: الملف غير موجود (' + rel + ')' }; }
+      if (!st.isFile()) return { ok: false, content: 'خطأ: المسار ليس ملفاً' };
+      // لقطة المحتوى قبل الحذف ليعمل «تراجع» (يعيد إنشاء الملف) — نصّي فقط
+      let before = null;
+      try {
+        if (st.size <= MAX_EDIT_SRC) {
+          const buf = fs.readFileSync(abs);
+          if (!inject.looksBinary(buf)) before = buf.toString('utf8');
+        }
+      } catch { before = null; }
+      fs.unlinkSync(abs);
+      const id = (ctx && ctx.id) || ('tool_' + Math.random().toString(36).slice(2));
+      // لقطة الحذف: before = المحتوى، والتراجع يعيد كتابته (undoEdit يتكفّل)
+      rememberSnapshot(id, { file_path: abs, before: before == null ? '' : before });
+      if (ctx && typeof ctx.emit === 'function') {
+        const d = computeDiff(before == null ? '' : before, '');
+        ctx.emit({
+          type: 'file_edit', id, tool: name,
+          rel: rel.replace(/\\/g, '/'), isNew: false, isDelete: true,
+          added: d.added, removed: d.removed, lines: d.lines, truncated: d.truncated,
+        });
+      }
+      return { ok: true, content: 'حُذف الملف ' + rel };
+    }
+    if (name === 'run_command') {
+      // 2.3: تنفيذ في طرفية النموذج المرئية (نفس مسار run_in_terminal للـ SDK — المرحلة 16):
+      // المستخدم يرى الأمر وخرجه حياً، والأمر نصّ لمجرى pty لا لوسائط spawn (sanitizeCommand
+      // في term.js ينقّي بايتات التحكم). ⚠️ لا يُستدعى إلا بعد موافقة المستخدم (tier 'exec').
+      const command = args && typeof args.command === 'string' ? args.command : '';
+      if (!command.trim()) return { ok: false, content: 'خطأ: الوسيطة command مطلوبة' };
+      const ensured = term.ensureModelTerm(cwd);
+      if (!ensured.ok) return { ok: false, content: 'خطأ: تعذّر فتح طرفية النموذج: ' + (ensured.message || ensured.error) };
+      // تبنّي الواجهة لتبويب «🤖 النموذج» عند إنشائه (نفس حدث مسار SDK)
+      if (ensured.created && ctx && typeof ctx.emit === 'function') {
+        ctx.emit({ type: 'model_term', id: ensured.id, shell: ensured.shell, cwd });
+      }
+      const secs = (args && Number.isFinite(args.timeout_seconds) && args.timeout_seconds > 0)
+        ? Math.min(Math.floor(args.timeout_seconds), 600) : 120;
+      const r = await term.runCapture(ensured.id, command, { timeoutMs: secs * 1000 });
+      if (!r.ok) return { ok: false, content: 'خطأ: تعذّر التشغيل: ' + (r.message || r.error) };
+      let output = r.output || '(لا خرج)';
+      if (output.length > MAX_RESULT) output = output.slice(0, MAX_RESULT) + '\n…(قُصّ الخرج — تجاوز السقف)';
+      const head = (r.timedOut ? '[انتهت المهلة — قد يكون أمراً طويلاً/تفاعلياً]\n' : '')
+        + 'exit code: ' + (r.exitCode === null ? 'غير معروف' : r.exitCode) + '\n---\n';
+      return { ok: r.exitCode === 0 || r.exitCode === null, content: head + output };
+    }
     return { ok: false, content: 'خطأ: أداة غير معروفة: ' + String(name) };
   } catch (e) {
     return { ok: false, content: 'خطأ: ' + String((e && e.message) || e) };
   }
 }
 
-module.exports = { defs, run, MAX_RESULT };
+module.exports = { defs, run, needsPermission, permissionTier, undoEdit, MAX_RESULT };
