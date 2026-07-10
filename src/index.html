@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-gvN4eqVv7sthteWxgxiSU0vFxLtT6u/2oyMyNGxz3n0='; script-src 'self' 'sha256-GZT4bPlVGBByg/gijNUPlvYs8nvc6VxXKe7ffEOWmIE='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-aq6YbQQ/NGxdDk5yFZUg4ikigReQ+YEFXnxYCUNviOw='; script-src 'self' 'sha256-Ac6J/IVbRJCDV//DXIWUw1pYxj2Qjdowz6uaVXCWzUM='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -187,6 +187,12 @@
   }
   #send { background: var(--gold); color: #1A1408; border: none; font-weight: 600; padding: 12px 22px; border-radius: 12px; }
   #send.stop { background: var(--red); color: #fff; }
+  /* شريط المؤلّف (§5-د-1): محرك/نموذج بجوار الإرسال */
+  .composer-tools { max-width: 880px; margin: 0 auto 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .composer-tools .ct-label { font-size: 11.5px; color: var(--text-dim); }
+  .composer-tools select, .composer-tools button { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 6px 10px; font-size: 12.5px; font-family: var(--sans); outline: none; cursor: pointer; }
+  .composer-tools select:hover, .composer-tools button:hover { border-color: var(--gold); }
+  .ct-hint { font-size: 11.5px; color: var(--text-dim); }
   /* شريط الحالة عربي RTL — المعرّفات والأرقام اللاتينية تنعزل LTR تلقائياً بخوارزمية BiDi */
   .statusline { max-width: 880px; margin: 8px auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
   .statusline span { unicode-bidi: plaintext; }
@@ -219,6 +225,12 @@
   .dir-chip .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; text-align: left; font-family: var(--mono); font-size: 11.5px; color: var(--text); }
   .dir-chip .rm { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 0 3px; font-size: 12px; }
   .dir-chip .rm:hover { color: var(--red); }
+  .settings-keys { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+  .key-row { display: flex; gap: 6px; align-items: center; }
+  .key-row input { flex: 1; min-width: 0; direction: ltr; text-align: left; font-family: var(--mono); font-size: 11.5px; }
+  .key-row button { font-size: 12px; padding: 3px 10px; }
+  .key-status { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
+  .key-status.set { color: #3fb950; }
 
   /* قائمة / المنبثقة (و @ تشاركها التموضع) */
   #slashMenu, #fileMenu {
@@ -432,14 +444,37 @@
   .agent-row .adesc { font-size: 12.5px; color: var(--text-dim); margin-top: 4px; unicode-bidi: plaintext; }
   .agent-row .ameta { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; direction: ltr; text-align: right; font-family: var(--mono); }
 
-  #mcpPanel, #contextPanel, #agentsPanel {
+  #mcpPanel, #contextPanel, #agentsPanel, #filesPanel {
     position: fixed; top: 0; bottom: 0; right: 0; width: 420px; max-width: 92vw;
     background: var(--surface); border-inline-start: 1px solid var(--border);
     box-shadow: -10px 0 34px rgba(0,0,0,.5); z-index: 80;
     transform: translateX(100%); transition: transform .18s ease;
     display: flex; flex-direction: column;
   }
-  #mcpPanel.open, #contextPanel.open, #agentsPanel.open { transform: translateX(0); }
+  #mcpPanel.open, #contextPanel.open, #agentsPanel.open, #filesPanel.open { transform: translateX(0); }
+
+  /* ===== لوحة ملفات المشروع + عارض القراءة (الدفعة 1.2) ===== */
+  #filesToggle.active { border-color: var(--gold); background: var(--gold-soft); }
+  /* صفوف الشجرة: مجلد قابل للطي وملف قابل للفتح — الأسماء LTR داخل واجهة RTL */
+  .ft-row { display: flex; align-items: center; gap: 7px; padding: 4px 14px; cursor: pointer; font-size: 13px; color: var(--text); }
+  .ft-row:hover, .ft-row:focus-visible { background: var(--gold-soft); outline: none; }
+  .ft-row .ft-ico { flex: none; font-size: 12px; width: 16px; text-align: center; }
+  .ft-row .ft-name { font-family: var(--mono); direction: ltr; unicode-bidi: embed; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ft-row.dir .ft-name { color: var(--gold); }
+  .ft-kids[hidden] { display: none; }
+  /* عارض القراءة: نافذة وسطية — الكود LTR بأرقام أسطر عبر عدّاد CSS */
+  #viewerOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 90; display: none; }
+  #viewerOverlay.open { display: flex; }
+  .viewer-box { margin: auto; width: min(1020px, 94vw); height: 86vh; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 18px 60px rgba(0,0,0,.6); }
+  .viewer-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .viewer-name { font-family: var(--mono); direction: ltr; text-align: left; color: var(--gold); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .viewer-meta { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); direction: ltr; white-space: nowrap; }
+  #viewerBody { flex: 1; overflow: auto; background: #0B0E13; }
+  #viewerPre { margin: 0; padding: 10px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; direction: ltr; text-align: left; counter-reset: ln; width: max-content; min-width: 100%; }
+  #viewerPre .l { counter-increment: ln; white-space: pre; padding-inline-end: 16px; }
+  #viewerPre .l::before { content: counter(ln); display: inline-block; width: 48px; padding-inline-end: 16px; color: var(--text-dim); text-align: right; user-select: none; }
+  .viewer-note { padding: 8px 14px; font-size: 12px; color: var(--gold); border-top: 1px solid var(--border); }
+  .viewer-note[hidden] { display: none; }
   .panel-head button.refresh { font-size: 12px; padding: 3px 10px; color: var(--text); }
   .panel-head-actions { display: flex; gap: 6px; }
 
@@ -570,36 +605,13 @@
     </div>
     <button id="newSession">جلسة جديدة</button>
     <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
+    <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄</button>
     <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
     <div class="settings-wrap">
       <button id="settingsBtn" title="الإعدادات">⚙</button>
       <div id="settingsPop" hidden>
-        <div class="field">
-          <label for="model">النموذج</label>
-          <select id="model">
-            <option value="">الافتراضي</option>
-            <option value="claude-fable-5">Fable 5</option>
-            <option value="opus">Opus</option>
-            <option value="sonnet">Sonnet</option>
-            <option value="haiku">Haiku</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="engine">المحرك</label>
-          <select id="engine">
-            <option value="sdk">SDK — بث وأذونات حية</option>
-            <option value="cli">CLI — احتياطي</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="perm">الصلاحيات</label>
-          <select id="perm">
-            <option value="acceptEdits">قبول التعديلات تلقائياً</option>
-            <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
-            <option value="default">افتراضي</option>
-            <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
-          </select>
-        </div>
+        <!-- المحرك/النموذج/الصلاحيات انتقلت إلى شريط المؤلّف قرب زر الإرسال (§5-د) -->
+        <div class="field ct-hint">التبديل السريع للمحرك والنموذج والصلاحيات بجوار زر الإرسال أسفل ↓</div>
         <div class="field">
           <label for="effort">جهد التفكير</label>
           <select id="effort" title="كم يفكّر النموذج قبل الرد — الأعلى أدق وأبطأ وأكلف (يُخفَّض صامتاً إن لم يدعمه النموذج)">
@@ -617,6 +629,19 @@
             <button id="addDir" type="button" title="منح النموذج وصولاً لمجلد آخر بجانب مجلد المشروع">📁 إضافة</button>
           </div>
           <div id="dirChips"></div>
+        </div>
+        <!-- مركز مفاتيح المزوّدين (§5-ب): إدخال مفاتيح DeepSeek/Qwen/Gemini بصرياً (تُحفظ في ~/.satr/keys.json) -->
+        <div class="settings-keys" id="keysMgr">
+          <div class="dirs-head"><span>مفاتيح المزوّدين</span></div>
+          <div class="key-row">
+            <select id="keyProvider"></select>
+            <span id="keyStatus" class="key-status"></span>
+          </div>
+          <div class="key-row">
+            <input id="keyValue" type="password" placeholder="ألصق مفتاح API…" autocomplete="off" spellcheck="false">
+            <button id="keySave" type="button">حفظ</button>
+            <button id="keyClear" type="button">مسح</button>
+          </div>
         </div>
       </div>
     </div>
@@ -701,6 +726,31 @@
   <div class="panel-list" id="sessionsList"></div>
 </aside>
 
+<!-- لوحة ملفات المشروع (الدفعة 1.2): شجرة قراءة فقط + عارض -->
+<aside id="filesPanel" aria-label="ملفات المشروع">
+  <div class="panel-head">
+    <span>ملفات المشروع</span>
+    <span class="panel-head-actions">
+      <button class="refresh" id="refreshFiles" title="إعادة قراءة الشجرة">تحديث</button>
+      <button id="closeFiles" title="إغلاق">✕</button>
+    </span>
+  </div>
+  <div class="panel-list" id="filesTree"></div>
+</aside>
+
+<!-- عارض القراءة (الدفعة 1.2): ليس محرّراً — كود LTR بأرقام أسطر داخل واجهة RTL -->
+<div id="viewerOverlay" role="dialog" aria-modal="true" aria-label="عارض ملف">
+  <div class="viewer-box">
+    <div class="viewer-head">
+      <span class="viewer-name" id="viewerName"></span>
+      <span class="viewer-meta" id="viewerMeta"></span>
+      <button id="viewerClose" title="إغلاق">✕</button>
+    </div>
+    <div id="viewerBody"><pre id="viewerPre"></pre></div>
+    <div class="viewer-note" id="viewerNote" hidden></div>
+  </div>
+</div>
+
 <aside id="skillsPanel" aria-label="المهارات">
   <div class="panel-head">
     <span>المهارات</span>
@@ -749,6 +799,25 @@
     <button id="bgKillAll" type="button">إيقاف الكل</button>
   </div>
   <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
+  <!-- شريط المؤلّف (§5-د): محرك/نموذج/صلاحيات + إرفاق، بجوار الإرسال (نمط Cursor) -->
+  <div class="composer-tools">
+    <span class="ct-label">المحرك</span>
+    <select id="engine" title="المحرك/المزوّد">
+      <option value="sdk">SDK — بث وأذونات حية</option>
+      <option value="cli">CLI — احتياطي</option>
+      <option value="gemini">Gemini (REST)</option>
+    </select>
+    <span class="ct-label">النموذج</span>
+    <select id="model" title="النموذج"><option value="">الافتراضي</option></select>
+    <select id="perm" title="وضع الصلاحيات">
+      <option value="acceptEdits">قبول التعديلات تلقائياً</option>
+      <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
+      <option value="default">افتراضي</option>
+      <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
+    </select>
+    <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (محرك SDK)">📎 إرفاق</button>
+    <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+  </div>
   <div class="composer">
     <div id="slashMenu" role="listbox"></div>
     <div id="fileMenu" role="listbox"></div>
@@ -885,6 +954,118 @@
   $('gate-recheck').addEventListener('click', runPreflight);
   gate.hidden = false; // إظهار حالة «جارٍ التحقق» فوراً ريثما يعود الفحص
   runPreflight();
+
+  // بناء قائمة «المحرك» ديناميكياً من طبقة المزوّد (satr:providers): sdk (خاص) + المحوّلات.
+  // §5-د-2: النماذج تتبع المحرك المختار (لكل مزوّد نماذجه). فشل الجلب ⇒ خيارات ثابتة احتياطية.
+  const CLAUDE_MODELS = [
+    { value: '', label: 'الافتراضي' }, { value: 'claude-fable-5', label: 'Fable 5' },
+    { value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' },
+  ];
+  let providersCache = [];
+  // محوّل «أعمى» (1.3): غير sdk وليس من عائلة claude — له ذاكرة على القرص تُستأنف.
+  // فشل جلب المزوّدين ⇒ احتياطي بالاسم (sdk/cli معروفان).
+  function isBlindEngine(e) {
+    if (e === 'sdk') return false;
+    const p = providersCache.find((x) => x.name === e);
+    return p ? p.family !== 'claude' : (e !== 'cli');
+  }
+  // استئناف آخر جلسة للمحوّل — المؤشر على **القرص** مع ملفات الذاكرة (satr:lastChat)
+  // لا في localStorage (ثبت بالاختبار أنه قد لا يُكتب للقرص فيضيع المؤشر)
+  async function restoreAdapterSession() {
+    const e = $('engine').value;
+    if (!isBlindEngine(e)) return;
+    let sid = null;
+    try { const r = await window.satr.lastChat(e); sid = (r && r.sid) || null; } catch (err) {}
+    if (sid && !sessionId) {
+      sessionId = sid;
+      $('sessionInfo').textContent = 'جلسة: ' + sid.slice(0, 8) + ' (مستأنفة)';
+    }
+  }
+  function modelsForEngine(engine) {
+    if (engine === 'sdk') return CLAUDE_MODELS; // محرك SDK الخاص (خارج السجلّ)
+    const p = providersCache.find((x) => x.name === engine);
+    return (p && p.models && p.models.length) ? p.models : [{ value: '', label: 'الافتراضي' }];
+  }
+  function rebuildModels() {
+    const engine = $('engine').value, mSel = $('model');
+    const saved = localStorage.getItem('satr_model_' + engine) || '';
+    mSel.innerHTML = '';
+    for (const m of modelsForEngine(engine)) {
+      const o = document.createElement('option'); o.value = m.value; o.textContent = m.label; mSel.appendChild(o);
+    }
+    if ([...mSel.options].some((o) => o.value === saved)) mSel.value = saved;
+  }
+  async function loadProviders() {
+    const sel = $('engine');
+    let list = [];
+    try { const r = await window.satr.providers(); if (r && Array.isArray(r.providers)) list = r.providers; } catch (e) {}
+    if (list.length) {
+      providersCache = list;
+      const saved = localStorage.getItem('satr_engine') || sel.value || 'sdk';
+      sel.innerHTML = '';
+      const add = (v, l) => { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.appendChild(o); };
+      add('sdk', 'SDK — بث وأذونات حية'); // محرك SDK الخاص (ليس محوّلاً في السجلّ)
+      for (const p of list) add(p.name, p.label || p.name);
+      if ([...sel.options].some((o) => o.value === saved)) sel.value = saved;
+    }
+    rebuildModels();
+    restoreAdapterSession(); // 1.3: استئناف محادثة المحوّل بعد إعادة التشغيل
+    lastEngine = $('engine').value;
+  }
+  let lastEngine = null; // لتمييز مغادرة محوّل أعمى عند التبديل
+  $('engine').addEventListener('change', async () => {
+    const e = $('engine').value;
+    localStorage.setItem('satr_engine', e);
+    rebuildModels();
+    // 1.3: لكل محوّل أعمى جلسته المستقلة — التبديل إليه يستأنف آخر جلسة (من القرص)،
+    // ومغادرته تصفّر المؤشر (sdk↔cli يتشاركان جلسات كلود فلا يُمسّان — السلوك القائم)
+    if (isBlindEngine(e)) {
+      sessionId = null;
+      await restoreAdapterSession();
+      if (!sessionId) $('sessionInfo').textContent = 'لا جلسة';
+    } else if (lastEngine && isBlindEngine(lastEngine)) {
+      sessionId = null;
+      $('sessionInfo').textContent = 'لا جلسة';
+    }
+    lastEngine = e;
+  });
+  $('model').addEventListener('change', () => localStorage.setItem('satr_model_' + $('engine').value, $('model').value));
+  loadProviders();
+
+  // §5-د-3: زر إرفاق صورة من الجهاز — يعيد استخدام addImageFile ومسار الصور القائم (محرك SDK)
+  $('attachBtn').addEventListener('click', () => $('fileInput').click());
+  $('fileInput').addEventListener('change', (e) => {
+    for (const f of (e.target.files || [])) addImageFile(f);
+    e.target.value = ''; // يسمح بإعادة اختيار الملف نفسه
+  });
+
+  // مركز مفاتيح المزوّدين (§5-ب): إدخال مفاتيح API بصرياً. أمان: القيم لا تُقرأ للواجهة —
+  // نعرض «مضبوط/غير مضبوط» فقط. الحفظ فوري (keys.js يُقرأ لحظة الطلب — بلا إعادة تشغيل).
+  async function initKeysManager() {
+    const provSel = $('keyProvider'), val = $('keyValue'), status = $('keyStatus');
+    let keyed = [];
+    try { const r = await window.satr.providers(); keyed = ((r && r.providers) || []).filter((p) => p.keyName); } catch (e) {}
+    if (!keyed.length) { $('keysMgr').style.display = 'none'; return; }
+    provSel.innerHTML = '';
+    for (const p of keyed) { const o = document.createElement('option'); o.value = p.keyName; o.textContent = p.label; provSel.appendChild(o); }
+    let setNames = new Set();
+    async function refresh() {
+      try { const r = await window.satr.keysList(); setNames = new Set((r && r.names) || []); } catch (e) {}
+      const on = setNames.has(provSel.value);
+      status.textContent = on ? 'مضبوط ✓' : 'غير مضبوط';
+      status.classList.toggle('set', on);
+    }
+    provSel.addEventListener('change', refresh);
+    $('keySave').addEventListener('click', async () => {
+      const v = val.value.trim(); if (!v) return;
+      const r = await window.satr.keySet(provSel.value, v);
+      if (r && r.ok) { val.value = ''; await refresh(); status.textContent = 'حُفظ ✓ — جرّب الإرسال'; status.classList.add('set'); }
+      else { status.textContent = 'تعذّر الحفظ'; status.classList.remove('set'); }
+    });
+    $('keyClear').addEventListener('click', async () => { await window.satr.keyDelete(provSel.value); val.value = ''; await refresh(); });
+    refresh();
+  }
+  initKeysManager();
 
   $('pickFolder').addEventListener('click', async () => {
     const p = await window.satr.pickFolder();
@@ -1213,6 +1394,7 @@
     }
 
     return {
+      el: w, // جذر البطاقة — لإدراج تنبيهات قبل الرد (تنبيه 📎 الحقن مثلاً)
       addText(t, parentId) {
         // نص وكيل فرعي (forwardSubagentText) ⇐ سجل بطاقته المتداخل لا النص الرئيسي
         const card = parentId ? agentCards[parentId] : null;
@@ -1412,6 +1594,7 @@
     } else if (ev.type === 'system' && ev.session_id) {
       sessionId = ev.session_id;
       $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8);
+      // 1.3: مؤشر الاستئناف يكتبه المحوّل نفسه على القرص (chats.save) — لا حفظ هنا
     } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
       // parent_tool_use_id (المرحلة 14.2): رسائل الوكيل الفرعي تتوجه لبطاقة وكيلها
       for (const c of ev.message.content) {
@@ -1558,8 +1741,8 @@
     const prompt = input.value.trim();
     const engine = $('engine').value;
     let images = pendingImages.slice();
-    // الصور تُرسَل عبر محرك SDK فقط — في الوضع الاحتياطي ننبّه ونتجاهلها
-    if (engine === 'cli' && images.length) {
+    // الصور تُرسَل عبر محرك SDK فقط — أي محرك آخر ننبّه ونتجاهلها
+    if (engine !== 'sdk' && images.length) {
       addNotice('الصور مدعومة في محرك SDK فقط — لم تُرسَل الصور المرفقة');
       images = [];
     }
@@ -1600,6 +1783,25 @@
     if (r && r.error) {
       currentBlock.error(r.message || r.error);
       endRun();
+      return;
+    }
+    // 1.1 — شفافية حقن @الملفات للمحوّلات: ماذا أُرفق فعلاً وماذا تُخطّي ولماذا.
+    // التنبيه يُدرج **قبل** بطاقة الرد (فوق الرد بجانب رسالة المستخدم) لا في ذيل المحادثة
+    const noticeBeforeReply = (text) => {
+      const n = document.createElement('div');
+      n.className = 'notice'; n.textContent = text;
+      if (currentBlock && currentBlock.el && currentBlock.el.parentNode === thread) {
+        thread.insertBefore(n, currentBlock.el);
+      } else { thread.appendChild(n); }
+    };
+    if (r && Array.isArray(r.injectedFiles) && r.injectedFiles.length) {
+      const parts = r.injectedFiles.map((f) => f.rel + (f.truncated ? ' (قُصّ)' : ''));
+      noticeBeforeReply('📎 أُرفق للنموذج: ' + parts.join('، '));
+    }
+    if (r && Array.isArray(r.skippedFiles) && r.skippedFiles.length) {
+      const why = { outside: 'خارج مجلد المشروع', binary: 'ملف ثنائي', total: 'تجاوز السقف الإجمالي', error: 'تعذّرت قراءته' };
+      const parts = r.skippedFiles.map((f) => f.rel + ' (' + (why[f.reason] || f.reason) + ')');
+      noticeBeforeReply('⚠️ لم يُرفق: ' + parts.join('، '));
     }
   }
 
@@ -1658,6 +1860,9 @@
     addNotice('✓ ' + label);
   }
   function newSession() {
+    // 1.3: «جلسة جديدة» على محوّل أعمى تنسى مؤشر الاستئناف على القرص (سجلّه يبقى للتنظيف)
+    const engNow = $('engine').value;
+    if (isBlindEngine(engNow)) { try { window.satr.forgetChat(engNow); } catch (e) {} }
     sessionId = null; totalCost = 0; currentBlock = null;
     pendingImages = []; renderAttachments();
     $('sessionInfo').textContent = 'لا جلسة';
@@ -1846,6 +2051,139 @@
   }
   $('closeAgents').addEventListener('click', () => agentsPanel.classList.remove('open'));
   $('refreshAgents').addEventListener('click', openAgents);
+
+  // ---------- لوحة ملفات المشروع + عارض القراءة (الدفعة 1.2 من ROADMAP) ----------
+  // شجرة قراءة فقط من satr:listFiles القائمة + عارض عبر satr:readFile الجديد.
+  // ليس محرّراً — عرض فقط، الكود LTR بأرقام أسطر داخل الواجهة RTL.
+  const filesPanel = $('filesPanel'), filesTreeEl = $('filesTree');
+  const viewerOverlay = $('viewerOverlay'), viewerPre = $('viewerPre');
+  const MAX_VIEW_LINES = 5000; // سقف أسطر DOM (الملفات الأطول تُقصّ مع ملاحظة)
+
+  // بناء شجرة متداخلة من قائمة المسارات المسطّحة (a/b/c.js …)
+  function buildFileTree(paths) {
+    const root = { dirs: new Map(), files: [] };
+    for (const p of paths) {
+      const parts = p.split('/');
+      let node = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!node.dirs.has(parts[i])) node.dirs.set(parts[i], { dirs: new Map(), files: [] });
+        node = node.dirs.get(parts[i]);
+      }
+      node.files.push(parts[parts.length - 1]);
+    }
+    return root;
+  }
+
+  // رسم مستوى واحد: مجلدات أولاً (بناء الأبناء كسول عند أول فتح) ثم ملفات
+  function renderFileTree(node, container, prefix, depth) {
+    const pad = (14 + depth * 16) + 'px';
+    const byName = (a, b) => a.toLowerCase().localeCompare(b.toLowerCase());
+    for (const name of [...node.dirs.keys()].sort(byName)) {
+      const row = document.createElement('div');
+      row.className = 'ft-row dir'; row.tabIndex = 0;
+      row.style.paddingInlineStart = pad; // CSSOM لا سمة مضمّنة (CSP)
+      const ico = document.createElement('span'); ico.className = 'ft-ico'; ico.textContent = '📁';
+      const nm = document.createElement('span'); nm.className = 'ft-name'; nm.textContent = name;
+      row.appendChild(ico); row.appendChild(nm);
+      const kids = document.createElement('div'); kids.className = 'ft-kids'; kids.hidden = true;
+      let built = false;
+      const toggle = () => {
+        kids.hidden = !kids.hidden;
+        ico.textContent = kids.hidden ? '📁' : '📂';
+        if (!built && !kids.hidden) {
+          renderFileTree(node.dirs.get(name), kids, prefix + name + '/', depth + 1);
+          built = true;
+        }
+      };
+      row.addEventListener('click', toggle);
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+      container.appendChild(row); container.appendChild(kids);
+    }
+    for (const f of node.files.sort(byName)) {
+      const row = document.createElement('div');
+      row.className = 'ft-row file'; row.tabIndex = 0;
+      row.style.paddingInlineStart = pad;
+      const ico = document.createElement('span'); ico.className = 'ft-ico'; ico.textContent = '📄';
+      const nm = document.createElement('span'); nm.className = 'ft-name'; nm.textContent = f;
+      row.appendChild(ico); row.appendChild(nm);
+      const open = () => openViewer(prefix + f);
+      row.addEventListener('click', open);
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+      container.appendChild(row);
+    }
+  }
+
+  function closeFilesPanel() {
+    filesPanel.classList.remove('open');
+    $('filesToggle').classList.remove('active');
+  }
+
+  async function openFilesPanel() {
+    filesPanel.classList.add('open');
+    $('filesToggle').classList.add('active');
+    const cwd = $('cwd').value.trim();
+    if (!cwd) { filesTreeEl.innerHTML = '<div class="hint">اختر مجلد المشروع أولاً 📁</div>'; return; }
+    filesTreeEl.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
+    const list = (await window.satr.listFiles(cwd)) || [];
+    filesTreeEl.innerHTML = '';
+    if (!list.length) { filesTreeEl.innerHTML = '<div class="hint">لا ملفات في هذا المجلد</div>'; return; }
+    renderFileTree(buildFileTree(list), filesTreeEl, '', 0);
+  }
+
+  $('filesToggle').addEventListener('click', () => {
+    if (filesPanel.classList.contains('open')) closeFilesPanel(); else openFilesPanel();
+  });
+  $('closeFiles').addEventListener('click', closeFilesPanel);
+  $('refreshFiles').addEventListener('click', openFilesPanel);
+
+  // ---------- عارض القراءة ----------
+  function closeViewer() { viewerOverlay.classList.remove('open'); viewerPre.textContent = ''; }
+
+  async function openViewer(rel) {
+    $('viewerName').textContent = rel;
+    $('viewerMeta').textContent = '';
+    $('viewerNote').hidden = true;
+    viewerPre.textContent = '';
+    viewerOverlay.classList.add('open');
+    const r = await window.satr.readFile($('cwd').value.trim(), rel);
+    if (!r || !r.ok) {
+      const why = {
+        outside: 'المسار خارج مجلد المشروع', notfound: 'الملف غير موجود',
+        binary: 'ملف ثنائي — لا يُعرض نصاً', error: 'تعذّرت قراءة الملف',
+        bad_cwd: 'مجلد المشروع غير موجود', bad_input: 'مدخل غير صالح',
+      };
+      $('viewerNote').textContent = '⚠️ ' + (why[(r && r.error) || ''] || 'خطأ غير معروف');
+      $('viewerNote').hidden = false;
+      return;
+    }
+    let lines = r.content.split('\n');
+    const clipped = lines.length > MAX_VIEW_LINES;
+    if (clipped) lines = lines.slice(0, MAX_VIEW_LINES);
+    const frag = document.createDocumentFragment();
+    for (const ln of lines) {
+      const d = document.createElement('div');
+      d.className = 'l';
+      d.textContent = ln.replace(/\r$/, ''); // السطر الفارغ يبقى بارتفاعه (رقم السطر في ::before يملؤه)
+      frag.appendChild(d);
+    }
+    viewerPre.appendChild(frag);
+    const kb = (r.bytes / 1024).toFixed(r.bytes < 10240 ? 1 : 0);
+    $('viewerMeta').textContent = kb + ' KB · ' + lines.length + (clipped || r.truncated ? '+' : '') + ' سطر';
+    if (r.truncated || clipped) {
+      $('viewerNote').textContent = '✂️ الملف أطول من حدّ العرض — يُعرض أوله فقط (' +
+        (r.truncated ? '256 ك.ب' : MAX_VIEW_LINES + ' سطر') + ')';
+      $('viewerNote').hidden = false;
+    }
+  }
+
+  $('viewerClose').addEventListener('click', closeViewer);
+  // النقر على الخلفية المعتمة (خارج الصندوق) يغلق
+  viewerOverlay.addEventListener('click', (e) => { if (e.target === viewerOverlay) closeViewer(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (viewerOverlay.classList.contains('open')) { closeViewer(); return; }
+    if (filesPanel.classList.contains('open')) closeFilesPanel();
+  });
 
   async function openSkills() {
     skillsPanel.classList.add('open');

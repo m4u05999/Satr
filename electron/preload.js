@@ -7,12 +7,20 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('satr', {
   preflight: () => ipcRenderer.invoke('satr:preflight'),
+  features: () => ipcRenderer.invoke('satr:features'),
+  providers: () => ipcRenderer.invoke('satr:providers'),
+  keysList: () => ipcRenderer.invoke('satr:keysList'),
+  keySet: (name, value) => ipcRenderer.invoke('satr:keySet', { name, value }),
+  keyDelete: (name) => ipcRenderer.invoke('satr:keyDelete', { name }),
   pickFolder: () => ipcRenderer.invoke('satr:pickFolder'),
   send: (payload) => ipcRenderer.invoke('satr:send', payload),
   stop: () => ipcRenderer.invoke('satr:stop'),
   listSessions: () => ipcRenderer.invoke('satr:listSessions'),
   readSession: (project, id) => ipcRenderer.invoke('satr:readSession', { project, id }),
   listFiles: (cwd) => ipcRenderer.invoke('satr:listFiles', cwd),
+  readFile: (cwd, rel) => ipcRenderer.invoke('satr:readFile', { cwd, rel }), // عارض القراءة (1.2)
+  lastChat: (engine) => ipcRenderer.invoke('satr:lastChat', { engine }),     // ذاكرة المحوّلات (1.3)
+  forgetChat: (engine) => ipcRenderer.invoke('satr:forgetChat', { engine }),
   listSkills: (cwd) => ipcRenderer.invoke('satr:listSkills', cwd),
   mcpStatus: (cwd) => ipcRenderer.invoke('satr:mcpStatus', cwd),
   mcpAction: (cwd, name, action) => ipcRenderer.invoke('satr:mcpAction', { cwd, name, action }),

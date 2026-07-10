@@ -14,6 +14,11 @@ const files = require('./files');
 const skills = require('./skills');
 const agentsList = require('./agents');
 const agent = require('./agent');
+const adapters = require('./adapters');
+const inject = require('./inject');
+const chats = require('./chats');
+const features = require('./features');
+const keys = require('./keys');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
 const updater = require('./updater');
@@ -27,8 +32,8 @@ const APP_ICON = path.join(__dirname, '..', 'build', 'icon.ico'); // أيقون�
 if (IS_WIN) { try { app.setAppUserModelId('ai.satr.app'); } catch (e) {} }
 
 let mainWindow = null;
-let currentChild = null; // عملية CLI الجارية (مسار -p الاحتياطي)
-let currentRun = null;   // تشغيل Agent SDK الجاري (المسار الافتراضي)
+let currentCliRun = null; // مقبض محوّل غير SDK الجاري (cli الاحتياطي وما يليه) — له stop()
+let currentRun = null;    // تشغيل Agent SDK الجاري (المسار الافتراضي) — له stop()+resolvePermission
 
 // ---------- مناعة ضد إشارات تحكّم الكونسول (ويندوز) ----------
 // المشكلة: الأوامر الطويلة (خادم تطوير مثل `npm run dev`) تعمل ضمن شجرة عمليات
@@ -84,20 +89,8 @@ function createWindow() {
   updater.initUpdater(app, emitToWindow);
 }
 
-function killCurrent() {
-  const child = currentChild;
-  currentChild = null;
-  if (!child || child.killed || child.exitCode !== null || !child.pid) return;
-  if (IS_WIN) {
-    // child.pid هو cmd.exe (shell:true)، وهو قائد مجموعة عمليات معزولة (detached)
-    // ولها كونسولها الخاص. taskkill /T يقتل الشجرة كاملة (cmd + claude + أحفادها)
-    // نزولاً فقط — ثبت أنه لا يصعد لـ«سطر» (الأب) ولا يسرّب حدثاً للكونسول المشترك.
-    const tk = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
-    tk.on('error', () => {});
-  } else {
-    try { child.kill('SIGTERM'); } catch (e) {}
-  }
-}
+// ملاحظة: منطق إيقاف مسار cli (detached + taskkill /T) انتقل إلى adapters/claude-cli.js
+// (المرحلة 5أ) — يملكه المحوّل عبر stop() على مقبضه. stopAll أدناه يوقّف كلا المحرّكين.
 
 // ---------- فحص أول التشغيل (Preflight) — مانع إطلاق ----------
 // «سطر» يعتمد كلياً على Claude Code المثبّت عالمياً (محرك SDK يستدعي الثنائي عبر
@@ -122,6 +115,36 @@ function probeVersion(cmd, args) {
     setTimeout(() => { try { child.kill(); } catch (e) {} finish({ ok: false }); }, 8000);
   });
 }
+
+// لقطة القدرات للواجهة (قراءة فقط): تُظهر/تُخفي قدرات Enterprise. المجتمعية ⇒ {enterprise:false}
+ipcMain.handle('satr:features', () => features.snapshot());
+
+// قائمة مزوّدي المحرّكات (طبقة المزوّد §4.2) — لبناء قائمة «المحرك» ديناميكياً في الواجهة
+ipcMain.handle('satr:providers', () => ({ providers: adapters.list() }));
+
+// ---------- مركز مفاتيح المزوّدين (§4.3 — مخزن الأسرار) ----------
+// 🔒 أمان: الأسماء المقبولة محصورة بمفاتيح المزوّدين المسجّلين فقط، والقيم لا تُعاد
+// للواجهة أبداً (satr:keysList يعيد الأسماء المضبوطة فقط). الكتابة لملف لا spawn.
+const SAFE_KEY_NAME = /^[A-Z][A-Z0-9_]{1,64}$/;
+function knownKeyNames() {
+  return new Set(adapters.list().map((p) => p.keyName).filter(Boolean));
+}
+
+ipcMain.handle('satr:keysList', () => ({ names: keys.names() }));
+
+ipcMain.handle('satr:keySet', (event, p) => {
+  const name = p && typeof p.name === 'string' ? p.name : '';
+  const value = p && typeof p.value === 'string' ? p.value.trim() : '';
+  if (!SAFE_KEY_NAME.test(name) || !knownKeyNames().has(name)) return { ok: false, error: 'bad_name' };
+  if (!value || value.length > 8192) return { ok: false, error: 'bad_value' };
+  try { keys.set(name, value); return { ok: true }; } catch (e) { return { ok: false, error: 'write_failed' }; }
+});
+
+ipcMain.handle('satr:keyDelete', (event, p) => {
+  const name = p && typeof p.name === 'string' ? p.name : '';
+  if (!SAFE_KEY_NAME.test(name) || !knownKeyNames().has(name)) return { ok: false, error: 'bad_name' };
+  try { keys.remove(name); return { ok: true }; } catch (e) { return { ok: false, error: 'write_failed' }; }
+});
 
 ipcMain.handle('satr:preflight', async () => {
   const [node, npm] = await Promise.all([
@@ -212,9 +235,13 @@ function sanitizeImages(arr) {
   return out;
 }
 
-// إيقاف أي تشغيل جارٍ أياً كان محركه
+// إيقاف أي تشغيل جارٍ أياً كان محركه (محوّل غير SDK أو تشغيل SDK)
 function stopAll() {
-  killCurrent();
+  if (currentCliRun) {
+    const h = currentCliRun;
+    currentCliRun = null;
+    h.stop().catch(() => {});
+  }
   if (currentRun) {
     const run = currentRun;
     currentRun = null;
@@ -232,45 +259,6 @@ bgprocs.setNotifier((procs) => emitToWindow({ type: 'bg_procs', procs }));
 // رقم تسلسلي للتشغيل: أحداث متأخرة من تشغيل أُلغي (proc_done مثلاً)
 // لا يجوز أن تصل للواجهة فتُنهي رسالة التشغيل الجديد قبل أوانها
 let runSeq = 0;
-
-// المسار الاحتياطي: claude -p (يُفعَّل من قائمة «المحرك» في الواجهة)
-function runCli(payload, prompt, cwd, emit) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose'];
-  if (payload.sessionId && SAFE_SESSION.test(payload.sessionId)) args.push('--resume', payload.sessionId);
-  if (PERMISSION_MODES.has(payload.permissionMode) && payload.permissionMode !== 'default')
-    args.push('--permission-mode', payload.permissionMode);
-  if (payload.model && SAFE_MODEL.test(payload.model)) args.push('--model', payload.model);
-
-  // detached على ويندوز = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: الطفل
-  // يأخذ مجموعة عمليات وكونسولاً خاصّين به، فأي حدث تحكّم كونسول من خادم تطوير
-  // أو غيره يبقى محبوساً في شجرته ولا يصل «سطر» ولا الطرفيات الأخرى.
-  // windowsHide يمنع وميض نافذة كونسول. لا نستدعي unref لأننا نقرأ stdout ونديره.
-  const child = spawn(CLAUDE_BIN, args, { cwd, shell: IS_WIN, detached: IS_WIN, windowsHide: true });
-  currentChild = child;
-
-  // البرومبت عبر stdin لتجنب مشاكل الاقتباس
-  child.stdin.write(prompt, 'utf8');
-  child.stdin.end();
-
-  // تجزئة المخرجات إلى أسطر JSON وإرسالها للواجهة مفسَّرة
-  let buf = '';
-  child.stdout.on('data', (d) => {
-    buf += d.toString('utf8');
-    let idx;
-    while ((idx = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, idx).trim();
-      buf = buf.slice(idx + 1);
-      if (!line) continue;
-      try { emit(JSON.parse(line)); } catch (e) { /* سطر غير JSON — نتجاهله */ }
-    }
-  });
-  child.stderr.on('data', (d) => emit({ type: 'stderr', text: d.toString('utf8') }));
-  child.on('error', (e) => emit({ type: 'spawn_error', text: String(e && e.message) }));
-  child.on('close', (code) => {
-    if (currentChild === child) currentChild = null;
-    emit({ type: 'proc_done', code });
-  });
-}
 
 ipcMain.handle('satr:send', async (event, payload) => {
   const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : '';
@@ -290,10 +278,35 @@ ipcMain.handle('satr:send', async (event, payload) => {
   const token = ++runSeq;
   const emit = (obj) => { if (token === runSeq) emitToWindow(obj); };
 
-  if (payload.engine === 'cli') {
-    // المسار الاحتياطي عبر stdin نصّي فقط — لا يدعم الصور (محرك SDK يدعمها)
-    runCli(payload, prompt, cwd, emit);
-    return { started: true, engine: 'cli', imagesIgnored: images.length > 0 };
+  // المحرّكات غير SDK تمر عبر طبقة adapters (القاعدة 2: التنقية هنا في main.js)
+  const adapter = adapters.get(payload.engine);
+  if (adapter) {
+    // 1.1 — حقن @الملفات (ROADMAP الدفعة 1): محوّلات REST لا ترى القرص، فنقرأ الملفات
+    // المُشار إليها بـ @مسار ونحقنها في البرومبت. عائلة claude (cli) تُستثنى — كلود
+    // يقرأ الملفات بنفسه. التنقية كلها في inject.js (داخل cwd حصراً + سقوف حجم).
+    const meta = adapters.list().find((p) => p.name === payload.engine);
+    const isBlind = !meta || meta.family !== 'claude';
+    const inj = isBlind ? inject.injectFiles(prompt, cwd) : { prompt, attached: [], skipped: [] };
+
+    // مسار نصّي عبر stdin — لا يدعم الصور (محرك SDK يدعمها)
+    const input = {
+      prompt: inj.prompt,
+      sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
+      model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
+      permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
+      extraDirs: sanitizeExtraDirs(payload.extraDirs), // متاحة للمحوّلات؛ cli/gemini الحاليان لا يستخدمانها
+    };
+    try {
+      currentCliRun = adapter.start(input, cwd, emit);
+      return {
+        started: true, engine: payload.engine, imagesIgnored: images.length > 0,
+        // معلومات الحقن للواجهة (تنبيهات شفافية): ما أُرفق وما تُخطّي ولماذا
+        injectedFiles: inj.attached, skippedFiles: inj.skipped,
+      };
+    } catch (e) {
+      currentCliRun = null;
+      return { error: 'adapter_failed', message: 'تعذّر تشغيل المحرك: ' + String((e && e.message) || e) };
+    }
   }
 
   // المسار الافتراضي: Agent SDK — نفس التحقق الصارم من المدخلات
@@ -393,6 +406,40 @@ ipcMain.handle('satr:listFiles', (event, cwd) => {
   return files.listFiles(dir);
 });
 
+// ---------- ذاكرة المحوّلات (الدفعة 1.3): مؤشر آخر جلسة لكل مزوّد ----------
+// المؤشر على القرص مع ملفات الذاكرة (chats.js) — لا localStorage (قد لا يُفلَش فيضيع).
+// معرّف المحوّل الأعمى = اسم مجلد الذاكرة (deepseek/qwen/gemini…).
+
+const SAFE_ENGINE = /^[a-z0-9_-]{1,32}$/;
+
+ipcMain.handle('satr:lastChat', (event, payload) => {
+  const eng = payload && typeof payload.engine === 'string' ? payload.engine : '';
+  if (!SAFE_ENGINE.test(eng)) return { sid: null };
+  return { sid: chats.last(eng) };
+});
+
+ipcMain.handle('satr:forgetChat', (event, payload) => {
+  const eng = payload && typeof payload.engine === 'string' ? payload.engine : '';
+  if (SAFE_ENGINE.test(eng)) chats.forget(eng);
+  return { ok: true };
+});
+
+// ---------- عارض القراءة (الدفعة 1.2): قراءة ملف نصّي للعرض فقط ----------
+// التحقق الأمني في files.readText (المسار داخل cwd حصراً + رفض الثنائي + سقف حجم)
+
+ipcMain.handle('satr:readFile', (event, payload) => {
+  const p = payload || {};
+  const cwd = typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd.trim() : '';
+  const rel = typeof p.rel === 'string' ? p.rel.trim() : '';
+  if (!cwd || !rel || rel.length > 512) return { ok: false, error: 'bad_input' };
+  try {
+    if (!fs.statSync(cwd).isDirectory()) throw new Error();
+  } catch {
+    return { ok: false, error: 'bad_cwd' };
+  }
+  return files.readText(cwd, rel);
+});
+
 // ---------- سرد المهارات المكتشَفة للوحة /مهارات (قراءة فقط) ----------
 
 ipcMain.handle('satr:listSkills', (event, cwd) => {
@@ -439,6 +486,10 @@ ipcMain.handle('satr:contextUsage', (event, p) => {
 });
 
 // ---------- دورة حياة التطبيق ----------
+
+// تهيئة طبقة القدرات + المُحمِّل الشرطي لـ Enterprise (docs/ARCHITECTURE.md §4.1).
+// النواة تعمل كاملة إن غاب enterprise/. لا يُسقط الإقلاع إن فشل.
+try { features.init(); } catch (e) { /* عزل: فشل Enterprise لا يمنع إقلاع النواة */ }
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {

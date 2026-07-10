@@ -1,0 +1,90 @@
+/**
+ * سجلّ المحوّلات (طبقة المزوّد) — المرحلة 5 + نقطة الربط §4.2 في ARCHITECTURE.md.
+ *
+ * كل محوّل يوفّر: start(input, cwd, emit) → { stop() }، ويبثّ أحداث «سطر» المطبَّعة
+ * (system/stream_text/assistant/result). سجلّ **قابل للحقن** عبر register() فتضيف طبقة
+ * Enterprise مزوّدين (نماذج محلية/خاصة) دون لمس النواة.
+ *
+ * ملاحظة: محرك SDK (agent.js) يبقى خاصاً ولا يُلفّ هنا (أدواته لا تُعمَّم).
+ */
+
+const claudeCli = require('./claude-cli');
+const gemini = require('./gemini');
+const openaiCompatible = require('./openai-compatible');
+
+// name -> { adapter, meta:{ label, family } }
+const REGISTRY = new Map();
+
+// تسجيل محوّل تحت اسم محرّك (قيمة payload.engine من الواجهة)
+function register(name, adapter, meta) {
+  REGISTRY.set(name, { adapter, meta: meta || {} });
+}
+
+// نماذج Claude (لمحرك cli الاحتياطي — ومحرك sdk الخاص يعرّفها في الواجهة)
+const CLAUDE_MODELS = [
+  { value: '', label: 'الافتراضي' },
+  { value: 'claude-fable-5', label: 'Fable 5' },
+  { value: 'opus', label: 'Opus' },
+  { value: 'sonnet', label: 'Sonnet' },
+  { value: 'haiku', label: 'Haiku' },
+];
+
+// ---- المحرّكات المدمجة في النواة ----
+register('cli', claudeCli, { label: 'CLI — احتياطي', family: 'claude', models: CLAUDE_MODELS });
+register('gemini', gemini, {
+  label: 'Gemini (REST)', family: 'gemini', keyName: 'GEMINI_API_KEY',
+  models: [
+    { value: '', label: 'الافتراضي (Flash)' },
+    { value: 'gemini-2.5-flash', label: '2.5 Flash' },
+    { value: 'gemini-2.5-pro', label: '2.5 Pro' },
+  ],
+});
+
+// عائلة المتوافقة مع OpenAI: نفس البروتوكول، مفتاح لكل مزوّد في ~/.satr/keys.json.
+// البروتوكول متحقَّق حيّاً (عبر نقطة Gemini المتوافقة)؛ المفاتيح يضيفها المستخدم.
+register('deepseek', openaiCompatible.make({
+  id: 'deepseek', // معرّف مجلد الذاكرة على القرص (~/.satr/chats/deepseek/) — الدفعة 1.3
+  host: 'api.deepseek.com', path: '/chat/completions',
+  keyName: 'DEEPSEEK_API_KEY', defaultModel: 'deepseek-chat', label: 'DeepSeek',
+}), {
+  label: 'DeepSeek', family: 'openai', keyName: 'DEEPSEEK_API_KEY',
+  models: [
+    { value: '', label: 'الافتراضي' },
+    { value: 'deepseek-chat', label: 'Chat (V3)' },
+    { value: 'deepseek-reasoner', label: 'Reasoner (R1)' },
+  ],
+});
+
+register('qwen', openaiCompatible.make({
+  id: 'qwen', // معرّف مجلد الذاكرة على القرص (~/.satr/chats/qwen/) — الدفعة 1.3
+  host: 'dashscope-intl.aliyuncs.com', path: '/compatible-mode/v1/chat/completions',
+  keyName: 'QWEN_API_KEY', defaultModel: 'qwen-plus', label: 'Qwen (Alibaba)',
+}), {
+  label: 'Qwen (Alibaba)', family: 'openai', keyName: 'QWEN_API_KEY',
+  models: [
+    { value: '', label: 'الافتراضي' },
+    { value: 'qwen-plus', label: 'Plus' },
+    { value: 'qwen-turbo', label: 'Turbo' },
+    { value: 'qwen-max', label: 'Max' },
+  ],
+});
+
+// يعيد المحوّل المطابق أو null
+function get(engine) {
+  const e = REGISTRY.get(engine);
+  return e ? e.adapter : null;
+}
+
+// قائمة المزوّدين للواجهة (لبناء قائمة «المحرّك» ديناميكياً لاحقاً)
+function list() {
+  const out = [];
+  for (const [name, { meta }] of REGISTRY) {
+    out.push({
+      name, label: meta.label || name, family: meta.family || '',
+      keyName: meta.keyName || '', models: meta.models || [],
+    });
+  }
+  return out;
+}
+
+module.exports = { get, register, list };

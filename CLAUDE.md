@@ -28,11 +28,33 @@ electron/agent.js    ← محرك Claude Agent SDK: بث جزئي + اعتراض
 electron/preload.js  ← جسر آمن: يكشف window.satr فقط (contextIsolation مفعّل)
 electron/sessions.js ← قراءة جلسات ~/.claude/projects (قراءة فقط + تحقق صارم من المسارات)
 electron/files.js    ← سرد ملفات المشروع لمنصّة @ (مشي محدود + تجاهل مجلدات ثقيلة + تخزين
-                       مؤقت لكل cwd، قراءة فقط) — المرحلة 4
+                       مؤقت لكل cwd، قراءة فقط) — المرحلة 4. ومنذ الدفعة 1.2: readText
+                       (قراءة ملف للعارض — تحقق موحّد مع inject.js، سقف 256ك، رفض الثنائي)
 electron/skills.js   ← سرد المهارات المكتشَفة (<cwd>/.claude/skills و ~/.claude/skills) للوحة
                        /مهارات (قراءة فقط + تحليل مقدمة SKILL.md، المشروع يفوز عند تكرار الاسم)
 electron/diff.js     ← حساب فرق الأسطر (قصّ بادئة/لاحقة + LCS محدود + طيّ السياق)
                        دالة نقية بلا اعتماديات — المرحلة 3
+electron/inject.js   ← حقن @الملفات للمحوّلات (الدفعة 1.1 من ROADMAP): يقرأ الملفات المُشار
+                       إليها بـ @مسار ويحقنها في برومبت المحوّلات «العمياء» (كل محرك غير SDK
+                       ليس من عائلة claude — cli مستثنى لأن كلود يقرأ بنفسه). نقي بلا اعتماديات
+                       (نمط diff.js). تنقية: المسار داخل cwd حصراً (لا مطلق ولا ..)، سقف
+                       64ك/ملف و192ك إجمالاً و12 ملفاً، رفض الثنائي (بايت NUL)، تجاهل غير
+                       الموجود بصمت (@ قد لا تكون إشارة ملف). يعيد {prompt, attached, skipped}
+                       — ردّ satr:send يحملها (injectedFiles/skippedFiles) والواجهة تعرض
+                       تنبيهات «📎 أُرفق…»/«⚠️ لم يُرفق…»
+electron/adapters/   ← طبقة المحوّلات/المزوّدين (المرحلة 5): سجلّ قابل للحقن + عقد موحّد
+                       index.js (register/get/list) + claude-cli.js (مسار claude -p المنقول) +
+                       gemini.js (Gemini عبر REST مباشر) + openai-compatible.js (مصنع لأي
+                       endpoint متوافق OpenAI: DeepSeek/Qwen/GLM…). محرك SDK يبقى خاصاً في
+                       agent.js (لا يُلفّ). انظر «طبقة المحوّلات والمزوّدين» أدناه + docs/ARCHITECTURE.md
+electron/keys.js     ← مخزن أسرار «سطر» (~/.satr/keys.json): get/names/set/remove — بذرة إدارة
+                       مفاتيح المزوّدين (نقطة الربط §4.3). القيم لا تُعاد للواجهة أبداً
+electron/chats.js    ← ذاكرة المحوّلات على القرص (الدفعة 1.3): load/save لسجلّ محادثات REST
+                       في ~/.satr/chats/<provider>/<session>.json بصيغة المحوّل الأصلية.
+                       تنقية regex صارمة للمعرّفات، سقف 50 جلسة/مزوّد (تنظيف بالأقدم)،
+                       أفضل جهد (فشل القرص لا يكسر الدور — الكاش الحيّ يكمل)
+electron/features.js ← طبقة القدرات (feature-flags) + المُحمِّل الشرطي لـ enterprise/ (نقطة الربط
+                       §4.1/§4.4): النواة تعمل كاملة إن غاب enterprise/. أساس نموذج Community+Enterprise
 electron/bgprocs.js  ← متتبّع عمليات الخلفية المعمّرة (خوادم التطوير): الـ SDK لا يكشف
                        للمضيف أي مقبض لعمليات تُشغّلها الأدوات، فنتعقّبها على مستوى النظام.
                        خطّافا Bash (run_in_background) في agent.js يلتقطان أحفاد عملية «سطر»
@@ -79,15 +101,19 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
    - `extraDirs` (⚙ «مجلدات إضافية» — المرحلة 14.4): مصفوفة مسارات يصل إليها النموذج
      بجانب cwd. تُنقّى في main.js (`sanitizeExtraDirs`: مجلد موجود فعلاً، سقف 10)
      وتُمرَّر `additionalDirectories`. تُحفظ في localStorage (`satr_extra_dirs`). sdk فقط.
-2. حسب `engine` (قائمة «المحرك» في الواجهة، الافتراضي `sdk`):
+2. حسب `engine` (قائمة «المحرك» في الواجهة، الافتراضي `sdk`؛ القائمة تُبنى ديناميكياً من
+   `satr:providers`): `sdk` خاص يذهب لـ agent.js، وأي `engine` آخر يمرّ عبر
+   **طبقة المحوّلات** `adapters.get(engine)` (main.js يُنقّي المدخلات ثم يستدعي `start`):
    - **sdk** (المرحلة 2): `electron/agent.js` يستدعي `query()` من `@anthropic-ai/claude-agent-sdk`
      بإدخال بثّي (مولّد يبقى مفتوحاً حتى نهاية الدور — شرط عمل `interrupt()`)
      مع `includePartialMessages` و `canUseTool` و `resume/model/permissionMode/cwd`
-   - **cli** (احتياطي): `claude -p --output-format stream-json --verbose [--resume id] …`
+   - **cli** (احتياطي، `adapters/claude-cli.js`): `claude -p --output-format stream-json --verbose …`
      - البرومبت عبر **stdin**؛ على ويندوز `shell: true` لأن claude قد يكون `.cmd`
      - يُشغَّل بـ `detached: true` (ويندوز): مجموعة عمليات وكونسول خاصّان به، فأي
        حدث تحكّم كونسول (CTRL_C/CTRL_BREAK) من خادم تطوير طويل العمر يبقى محبوساً
-       في شجرته ولا يصل «سطر». الإيقاف بـ `taskkill /T /F` (نزولاً فقط، انظر killCurrent)
+       في شجرته ولا يصل «سطر». الإيقاف بـ `taskkill /T /F` (نزولاً فقط)
+   - **gemini / deepseek / qwen / …** (المرحلة 5): محوّلات REST (لا CLI) — انظر
+     «طبقة المحوّلات والمزوّدين» أدناه. مقبضها في main.js هو `currentCliRun` (له `stop()`)
    - **عزل العمليات (حرج)**: العملية الرئيسية تتجاهل `SIGINT/SIGBREAK/SIGHUP` على
      ويندوز (انظر مناعة الكونسول في main.js) حتى لا يُسقطها حدث تحكّم كونسول قادم من
      عملية طفل. هذا ضروري لمسار **SDK** الذي يبثّ فيه الـ SDK عملية claude **بلا**
@@ -121,6 +147,69 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
 
 كل رسالة جديدة تمرّر `--resume <session_id>` المأخوذ من حدث `result` السابق.
 «جلسة جديدة» = تصفير sessionId.
+
+### طبقة المحوّلات والمزوّدين (Adapters/Providers — المرحلة 5)
+
+إثبات رؤية «البيت العربي لكل أدوات CLI/النماذج» بمحرّكات ثانية بجانب Claude، **بصفر تغيير
+في الواجهة**: كل محوّل يطبّع خرجه إلى أنواع أحداث «سطر» نفسها (`system/stream_text/assistant/
+result`)، فالواجهة لا تتغيّر.
+
+- **العقد الموحّد**: `start(input, cwd, emit) → { stop() }`. `input` **مُنقّى في main.js**
+  (القاعدة 2): `{prompt, sessionId, model, permissionMode, extraDirs}`. `emit(obj)` يبثّ حدثاً
+  (مقيّد بـ `runSeq`). `stop()` يعيد Promise. المقبض يُخزَّن في `currentCliRun` (بجانب
+  `currentRun` لمحرك SDK الذي يحمل `resolvePermission`).
+- **السجلّ** (`adapters/index.js`): `register(name, adapter, meta)` / `get(engine)` /
+  `list()` (يعيد `{name, label, family, keyName}`). **قابل للحقن** فتضيف طبقة Enterprise
+  مزوّدين دون لمس النواة (نقطة الربط §4.2 في ARCHITECTURE.md). المدمج: cli, gemini, deepseek, qwen.
+- **`adapters/claude-cli.js`**: مسار `claude -p` المنقول من main.js (نفس detached+taskkill).
+- **`adapters/gemini.js`**: Gemini عبر **REST مباشر** (`https` مدمجة، بثّ SSE من
+  `streamGenerateContent`) لا gemini-cli. **قرار مثبّت**: gemini-cli أُسقط لأنه غير موثوق
+  للوضع غير التفاعلي (طبقة OAuth المجانية أُلغيت من Google، ثقة المجلد تُعلّق، «auto» بطيء) —
+  REST بنموذج `gemini-2.5-flash` سريع وثابت. المفتاح في ترويسة HTTP، ذاكرة محادثة في خريطة
+  لكل session_id (يُمرَّر كامل السجل كل دور).
+- **`adapters/openai-compatible.js`**: **مصنع** `make(config)` لأي endpoint متوافق مع OpenAI
+  Chat Completions (بثّ `choices[].delta.content` + `[DONE]`). DeepSeek/Qwen/GLM/Kimi كلها
+  بنفس البروتوكول ⇒ إضافة مزوّد = سطر `register()` واحد. متحقَّق حيّاً بالبروتوكول.
+- **حدود موثّقة**: نص فقط (لا صور/أدوات/diff/إذن حيّ في هذه المحوّلات — تلك حصرية لمحرك SDK).
+- **الذاكرة (الدفعة 1.3)**: سجلّ المحادثة كاش حيّ (Map) فوق **قرص** (`electron/chats.js` —
+  `~/.satr/chats/<provider>/<session>.json`) فتُستأنف المحادثة بعد إعادة تشغيل «سطر».
+  مؤشر «آخر جلسة» على **القرص أيضاً** (`<provider>/last.txt` يكتبه `chats.save`) — **ليس
+  localStorage** (درس مثبّت من اختبار القبول: كتابة localStorage قد لا تصل القرص فيضيع
+  المؤشر). الواجهة تستعيده عند الإقلاع وعند التبديل للمحرك عبر IPC `satr:lastChat {engine}`
+  → `{sid}`، و«جلسة جديدة» تنساه عبر `satr:forgetChat` (`chats.forget` يحذف last.txt
+  والسجلّ يبقى للتنظيف بالأقدم). preload يكشفهما `lastChat/forgetChat`. sdk↔cli يتشاركان
+  جلسات كلود كما كانا (لا مساس). المصنع openai-compatible يأخذ `id` في config هو اسم
+  مجلد الذاكرة؛ بدونه تبقى الذاكرة حيّة فقط.
+- **رؤية الملفات (الدفعة 1.1)**: `@مسار` في الرسالة يُحقن محتواه في البرومبت قبل
+  `adapter.start` (عبر `electron/inject.js` — انظر خريطة الملفات أعلاه). للمحوّلات العمياء
+  فقط (عائلة claude مستثناة)؛ صفر تغيير في المحوّلات نفسها.
+
+### مخزن الأسرار ومركز المفاتيح (keys.js — المرحلة 5ب)
+
+- **`electron/keys.js`**: `~/.satr/keys.json` (كائن اسم→قيمة). المحوّلات تقرأ المفتاح:
+  بيئة النظام أولاً ثم `keys.get(name)` — موثوق لا يعتمد على وراثة البيئة أو إعادة التشغيل
+  (يُقرأ لحظة الطلب). بذرة إدارة أسرار Enterprise (نقطة الربط §4.3).
+- **🔒 أمان مثبّت**: قيم الأسرار **لا تُعاد للواجهة أبداً** — `satr:keysList` يعيد الأسماء
+  المضبوطة فقط. `satr:keySet {name, value}` يقبل **أسماء مفاتيح المزوّدين المسجّلين فقط**
+  (`SAFE_KEY_NAME` + فحص `adapters.list()`)، قيمة ≤8ك، كتابة لملف لا spawn. `satr:keyDelete`.
+- **الواجهة**: قسم «مفاتيح المزوّدين» في ⚙ (منتقي مزوّد + حالة «مضبوط/غير مضبوط» + إدخال
+  password + حفظ/مسح). الحفظ فوري (بلا إعادة تشغيل).
+
+### طبقة القدرات ونموذج Community + Enterprise (features.js — المرحلة 5ج)
+
+**التصميم الكامل في `docs/ARCHITECTURE.md`** (نموذج «النواة + Enterprise إضافي» بطريقة
+مستودع GitHub واحد + مجلد `enterprise/` مُقفل — اقرأه قبل أي عمل يمسّ الفصل).
+- **`electron/features.js`**: المُحمِّل الشرطي (`try require('../enterprise')`) + feature-flags.
+  النواة تعمل **كاملة** إن غاب `enterprise/` (معيار قبول دائم). فشل Enterprise معزول لا
+  يُسقط النواة. `features.init()` في main.js؛ IPC `satr:features` (لقطة القدرات).
+- **نقاط الربط**: §4.1 مُحمِّل شرطي، §4.2 سجلّ المحوّلات، §4.3 مخزن الأسرار، §4.4 flags.
+
+### IPCs المرحلة 5 (قراءة/كتابة، مُنقّاة في main.js)
+
+`satr:providers` (قائمة المزوّدين للقائمة الديناميكية) · `satr:features` (لقطة القدرات) ·
+`satr:keysList`/`keySet`/`keyDelete` (مركز المفاتيح). preload يكشفها كلها. القائمة «المحرك»
+في index.html تُبنى من `satr:providers` (sdk خاص أولاً + المحوّلات)، والاختيار يُحفظ في
+localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثابتة احتياطياً.
 
 ### متصفح الجلسات (المرحلة 1)
 
@@ -249,6 +338,19 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
   الأيقونة من مورد الـ exe، وفي التطوير من الملف على القرص (الحارس `fs.existsSync`).
 - **مؤجَّل للمرحلة 7**: التحديث التلقائي (electron-updater) — يحتاج مستودع GitHub عاماً وإصدارات
   (Releases) لا توجد بعد، فيُنفَّذ مع إطلاق المصدر المفتوح. ولوحة `/تكلفة` مُلغاة (تجميد الأوامر).
+
+### لوحة ملفات المشروع + عارض القراءة (الدفعة 1.2 من ROADMAP)
+
+- **الفتح**: زر 📄 في الشريط العلوي (ليس أمر `/` — احتراماً لتجميد الأوامر) يفتح لوحة
+  جانبية بشجرة ملفات المشروع (من `satr:listFiles` القائمة؛ بناء الأبناء كسول عند فتح
+  المجلد). النقر على ملف يفتح **عارض قراءة** (ليس محرّراً): نافذة وسطية، كود LTR بأرقام
+  أسطر (عدّاد CSS)، نص خام بلا تظليل (الترقية للدفعة 4).
+- **IPC جديد**: `satr:readFile {cwd, rel}` → `{ok, content, truncated, bytes}` أو
+  `{ok:false, error: outside|notfound|binary|error|bad_cwd|bad_input}` — قراءة فقط عبر
+  `files.readText` (تحقق موحّد مع inject.js: داخل cwd حصراً، رفض الثنائي، سقف 256ك.ب).
+  preload يكشفه كـ `readFile(cwd, rel)`.
+- **حدود العرض**: 256ك.ب و5000 سطر DOM — الأطول يُعرض أوله مع ملاحظة «✂️». Escape يغلق
+  العارض ثم اللوحة؛ النقر على الخلفية المعتمة يغلق العارض.
 
 ### منصّة @ للملفات + لصق الصور (المرحلة 4)
 

@@ -8,7 +8,9 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const fsp = require('fs/promises');
+const inject = require('./inject'); // إعادة استخدام resolveInside/looksBinary/readCapped (أمان موحّد)
 
 // مجلدات لا قيمة لذكرها في @ وتُبطئ المشي — نتجاهلها كلياً
 const IGNORE_DIRS = new Set([
@@ -57,4 +59,30 @@ async function listFiles(cwd) {
   return files;
 }
 
-module.exports = { listFiles };
+// ---------- عارض القراءة (الدفعة 1.2 من ROADMAP) ----------
+
+const MAX_VIEW = 256 * 1024; // سقف المعروض في عارض القراءة (بايت)
+
+/**
+ * قراءة ملف نصّي للعرض فقط — التحقق موحّد مع inject.js:
+ * المسار داخل cwd حصراً، رفض الثنائي، قراءة بسقف (لا تحميل ملفات عملاقة).
+ * @returns {{ok:true, content:string, truncated:boolean, bytes:number} |
+ *           {ok:false, error:'outside'|'notfound'|'binary'|'error'}}
+ */
+function readText(cwd, rel) {
+  const abs = inject.resolveInside(cwd, rel);
+  if (!abs) return { ok: false, error: 'outside' };
+  let st;
+  try { st = fs.statSync(abs); } catch { return { ok: false, error: 'notfound' }; }
+  if (!st.isFile()) return { ok: false, error: 'notfound' };
+  let buf;
+  try { buf = inject.readCapped(abs, MAX_VIEW); } catch { return { ok: false, error: 'error' }; }
+  if (inject.looksBinary(buf)) return { ok: false, error: 'binary' };
+  const truncated = buf.length > MAX_VIEW;
+  if (truncated) buf = buf.subarray(0, MAX_VIEW);
+  // إزالة محرف بديل مبتور محتمل عند قطع UTF-8 في منتصف حرف
+  const content = buf.toString('utf8').replace(/�+$/, '');
+  return { ok: true, content, truncated, bytes: st.size };
+}
+
+module.exports = { listFiles, readText };
