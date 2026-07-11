@@ -86,7 +86,7 @@ const MARKUP = `
     <button id="pvReload" type="button" title="تحديث">⟳</button>
     <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل">🔄</button>
     <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)">🎯</button>
-    <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (webm)">⏺</button>
+    <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (mp4)">⏺</button>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
   <div id="pvBox">
@@ -324,8 +324,24 @@ class SatrPreviewPanel extends HTMLElement {
 
     // ---------- تسجيل فيديو التصفح (م-5) ----------
     // صفر اعتماديات: previewFrame (لقطة PNG من العرض) ⇒ رسم على <canvas> ⇒
-    // canvas.captureStream(fps) ⇒ MediaRecorder ⇒ webm blob ⇒ تنزيل. ~8 إطارات/ث كافية
+    // canvas.captureStream(fps) ⇒ MediaRecorder ⇒ blob ⇒ تنزيل. ~8 إطارات/ث كافية
     // لتوثيق التصفح. الـ canvas مخفي داخل Shadow. الإيقاف يجمع القطع وينزّل الملف.
+    // الحاوية: **mp4 مفضّلة** (H.264) إن دعمها المحرك (Chromium 130+ في Electron 33 يدعم
+    // MediaRecorder بحاوية mp4 — تحقّق حيّ)، وإلا webm. صفر muxer/اعتماديات (MediaRecorder
+    // يتولّى التغليف داخلياً؛ مسار WebCodecs غير متاح هنا — VideoEncoder غائب في هذا المحرك).
+    // يعيد {mime, container, ext} حسب المدعوم — النوع والامتداد يتبعانه.
+    const pickRecMime = () => {
+      const cands = [
+        { mime: 'video/mp4;codecs=avc1.42E01E', container: 'video/mp4', ext: 'mp4' },
+        { mime: 'video/mp4;codecs=avc1', container: 'video/mp4', ext: 'mp4' },
+        { mime: 'video/mp4', container: 'video/mp4', ext: 'mp4' },
+        { mime: 'video/webm;codecs=vp9', container: 'video/webm', ext: 'webm' },
+        { mime: 'video/webm', container: 'video/webm', ext: 'webm' },
+      ];
+      const MR = window.MediaRecorder;
+      for (const c of cands) if (MR && MR.isTypeSupported(c.mime)) return c;
+      return { mime: '', container: 'video/webm', ext: 'webm' }; // افتراضي المحرك
+    };
     const recBtn = $('pvRec');
     let recording = false, mediaRec = null, recChunks = [], recTimer = 0, recCanvas = null, recCtx = null;
 
@@ -364,19 +380,19 @@ class SatrPreviewPanel extends HTMLElement {
       drawFrame(first);
       let stream;
       try { stream = recCanvas.captureStream(8); } catch (e) { showErr('التسجيل غير مدعوم في هذه البيئة.'); return; }
-      const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) ? 'video/webm;codecs=vp9' : 'video/webm';
-      try { mediaRec = new MediaRecorder(stream, { mimeType: mime }); }
+      const rec = pickRecMime(); // mp4 مفضّلة، وإلا webm
+      try { mediaRec = rec.mime ? new MediaRecorder(stream, { mimeType: rec.mime }) : new MediaRecorder(stream); }
       catch (e) { showErr('التسجيل غير مدعوم في هذه البيئة.'); return; }
       recChunks = [];
       mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
       mediaRec.onstop = () => {
-        const blob = new Blob(recChunks, { type: 'video/webm' });
+        const blob = new Blob(recChunks, { type: rec.container });
         recChunks = []; recCanvas = null; recCtx = null;
         if (!blob.size) return;
         const a = document.createElement('a');
         const u = URL.createObjectURL(blob);
         a.href = u;
-        a.download = 'satr-preview-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.webm';
+        a.download = 'satr-preview-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + rec.ext;
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(u), 10000);
       };
