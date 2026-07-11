@@ -139,9 +139,10 @@ function list() {
   return out;
 }
 
-// محادثة واحدة مهيأة للعرض: آخر 40 رسالة نصية {role: user|assistant, text}
-// (رسائل الأدوات تُتخطى — العرض للتصفح لا لإعادة بناء الحلقة)
-function read(provider, sid) {
+// محادثة واحدة مهيأة للعرض: آخر cap رسالة نصية {role: user|assistant, text}
+// (رسائل الأدوات تُتخطى — العرض للتصفح لا لإعادة بناء الحلقة).
+// cap=0 يعيد الكل (التصدير 4.8)؛ الافتراضي 40 (لوحة الجلسات كما كانت).
+function read(provider, sid, cap = 40) {
   const h = load(provider, sid);
   if (!h) return { ok: false, error: 'notfound' };
   const messages = [];
@@ -151,7 +152,7 @@ function read(provider, sid) {
     if (m.role === 'user') text = unwrapInjected(text);
     if (text) messages.push({ role: m.role === 'user' ? 'user' : 'assistant', text });
   }
-  return { ok: true, total: messages.length, messages: messages.slice(-40) };
+  return { ok: true, total: messages.length, messages: cap ? messages.slice(-cap) : messages };
 }
 
 // إبقاء أحدث MAX_SESSIONS ملفاً في مجلد المزوّد (الأقدم بوقت التعديل يُحذف)

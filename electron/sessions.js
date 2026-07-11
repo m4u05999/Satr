@@ -121,16 +121,9 @@ async function listSessions() {
   return sessions;
 }
 
-// قراءة جلسة واحدة: cwd الخاص بها + آخر رسائلها مهيأة للعرض
-async function readSession(project, id) {
-  if (!safeName(project) || !safeName(id)) return { error: 'bad_args' };
-  const file = path.join(PROJECTS_ROOT, project, id + '.jsonl');
-  // حزام أمان إضافي فوق safeName: المسار النهائي يجب أن يبقى داخل مجلد الجلسات
-  if (!file.startsWith(PROJECTS_ROOT + path.sep)) return { error: 'bad_args' };
-
-  let raw;
-  try { raw = await fsp.readFile(file, 'utf8'); } catch { return { error: 'not_found' }; }
-
+// بناء رسائل العرض من نص jsonl خام — مشترك بين readSession (لوحة الجلسات)
+// و readFullSession (التصدير 4.8)
+function buildMessages(raw) {
   const messages = [];
   let cwd = '';
   for (const e of parseLines(raw)) {
@@ -152,7 +145,39 @@ async function readSession(project, id) {
       }
     }
   }
+  return { cwd, messages };
+}
+
+// قراءة جلسة واحدة: cwd الخاص بها + آخر رسائلها مهيأة للعرض
+async function readSession(project, id) {
+  if (!safeName(project) || !safeName(id)) return { error: 'bad_args' };
+  const file = path.join(PROJECTS_ROOT, project, id + '.jsonl');
+  // حزام أمان إضافي فوق safeName: المسار النهائي يجب أن يبقى داخل مجلد الجلسات
+  if (!file.startsWith(PROJECTS_ROOT + path.sep)) return { error: 'bad_args' };
+
+  let raw;
+  try { raw = await fsp.readFile(file, 'utf8'); } catch { return { error: 'not_found' }; }
+
+  const { cwd, messages } = buildMessages(raw);
   return { cwd, total: messages.length, messages: messages.slice(-MAX_MESSAGES) };
 }
 
-module.exports = { listSessions, readSession };
+// قراءة جلسة **كاملة** بمعرّفها وحده (التصدير 4.8): المعرّف UUID فريد عبر المشاريع،
+// فمسح مجلدات المشاريع عنه يغني عن إعادة اشتقاق ترميز اسم المجلد من cwd (هشّ).
+// بلا سقف الـ40 الخاص بالعرض — التصدير يريد المحادثة كلها.
+async function readFullSession(id) {
+  if (!safeName(id)) return { error: 'bad_args' };
+  let dirs = [];
+  try { dirs = await fsp.readdir(PROJECTS_ROOT, { withFileTypes: true }); } catch { return { error: 'not_found' }; }
+  for (const d of dirs) {
+    if (!d.isDirectory() || !safeName(d.name)) continue;
+    const file = path.join(PROJECTS_ROOT, d.name, id + '.jsonl');
+    let raw;
+    try { raw = await fsp.readFile(file, 'utf8'); } catch { continue; } // ليس في هذا المشروع
+    const { cwd, messages } = buildMessages(raw);
+    return { cwd, messages };
+  }
+  return { error: 'not_found' };
+}
+
+module.exports = { listSessions, readSession, readFullSession };

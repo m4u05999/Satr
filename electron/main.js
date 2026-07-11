@@ -13,6 +13,7 @@ const sessions = require('./sessions');
 const files = require('./files');
 const searchMod = require('./search'); // بحث محتوى المشروع (الدفعة 4.6)
 const gitdiff = require('./gitdiff'); // فروقات git للوحة التغييرات (الدفعة 4.7) — قراءة فقط
+const exporter = require('./exporter'); // تصدير المحادثة Markdown (الدفعة 4.8) — قراءة فقط
 const skills = require('./skills');
 const agentsList = require('./agents');
 const agent = require('./agent');
@@ -529,6 +530,19 @@ ipcMain.handle('satr:gitChanges', async (event, payload) => {
     return { ok: false, error: 'bad_cwd' };
   }
   try { return await gitdiff.changes(cwd); } catch { return { ok: false, error: 'error' }; }
+});
+
+// ---------- تصدير المحادثة الحالية Markdown (الدفعة 4.8 «مشاركة») — قراءة فقط ----------
+// القرص مصدر الحقيقة (sessions.js/chats.js)؛ الحفظ في الواجهة (Blob + تنزيل) —
+// لا مسار كتابة جديداً هنا. cwd للترويسة الوصفية فقط (لا عمليات ملفات عليه).
+
+ipcMain.handle('satr:exportChat', async (event, payload) => { // SAFE_ENGINE معرّف أعلاه (1.3)
+  const p = payload || {};
+  const engine = typeof p.engine === 'string' ? p.engine : '';
+  const sessionId = typeof p.sessionId === 'string' ? p.sessionId : '';
+  const cwd = typeof p.cwd === 'string' ? p.cwd.slice(0, 512) : '';
+  if (!SAFE_ENGINE.test(engine) || !SAFE_SESSION.test(sessionId)) return { ok: false, error: 'bad_input' };
+  try { return await exporter.toMarkdown({ engine, sessionId, cwd }); } catch { return { ok: false, error: 'error' }; }
 });
 
 // ---------- سرد المهارات المكتشَفة للوحة /مهارات (قراءة فقط) ----------

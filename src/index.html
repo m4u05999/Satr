@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-T9YKt1pDbPQvepQSDvwXAfWNbmlRqfgkHccgWKgxBo8='; script-src 'self' 'sha256-/Orv84xqp6E9kehE/xxhVCXglwtcaZtEr0M48zf/5+k='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-T9YKt1pDbPQvepQSDvwXAfWNbmlRqfgkHccgWKgxBo8='; script-src 'self' 'sha256-Ki9zwp4aSJnH06pXtxjlXgbgqVxd+897YmOl9XN9kag='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/fonts.css">
 <link rel="stylesheet" href="vendor/xterm.css">
@@ -725,6 +725,7 @@
     <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
     <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄</button>
     <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">±</button>
+    <button id="exportChat" title="تصدير المحادثة الحالية (Markdown)">📤</button>
     <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
     <div class="settings-wrap">
       <button id="settingsBtn" title="الإعدادات">⚙</button>
@@ -2596,6 +2597,30 @@
   });
   $('closeGit').addEventListener('click', closeGitPanel);
   $('refreshGit').addEventListener('click', openGitPanel);
+
+  // ---------- تصدير المحادثة Markdown (الدفعة 4.8 «مشاركة») ----------
+  // القرص مصدر الحقيقة (العملية الرئيسية تقرأ الجلسة كاملة)، والحفظ هنا عبر
+  // Blob + تنزيل — حوار الحفظ الافتراضي في Electron يتولى الوجهة.
+  $('exportChat').addEventListener('click', async () => {
+    if (!sessionId) { addNotice('لا محادثة للتصدير بعد — أرسل رسالة أولاً'); return; }
+    const r = await window.satr.exportChat($('engine').value, sessionId, $('cwd').value.trim());
+    if (!r || !r.ok) {
+      const why = {
+        notfound: 'لم يُعثر على سجلّ الجلسة على القرص',
+        empty: 'المحادثة فارغة — لا شيء يُصدَّر',
+        bad_input: 'مدخل غير صالح',
+      };
+      addNotice('⚠️ تعذّر التصدير: ' + (why[(r && r.error) || ''] || 'خطأ غير معروف'));
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([r.markdown], { type: 'text/markdown' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = r.filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    addNotice('📤 صُدّرت المحادثة (' + r.messages + ' رسالة) — ' + r.filename +
+      (r.truncated ? ' (قُصّت — تجاوزت 2م.ب)' : ''));
+  });
 
   // ---------- تظليل كود بسيط (الدفعة 4.3) ----------
   // مميّز رموز يدوي صغير بلا اعتماديات (قاعدة 5): تعليقات/نصوص/كلمات مفتاحية/أرقام.
