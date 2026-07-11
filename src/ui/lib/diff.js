@@ -91,6 +91,9 @@ export function buildDiff(ev, notify) {
       box.classList.add('undone');
       undo.textContent = 'أُعيد ✓';
       note('✓ أُعيد الملف لما قبل التعديل: ' + ev.rel);
+      // تحديث المعاينة بعد التراجع (طلب مالك): القشرة تلتقطه وتستدعي reloadIfLive.
+      // حدّ: مشاريع ذات خطوة بناء تحتاج إعادة توليد أيضاً — reload وحده لا يكفيها.
+      box.dispatchEvent(new CustomEvent('preview-refresh', { bubbles: true }));
     } else {
       undo.disabled = false;
       undo.textContent = prev;

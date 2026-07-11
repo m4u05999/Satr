@@ -618,6 +618,11 @@
   // فتعرض القشرة إشعاراً بزرّ «افتح المعاينة» (مرة لكل عنوان في عمر الجلسة).
   const previewEl = document.querySelector('satr-preview-panel');
   let previewDirty = false; // م-1-ج: عُدّل ملف في الدور الجاري ⇒ حدّث المعاينة عند انتهائه
+  // تحديث المعاينة بعد التراجع من بطاقة diff (طلب مالك): الحدث يصعد من buildDiff.
+  // حدّ: مشاريع ذات خطوة بناء تحتاج إعادة توليد أيضاً — reload وحده لا يعكس المصدر.
+  document.addEventListener('preview-refresh', () => {
+    if (previewEl && previewEl.reloadIfLive) previewEl.reloadIfLive();
+  });
   const suggestedPreviewUrls = new Set();
   document.querySelector('satr-terminal-panel').addEventListener('localhost-url', (e) => {
     const url = e.detail;
