@@ -99,10 +99,15 @@ electron/term.js     ← الطرفية العربية المدمجة (المر�
                        (ConPTY، ويندوز 10 1809+) + IPC بثّ البايتات بالاتجاهين + تغيير الحجم +
                        قتل مضمون عند الإغلاق. التصميم الكامل في docs/PHASE8-DESIGN.md
 src/index.html       ← الواجهة كاملة (HTML/CSS/JS في ملف واحد حالياً)
-src/vendor/          ← xterm.js مُضمّن (vendored) للواجهة — يولّده scripts/vendor-xterm.js من
-                       devDependency والناتج مُلتزَم (لا اعتمادية npm وقت تشغيل للواجهة)
+src/vendor/          ← أصول مُضمّنة (vendored) للواجهة — الناتج مُلتزَم (لا اعتمادية npm وقت
+                       تشغيل للواجهة): xterm.js (يولّده scripts/vendor-xterm.js) + خط IBM Plex
+                       Sans Arabic في fonts/ مع fonts.css (يولّدهما scripts/vendor-fonts.js)
 scripts/vendor-xterm.js ← ينسخ lib/xterm.js و css/xterm.css من node_modules إلى src/vendor —
                        يُشغَّل يدوياً عند ترقية إصدار xterm.js فقط
+scripts/vendor-fonts.js ← يضمّن خط IBM Plex Sans Arabic (OFL) من devDependency
+                       ‏@fontsource/ibm-plex-sans-arabic: مجموعتا subset عربي+لاتيني ×
+                       الأوزان 400/500/700، woff2 حصراً (~190ك.ب)، وكتل @font-face تُستخرج
+                       من CSS الحزمة (unicode-range يبقى متزامناً) — يُشغَّل يدوياً عند الترقية
 docs/PHASE8-DESIGN.md ← تصميم الطرفية العربية: المقاربات الثلاث، القرارات المثبّتة (الصدى،
                        حدود الإدخال، الأداء، محرك واحد بعارضين)، المراحل الفرعية 8.1–8.4
 scripts/update-csp.js ← يحدّث هاشات CSP لكتل style/script المضمّنة — يعمل تلقائياً قبل start و dist
@@ -489,6 +494,25 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   (الوحدات الأصلية لا تعمل من داخل asar)، و`files` يستثني prebuilds غير win32-x64
   ومجلدات المصادر فيبقى المثبّت ~80م.ب.
 
+### نظام التصميم (الدفعة 4.1)
+
+- **Design Tokens في `:root`** (src/index.html): الرمادية الدافئة مقتبسة **قيماً** من مقياس
+  Sand الداكن في Radix Colors (نسخ قيم لا تثبيت حزم)، والدلاليات من Grass/Red الداكنين.
+  الهوية الذهبية `--gold: #D9A441` ثابتة. **الأسماء القديمة باقية تعمل**
+  (`--bg/--surface/--surface-2/--border/--text/--text-dim/--gold-soft/--green/--red`)
+  وأُضيفت درجات جديدة: `--bg-deep` (الطرفية/عارض القراءة — بديل ‎#0B0E13 الصلب)،
+  `--surface-3`، `--border-dim/-strong`، `--text-faint` (أرقام الأسطر)، `--gold-strong/-border`،
+  `--green-soft/-border`، `--red-soft/-border`، وظلال (`--shadow-pop/-panel/-modal`)
+  وحركة موحّدة (`--ease`, `--dur`). **قرار مثبّت**: داكن فقط الآن، والبنية (كل الألوان عبر
+  متغيرات) تمهّد لوضع فاتح لاحقاً — لا تُدخل ألواناً صلبة جديدة في CSS.
+- **الخط**: IBM Plex Sans Arabic مضمّن (`src/vendor/fonts/` + `fonts.css` — انظر
+  scripts/vendor-fonts.js أعلاه) هو أول `--sans` والاحتياط نظامي؛ حجم الأساس رُفع إلى 16px
+  (قرار مالك عند قبول 4.1 — كان 15px مع Segoe UI).
+  الخط الأحادي يبقى نظامياً (Cascadia/Consolas — قرار مالك: الكود لاتيني، لا مكسب من تضمين
+  mono). ثيمة xterm وألوان الافتراض في JS حُدّثت لتطابق `--bg-deep`/`--text`.
+- **الحركات**: دخول الرسائل (`rise`) وظهور المنبثقات (`pop`) عبر `--dur/--ease`، مع تعطيل
+  شامل تحت `prefers-reduced-motion` — أي حركة جديدة تستخدم المتغيرين لا أرقاماً صلبة.
+
 ## قواعد إلزامية
 
 1. **الأمان أولاً**: لا تعطّل `contextIsolation` أو `sandbox`، ولا تفعّل `nodeIntegration`.
@@ -505,9 +529,10 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
    **استثناء واعٍ وموثَّق (المرحلة 8 — الطرفية):** `node-pty` اعتمادية **أصلية (native)**
    ثانية في العملية الرئيسية. المبرر: الطرفية المدمجة تستحيل بلا pseudoterminal حقيقي
    (ConPTY) ولا بديل JS خالص له — spawn العادي لا يعطي TTY (لا ألوان ولا تفاعلية)؛ الحزمة
-   من مايكروسوفت وتشغّل VS Code نفسه. أما xterm.js في الواجهة فليس اعتمادية تشغيل npm بل
-   **مُضمّن (vendored)** في `src/vendor/` (المصدر devDependency، والنسخ عبر
-   `scripts/vendor-xterm.js`، والناتج مُلتزَم) — فقاعدة الواجهة تبقى قائمة بمعناها.
+   من مايكروسوفت وتشغّل VS Code نفسه. أما xterm.js وخط IBM Plex Sans Arabic في الواجهة
+   فليسا اعتماديتَي تشغيل npm بل **مُضمّنان (vendored)** في `src/vendor/` (المصدر
+   devDependency، والنسخ عبر `scripts/vendor-xterm.js` و`scripts/vendor-fonts.js`،
+   والناتج مُلتزَم) — فقاعدة الواجهة تبقى قائمة بمعناها.
    لا استثناءات أخرى دون قرار يُوثَّق هنا.
 6. **لا تكسر العقد بين الطبقات**: أي تغيير في صيغة أحداث IPC يتطلب تحديث الطرفين معاً
    وتحديث هذا الملف.

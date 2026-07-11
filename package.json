@@ -17,6 +17,7 @@
     "dist:ee": "electron-builder --win --config scripts/ee-builder-config.js"
   },
   "devDependencies": {
+    "@fontsource/ibm-plex-sans-arabic": "^5.2.9",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "electron": "^33.0.0",

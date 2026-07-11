@@ -2,29 +2,54 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-aq6YbQQ/NGxdDk5yFZUg4ikigReQ+YEFXnxYCUNviOw='; script-src 'self' 'sha256-VtiAmwkysR1XwgpscGmgBxgVF5nZSyS9buhzs7dPU/4='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-8fVNAa+0u+2KfeaKY7X4LNfR6hGCJeDt7eDVwVQiUpI='; script-src 'self' 'sha256-DzjCwKvDRm5DpTZCTCRX6Vrv5fUOZhiirdgiBHz9nz4='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
+<link rel="stylesheet" href="vendor/fonts.css">
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
   :root {
-    --bg: #0E1116;
-    --surface: #151B23;
-    --surface-2: #1C232E;
-    --border: #28303C;
-    --text: #E8E3D8;
-    --text-dim: #9AA3AE;
+    /* ===== Design Tokens (الدفعة 4.1) =====
+       الرمادية الدافئة مقتبسة قيماً من مقياس Sand الداكن في Radix Colors
+       (نسخ قيم لا تثبيت حزم — درجات مدروسة التباين تلائم الهوية الذهبية).
+       الأسماء القديمة (bg/surface/border/text/…) باقية تعمل — أساس لوضع فاتح لاحقاً */
+    --bg-deep: #0d0d0c;        /* أعمق من الخلفية: الطرفية وعارض القراءة */
+    --bg: #111110;             /* sand1 */
+    --surface: #191918;        /* sand2 */
+    --surface-2: #222221;      /* sand3 */
+    --surface-3: #2a2a28;      /* sand4 — تمييز/تحويم */
+    --border-dim: #2a2a28;     /* sand4 — فواصل خافتة */
+    --border: #3b3a37;         /* sand6 */
+    --border-strong: #62605b;  /* sand8 — حدود مُبرزة */
+    --text: #eeeeec;           /* sand12 */
+    --text-dim: #b5b3ad;       /* sand11 — نص ثانوي بتباين مقروء */
+    --text-faint: #7c7b74;     /* sand10 — أخفت (أرقام أسطر ونحوها) */
+    /* الهوية الذهبية — ثابتة */
     --gold: #D9A441;
+    --gold-strong: #E5B655;    /* تحويم/توهج */
     --gold-soft: rgba(217, 164, 65, 0.12);
-    --green: #7FB069;
-    --red: #E2635D;
+    --gold-border: rgba(217, 164, 65, 0.35);
+    /* دلالية — Grass/Red الداكنان من Radix */
+    --green: #71d083;          /* grass11 */
+    --green-soft: rgba(113, 208, 131, 0.12);
+    --green-border: rgba(113, 208, 131, 0.4);
+    --red: #ec5d5e;            /* red10 */
+    --red-soft: rgba(236, 93, 94, 0.1);
+    --red-border: rgba(236, 93, 94, 0.4);
+    /* الخطوط: IBM Plex Sans Arabic مضمّن (vendor/fonts.css — OFL) والاحتياط نظامي */
     --mono: 'Cascadia Mono', 'Consolas', monospace;
-    --sans: 'Segoe UI', 'Tahoma', system-ui, sans-serif;
+    --sans: 'IBM Plex Sans Arabic', 'Segoe UI', 'Tahoma', system-ui, sans-serif;
+    /* الحركة والظلال — منحنى واحد موحّد لكل الواجهة */
+    --ease: cubic-bezier(.2, .8, .3, 1);
+    --dur: .18s;
+    --shadow-pop: 0 10px 30px rgba(0, 0, 0, .45);
+    --shadow-panel: -10px 0 34px rgba(0, 0, 0, .5);
+    --shadow-modal: 0 18px 60px rgba(0, 0, 0, .6);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
   body {
     background: var(--bg); color: var(--text);
-    font-family: var(--sans); font-size: 15px; line-height: 1.8;
+    font-family: var(--sans); font-size: 16px; line-height: 1.8;
     display: flex; flex-direction: column; overflow: hidden;
   }
 
@@ -37,7 +62,12 @@
   .wordmark { font-size: 22px; font-weight: 700; color: var(--gold); display: flex; align-items: baseline; gap: 3px; user-select: none; }
   .wordmark .cursor { display: inline-block; width: 10px; height: 19px; background: var(--gold); animation: blink 1.1s steps(1) infinite; transform: translateY(2px); }
   @keyframes blink { 50% { opacity: 0; } }
-  @media (prefers-reduced-motion: reduce) { .wordmark .cursor { animation: none; } }
+  /* ظهور القوائم المنبثقة (⚙ وقائمتا / و@) — يعمل عند كل إظهار لأن العنصر يُرسم من جديد */
+  @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.985); } }
+  @media (prefers-reduced-motion: reduce) {
+    .wordmark .cursor { animation: none; }
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
 
   .controls { display: flex; align-items: center; gap: 8px; flex: 1; flex-wrap: wrap; justify-content: flex-end; }
   .field { display: flex; align-items: center; gap: 6px; }
@@ -45,20 +75,21 @@
   input[type="text"], select {
     background: var(--bg); border: 1px solid var(--border); color: var(--text);
     border-radius: 8px; padding: 6px 10px; font-family: var(--sans); font-size: 13px; outline: none;
+    transition: border-color var(--dur) var(--ease);
   }
   input[type="text"]:focus, select:focus, textarea:focus { border-color: var(--gold); }
   #cwd { width: 240px; direction: ltr; text-align: left; font-family: var(--mono); font-size: 12px; }
   button {
     background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
     border-radius: 8px; padding: 6px 13px; font-family: var(--sans); font-size: 13px;
-    cursor: pointer; transition: border-color .15s;
+    cursor: pointer; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
   }
-  button:hover { border-color: var(--gold); }
+  button:hover { border-color: var(--gold); background: var(--surface-3); }
   button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
 
   #banner { padding: 8px 18px; font-size: 13px; display: none; border-bottom: 1px solid var(--border); }
-  #banner.warn { display: block; background: rgba(226,99,93,.1); color: var(--red); }
-  #banner.ok   { display: block; background: rgba(127,176,105,.08); color: var(--green); }
+  #banner.warn { display: block; background: var(--red-soft); color: var(--red); }
+  #banner.ok   { display: block; background: var(--green-soft); color: var(--green); }
 
   /* ===== بوابة أول التشغيل (مانع إطلاق) ===== */
   /* تحجب المحادثة كلياً حتى يتوفّر Claude Code المثبّت عالمياً */
@@ -80,7 +111,7 @@
   .gate-steps { list-style: none; display: flex; flex-direction: column; gap: 14px; margin-bottom: 22px; }
   .gate-step { display: flex; gap: 12px; align-items: flex-start; }
   .gate-mark { flex: 0 0 24px; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; border: 1px solid var(--border); margin-top: 2px; }
-  .gate-mark.done { background: rgba(127,176,105,.15); color: var(--green); border-color: transparent; }
+  .gate-mark.done { background: var(--green-soft); color: var(--green); border-color: transparent; }
   .gate-mark.todo { background: var(--gold-soft); color: var(--gold); border-color: transparent; }
   .gate-body { flex: 1; min-width: 0; }
   .gate-body .t { font-size: 14.5px; font-weight: 600; margin-bottom: 3px; }
@@ -110,10 +141,12 @@
   .empty .hints kbd { min-width: 52px; text-align: center; }
   .empty kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px; font-family: var(--mono); font-size: 12px; }
 
-  .msg { display: flex; flex-direction: column; gap: 6px; }
+  /* دخول ناعم للرسائل الجديدة (الدفعة 4.1) — انزياح طفيف + ظهور، يحترم تفضيل تقليل الحركة */
+  @keyframes rise { from { opacity: 0; transform: translateY(5px); } }
+  .msg { display: flex; flex-direction: column; gap: 6px; animation: rise var(--dur) var(--ease); }
   .msg .who { font-size: 12px; color: var(--text-dim); }
   .msg.user .bubble {
-    background: var(--gold-soft); border: 1px solid rgba(217,164,65,.25);
+    background: var(--gold-soft); border: 1px solid var(--gold-border);
     border-radius: 14px 14px 4px 14px; padding: 12px 16px;
     align-self: flex-start; max-width: 92%; white-space: pre-wrap; unicode-bidi: plaintext;
   }
@@ -154,7 +187,7 @@
   .tools-wrap { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; align-self: stretch; }
   .tools-head { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none; }
   .tools-head:hover { color: var(--gold); }
-  .tools-head .chev { transition: transform .15s; font-size: 10px; }
+  .tools-head .chev { transition: transform var(--dur) var(--ease); font-size: 10px; }
   .tools-wrap.collapsed .chev { transform: rotate(-90deg); }
   .tools-wrap .tools { max-height: 176px; overflow-y: auto; padding: 0 10px 8px; }
   .tools-wrap.collapsed .tools { display: none; }
@@ -168,11 +201,11 @@
   }
   .tool .name { color: var(--gold); font-weight: 600; }
   .tool .detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px; }
-  .tool.done { border-color: rgba(127,176,105,.4); }
+  .tool.done { border-color: var(--green-border); }
   .tool.done .state { color: var(--green); }
 
   .meta { font-size: 12px; color: var(--text-dim); font-family: var(--mono); direction: ltr; text-align: right; }
-  .error-box { background: rgba(226,99,93,.08); border: 1px solid rgba(226,99,93,.35); color: var(--red); border-radius: 10px; padding: 10px 14px; font-size: 13px; white-space: pre-wrap; unicode-bidi: plaintext; }
+  .error-box { background: var(--red-soft); border: 1px solid var(--red-border); color: var(--red); border-radius: 10px; padding: 10px 14px; font-size: 13px; white-space: pre-wrap; unicode-bidi: plaintext; }
   .notice { color: var(--text-dim); font-size: 13px; text-align: center; }
   .thinking { color: var(--text-dim); font-size: 13px; }
   .thinking::after { content: ' …'; animation: blink 1s steps(1) infinite; }
@@ -182,8 +215,9 @@
   .composer { max-width: 880px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; position: relative; }
   textarea {
     flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 12px; padding: 12px 14px; font-family: var(--sans); font-size: 15px; line-height: 1.7;
+    border-radius: 12px; padding: 12px 14px; font-family: var(--sans); font-size: 16px; line-height: 1.7;
     resize: none; min-height: 52px; max-height: 220px; outline: none; unicode-bidi: plaintext;
+    transition: border-color var(--dur) var(--ease);
   }
   #send { background: var(--gold); color: #1A1408; border: none; font-weight: 600; padding: 12px 22px; border-radius: 12px; }
   #send.stop { background: var(--red); color: #fff; }
@@ -209,7 +243,7 @@
     position: absolute; top: calc(100% + 8px); left: 0; z-index: 60;
     background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
     padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 300px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+    box-shadow: var(--shadow-pop); animation: pop var(--dur) var(--ease);
   }
   #settingsPop[hidden] { display: none; }
   #settingsPop .field { justify-content: space-between; }
@@ -230,16 +264,16 @@
   .key-row input { flex: 1; min-width: 0; direction: ltr; text-align: left; font-family: var(--mono); font-size: 11.5px; }
   .key-row button { font-size: 12px; padding: 3px 10px; }
   .key-status { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
-  .key-status.set { color: #3fb950; }
+  .key-status.set { color: var(--green); }
 
   /* قائمة / المنبثقة (و @ تشاركها التموضع) */
   #slashMenu, #fileMenu {
     position: absolute; bottom: calc(100% + 8px); right: 0; left: auto;
     min-width: 340px; max-width: 480px; max-height: 300px; overflow-y: auto;
     background: var(--surface-2); border: 1px solid var(--gold); border-radius: 12px;
-    box-shadow: 0 8px 30px rgba(0,0,0,.5); display: none; z-index: 50;
+    box-shadow: var(--shadow-pop); display: none; z-index: 50;
   }
-  #slashMenu.open, #fileMenu.open { display: block; }
+  #slashMenu.open, #fileMenu.open { display: block; animation: pop var(--dur) var(--ease); }
   .slash-item { cursor: pointer; }
   .slash-row { padding: 9px 14px; display: flex; gap: 12px; align-items: baseline; }
   .slash-item .cmd { font-family: var(--mono); color: var(--gold); font-size: 13px; direction: ltr; min-width: 90px; flex: none; }
@@ -250,7 +284,7 @@
   /* أوامر CLI المتزامنة (مهارات مضمّنة + مهاراتك): لون مميز */
   .slash-item.cli .cmd { color: var(--green); }
   /* سهم التوسيع + الوصف الكامل (درس مصغّر): أكورديون، ⇄ توسّع المحدد */
-  .slash-expand { flex: none; color: var(--text-dim); font-size: 11px; padding: 0 4px; transition: transform .15s; }
+  .slash-expand { flex: none; color: var(--text-dim); font-size: 11px; padding: 0 4px; transition: transform var(--dur) var(--ease); }
   .slash-item.expanded .slash-expand { transform: rotate(180deg); color: var(--gold); }
   .slash-desc-full {
     display: block; padding: 0 14px 10px; margin-top: -3px;
@@ -283,8 +317,8 @@
   #bgBar.open { display: flex; }
   .bg-chips { display: contents; }
   .bg-label { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-  .bg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(127,176,105,.6); animation: bgpulse 1.8s infinite; }
-  @keyframes bgpulse { 70% { box-shadow: 0 0 0 6px rgba(127,176,105,0); } 100% { box-shadow: 0 0 0 0 rgba(127,176,105,0); } }
+  .bg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(113,208,131,.6); animation: bgpulse 1.8s infinite; }
+  @keyframes bgpulse { 70% { box-shadow: 0 0 0 6px rgba(113,208,131,0); } 100% { box-shadow: 0 0 0 0 rgba(113,208,131,0); } }
   .bg-chip { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; background: var(--surface-2); max-width: 100%; }
   .bg-chip .cmd { font-family: var(--mono); font-size: 12px; color: var(--text); direction: ltr; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
   .bg-chip .age { font-family: var(--mono); font-size: 11px; color: var(--text-dim); direction: ltr; }
@@ -299,8 +333,8 @@
   #sessionsPanel, #skillsPanel {
     position: fixed; top: 0; bottom: 0; right: 0; width: 400px; max-width: 92vw;
     background: var(--surface); border-inline-start: 1px solid var(--border);
-    box-shadow: -10px 0 34px rgba(0,0,0,.5); z-index: 80;
-    transform: translateX(100%); transition: transform .18s ease;
+    box-shadow: var(--shadow-panel); z-index: 80;
+    transform: translateX(100%); transition: transform var(--dur) var(--ease);
     display: flex; flex-direction: column;
   }
   #sessionsPanel.open, #skillsPanel.open { transform: translateX(0); }
@@ -342,9 +376,10 @@
     position: fixed; bottom: 16px; left: 16px; z-index: 90; max-width: 380px;
     display: flex; align-items: center; gap: 10px; padding: 10px 14px;
     background: var(--surface-2); border: 1px solid var(--gold); border-radius: 12px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.5); font-size: 13px; color: var(--text);
+    box-shadow: var(--shadow-pop); font-size: 13px; color: var(--text);
   }
   #updateToast[hidden] { display: none; }
+  #updateToast:not([hidden]) { animation: pop var(--dur) var(--ease); }
   #updateToast .upd-ico { color: var(--gold); flex: none; }
   #updateToast #updateText { flex: 1; unicode-bidi: plaintext; }
   #updateToast button { font-size: 12px; padding: 3px 10px; }
@@ -356,10 +391,11 @@
     display: none; align-items: center; justify-content: center;
   }
   #permOverlay.open { display: flex; }
+  #permOverlay.open .perm-box { animation: pop var(--dur) var(--ease); }
   .perm-box {
     background: var(--surface-2); border: 1px solid var(--gold); border-radius: 14px;
     padding: 20px 22px; width: 500px; max-width: 92vw;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, .6);
+    box-shadow: var(--shadow-modal);
   }
   .perm-box h3 { color: var(--gold); font-size: 16px; margin-bottom: 10px; }
   .perm-box .tool-name {
@@ -385,7 +421,7 @@
   .diff { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg); }
   /* الترويسة عربية (RTL): الوسم والعدّاد والأزرار؛ اسم الملف وحده LTR */
   .diff-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--surface-2); font-size: 12px; }
-  .diff-toggle { background: none; border: none; color: var(--text-dim); padding: 0 2px; font-size: 12px; cursor: pointer; transition: transform .15s; }
+  .diff-toggle { background: none; border: none; color: var(--text-dim); padding: 0 2px; font-size: 12px; cursor: pointer; transition: transform var(--dur) var(--ease); }
   .diff-toggle:hover { border: none; color: var(--gold); }
   .diff.collapsed .diff-toggle { transform: rotate(-90deg); }
   .diff-file { font-family: var(--mono); color: var(--gold); direction: ltr; font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -400,19 +436,19 @@
   .diff.collapsed .diff-body { display: none; }
   .diff.undone { opacity: .55; }
   .dl { display: flex; white-space: pre; }
-  .dl .ln { flex: 0 0 auto; width: 38px; text-align: right; padding: 0 6px; color: var(--text-dim); opacity: .65; user-select: none; }
+  .dl .ln { flex: 0 0 auto; width: 38px; text-align: right; padding: 0 6px; color: var(--text-faint); user-select: none; }
   .dl .sg { flex: 0 0 auto; width: 16px; text-align: center; user-select: none; }
   .dl .tx { flex: 1; padding: 0 8px; white-space: pre; }
-  .dl.add { background: rgba(127,176,105,.12); }
+  .dl.add { background: var(--green-soft); }
   .dl.add .sg { color: var(--green); }
-  .dl.del { background: rgba(226,99,93,.12); }
+  .dl.del { background: var(--red-soft); }
   .dl.del .sg { color: var(--red); }
   .dl.gap { justify-content: center; color: var(--text-dim); opacity: .6; padding: 1px 0; }
   .diff-note { padding: 4px 10px; font-size: 11.5px; color: var(--text-dim); border-top: 1px solid var(--border); }
 
   /* ===== بطاقة ضغط المحادثة (/ضغط) ===== */
   .compact-card {
-    border: 1px solid rgba(217,164,65,.35); background: var(--gold-soft);
+    border: 1px solid var(--gold-border); background: var(--gold-soft);
     border-radius: 10px; padding: 10px 14px; font-size: 13px; color: var(--text);
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   }
@@ -447,8 +483,8 @@
   #mcpPanel, #contextPanel, #agentsPanel, #filesPanel {
     position: fixed; top: 0; bottom: 0; right: 0; width: 420px; max-width: 92vw;
     background: var(--surface); border-inline-start: 1px solid var(--border);
-    box-shadow: -10px 0 34px rgba(0,0,0,.5); z-index: 80;
-    transform: translateX(100%); transition: transform .18s ease;
+    box-shadow: var(--shadow-panel); z-index: 80;
+    transform: translateX(100%); transition: transform var(--dur) var(--ease);
     display: flex; flex-direction: column;
   }
   #mcpPanel.open, #contextPanel.open, #agentsPanel.open, #filesPanel.open { transform: translateX(0); }
@@ -465,14 +501,15 @@
   /* عارض القراءة: نافذة وسطية — الكود LTR بأرقام أسطر عبر عدّاد CSS */
   #viewerOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 90; display: none; }
   #viewerOverlay.open { display: flex; }
-  .viewer-box { margin: auto; width: min(1020px, 94vw); height: 86vh; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 18px 60px rgba(0,0,0,.6); }
+  #viewerOverlay.open .viewer-box { animation: pop var(--dur) var(--ease); }
+  .viewer-box { margin: auto; width: min(1020px, 94vw); height: 86vh; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow-modal); }
   .viewer-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
   .viewer-name { font-family: var(--mono); direction: ltr; text-align: left; color: var(--gold); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .viewer-meta { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); direction: ltr; white-space: nowrap; }
-  #viewerBody { flex: 1; overflow: auto; background: #0B0E13; }
+  #viewerBody { flex: 1; overflow: auto; background: var(--bg-deep); }
   #viewerPre { margin: 0; padding: 10px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; direction: ltr; text-align: left; counter-reset: ln; width: max-content; min-width: 100%; }
   #viewerPre .l { counter-increment: ln; white-space: pre; padding-inline-end: 16px; }
-  #viewerPre .l::before { content: counter(ln); display: inline-block; width: 48px; padding-inline-end: 16px; color: var(--text-dim); text-align: right; user-select: none; }
+  #viewerPre .l::before { content: counter(ln); display: inline-block; width: 48px; padding-inline-end: 16px; color: var(--text-faint); text-align: right; user-select: none; }
   .viewer-note { padding: 8px 14px; font-size: 12px; color: var(--gold); border-top: 1px solid var(--border); }
   .viewer-note[hidden] { display: none; }
   .panel-head button.refresh { font-size: 12px; padding: 3px 10px; color: var(--text); }
@@ -483,10 +520,10 @@
   .mcp-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .mcp-name { font-family: var(--mono); color: var(--gold); font-size: 13px; direction: ltr; flex: 1; min-width: 0; word-break: break-all; }
   .mcp-badge { font-size: 11px; border-radius: 6px; padding: 1px 8px; white-space: nowrap; border: 1px solid var(--border); }
-  .mcp-badge.connected { color: var(--green); border-color: rgba(127,176,105,.5); }
-  .mcp-badge.pending   { color: var(--gold); border-color: rgba(217,164,65,.5); }
+  .mcp-badge.connected { color: var(--green); border-color: var(--green-border); }
+  .mcp-badge.pending   { color: var(--gold); border-color: var(--gold-border); }
   .mcp-badge.needsauth { color: #E0A33E; border-color: rgba(224,163,62,.6); }
-  .mcp-badge.failed    { color: var(--red); border-color: rgba(226,99,93,.5); }
+  .mcp-badge.failed    { color: var(--red); border-color: var(--red-border); }
   .mcp-badge.disabled  { color: var(--text-dim); }
   .mcp-meta { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; direction: ltr; text-align: right; font-family: var(--mono); }
   .mcp-hint { font-size: 12px; color: var(--text-dim); margin-top: 5px; unicode-bidi: plaintext; line-height: 1.6; }
@@ -509,7 +546,7 @@
   .ctx-cat-bar > span { display: block; height: 100%; background: var(--gold); opacity: .75; }
 
   /* ===== الطرفية المدمجة (المرحلة 8) ===== */
-  #termPanel { display: flex; flex-direction: column; height: 42vh; min-height: 140px; border-top: 1px solid var(--border); background: #0B0E13; position: relative; }
+  #termPanel { display: flex; flex-direction: column; height: 42vh; min-height: 140px; border-top: 1px solid var(--border); background: var(--bg-deep); position: relative; }
   #termPanel[hidden] { display: none; }
   /* مقبض سحب لتغيير ارتفاع اللوحة — الارتفاع يُحفظ في localStorage */
   #termResizer { position: absolute; top: -3px; left: 0; right: 0; height: 7px; cursor: ns-resize; z-index: 5; }
@@ -548,18 +585,18 @@
   #termPanel.mode-grid .term-view.active .tv-bidi { display: none; }
   #termPanel.mode-grid #termInputRow { display: none; } /* الشبكي: إدخال خام عبر xterm مباشرة */
   .tv-bidi {
-    overflow-y: auto; z-index: 2; background: #0B0E13;
-    /* لاتيني من Cascadia/Consolas؛ العربية تسقط إلى Segoe UI فتتشكل حروفها */
-    font-family: 'Cascadia Mono', 'Consolas', 'Segoe UI', monospace;
+    overflow-y: auto; z-index: 2; background: var(--bg-deep);
+    /* لاتيني من Cascadia/Consolas؛ العربية تسقط إلى IBM Plex Sans Arabic فتتشكل حروفها */
+    font-family: 'Cascadia Mono', 'Consolas', 'IBM Plex Sans Arabic', 'Segoe UI', monospace;
     font-size: 13px;
   }
   .tv-spacer { position: relative; min-height: 100%; }
   .bidi-line {
     position: absolute; left: 8px; right: 8px; height: 20px;
     line-height: 20px; white-space: pre; overflow: hidden;
-    color: #E8E3D8; /* dir=auto يُضبط من JS: سطر عربي يبدأ يميناً وسطر لاتيني يساراً */
+    color: var(--text); /* dir=auto يُضبط من JS: سطر عربي يبدأ يميناً وسطر لاتيني يساراً */
   }
-  #termExited { display: none; padding: 8px 14px; border-top: 1px solid var(--border); background: rgba(226,99,93,.08); color: var(--red); font-size: 13px; align-items: center; gap: 10px; }
+  #termExited { display: none; padding: 8px 14px; border-top: 1px solid var(--border); background: var(--red-soft); color: var(--red); font-size: 13px; align-items: center; gap: 10px; }
   #termExited.show { display: flex; }
   /* سطر الإدخال (المرحلة 8.3): حقل HTML حقيقي — عربية مثالية أثناء الكتابة، والمؤشر
      مؤشر المتصفح («المؤشر الملعون» محلول جذرياً — قرار الصدى في وثيقة التصميم §8.2) */
@@ -567,7 +604,7 @@
   #termInput {
     flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 6px 12px; color: var(--text); outline: none;
-    font-family: 'Cascadia Mono', 'Consolas', 'Segoe UI', monospace; font-size: 13px;
+    font-family: 'Cascadia Mono', 'Consolas', 'IBM Plex Sans Arabic', 'Segoe UI', monospace; font-size: 13px;
   }
   #termInput:focus { border-color: var(--gold); }
   #termInput:disabled { opacity: .5; }
@@ -2721,7 +2758,7 @@
     const term = new Terminal({
       fontFamily: "'Cascadia Mono', 'Consolas', monospace",
       fontSize: 13.5, scrollback: 5000,
-      theme: { background: '#0B0E13', foreground: '#E8E3D8', cursor: '#D9A441' },
+      theme: { background: '#0d0d0c', foreground: '#eeeeec', cursor: '#D9A441' },
     });
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
@@ -2927,13 +2964,13 @@
   // كل سطر عنصر بـ dir=auto: أول حرف قوي يحدد الاتجاه، والمتصفح يتولى BiDi والتشكيل.
   const LINE_H = 20;      // ارتفاع السطر بالبكسل — ثابت ليصح حساب النافذة والفاصل
   const OVERSCAN = 12;    // أسطر إضافية فوق/تحت النافذة لتمرير سلس
-  const DEF_FG = '#E8E3D8', DEF_BG = '#0B0E13';
+  const DEF_FG = '#eeeeec', DEF_BG = '#0d0d0c';
   let bidiRaf = 0;        // إسقاط BiDi يُزامَن للتبويب النشط فقط (حالته داخل الكائن)
 
   // لوحة ألوان xterm-256: 0–15 من الثيم، 16–231 مكعب ألوان، 232–255 رماديات
   const PALETTE256 = (() => {
-    const p = ['#0B0E13', '#E2635D', '#7FB069', '#D9A441', '#6E9ECF', '#B07FB0', '#5FA8A8', '#C9C4B8',
-               '#5A6470', '#F08A84', '#9CCB86', '#E8BE6A', '#8FB8E8', '#CFA0CF', '#7FC4C4', '#E8E3D8'];
+    const p = ['#0d0d0c', '#ec5d5e', '#71d083', '#D9A441', '#6E9ECF', '#B07FB0', '#5FA8A8', '#C9C4B8',
+               '#5A6470', '#F08A84', '#9CCB86', '#E8BE6A', '#8FB8E8', '#CFA0CF', '#7FC4C4', '#eeeeec'];
     const lv = [0, 95, 135, 175, 215, 255];
     for (let r = 0; r < 6; r++) for (let g = 0; g < 6; g++) for (let b = 0; b < 6; b++)
       p.push('rgb(' + lv[r] + ',' + lv[g] + ',' + lv[b] + ')');
