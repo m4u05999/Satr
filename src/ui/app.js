@@ -191,6 +191,12 @@
       if (t && t.adoptModelTerm) t.adoptModelTerm(ev.id, ev.shell);
       return;
     }
+    // أداة open_preview (م-1-ب): النموذج طلب عرض عنوان في المعاينة المدمجة —
+    // اللوحة تفتح وتبلّغ مستطيلها فيُنشأ العرض الأصلي (العنوان تحقق منه agent.js)
+    if (ev.type === 'preview_open' && ev.url) {
+      if (previewEl.openWith) previewEl.openWith(ev.url);
+      return;
+    }
     // التحديث التلقائي (17): مستقل عن الدور — إشعار لطيف أسفل النافذة
     if (ev.type === 'update') {
       handleUpdateEvent(ev);

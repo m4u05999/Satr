@@ -251,6 +251,17 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // النموذج يجعله يطرح أسئلته نصّاً في المحادثة، فيجيب المستخدم بالكتابة في المحرّر —
   // وهو السلوك الطبيعي الذي يدعمه «سطر» أصلاً. (disallowedTools يزيل الأداة كلياً.)
   options.disallowedTools = ['AskUserQuestion'];
+  // تعريف الوكيل ببيئة «سطر» (م-1-ب — الدفعة 5): بدونه لا يعلم النموذج بالمعاينة
+  // المدمجة فيفتح متصفحاً خارجياً بـ Start-Process (لقطة مالك من قبول م-1).
+  // إلحاق على برومبت claude_code الأصلي لا استبدال له (preset + append).
+  options.systemPrompt = {
+    type: 'preset',
+    preset: 'claude_code',
+    append: 'أنت تعمل داخل تطبيق «سطر» (Satr) — واجهة عربية لسطح المكتب تغلّف Claude Code، ' +
+      'وفيها متصفح معاينة مدمج بجانب المحادثة. عند تشغيل خادم ويب محلي استخدم أداة ' +
+      'open_preview لعرض العنوان داخل «سطر» مباشرة، ولا تفتح متصفحاً خارجياً ' +
+      '(Start-Process / start / open) إلا إذا طلب المستخدم ذلك صراحةً.',
+  };
   // جهد التفكير (المرحلة 14.4): منقّى في main.js — الـ SDK يخفّضه صامتاً إن لم يدعمه النموذج
   if (effort) options.effort = effort;
   // مجلدات إضافية يصل إليها النموذج بجانب cwd (منقّاة في main.js: موجودة فعلاً، بسقف 10)
@@ -282,8 +293,29 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         return { content: [{ type: 'text', text: head + (r.output || '(لا خرج)') }], isError: r.exitCode !== 0 && r.exitCode !== null };
       }
     );
+    // أداة open_preview (م-1-ب): يفتح بها النموذج لوحة المعاينة المدمجة على عنوان —
+    // تبثّ حدث preview_open للواجهة فيستدعي app.js ‏previewEl.openWith (اللوحة تفتح
+    // وتبلّغ مستطيلها فيُنشأ العرض الأصلي بالمسار القائم — لا مساس بـ preview.js هنا)
+    const previewTool = sdk.tool(
+      'open_preview',
+      'اعرض عنوان ويب (عادةً خادم التطوير المحلي http://localhost:…) في لوحة المعاينة ' +
+      'المدمجة داخل تطبيق «سطر» بجانب المحادثة. استعملها بعد تشغيل خادم المشروع بدل ' +
+      'فتح متصفح خارجي.',
+      { url: z.string().describe('العنوان الكامل http/https (مثل http://localhost:3000)') },
+      async (args) => {
+        const url = String((args && args.url) || '').trim();
+        let okUrl = false;
+        try {
+          const p = new URL(url);
+          okUrl = (p.protocol === 'http:' || p.protocol === 'https:') && url.length <= 2048;
+        } catch (e) {}
+        if (!okUrl) return { content: [{ type: 'text', text: 'عنوان غير صالح — http/https فقط' }], isError: true };
+        emit({ type: 'preview_open', url });
+        return { content: [{ type: 'text', text: 'فُتحت المعاينة المدمجة على ' + url }] };
+      }
+    );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool] }),
     });
   }
 
