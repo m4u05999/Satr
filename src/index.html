@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-bNYmvmk2tqomETrBhV1JY7lSs8qSsXk4OUHwXhXCxpQ='; script-src 'self' 'sha256-xih7sx0qjeGb+cQj9bSVEE2aRL+6/ZwqOFlzYLBxwok='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-dKe6A615b1bgAvxagynhm2nQeZ4XmRESeZkEF9mkQq8='; script-src 'self' 'sha256-6tsqeUmyHJxgfYT6Tzyc/wG66t5MDZdG1Fw2WBjg05g='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/fonts.css">
 <link rel="stylesheet" href="vendor/xterm.css">
@@ -35,6 +35,7 @@
     --red: #ec5d5e;            /* red10 */
     --red-soft: rgba(236, 93, 94, 0.1);
     --red-border: rgba(236, 93, 94, 0.4);
+    --blue: #8FB8E8;           /* أزرق ANSI الساطع من لوحة الطرفية — أرقام الكود في العارض */
     /* الخطوط: IBM Plex Sans Arabic مضمّن (vendor/fonts.css — OFL) والاحتياط نظامي */
     --mono: 'Cascadia Mono', 'Consolas', monospace;
     --sans: 'IBM Plex Sans Arabic', 'Segoe UI', 'Tahoma', system-ui, sans-serif;
@@ -534,8 +535,24 @@
   .viewer-meta { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); direction: ltr; white-space: nowrap; }
   #viewerBody { flex: 1; overflow: auto; background: var(--bg-deep); }
   #viewerPre { margin: 0; padding: 10px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; direction: ltr; text-align: left; counter-reset: ln; width: max-content; min-width: 100%; }
-  #viewerPre .l { counter-increment: ln; white-space: pre; padding-inline-end: 16px; }
-  #viewerPre .l::before { content: counter(ln); display: inline-block; width: 48px; padding-inline-end: 16px; color: var(--text-faint); text-align: right; user-select: none; }
+  /* السطر flex: عمود أرقام ثابت (::before عنصر flex مجهول) + نص السطر .lt بأساس
+     اتجاه موحّد للملف (قبول 4.3 — لقطات مالك). ملف كود: أرقام يساراً ونص pre يمتد أفقياً */
+  #viewerPre .l { display: flex; counter-increment: ln; }
+  #viewerPre .l::before { content: counter(ln); flex: 0 0 64px; padding-inline-end: 16px; color: var(--text-faint); text-align: right; user-select: none; }
+  #viewerPre .lt { flex: 1; white-space: pre; padding-inline-end: 16px; min-width: 0; }
+  /* وضع «مستند عربي» (rtl-doc): مرآة كاملة — الأرقام عمود يميناً، النص يرسو يميناً
+     بجانبها، والأسطر الطويلة تلتف داخل العرض (pre-wrap) بدل التمدد الأفقي القاطع للقراءة */
+  #viewerPre.rtl-doc { width: auto; }
+  #viewerPre.rtl-doc .l { flex-direction: row-reverse; }
+  #viewerPre.rtl-doc .l::before { text-align: left; padding-inline-end: 8px; padding-inline-start: 16px; }
+  /* text-align: right ضرورية صراحةً — العارض يورّث text-align:left من قاعدة الكود
+     والوراثة تغلب اتجاه dir=rtl (لقطة مالك: الترتيب انقلب والرسوّ بقي يساراً) */
+  #viewerPre.rtl-doc .lt { white-space: pre-wrap; overflow-wrap: anywhere; padding-inline-end: 0; text-align: right; }
+  /* تظليل الكود البسيط (الدفعة 4.3): أربع فئات رموز فقط — بألوان الـ tokens */
+  .hl-c { color: var(--text-faint); font-style: italic; } /* تعليق */
+  .hl-s { color: var(--green); }                          /* نص مقتبس */
+  .hl-k { color: var(--gold); }                           /* كلمة مفتاحية */
+  .hl-n { color: var(--blue); }                           /* رقم */
   .viewer-note { padding: 8px 14px; font-size: 12px; color: var(--gold); border-top: 1px solid var(--border); }
   .viewer-note[hidden] { display: none; }
   .panel-head button.refresh { font-size: 12px; padding: 3px 10px; color: var(--text); }
@@ -817,6 +834,7 @@
     <div class="viewer-head">
       <span class="viewer-name" id="viewerName"></span>
       <span class="viewer-meta" id="viewerMeta"></span>
+      <button id="viewerDir" type="button" title="اتجاه العرض: تلقائي لكل سطر (عربي يميناً وكود يساراً) أو LTR خام للمحاذاة الحرفية">الاتجاه: تلقائي</button>
       <button id="viewerClose" title="إغلاق">✕</button>
     </div>
     <div id="viewerBody"><pre id="viewerPre"></pre></div>
@@ -2353,10 +2371,109 @@
   $('closeFiles').addEventListener('click', closeFilesPanel);
   $('refreshFiles').addEventListener('click', openFilesPanel);
 
+  // ---------- تظليل كود بسيط (الدفعة 4.3) ----------
+  // مميّز رموز يدوي صغير بلا اعتماديات (قاعدة 5): تعليقات/نصوص/كلمات مفتاحية/أرقام.
+  // الهدف وضوح القراءة لا دقة مُصرّف — الحالات النادرة (regex literals، نصوص
+  // متعددة الأسطر…) تتدهور لنص عادي بأمان. البناء بعناصر DOM لا innerHTML (CSP وأمان).
+  const HL_KEYWORDS = {
+    clike: new Set(('abstract async await break case catch class const continue debugger default delete do else enum export extends extern false finally for from function get if implements import in instanceof interface let new null of package private protected public return set static struct super switch this throw true try typeof undefined var void while with yield').split(' ')),
+    py: new Set(('False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield self').split(' ')),
+  };
+  // إعداد لكل لغة: k مجموعة كلمات، lc تعليق سطري، bo/bc تعليق كتلي، str محارف الاقتباس
+  const HL_CLIKE = { k: 'clike', lc: '//', bo: '/*', bc: '*/', str: '"\'`' };
+  const HL_HASH = { lc: '#', str: '"\'' };
+  const HL_CFG = {
+    js: HL_CLIKE, mjs: HL_CLIKE, cjs: HL_CLIKE, ts: HL_CLIKE, jsx: HL_CLIKE, tsx: HL_CLIKE,
+    c: HL_CLIKE, h: HL_CLIKE, cpp: HL_CLIKE, hpp: HL_CLIKE, cs: HL_CLIKE, java: HL_CLIKE,
+    go: HL_CLIKE, rs: HL_CLIKE, kt: HL_CLIKE, swift: HL_CLIKE,
+    json: { k: 'clike', str: '"' }, // true/false/null من مجموعة clike
+    py: { k: 'py', lc: '#', str: '"\'' }, rb: { k: 'py', lc: '#', str: '"\'' },
+    sh: HL_HASH, bash: HL_HASH, zsh: HL_HASH,
+    yml: HL_HASH, yaml: HL_HASH, toml: HL_HASH, ini: HL_HASH, conf: HL_HASH, env: HL_HASH,
+    ps1: { lc: '#', bo: '<#', bc: '#>', str: '"\'' },
+    css: { bo: '/*', bc: '*/', str: '"\'' },
+    html: { bo: '<!--', bc: '-->', str: '"\'' }, htm: { bo: '<!--', bc: '-->', str: '"\'' },
+    xml: { bo: '<!--', bc: '-->', str: '"\'' }, svg: { bo: '<!--', bc: '-->', str: '"\'' },
+    sql: { lc: '--', bo: '/*', bc: '*/', str: "'" },
+  };
+  function hlSpan(cls, text) { const s = document.createElement('span'); s.className = cls; s.textContent = text; return s; }
+  // مقطع كود عادي: تلوين الكلمات المفتاحية والأرقام فقط، والباقي نص خام
+  function hlCode(el, text, kw) {
+    const re = /[A-Za-z_$][\w$]*|\d[\w.]*/g;
+    let last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const w = m[0];
+      if (/^\d/.test(w)) el.appendChild(hlSpan('hl-n', w));
+      else if (kw && kw.has(w)) el.appendChild(hlSpan('hl-k', w));
+      else el.appendChild(document.createTextNode(w));
+      last = m.index + w.length;
+    }
+    if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+  }
+  // سطر واحد؛ st.block يحمل تعليقاً كتلياً مفتوحاً عبر الأسطر
+  function hlLine(el, line, cfg, st) {
+    if (line.length > 2000) { el.textContent = line; return; } // سطر عملاق (minified) — بلا تظليل
+    const kw = cfg.k ? HL_KEYWORDS[cfg.k] : null;
+    let i = 0;
+    while (i < line.length) {
+      if (st.block) {
+        const end = line.indexOf(cfg.bc, i);
+        if (end === -1) { el.appendChild(hlSpan('hl-c', line.slice(i))); return; }
+        el.appendChild(hlSpan('hl-c', line.slice(i, end + cfg.bc.length)));
+        i = end + cfg.bc.length; st.block = false; continue;
+      }
+      // أقرب حدث خاص بعد i: تعليق سطري / تعليق كتلي / بداية نص مقتبس
+      const cand = [];
+      if (cfg.lc) { const p = line.indexOf(cfg.lc, i); if (p !== -1) cand.push([p, 'lc']); }
+      if (cfg.bo) { const p = line.indexOf(cfg.bo, i); if (p !== -1) cand.push([p, 'bo']); }
+      if (cfg.str) for (const q of cfg.str) { const p = line.indexOf(q, i); if (p !== -1) cand.push([p, q]); }
+      if (!cand.length) { hlCode(el, line.slice(i), kw); return; }
+      cand.sort((a, b) => a[0] - b[0]);
+      const next = cand[0][0], kind = cand[0][1];
+      if (next > i) hlCode(el, line.slice(i, next), kw);
+      if (kind === 'lc') { el.appendChild(hlSpan('hl-c', line.slice(next))); return; }
+      if (kind === 'bo') {
+        const end = line.indexOf(cfg.bc, next + cfg.bo.length);
+        if (end === -1) { el.appendChild(hlSpan('hl-c', line.slice(next))); st.block = true; return; }
+        el.appendChild(hlSpan('hl-c', line.slice(next, end + cfg.bc.length)));
+        i = end + cfg.bc.length; continue;
+      }
+      // نص مقتبس: القفل نفس المحرف مع تجاوز \ الهروب؛ بلا قفل ⇐ لنهاية السطر
+      let j = next + 1;
+      while (j < line.length && line[j] !== kind) j += (line[j] === '\\' ? 2 : 1);
+      const end = j < line.length ? j + 1 : line.length;
+      el.appendChild(hlSpan('hl-s', line.slice(next, end)));
+      i = end;
+    }
+  }
+
   // ---------- عارض القراءة ----------
   function closeViewer() { viewerOverlay.classList.remove('open'); viewerPre.textContent = ''; }
 
+  // اتجاه العرض (قبول 4.3 — لقطتا مالك): أساس اتجاه **موحّد للملف كله** لا لكل سطر.
+  // dir=auto لكل سطر جرّبناه فشتّت القراءة: كل سطر يرسو على حافة مختلفة (سطر كود
+  // يساراً وجاره العربي يميناً). الأساس الموحّد: ملف عربي الغالب ⇐ RTL لكل الأسطر
+  // (الكود داخلها ينعزل LTR بخوارزمية BiDi كما في فقاعات المحادثة)، وملف كود ⇐ LTR.
+  // «تلقائي»: امتداد كود معروف = LTR دائماً؛ غيره بإحصاء المحارف العربية مقابل اللاتينية.
+  // الزر يدور: تلقائي ← RTL ← LTR (تجاوز يدوي لو أخطأ الإحصاء) — يعود تلقائياً كل فتح.
+  let viewerDirMode = 'auto';
+  let viewerFileDir = 'ltr'; // ما حسمه «تلقائي» للملف المفتوح
+  function applyViewerDir() {
+    const label = { auto: 'تلقائي', rtl: 'RTL', ltr: 'LTR' };
+    $('viewerDir').textContent = 'الاتجاه: ' + label[viewerDirMode];
+    const dir = viewerDirMode === 'auto' ? viewerFileDir : viewerDirMode;
+    viewerPre.classList.toggle('rtl-doc', dir === 'rtl'); // مرآة كاملة: أرقام يميناً + التفاف
+    for (const lt of viewerPre.querySelectorAll('.lt')) lt.dir = dir;
+  }
+  $('viewerDir').addEventListener('click', () => {
+    viewerDirMode = viewerDirMode === 'auto' ? 'rtl' : (viewerDirMode === 'rtl' ? 'ltr' : 'auto');
+    applyViewerDir();
+  });
+
   async function openViewer(rel) {
+    viewerDirMode = 'auto'; // «تعديل مؤقت» — كل فتح يبدأ تلقائياً
+    $('viewerDir').textContent = 'الاتجاه: تلقائي';
     $('viewerName').textContent = rel;
     $('viewerMeta').textContent = '';
     $('viewerNote').hidden = true;
@@ -2376,14 +2493,36 @@
     let lines = r.content.split('\n');
     const clipped = lines.length > MAX_VIEW_LINES;
     if (clipped) lines = lines.slice(0, MAX_VIEW_LINES);
+    // تظليل حسب الامتداد (4.3) — امتداد غير معروف يبقى نصاً خاماً كما كان
+    const ext = (rel.split('.').pop() || '').toLowerCase();
+    const cfg = HL_CFG[ext] || null;
+    // «تلقائي»: ملف كود = LTR دائماً؛ غيره (md/txt/…) بإحصاء عيّنة المحارف —
+    // العربية تغلب ولو مع كثافة رموز لاتينية (كسر بسيط لصالح لغة القراءة)
+    if (cfg) viewerFileDir = 'ltr';
+    else {
+      const sample = r.content.slice(0, 65536);
+      const ar = (sample.match(/[؀-ۿ]/g) || []).length;
+      const lat = (sample.match(/[A-Za-z]/g) || []).length;
+      viewerFileDir = ar >= lat * 0.5 ? 'rtl' : 'ltr';
+    }
+    const dirNow = viewerDirMode === 'auto' ? viewerFileDir : viewerDirMode;
+    const hlState = { block: false };
     const frag = document.createDocumentFragment();
     for (const ln of lines) {
       const d = document.createElement('div');
       d.className = 'l';
-      d.textContent = ln.replace(/\r$/, ''); // السطر الفارغ يبقى بارتفاعه (رقم السطر في ::before يملؤه)
+      // نص السطر في عمود مستقل بأساس اتجاه الملف الموحّد (لا لكل سطر — قبول 4.3)
+      const lt = document.createElement('span');
+      lt.className = 'lt';
+      lt.dir = dirNow;
+      const text = ln.replace(/\r$/, ''); // السطر الفارغ يبقى بارتفاعه (رقم السطر في ::before يملؤه)
+      if (cfg) hlLine(lt, text, cfg, hlState);
+      else lt.textContent = text;
+      d.appendChild(lt);
       frag.appendChild(d);
     }
     viewerPre.appendChild(frag);
+    applyViewerDir(); // يطبّق صنف rtl-doc (مرآة الأرقام + الالتفاف) حسب الاتجاه المحسوم
     const kb = (r.bytes / 1024).toFixed(r.bytes < 10240 ? 1 : 0);
     $('viewerMeta').textContent = kb + ' KB · ' + lines.length + (clipped || r.truncated ? '+' : '') + ' سطر';
     if (r.truncated || clipped) {
