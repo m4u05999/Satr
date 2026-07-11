@@ -263,7 +263,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'open_preview لعرض العنوان داخل «سطر» مباشرة، ولا تفتح متصفحاً خارجياً ' +
       '(Start-Process / start / open) إلا إذا طلب المستخدم ذلك صراحةً. ' +
       'بعد العرض يمكنك فحص ما بنيته: read_page يعطيك بنية الصفحة النصية، و screenshot ' +
-      'يريك مظهرها بصرياً — استعملهما للتحقق من نتيجة تعديلاتك وتصحيح نفسك.',
+      'يريك مظهرها بصرياً — استعملهما للتحقق من نتيجة تعديلاتك وتصحيح نفسك. وللتفاعل ' +
+      'مع الصفحة (تجربة زر أو ملء نموذج) استعمل browser_click و browser_type بمُحدِّد CSS.',
   };
   // جهد التفكير (المرحلة 14.4): منقّى في main.js — الـ SDK يخفّضه صامتاً إن لم يدعمه النموذج
   if (effort) options.effort = effort;
@@ -366,8 +367,47 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         return { content: [{ type: 'image', data: r.base64, mimeType: 'image/png' }] };
       }
     );
+    // أدوات الفعل (م-4 — خلف إذن إلزامي): browser_click + browser_type تمرّان بـ
+    // canUseTool مثل Bash (مربع الإذن العربي كل مرة؛ لا تُضاف لـ alwaysAllowed)،
+    // bypassPermissions وحده يعفيها. النقر/الكتابة على العرض القائم عبر preview.js.
+    const clickTool = sdk.tool(
+      'browser_click',
+      'انقر عنصراً في الصفحة المعروضة بالمعاينة المدمجة (بمُحدِّد CSS). استعمله للتفاعل ' +
+      'مع الأزرار والروابط — بعد open_preview وread_page لمعرفة المُحدِّدات المتاحة.',
+      { selector: z.string().describe('مُحدِّد CSS للعنصر (مثل #submit أو .btn-primary أو button)') },
+      async (args) => {
+        const r = await preview.clickElement(String((args && args.selector) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'not_found' ? 'لم يُعثر على عنصر بهذا المُحدِّد.'
+            : 'تعذّر النقر (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: 'نُقر على <' + r.tag + '>' + (r.text ? ' («' + r.text + '»)' : '') }] };
+      }
+    );
+    const typeTool = sdk.tool(
+      'browser_type',
+      'اكتب نصاً في حقل إدخال بالصفحة المعروضة (بمُحدِّد CSS). استعمله لملء النماذج — ' +
+      'بعد open_preview وread_page لمعرفة الحقول المتاحة.',
+      {
+        selector: z.string().describe('مُحدِّد CSS للحقل (input/textarea أو عنصر contenteditable)'),
+        text: z.string().describe('النص المراد كتابته في الحقل'),
+      },
+      async (args) => {
+        const r = await preview.typeText(String((args && args.selector) || ''), String((args && args.text) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'not_found' ? 'لم يُعثر على حقل بهذا المُحدِّد.'
+            : r && r.error === 'not_editable' ? 'العنصر ليس حقل إدخال قابلاً للكتابة.'
+            : 'تعذّرت الكتابة (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: 'كُتب النص في <' + r.tag + '>' }] };
+      }
+    );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, screenshotTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, screenshotTool, clickTool, typeTool] }),
     });
   }
 

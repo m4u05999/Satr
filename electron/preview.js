@@ -267,6 +267,60 @@ async function screenshot() {
   } catch (e) { return { error: 'shot_failed' }; }
 }
 
+// ---------- أدوات الفعل في المعاينة (م-4 — خلف إذن إلزامي) ----------
+// نقر/كتابة عبر executeJavaScript (selector يُهرَّب بـ JSON.stringify — لا حقن).
+// **الأمان (حرج)**: أدوات agent.js تمرّ بـ canUseTool مثل Bash — مربع الإذن العربي كل
+// مرة، bypassPermissions وحده يعفيها (لا acceptEdits). الإذن اليدوي لكل فعل أقوى من
+// قائمة نطاقات (يعفي فعلاً لا نطاقاً) فلم تلزم. الكتابة عبر native value setter
+// ليلتقطها React/Vue (input/change events)، والنقر el.click() بعد scrollIntoView.
+const CLICK_FN = `function(sel){
+  var el; try { el = document.querySelector(sel); } catch(e){ return {ok:false, reason:'bad_selector'}; }
+  if (!el) return {ok:false, reason:'not_found'};
+  try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
+  try { el.click(); } catch(e){ return {ok:false, reason:'click_error'}; }
+  return {ok:true, tag: el.tagName.toLowerCase(), text: (el.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80)};
+}`;
+const TYPE_FN = `function(sel, text){
+  var el; try { el = document.querySelector(sel); } catch(e){ return {ok:false, reason:'bad_selector'}; }
+  if (!el) return {ok:false, reason:'not_found'};
+  try {
+    el.focus();
+    var tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+      var proto = tag === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (desc && desc.set) desc.set.call(el, text); else el.value = text;
+      el.dispatchEvent(new Event('input', {bubbles:true}));
+      el.dispatchEvent(new Event('change', {bubbles:true}));
+    } else if (el.isContentEditable) {
+      el.textContent = text;
+      el.dispatchEvent(new Event('input', {bubbles:true}));
+    } else { return {ok:false, reason:'not_editable'}; }
+  } catch(e){ return {ok:false, reason:'type_error'}; }
+  return {ok:true, tag: el.tagName.toLowerCase()};
+}`;
+
+async function clickElement(selector) {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const r = await wc.executeJavaScript('(' + CLICK_FN + ')(' + JSON.stringify(String(selector)) + ')', true);
+    return r && r.ok ? { ok: true, tag: r.tag, text: r.text } : { error: (r && r.reason) || 'click_failed' };
+  } catch (e) { return { error: 'click_failed' }; }
+}
+
+async function typeText(selector, text) {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const r = await wc.executeJavaScript(
+      '(' + TYPE_FN + ')(' + JSON.stringify(String(selector)) + ',' + JSON.stringify(String(text)) + ')', true);
+    return r && r.ok ? { ok: true, tag: r.tag } : { error: (r && r.reason) || 'type_failed' };
+  } catch (e) { return { error: 'type_failed' }; }
+}
+
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
 function close() {
   if (!view) return { ok: true };
@@ -279,4 +333,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, screenshot, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, screenshot, clickElement, typeText, close, destroy, isHttpUrl };

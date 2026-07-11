@@ -270,10 +270,21 @@
   التنفيذ): `webContents.capturePage()` دورياً ⇒ رسم على `<canvas>` ⇒ `canvas.
   captureStream(fps)` ⇒ `MediaRecorder` ⇒ webm blob ⇒ تنزيل (كلها APIs مدمجة في
   Chromium/Electron). يسجّل عرض المعاينة وحده (لا النافذة كاملة). بند مستقل بعد م-3/م-4.
-- **م-4 — أدوات الفعل (بوابة قرار — لا تُنفَّذ تلقائياً)**: ‏click/type/fill عبر
-  sendInputEvent بطبقة إذن عربي **إلزامية كل مرة** (نمط exec في tools.js — لا تعفيها
-  acceptEdits، ‏bypassPermissions وحده) + قائمة نطاقات مسموحة يديرها المستخدم.
-  **تُقيَّم بعد قبول م-3 بقرار مالك مستقل** — حينها تُفصَّل معايير قبولها.
+- **م-4 ✅ (2026-07-11) — أدوات الفعل بالإذن**: أداتان `browser_click(selector)` +
+  `browser_type(selector, text)` في خادم MCP الداخلي، على العرض القائم عبر
+  `preview.clickElement/typeText` (executeJavaScript؛ selector يُهرَّب بـ JSON.stringify
+  — لا حقن). النقر `el.click()` بعد scrollIntoView؛ الكتابة عبر **native value setter**
+  ثم input/change events (توافق React/Vue). **الأمان (حرج، مثبّت)**: الأداتان تمرّان
+  بـ `canUseTool` مثل Bash — مربع الإذن العربي **كل مرة** (لسن في alwaysAllowed)،
+  bypassPermissions وحده يعفيها (لا acceptEdits — تحقق: canUseTool لأدوات MCP يُستدعى
+  في default/acceptEdits). `toolDetail` يُظهر `selector` في الإذن فيرى المستخدم الهدف.
+  **قرار نطاق**: قائمة النطاقات المسموحة **لم تلزم** — الإذن اليدوي لكل فعل أقوى منها
+  (يعفي فعلاً واحداً لا نطاقاً كاملاً). systemPrompt يوجّه الوكيل لاستعمالهما بعد
+  read_page. تحقق حيّ (منطق محفوف): مسبار محرك 8/8 (نقر يغيّر النص فعلاً + كتابة تضبط
+  القيمة **وتُطلق حدث input** لتوافق React + not_found/not_editable/bad_selector) +
+  إقلاع نظيف. **حدّ موثّق**: النص المكتوب لا يظهر كاملاً في مربع الإذن (selector فقط) —
+  الوكيل يكتب عادةً ما طلبه المستخدم؛ حقن البرومبت من صفحة عبر read_page ⇒ الإذن اليدوي
+  يكشف الفعل الشاذّ. **قبول المالك**: أطلب «جرّب زر الإرسال» ⇒ الوكيل ينقر بعد إذني.
 
 ---
 

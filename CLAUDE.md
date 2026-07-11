@@ -672,6 +672,13 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   (waitReady ينتظر التحميل؛ preview.js موديول مشترك بين main وagent مثل term.js).
   systemPrompt يوجّه الوكيل لاستعمالهما للتحقق من تعديلاته. قراءة فقط — الأفعال (م-4)
   خلف بوابة قرار. تحقق حيّ: دور SDK حقيقي استدعى الأداتين والرؤية قبِلت اللقطة.
+- **أدوات الفعل بالإذن (م-4)**: `browser_click(selector)` + `browser_type(selector, text)`
+  في خادم satr-terminal، على العرض القائم عبر `preview.clickElement/typeText`
+  (executeJavaScript؛ selector يُهرَّب بـ JSON.stringify؛ الكتابة عبر native value setter
+  + input/change لتوافق React). **الأمان (حرج)**: تمرّان بـ `canUseTool` مثل Bash —
+  مربع الإذن العربي كل مرة (لسن في alwaysAllowed)، bypassPermissions وحده يعفيها؛
+  `toolDetail` يُظهر selector في الإذن. قائمة النطاقات لم تلزم (الإذن اليدوي لكل فعل
+  أقوى). حدّ: النص المكتوب لا يظهر كاملاً في الإذن (selector فقط).
 - **التحرير بالتأشير (م-2)**: زرّ 🎯 يبدأ وضع تحديد — `preview.startPick()` يحقن سكربتاً
   في الصفحة المعزولة عبر `executeJavaScript` يعيد **Promise يُحلّ عند نقر المستخدم** على
   عنصر (outline ذهبي يتتبّع المؤشر + يمنع تفعيل الروابط + Escape/إلغاء ⇒ null). لا

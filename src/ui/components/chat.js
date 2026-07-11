@@ -249,7 +249,9 @@ class SatrChat extends HTMLElement {
 
   function toolDetail(inp) {
     if (!inp) return '';
-    return inp.file_path || inp.path || inp.command || inp.pattern || inp.query || inp.url || '';
+    // م-4: أدوات المعاينة (نقر/كتابة) — يُظهر مربع الإذن العنصر المستهدف
+    return inp.file_path || inp.path || inp.command || inp.pattern || inp.query || inp.url ||
+      inp.selector || '';
   }
 
   // بناء عنصر الفرق: وحدة ui/lib/diff.js المشتركة (ت-5) — استيراد مباشر منذ ت-12
