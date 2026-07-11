@@ -214,6 +214,59 @@ async function cancelPick() {
   return { ok: true };
 }
 
+// ---------- أدوات قراءة الصفحة للوكيل (م-3) ----------
+// يستهلكها خادم MCP الداخلي في agent.js (preview.js موديول مشترك بين العمليتين مثل
+// term.js — نفس نسخة الـ view). العرض تُنشئه القشرة عبر open_preview؛ هذه الأدوات
+// تعمل على الـ view القائمة (قراءة فقط — لا أفعال، م-4 خلف بوابة قرار مستقلة).
+// **أمان**: المحتوى المُستخرَج من صفحة غير موثوقة ⇒ نصّ مغلّف يقرؤه النموذج (حقن
+// برومبت محتمل موثّق — قراءة فقط، الوكيل يطلبه عمداً ليفحص).
+function currentWC() {
+  return (view && !view.webContents.isDestroyed()) ? view.webContents : null;
+}
+
+// انتظار انتهاء أي تحميل جارٍ (open_preview قبله بلحظة) بمهلة — كي يقرأ الوكيل بعد الجهوز
+function waitReady(wc, ms) {
+  if (!wc.isLoadingMainFrame || !wc.isLoadingMainFrame()) return Promise.resolve();
+  return new Promise((res) => {
+    const t = setTimeout(res, ms || 8000);
+    wc.once('did-stop-loading', () => { clearTimeout(t); res(); });
+  });
+}
+
+// سكربت استخراج snapshot نصي مفيد للنموذج: عنوان + روابط + عناوين + أزرار + نص الجسم
+const READ_SCRIPT = `(function(){
+  function txt(el){ try { return (el.textContent||'').replace(/\\s+/g,' ').trim(); } catch(e){ return ''; } }
+  function q(sel){ try { return Array.prototype.slice.call(document.querySelectorAll(sel)); } catch(e){ return []; } }
+  var headings = q('h1,h2,h3,h4').slice(0,40).map(function(h){ return h.tagName.toLowerCase()+': '+txt(h).slice(0,120); }).filter(function(x){ return x.split(': ')[1]; });
+  var links = q('a[href]').slice(0,50).map(function(a){ var t=txt(a).slice(0,60); return (t||'(بلا نص)')+' → '+a.getAttribute('href'); });
+  var buttons = q('button,[role=button],input[type=submit],input[type=button]').slice(0,40).map(function(b){ return (txt(b)||b.value||'').slice(0,60); }).filter(Boolean);
+  var inputs = q('input,textarea,select').slice(0,30).map(function(i){ return (i.tagName.toLowerCase())+(i.type?('['+i.type+']'):'')+(i.name?(' name='+i.name):'')+(i.placeholder?(' ph="'+i.placeholder.slice(0,40)+'"'):''); });
+  var body = txt(document.body).slice(0, 4000);
+  return { title: document.title, url: location.href, headings: headings, links: links, buttons: buttons, inputs: inputs, bodyText: body };
+})()`;
+
+async function readPage() {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const data = await wc.executeJavaScript(READ_SCRIPT, true);
+    return { ok: true, page: data };
+  } catch (e) { return { error: 'read_failed' }; }
+}
+
+async function screenshot() {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const img = await wc.capturePage();
+    const png = img.toPNG();
+    if (!png || !png.length) return { error: 'empty' };
+    return { ok: true, base64: png.toString('base64') };
+  } catch (e) { return { error: 'shot_failed' }; }
+}
+
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
 function close() {
   if (!view) return { ok: true };
@@ -226,4 +279,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, screenshot, close, destroy, isHttpUrl };
