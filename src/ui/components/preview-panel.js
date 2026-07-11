@@ -35,6 +35,24 @@ const previewSheet = sheet(`
   #pvUrl:focus { border-color: var(--gold); }
   #pvReload.loading { color: var(--gold); border-color: var(--gold-border); }
   #pvAuto.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  #pvPick.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  /* شريط التحديد بالتأشير (م-2): يظهر أسفل الرأس عند التقاط عنصر */
+  #pvPickBar { display: none; flex-direction: column; gap: 6px; padding: 8px 10px;
+    background: var(--surface); border-bottom: 1px solid var(--gold-border); }
+  #pvPickBar.show { display: flex; }
+  #pvPickBar .pb-el { display: flex; align-items: baseline; gap: 8px; font-size: 12px; min-width: 0; }
+  #pvPickBar .pb-tag { font-family: var(--mono); color: var(--gold); direction: ltr; flex: none; }
+  #pvPickBar .pb-text { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; unicode-bidi: plaintext; }
+  #pvPickBar .pb-row { display: flex; gap: 6px; }
+  #pvPickBar #pbInput { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 6px 10px; font-size: 13px; font-family: var(--sans);
+    outline: none; unicode-bidi: plaintext; }
+  #pvPickBar #pbInput:focus { border-color: var(--gold); }
+  #pvPickBar #pbSend { background: var(--gold); color: #1A1408; border: none; font-weight: 600;
+    border-radius: 8px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; }
+  #pvPickBar #pbCancel { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 8px; padding: 6px 10px; cursor: pointer; }
   /* مساحة العرض: فارغة — WebContentsView الأصلية تُرسم فوقها بنفس المستطيل */
   #pvBox { flex: 1; position: relative; min-height: 0; }
   .pv-hint {
@@ -65,6 +83,7 @@ const MARKUP = `
     <button id="pvFwd" type="button" title="تقدم" disabled>←</button>
     <button id="pvReload" type="button" title="تحديث">⟳</button>
     <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل">🔄</button>
+    <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)">🎯</button>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
   <div id="pvBox">
@@ -75,6 +94,15 @@ const MARKUP = `
     </div>
   </div>
   <div id="pvErr"></div>
+  <!-- شريط التحديد بالتأشير (م-2): يظهر بعد التقاط عنصر — ملخّص + طلب التعديل -->
+  <div id="pvPickBar">
+    <div class="pb-el"><span class="pb-tag" id="pbTag"></span><span class="pb-text" id="pbText"></span></div>
+    <div class="pb-row">
+      <input id="pbInput" type="text" placeholder="ماذا تريد أن يتغيّر في هذا العنصر؟ (مثال: اجعله أخضر)">
+      <button id="pbSend" type="button" title="إرسال للوكيل">إرسال</button>
+      <button id="pbCancel" type="button" title="إلغاء">✕</button>
+    </div>
+  </div>
 `;
 
 class SatrPreviewPanel extends HTMLElement {
@@ -157,6 +185,9 @@ class SatrPreviewPanel extends HTMLElement {
       started = false;
       hint.style.display = '';
       err.classList.remove('show');
+      // م-2: أنهِ أي تحديد جارٍ/شريط مفتوح (الدوال مهيّأة وقت الاستدعاء — تُعرَّف أدناه)
+      if (picking) { window.satr.previewPickCancel(); endPickMode(); }
+      closePickBar();
       window.satr.previewClose(); // يدمّر العرض الأصلي (الكوكيز تبقى في partition الدائمة)
     };
     if (toggleBtn) toggleBtn.addEventListener('click', () => {
@@ -220,6 +251,50 @@ class SatrPreviewPanel extends HTMLElement {
           ' — تأكد أن خادم التطوير يعمل (اطلب من الوكيل «شغّل المشروع») ثم اضغط ⟳.');
       }
       // ev.type === 'title' متاح مستقبلاً (لا مكان لعرضه في رأس م-1 المضغوط)
+    });
+
+    // ---------- التحديد بالتأشير (م-2) ----------
+    // زر 🎯 يبدأ وضع التحديد: previewPick يعيد Promise يُحلّ عند نقر المستخدم على عنصر
+    // في الصفحة (أو null عند الإلغاء/Escape). ثم يظهر شريط بملخّص العنصر وحقل طلب التعديل.
+    const pickBtn = $('pvPick'), pickBar = $('pvPickBar');
+    const pbTag = $('pbTag'), pbText = $('pbText'), pbInput = $('pbInput');
+    let picking = false;
+    let picked = null; // العنصر الملتقط {selector, tag, html, text}
+
+    const endPickMode = () => { picking = false; pickBtn.classList.remove('on'); };
+    const closePickBar = () => { pickBar.classList.remove('show'); picked = null; pbInput.value = ''; };
+
+    const startPick = async () => {
+      if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم استخدم التحديد.'); return; }
+      if (picking) { window.satr.previewPickCancel(); endPickMode(); return; } // نقرة ثانية = إلغاء
+      closePickBar();
+      picking = true; pickBtn.classList.add('on');
+      const r = await window.satr.previewPick();
+      endPickMode();
+      if (!r || !r.ok || !r.pick) return; // أُلغي أو فشل — بلا ضجيج
+      picked = r.pick;
+      pbTag.textContent = '<' + picked.tag + '>';
+      pbText.textContent = picked.text || '(بلا نص)';
+      pickBar.classList.add('show');
+      pbInput.focus();
+    };
+    pickBtn.addEventListener('click', startPick);
+    $('pbCancel').addEventListener('click', closePickBar);
+
+    const submitPick = () => {
+      const instruction = pbInput.value.trim();
+      if (!instruction || !picked) return;
+      // يُرسل للقشرة سياق العنصر + الطلب — القشرة تركّبه وترسله كدور محادثة عادي
+      this.dispatchEvent(new CustomEvent('preview-edit', {
+        bubbles: true,
+        detail: { instruction, url: urlIn.value, tag: picked.tag, selector: picked.selector, html: picked.html, text: picked.text },
+      }));
+      closePickBar();
+    };
+    $('pbSend').addEventListener('click', submitPick);
+    pbInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitPick();
+      else if (e.key === 'Escape') closePickBar();
     });
 
     // ---------- مقبض تغيير العرض (نمط مقبض ارتفاع الطرفية) ----------

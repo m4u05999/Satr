@@ -61,6 +61,8 @@ contextBridge.exposeInMainWorld('satr', {
   previewNavigate: (url) => ipcRenderer.invoke('satr:previewNavigate', { url }),
   previewAction: (action) => ipcRenderer.invoke('satr:previewAction', { action }),
   previewBounds: (x, y, width, height) => ipcRenderer.invoke('satr:previewBounds', { x, y, width, height }),
+  previewPick: () => ipcRenderer.invoke('satr:previewPick'),             // م-2: التحديد بالتأشير
+  previewPickCancel: () => ipcRenderer.invoke('satr:previewPickCancel'),
   previewClose: () => ipcRenderer.invoke('satr:previewClose'),
   onPreview: (callback) => {
     const handler = (_e, obj) => callback(obj);

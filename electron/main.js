@@ -415,6 +415,8 @@ ipcMain.handle('satr:previewBounds', (event, p) => {
   if (!ok) return { error: 'bad_bounds' };
   return preview.setBounds({ x: p.x, y: p.y, width: p.width, height: p.height });
 });
+ipcMain.handle('satr:previewPick', () => preview.startPick());       // م-2: التحديد بالتأشير
+ipcMain.handle('satr:previewPickCancel', () => preview.cancelPick());
 ipcMain.handle('satr:previewClose', () => preview.close());
 
 // ---------- عمليات الخلفية المعمّرة (خوادم التطوير ونحوها) ----------

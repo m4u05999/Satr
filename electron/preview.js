@@ -121,6 +121,99 @@ function setBounds(b) {
   return { ok: true };
 }
 
+// ---------- التحديد بالتأشير (م-2) ----------
+// نحقن سكربتاً في الصفحة المعزولة عبر executeJavaScript يعيد Promise يُحلّ عند نقر
+// المستخدم على عنصر (أو Escape ⇒ null). لا preload في العرض (معزول) فهذا المسار الوحيد
+// لإخراج بيانات العنصر: قيمة الـ Promise تعود مباشرة لـ executeJavaScript. العنصر
+// يُلتقط بـ outerHTML مقتطع + نص + selector تقريبي — يكفي النموذج ليجده بـ Grep في المصدر.
+// **أمان**: outerHTML من صفحة غير موثوقة ⇒ يُغلَّف كـ «محتوى» في القشرة ويُقتطع (حقن
+// برومبت محتمل موثّق في ROADMAP — م-2 وصف فقط بلا أفعال تلقائية، والمستخدم يبادر ويرسل).
+const PICK_SCRIPT = `(function(){
+  return new Promise(function(resolve){
+    if (window.__satrPick) { try { window.__satrPick.cleanup(); } catch(e){} }
+    var box = document.createElement('div');
+    box.setAttribute('data-satr-pick','1');
+    box.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;border:2px solid #D9A441;background:rgba(217,164,65,.14);border-radius:2px;transition:left .04s,top .04s,width .04s,height .04s;';
+    document.documentElement.appendChild(box);
+    var current = null;
+    function esc(s){ try { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g,'\\\\$&'); } catch(e){ return s; } }
+    function cssPath(el){
+      if (el.id) return '#' + esc(el.id);
+      var parts = [], e = el, guard = 0;
+      while (e && e.nodeType === 1 && guard++ < 5) {
+        if (e.id) { parts.unshift('#' + esc(e.id)); break; }
+        var sel = e.tagName.toLowerCase();
+        if (e.classList && e.classList.length)
+          sel += '.' + Array.prototype.slice.call(e.classList, 0, 2).map(esc).join('.');
+        var par = e.parentElement;
+        if (par) {
+          var same = Array.prototype.filter.call(par.children, function(c){ return c.tagName === e.tagName; });
+          if (same.length > 1) sel += ':nth-of-type(' + (same.indexOf(e) + 1) + ')';
+        }
+        parts.unshift(sel);
+        e = e.parentElement;
+      }
+      return parts.join(' > ');
+    }
+    function describe(el){
+      var html = '';
+      try { html = el.outerHTML || ''; } catch(e){}
+      if (html.length > 600) html = html.slice(0, 600) + '…';
+      var text = '';
+      try { text = (el.textContent || '').replace(/\\s+/g, ' ').trim(); } catch(e){}
+      if (text.length > 140) text = text.slice(0, 140) + '…';
+      return { selector: cssPath(el), tag: el.tagName.toLowerCase(), html: html, text: text };
+    }
+    function move(e){
+      var el = document.elementFromPoint(e.clientX, e.clientY);
+      if (!el || el === box) return;
+      current = el;
+      var r = el.getBoundingClientRect();
+      box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
+      box.style.width = r.width + 'px'; box.style.height = r.height + 'px';
+    }
+    function pick(e){
+      var el = current || document.elementFromPoint(e.clientX, e.clientY);
+      e.preventDefault(); e.stopPropagation();
+      var data = el ? describe(el) : null;
+      cleanup(); resolve(data);
+    }
+    function swallow(e){ e.preventDefault(); e.stopPropagation(); } // يمنع تفعيل الروابط/الأزرار
+    function key(e){ if (e.key === 'Escape') { cleanup(); resolve(null); } }
+    function cleanup(){
+      document.removeEventListener('mousemove', move, true);
+      document.removeEventListener('click', pick, true);
+      document.removeEventListener('mousedown', swallow, true);
+      document.removeEventListener('pointerdown', swallow, true);
+      document.removeEventListener('keydown', key, true);
+      if (box.parentNode) box.parentNode.removeChild(box);
+      window.__satrPick = null;
+    }
+    document.addEventListener('mousemove', move, true);
+    document.addEventListener('click', pick, true);
+    document.addEventListener('mousedown', swallow, true);
+    document.addEventListener('pointerdown', swallow, true);
+    document.addEventListener('keydown', key, true);
+    window.__satrPick = { cleanup: cleanup, cancel: function(){ cleanup(); resolve(null); } };
+  });
+})()`;
+
+async function startPick() {
+  if (!view || view.webContents.isDestroyed()) return { error: 'closed' };
+  try {
+    const pick = await view.webContents.executeJavaScript(PICK_SCRIPT, true);
+    return { ok: true, pick: pick || null }; // null = أُلغي (Escape/إلغاء)
+  } catch (e) { return { error: 'pick_failed' }; }
+}
+
+// إلغاء وضع التحديد من الواجهة (زر «تحديد» ثانيةً أو إغلاق) — يحلّ الـ Promise بـ null
+async function cancelPick() {
+  if (view && !view.webContents.isDestroyed()) {
+    try { await view.webContents.executeJavaScript('window.__satrPick && window.__satrPick.cancel && window.__satrPick.cancel()', true); } catch (e) {}
+  }
+  return { ok: true };
+}
+
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
 function close() {
   if (!view) return { ok: true };
@@ -133,4 +226,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, close, destroy, isHttpUrl };
