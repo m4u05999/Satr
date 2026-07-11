@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-uC/LEQ3Cuw2DT3p9f/pIIrF+yJKusEK/+k2Knv9wjyA='; script-src 'self' 'sha256-HuqsN2ylvZ1s+DjaB5WHvcBBw0MyeYN94ZBivan1+B4='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-5eQsiGaUySp16FEWHDGH9t9VwsbKdJD03+6Cc0NtpoQ='; script-src 'self' 'sha256-AMEhpf/MjKuJXTV5k1LU+mKbeUXMm0WCw3VIofhh2ic='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/fonts.css">
 <link rel="stylesheet" href="vendor/xterm.css">
@@ -531,6 +531,14 @@
   .ft-row .ft-name { font-family: var(--mono); direction: ltr; unicode-bidi: embed; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ft-row.dir .ft-name { color: var(--gold); }
   .ft-kids[hidden] { display: none; }
+  /* نتائج بحث المحتوى (الدفعة 4.6): موضع LTR (ملف:سطر) + مقتطف باتجاه تلقائي */
+  #fileHits[hidden] { display: none; }
+  .fh-row { padding: 6px 14px; cursor: pointer; border-bottom: 1px solid var(--border-dim); }
+  .fh-row:hover, .fh-row:focus-visible { background: var(--gold-soft); outline: none; }
+  .fh-loc { display: block; font-family: var(--mono); direction: ltr; unicode-bidi: embed; text-align: left; font-size: 11.5px; color: var(--gold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fh-text { display: block; font-family: var(--mono); font-size: 12px; color: var(--text-dim); text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* سطر القفز من نتيجة بحث في العارض */
+  #viewerPre .l.hit { background: var(--gold-soft); }
   /* عارض القراءة: نافذة وسطية — الكود LTR بأرقام أسطر عبر عدّاد CSS */
   #viewerOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 90; display: none; }
   #viewerOverlay.open { display: flex; }
@@ -830,7 +838,7 @@
   <div class="panel-list" id="sessionsList"></div>
 </aside>
 
-<!-- لوحة ملفات المشروع (الدفعة 1.2): شجرة قراءة فقط + عارض -->
+<!-- لوحة ملفات المشروع (الدفعة 1.2): شجرة قراءة فقط + عارض + بحث محتوى (4.6) -->
 <aside id="filesPanel" aria-label="ملفات المشروع">
   <div class="panel-head">
     <span>ملفات المشروع</span>
@@ -839,6 +847,10 @@
       <button id="closeFiles" title="إغلاق">✕</button>
     </span>
   </div>
+  <div class="panel-search">
+    <input type="text" id="fileSearch" placeholder="🔍 ابحث في محتوى الملفات… (Enter)" autocomplete="off">
+  </div>
+  <div class="panel-list" id="fileHits" hidden></div>
   <div class="panel-list" id="filesTree"></div>
 </aside>
 
@@ -2397,6 +2409,7 @@
   async function openFilesPanel() {
     filesPanel.classList.add('open');
     $('filesToggle').classList.add('active');
+    resetFileSearch(); // فتح/تحديث = عودة للشجرة (بحث 4.6 يُصفَّر)
     const cwd = $('cwd').value.trim();
     if (!cwd) { filesTreeEl.innerHTML = '<div class="hint">اختر مجلد المشروع أولاً 📁</div>'; return; }
     filesTreeEl.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
@@ -2411,6 +2424,63 @@
   });
   $('closeFiles').addEventListener('click', closeFilesPanel);
   $('refreshFiles').addEventListener('click', openFilesPanel);
+
+  // ---------- بحث محتوى الملفات (الدفعة 4.6) ----------
+  // Enter يبحث (المسح يقرأ كل الملفات — ليس ترشيحاً فورياً كبحث الجلسات)،
+  // حقل فارغ يعيد الشجرة، والنقر على نتيجة يفتح العارض ويقفز للسطر.
+  const fileSearchEl = $('fileSearch'), fileHitsEl = $('fileHits');
+  function resetFileSearch() {
+    fileSearchEl.value = '';
+    fileHitsEl.hidden = true;
+    fileHitsEl.innerHTML = '';
+    filesTreeEl.hidden = false;
+  }
+  async function runFileSearch() {
+    const q = fileSearchEl.value.trim();
+    if (!q) { fileHitsEl.hidden = true; fileHitsEl.innerHTML = ''; filesTreeEl.hidden = false; return; }
+    const cwd = $('cwd').value.trim();
+    if (!cwd) return;
+    filesTreeEl.hidden = true;
+    fileHitsEl.hidden = false;
+    fileHitsEl.innerHTML = '<div class="hint">جارٍ البحث…</div>';
+    const r = await window.satr.searchFiles(cwd, q);
+    if (fileSearchEl.value.trim() !== q) return; // الاستعلام تغيّر أثناء الانتظار — تجاهل نتيجة قديمة
+    fileHitsEl.innerHTML = '';
+    if (!r || !r.ok) {
+      fileHitsEl.innerHTML = '<div class="hint">تعذّر البحث — جرّب كلمات أخرى (حرفان فأكثر)</div>';
+      return;
+    }
+    if (!r.hits.length) {
+      fileHitsEl.innerHTML = '<div class="hint">لا نتائج</div>';
+      return;
+    }
+    for (const h of r.hits) {
+      const row = document.createElement('div');
+      row.className = 'fh-row'; row.tabIndex = 0;
+      const loc = document.createElement('span'); loc.className = 'fh-loc';
+      loc.textContent = h.rel + (h.line ? ':' + h.line : '');
+      const tx = document.createElement('span'); tx.className = 'fh-text'; tx.dir = 'auto';
+      tx.textContent = h.text;
+      row.appendChild(loc); row.appendChild(tx);
+      const open = () => openViewer(h.rel, h.line || 0);
+      row.addEventListener('click', open);
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+      fileHitsEl.appendChild(row);
+    }
+    if (r.partial) {
+      const n = document.createElement('div'); n.className = 'hint';
+      n.textContent = '⏱ مسح جزئي — المشروع كبير ونفدت ميزانية الوقت';
+      fileHitsEl.appendChild(n);
+    }
+  }
+  fileSearchEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); runFileSearch(); }
+    else if (e.key === 'Escape' && fileSearchEl.value) {
+      // نمط بحث الجلسات: Escape يمسح النص أولاً ثم (ضغطة ثانية) يغلق اللوحة
+      e.stopPropagation(); resetFileSearch();
+    }
+  });
+  fileSearchEl.addEventListener('input', () => { if (!fileSearchEl.value.trim()) runFileSearch(); });
 
   // ---------- تظليل كود بسيط (الدفعة 4.3) ----------
   // مميّز رموز يدوي صغير بلا اعتماديات (قاعدة 5): تعليقات/نصوص/كلمات مفتاحية/أرقام.
@@ -2578,7 +2648,8 @@
     applyViewerDir();
   });
 
-  async function openViewer(rel) {
+  // line اختياري (بحث المحتوى 4.6): يميّز السطر ويوسّطه بعد البناء
+  async function openViewer(rel, line) {
     viewerDirMode = 'auto'; // «تعديل مؤقت» — كل فتح يبدأ تلقائياً
     viewerRaw = null; viewerRel = rel; viewerEditable = false;
     exitEdit(); // فتح جديد = وضع قراءة نظيف (زرّ التحرير يظهر بعد قراءة ناجحة)
@@ -2646,6 +2717,12 @@
       $('viewerNote').textContent = '✂️ الملف أطول من حدّ العرض — يُعرض أوله فقط (' +
         (r.truncated ? '256 ك.ب' : MAX_VIEW_LINES + ' سطر') + ')';
       $('viewerNote').hidden = false;
+    }
+    // قفز لسطر نتيجة بحث (4.6): تمييز + توسيط — سطر خارج المعروض يُتجاهل بأمان
+    if (line > 0 && line <= viewerPre.children.length) {
+      const target = viewerPre.children[line - 1];
+      target.classList.add('hit');
+      target.scrollIntoView({ block: 'center' });
     }
   }
 

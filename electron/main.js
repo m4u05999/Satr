@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 
 const sessions = require('./sessions');
 const files = require('./files');
+const searchMod = require('./search'); // بحث محتوى المشروع (الدفعة 4.6)
 const skills = require('./skills');
 const agentsList = require('./agents');
 const agent = require('./agent');
@@ -495,6 +496,23 @@ ipcMain.handle('satr:writeFile', (event, payload) => {
     return { ok: false, error: 'bad_cwd' };
   }
   return agentTools.saveFromViewer(cwd, rel, p.content);
+});
+
+// ---------- بحث محتوى المشروع (الدفعة 4.6): قراءة فقط ----------
+// المحرك في search.js فوق files.listFiles/readText المؤمَّنتين — لا مسار قراءة جديداً.
+// نفس المحرك تستهلكه أداة search_code للمحوّلات العمياء (tools.js).
+
+ipcMain.handle('satr:searchFiles', async (event, payload) => {
+  const p = payload || {};
+  const cwd = typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd.trim() : '';
+  const query = typeof p.query === 'string' ? p.query.trim() : '';
+  if (!cwd || !query || query.length > 256) return { ok: false, error: 'bad_input' };
+  try {
+    if (!fs.statSync(cwd).isDirectory()) throw new Error();
+  } catch {
+    return { ok: false, error: 'bad_cwd' };
+  }
+  try { return await searchMod.search(cwd, query); } catch { return { ok: false, error: 'error' }; }
 });
 
 // ---------- سرد المهارات المكتشَفة للوحة /مهارات (قراءة فقط) ----------

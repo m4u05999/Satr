@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const files = require('./files');
+const search = require('./search'); // بحث «دلالي خفيف» (4.6) — أداة search_code
 const inject = require('./inject'); // resolveInside — تحقق مسار موحّد
 const { computeDiff } = require('./diff');
 const term = require('./term'); // طرفية النموذج المرئية (2.3) — نفس مفرد المرحلة 16
@@ -90,6 +91,20 @@ const DEFS = [
       name: 'list_files',
       description: "List the files of the user's project as relative paths, one per line. Use it to discover the project structure before reading files.",
       parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_code',
+      description: "Search all project files for text (grep-like). Returns matching lines as path:line: excerpt, best-matching files first. Matching is lenient: case-insensitive, Arabic diacritics and letter variants ignored, and substrings match inside identifiers (searching 'save viewer' finds saveFromViewer). Use it to locate where something is defined or handled instead of reading whole files.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Space-separated words to search for (1-8 words, 2+ characters each)' },
+        },
+        required: ['query'],
+      },
     },
   },
   {
@@ -258,6 +273,20 @@ async function run(name, cwd, args, ctx) {
       if (!list.length) return { ok: true, content: '(لا ملفات — المجلد فارغ أو غير مقروء)' };
       let content = list.slice(0, MAX_LIST).join('\n');
       if (list.length > MAX_LIST) content += '\n…(' + (list.length - MAX_LIST) + ' ملفاً آخر لم يُعرض)';
+      return { ok: true, content };
+    }
+    if (name === 'search_code') {
+      // بحث «دلالي خفيف» (الدفعة 4.6) — قراءة بلا إذن، نمط Grep في Claude Code
+      const q = args && typeof args.query === 'string' ? args.query.trim() : '';
+      if (!q) return { ok: false, content: 'خطأ: وسيطة query مطلوبة' };
+      const r = await search.search(cwd, q);
+      if (!r.ok) return { ok: false, content: 'خطأ: استعلام غير صالح — كلمة واحدة على الأقل من حرفين' };
+      if (!r.hits.length) return { ok: true, content: '(لا نتائج — جرّب كلمات أخرى أو list_files)' };
+      let content = r.hits
+        .map((h) => h.rel + (h.line ? ':' + h.line : '') + ': ' + h.text)
+        .join('\n');
+      if (content.length > MAX_RESULT) content = content.slice(0, MAX_RESULT) + '\n…(قُصّت النتائج)';
+      if (r.partial) content += '\n(مسح جزئي — نفدت ميزانية الوقت قبل تغطية كل الملفات)';
       return { ok: true, content };
     }
     if (name === 'write_file') {
