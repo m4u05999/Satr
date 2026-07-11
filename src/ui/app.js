@@ -7,6 +7,31 @@
 {
   const $ = (id) => document.getElementById(id);
   const input = $('input'), sendBtn = $('send');
+
+  // ---------- الوضع الفاتح/الداكن (دفعة «وضع فاتح») ----------
+  // يُطبَّق مبكراً (أول المنطق) لتقليل ومضة الثيمة. الاختيار في localStorage
+  // (satr_theme=light|dark)؛ وإن غاب يتبع تفضيل النظام (prefers-color-scheme) كافتراضي.
+  // الزر اليدوي يغلب النظام ويُحفظ. الثيمة على <html> فتعبر حدود Shadow بالوراثة.
+  function applyTheme(theme) {
+    const light = theme === 'light';
+    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    const btn = $('themeToggle');
+    if (btn) { btn.textContent = light ? '☀️' : '🌙'; btn.title = light ? 'التبديل للوضع الداكن' : 'التبديل للوضع الفاتح'; }
+  }
+  (function initTheme() {
+    let saved = localStorage.getItem('satr_theme');
+    if (saved !== 'light' && saved !== 'dark') {
+      // لا اختيار محفوظ: اتبع تفضيل النظام أول مرة
+      saved = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+    }
+    applyTheme(saved);
+    const btn = $('themeToggle');
+    if (btn) btn.addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+      localStorage.setItem('satr_theme', next);
+      applyTheme(next);
+    });
+  })();
   let sessionId = null, busy = false, currentBlock = null;
   let sessionCwd = null;     // المجلد الذي وُلدت فيه الجلسة الحالية (جلسات Claude Code مرتبطة بمجلدها)
   let lastSentPrompt = '';   // آخر طلب أُرسل — يُستعاد للمحرّر عند فشل استئناف جلسة ميتة

@@ -36,7 +36,61 @@
     --shadow-pop: 0 10px 30px rgba(0, 0, 0, .45);
     --shadow-panel: -10px 0 34px rgba(0, 0, 0, .5);
     --shadow-modal: 0 18px 60px rgba(0, 0, 0, .6);
+    color-scheme: dark; /* يُطابق تمريرات النظام (شريط تمرير/عناصر أصلية) — يُقلب في الوضع الفاتح */
   }
+
+  /* ===== الوضع الفاتح (دفعة «وضع فاتح») =====
+     يُفعَّل بضبط data-theme=light على <html> (زر التبديل في الشريط + تفضيل النظام).
+     البنية جاهزة منذ 4.1 (كل الألوان tokens) — هذه الكتلة تعيد تعريف tokens الواجهة فقط.
+     لوحة Sand الفاتحة من Radix (قيماً)، والذهب/الأخضر/الأحمر مُغمَّقة للتباين على خلفية فاتحة.
+     ملاحظة: --bg-deep لا يُقلب (سطح كود عميق)، وسطحا الكود (الطرفية والعارض) يُثبَّتان
+     داكنين أسفل هذه الكتلة — عكس لوحة ANSI على خلفية فاتحة رديء، والأعراف تُبقيهما داكنين. */
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg: #fdfdfc;             /* sand1 فاتح */
+    --surface: #f6f5f4;        /* sand2 */
+    --surface-2: #eeedeb;      /* sand3 */
+    --surface-3: #e6e4e1;      /* sand4 — تمييز/تحويم */
+    --border-dim: #eae8e6;     /* فواصل خافتة */
+    --border: #dddbd7;         /* sand6 */
+    --border-strong: #c0beb8;  /* sand8 */
+    --text: #21201c;           /* sand12 */
+    --text-dim: #63605b;       /* sand11 — نص ثانوي مقروء */
+    --text-faint: #8f8d86;     /* sand10 — أخفت */
+    /* الهوية الذهبية — مُغمَّقة للتباين على الفاتح (تبقى «ذهباً» بصرياً) */
+    --gold: #9a6a10;
+    --gold-strong: #b07d1a;
+    --gold-soft: rgba(217, 164, 65, 0.16);
+    --gold-border: rgba(154, 106, 16, 0.4);
+    /* دلالية — أغمق من نسخ الداكن لتقرأ على خلفية فاتحة */
+    --green: #2f8a46;
+    --green-soft: rgba(47, 138, 70, 0.12);
+    --green-border: rgba(47, 138, 70, 0.4);
+    --red: #ce2c31;
+    --red-soft: rgba(206, 44, 49, 0.09);
+    --red-border: rgba(206, 44, 49, 0.4);
+    --blue: #2f6bb0;
+    /* ظلال أخف على خلفية فاتحة */
+    --shadow-pop: 0 10px 30px rgba(0, 0, 0, .15);
+    --shadow-panel: -10px 0 34px rgba(0, 0, 0, .14);
+    --shadow-modal: 0 18px 60px rgba(0, 0, 0, .2);
+  }
+  /* سطحا الكود يبقيان داكنين في الوضع الفاتح: الطرفية (#termPanel) والعارض
+     (satr-file-viewer — الـ tokens تعبر Shadow بالوراثة من المضيف في light DOM).
+     نعيد القيم الداكنة الأصلية محلياً فيظلّان جزيرتين داكنتين متّسقتين مع xterm
+     (ألوانه صلبة في JS) — قرار موثّق: عكس ألوان الكود على الفاتح رديء. */
+  html[data-theme="light"] #termPanel,
+  html[data-theme="light"] satr-file-viewer {
+    color-scheme: dark;
+    --bg-deep: #0d0d0c; --bg: #111110; --surface: #191918; --surface-2: #222221; --surface-3: #2a2a28;
+    --border-dim: #2a2a28; --border: #3b3a37; --border-strong: #62605b;
+    --text: #eeeeec; --text-dim: #b5b3ad; --text-faint: #7c7b74;
+    --gold: #D9A441; --gold-strong: #E5B655; --gold-soft: rgba(217, 164, 65, 0.12); --gold-border: rgba(217, 164, 65, 0.35);
+    --green: #71d083; --green-soft: rgba(113, 208, 131, 0.12);
+    --red: #ec5d5e; --red-soft: rgba(236, 93, 94, 0.1);
+    --blue: #8FB8E8;
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
   body {
