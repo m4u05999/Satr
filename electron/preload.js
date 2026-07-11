@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('satr', {
   readFile: (cwd, rel) => ipcRenderer.invoke('satr:readFile', { cwd, rel }), // عارض القراءة (1.2)
   writeFile: (cwd, rel, content) => ipcRenderer.invoke('satr:writeFile', { cwd, rel, content }), // تحرير خفيف في العارض (الدفعة 4)
   searchFiles: (cwd, query) => ipcRenderer.invoke('satr:searchFiles', { cwd, query }), // بحث محتوى المشروع (الدفعة 4.6)
+  gitChanges: (cwd) => ipcRenderer.invoke('satr:gitChanges', { cwd }), // لوحة تغييرات git (الدفعة 4.7)
   lastChat: (engine) => ipcRenderer.invoke('satr:lastChat', { engine }),     // ذاكرة المحوّلات (1.3)
   forgetChat: (engine) => ipcRenderer.invoke('satr:forgetChat', { engine }),
   listChats: () => ipcRenderer.invoke('satr:listChats'),                     // تصفح محادثات المحوّلات (الدفعة 4)

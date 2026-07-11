@@ -12,6 +12,7 @@ const { spawn } = require('child_process');
 const sessions = require('./sessions');
 const files = require('./files');
 const searchMod = require('./search'); // بحث محتوى المشروع (الدفعة 4.6)
+const gitdiff = require('./gitdiff'); // فروقات git للوحة التغييرات (الدفعة 4.7) — قراءة فقط
 const skills = require('./skills');
 const agentsList = require('./agents');
 const agent = require('./agent');
@@ -513,6 +514,21 @@ ipcMain.handle('satr:searchFiles', async (event, payload) => {
     return { ok: false, error: 'bad_cwd' };
   }
   try { return await searchMod.search(cwd, query); } catch { return { ok: false, error: 'error' }; }
+});
+
+// ---------- فروقات git — لوحة «تغييرات المشروع» (الدفعة 4.7): قراءة فقط ----------
+// git يُشغَّل بمصفوفة وسائط بلا shell والمسارات من خرجه نفسه (التفاصيل في gitdiff.js).
+
+ipcMain.handle('satr:gitChanges', async (event, payload) => {
+  const p = payload || {};
+  const cwd = typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd.trim() : '';
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  try {
+    if (!fs.statSync(cwd).isDirectory()) throw new Error();
+  } catch {
+    return { ok: false, error: 'bad_cwd' };
+  }
+  try { return await gitdiff.changes(cwd); } catch { return { ok: false, error: 'error' }; }
 });
 
 // ---------- سرد المهارات المكتشَفة للوحة /مهارات (قراءة فقط) ----------

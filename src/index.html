@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-5eQsiGaUySp16FEWHDGH9t9VwsbKdJD03+6Cc0NtpoQ='; script-src 'self' 'sha256-AMEhpf/MjKuJXTV5k1LU+mKbeUXMm0WCw3VIofhh2ic='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-T9YKt1pDbPQvepQSDvwXAfWNbmlRqfgkHccgWKgxBo8='; script-src 'self' 'sha256-/Orv84xqp6E9kehE/xxhVCXglwtcaZtEr0M48zf/5+k='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/fonts.css">
 <link rel="stylesheet" href="vendor/xterm.css">
@@ -513,14 +513,14 @@
   .agent-row .adesc { font-size: 12.5px; color: var(--text-dim); margin-top: 4px; unicode-bidi: plaintext; }
   .agent-row .ameta { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; direction: ltr; text-align: right; font-family: var(--mono); }
 
-  #mcpPanel, #contextPanel, #agentsPanel, #filesPanel {
+  #mcpPanel, #contextPanel, #agentsPanel, #filesPanel, #gitPanel {
     position: fixed; top: 0; bottom: 0; right: 0; width: 420px; max-width: 92vw;
     background: var(--surface); border-inline-start: 1px solid var(--border);
     box-shadow: var(--shadow-panel); z-index: 80;
     transform: translateX(100%); transition: transform var(--dur) var(--ease);
     display: flex; flex-direction: column;
   }
-  #mcpPanel.open, #contextPanel.open, #agentsPanel.open, #filesPanel.open { transform: translateX(0); }
+  #mcpPanel.open, #contextPanel.open, #agentsPanel.open, #filesPanel.open, #gitPanel.open { transform: translateX(0); }
 
   /* ===== لوحة ملفات المشروع + عارض القراءة (الدفعة 1.2) ===== */
   #filesToggle.active { border-color: var(--gold); background: var(--gold-soft); }
@@ -539,6 +539,22 @@
   .fh-text { display: block; font-family: var(--mono); font-size: 12px; color: var(--text-dim); text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* سطر القفز من نتيجة بحث في العارض */
   #viewerPre .l.hit { background: var(--gold-soft); }
+
+  /* ===== لوحة تغييرات git (الدفعة 4.7) ===== */
+  #gitToggle.active { border-color: var(--gold); background: var(--gold-soft); }
+  .gd-row { display: flex; align-items: center; gap: 8px; padding: 7px 14px; cursor: pointer; border-bottom: 1px solid var(--border-dim); }
+  .gd-row:hover, .gd-row:focus-visible { background: var(--gold-soft); outline: none; }
+  .gd-badge { flex: none; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
+  .gd-badge.new { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+  .gd-badge.del { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+  .gd-badge.mod { color: var(--gold); border-color: var(--gold-border); background: var(--gold-soft); }
+  .gd-name { flex: 1; min-width: 0; font-family: var(--mono); direction: ltr; unicode-bidi: embed; text-align: left; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gd-counts { flex: none; font-family: var(--mono); direction: ltr; font-size: 11.5px; }
+  .gd-counts .a { color: var(--green); }
+  .gd-counts .d { color: var(--red); margin-inline-start: 5px; }
+  .gd-card { padding: 0 10px 8px; }
+  .gd-card[hidden] { display: none; }
+  .gd-card .diff { margin: 0; }
   /* عارض القراءة: نافذة وسطية — الكود LTR بأرقام أسطر عبر عدّاد CSS */
   #viewerOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 90; display: none; }
   #viewerOverlay.open { display: flex; }
@@ -708,6 +724,7 @@
     <button id="newSession">جلسة جديدة</button>
     <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
     <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄</button>
+    <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">±</button>
     <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
     <div class="settings-wrap">
       <button id="settingsBtn" title="الإعدادات">⚙</button>
@@ -852,6 +869,18 @@
   </div>
   <div class="panel-list" id="fileHits" hidden></div>
   <div class="panel-list" id="filesTree"></div>
+</aside>
+
+<!-- لوحة تغييرات git (الدفعة 4.7): عرض فقط — لا commit ولا revert من «سطر» -->
+<aside id="gitPanel" aria-label="تغييرات المشروع">
+  <div class="panel-head">
+    <span>تغييرات المشروع</span>
+    <span class="panel-head-actions">
+      <button class="refresh" id="refreshGit" title="إعادة قراءة التغييرات">تحديث</button>
+      <button id="closeGit" title="إغلاق">✕</button>
+    </span>
+  </div>
+  <div class="panel-list" id="gitList"></div>
 </aside>
 
 <!-- عارض القراءة (الدفعة 1.2) + تحرير خفيف (الدفعة 4): textarea بديل عند التحرير -->
@@ -1458,6 +1487,8 @@
     const undo = document.createElement('button');
     undo.className = 'diff-undo'; undo.textContent = 'تراجع';
     undo.title = 'إعادة الملف لما قبل هذا التعديل';
+    // بطاقات لوحة git (4.7) عرض فقط: لا لقطة «سطر» وراءها والتراجع عنها = checkout مدمّر
+    if (ev.noUndo) undo.hidden = true;
 
     head.appendChild(toggle); head.appendChild(file);
     head.appendChild(tag); head.appendChild(counts); head.appendChild(undo);
@@ -2482,6 +2513,90 @@
   });
   fileSearchEl.addEventListener('input', () => { if (!fileSearchEl.value.trim()) runFileSearch(); });
 
+  // ---------- لوحة تغييرات git (الدفعة 4.7) ----------
+  // عرض فقط: صف لكل ملف متغيّر منذ HEAD، والنقر يفرد بطاقة الفرق (buildDiff القائمة
+  // بمرآة RTL — noUndo لأنها ليست لقطات «سطر»). لا أفعال git (قرار نطاق مثبّت).
+  const gitPanel = $('gitPanel'), gitListEl = $('gitList');
+  const GD_KIND = { new: 'جديد', del: 'حُذف', mod: 'معدَّل' };
+  const GD_SKIP = { binary: 'ثنائي', big: 'ضخم', error: 'تعذّر' };
+
+  function gitHint(text) {
+    const h = document.createElement('div');
+    h.className = 'hint'; h.textContent = text;
+    gitListEl.appendChild(h);
+  }
+  function closeGitPanel() {
+    gitPanel.classList.remove('open');
+    $('gitToggle').classList.remove('active');
+  }
+  async function openGitPanel() {
+    gitPanel.classList.add('open');
+    $('gitToggle').classList.add('active');
+    gitListEl.innerHTML = '';
+    const cwd = $('cwd').value.trim();
+    if (!cwd) { gitHint('اختر مجلد المشروع أولاً 📁'); return; }
+    gitHint('جارٍ قراءة التغييرات…');
+    const r = await window.satr.gitChanges(cwd);
+    if (!gitPanel.classList.contains('open')) return; // أُغلقت أثناء الانتظار
+    gitListEl.innerHTML = '';
+    if (!r || !r.ok) {
+      const why = {
+        no_git: 'git غير مثبّت — ثبّته من git-scm.com ثم أعد المحاولة',
+        bad_cwd: 'مجلد المشروع غير موجود',
+      };
+      gitHint('⚠️ ' + (why[(r && r.error) || ''] || 'تعذّرت قراءة تغييرات git'));
+      return;
+    }
+    if (!r.repo) { gitHint('هذا المجلد ليس مستودع git'); return; }
+    if (!r.files.length) { gitHint('✓ لا تغييرات غير ملتزمة — شجرة العمل نظيفة'); return; }
+    for (let i = 0; i < r.files.length; i++) {
+      const f = r.files[i];
+      const row = document.createElement('div');
+      row.className = 'gd-row'; row.tabIndex = 0;
+      const badge = document.createElement('span');
+      badge.className = 'gd-badge ' + f.kind;
+      badge.textContent = f.skipped ? GD_SKIP[f.skipped] : GD_KIND[f.kind];
+      const name = document.createElement('span'); name.className = 'gd-name';
+      name.textContent = f.rel + (f.renamedFrom ? ' ← ' + f.renamedFrom : '');
+      name.title = f.rel;
+      row.appendChild(badge); row.appendChild(name);
+      if (!f.skipped) {
+        const counts = document.createElement('span'); counts.className = 'gd-counts';
+        const a = document.createElement('span'); a.className = 'a'; a.textContent = '+' + f.added;
+        const d = document.createElement('span'); d.className = 'd'; d.textContent = '−' + f.removed;
+        counts.appendChild(a); counts.appendChild(d);
+        row.appendChild(counts);
+      }
+      gitListEl.appendChild(row);
+      if (f.skipped) continue; // صف شارة فقط — لا بطاقة تُفرد
+      // بطاقة الفرق كسولة: تُبنى عند أول فرد (100 بطاقة دفعة واحدة تثقل الفتح)
+      const holder = document.createElement('div');
+      holder.className = 'gd-card'; holder.hidden = true;
+      gitListEl.appendChild(holder);
+      let built = false;
+      const toggle = () => {
+        holder.hidden = !holder.hidden;
+        if (!built && !holder.hidden) {
+          holder.appendChild(buildDiff({
+            id: 'git_' + i, tool: 'git', noUndo: true,
+            rel: f.rel, isNew: f.kind === 'new', isDelete: f.kind === 'del',
+            added: f.added, removed: f.removed, lines: f.lines, truncated: f.truncated,
+          }));
+          built = true;
+        }
+      };
+      row.addEventListener('click', toggle);
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    }
+    if (r.more) gitHint('… و' + r.more + ' ملفاً آخر لم يُعرض (سقف 100)');
+    if (r.partial) gitHint('⏱ قراءة جزئية — نفدت ميزانية الوقت');
+  }
+  $('gitToggle').addEventListener('click', () => {
+    if (gitPanel.classList.contains('open')) closeGitPanel(); else openGitPanel();
+  });
+  $('closeGit').addEventListener('click', closeGitPanel);
+  $('refreshGit').addEventListener('click', openGitPanel);
+
   // ---------- تظليل كود بسيط (الدفعة 4.3) ----------
   // مميّز رموز يدوي صغير بلا اعتماديات (قاعدة 5): تعليقات/نصوص/كلمات مفتاحية/أرقام.
   // الهدف وضوح القراءة لا دقة مُصرّف — الحالات النادرة (regex literals، نصوص
@@ -2748,7 +2863,8 @@
       }
       closeViewer(); return;
     }
-    if (filesPanel.classList.contains('open')) closeFilesPanel();
+    if (filesPanel.classList.contains('open')) { closeFilesPanel(); return; }
+    if (gitPanel.classList.contains('open')) closeGitPanel();
   });
 
   async function openSkills() {
