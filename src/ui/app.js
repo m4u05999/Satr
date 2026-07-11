@@ -272,6 +272,10 @@
   // فالمكوّن مُرقّى حتماً لحظة الاستدعاء.
   const permEl = document.querySelector('satr-perm-dialog');
   permEl.addEventListener('notice', (e) => addNotice(e.detail));
+  // إصلاح احتجاب المربع خلف المعاينة (لقطة مالك): تنزوي المعاينة أثناء ظهوره ثم تعود
+  permEl.addEventListener('perm-visible', (e) => {
+    if (previewEl && previewEl.holdForDialog) previewEl.holdForDialog(e.detail);
+  });
   function permDetailText(inp) {
     const d = chatEl.toolDetail(inp);
     if (d) return d;

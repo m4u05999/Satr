@@ -70,11 +70,18 @@ class SatrPermDialog extends HTMLElement {
     this._showNext();
   }
 
+  // ضبط ظهور المربع + بثّ الحالة — القشرة تحجب المعاينة أثناء ظهوره فيبرز فوقها
+  // (WebContentsView طبقة نظام فوق DOM؛ بلا هذا يختبئ المربع خلف المعاينة — لقطة مالك)
+  _setOpen(on) {
+    if (on) this.setAttribute('open', ''); else this.removeAttribute('open');
+    this.dispatchEvent(new CustomEvent('perm-visible', { bubbles: true, detail: this.hasAttribute('open') }));
+  }
+
   // انتهاء/إيقاف الدور: تفريغ الطابور وإخفاء المربع
   closeAll() {
     this._queue.length = 0;
     this._current = null;
-    this.removeAttribute('open');
+    this._setOpen(false);
   }
 
   _showNext() {
@@ -82,14 +89,14 @@ class SatrPermDialog extends HTMLElement {
     this._current = this._queue.shift();
     this._tool.textContent = this._current.tool;
     this._detail.textContent = this._current.detail || '';
-    this.setAttribute('open', '');
+    this._setOpen(true);
   }
 
   _answer(allow, always) {
     if (!this._current) return;
     const req = this._current;
     this._current = null;
-    this.removeAttribute('open');
+    this._setOpen(false);
     window.satr.permission(req.id, allow, !!always);
     this.dispatchEvent(new CustomEvent('notice', {
       detail: allow

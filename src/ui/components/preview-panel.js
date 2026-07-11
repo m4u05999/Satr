@@ -144,8 +144,9 @@ class SatrPreviewPanel extends HTMLElement {
     // WebContentsView تُرسم فوق pvBox — أي تغيير تخطيط (فتح الطرفية/تغيير حجم/سحب
     // المقبض) يغيّر المستطيل، وResizeObserver يلتقطه كله. إحداثيات CSS px = DIP.
     let boundsRaf = 0;
+    let held = false; // محجوب مؤقتاً أثناء مربع إذن (يبرز فوق العرض) — لا نبلّغ مستطيلاً
     const reportBounds = () => {
-      if (!this.hasAttribute('open') || !started) return;
+      if (!this.hasAttribute('open') || !started || held) return;
       cancelAnimationFrame(boundsRaf);
       boundsRaf = requestAnimationFrame(() => {
         const r = box.getBoundingClientRect();
@@ -395,6 +396,14 @@ class SatrPreviewPanel extends HTMLElement {
     // reload فعلي فقط إن كان الوضع مُفعّلاً والعرض حيّاً (خارج ذلك تجاهل صامت آمن).
     this.reloadIfLive = () => {
       if (autoReload && started && this.hasAttribute('open')) window.satr.previewAction('reload');
+    };
+    // إصلاح احتجاب مربع الإذن خلف المعاينة (لقطة مالك): القشرة تستدعيها عند ظهور/إخفاء
+    // مربع إذن — نُخفي العرض الأصلي (bounds صفر) فيبرز المربع فوق اللوحة، ثم نعيده.
+    this.holdForDialog = (hold) => {
+      held = !!hold;
+      if (!started) return;
+      if (held) window.satr.previewBounds(0, 0, 0, 0); // العرض بحجم صفر ⇒ مخفي، المربع يظهر
+      else reportBounds(); // استعادة الموضع الفعلي بعد الرد
     };
   }
 }
