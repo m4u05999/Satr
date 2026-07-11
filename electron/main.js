@@ -13,6 +13,7 @@ const sessions = require('./sessions');
 const files = require('./files');
 const searchMod = require('./search'); // بحث محتوى المشروع (الدفعة 4.6)
 const gitdiff = require('./gitdiff'); // فروقات git للوحة التغييرات (الدفعة 4.7) — قراءة فقط
+const gitactions = require('./gitactions'); // أفعال git للوحة التغييرات (stage/unstage/discard/commit)
 const exporter = require('./exporter'); // تصدير المحادثة Markdown (الدفعة 4.8) — قراءة فقط
 const skills = require('./skills');
 const agentsList = require('./agents');
@@ -567,6 +568,29 @@ ipcMain.handle('satr:gitChanges', async (event, payload) => {
     return { ok: false, error: 'bad_cwd' };
   }
   try { return await gitdiff.changes(cwd); } catch { return { ok: false, error: 'error' }; }
+});
+
+// ---------- أفعال git — لوحة «تغييرات المشروع» (دفعة «أفعال git») ----------
+// stage/unstage/discard/commit. الأمان (القاعدة 2): op من قائمة بيضاء، والمسار
+// يتحقّق منه gitactions مقابل مجموعة تغييرات git الحيّة (لا حقن مسار)، وgit بمصفوفة
+// وسائط بلا shell. الأفعال المدمّرة (discard) تُؤكَّد في الواجهة قبل الوصول هنا.
+const GIT_OPS = new Set(['stage', 'unstage', 'discard', 'commit']);
+ipcMain.handle('satr:gitAction', async (event, payload) => {
+  const p = payload || {};
+  const cwd = typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd.trim() : '';
+  const op = typeof p.op === 'string' ? p.op : '';
+  if (!cwd || !GIT_OPS.has(op)) return { ok: false, error: 'bad_input' };
+  try { if (!fs.statSync(cwd).isDirectory()) throw new Error(); } catch { return { ok: false, error: 'bad_cwd' }; }
+  try {
+    if (op === 'commit') {
+      const message = typeof p.message === 'string' ? p.message : '';
+      return await gitactions.commit(cwd, message);
+    }
+    // stage/unstage/discard: تحتاج مساراً (يتحقق gitactions أنه من تغييرات git الحيّة)
+    const rel = typeof p.rel === 'string' && p.rel.length && p.rel.length <= 4096 ? p.rel : '';
+    if (!rel) return { ok: false, error: 'bad_input' };
+    return await gitactions[op](cwd, rel);
+  } catch { return { ok: false, error: 'error' }; }
 });
 
 // ---------- تصدير المحادثة الحالية Markdown (الدفعة 4.8 «مشاركة») — قراءة فقط ----------

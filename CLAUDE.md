@@ -41,7 +41,13 @@ electron/gitdiff.js  ← فروقات git للوحة «تغييرات المشر
                        git بمصفوفة وسائط بلا shell، status --porcelain -z (أسماء عربية
                        خام)، المعدَّل عبر تحليل git diff الموحّد (دقيق لأي حجم — سقف LCS
                        في diff.js يضلّل الملفات الكبيرة)، والجديد/المحذوف عبر computeDiff
-                       بتوحيد CRLF/LF (درسان مثبّتان). لا أفعال git — عرض حصراً
+                       بتوحيد CRLF/LF (درسان مثبّتان). قراءة فقط (الأفعال في gitactions.js)
+electron/gitactions.js ← أفعال git للوحة ± (دفعة «أفعال git»): stage/unstage/discard/commit.
+                       الجانب الكاتب المقابل لـ gitdiff.js (يبقى قراءة فقط). أمان: المسار
+                       يُتحقَّق منه مقابل مجموعة `git status -z` الحيّة (لا حقن — مسار ليس
+                       متغيّراً يُرفض)، execFile بمصفوفة وسائط بلا shell + فاصل `--`، وحذف
+                       غير المتتبَّع بـ fs داخل جذر المستودع حصراً. discard مدمّر (checkout
+                       HEAD للمتتبَّع، حذف قرص للجديد) — تؤكّده الواجهة بـ confirm قبل الاستدعاء
 electron/exporter.js ← تصدير المحادثة Markdown (الدفعة 4.8 «مشاركة» — قراءة فقط):
                        القرص مصدر الحقيقة للمحرّكين — جلسات كلود عبر sessions.readFullSession
                        (تحديد الملف بمعرّف الجلسة UUID بمسح مجلدات المشاريع — لا اشتقاق
@@ -511,12 +517,20 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **الفتح**: زرّ ± في الشريط العلوي (نمط 📄 — لا أمر `/`) يفتح لوحة جانبية بالملفات
   المتغيّرة منذ HEAD: شارة (جديد/معدَّل/حُذف/ثنائي/ضخم) + ‎+س −ص، والنقر يفرد بطاقة
   الفرق (بناء كسول، `buildDiff` القائمة بمرآة RTL) مع `noUndo` — **لا زرّ تراجع**:
-  ليست لقطات «سطر» والتراجع عنها يعني checkout مدمّراً. **عرض فقط — لا أفعال git**
-  (commit/stage/revert بند مستقل إن ثبت طلبه — قرار نطاق مثبّت).
-- **IPC**: `satr:gitChanges {cwd}` → `{ok, repo, files:[{rel, kind, renamedFrom?, skipped?,
-  added, removed, lines, truncated}], more, partial}` أو `{ok:false, error:
-  no_git|bad_cwd|bad_input|error}`. `repo:false` = ليس مستودعاً (رسالة هادئة).
-  preload يكشفه `gitChanges(cwd)`. المحرك في `electron/gitdiff.js` (انظر خريطة الملفات).
+  ليست لقطات «سطر» والتراجع عنها يعني checkout مدمّراً.
+- **أفعال git (دفعة «أفعال git»)**: اللوحة صارت **تفاعلية**. كل صف له زرّا «تجهيز/إلغاء
+  التجهيز» (حسب حالة `staged` الجديدة من gitdiff) و«تجاهل»؛ وشريط علوي برسالة الالتزام +
+  زرّ «التزام» يظهر حين يوجد مُجهَّز. الأفعال الأربعة: stage/unstage/discard/commit عبر
+  `electron/gitactions.js` (الجانب الكاتب — gitdiff.js يبقى قراءة فقط). «تجاهل» مدمّر
+  فتؤكّده الواجهة بـ `confirm` عربي قبل الاستدعاء (checkout HEAD للمتتبَّع، حذف قرص للجديد).
+  بعد كل فعل تُعاد قراءة القائمة، ونجاح الالتزام/الفشل يظهر تنبيهاً عربياً.
+- **IPC**: `satr:gitChanges {cwd}` → `{ok, repo, files:[{rel, kind, staged, renamedFrom?,
+  skipped?, added, removed, lines, truncated}], more, partial}` (أُضيف `staged`) ·
+  `satr:gitAction {cwd, op, rel?, message?}` حيث op ∈ `{stage, unstage, discard, commit}`
+  → `{ok, hash?}` أو `{ok:false, error}` (`no_git|no_repo|bad_cwd|bad_input|not_changed|
+  nothing_staged|empty_message|outside|error(+message)}`). التنقية في main.js (op قائمة
+  بيضاء `GIT_OPS`، cwd مجلد قائم)، و**المسار يُتحقَّق منه في gitactions مقابل مجموعة git
+  status الحيّة** (لا حقن مسار). preload يكشف `gitChanges(cwd)` و`gitAction(cwd, op, rel, message)`.
 - **درسان مثبّتان بالتجربة**: (1) توحيد CRLF/LF قبل computeDiff — git يخزّن LF والقرص
   CRLF فيظهر الملف كله متغيّراً زوراً. (2) الملفات المعدَّلة عبر تحليل `git diff` الموحّد
   لا computeDiff — سقف LCS ‏400×400 يسقط للحذف-ثم-إضافة على الملفات الكبيرة

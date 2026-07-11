@@ -134,7 +134,10 @@ async function changes(cwd) {
   for (const e of entries.slice(0, MAX_FILES)) {
     if (Date.now() - started > TIME_BUDGET) { partial = true; break; }
     const kind = classify(e.x, e.y);
-    const row = { rel: e.rel, kind, renamedFrom: e.from || undefined };
+    // staged: للفهرس تغيير عن HEAD (X غير فراغ وغير '?') — تستهلكه اللوحة لعرض زر
+    // التجهيز/إلغائه (أفعال git). قراءة فقط — لا فعل هنا.
+    const staged = e.x !== ' ' && e.x !== '?';
+    const row = { rel: e.rel, kind, staged, renamedFrom: e.from || undefined };
     try {
       // «قبل» من HEAD (المسار القديم عند إعادة التسمية) — غير موجود فيه = null (جديد)
       let before = null;
