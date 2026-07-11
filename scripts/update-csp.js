@@ -33,17 +33,17 @@ function inlineHashes(tag) {
   return out;
 }
 
+// منذ ت-0 (تفكيك المكوّنات — docs/COMPONENTS-PLAN.md): الأنماط والسكربت في ملفات خارجية
+// تغطيها 'self'، فصفر كتل مضمّنة هو الوضع الطبيعي والتوجيه يخرج بلا هاشات.
+// السكربت يبقى حارساً: أي كتلة مضمّنة تعود مستقبلاً تُهَشّ تلقائياً كالسابق.
 const styleHashes = inlineHashes('style');
 const scriptHashes = inlineHashes('script');
-if (!styleHashes.length || !scriptHashes.length) {
-  console.error('update-csp: لم يُعثر على كتلة <style> أو <script> مضمّنة في index.html');
-  process.exit(1);
-}
 
+const withHashes = (dir, hashes) => hashes.length ? dir + ' ' + hashes.join(' ') : dir;
 const csp = [
   "default-src 'self'",
-  "style-src 'self' " + styleHashes.join(' '),
-  "script-src 'self' " + scriptHashes.join(' '),
+  withHashes("style-src 'self'", styleHashes),
+  withHashes("script-src 'self'", scriptHashes),
   "font-src 'self' data:",
   // الصور الملصقة تُعرض كـ data: URL في مصغّرات الإرفاق وفقاعة المستخدم (المرحلة 4)
   "img-src 'self' data:",

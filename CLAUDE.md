@@ -116,7 +116,19 @@ electron/bgprocs.js  ← متتبّع عمليات الخلفية المعمّر
 electron/term.js     ← الطرفية العربية المدمجة (المرحلة 8): دورة حياة pty واحدة عبر node-pty
                        (ConPTY، ويندوز 10 1809+) + IPC بثّ البايتات بالاتجاهين + تغيير الحجم +
                        قتل مضمون عند الإغلاق. التصميم الكامل في docs/PHASE8-DESIGN.md
-src/index.html       ← الواجهة كاملة (HTML/CSS/JS في ملف واحد حالياً)
+src/index.html       ← هيكل الواجهة (HTML فقط منذ ت-0 من تفكيك المكوّنات — docs/COMPONENTS-PLAN.md)
+src/styles/base.css  ← الورقة الأساس: Design Tokens + كل الأنماط غير المفكّكة بعد (كانت
+                       <style> المضمّنة — تتقلّص مع كل دفعة تفكيك تنقل CSS منطقتها لمكوّنها)
+src/ui/app.js        ← قشرة الواجهة: السكربت الضخم منقولاً كما هو (كلاسيكي خارجي لا module —
+                       قرار ت-0 لتفادي مفاجآت strict mode؛ يتقلّص مع كل دفعة، وتحويله
+                       module وإزالة جسر window.SatrUI في الدفعة الأخيرة ت-13)
+src/ui/lib/          ← وحدات ES مشتركة للمكوّنات: sheet.js (مساعد adoptedStyleSheets — آلية
+                       أنماط المكوّنات الحصرية) + panel.css.js (ورقة اللوحات الجانبية) +
+                       diff.js (buildDiff بعقدها الثلاثي: محادثة/عارض/git) + diff.css.js
+                       (نسخة Shadow — نسخة base.css تبقى للمحادثة حتى ت-12) + highlight.js
+                       (HL_CFG + hlLine). الوحدات تسجّل نفسها أيضاً على جسر window.SatrUI
+                       المؤقت لاستهلاك القشرة الكلاسيكية (يُزال في ت-13)
+src/ui/components/   ← مكوّنات Web Components (بادئة satr- — تُملأ من الدفعة ت-1)
 src/vendor/          ← أصول مُضمّنة (vendored) للواجهة — الناتج مُلتزَم (لا اعتمادية npm وقت
                        تشغيل للواجهة): xterm.js (يولّده scripts/vendor-xterm.js) + خط IBM Plex
                        Sans Arabic في fonts/ مع fonts.css (يولّدهما scripts/vendor-fonts.js)
@@ -137,6 +149,11 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
 ملاحظة CSP: لا يوجد `'unsafe-inline'` — أي `<style>` أو `<script>` مضمّن جديد في index.html
 يتطلب إعادة حساب الهاش، وهذا يحدث تلقائياً عبر `prestart`/`predist`. السمات المضمّنة
 (`style="..."` أو `onclick="..."`) محظورة — استخدم CSSOM و addEventListener.
+**منذ ت-0 (تفكيك المكوّنات)**: لا كتل مضمّنة أصلاً — الأنماط في `styles/base.css` والمنطق
+في `ui/app.js` (تغطيهما `'self'`) والتوجيهان يخرجان **بلا هاشات**؛ update-csp يبقى حارساً
+يهشّ أي كتلة مضمّنة تعود مستقبلاً. أنماط المكوّنات عبر `adoptedStyleSheets` حصراً
+(`ui/lib/sheet.js`) — **وسم `<style>` داخل Shadow DOM محجوب بـ CSP** (تحقق حيّ مثبّت
+في docs/COMPONENTS-PLAN.md §1).
 قالب الـ CSP نفسه (التوجيهات لا الهاشات) معرّف في `scripts/update-csp.js`، فأي توجيه جديد
 يُضاف هناك لا في index.html مباشرة (وإلا داسه `prestart`). مثال: `img-src 'self' data:`
 أُضيف للمرحلة 4 ليسمح بمصغّرات الصور الملصقة (data: URL).
