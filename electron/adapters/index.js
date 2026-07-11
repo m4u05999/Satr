@@ -69,6 +69,23 @@ register('qwen', openaiCompatible.make({
   ],
 });
 
+// MiniMax — نقطة متوافقة مع OpenAI (base_url: https://api.minimax.io/v1). الافتراضي
+// M3 (نافذة 1M). أسماء النماذج بصيغة MiniMax-Mx الرسمية (فرق حالة الأحرف يسبب 400).
+register('minimax', openaiCompatible.make({
+  id: 'minimax', // معرّف مجلد الذاكرة على القرص (~/.satr/chats/minimax/) — الدفعة 1.3
+  host: 'api.minimax.io', path: '/v1/chat/completions',
+  keyName: 'MINIMAX_API_KEY', defaultModel: 'MiniMax-M3', label: 'MiniMax',
+}), {
+  label: 'MiniMax', family: 'openai', keyName: 'MINIMAX_API_KEY',
+  models: [
+    { value: '', label: 'الافتراضي (M3)' },
+    { value: 'MiniMax-M3', label: 'M3' },
+    { value: 'MiniMax-M2.7', label: 'M2.7' },
+    { value: 'MiniMax-M2.5', label: 'M2.5' },
+    { value: 'MiniMax-M2', label: 'M2' },
+  ],
+});
+
 // يعيد المحوّل المطابق أو null
 function get(engine) {
   const e = REGISTRY.get(engine);

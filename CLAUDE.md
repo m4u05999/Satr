@@ -245,7 +245,8 @@ result`)، فالواجهة لا تتغيّر.
   `currentRun` لمحرك SDK الذي يحمل `resolvePermission`).
 - **السجلّ** (`adapters/index.js`): `register(name, adapter, meta)` / `get(engine)` /
   `list()` (يعيد `{name, label, family, keyName}`). **قابل للحقن** فتضيف طبقة Enterprise
-  مزوّدين دون لمس النواة (نقطة الربط §4.2 في ARCHITECTURE.md). المدمج: cli, gemini, deepseek, qwen.
+  مزوّدين دون لمس النواة (نقطة الربط §4.2 في ARCHITECTURE.md). المدمج: cli, gemini,
+  deepseek, qwen, minimax (M3 افتراضياً — `api.minimax.io/v1`، مفتاح `MINIMAX_API_KEY`).
 - **`adapters/claude-cli.js`**: مسار `claude -p` المنقول من main.js (نفس detached+taskkill).
 - **`adapters/gemini.js`**: Gemini عبر **REST مباشر** (`https` مدمجة، بثّ SSE من
   `streamGenerateContent`) لا gemini-cli. **قرار مثبّت**: gemini-cli أُسقط لأنه غير موثوق
