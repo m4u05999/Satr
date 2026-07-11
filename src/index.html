@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-dKe6A615b1bgAvxagynhm2nQeZ4XmRESeZkEF9mkQq8='; script-src 'self' 'sha256-6tsqeUmyHJxgfYT6Tzyc/wG66t5MDZdG1Fw2WBjg05g='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-DIzBZWxP8NLmjIaRiYYve0fbh7VW3gDhb8ownooTfxY='; script-src 'self' 'sha256-fTvlT3B1BDrm25SgNsZPeXkLqIz8CzpixsjvFx1ckMo='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/fonts.css">
 <link rel="stylesheet" href="vendor/xterm.css">
@@ -471,6 +471,12 @@
   .dl.del { background: var(--red-soft); }
   .dl.del .sg { color: var(--red); }
   .dl.gap { justify-content: center; color: var(--text-dim); opacity: .6; padding: 1px 0; }
+  /* فرق ملف عربي (الدفعة 4 — ملاحظة مالك من قبول 2.2): مرآة كاملة كنمط rtl-doc في
+     العارض — الأرقام والإشارة عمود يميناً، النص يرسو يميناً بجانبه ويلتف داخل العرض
+     (لا تمرير أفقي). text-align صريحة — الوراثة تغلب dir (درس العارض المثبّت) */
+  .diff.rtl-doc .dl { flex-direction: row-reverse; }
+  .diff.rtl-doc .dl .tx { direction: rtl; text-align: right; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .diff.rtl-doc .dl .ln { text-align: left; }
   .diff-note { padding: 4px 10px; font-size: 11.5px; color: var(--text-dim); border-top: 1px solid var(--border); }
 
   /* ===== بطاقة ضغط المحادثة (/ضغط) ===== */
@@ -1387,6 +1393,18 @@
   function buildDiff(ev) {
     const box = document.createElement('div');
     box.className = 'diff';
+    // اتجاه جسم الفرق (الدفعة 4 — ملاحظة مالك من قبول 2.2): نفس قاعدة العارض —
+    // امتداد كود معروف = LTR دائماً؛ غيره بإحصاء محارف الأسطر المعروضة (عربي غالب ⇐ مرآة RTL)
+    const ext = ((ev.rel || '').split('.').pop() || '').toLowerCase();
+    if (!HL_CFG[ext]) {
+      let ar = 0, lat = 0;
+      for (const ln of (ev.lines || [])) {
+        const t = ln.text || '';
+        ar += (t.match(/[؀-ۿ]/g) || []).length;
+        lat += (t.match(/[A-Za-z]/g) || []).length;
+      }
+      if (ar > 0 && ar >= lat * 0.5) box.classList.add('rtl-doc');
+    }
 
     const head = document.createElement('div'); head.className = 'diff-head';
     const toggle = document.createElement('button');
