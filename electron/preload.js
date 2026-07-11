@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld('satr', {
   readFile: (cwd, rel) => ipcRenderer.invoke('satr:readFile', { cwd, rel }), // عارض القراءة (1.2)
   lastChat: (engine) => ipcRenderer.invoke('satr:lastChat', { engine }),     // ذاكرة المحوّلات (1.3)
   forgetChat: (engine) => ipcRenderer.invoke('satr:forgetChat', { engine }),
+  // قنوات Enterprise (الدفعة 3) — تفشل بهدوء في البناء المجتمعي (لا معالج مسجَّل)
+  eeUsage: () => ipcRenderer.invoke('satr:ee:usage'),
+  eeAudit: () => ipcRenderer.invoke('satr:ee:audit'),
   listSkills: (cwd) => ipcRenderer.invoke('satr:listSkills', cwd),
   mcpStatus: (cwd) => ipcRenderer.invoke('satr:mcpStatus', cwd),
   mcpAction: (cwd, name, action) => ipcRenderer.invoke('satr:mcpAction', { cwd, name, action }),

@@ -101,6 +101,8 @@ function start(input, cwd, emit) {
   let currentReq = null;
   let toolsOk = true; // يُعطَّل إن رفض المزوّد الأدوات (تدهور رشيق لدردشة)
   let callSeq = 0;    // Gemini لا يصدر معرّفات نداءات — نولّدها لبطاقات الواجهة
+  // استهلاك الدور (3.3): آخر usageMetadata (طلب Gemini يشمل السجل كاملاً فالأخير أشمل)
+  const usageTotal = { input_tokens: 0, output_tokens: 0 };
 
   // ---------- الإذن العربي (نفس عقد openai-compatible — 2.2/2.3) ----------
   const pendingPerms = new Map();
@@ -128,6 +130,11 @@ function start(input, cwd, emit) {
         if (!jsonStr || jsonStr === '[DONE]') return;
         let obj;
         try { obj = JSON.parse(jsonStr); } catch (e) { return; }
+        // استهلاك الرموز (3.3): usageMetadata يصل مع الإطارات الأخيرة — نأخذ آخر قيمة
+        if (obj && obj.usageMetadata) {
+          usageTotal.input_tokens = obj.usageMetadata.promptTokenCount || usageTotal.input_tokens;
+          usageTotal.output_tokens = obj.usageMetadata.candidatesTokenCount || usageTotal.output_tokens;
+        }
         const cand = obj && obj.candidates && obj.candidates[0];
         const parts = cand && cand.content && cand.content.parts;
         if (!Array.isArray(parts)) return;
@@ -258,7 +265,12 @@ function start(input, cwd, emit) {
       }
       histories.set(sid, h);
       chats.save(PROVIDER, sid, h); // حفظ على القرص — أفضل جهد (1.3)
-      emit({ type: 'result', session_id: sid, is_error: false, duration_ms: Date.now() - startedAt, num_turns: rounds + 1 });
+      emit({
+        type: 'result', session_id: sid, is_error: false,
+        duration_ms: Date.now() - startedAt, num_turns: rounds + 1,
+        usage: (usageTotal.input_tokens || usageTotal.output_tokens) ? { ...usageTotal } : undefined,
+        provider: PROVIDER,
+      });
       emit({ type: 'proc_done', code: 0 });
       return;
     }

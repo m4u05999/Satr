@@ -12,7 +12,9 @@
     "predist": "node scripts/update-csp.js",
     "dist": "electron-builder --win",
     "predist:dir": "node scripts/update-csp.js",
-    "dist:dir": "electron-builder --win --dir"
+    "dist:dir": "electron-builder --win --dir",
+    "predist:ee": "node scripts/update-csp.js",
+    "dist:ee": "electron-builder --win --config scripts/ee-builder-config.js"
   },
   "devDependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -34,6 +36,7 @@
     "files": [
       "electron/**/*",
       "src/**/*",
+      "!enterprise/**",
       "!**/@anthropic-ai/claude-agent-sdk-win32-x64/**",
       "!**/@anthropic-ai/claude-agent-sdk-*/**",
       "!**/node_modules/node-pty/prebuilds/darwin-*/**",

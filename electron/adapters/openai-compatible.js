@@ -9,6 +9,10 @@
  * make(config) → { start(input, cwd, emit) → { stop() } }  (نفس عقد المحوّلات).
  * config: { id, host, path, keyName, defaultModel, label } — id هو معرّف مجلد الذاكرة
  * على القرص (~/.satr/chats/<id>/)؛ بدونه تبقى الذاكرة حيّة فقط (تُمسح بإعادة التشغيل).
+ * خيارات إضافية (الدفعة 3 — مزوّدون محليون مثل Ollama عبر نقطة الربط §4.2):
+ *   protocol: 'https' (افتراضي) أو 'http' (خوادم محلية) · port: منفذ مخصّص ·
+ *   requiresKey: false = بلا مفتاح API (محلي) · connectHint: نص عربي يُعرض عند فشل
+ *   الاتصال (ECONNREFUSED) يرشد المستخدم لتشغيل/تثبيت الخادم المحلي.
  *
  * حلقة الوكيل (الدفعة 2.1): الطلب يعلن أدوات «سطر» (electron/tools.js — قراءة فقط
  * حالياً). النموذج يطلب أداة ⇒ ننفّذها محلياً ونعيد النتيجة برسالة role:"tool" ونعاود
@@ -22,6 +26,7 @@
  */
 
 const https = require('https');
+const http = require('http'); // خوادم محلية (Ollama وأمثاله) — HTTP على منفذ محلي
 const crypto = require('crypto');
 const keys = require('../keys');
 const chats = require('../chats'); // ذاكرة على القرص (1.3): استئناف بعد إعادة التشغيل
@@ -54,10 +59,15 @@ function displayInput(args) {
 
 function make(config) {
   const { id: providerId, host, path: apiPath, keyName, defaultModel, label } = config;
+  const requiresKey = config.requiresKey !== false; // المزوّدون المحليون بلا مفتاح
+  const transport = config.protocol === 'http' ? http : https;
+  const port = config.port || undefined;
+  const connectHint = config.connectHint || ''; // إرشاد عربي عند فشل الاتصال (خادم محلي غائب)
   const histories = new Map(); // session_id -> رسائل بصيغة OpenAI (كاش حيّ فوق القرص)
 
   // المفتاح: بيئة النظام أولاً ثم مخزن «سطر» (~/.satr/keys.json) — موثوق بلا وراثة بيئة
   function resolveKey() {
+    if (!requiresKey) return null;
     return (process.env[keyName] || keys.get(keyName) || '').trim();
   }
 
@@ -67,7 +77,7 @@ function make(config) {
     const autoAllowWrites = permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions';
 
     const apiKey = resolveKey();
-    if (!apiKey) {
+    if (requiresKey && !apiKey) {
       queueMicrotask(() => {
         emit({ type: 'spawn_error', text: 'لم يُضبط مفتاح ' + label + '. أضِفه من ⚙ ← «مفاتيح المزوّدين» أو في الملف '
           + keys.KEYS_PATH + ' بالصيغة: {"' + keyName + '":"..."}' });
@@ -90,6 +100,8 @@ function make(config) {
     let aborted = false;
     let currentReq = null;
     let toolsOk = true; // يُعطَّل بعد رفض المزوّد للأدوات (نموذج لا يدعم tool-calling)
+    // استهلاك الرموز عبر جولات الدور (3.3): يُجمَع من إطارات usage إن وفّرها المزوّد
+    const usageTotal = { input_tokens: 0, output_tokens: 0 };
 
     // ---------- الإذن العربي لأدوات الكتابة والتنفيذ (2.2/2.3) ----------
     // نفس عقد مسار SDK: permission_request للواجهة، والرد يصل عبر resolvePermission
@@ -123,6 +135,11 @@ function make(config) {
           if (!jsonStr || jsonStr === '[DONE]') return;
           let obj;
           try { obj = JSON.parse(jsonStr); } catch (e) { return; }
+          // usage يصل في إطار أخير (DeepSeek يرسله دائماً؛ آخرون حسب الإعداد) — نجمعه للدور
+          if (obj && obj.usage) {
+            usageTotal.input_tokens += obj.usage.prompt_tokens || 0;
+            usageTotal.output_tokens += obj.usage.completion_tokens || 0;
+          }
           const choice = obj && obj.choices && obj.choices[0];
           if (!choice) return;
           const delta = choice.delta || {};
@@ -142,16 +159,14 @@ function make(config) {
           }
         };
 
-        const options = {
-          host, path: apiPath, method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + apiKey,
-            'Content-Length': Buffer.byteLength(body),
-          },
+        const headers = {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
         };
+        if (apiKey) headers['Authorization'] = 'Bearer ' + apiKey; // المحلي بلا مفتاح
+        const options = { host, port, path: apiPath, method: 'POST', headers };
 
-        const req = https.request(options, (res) => {
+        const req = transport.request(options, (res) => {
           res.setEncoding('utf8');
           if (res.statusCode < 200 || res.statusCode >= 300) {
             let errBody = '';
@@ -179,7 +194,11 @@ function make(config) {
         });
 
         req.on('error', (e) => {
-          done({ error: aborted ? '__aborted__' : ('تعذّر الاتصال بـ ' + label + ': ' + String(e && e.message)) });
+          if (aborted) return done({ error: '__aborted__' });
+          // خادم محلي غائب (ECONNREFUSED) وله إرشاد ⇐ رسالة عربية موجّهة بدل خطأ تقني
+          const refused = e && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND');
+          if (refused && connectHint) return done({ error: connectHint, isHint: true });
+          done({ error: 'تعذّر الاتصال بـ ' + label + ': ' + String(e && e.message) });
         });
 
         currentReq = req;
@@ -259,7 +278,13 @@ function make(config) {
         }
         histories.set(sid, h);
         if (providerId) chats.save(providerId, sid, h); // حفظ على القرص — أفضل جهد (1.3)
-        emit({ type: 'result', session_id: sid, is_error: false, duration_ms: Date.now() - startedAt, num_turns: rounds + 1 });
+        emit({
+          type: 'result', session_id: sid, is_error: false,
+          duration_ms: Date.now() - startedAt, num_turns: rounds + 1,
+          // استهلاك الدور (3.3) — إن وفّره المزوّد؛ مجرى المراقبة (§4.7) يلتقطه للوحة الاستهلاك
+          usage: (usageTotal.input_tokens || usageTotal.output_tokens) ? { ...usageTotal } : undefined,
+          provider: providerId || undefined,
+        });
         emit({ type: 'proc_done', code: 0 });
         return;
       }

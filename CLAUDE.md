@@ -70,7 +70,26 @@ electron/chats.js    ← ذاكرة المحوّلات على القرص (الد
                        تنقية regex صارمة للمعرّفات، سقف 50 جلسة/مزوّد (تنظيف بالأقدم)،
                        أفضل جهد (فشل القرص لا يكسر الدور — الكاش الحيّ يكمل)
 electron/features.js ← طبقة القدرات (feature-flags) + المُحمِّل الشرطي لـ enterprise/ (نقطة الربط
-                       §4.1/§4.4): النواة تعمل كاملة إن غاب enterprise/. أساس نموذج Community+Enterprise
+                       §4.1/§4.4): النواة تعمل كاملة إن غاب enterprise/. أساس نموذج Community+Enterprise.
+                       منذ الدفعة 3 نقاط الربط الممرَّرة: setFlag (§4.4) + registerProvider
+                       (§4.2) + openaiCompatible (المصنع — Enterprise يبني عليه بلا تكرار) +
+                       registerIpc (قنوات satr:ee: حصراً — §4.5) + subscribe (§4.7 مجرى
+                       مراقبة أحداث: main.js يبثّ عبر notify() كل أحداث الدور + prompt +
+                       permission_reply — للتدقيق والاستهلاك). notify رخيص بلا مشتركين
+enterprise/          ← طبقة Enterprise (الدفعة 3 — رخصة تجارية في enterprise/LICENSE،
+                       ليست MIT): index.js (نقطة الدخول: ترخيص ⇒ أعلام ⇒ تسجيل قدرات) +
+                       licensing.js (⚠️ ليس license.js — يتصادم مع ملف LICENSE على ويندوز
+                       غير الحساس لحالة الأحرف؛ يقرأ ~/.satr/license.json: key بنمط
+                       SATR-EE-XXXXXX-XXXXXX + exp + features) + providers/ollama.js
+                       (3.1: نماذج محلية فوق مصنع openai-compatible — http://127.0.0.1:11434،
+                       بلا مفتاح، يرث حلقة الوكيل كاملة، وإرشاد عربي عند غيابه عبر
+                       connectHint) + usage.js (3.3: ~/.satr/usage/YYYY-MM.jsonl + تجميع
+                       satr:ee:usage) + audit.js (3.4: ~/.satr/audit/YYYY-MM-DD.jsonl —
+                       prompt/tool_use/file_edit/أذونات + satr:ee:audit).
+                       البناء المجتمعي يستثنيه (!enterprise/** + قائمة السماح)؛ بناء EE
+                       عبر npm run dist:ee (scripts/ee-builder-config.js يوسّع إعداد
+                       package.json). حذف المجلد كلياً = النواة تعمل كاملة (معيار §1 —
+                       متحقَّق آلياً). قسم «سطر Enterprise» في ⚙ يظهر عند تحميل الطبقة
 electron/bgprocs.js  ← متتبّع عمليات الخلفية المعمّرة (خوادم التطوير): الـ SDK لا يكشف
                        للمضيف أي مقبض لعمليات تُشغّلها الأدوات، فنتعقّبها على مستوى النظام.
                        خطّافا Bash (run_in_background) في agent.js يلتقطان أحفاد عملية «سطر»

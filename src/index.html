@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-aq6YbQQ/NGxdDk5yFZUg4ikigReQ+YEFXnxYCUNviOw='; script-src 'self' 'sha256-Qo5N7W6koYAVUPKgz8CIaUCu1kOAFVQea3SSKCGl7/I='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-aq6YbQQ/NGxdDk5yFZUg4ikigReQ+YEFXnxYCUNviOw='; script-src 'self' 'sha256-VtiAmwkysR1XwgpscGmgBxgVF5nZSyS9buhzs7dPU/4='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -629,6 +629,12 @@
             <button id="addDir" type="button" title="منح النموذج وصولاً لمجلد آخر بجانب مجلد المشروع">📁 إضافة</button>
           </div>
           <div id="dirChips"></div>
+        </div>
+        <!-- قسم «سطر Enterprise» (الدفعة 3): يظهر فقط عند تحميل الطبقة (satr:features) -->
+        <div class="settings-keys" id="eeSection" hidden>
+          <div class="dirs-head"><span>سطر Enterprise</span><span id="eeLicense" class="key-status"></span></div>
+          <div id="eeUsageBox" class="ct-hint" dir="auto"></div>
+          <div id="eeAuditBox" class="ct-hint" dir="auto"></div>
         </div>
         <!-- مركز مفاتيح المزوّدين (§5-ب): إدخال مفاتيح DeepSeek/Qwen/Gemini بصرياً (تُحفظ في ~/.satr/keys.json) -->
         <div class="settings-keys" id="keysMgr">
@@ -3192,6 +3198,45 @@
   settingsPop.addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', () => { if (!settingsPop.hidden) setSettingsOpen(false); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !settingsPop.hidden) setSettingsOpen(false); });
+
+  // ---------- قسم «سطر Enterprise» في ⚙ (الدفعة 3) ----------
+  // يظهر فقط إن حُمِّلت الطبقة (satr:features)؛ الترخيص والاستهلاك والتدقيق تُحدَّث عند فتح ⚙
+  let eeLoaded = false;
+  async function initEeSection() {
+    try {
+      const f = await window.satr.features();
+      if (!f || !f.enterprise) return; // بناء مجتمعي — القسم يبقى مخفياً
+      $('eeSection').hidden = false;
+      const inf = f.info || {};
+      const lic = $('eeLicense');
+      if (inf.licensed) {
+        lic.textContent = '✓ مرخّص' + (inf.org ? ' — ' + inf.org : '') + (inf.exp ? ' (حتى ' + inf.exp + ')' : '');
+        lic.style.color = 'var(--green)';
+      } else {
+        lic.textContent = 'غير مرخّص — القدرات معطّلة';
+        lic.style.color = 'var(--text-dim)';
+      }
+      eeLoaded = !!inf.licensed;
+    } catch (e) { /* البناء المجتمعي أو فشل معزول — لا شيء */ }
+  }
+  async function refreshEeStats() {
+    if (!eeLoaded) return;
+    try {
+      const u = await window.satr.eeUsage();
+      const parts = [];
+      for (const [prov, s] of Object.entries((u && u.today) || {})) {
+        parts.push(prov + ': ' + s.turns + ' دور، ' + (s.input_tokens + s.output_tokens) + ' رمز'
+          + (s.cost_usd ? '، $' + s.cost_usd.toFixed(3) : ''));
+      }
+      $('eeUsageBox').textContent = 'استهلاك اليوم — ' + (parts.length ? parts.join(' · ') : 'لا شيء بعد');
+    } catch (e) { $('eeUsageBox').textContent = ''; }
+    try {
+      const a = await window.satr.eeAudit();
+      $('eeAuditBox').textContent = 'سجل التدقيق — ' + ((a && a.todayCount) || 0) + ' حدثاً اليوم، في: ' + ((a && a.path) || '');
+    } catch (e) { $('eeAuditBox').textContent = ''; }
+  }
+  settingsBtn.addEventListener('click', () => { if (!settingsPop.hidden) refreshEeStats(); });
+  initEeSection();
 
   input.focus();
 })();

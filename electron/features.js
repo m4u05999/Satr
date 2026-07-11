@@ -7,7 +7,20 @@
  *    تعرف النواة شيئاً عن داخله (لا require صريح من النواة إلى enterprise).
  *
  * القاعدة الصارمة: أي فشل في تحميل/تسجيل Enterprise **لا يُسقط النواة** إطلاقاً.
+ *
+ * نقاط الربط المتاحة (الدفعة 3 وسّعتها — كلٌّ موثّقة في ARCHITECTURE.md §4):
+ *  - setFlag (§4.4)            — الترخيص يفعّل القدرات
+ *  - registerProvider (§4.2)   — حقن مزوّدين في سجلّ المحوّلات (Ollama/vLLM/خاص)
+ *  - openaiCompatible (§4.2)   — مصنع البروتوكول نفسه (صفر تكرار: Enterprise يبني عليه)
+ *  - registerIpc (§4.5)        — معالجات IPC إضافية بقنوات `satr:ee:` حصراً
+ *  - subscribe (§4.7)          — مجرى مراقبة أحداث «سطر» (للتدقيق والاستهلاك)
  */
+
+// electron قد لا تتوفر خارج العملية الرئيسية (اختبارات node النقية) — تحميل دفاعي
+let ipcMain = null;
+try { ({ ipcMain } = require('electron')); } catch (e) { ipcMain = null; }
+const adapters = require('./adapters');
+const openaiCompatible = require('./adapters/openai-compatible');
 
 // خريطة الأعلام: اسم القدرة → مُفعّلة؟ (غياب الاسم = معطّلة، فالمجتمعية تُخفي قدرات Enterprise)
 const flags = new Map();
@@ -15,12 +28,48 @@ const flags = new Map();
 let enterprise = null;   // مرجع وحدة Enterprise إن حُمِّلت، وإلا null (بناء مجتمعي)
 let started = false;     // منع التهيئة المزدوجة
 
-// نقاط الربط المُمرَّرة لـ Enterprise عند التسجيل. تُوسَّع لاحقاً (adapters.register،
-// خطّافات IPC، فتحات الواجهة) — كل نقطة جديدة توثَّق في ARCHITECTURE.md §4.
+// مشتركو مجرى المراقبة (§4.7): يستقبلون أحداث «سطر» المطبَّعة + أحداث النواة الوصفية
+// (prompt/permission_reply). كل مشترك معزول — استثناؤه لا يكسر البث.
+const subscribers = [];
+
+// إعلام المشتركين بحدث (تستدعيه النواة من مواضع البث في main.js) — رخيص عند عدم وجودهم
+function notify(ev, meta) {
+  if (!subscribers.length) return;
+  for (const fn of subscribers) {
+    try { fn(ev, meta || {}); } catch (e) { /* عزل: مراقب معطوب لا يكسر الدور */ }
+  }
+}
+
+// نقاط الربط المُمرَّرة لـ Enterprise عند التسجيل
 function buildSeams() {
   return {
-    // يفعّل/يعطّل علماً (يستدعيه Enterprise بعد التحقق من الترخيص)
+    // §4.4: يفعّل/يعطّل علماً (يستدعيه Enterprise بعد التحقق من الترخيص)
     setFlag: (name, on) => { flags.set(String(name), !!on); },
+
+    // §4.2: تسجيل مزوّد في سجلّ المحوّلات — بلا لمس ملفات النواة
+    registerProvider: (name, adapter, meta) => adapters.register(name, adapter, meta),
+
+    // §4.2 (مكمّل): مصنع البروتوكول المتوافق مع OpenAI — يرث حلقة الوكيل كاملة
+    // (أدوات + أذونات عربية + ذاكرة). Enterprise يبني مزوّديه فوقه بلا سطر مكرّر.
+    openaiCompatible,
+
+    // §4.5: معالجات IPC إضافية — قنوات `satr:ee:` حصراً (لا تصادم مع قنوات النواة)
+    registerIpc: (channel, handler) => {
+      const ch = String(channel);
+      if (!/^satr:ee:[a-zA-Z0-9_-]{1,64}$/.test(ch)) throw new Error('قناة Enterprise يجب أن تبدأ بـ satr:ee:');
+      if (typeof handler !== 'function') throw new Error('معالج غير صالح');
+      if (ipcMain && ipcMain.handle) ipcMain.handle(ch, handler); // خارج electron (اختبار node): تجاهل آمن
+    },
+
+    // §4.7: الاشتراك في مجرى مراقبة الأحداث (تدقيق/استهلاك) — يعيد دالة إلغاء
+    subscribe: (fn) => {
+      if (typeof fn !== 'function') throw new Error('مشترك غير صالح');
+      subscribers.push(fn);
+      return () => {
+        const i = subscribers.indexOf(fn);
+        if (i >= 0) subscribers.splice(i, 1);
+      };
+    },
   };
 }
 
@@ -41,6 +90,7 @@ function init() {
       // تسجيل Enterprise فشل — نعزله ولا نُسقط النواة
       enterprise = null;
       flags.clear();
+      subscribers.length = 0;
     }
   }
   return { loaded: !!enterprise };
@@ -56,11 +106,16 @@ function isEnterprise() {
   return !!enterprise;
 }
 
-// لقطة للواجهة عبر IPC: تُظهر/تُخفي قدرات Enterprise
+// لقطة للواجهة عبر IPC: تُظهر/تُخفي قدرات Enterprise + معلومات عرض اختيارية
+// يوفّرها Enterprise نفسه (حالة الترخيص مثلاً) عبر info()
 function snapshot() {
   const out = {};
   for (const [k, v] of flags) out[k] = v;
-  return { enterprise: !!enterprise, flags: out };
+  let info = null;
+  if (enterprise && typeof enterprise.info === 'function') {
+    try { info = enterprise.info(); } catch (e) { info = null; }
+  }
+  return { enterprise: !!enterprise, flags: out, info };
 }
 
-module.exports = { init, enabled, isEnterprise, snapshot };
+module.exports = { init, enabled, isEnterprise, snapshot, notify };

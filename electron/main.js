@@ -252,7 +252,13 @@ function stopAll() {
 
 function emitToWindow(obj) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:event', obj);
+  // مجرى المراقبة (§4.7 — الدفعة 3): التدقيق/الاستهلاك في Enterprise يلتقطان الأحداث.
+  // رخيص عند غياب المشتركين (بناء مجتمعي = لا شيء)
+  try { features.notify(obj, { engine: lastEngine }); } catch (e) { /* عزل */ }
 }
+
+// آخر محرك أُرسل به طلب — وصفٌ لمجرى المراقبة (لا يغيّر سلوك النواة)
+let lastEngine = 'sdk';
 
 // تتبّع عمليات الخلفية: يُبثّ مباشرةً (لا عبر token الدور) لأنه يعيش بعد انتهاء الدور
 bgprocs.setNotifier((procs) => emitToWindow({ type: 'bg_procs', procs }));
@@ -278,6 +284,12 @@ ipcMain.handle('satr:send', async (event, payload) => {
 
   const token = ++runSeq;
   const emit = (obj) => { if (token === runSeq) emitToWindow(obj); };
+
+  // مجرى المراقبة (§4.7): حدث وصفي ببداية الدور — للتدقيق (من طلب ماذا وأين)
+  lastEngine = adapters.get(payload.engine) ? payload.engine : 'sdk';
+  try {
+    features.notify({ type: 'prompt', engine: lastEngine, cwd, prompt: prompt.slice(0, 2000) });
+  } catch (e) { /* عزل */ }
 
   // المحرّكات غير SDK تمر عبر طبقة adapters (القاعدة 2: التنقية هنا في main.js)
   const adapter = adapters.get(payload.engine);
@@ -386,6 +398,10 @@ ipcMain.handle('satr:permission', (event, p) => {
   if (!ok && currentCliRun && typeof currentCliRun.resolvePermission === 'function') {
     ok = currentCliRun.resolvePermission(p.id, !!p.allow, !!p.always);
   }
+  // مجرى المراقبة (§4.7): قرار الإذن — عنصر أساسي في سجل التدقيق (3.4)
+  try {
+    features.notify({ type: 'permission_reply', id: p.id, allow: !!p.allow, always: !!p.always, engine: lastEngine });
+  } catch (e) { /* عزل */ }
   return { ok };
 });
 
