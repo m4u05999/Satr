@@ -211,6 +211,30 @@ function commitWrite(ctx, cwd, toolName, rel, abs, before, after) {
 }
 
 /**
+ * حفظ من عارض القراءة (تحرير خفيف — الدفعة 4): كتابة ملف **قائم** فقط بإعادة
+ * استخدام المسار المؤمَّن نفسه — resolveExisting (تسامح NFC/NFD للأسماء العربية) +
+ * readBefore (يرمي للثنائي/الضخم) + commitWrite (كتابة + لقطة تراجع) — فيأتي
+ * «تراجع» (editSnapshots/undoEdit) وبيانات بطاقة diff مجاناً. لا يُنشئ ملفات
+ * (العارض يفتح الموجود فقط). بطاقة file_edit تُعاد في الردّ نفسه (card) بدل بثّها
+ * حدثاً: حدث خارج دور يسقط على حارس الكتلة في الواجهة — الردّ المتزامن أسلم ترتيباً.
+ */
+function saveFromViewer(cwd, rel, content) {
+  try {
+    if (typeof content !== 'string' || content.length > MAX_WRITE) return { ok: false, error: 'too_big' };
+    const abs = resolveExisting(cwd, rel);
+    if (!abs) return { ok: false, error: 'outside' };
+    const before = readBefore(abs); // يرمي للثنائي/الضخم — يلتقطه catch أدناه
+    if (before == null) return { ok: false, error: 'notfound' }; // العارض لا ينشئ ملفات
+    const id = 'view_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    let card = null;
+    commitWrite({ emit: (ev) => { card = ev; }, id }, cwd, 'viewer_edit', rel.replace(/\\/g, '/'), abs, before, content);
+    return { ok: true, card };
+  } catch (e) {
+    return { ok: false, error: 'error', message: String((e && e.message) || e) };
+  }
+}
+
+/**
  * تنفيذ أداة باسمها — يعيد دائماً { ok, content } والمحتوى نص يُعاد للنموذج
  * (الفشل نص خطأ عربي، لا استثناء — النموذج يصحح مساره بنفسه).
  * ctx (اختياري): { emit, id } — لبطاقات diff وربطها ببطاقة الأداة (أدوات الكتابة).
@@ -325,4 +349,4 @@ async function run(name, cwd, args, ctx) {
   }
 }
 
-module.exports = { defs, run, needsPermission, permissionTier, undoEdit, MAX_RESULT };
+module.exports = { defs, run, needsPermission, permissionTier, undoEdit, saveFromViewer, MAX_RESULT };

@@ -479,6 +479,24 @@ ipcMain.handle('satr:readFile', (event, payload) => {
   return files.readText(cwd, rel);
 });
 
+// ---------- تحرير خفيف في العارض (الدفعة 4): حفظ محتوى ملف قائم ----------
+// التنقية هنا (القاعدة 2)؛ التنفيذ بمسار tools.js المؤمَّن نفسه (resolveExisting
+// المتسامح مع NFC/NFD + رفض الثنائي/الضخم + لقطة تراجع + بطاقة diff في الردّ).
+// كتابة ملف قائم فقط — العارض لا ينشئ ملفات. content ≤ 1م.ب (سقف tools.js نفسه).
+
+ipcMain.handle('satr:writeFile', (event, payload) => {
+  const p = payload || {};
+  const cwd = typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd.trim() : '';
+  const rel = typeof p.rel === 'string' ? p.rel.trim() : '';
+  if (!cwd || !rel || rel.length > 512 || typeof p.content !== 'string') return { ok: false, error: 'bad_input' };
+  try {
+    if (!fs.statSync(cwd).isDirectory()) throw new Error();
+  } catch {
+    return { ok: false, error: 'bad_cwd' };
+  }
+  return agentTools.saveFromViewer(cwd, rel, p.content);
+});
+
 // ---------- سرد المهارات المكتشَفة للوحة /مهارات (قراءة فقط) ----------
 
 ipcMain.handle('satr:listSkills', (event, cwd) => {

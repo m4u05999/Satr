@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('satr', {
   readSession: (project, id) => ipcRenderer.invoke('satr:readSession', { project, id }),
   listFiles: (cwd) => ipcRenderer.invoke('satr:listFiles', cwd),
   readFile: (cwd, rel) => ipcRenderer.invoke('satr:readFile', { cwd, rel }), // عارض القراءة (1.2)
+  writeFile: (cwd, rel, content) => ipcRenderer.invoke('satr:writeFile', { cwd, rel, content }), // تحرير خفيف في العارض (الدفعة 4)
   lastChat: (engine) => ipcRenderer.invoke('satr:lastChat', { engine }),     // ذاكرة المحوّلات (1.3)
   forgetChat: (engine) => ipcRenderer.invoke('satr:forgetChat', { engine }),
   listChats: () => ipcRenderer.invoke('satr:listChats'),                     // تصفح محادثات المحوّلات (الدفعة 4)
