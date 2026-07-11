@@ -126,14 +126,26 @@ class SatrPreviewPanel extends HTMLElement {
     new ResizeObserver(reportBounds).observe(box);
     window.addEventListener('resize', reportBounds);
 
+    // م-1-د: تذكّر آخر عنوان **لكل مجلد مشروع** (لا عنواناً عاماً واحداً) — لكل مشروع
+    // منفذه، فالنقر على 🌐 يعيد عنوان المشروع الحالي لا آخر ما فُتح في أي مكان. المفتاح
+    // يقرأ #cwd من الشريط العلوي (light DOM — نمط terminal-panel). fallback للمفتاح العام
+    // القديم للتوافق مع ما حُفظ في م-1-ج.
+    const savedKey = () => {
+      const cwd = (document.getElementById('cwd') && document.getElementById('cwd').value || '').trim();
+      return cwd ? 'satr_preview_url::' + cwd : 'satr_preview_url';
+    };
+    // كل مجلد مشروع مستقل — لا fallback عام (يسبّب تلوّثاً: مشروع جديد يرث عنوان آخر).
+    // مشروع بلا عنوان محفوظ ⇒ شاشة hint حتى يُفتح عنوانه أول مرة.
+    const loadSavedUrl = () => localStorage.getItem(savedKey()) || '';
+
     // ---------- الفتح/الإغلاق ----------
-    // م-1-ج: النقر على 🌐 يفتح **آخر مشروع مباشرة** (طلب المالك) — العنوان الأخير الناجح
-    // محفوظ في localStorage. إن توقّف الخادم يظهر خطأ لطيف والحقل يبقى قابلاً لإعادة المحاولة.
+    // م-1-ج/د: النقر على 🌐 يفتح **آخر عنوان لهذا المشروع مباشرة** (طلب المالك). إن توقّف
+    // الخادم (استئناف جلسة قديمة مثلاً) يظهر تنبيه واضح والحقل يبقى قابلاً لإعادة المحاولة.
     const openPanel = (autoLast = true) => {
       this.setAttribute('open', '');
       if (toggleBtn) toggleBtn.classList.add('active');
       if (!started && autoLast) {
-        const last = localStorage.getItem('satr_preview_url');
+        const last = loadSavedUrl();
         if (last) { urlIn.value = last; go(last); }
         else urlIn.focus();
       } else if (!started) urlIn.focus();
@@ -168,12 +180,15 @@ class SatrPreviewPanel extends HTMLElement {
       const u = normalize(raw);
       if (!u) { showErr('عنوان غير صالح — http/https فقط'); return; }
       err.classList.remove('show');
+      // loadURL يعود ok فور بدء التحميل؛ فشل خادم متوقف يصل لاحقاً عبر حدث failed
       const r = started ? await window.satr.previewNavigate(u) : await window.satr.previewOpen(u);
       if (r && r.ok) {
         started = true;
         hint.style.display = 'none';
         urlIn.value = u;
-        localStorage.setItem('satr_preview_url', u); // م-1-ج: تذكّر آخر مشروع للفتح المباشر
+        // م-1-د: تذكّر لكل مجلد مشروع + مفتاح عام (توافق/احتياط بلا cwd)
+        localStorage.setItem(savedKey(), u);
+        localStorage.setItem('satr_preview_url', u);
         reportBounds(); // العرض أُنشئ الآن — أبلغه مستطيله فوراً
       } else showErr('تعذّر فتح العنوان' + (r && r.error ? ' (' + r.error + ')' : ''));
     };
@@ -198,7 +213,11 @@ class SatrPreviewPanel extends HTMLElement {
       } else if (ev.type === 'loading') {
         reloadBtn.classList.toggle('loading', !!ev.loading);
       } else if (ev.type === 'failed') {
-        showErr('فشل التحميل: ' + (ev.desc || ev.code) + ' — ' + (ev.url || ''));
+        // م-1-د: فشل الوصول غالباً = الخادم غير قائم (استئناف جلسة قديمة، أو لم يُشغَّل
+        // بعد). رسالة واضحة توجّه المستخدم لتشغيله بدل رمز خطأ غامض — العرض يبقى حيّاً
+        // (يُظهر صفحة خطأ المتصفح) و⟳ يعيد المحاولة عليه مباشرة.
+        showErr('تعذّر الوصول إلى ' + (ev.url || 'العنوان') +
+          ' — تأكد أن خادم التطوير يعمل (اطلب من الوكيل «شغّل المشروع») ثم اضغط ⟳.');
       }
       // ev.type === 'title' متاح مستقبلاً (لا مكان لعرضه في رأس م-1 المضغوط)
     });
