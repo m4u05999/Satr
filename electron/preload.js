@@ -56,4 +56,15 @@ contextBridge.exposeInMainWorld('satr', {
     ipcRenderer.on('satr:term', handler);
     return () => ipcRenderer.removeListener('satr:term', handler);
   },
+  // لوحة المعاينة المدمجة (م-1 — الدفعة 5) — قناة أحداث مستقلة satr:preview
+  previewOpen: (url) => ipcRenderer.invoke('satr:previewOpen', { url }),
+  previewNavigate: (url) => ipcRenderer.invoke('satr:previewNavigate', { url }),
+  previewAction: (action) => ipcRenderer.invoke('satr:previewAction', { action }),
+  previewBounds: (x, y, width, height) => ipcRenderer.invoke('satr:previewBounds', { x, y, width, height }),
+  previewClose: () => ipcRenderer.invoke('satr:previewClose'),
+  onPreview: (callback) => {
+    const handler = (_e, obj) => callback(obj);
+    ipcRenderer.on('satr:preview', handler);
+    return () => ipcRenderer.removeListener('satr:preview', handler);
+  },
 });

@@ -234,6 +234,19 @@ class SatrChat extends HTMLElement {
     else thread.appendChild(n);
   }
 
+  // إشعار بزرّ فعل (م-1 — الدفعة 5): نص + زرّ ينفّذ معاودة (اقتراح «افتح المعاينة»)
+  function addActionNotice(text, btnLabel, onAct) {
+    hideEmpty();
+    const n = document.createElement('div');
+    n.className = 'notice';
+    const t = document.createElement('span'); t.textContent = text;
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'notice-act'; b.textContent = btnLabel;
+    b.addEventListener('click', () => { try { onAct(); } catch (e) {} });
+    n.appendChild(t); n.appendChild(b);
+    thread.appendChild(n); scrollDown();
+  }
+
   function toolDetail(inp) {
     if (!inp) return '';
     return inp.file_path || inp.path || inp.command || inp.pattern || inp.query || inp.url || '';
@@ -493,6 +506,7 @@ class SatrChat extends HTMLElement {
     this.addUserMsg = addUserMsg;
     this.addNotice = addNotice;
     this.addNoticeBefore = addNoticeBefore;
+    this.addActionNotice = addActionNotice;
     this.addStandaloneDiff = addStandaloneDiff;
     this.addHistoryAssistant = addHistoryAssistant;
     this.newAssistantBlock = newAssistantBlock;

@@ -116,6 +116,12 @@ electron/bgprocs.js  ← متتبّع عمليات الخلفية المعمّر
 electron/term.js     ← الطرفية العربية المدمجة (المرحلة 8): دورة حياة pty واحدة عبر node-pty
                        (ConPTY، ويندوز 10 1809+) + IPC بثّ البايتات بالاتجاهين + تغيير الحجم +
                        قتل مضمون عند الإغلاق. التصميم الكامل في docs/PHASE8-DESIGN.md
+electron/preview.js  ← لوحة المعاينة المدمجة (م-1 — الدفعة 5 «سطر يرى الويب»): متصفح
+                       WebContentsView أصلي (صفر اعتماديات) معزول كلياً — sandbox +
+                       partition دائمة مستقلة + **بلا preload** (الصفحة لا ترى window.satr)
+                       + http/https حصراً + رفض كل أذونات الويب + المنبثقات لنفس العرض.
+                       الواجهة ترسم الإطار وتبلّغ مستطيل العرض (satr:previewBounds)
+                       والعرض الأصلي يطفو فوقه؛ أحداثه عبر قناة satr:preview
 src/index.html       ← هيكل الواجهة: HTML فقط — وسوم المكوّنات + ترميز light DOM لمن يحتاجه
                        (topbar/composer) + وسوم تحميل الوحدات (التفكيك اكتمل — docs/COMPONENTS-PLAN.md)
 src/styles/base.css  ← الورقة الأساس: Design Tokens في :root (تعبر حدود Shadow بالوراثة) +
@@ -131,8 +137,8 @@ src/ui/lib/          ← وحدات ES مشتركة للمكوّنات: sheet.js
                        (المصدر الوحيد لأنماط بطاقة الفرق منذ ت-12: تُعتمد على المستند من
                        chat.js للـ light DOM وعلى shadowRoot في git/العارض) + highlight.js
                        (HL_CFG + hlLine). جسر window.SatrUI أُزيل في ت-13 — استيراد مباشر فقط
-src/ui/components/   ← 14 مكوّن Web Component (بادئة satr-، ملف لكل مكوّن) — انظر قسم
-                       «مكوّنات الواجهة» أدناه
+src/ui/components/   ← 15 مكوّن Web Component (بادئة satr-، ملف لكل مكوّن) — انظر قسم
+                       «مكوّنات الواجهة» أدناه (الخامس عشر: preview-panel — م-1)
 src/vendor/          ← أصول مُضمّنة (vendored) للواجهة — الناتج مُلتزَم (لا اعتمادية npm وقت
                        تشغيل للواجهة): xterm.js (يولّده scripts/vendor-xterm.js) + خط IBM Plex
                        Sans Arabic في fonts/ مع fonts.css (يولّدهما scripts/vendor-fonts.js)
@@ -621,6 +627,31 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   (الوحدات الأصلية لا تعمل من داخل asar)، و`files` يستثني prebuilds غير win32-x64
   ومجلدات المصادر فيبقى المثبّت ~80م.ب.
 
+### لوحة المعاينة المدمجة 🌐 (م-1 — الدفعة 5 «سطر يرى الويب»)
+
+> خطة الدفعة 5 وقرارات النطاق والعزل في `docs/ROADMAP.md` — اقرأها قبل م-2/م-3/م-4.
+
+- **الفكرة**: متصفح مدمج بجانب المحادثة (زرّ 🌐 — لا أمر `/`) يعرض مشروع الويب الجاري
+  تطويره. `#midRow` صفّ flex أفقي (RTL: المحادثة يميناً والمعاينة يساراً بمقبض عرض).
+- **البنية**: `electron/preview.js` يملك `WebContentsView` (انظر خريطة الملفات — العزل
+  الكامل موثّق هناك)؛ المكوّن `<satr-preview-panel>` (Shadow) يرسم الإطار (رأس: ✕/رجوع/
+  تقدم/تحديث/حقل عنوان LTR) ويقيس مساحة العرض بـ ResizeObserver ويبلّغها — **العرض
+  الأصلي يطفو فوق المساحة** (طبقة نظام فوق كل محتوى المتصفح).
+- **العقد (IPC — تنقية في main.js)**: `satr:previewOpen/previewNavigate {url}` (http/https
+  حصراً ≤ 2048) · `satr:previewAction {action}` ∈ back/forward/reload ·
+  `satr:previewBounds {x,y,width,height}` (أعداد صحيحة 0..20000) · `satr:previewClose`
+  (يدمّر العرض — partition الدائمة تحفظ الكوكيز). أحداث عبر قناة مستقلة `satr:preview`:
+  `{type:'nav', url, canGoBack, canGoForward}` / `{type:'title', title}` /
+  `{type:'loading', loading}` / `{type:'failed', code, desc, url}`. preload يكشفها
+  `previewOpen/previewNavigate/previewAction/previewBounds/previewClose/onPreview`.
+- **اقتراح localhost التلقائي**: الطرفية (terminal-panel) ترصد عناوين
+  `localhost/127.0.0.1` في خرج أي تبويب (بما فيها طرفية النموذج 🤖) وتبثّ حدث DOM
+  ‏`localhost-url`؛ القشرة تعرض إشعاراً بزرّ «افتح المعاينة» (`chatEl.addActionNotice` —
+  مرة لكل عنوان). **حدّ موثّق**: خوادم يشغّلها SDK بأداة Bash الخفية لا تمرّ بالطرفية
+  فلا تُرصد (bgprocs يعرف PID لا URL) — المستخدم يدخل العنوان يدوياً.
+- **حدّ معماري موثّق**: WebContentsView فوق كل محتوى العارض — المنبثقات المركزية (مربع
+  الأذونات) قد تختفي جزئياً خلفها على الشاشات الضيقة؛ تُقيَّم معالجة في دفعات م القادمة.
+
 ### نظام التصميم (الدفعة 4.1)
 
 - **Design Tokens في `:root`** (src/index.html): الرمادية الدافئة مقتبسة **قيماً** من مقياس
@@ -667,7 +698,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **الأنماط**: Shadow DOM ⇒ `adoptedStyleSheets` حصراً (وسم `<style>` داخل Shadow
   **محجوب بـ CSP**)؛ light DOM ⇒ base.css. Tokens تعبر الحدود بالوراثة من `:root`.
 - **بـ Shadow DOM** (عزل حقيقي): لوحات agents/skills/mcp/context/sessions/git/files +
-  file-viewer + gate + perm-dialog.
+  file-viewer + gate + perm-dialog + preview-panel (م-1 — بعد اكتمال التفكيك).
 - **بلا Shadow (light DOM بغلاف `display:contents`)**: terminal-panel (xterm يقيس
   المستند) + composer وtopbar (الترميز داخل الوسم في index.html — القشرة تربط عناصرهما)
   + **chat** (البث يعيد بناء innerHTML؛ يبني `<main>` بداخله ويعيد كتلة

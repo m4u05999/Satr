@@ -26,6 +26,7 @@ const keys = require('./keys');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
 const updater = require('./updater');
+const preview = require('./preview'); // لوحة المعاينة المدمجة (م-1 — الدفعة 5)
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
@@ -85,6 +86,7 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    preview.destroy(); // عرض المعاينة ابن النافذة — تدمير صريح احتياطاً
     stopAll();
   });
 
@@ -382,6 +384,38 @@ ipcMain.handle('satr:termKill', (event, p) => {
   if (!p || typeof p.id !== 'string' || !SAFE_TERM_ID.test(p.id)) return { ok: false, error: 'bad_id' };
   return term.killTerm(p.id);
 });
+
+// ---------- لوحة المعاينة المدمجة (م-1 — الدفعة 5 «سطر يرى الويب») ----------
+// متصفح WebContentsView معزول (التفاصيل والعزل في electron/preview.js) — التنقية هنا
+// (القاعدة 2): http/https حصراً بسقف طول، أفعال من قائمة، ومستطيل أعداد صحيحة محدودة.
+// أحداثه للواجهة عبر قناة مستقلة satr:preview (nav/title/loading/failed).
+const PREVIEW_ACTIONS = new Set(['back', 'forward', 'reload']);
+function previewSender(ev) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:preview', ev);
+}
+ipcMain.handle('satr:previewOpen', (event, p) => {
+  const url = p && p.url;
+  if (!preview.isHttpUrl(url)) return { error: 'bad_url' };
+  if (!mainWindow || mainWindow.isDestroyed()) return { error: 'no_window' };
+  return preview.open(mainWindow, previewSender, url);
+});
+ipcMain.handle('satr:previewNavigate', (event, p) => {
+  const url = p && p.url;
+  if (!preview.isHttpUrl(url)) return { error: 'bad_url' };
+  return preview.navigate(url);
+});
+ipcMain.handle('satr:previewAction', (event, p) => {
+  const a = p && p.action;
+  if (typeof a !== 'string' || !PREVIEW_ACTIONS.has(a)) return { error: 'bad_action' };
+  return preview.action(a);
+});
+ipcMain.handle('satr:previewBounds', (event, p) => {
+  const ok = p && ['x', 'y', 'width', 'height'].every(
+    (k) => Number.isInteger(p[k]) && p[k] >= 0 && p[k] <= 20000);
+  if (!ok) return { error: 'bad_bounds' };
+  return preview.setBounds({ x: p.x, y: p.y, width: p.width, height: p.height });
+});
+ipcMain.handle('satr:previewClose', () => preview.close());
 
 // ---------- عمليات الخلفية المعمّرة (خوادم التطوير ونحوها) ----------
 // مستقلة عن الدور: تُسرد وتُقتل حتى بعد انتهاء التشغيل واختفاء زرّ الإيقاف.

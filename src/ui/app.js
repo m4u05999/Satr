@@ -598,6 +598,21 @@
   customElements.whenDefined('satr-composer').then(() => composerEl.setCommands(COMMANDS));
   composerEl.addEventListener('composer-send', send);
   composerEl.addEventListener('notice', (e) => addNotice(e.detail));
+  // ---------- لوحة المعاينة المدمجة (م-1 — الدفعة 5) ----------
+  // المكوّن يملك اللوحة كاملة (زر 🌐 يربطه بنفسه — نمط الطرفية)؛ القشرة توصّل فقط
+  // اقتراح localhost: الطرفية ترصد عناوين خوادم التطوير في خرجها وتبثّ «localhost-url»
+  // فتعرض القشرة إشعاراً بزرّ «افتح المعاينة» (مرة لكل عنوان في عمر الجلسة).
+  const previewEl = document.querySelector('satr-preview-panel');
+  const suggestedPreviewUrls = new Set();
+  document.querySelector('satr-terminal-panel').addEventListener('localhost-url', (e) => {
+    const url = e.detail;
+    if (!url || suggestedPreviewUrls.has(url) || suggestedPreviewUrls.size > 20) return;
+    suggestedPreviewUrls.add(url);
+    if (chatEl.addActionNotice)
+      chatEl.addActionNotice('🌐 رُصد خادم تطوير يعمل على ' + url, 'افتح المعاينة',
+        () => previewEl.openWith(url));
+  });
+
   // ---------- الطرفية المدمجة: انتقلت لمكوّن <satr-terminal-panel> (تفكيك ت-9) ----------
   // بلا Shadow DOM (قرار الخطة: xterm يقيس DOM المستند وأنماط المنطقة في base.css كما
   // هي). المنطقة كانت معزولة ذاتياً (قناة satr:term + xterm العالمية) فانتقلت حرفياً؛

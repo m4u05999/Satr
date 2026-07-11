@@ -219,12 +219,29 @@ class SatrTerminalPanel extends HTMLElement {
   $('termRestart').addEventListener('click', restartTermSession);
   $('termRestart2').addEventListener('click', restartTermSession);
 
+  // م-1 (الدفعة 5): رصد عناوين خوادم التطوير المحلية في خرج أي طرفية (بما فيها
+  // طرفية النموذج 🤖) — يبثّ حدث «localhost-url» فتقترح القشرة «افتح المعاينة».
+  // كشف إرشادي: عنوان منقسم بين دفعتي بثّ يفوت (نادر — الخوادم تطبعه سطراً واحداً)،
+  // و\x1b يقطع المطابقة كي لا تبتلع محارف ANSI الملوّنة.
+  const hostEl = this;
+  const LOCAL_URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d{2,5})?(?:\/[^\s"'\x1b]*)?/g;
+  const seenLocalUrls = new Set();
+  const scanForLocalUrls = (chunk) => {
+    if (chunk.indexOf('localhost') === -1 && chunk.indexOf('127.0.0.1') === -1) return;
+    for (const m of chunk.match(LOCAL_URL_RE) || []) {
+      const url = m.replace(/[).,;]+$/, ''); // قصّ ترقيم ذيلي شائع حول العناوين
+      if (seenLocalUrls.has(url) || seenLocalUrls.size > 50) continue;
+      seenLocalUrls.add(url);
+      hostEl.dispatchEvent(new CustomEvent('localhost-url', { detail: url, bubbles: true }));
+    }
+  };
+
   // موجّه أحداث pty: يوزّع بالمعرّف على تبويبه (الخلفية متعددة منذ 15.1)
   window.satr.onTerm((ev) => {
     if (!ev) return;
     const tab = tabs.find((t) => t.id === ev.id);
     if (!tab) return;
-    if (ev.type === 'data') tab.term.write(ev.data); // يحدّث buffer حتى لو التبويب خلفي
+    if (ev.type === 'data') { tab.term.write(ev.data); scanForLocalUrls(ev.data); } // يحدّث buffer حتى لو التبويب خلفي
     else if (ev.type === 'exit') {
       tab.exited = true;
       renderTabs();

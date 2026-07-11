@@ -27,6 +27,7 @@
     </div>
     <button id="newSession">جلسة جديدة</button>
     <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
+    <button id="previewToggle" title="المعاينة المدمجة — متصفح لمشروعك (م-1)">🌐</button>
     <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄</button>
     <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">±</button>
     <button id="exportChat" title="تصدير المحادثة الحالية (Markdown)">📤</button>
@@ -81,10 +82,18 @@
 
 <div id="banner"></div>
 
+<!-- الصف الأوسط (م-1): المحادثة + لوحة المعاينة جنباً إلى جنب (flex أفقي RTL —
+     المحادثة يميناً والمعاينة يساراً). display:contents في satr-chat يُبقي <main>
+     ابناً مباشراً للصف فيرث flex:1 -->
+<div id="midRow">
 <!-- خيط المحادثة: مكوّن light DOM (تفكيك ت-12 — بلا Shadow: البث يعيد بناء innerHTML
      وأنماط المنطقة في base.css؛ الغلاف display:contents يبني <main> بداخله).
      مجرى أحداث satr:event يبقى orchestration في القشرة ويستدعي methods المكوّن -->
 <satr-chat></satr-chat>
+<!-- لوحة المعاينة المدمجة (م-1 — الدفعة 5): إطار الرأس والمساحة فقط — الصفحة ترسمها
+     WebContentsView أصلية معزولة تطفو فوق المساحة (satr:previewBounds يحدد مكانها) -->
+<satr-preview-panel aria-label="المعاينة المدمجة"></satr-preview-panel>
+</div>
 
 <!-- الطرفية المدمجة (المرحلة 8.1): عارض xterm.js قياسي — عرض BiDi يأتي في 8.2 -->
 <!-- الطرفية المدمجة: مكوّن light DOM (تفكيك ت-9 — بلا Shadow: xterm يقيس DOM المستند،
@@ -191,6 +200,7 @@
 <script type="module" src="ui/components/composer.js"></script>
 <script type="module" src="ui/components/topbar.js"></script>
 <script type="module" src="ui/components/chat.js"></script>
+<script type="module" src="ui/components/preview-panel.js"></script>
 <!-- وحدات lib المشتركة تصل كاعتماديات استيراد من المكوّنات — جسر window.SatrUI أُزيل في ت-13 -->
 </body>
 </html>
