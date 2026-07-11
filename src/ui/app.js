@@ -1,5 +1,10 @@
-(function () {
-  'use strict';
+// قشرة الإقلاع والتوجيه (Orchestration) — وحدة ES منذ التنظيف النهائي ت-13
+// (كانت IIFE كلاسيكية طوال التفكيك — قرار ت-0 لتفادي مفاجآت strict mode).
+// نطاق الوحدة معزول وstrict أصلاً فلا لفّ ولا 'use strict'. تعمل قبل وحدات
+// المكوّنات (ترتيب الوسوم في index.html) وتتفاعل معها بالأحداث وmethods عامة.
+// ما تملكه: حالة التطبيق (sessionId/busy/currentBlock/cwd/engine) + مجرى أحداث
+// satr:event + send/compact + قائمة المحرك والنماذج + الاستئناف + التصدير + التحديث.
+{
   const $ = (id) => document.getElementById(id);
   const input = $('input'), sendBtn = $('send');
   let sessionId = null, busy = false, currentBlock = null;
@@ -114,7 +119,7 @@
   // المكوّن (light DOM — بلا Shadow، قرار الخطة §2/3) يملك: الماركداون المدمج، أزرار
   // النسخ، الالتصاق الذكي (⬇ الأحدث)، بطاقات المستخدم/المساعد/الفرق/الوكلاء/الضغط،
   // إشعار اكتمال الدور، وعدّاد الكلفة (#costInfo). وهو من يستورد buildDiff مباشرة —
-  // سقط آخر مستهلك لجسر window.SatrUI هنا (يُزال الجسر في ت-13).
+  // سقط آخر مستهلك لجسر window.SatrUI هنا (أُزيل الجسر كلياً في ت-13).
   // **يبقى في القشرة عمداً**: مجرى أحداث satr:event (orchestration يلمس sessionId/
   // busy/currentBlock — يستدعي methods كتلة newAssistantBlock بعقدها الحرفي)،
   // deadSessionRecovery (تلمس حالة القشرة والمحرّر)، وengineLabel (تقرأ providersCache).
@@ -601,4 +606,4 @@
   // send() تقرأ المجلدات عبر topbarEl.getExtraDirs().
 
   input.focus();
-})();
+}

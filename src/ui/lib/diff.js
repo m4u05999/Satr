@@ -103,7 +103,3 @@ export function buildDiff(ev, notify) {
 
   return box;
 }
-
-// جسر انتقالي للقشرة الكلاسيكية (يُزال في ت-13)
-window.SatrUI = window.SatrUI || {};
-window.SatrUI.buildDiff = buildDiff;

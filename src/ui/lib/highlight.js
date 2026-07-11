@@ -75,9 +75,3 @@ export function hlLine(el, line, cfg, st) {
     i = end;
   }
 }
-
-// جسر انتقالي للقشرة الكلاسيكية (يُزال في ت-13): العارض يستهلكهما وقت التفاعل
-// (بعد تحميل الوحدات بزمن طويل) لا وقت الإقلاع
-window.SatrUI = window.SatrUI || {};
-window.SatrUI.HL_CFG = HL_CFG;
-window.SatrUI.hlLine = hlLine;

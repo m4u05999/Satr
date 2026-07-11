@@ -116,19 +116,23 @@ electron/bgprocs.js  ← متتبّع عمليات الخلفية المعمّر
 electron/term.js     ← الطرفية العربية المدمجة (المرحلة 8): دورة حياة pty واحدة عبر node-pty
                        (ConPTY، ويندوز 10 1809+) + IPC بثّ البايتات بالاتجاهين + تغيير الحجم +
                        قتل مضمون عند الإغلاق. التصميم الكامل في docs/PHASE8-DESIGN.md
-src/index.html       ← هيكل الواجهة (HTML فقط منذ ت-0 من تفكيك المكوّنات — docs/COMPONENTS-PLAN.md)
-src/styles/base.css  ← الورقة الأساس: Design Tokens + كل الأنماط غير المفكّكة بعد (كانت
-                       <style> المضمّنة — تتقلّص مع كل دفعة تفكيك تنقل CSS منطقتها لمكوّنها)
-src/ui/app.js        ← قشرة الواجهة: السكربت الضخم منقولاً كما هو (كلاسيكي خارجي لا module —
-                       قرار ت-0 لتفادي مفاجآت strict mode؛ يتقلّص مع كل دفعة، وتحويله
-                       module وإزالة جسر window.SatrUI في الدفعة الأخيرة ت-13)
+src/index.html       ← هيكل الواجهة: HTML فقط — وسوم المكوّنات + ترميز light DOM لمن يحتاجه
+                       (topbar/composer) + وسوم تحميل الوحدات (التفكيك اكتمل — docs/COMPONENTS-PLAN.md)
+src/styles/base.css  ← الورقة الأساس: Design Tokens في :root (تعبر حدود Shadow بالوراثة) +
+                       أنماط مناطق light DOM (المحادثة/الطرفية/المؤلّف/الشريط) — أنماط
+                       مكوّنات Shadow في أوراق ui/lib عبر adoptedStyleSheets حصراً
+src/ui/app.js        ← قشرة الإقلاع والتوجيه (وحدة ES منذ ت-13): تملك حالة التطبيق
+                       (sessionId/busy/currentBlock/المحرك/النماذج) + مجرى أحداث satr:event
+                       (orchestration يستدعي methods كتلة newAssistantBlock من مكوّن المحادثة)
+                       + send/compact + COMMANDS + الاستئناف + التصدير + التحديث التلقائي
 src/ui/lib/          ← وحدات ES مشتركة للمكوّنات: sheet.js (مساعد adoptedStyleSheets — آلية
                        أنماط المكوّنات الحصرية) + panel.css.js (ورقة اللوحات الجانبية) +
                        diff.js (buildDiff بعقدها الثلاثي: محادثة/عارض/git) + diff.css.js
-                       (نسخة Shadow — نسخة base.css تبقى للمحادثة حتى ت-12) + highlight.js
-                       (HL_CFG + hlLine). الوحدات تسجّل نفسها أيضاً على جسر window.SatrUI
-                       المؤقت لاستهلاك القشرة الكلاسيكية (يُزال في ت-13)
-src/ui/components/   ← مكوّنات Web Components (بادئة satr- — تُملأ من الدفعة ت-1)
+                       (المصدر الوحيد لأنماط بطاقة الفرق منذ ت-12: تُعتمد على المستند من
+                       chat.js للـ light DOM وعلى shadowRoot في git/العارض) + highlight.js
+                       (HL_CFG + hlLine). جسر window.SatrUI أُزيل في ت-13 — استيراد مباشر فقط
+src/ui/components/   ← 14 مكوّن Web Component (بادئة satr-، ملف لكل مكوّن) — انظر قسم
+                       «مكوّنات الواجهة» أدناه
 src/vendor/          ← أصول مُضمّنة (vendored) للواجهة — الناتج مُلتزَم (لا اعتمادية npm وقت
                        تشغيل للواجهة): xterm.js (يولّده scripts/vendor-xterm.js) + خط IBM Plex
                        Sans Arabic في fonts/ مع fonts.css (يولّدهما scripts/vendor-fonts.js)
@@ -650,6 +654,26 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   Escape يمسح النص أولاً ثم يغلق اللوحة.
 - **إشعار اكتمال الدور**: `Notification` عند `result` والنافذة غير مركزة
   (`document.hasFocus()`) — النقر يعيد التركيز. يظهر باسم «سطر» بفضل AppUserModelId.
+
+### مكوّنات الواجهة (تفكيك Web Components — اكتمل ت-0…ت-13)
+
+> الخطة والسجل الكامل بالدروس المثبّتة في `docs/COMPONENTS-PLAN.md` — اقرأه قبل أي
+> عمل على الواجهة. صفر اعتماديات وبنّائين: Web Components أصلية + وحدات ES.
+
+- **المعمارية**: `src/ui/app.js` قشرة إقلاع وتوجيه (وحدة ES تعمل أولاً — ترتيب الوسوم)
+  تملك حالة التطبيق ومجرى `satr:event`؛ 14 مكوّناً ذاتي التسجيل في `src/ui/components/`؛
+  المشتركات وحدات في `src/ui/lib/`. العقد: أحداث `CustomEvent` للخارج + methods عامة +
+  الحالة تُمرَّر لحظة الفتح (المكوّنات لا تقرأ حالة القشرة).
+- **الأنماط**: Shadow DOM ⇒ `adoptedStyleSheets` حصراً (وسم `<style>` داخل Shadow
+  **محجوب بـ CSP**)؛ light DOM ⇒ base.css. Tokens تعبر الحدود بالوراثة من `:root`.
+- **بـ Shadow DOM** (عزل حقيقي): لوحات agents/skills/mcp/context/sessions/git/files +
+  file-viewer + gate + perm-dialog.
+- **بلا Shadow (light DOM بغلاف `display:contents`)**: terminal-panel (xterm يقيس
+  المستند) + composer وtopbar (الترميز داخل الوسم في index.html — القشرة تربط عناصرهما)
+  + **chat** (البث يعيد بناء innerHTML؛ يبني `<main>` بداخله ويعيد كتلة
+  `newAssistantBlock(label)` بعقدها للقشرة، ويعتمد diffSheet على المستند).
+- **دروس مثبّتة**: retargeting نقرات Shadow على مستمع المضيف ⇒ `composedPath()[0]`؛
+  نداء مبكر لمكوّن ⇒ `customElements.whenDefined`؛ grep لكل id/صنف قبل حذف CSS.
 
 ## قواعد إلزامية
 
