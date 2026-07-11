@@ -229,6 +229,7 @@
       }
     } else if (ev.type === 'file_edit') {
       block.addDiff(ev);
+      previewDirty = true; // م-1-ج: عُدّل ملف في هذا الدور ⇒ المعاينة تحتاج تحديثاً عند انتهائه
     } else if (ev.type === 'result') {
       if (ev.session_id) {
         sessionId = ev.session_id;
@@ -239,6 +240,8 @@
         else block.error(String(ev.result));
       }
       block.finish(ev);
+      // م-1-ج: تحديث المعاينة تلقائياً بعد دور عدّل ملفات (المكوّن يقرّر فعلياً حسب وضعه)
+      if (previewDirty) { previewDirty = false; if (previewEl.reloadIfLive) previewEl.reloadIfLive(); }
       chatEl.notifyTurnDone(!!ev.is_error);
     } else if (ev.type === 'spawn_error') {
       if (deadSessionRecovery(ev.text)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
@@ -310,6 +313,7 @@
     chatEl.addUserMsg(prompt, images.map((i) => i.dataUrl));
 
     busy = true;
+    previewDirty = false; // م-1-ج: بداية دور جديد — لا تعديل بعد
     sendBtn.textContent = 'إيقاف';
     sendBtn.classList.add('stop');
     currentBlock = chatEl.newAssistantBlock(engineLabel());
@@ -609,6 +613,7 @@
   // اقتراح localhost: الطرفية ترصد عناوين خوادم التطوير في خرجها وتبثّ «localhost-url»
   // فتعرض القشرة إشعاراً بزرّ «افتح المعاينة» (مرة لكل عنوان في عمر الجلسة).
   const previewEl = document.querySelector('satr-preview-panel');
+  let previewDirty = false; // م-1-ج: عُدّل ملف في الدور الجاري ⇒ حدّث المعاينة عند انتهائه
   const suggestedPreviewUrls = new Set();
   document.querySelector('satr-terminal-panel').addEventListener('localhost-url', (e) => {
     const url = e.detail;

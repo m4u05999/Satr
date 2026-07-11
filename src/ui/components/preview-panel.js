@@ -34,6 +34,7 @@ const previewSheet = sheet(`
   }
   #pvUrl:focus { border-color: var(--gold); }
   #pvReload.loading { color: var(--gold); border-color: var(--gold-border); }
+  #pvAuto.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   /* مساحة العرض: فارغة — WebContentsView الأصلية تُرسم فوقها بنفس المستطيل */
   #pvBox { flex: 1; position: relative; min-height: 0; }
   .pv-hint {
@@ -63,6 +64,7 @@ const MARKUP = `
     <button id="pvBack" type="button" title="رجوع" disabled>→</button>
     <button id="pvFwd" type="button" title="تقدم" disabled>←</button>
     <button id="pvReload" type="button" title="تحديث">⟳</button>
+    <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل">🔄</button>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
   <div id="pvBox">
@@ -88,10 +90,20 @@ class SatrPreviewPanel extends HTMLElement {
     root.appendChild(wrap);
     const $ = (id) => root.getElementById(id);
     const urlIn = $('pvUrl'), box = $('pvBox'), hint = $('pvHint'), err = $('pvErr');
-    const backBtn = $('pvBack'), fwdBtn = $('pvFwd'), reloadBtn = $('pvReload');
+    const backBtn = $('pvBack'), fwdBtn = $('pvFwd'), reloadBtn = $('pvReload'), autoBtn = $('pvAuto');
     const toggleBtn = document.getElementById('previewToggle'); // زر الشريط العلوي (light DOM)
 
     let started = false; // هل حُمّل عنوان في العرض الأصلي؟
+
+    // م-1-ج: تحديث تلقائي بعد تعديلات الوكيل (افتراضياً مُفعّل — طلب المالك «تتحدث مباشرة»).
+    // القيمة المحفوظة '0' وحدها تُطفئه؛ أي شيء آخر (بما فيه الغياب أول مرة) = مُفعّل.
+    let autoReload = localStorage.getItem('satr_preview_autoreload') !== '0';
+    autoBtn.classList.toggle('on', autoReload);
+    autoBtn.addEventListener('click', () => {
+      autoReload = !autoReload;
+      autoBtn.classList.toggle('on', autoReload);
+      localStorage.setItem('satr_preview_autoreload', autoReload ? '1' : '0');
+    });
 
     // عرض اللوحة المحفوظ (نمط ارتفاع الطرفية)
     const savedW = parseInt(localStorage.getItem('satr_preview_w') || '', 10);
@@ -115,10 +127,16 @@ class SatrPreviewPanel extends HTMLElement {
     window.addEventListener('resize', reportBounds);
 
     // ---------- الفتح/الإغلاق ----------
-    const openPanel = () => {
+    // م-1-ج: النقر على 🌐 يفتح **آخر مشروع مباشرة** (طلب المالك) — العنوان الأخير الناجح
+    // محفوظ في localStorage. إن توقّف الخادم يظهر خطأ لطيف والحقل يبقى قابلاً لإعادة المحاولة.
+    const openPanel = (autoLast = true) => {
       this.setAttribute('open', '');
       if (toggleBtn) toggleBtn.classList.add('active');
-      if (!started) urlIn.focus();
+      if (!started && autoLast) {
+        const last = localStorage.getItem('satr_preview_url');
+        if (last) { urlIn.value = last; go(last); }
+        else urlIn.focus();
+      } else if (!started) urlIn.focus();
       reportBounds();
     };
     const closePanel = () => {
@@ -155,6 +173,7 @@ class SatrPreviewPanel extends HTMLElement {
         started = true;
         hint.style.display = 'none';
         urlIn.value = u;
+        localStorage.setItem('satr_preview_url', u); // م-1-ج: تذكّر آخر مشروع للفتح المباشر
         reportBounds(); // العرض أُنشئ الآن — أبلغه مستطيله فوراً
       } else showErr('تعذّر فتح العنوان' + (r && r.error ? ' (' + r.error + ')' : ''));
     };
@@ -205,8 +224,14 @@ class SatrPreviewPanel extends HTMLElement {
     });
 
     // ---------- العقد العام ----------
-    // فتح بعنوان جاهز (اقتراح localhost المرصود من الطرفية — القشرة تستدعيها)
-    this.openWith = (url) => { openPanel(); go(url); };
+    // فتح بعنوان جاهز (اقتراح localhost المرصود / أداة open_preview — القشرة تستدعيها).
+    // autoLast=false: العنوان القادم أدقّ من المحفوظ فلا نفتح الأخير أولاً (تفادي سباق).
+    this.openWith = (url) => { openPanel(false); go(url); };
+    // م-1-ج: تحديث تلقائي — القشرة تستدعيها عند اكتمال دور عدّل ملفات والمعاينة مفتوحة.
+    // reload فعلي فقط إن كان الوضع مُفعّلاً والعرض حيّاً (خارج ذلك تجاهل صامت آمن).
+    this.reloadIfLive = () => {
+      if (autoReload && started && this.hasAttribute('open')) window.satr.previewAction('reload');
+    };
   }
 }
 
