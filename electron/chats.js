@@ -80,6 +80,80 @@ function forget(provider) {
   try { fs.unlinkSync(path.join(ROOT, provider, LAST_FILE)); } catch { /* أفضل جهد */ }
 }
 
+// ---------- تصفح المحادثات في لوحة الجلسات (الدفعة 4 — قراءة فقط) ----------
+
+// نص رسالة واحدة بأي من الصيغتين: OpenAI (content نص) أو Gemini (parts[].text).
+// رسائل الأدوات (tool/functionCall/functionResponse) تُعيد '' فتُتخطى في العرض.
+function textOfMsg(m) {
+  if (!m || typeof m !== 'object') return '';
+  if (typeof m.content === 'string') return m.content;
+  if (Array.isArray(m.parts)) {
+    return m.parts.map((p) => (p && typeof p.text === 'string') ? p.text : '').filter(Boolean).join('\n');
+  }
+  return '';
+}
+
+// رسالة مستخدم مرّت بحقن @الملفات (inject.js) تبدأ بترويسة الملفات ثم فاصل ---
+// ثم طلب المستخدم الأصلي — للعرض والعنوان نفكّها ونعيد الطلب وحده (المحتوى المحقون ضجيج)
+const INJECT_HEADER = 'ملفات مرفقة من مشروع المستخدم';
+function unwrapInjected(t) {
+  if (!t.startsWith(INJECT_HEADER)) return t;
+  const idx = t.lastIndexOf('\n---\n');
+  return idx === -1 ? t : t.slice(idx + 5).trim();
+}
+
+// عنوان قصير من أول رسالة مستخدم (السطر الأول، ≤ 80 حرفاً)
+function titleOf(history) {
+  if (!Array.isArray(history)) return '';
+  for (const m of history) {
+    if (m && m.role === 'user') {
+      const t = unwrapInjected(textOfMsg(m).trim());
+      if (t) return t.split('\n')[0].slice(0, 80);
+    }
+  }
+  return '';
+}
+
+// كل محادثات كل المزوّدين، الأحدث أولاً — [{provider, id, title, mtime}].
+// الملفات صغيرة (السجلّ مسقوف عند المحوّل) والعدد ≤ MAX_SESSIONS لكل مزوّد،
+// فقراءتها لاستخراج العناوين رخيصة (تحدث عند فتح اللوحة فقط).
+function list() {
+  const out = [];
+  let provs = [];
+  try { provs = fs.readdirSync(ROOT).filter((n) => SAFE_PROVIDER.test(n)); } catch { return []; }
+  for (const provider of provs) {
+    const dir = path.join(ROOT, provider);
+    let names = [];
+    try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.json')); } catch { continue; }
+    for (const n of names) {
+      const sid = n.slice(0, -5);
+      if (!SAFE_SESSION.test(sid)) continue;
+      try {
+        const st = fs.statSync(path.join(dir, n));
+        if (!st.isFile() || st.size > MAX_FILE) continue;
+        out.push({ provider, id: sid, mtime: st.mtimeMs, title: titleOf(load(provider, sid)) || '(محادثة بلا عنوان)' });
+      } catch { /* ملف معطوب — يُتخطى */ }
+    }
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out;
+}
+
+// محادثة واحدة مهيأة للعرض: آخر 40 رسالة نصية {role: user|assistant, text}
+// (رسائل الأدوات تُتخطى — العرض للتصفح لا لإعادة بناء الحلقة)
+function read(provider, sid) {
+  const h = load(provider, sid);
+  if (!h) return { ok: false, error: 'notfound' };
+  const messages = [];
+  for (const m of h) {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'model')) continue;
+    let text = textOfMsg(m).trim();
+    if (m.role === 'user') text = unwrapInjected(text);
+    if (text) messages.push({ role: m.role === 'user' ? 'user' : 'assistant', text });
+  }
+  return { ok: true, total: messages.length, messages: messages.slice(-40) };
+}
+
 // إبقاء أحدث MAX_SESSIONS ملفاً في مجلد المزوّد (الأقدم بوقت التعديل يُحذف)
 function prune(dir) {
   try {
@@ -97,4 +171,4 @@ function prune(dir) {
   } catch { /* أفضل جهد */ }
 }
 
-module.exports = { load, save, last, forget, MAX_SESSIONS };
+module.exports = { load, save, last, forget, list, read, MAX_SESSIONS };

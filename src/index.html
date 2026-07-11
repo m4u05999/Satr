@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-bNYmvmk2tqomETrBhV1JY7lSs8qSsXk4OUHwXhXCxpQ='; script-src 'self' 'sha256-UKbq+8xoQbVLx4ks/iEbEXhGV6bmCcYNQW2UyCq9W24='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'sha256-bNYmvmk2tqomETrBhV1JY7lSs8qSsXk4OUHwXhXCxpQ='; script-src 'self' 'sha256-xih7sx0qjeGb+cQj9bSVEE2aRL+6/ZwqOFlzYLBxwok='; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>سطر — Satr</title>
 <link rel="stylesheet" href="vendor/fonts.css">
 <link rel="stylesheet" href="vendor/xterm.css">
@@ -2031,16 +2031,20 @@
     return 'قبل ' + Math.round(h / 24) + ' يوم';
   }
 
-  // ترشيح فوري بالعنوان أو المجلد (دفعة UX) — القائمة تُجلب مرة عند الفتح وتُرشَّح محلياً
+  // ترشيح فوري بالعنوان أو المجلد/المزوّد (دفعة UX) — القائمة تُجلب مرة عند الفتح وتُرشَّح محلياً
   const sessSearch = $('sessSearch');
   let sessionsData = [];
+  // تسمية مزوّد محادثة محوّل (الدفعة 4) — من قائمة المزوّدين المحمّلة
+  function providerLabel(name) {
+    const p = providersCache.find((x) => x.name === name);
+    return (p && p.label) ? p.label : name;
+  }
   function renderSessions() {
     const q = sessSearch.value.trim().toLowerCase();
-    const list = q
-      ? sessionsData.filter((s) =>
-          String(s.title || '').toLowerCase().includes(q) ||
-          String(s.cwd || s.project || '').toLowerCase().includes(q))
-      : sessionsData;
+    const hay = (s) => (String(s.title || '') + ' ' +
+      String(s.cwd || s.project || '') + ' ' +
+      (s.kind === 'chat' ? s.provider + ' ' + providerLabel(s.provider) : '')).toLowerCase();
+    const list = q ? sessionsData.filter((s) => hay(s).includes(q)) : sessionsData;
     sessionsList.innerHTML = '';
     if (!list.length) {
       sessionsList.innerHTML = '<div class="hint">' +
@@ -2053,10 +2057,12 @@
       el.tabIndex = 0;
       const t = document.createElement('div'); t.className = 't'; t.textContent = s.title;
       const m = document.createElement('div'); m.className = 'm';
-      m.textContent = (s.cwd || s.project) + ' · ' + fmtAge(s.mtime);
+      // محادثة محوّل: اسم المزوّد بدل المجلد (محادثات REST غير مرتبطة بمجلد)
+      m.textContent = (s.kind === 'chat' ? providerLabel(s.provider) : (s.cwd || s.project)) + ' · ' + fmtAge(s.mtime);
       el.appendChild(t); el.appendChild(m);
-      el.addEventListener('click', () => resumeSession(s));
-      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') resumeSession(s); });
+      const open = () => (s.kind === 'chat' ? resumeChat(s) : resumeSession(s));
+      el.addEventListener('click', open);
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
       sessionsList.appendChild(el);
     }
   }
@@ -2069,18 +2075,63 @@
   async function openSessions() {
     sessionsPanel.classList.add('open');
     sessionsList.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
-    const list = await window.satr.listSessions();
-    sessionsData = Array.isArray(list) ? list : [];
+    // جلسات Claude Code + محادثات المحوّلات (الدفعة 4) معاً، الأحدث أولاً
+    const [claude, chats] = await Promise.all([
+      window.satr.listSessions().catch(() => []),
+      window.satr.listChats().catch(() => []),
+    ]);
+    const merged = (Array.isArray(claude) ? claude : [])
+      .concat((Array.isArray(chats) ? chats : []).map((c) => ({ ...c, kind: 'chat' })));
+    merged.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+    sessionsData = merged;
     renderSessions();
     sessSearch.focus();
   }
 
-  // رسالة مساعد تاريخية (من ملف الجلسة) — بدون مؤشر «يعمل» ولا حالة جارية
-  function addHistoryAssistant(msg) {
+  // استئناف محادثة محوّل (الدفعة 4): تبديل المحرك يدوياً (دون حدث change — منطقه
+  // يستأنف «آخر جلسة» وقد تكون غير المنقورة) ثم عرض التاريخ وضبط sessionId —
+  // الرسالة التالية تستأنف من ذاكرة القرص (chats.load) طبيعياً.
+  async function resumeChat(c) {
+    if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل استئناف محادثة أخرى'); return; }
+    const data = await window.satr.readChat(c.provider, c.id);
+    sessionsPanel.classList.remove('open');
+    if (!data || !data.ok) { addNotice('✗ تعذّر فتح المحادثة'); return; }
+    const sel = $('engine');
+    if (![...sel.options].some((o) => o.value === c.provider)) {
+      addNotice('✗ المزوّد ' + c.provider + ' غير متاح في هذا البناء');
+      return;
+    }
+    sel.value = c.provider;
+    localStorage.setItem('satr_engine', c.provider);
+    rebuildModels();
+    lastEngine = c.provider;
+    // تصفير العرض (نظير newSession دون نسيان مؤشر الاستئناف على القرص)
+    totalCost = 0; currentBlock = null;
+    pendingImages = []; renderAttachments();
+    $('costInfo').textContent = '';
+    thread.innerHTML = '';
+    const label = providerLabel(c.provider);
+    for (const msg of (data.messages || [])) {
+      if (msg.role === 'user') addUserMsg(msg.text);
+      else addHistoryAssistant({ text: msg.text }, label);
+    }
+    sessionId = c.id;
+    // حارس تغيّر المجلد في send() يخص جلسات كلود — نطابق المجلد الحالي حتى لا
+    // يصفّر جلسة محوّل غير مرتبطة بمجلد أصلاً
+    sessionCwd = $('cwd').value.trim();
+    $('sessionInfo').textContent = 'جلسة: ' + c.id.slice(0, 8) + ' (مستأنفة)';
+    addNotice('📂 استؤنفت محادثة ' + label + ' — أرسل رسالتك للمتابعة');
+    scrollDown(true);
+  }
+
+  // رسالة مساعد تاريخية (من ملف الجلسة أو ذاكرة محوّل) — بدون مؤشر «يعمل» ولا حالة جارية
+  function addHistoryAssistant(msg, label) {
     hideEmpty();
     const w = document.createElement('div');
     w.className = 'msg assistant';
-    w.innerHTML = '<div class="who">Claude Code</div>';
+    const whoEl = document.createElement('div');
+    whoEl.className = 'who'; whoEl.textContent = label || 'Claude Code';
+    w.appendChild(whoEl);
     const toolNames = Array.isArray(msg.tools) ? msg.tools : [];
     if (toolNames.length) {
       const tools = document.createElement('div'); tools.className = 'tools';

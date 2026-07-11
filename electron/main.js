@@ -451,6 +451,18 @@ ipcMain.handle('satr:forgetChat', (event, payload) => {
   return { ok: true };
 });
 
+// ---------- تصفح محادثات المحوّلات في لوحة الجلسات (الدفعة 4 — قراءة فقط) ----------
+// التحقق من المعرّفات داخل chats.js (نفس regex الحفظ) — القراءة أفضل جهد
+
+ipcMain.handle('satr:listChats', () => {
+  try { return chats.list(); } catch { return []; }
+});
+
+ipcMain.handle('satr:readChat', (event, payload) => {
+  const p = payload || {};
+  try { return chats.read(p.provider, p.id); } catch { return { ok: false, error: 'error' }; }
+});
+
 // ---------- عارض القراءة (الدفعة 1.2): قراءة ملف نصّي للعرض فقط ----------
 // التحقق الأمني في files.readText (المسار داخل cwd حصراً + رفض الثنائي + سقف حجم)
 
