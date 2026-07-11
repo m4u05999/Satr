@@ -321,6 +321,22 @@ async function typeText(selector, text) {
   } catch (e) { return { error: 'type_failed' }; }
 }
 
+// ---------- التقاط إطار للتسجيل (م-5) ----------
+// المكوّن يطلب إطاراً دورياً (~8/ث) فنعيد PNG base64؛ الواجهة ترسمه على <canvas>
+// وتسجّله بـ MediaRecorder ⇒ webm (صفر اعتماديات — كله APIs Chromium). حجم الإطار =
+// أبعاد العرض. عائد سريع (بلا waitReady) — التسجيل يلتقط الحالة اللحظية أثناء التصفح.
+async function captureFrame() {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  try {
+    const img = await wc.capturePage();
+    const png = img.toPNG();
+    if (!png || !png.length) return { error: 'empty' };
+    const size = img.getSize();
+    return { ok: true, base64: png.toString('base64'), width: size.width, height: size.height };
+  } catch (e) { return { error: 'capture_failed' }; }
+}
+
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
 function close() {
   if (!view) return { ok: true };
@@ -333,4 +349,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, screenshot, clickElement, typeText, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, screenshot, clickElement, typeText, captureFrame, close, destroy, isHttpUrl };

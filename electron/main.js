@@ -417,6 +417,7 @@ ipcMain.handle('satr:previewBounds', (event, p) => {
 });
 ipcMain.handle('satr:previewPick', () => preview.startPick());       // م-2: التحديد بالتأشير
 ipcMain.handle('satr:previewPickCancel', () => preview.cancelPick());
+ipcMain.handle('satr:previewFrame', () => preview.captureFrame());   // م-5: إطار للتسجيل
 ipcMain.handle('satr:previewClose', () => preview.close());
 
 // ---------- عمليات الخلفية المعمّرة (خوادم التطوير ونحوها) ----------

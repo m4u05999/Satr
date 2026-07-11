@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('satr', {
   previewBounds: (x, y, width, height) => ipcRenderer.invoke('satr:previewBounds', { x, y, width, height }),
   previewPick: () => ipcRenderer.invoke('satr:previewPick'),             // م-2: التحديد بالتأشير
   previewPickCancel: () => ipcRenderer.invoke('satr:previewPickCancel'),
+  previewFrame: () => ipcRenderer.invoke('satr:previewFrame'),           // م-5: إطار للتسجيل
   previewClose: () => ipcRenderer.invoke('satr:previewClose'),
   onPreview: (callback) => {
     const handler = (_e, obj) => callback(obj);

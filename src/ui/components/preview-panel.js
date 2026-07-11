@@ -36,6 +36,8 @@ const previewSheet = sheet(`
   #pvReload.loading { color: var(--gold); border-color: var(--gold-border); }
   #pvAuto.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   #pvPick.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  #pvRec.rec { color: #fff; border-color: var(--red); background: var(--red); animation: pvRecPulse 1.4s infinite; }
+  @keyframes pvRecPulse { 50% { opacity: .55; } }
   /* شريط التحديد بالتأشير (م-2): يظهر أسفل الرأس عند التقاط عنصر */
   #pvPickBar { display: none; flex-direction: column; gap: 6px; padding: 8px 10px;
     background: var(--surface); border-bottom: 1px solid var(--gold-border); }
@@ -84,6 +86,7 @@ const MARKUP = `
     <button id="pvReload" type="button" title="تحديث">⟳</button>
     <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل">🔄</button>
     <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)">🎯</button>
+    <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (webm)">⏺</button>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
   <div id="pvBox">
@@ -188,6 +191,7 @@ class SatrPreviewPanel extends HTMLElement {
       // م-2: أنهِ أي تحديد جارٍ/شريط مفتوح (الدوال مهيّأة وقت الاستدعاء — تُعرَّف أدناه)
       if (picking) { window.satr.previewPickCancel(); endPickMode(); }
       closePickBar();
+      if (recording) stopRec(); // م-5: أوقِف التسجيل وأنزِل ما سُجّل قبل إغلاق العرض
       window.satr.previewClose(); // يدمّر العرض الأصلي (الكوكيز تبقى في partition الدائمة)
     };
     if (toggleBtn) toggleBtn.addEventListener('click', () => {
@@ -316,6 +320,72 @@ class SatrPreviewPanel extends HTMLElement {
       drag = null;
       localStorage.setItem('satr_preview_w', String(Math.round(this.getBoundingClientRect().width)));
     });
+
+    // ---------- تسجيل فيديو التصفح (م-5) ----------
+    // صفر اعتماديات: previewFrame (لقطة PNG من العرض) ⇒ رسم على <canvas> ⇒
+    // canvas.captureStream(fps) ⇒ MediaRecorder ⇒ webm blob ⇒ تنزيل. ~8 إطارات/ث كافية
+    // لتوثيق التصفح. الـ canvas مخفي داخل Shadow. الإيقاف يجمع القطع وينزّل الملف.
+    const recBtn = $('pvRec');
+    let recording = false, mediaRec = null, recChunks = [], recTimer = 0, recCanvas = null, recCtx = null;
+
+    const stopRec = () => {
+      recording = false;
+      if (recTimer) { clearTimeout(recTimer); recTimer = 0; }
+      recBtn.classList.remove('rec');
+      recBtn.textContent = '⏺';
+      try { if (mediaRec && mediaRec.state !== 'inactive') mediaRec.stop(); } catch (e) {}
+    };
+
+    const drawFrame = (r) => {
+      if (!recCanvas) return;
+      if (recCanvas.width !== r.width || recCanvas.height !== r.height) {
+        recCanvas.width = r.width; recCanvas.height = r.height;
+      }
+      const img = new Image();
+      img.onload = () => { try { recCtx.drawImage(img, 0, 0, recCanvas.width, recCanvas.height); } catch (e) {} };
+      img.src = 'data:image/png;base64,' + r.base64;
+    };
+
+    const tick = async () => {
+      if (!recording) return;
+      try { const r = await window.satr.previewFrame(); if (r && r.ok) drawFrame(r); } catch (e) {}
+      if (recording) recTimer = setTimeout(tick, 125); // ~8fps
+    };
+
+    const startRec = async () => {
+      if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم ابدأ التسجيل.'); return; }
+      // إطار أول متزامن ليُضبط حجم الـ canvas قبل بدء MediaRecorder
+      const first = await window.satr.previewFrame();
+      if (!first || !first.ok) { showErr('تعذّر بدء التسجيل (لا إطار من المعاينة).'); return; }
+      recCanvas = document.createElement('canvas');
+      recCanvas.width = first.width; recCanvas.height = first.height;
+      recCtx = recCanvas.getContext('2d');
+      drawFrame(first);
+      let stream;
+      try { stream = recCanvas.captureStream(8); } catch (e) { showErr('التسجيل غير مدعوم في هذه البيئة.'); return; }
+      const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) ? 'video/webm;codecs=vp9' : 'video/webm';
+      try { mediaRec = new MediaRecorder(stream, { mimeType: mime }); }
+      catch (e) { showErr('التسجيل غير مدعوم في هذه البيئة.'); return; }
+      recChunks = [];
+      mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+      mediaRec.onstop = () => {
+        const blob = new Blob(recChunks, { type: 'video/webm' });
+        recChunks = []; recCanvas = null; recCtx = null;
+        if (!blob.size) return;
+        const a = document.createElement('a');
+        const u = URL.createObjectURL(blob);
+        a.href = u;
+        a.download = 'satr-preview-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.webm';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(u), 10000);
+      };
+      mediaRec.start();
+      recording = true;
+      recBtn.classList.add('rec');
+      recBtn.textContent = '⏹';
+      tick();
+    };
+    recBtn.addEventListener('click', () => { if (recording) stopRec(); else startRec(); });
 
     // ---------- العقد العام ----------
     // فتح بعنوان جاهز (اقتراح localhost المرصود / أداة open_preview — القشرة تستدعيها).
