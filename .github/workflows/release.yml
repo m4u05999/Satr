@@ -95,9 +95,22 @@ jobs:
             throw 'لم يُرفع blockmap'
           }
 
-      # electron-builder ينشئ مسودة افتراضياً؛ هذه الخطوة تنشرها بلا تدخل يدوي.
-      - name: نشر إصدار GitHub
+      # electron-builder ينشئ مسودة افتراضياً؛ هذه الخطوة تحسب بصمة المثبّت،
+      # تُدرجها في ملاحظات الإصدار (فلا تُحدَّث يدوياً في README)، ثم تنشر بلا تدخل.
+      - name: نشر إصدار GitHub مع بصمة المثبّت
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit '${{ github.ref_name }}' --draft=false --latest
+        run: |
+          $exe = Get-ChildItem dist -Filter *.exe -File | Select-Object -First 1
+          if (-not $exe) { throw 'لم يُعثر على مثبّت exe في dist' }
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
+          $lines = @(
+            "**المثبّت:** ``$($exe.Name)`` — حمّله من قسم **Assets** (بكلمة Setup، لا «Source code»).",
+            "",
+            "**بصمة SHA-256** (للتحقق الاختياري من سلامة الملف):",
+            "",
+            "    $hash"
+          )
+          $lines | Out-File release-notes.md -Encoding utf8
+          gh release edit '${{ github.ref_name }}' --notes-file release-notes.md --draft=false --latest
