@@ -22,6 +22,7 @@ const search = require('./search'); // بحث «دلالي خفيف» (4.6) — 
 const inject = require('./inject'); // resolveInside — تحقق مسار موحّد
 const skills = require('./skills'); // مهارات محمولة: تحميل تدريجي لـ SKILL.md وموارده
 const verify = require('./verify'); // تحقق صريح من .satr/verify.json — لا تشغيل تلقائي
+const memory = require('./memory'); // اقتراح ذاكرة فقط؛ الحفظ الصريح يتم من الواجهة
 const { computeDiff } = require('./diff');
 const term = require('./term'); // طرفية النموذج المرئية (2.3) — نفس مفرد المرحلة 16
 
@@ -158,6 +159,26 @@ const DEFS = [
           },
         },
         required: ['tasks'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_memory',
+      description: 'Propose one durable project memory for explicit user review. This never saves by itself. Use only for a fact, decision, reusable command, or failure lesson that will matter in later turns. Never include secrets. Mark shareable team knowledge so the UI recommends AGENTS.md or a Skill instead.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['fact', 'decision', 'command', 'failure'] },
+          content: { type: 'string', description: 'Concise durable knowledge, without credentials or secret values' },
+          confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
+          scope_type: { type: 'string', enum: ['project', 'path'] },
+          path: { type: 'string', description: 'Relative project path when scope_type is path' },
+          source: { type: 'string', description: 'Short provenance, such as a user statement, file, command result, or failure' },
+          shareable: { type: 'boolean', description: 'True when this belongs in AGENTS.md or a reusable Skill for the team' },
+        },
+        required: ['kind', 'content', 'confidence', 'scope_type', 'source'],
       },
     },
   },
@@ -396,6 +417,25 @@ async function run(name, cwd, args, ctx) {
         tasks: taskList,
       });
       return { ok: true, content: 'حُدّث سجل المهام المرئي والدائم.' };
+    }
+    if (name === 'propose_memory') {
+      if (!ctx || typeof ctx.emit !== 'function') return { ok: false, content: 'تعذّر عرض اقتراح الذاكرة في هذا المحرك' };
+      const result = memory.propose({
+        kind: args && args.kind,
+        content: args && args.content,
+        confidence: args && args.confidence,
+        scope: { type: args && args.scope_type, path: args && args.path },
+        source: { type: 'agent', engine: ctx.engine || '', detail: args && args.source },
+        shareable: !!(args && args.shareable),
+      }, { type: 'agent', engine: ctx.engine || '' });
+      if (!result.ok) {
+        const message = result.error === 'secret'
+          ? 'رُفض الاقتراح لأنه يشبه سراً أو مفتاحاً. لا تُعد إرساله ولا تعرض القيمة.'
+          : 'اقتراح الذاكرة غير صالح: ' + result.error;
+        return { ok: false, content: message };
+      }
+      ctx.emit({ type: 'memory_candidate', schema_version: 1, candidate: result.candidate });
+      return { ok: true, content: 'عُرض اقتراح الذاكرة للمستخدم ولم يُحفظ. لن يدخل الذاكرة إلا إذا ضغط المستخدم «حفظ» صراحةً.' };
     }
     if (name === 'load_skill') {
       const skillName = args && typeof args.name === 'string' ? args.name.trim() : '';

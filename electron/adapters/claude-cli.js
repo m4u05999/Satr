@@ -12,6 +12,7 @@
 
 const { spawn } = require('child_process');
 const skillCatalog = require('../skills');
+const memory = require('../memory');
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
@@ -23,6 +24,8 @@ function start(input, cwd, emit) {
   const { prompt, sessionId, model, permissionMode } = input;
   const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
   const portablePrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true, includePaths: true });
+  const memoryPrompt = memory.retrieve(cwd, prompt).text;
+  const contextPrompt = [portablePrompt, memoryPrompt].filter(Boolean).join('\n\n');
 
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (sessionId) args.push('--resume', sessionId);
@@ -36,8 +39,8 @@ function start(input, cwd, emit) {
   const child = spawn(CLAUDE_BIN, args, { cwd, shell: IS_WIN, detached: IS_WIN, windowsHide: true });
 
   // البرومبت عبر stdin لتجنب مشاكل الاقتباس
-  const inputPrompt = portablePrompt
-    ? portablePrompt + '\n\n<user_request>\n' + prompt + '\n</user_request>'
+  const inputPrompt = contextPrompt
+    ? contextPrompt + '\n\n<user_request>\n' + prompt + '\n</user_request>'
     : prompt;
   child.stdin.write(inputPrompt, 'utf8');
   child.stdin.end();

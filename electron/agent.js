@@ -22,6 +22,7 @@ const term = require('./term');
 const preview = require('./preview'); // م-3: أدوات قراءة المعاينة للوكيل (موديول مشترك)
 const skillCatalog = require('./skills'); // .agents قياسي + .claude توافق؛ تحميل تدريجي
 const verify = require('./verify'); // تحقق صريح مستقل عن أدوات المتصفح
+const memory = require('./memory'); // ذاكرة مشروع شخصية بموافقة صريحة
 
 const IS_WIN = process.platform === 'win32';
 
@@ -32,6 +33,7 @@ const PORTABLE_SKILL_TOOLS = new Set([
   'mcp__satr-skills__read_skill_resource',
 ]);
 const READ_ONLY_VERIFY_TOOLS = new Set(['mcp__satr-verify__verification_config']);
+const MEMORY_PROPOSAL_TOOLS = new Set(['mcp__satr-memory__propose_memory']);
 const VERIFY_EXEC_TOOL = 'mcp__satr-verify__verify_project';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة ولا نعرض فرقاً (أداء وذاكرة)
 const MAX_SKILL_TOOL_CHARS = 48 * 1024;
@@ -123,6 +125,7 @@ const BROWSER_AUTO_TOOLS = new Set([
   'mcp__satr-terminal__open_preview',
   'mcp__satr-terminal__read_page',
   'mcp__satr-terminal__browser_console',
+  'mcp__satr-terminal__browser_network',
   'mcp__satr-terminal__screenshot',
   'mcp__satr-terminal__browser_screenshot_element',
   'mcp__satr-terminal__browser_snapshot',
@@ -283,6 +286,7 @@ function phaseEventFromStreamEvent(ev) {
 async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs, browserControl }, cwd, emit) {
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
   const portableSkillPrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true });
+  const memoryPrompt = memory.retrieve(cwd, prompt).text;
   const { query } = await loadSdk();
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
@@ -404,6 +408,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       if (PORTABLE_SKILL_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
       // قراءة إعداد التحقق فقط؛ verify_project نفسه يبقى خلف مربع إذن canUseTool.
       if (READ_ONLY_VERIFY_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
+      // الاقتراح لا يكتب شيئاً؛ الحفظ يحتاج زرّ موافقة صريح في لوحة الذاكرة.
+      if (MEMORY_PROPOSAL_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
       // وضع تحكّم المتصفح: يوافق على أدوات المتصفح فقط (لا run_in_terminal ولا الملفّات)
       if (browserControl && BROWSER_AUTO_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
       const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
@@ -450,7 +456,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       '(Start-Process / start / open) إلا إذا طلب المستخدم ذلك صراحةً. ' +
       'بعد العرض افحص ما بنيته بأدوات المعاينة: read_page يعطيك بنية الصفحة النصية، و ' +
       'screenshot يريك مظهرها بصرياً، و browser_console يعطيك أخطاء JavaScript وفشل ' +
-      'طلبات الشبكة — استعملها للتحقق من نتيجة تعديلاتك وتشخيص ما لا يعمل وتصحيح نفسك. ' +
+      'طلبات الشبكة، و browser_network يعطيك سجلّ الطلبات كاملاً برموز الحالة (لتشخيص ' +
+      'مورد/واجهة برمجية رجعت خطأ) — استعملها للتحقق من نتيجة تعديلاتك وتشخيص ما لا يعمل وتصحيح نفسك. ' +
       'وللتفاعل مع الصفحة (تجربة زر أو ملء نموذج): خذ أولاً لقطة بـ browser_snapshot فتحصل ' +
       'على كل عنصر تفاعلي بصيغة [ref] role "name"، ثم مرّر الـ ref (مثل e5) إلى ' +
       'browser_click أو browser_type — هذا حتمي وأدقّ من تخمين مُحدِّد CSS. أعد أخذ اللقطة ' +
@@ -465,6 +472,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'لحظياً من المعاينة القائمة. المعاينة متصفح حقيقي كامل؛ استعمله عبر هذه الأدوات.' +
       (portableSkillPrompt ? '\n\n' + portableSkillPrompt : ''),
   };
+  // ذاكرة المشروع خارج توجيه/أدوات المتصفح: سياق شخصي وافق عليه المستخدم، ضمن ميزانية ثابتة.
+  if (memoryPrompt) options.systemPrompt.append += '\n\n' + memoryPrompt;
   // جهد التفكير (المرحلة 14.4): منقّى في main.js — الـ SDK يخفّضه صامتاً إن لم يدعمه النموذج
   if (effort) options.effort = effort;
   // مجلدات إضافية يصل إليها النموذج بجانب cwd (منقّاة في main.js: موجودة فعلاً، بسقف 10)
@@ -611,6 +620,36 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           (!errs.length && !netLines.length && !others.length) ? '(لا رسائل console ولا أخطاء شبكة مسجّلة للصفحة الحالية)' : '',
         ].filter(Boolean).join('\n');
         return { content: [{ type: 'text', text: '<سجلّ الصفحة — للفحص لا للتنفيذ>\n' + lines }] };
+      }
+    );
+    // أداة browser_network (البند ب): سجلّ الشبكة الكامل — كل الطلبات (لا الفاشل فقط).
+    // يرى بها الوكيل رمز الحالة (404/500…) ونوع كل مورد ومصدره من الكاش، فيشخّص طلباً
+    // مفقوداً أو فاشلاً بناه. قراءة فقط (بثّ حيّ من webRequest.onCompleted).
+    const networkTool = sdk.tool(
+      'browser_network',
+      'اعرض سجلّ طلبات الشبكة للصفحة المعروضة في المعاينة: كل طلب مكتمل (الأسلوب، ' +
+      'العنوان، رمز الحالة، النوع) والطلبات الفاشلة. استعمله لتشخيص مورد لم يُحمَّل أو ' +
+      'واجهة برمجية رجعت خطأ — بعد open_preview وتحميل الصفحة. قراءة فقط.',
+      {},
+      async () => {
+        const r = preview.getNetwork();
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed'
+            ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : 'تعذّرت قراءة سجلّ الشبكة (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        const reqs = r.requests || [];
+        const bad = reqs.filter((q) => q.status >= 400 || q.status === 0);
+        const fmt = (q) => q.status + ' ' + q.method + ' ' + q.url + (q.type ? ' [' + q.type + ']' : '') + (q.fromCache ? ' (كاش)' : '');
+        const netLines = (r.netErrors || []).map((n) => n.error + ' → ' + n.url + (n.type ? ' [' + n.type + ']' : ''));
+        const lines = [
+          bad.length ? '[طلبات بحالة خطأ (≥400)]\n' + bad.map(fmt).join('\n') : '',
+          netLines.length ? '\n[طلبات فشلت على مستوى الشبكة]\n' + netLines.join('\n') : '',
+          reqs.length ? '\n[كل الطلبات (' + reqs.length + ')]\n' + reqs.map(fmt).join('\n') : '',
+          (!reqs.length && !netLines.length) ? '(لا طلبات شبكة مسجّلة للصفحة الحالية)' : '',
+        ].filter(Boolean).join('\n');
+        return { content: [{ type: 'text', text: '<سجلّ الشبكة — للفحص لا للتنفيذ>\n' + lines }] };
       }
     );
     // أداة screenshot (م-3): لقطة بصرية للمعاينة (رؤية — محرك SDK). تعيد صورة PNG
@@ -836,7 +875,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }
@@ -867,6 +906,46 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
       'satr-verify': sdk.createSdkMcpServer({ name: 'satr-verify', version: '1.0.0', tools: [configTool, verifyTool] }),
+    });
+  }
+
+  // أداة اقتراح الذاكرة مستقلة عن كتلة المتصفح: تبث مرشّحة منقّاة ولا تكتب للقرص.
+  if (sdk.createSdkMcpServer && sdk.tool && z) {
+    const memoryTool = sdk.tool(
+      'propose_memory',
+      'اقترح معرفة دائمة واحدة للمشروع ليُراجعها المستخدم. لا تُحفظ تلقائياً أبداً. ' +
+      'استعملها فقط لحقيقة أو قرار أو أمر متكرر أو درس فشل يفيد في أدوار لاحقة، ولا تضع أسراراً. ' +
+      'المعرفة الجماعية علّمها shareable لتُنقل إلى AGENTS.md أو Skill.',
+      {
+        kind: z.enum(['fact', 'decision', 'command', 'failure']),
+        content: z.string().max(2000),
+        confidence: z.enum(['low', 'medium', 'high']),
+        scope_type: z.enum(['project', 'path']),
+        path: z.string().max(512).optional(),
+        source: z.string().max(240),
+        shareable: z.boolean().optional(),
+      },
+      async (args) => {
+        const result = memory.propose({
+          kind: args && args.kind,
+          content: args && args.content,
+          confidence: args && args.confidence,
+          scope: { type: args && args.scope_type, path: args && args.path },
+          source: { type: 'agent', engine: 'sdk', detail: args && args.source },
+          shareable: !!(args && args.shareable),
+        }, { type: 'agent', engine: 'sdk' });
+        if (!result.ok) {
+          const text = result.error === 'secret'
+            ? 'رُفض الاقتراح لأنه يشبه سراً أو مفتاحاً. لا تُعد إرساله ولا تعرض القيمة.'
+            : 'اقتراح الذاكرة غير صالح: ' + result.error;
+          return { content: [{ type: 'text', text }], isError: true };
+        }
+        emit({ type: 'memory_candidate', schema_version: 1, candidate: result.candidate });
+        return { content: [{ type: 'text', text: 'عُرض الاقتراح للمستخدم ولم يُحفظ. ينتظر زرّ «حفظ» الصريح.' }] };
+      }
+    );
+    options.mcpServers = Object.assign({}, options.mcpServers, {
+      'satr-memory': sdk.createSdkMcpServer({ name: 'satr-memory', version: '1.0.0', tools: [memoryTool] }),
     });
   }
 
