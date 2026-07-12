@@ -344,6 +344,10 @@ ipcMain.handle('satr:send', async (event, payload) => {
   const token = ++runSeq;
   const runEngine = (payload.engine === 'codex' || adapters.get(payload.engine)) ? payload.engine : 'sdk';
   let activeSessionId = payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null;
+  const priorVerification = activeSessionId ? checkpoints.consumeVerification(runEngine, activeSessionId) : '';
+  const enginePrompt = priorVerification
+    ? '<satr_verification_result>\n' + priorVerification + '\n</satr_verification_result>\n\n' + prompt
+    : prompt;
   const runId = 'run-' + token;
   checkpoints.begin({ runId, engine: runEngine, sessionId: activeSessionId, cwd });
   const emit = (obj) => {
@@ -394,7 +398,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
   if (payload.engine === 'codex') {
     try {
       currentRun = await codex.start({
-        prompt,
+        prompt: enginePrompt,
         images, // مُنقّاة بـ sanitizeImages (نفس محرك SDK) — نماذج Codex تقبل الصور
         sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
         model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
@@ -416,7 +420,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
     // يقرأ الملفات بنفسه. التنقية كلها في inject.js (داخل cwd حصراً + سقوف حجم).
     const meta = adapters.list().find((p) => p.name === payload.engine);
     const isBlind = !meta || meta.family !== 'claude';
-    const inj = isBlind ? inject.injectFiles(prompt, cwd) : { prompt, attached: [], skipped: [] };
+    const inj = isBlind ? inject.injectFiles(enginePrompt, cwd) : { prompt: enginePrompt, attached: [], skipped: [] };
 
     // مسار نصّي عبر stdin — لا يدعم الصور (محرك SDK يدعمها)
     const input = {
@@ -443,7 +447,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
   // المسار الافتراضي: Agent SDK — نفس التحقق الصارم من المدخلات
   try {
     currentRun = await agent.start({
-      prompt,
+      prompt: enginePrompt,
       images,
       sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
       model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,

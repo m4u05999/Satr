@@ -92,6 +92,8 @@ async function main() {
     const reverified = checkpoints.recordVerificationForCheckpoint(deferred.id, { passed: true, summary: 'نجح', checks: [] });
     assert.strictEqual(deferredFinished.state, 'ready');
     assert.strictEqual(reverified.state, 'passed');
+    assert(checkpoints.consumeVerification('sdk', 'session-2', { root: store }).includes('نجح التحقق'));
+    assert.strictEqual(checkpoints.consumeVerification('sdk', 'session-2', { root: store }), '');
 
     console.log('✓ explicit verification config boundaries');
     console.log('✓ verification runner result contract');

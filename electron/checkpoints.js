@@ -99,6 +99,7 @@ function storedShape(checkpoint) {
     edit_ids: checkpoint.edit_ids.slice(0, MAX_EDITS),
     files: checkpoint.files.slice(0, MAX_FILES).map((file) => ({ ...file })),
     verification,
+    resume_pending: !!checkpoint.resume_pending,
     task_id: checkpoint.task_id || '',
     task_title: checkpoint.task_title || '',
     cwd_hash: checkpoint.cwd_hash,
@@ -153,6 +154,7 @@ function begin(info, options) {
     edit_ids: [],
     files: [],
     verification: null,
+    resume_pending: false,
     task_id: '',
     task_title: '',
     cwd_hash: hashCwd(info.cwd),
@@ -212,6 +214,7 @@ function recordVerification(runId, verification) {
   const checkpoint = activeRuns.get(runId);
   if (!checkpoint || !checkpoint.edit_ids.length || !verification) return null;
   checkpoint.verification = JSON.parse(JSON.stringify(verification));
+  checkpoint.resume_pending = false; // أداة المحرك أعادت النتيجة في tool_result فوراً
   checkpoint.state = verification.passed ? 'passed' : 'failed';
   checkpoint.updated_at = Date.now();
   persist(checkpoint, checkpoint._options);
@@ -222,10 +225,27 @@ function recordVerificationForCheckpoint(checkpointId, verification) {
   const checkpoint = liveCheckpoints.get(checkpointId);
   if (!checkpoint || !checkpoint.edit_ids.length || !verification) return null;
   checkpoint.verification = JSON.parse(JSON.stringify(verification));
+  checkpoint.resume_pending = true; // تحقق يدوي بعد الدور: يُعاد للمحرك مرة في الدور التالي
   checkpoint.state = verification.passed ? 'passed' : 'failed';
   checkpoint.updated_at = Date.now();
   persist(checkpoint, checkpoint._options);
   return publicShape(checkpoint);
+}
+
+function consumeVerification(engine, sessionId, options) {
+  const collection = readCollection(engine, sessionId, options);
+  const stored = collection.slice(-1)[0];
+  if (!stored || !stored.resume_pending || !stored.verification) return '';
+  stored.resume_pending = false;
+  writeCollection(engine, sessionId, collection, options);
+  const live = liveCheckpoints.get(stored.id);
+  if (live) live.resume_pending = false;
+  const lines = [stored.verification.passed ? 'نجح التحقق اليدوي السابق.' : 'فشل التحقق اليدوي السابق.'];
+  for (const check of stored.verification.checks || []) {
+    lines.push((check.passed ? 'PASS ' : 'FAIL ') + (check.label || check.id)
+      + ' (exit ' + (check.exit_code == null ? 'unknown' : check.exit_code) + ')');
+  }
+  return lines.join('\n').slice(0, 4000);
 }
 
 function finish(runId) {
@@ -282,4 +302,5 @@ module.exports = {
   finish,
   latest,
   restore,
+  consumeVerification,
 };
