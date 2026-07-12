@@ -61,11 +61,13 @@ function wireNetwork() {
     session.fromPartition(PARTITION).webRequest.onErrorOccurred((details) => {
       // ERR_ABORTED = أُلغي بتنقّل جديد (ليس خطأً) — نتجاهله كي لا نضجّ سجل الوكيل
       if (!details || details.error === 'net::ERR_ABORTED') return;
-      pushLog(netErrBuf, {
+      const entry = {
         url: String(details.url || '').slice(0, 500),
         error: String(details.error || ''),
         type: String(details.resourceType || ''),
-      });
+      };
+      pushLog(netErrBuf, entry);
+      emit({ type: 'neterr', url: entry.url, error: entry.error, resourceType: entry.type });
     });
   } catch (e) {}
 }
@@ -82,18 +84,21 @@ function wireEvents(wc) {
   wc.on('page-title-updated', (e, title) => emit({ type: 'title', title: String(title || '').slice(0, 200) }));
   wc.on('did-start-loading', () => emit({ type: 'loading', loading: true }));
   wc.on('did-stop-loading', () => emit({ type: 'loading', loading: false }));
-  // التقاط رسائل console الصفحة (تشمل الأخطاء غير الملتقطة) للوكيل عبر browser_console
+  // التقاط رسائل console الصفحة (تشمل الأخطاء غير الملتقطة): للوكيل عبر browser_console
+  // (buffer) **وبثّ حيّ للواجهة** (لوحة console للمستخدم — الخيار 2).
   wc.on('console-message', (e, level, message, line, sourceId) => {
-    pushLog(consoleBuf, {
+    const entry = {
       level: Number(level) || 0,
       message: String(message || '').slice(0, 2000),
       line: Number(line) || 0,
       source: String(sourceId || '').slice(0, 300),
-    });
+    };
+    pushLog(consoleBuf, entry);
+    emit({ type: 'console', levelLabel: LEVELS[entry.level] || 'log', message: entry.message, line: entry.line, source: entry.source });
   });
   // تصفير السجلّ عند تنقّل الإطار الرئيسي لصفحة جديدة (لا للتنقّل داخل الصفحة) — يعكس الحالية
   wc.on('did-start-navigation', (e, url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) resetLogs();
+    if (isMainFrame && !isInPlace) { resetLogs(); emit({ type: 'console_clear' }); }
   });
   // فشل التحميل الرئيسي فقط (-3 = أُجهض بتنقل جديد — ليس خطأ)
   wc.on('did-fail-load', (e, code, desc, url, isMainFrame) => {

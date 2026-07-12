@@ -66,6 +66,26 @@ const previewSheet = sheet(`
   /* معاينة متجاوبة (محاكاة الأجهزة): زرّ يدوّر بين كامل/موبايل/لوحي. حين يُختار جهاز
      يُعرَض المحتوى بعرضه موسّطاً في pvBox (الجوانب خلفية اللوحة) فتتفاعل media queries. */
   #pvDevice.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  /* لوحة Console/أخطاء للمستخدم (الخيار 2): لوحة سفلية تعرض رسائل console وأخطاء الشبكة
+     حيّاً (بثّ من preview.js). أسفل pvBox فلا يغطّيها العرض الأصلي (يطفو فوق pvBox فقط). */
+  #pvConsoleBtn.has-err { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+  #pvConsole { display: none; flex-direction: column; height: 170px; min-height: 0;
+    background: var(--bg-deep); border-top: 1px solid var(--border); }
+  #pvConsole.show { display: flex; }
+  #pvConsole .pc-head { display: flex; align-items: center; gap: 6px; padding: 5px 9px;
+    background: var(--surface); border-bottom: 1px solid var(--border); }
+  #pvConsole .pc-title { flex: 1; color: var(--text-dim); font-size: 12px; }
+  #pvConsole .pc-head button { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 7px; padding: 3px 9px; font-size: 11.5px; cursor: pointer; }
+  #pvConsole .pc-head button:hover { border-color: var(--gold); color: var(--text); }
+  #pcLog { flex: 1; overflow: auto; padding: 3px 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
+  #pcLog .pc-line { padding: 1px 10px; white-space: pre-wrap; word-break: break-word;
+    border-bottom: 1px solid var(--border-dim); unicode-bidi: plaintext; direction: ltr; text-align: left; }
+  #pcLog .pc-line.error, #pcLog .pc-line.net { color: var(--red); }
+  #pcLog .pc-line.warning { color: var(--gold-strong); }
+  #pcLog .pc-line.log, #pcLog .pc-line.info, #pcLog .pc-line.verbose { color: var(--text-dim); }
+  #pcLog .pc-src { color: var(--text-faint); }
+  #pcLog .pc-empty { padding: 16px; text-align: center; color: var(--text-faint); font-size: 12px; direction: rtl; }
   /* شريط التحديد بالتأشير (م-2): يظهر أسفل الرأس عند التقاط عنصر */
   #pvPickBar { display: none; flex-direction: column; gap: 6px; padding: 8px 10px;
     background: var(--surface); border-bottom: 1px solid var(--gold-border); }
@@ -118,6 +138,7 @@ const MARKUP = `
     <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)">🎯</button>
     <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (mp4)">⏺</button>
     <button id="pvDevice" type="button" title="محاكاة الأجهزة: كامل/موبايل/لوحي (لاختبار التصميم المتجاوب)">🖥️</button>
+    <button id="pvConsoleBtn" type="button" title="لوحة Console والأخطاء (رسائل الصفحة وأخطاء الشبكة)">🐞</button>
     <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
@@ -129,6 +150,15 @@ const MARKUP = `
     </div>
   </div>
   <div id="pvErr"></div>
+  <!-- لوحة Console/أخطاء للمستخدم (الخيار 2): تُملأ حيّاً من أحداث preview.js -->
+  <div id="pvConsole">
+    <div class="pc-head">
+      <span class="pc-title">Console والأخطاء</span>
+      <button id="pcClear" type="button" title="مسح السجلّ">مسح</button>
+      <button id="pcClose" type="button" title="إغلاق اللوحة">✕</button>
+    </div>
+    <div id="pcLog"></div>
+  </div>
   <!-- شريط التحديد بالتأشير (م-2): يظهر بعد التقاط عنصر — ملخّص + طلب التعديل -->
   <div id="pvPickBar">
     <div class="pb-el"><span class="pb-tag" id="pbTag"></span><span class="pb-text" id="pbText"></span></div>
@@ -215,6 +245,51 @@ class SatrPreviewPanel extends HTMLElement {
       paintDevice();
       reportBounds();
     });
+
+    // ---------- لوحة Console/أخطاء للمستخدم (الخيار 2) ----------
+    // تُملأ حيّاً من أحداث preview.js (console/neterr/console_clear عبر onPreview أدناه).
+    // أسفل pvBox فلا يغطّيها العرض الأصلي؛ فتحها يصغّر pvBox فيُعاد قياس العرض.
+    const consoleBtn = $('pvConsoleBtn'), consolePanel = $('pvConsole'), pcLog = $('pcLog');
+    const PC_CAP = 500; // سقف أسطر DOM (إخلاء الأقدم)
+    let pcErrBadge = 0; // عدّاد أخطاء غير مرئية — يُصفَّر عند فتح اللوحة/المسح/التنقّل
+    const pcEmpty = () => {
+      pcLog.textContent = '';
+      const e = document.createElement('div');
+      e.className = 'pc-empty';
+      e.textContent = 'لا رسائل بعد — ستظهر رسائل console وأخطاء الصفحة هنا حيّاً.';
+      pcLog.appendChild(e);
+    };
+    const pcPaintBadge = () => {
+      consoleBtn.classList.toggle('has-err', pcErrBadge > 0);
+      consoleBtn.textContent = pcErrBadge > 0 ? '🐞 ' + (pcErrBadge > 99 ? '99+' : pcErrBadge) : '🐞';
+    };
+    const pcClearLog = () => { pcErrBadge = 0; pcPaintBadge(); pcEmpty(); };
+    const pcAppend = (cls, text, srcText) => {
+      const empty = pcLog.querySelector('.pc-empty'); if (empty) empty.remove();
+      const atBottom = pcLog.scrollHeight - pcLog.scrollTop - pcLog.clientHeight < 24;
+      const line = document.createElement('div');
+      line.className = 'pc-line ' + cls;
+      line.textContent = text;
+      if (srcText) { const s = document.createElement('span'); s.className = 'pc-src'; s.textContent = '  ' + srcText; line.appendChild(s); }
+      pcLog.appendChild(line);
+      while (pcLog.childElementCount > PC_CAP) pcLog.removeChild(pcLog.firstChild);
+      if (atBottom) pcLog.scrollTop = pcLog.scrollHeight; // التصاق بالذيل إن كان القارئ عنده
+      if ((cls === 'error' || cls === 'warning' || cls === 'net') && !consolePanel.classList.contains('show')) { pcErrBadge++; pcPaintBadge(); }
+    };
+    pcEmpty();
+    consoleBtn.addEventListener('click', () => {
+      const show = consolePanel.classList.toggle('show');
+      if (show) { pcErrBadge = 0; pcPaintBadge(); }
+      reportBounds();
+    });
+    $('pcClose').addEventListener('click', () => { consolePanel.classList.remove('show'); reportBounds(); });
+    $('pcClear').addEventListener('click', pcClearLog);
+    // تُستهلك في onPreview أدناه (نفس القناة satr:preview)
+    this._pcConsole = (ev) => {
+      if (ev.type === 'console') pcAppend(ev.levelLabel || 'log', '[' + (ev.levelLabel || 'log') + '] ' + (ev.message || ''), ev.source ? (ev.source + ':' + ev.line) : '');
+      else if (ev.type === 'neterr') pcAppend('net', '🌐 ' + (ev.error || 'network error') + ' → ' + (ev.url || ''), ev.resourceType || '');
+      else if (ev.type === 'console_clear') pcClearLog();
+    };
 
     // م-1-د: تذكّر آخر عنوان **لكل مجلد مشروع** (لا عنواناً عاماً واحداً) — لكل مشروع
     // منفذه، فالنقر على 🌐 يعيد عنوان المشروع الحالي لا آخر ما فُتح في أي مكان. المفتاح
@@ -312,6 +387,8 @@ class SatrPreviewPanel extends HTMLElement {
         // (يُظهر صفحة خطأ المتصفح) و⟳ يعيد المحاولة عليه مباشرة.
         showErr('تعذّر الوصول إلى ' + (ev.url || 'العنوان') +
           ' — تأكد أن خادم التطوير يعمل (اطلب من الوكيل «شغّل المشروع») ثم اضغط ⟳.');
+      } else if (ev.type === 'console' || ev.type === 'neterr' || ev.type === 'console_clear') {
+        this._pcConsole(ev); // لوحة Console/أخطاء للمستخدم (الخيار 2)
       }
       // ev.type === 'title' متاح مستقبلاً (لا مكان لعرضه في رأس م-1 المضغوط)
     });

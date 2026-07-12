@@ -851,6 +851,14 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   media queries حقيقةً (لا محاكاة CDP). لقطة الوكيل تعكس مقاس الجهاز. **preview-panel.js
   وحده** (بلا تصادم). الاختيار يُحفظ `satr_preview_device`. تحقّق حيّ: عرض 390 ⇒
   `innerWidth=390` والصفحة تُعيد التدفّق وmedia query تُفعَّل.
+- **لوحة Console/أخطاء للمستخدم (الخيار 2 — DevTools مصغّرة، 2026-07-12)**: زرّ 🐞 في
+  رأس اللوحة يفتح لوحة سفلية تعرض **حيّاً** رسائل console الصفحة (log/warn/error) وأخطاء
+  الشبكة الفاشلة — فيرى **المستخدم** ما يراه الوكيل (أداة browser_console). `preview.js`
+  يبثّ أحداث `console`/`neterr`/`console_clear` عبر قناة `satr:preview` القائمة (passthrough
+  في main.js `previewSender` — **بلا تعديل main.js**، فصفر تصادم مع Codex)، مع إبقاء
+  buffers الوكيل. المكوّن: سقف 500 سطر DOM، شارة عدّاد أخطاء غير مرئية على الزرّ، التصاق
+  بالذيل، مسح، وتصفير عند التنقّل. أسفل pvBox فلا يغطّيها العرض الطافي (فتحها يصغّر pvBox
+  ⇒ reportBounds). تحقّق حيّ: بثّ error/warning/info + neterr + console_clear عند التنقّل.
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
   رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`
