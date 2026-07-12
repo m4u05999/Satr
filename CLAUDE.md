@@ -159,6 +159,12 @@ docs/PHASE8-DESIGN.md ← تصميم الطرفية العربية: المقار
 scripts/update-csp.js ← يحدّث هاشات CSP لكتل style/script المضمّنة — يعمل تلقائياً قبل start و dist
 scripts/make-icon.js  ← يولّد build/icon.ico من علامة «سطر» (بلا اعتماديات: zlib يبني PNG ثم
                        يُحزَم ICO) — يُشغَّل يدوياً عند تغيير العلامة، والملف الناتج مُلتزَم
+scripts/agent-eval.js ← مرصد واختبارات الوكيل (الأولوية 0): replay حتمي بلا شبكة فوق 12 fixture
+                       في scripts/evals/tasks.json + live اختياري لمحركي sdk/codex. يتحقق من
+                       عقد الأحداث والملفات والأذونات والمقاطعة؛ يمنع أدوات browser في هذه
+                       الدفعة. traces تحت dist/agent-eval تحفظ hashes/metadata لا prompts أو
+                       خرج أدوات افتراضياً. التشغيل: npm run eval:agent؛ baseline الملتزم في
+                       docs/AGENT-EVAL-BASELINE.md (تحديثه الصريح: npm run eval:agent:baseline).
 docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها قبل أي مرحلة جديدة
 ```
 
@@ -731,6 +737,16 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   فقط (بثّ حيّ بلا executeJavaScript)، مغلّفة «للفحص لا للتنفيذ»، وضمن BROWSER_AUTO_TOOLS
   (وضع تحكّم المتصفح). تحقّق حيّ (منطق محفوف): مسبار معزول 9/9 بخادم HTTP فعلي —
   error/warning/log بمستوياتها + خطأ غير ملتقط + خطأ شبكة + تصفير عند التنقّل.
+- **إكمال طقم الأفعال — تكافؤ Playwright MCP (2026-07-12)**: أربع أدوات تُتمّم التفاعل مع
+  الصفحة (كلها ref-أو-selector وضمن BROWSER_AUTO_TOOLS): `browser_select_option(ref, value)`
+  (قوائم `<select>` — مطابقة بالـ value ثم بالنص الظاهر)، `browser_press_key(key)`
+  (مفاتيح Enter/Tab/Escape/الأسهم/… عبر `webContents.sendInputEvent` — أحداث مفاتيح
+  **حقيقية موثوقة** تُطلق السلوك الأصلي كإرسال النموذج، بقائمة بيضاء KEY_MAP لا حروف عامة)،
+  `browser_scroll(direction, amount?)` (down/up/top/bottom لكشف المحتوى الكسول قبل لقطة)،
+  `browser_hover(ref)` (mouseover/enter/move لإظهار قوائم التحويم). كلها في `preview.js`
+  (selectOption/pressKey/scroll/hover) + كتلة أدوات المتصفح في `agent.js`. تحقّق حيّ
+  (منطق محفوف): مسبار معزول 10/10 بخادم HTTP فعلي (اختيار بالقيمة/النص/ref + Enter حقيقي
+  يُطلق keydown + تحويم + تمرير أسفل/أعلى + bad_key/not_select/no_option).
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
   رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`

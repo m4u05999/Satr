@@ -488,6 +488,102 @@ async function typeText(locator, text) {
   } catch (e) { return { error: 'type_failed' }; }
 }
 
+// ---------- إكمال طقم الأفعال (البند 2) — قائمة منسدلة/مفتاح/تمرير/تحويم ----------
+// select/hover يُحلّان الهدف بنفس منطق ref-أو-selector (resolve مضمّن). press_key عبر
+// sendInputEvent (أحداث مفاتيح حقيقية موثوقة — تُرسل للعرض المعزول وحده، فتُطلق سلوك
+// النموذج الأصلي مثل إرسال النموذج بـ Enter، بعكس الحدث المُصطنع غير الموثوق).
+const SELECT_FN = `function(loc, val){
+  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
+  if (!el) return {ok:false, reason:'not_found'};
+  if (el.tagName !== 'SELECT') return {ok:false, reason:'not_select'};
+  var opts = Array.prototype.slice.call(el.options), match = null, i;
+  for (i=0;i<opts.length;i++){ if (opts[i].value === val){ match = opts[i]; break; } }
+  if (!match) for (i=0;i<opts.length;i++){ if ((opts[i].textContent||'').replace(/\\s+/g,' ').trim() === val){ match = opts[i]; break; } }
+  if (!match) return {ok:false, reason:'no_option'};
+  el.value = match.value;
+  el.dispatchEvent(new Event('input', {bubbles:true}));
+  el.dispatchEvent(new Event('change', {bubbles:true}));
+  return {ok:true, label: (match.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80)};
+}`;
+const HOVER_FN = `function(loc){
+  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
+  if (!el) return {ok:false, reason:'not_found'};
+  try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
+  try {
+    var r = el.getBoundingClientRect();
+    var opt = {bubbles:true, cancelable:true, clientX:r.left+r.width/2, clientY:r.top+r.height/2};
+    el.dispatchEvent(new MouseEvent('mouseover', opt));
+    el.dispatchEvent(new MouseEvent('mouseenter', {bubbles:false, clientX:opt.clientX, clientY:opt.clientY}));
+    el.dispatchEvent(new MouseEvent('mousemove', opt));
+  } catch(e){ return {ok:false, reason:'hover_error'}; }
+  return {ok:true, tag: el.tagName.toLowerCase()};
+}`;
+const SCROLL_FN = `function(dir, amount){
+  var before = window.scrollY || document.documentElement.scrollTop || 0;
+  var amt = amount || Math.round((window.innerHeight || 600) * 0.9);
+  if (dir === 'top') window.scrollTo(0, 0);
+  else if (dir === 'bottom') window.scrollTo(0, document.documentElement.scrollHeight);
+  else if (dir === 'up') window.scrollBy(0, -amt);
+  else window.scrollBy(0, amt);
+  var after = window.scrollY || document.documentElement.scrollTop || 0;
+  return {ok:true, scrollY: Math.round(after), moved: Math.round(after - before), max: Math.round(document.documentElement.scrollHeight)};
+}`;
+
+async function selectOption(locator, value) {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const r = await wc.executeJavaScript(
+      '(' + SELECT_FN + ')(' + JSON.stringify(String(locator)) + ',' + JSON.stringify(String(value)) + ')', true);
+    return r && r.ok ? { ok: true, label: r.label } : { error: (r && r.reason) || 'select_failed' };
+  } catch (e) { return { error: 'select_failed' }; }
+}
+
+async function hover(locator) {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const r = await wc.executeJavaScript('(' + HOVER_FN + ')(' + JSON.stringify(String(locator)) + ')', true);
+    return r && r.ok ? { ok: true, tag: r.tag } : { error: (r && r.reason) || 'hover_failed' };
+  } catch (e) { return { error: 'hover_failed' }; }
+}
+
+async function scroll(direction, amount) {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  const dir = ['up', 'down', 'top', 'bottom'].indexOf(String(direction)) >= 0 ? String(direction) : 'down';
+  const amt = Number(amount) > 0 ? Math.min(Number(amount), 20000) : 0;
+  try {
+    const r = await wc.executeJavaScript('(' + SCROLL_FN + ')(' + JSON.stringify(dir) + ',' + JSON.stringify(amt) + ')', true);
+    return r && r.ok ? { ok: true, scrollY: r.scrollY, moved: r.moved, max: r.max } : { error: 'scroll_failed' };
+  } catch (e) { return { error: 'scroll_failed' }; }
+}
+
+// أحداث مفاتيح حقيقية عبر sendInputEvent (على العنصر المركّز في العرض المعزول). خريطة
+// أسماء ودّية → keyCodes Electron. الحصر بقائمة بيضاء (لا حروف عامة — الكتابة عبر browser_type).
+const KEY_MAP = {
+  Enter: 'Return', Tab: 'Tab', Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete',
+  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+  Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+};
+function pressKey(key) {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  const code = KEY_MAP[String(key)];
+  if (!code) return { error: 'bad_key' };
+  try {
+    wc.focus();
+    wc.sendInputEvent({ type: 'keyDown', keyCode: code });
+    wc.sendInputEvent({ type: 'keyUp', keyCode: code });
+  } catch (e) { return { error: 'press_failed' }; }
+  return { ok: true, key: String(key) };
+}
+
 // ---------- التقاط إطار للتسجيل (م-5) ----------
 // المكوّن يطلب إطاراً دورياً (~8/ث) فنعيد PNG base64؛ الواجهة ترسمه على <canvas>
 // وتسجّله بـ MediaRecorder ⇒ webm (صفر اعتماديات — كله APIs Chromium). حجم الإطار =
@@ -516,4 +612,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, screenshot, clickElement, typeText, captureFrame, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, screenshot, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, close, destroy, isHttpUrl };

@@ -118,6 +118,10 @@ const BROWSER_AUTO_TOOLS = new Set([
   'mcp__satr-terminal__browser_snapshot',
   'mcp__satr-terminal__browser_click',
   'mcp__satr-terminal__browser_type',
+  'mcp__satr-terminal__browser_select_option',
+  'mcp__satr-terminal__browser_press_key',
+  'mcp__satr-terminal__browser_scroll',
+  'mcp__satr-terminal__browser_hover',
   'mcp__satr-terminal__browser_navigate',
   'mcp__satr-terminal__browser_wait_for',
 ]);
@@ -332,7 +336,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'على كل عنصر تفاعلي بصيغة [ref] role "name"، ثم مرّر الـ ref (مثل e5) إلى ' +
       'browser_click أو browser_type — هذا حتمي وأدقّ من تخمين مُحدِّد CSS. أعد أخذ اللقطة ' +
       'بعد كل نقر/تنقّل لأن المُعرّفات تتغيّر، واستعمل browser_wait_for بعد فعل يحمّل محتوى ' +
-      'ديناميكياً، وbrowser_navigate للانتقال بين الصفحات. ' +
+      'ديناميكياً، وbrowser_navigate للانتقال بين الصفحات. أفعال إضافية: browser_select_option ' +
+      'للقوائم المنسدلة، browser_press_key لمفاتيح مثل Enter/Tab (بعد تركيز الحقل)، ' +
+      'browser_scroll لكشف محتوى أسفل الصفحة، وbrowser_hover لإظهار قوائم التحويم. ' +
       '**مهم جداً**: لفحص الصفحة أو أخذ لقطة أو قراءة عناصرها استعمل أدوات المعاينة هذه ' +
       'حصراً. لا تكتب ولا تشغّل سكربتات puppeteer أو playwright أو selenium ولا تثبّت ' +
       'puppeteer-core، ولا تُطلق Chrome/متصفحاً منفصلاً (headless أو غيره) لالتقاط لقطات — ' +
@@ -580,8 +586,80 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         return { content: [{ type: 'text', text: r.found ? 'ظهر المطلوب.' : 'انتهت المهلة ولم يظهر المطلوب.' }], isError: !r.found };
       }
     );
+    // إكمال طقم الأفعال (البند 2): قائمة منسدلة/مفتاح/تمرير/تحويم — تكافؤ Playwright MCP.
+    const selectTool = sdk.tool(
+      'browser_select_option',
+      'اختر خياراً من قائمة منسدلة <select> في الصفحة المعروضة. مرّر ref (من ' +
+      'browser_snapshot) أو مُحدِّد CSS، مع value الخيار أو نصّه الظاهر.',
+      {
+        ref: z.string().describe('مُعرّف القائمة من browser_snapshot (مثل e9) أو مُحدِّد CSS'),
+        value: z.string().describe('قيمة الخيار (value) أو نصّه الظاهر'),
+      },
+      async (args) => {
+        const r = await preview.selectOption(String((args && args.ref) || ''), String((args && args.value) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'not_found' ? 'لم يُعثر على القائمة — أعد أخذ لقطة بـ browser_snapshot.'
+            : r && r.error === 'not_select' ? 'العنصر ليس قائمة منسدلة <select>.'
+            : r && r.error === 'no_option' ? 'لا خيار بهذه القيمة/النص في القائمة.'
+            : 'تعذّر الاختيار (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: 'اختير «' + (r.label || '') + '».' }] };
+      }
+    );
+    const pressTool = sdk.tool(
+      'browser_press_key',
+      'اضغط مفتاحاً على العنصر المركّز في الصفحة المعروضة (بعد browser_click لتركيزه). ' +
+      'مفيد لإرسال نموذج بـ Enter أو التنقّل بـ Tab/الأسهم. للكتابة استعمل browser_type.',
+      { key: z.string().describe('اسم المفتاح: Enter/Tab/Escape/ArrowUp/ArrowDown/ArrowLeft/ArrowRight/Backspace/Delete/Home/End/PageUp/PageDown') },
+      async (args) => {
+        const r = preview.pressKey(String((args && args.key) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'bad_key' ? 'مفتاح غير مدعوم (استعمل الأسماء المذكورة في وصف الأداة).'
+            : 'تعذّر الضغط (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: 'ضُغط ' + r.key + '.' }] };
+      }
+    );
+    const scrollTool = sdk.tool(
+      'browser_scroll',
+      'مرّر الصفحة المعروضة لكشف محتوى خارج نافذة العرض (قبل أخذ لقطة جديدة). ' +
+      'direction: down/up/top/bottom.',
+      {
+        direction: z.string().describe('اتجاه التمرير: down (افتراضي)/up/top/bottom'),
+        amount: z.number().int().optional().describe('مقدار التمرير بالبكسل (اختياري — الافتراضي ~ارتفاع الشاشة)'),
+      },
+      async (args) => {
+        const r = await preview.scroll(String((args && args.direction) || 'down'), args && args.amount);
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : 'تعذّر التمرير (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: 'مُرّرت الصفحة (scrollY=' + r.scrollY + ').' }] };
+      }
+    );
+    const hoverTool = sdk.tool(
+      'browser_hover',
+      'حوّم المؤشر فوق عنصر في الصفحة المعروضة لإظهار قائمة/محتوى يظهر عند التحويم. ' +
+      'مرّر ref (من browser_snapshot) أو مُحدِّد CSS.',
+      { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل e4) أو مُحدِّد CSS') },
+      async (args) => {
+        const r = await preview.hover(String((args && args.ref) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.'
+            : 'تعذّر التحويم (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: 'حُوّم فوق <' + r.tag + '>.' }] };
+      }
+    );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, screenshotTool, clickTool, typeTool, navTool, waitTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, screenshotTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool] }),
     });
   }
 
