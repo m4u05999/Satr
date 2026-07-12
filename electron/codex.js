@@ -192,6 +192,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
     appServerArgs.push(
       '-c', 'mcp_servers.satr_preview.url="' + mcpHost.url + '"',
       '-c', 'mcp_servers.satr_preview.bearer_token_env_var="SATR_MCP_TOKEN"',
+      // مهلة استدعاء أداة MCP: أفعال المتصفح (نقر/كتابة/اختيار/مفتاح) تنتظر موافقة المستخدم
+      // على مربع الإذن العربي عبر guard في codexmcp. مهلة Codex الافتراضية على أداة MCP
+      // قصيرة، فكانت تُلغي الاستدعاء قبل أن يلحق المستخدم الموافقة — فيتلقّى النموذج فشلاً
+      // ويقترح bypassPermissions بدل انتظار الإذن. نرفعها لتتّسع لموافقة بشرية (الأدوات
+      // القرائية لا تنتظر إذناً فلا تتأثر). إيقاف الدور يفكّ أي إذن معلّق فلا تعليق دائم.
+      '-c', 'mcp_servers.satr_preview.tool_timeout_sec=600',
+      '-c', 'mcp_servers.satr_preview.startup_timeout_sec=30',
     );
     spawnEnv.SATR_MCP_TOKEN = mcpHost.token;
   }
