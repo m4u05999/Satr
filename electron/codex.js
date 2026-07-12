@@ -8,7 +8,8 @@
  *
  * يطبّع خرج Codex (أحداث v2: thread/turn/item + ServerRequest للأذونات) إلى عقد أحداث
  * «سطر» نفسه (system/stream_text/assistant/user/result/permission_request/file_edit)،
- * فالواجهة لا تتغيّر. المصادقة: تسجيل دخول الاشتراك (~/.codex/auth.json) أولاً، والـ
+ * مع phase اختيارية لنص الوكيل (commentary/final_answer) كي تفصل الواجهة سجل العمل عن
+ * الإجابة. المصادقة: تسجيل دخول الاشتراك (~/.codex/auth.json) أولاً، والـ
  * API key ثانوياً (CODEX_API_KEY) — لا نحقنها هنا، الثنائي يقرأها بنفسه.
  *
  * تفاصيل مثبّتة بالمسبار (2026-07-12) موثّقة في ذاكرة codex-engine-plan:
@@ -170,6 +171,8 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
 
   // تراكم نصّ رسالة الوكيل الحالية (نبثّه deltas ثم نُصدر assistant مكتملاً)
   const agentText = new Map();     // itemId → نص متراكم
+  const agentPhase = new Map();    // itemId → commentary | final_answer
+  const startedToolCards = new Set(); // أدوات ظهرت عند item/started وتنتظر نتيجتها
   // بيانات تغييرات الملفات لكل عنصر (تُلتقط عند item/started قبل تطبيق الرقعة):
   // itemId → [{ path, kind }]. تخدم غرضين: عرض المسارات في مربع الإذن (params
   // الإذن في v2 لا تحملها)، والتقاط لقطة «قبل» للتراجع في اللحظة الصحيحة (نظير PreToolUse).
@@ -187,15 +190,28 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
   }
   function respond(id, result) { writeMsg({ jsonrpc: '2.0', id, result }); }
 
-  // تُصدر رسالة assistant نصية مكتملة (تستبدل بثّ stream_text في الواجهة)
-  function emitAssistantText(text) {
-    if (!text) return;
-    emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+  function normalizeAgentPhase(phase) {
+    return phase === 'commentary' ? 'commentary' : 'final_answer';
   }
-  // بطاقة أداة (أمر/تنفيذ): assistant tool_use ثم user tool_result — الواجهة ترسمها native
-  function emitToolCard(id, name, input, output, isError) {
+
+  // تُصدر رسالة assistant نصية مكتملة بمرحلتها (تستبدل بثّ stream_text المناظر في الواجهة)
+  function emitAssistantText(text, phase) {
+    if (!text) return;
+    emit({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text, phase: normalizeAgentPhase(phase) }] },
+    });
+  }
+  function emitToolStart(id, name, input) {
     emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+  }
+  function emitToolResult(id, output, isError) {
     emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output || '', is_error: !!isError }] } });
+  }
+  // مسار احتياطي إن لم يرسل app-server حدث item/started لإصدار بعينه.
+  function emitToolCard(id, name, input, output, isError) {
+    emitToolStart(id, name, input);
+    emitToolResult(id, output, isError);
   }
 
   // التقاط لقطة «قبل» لتغيير ملف — تُستدعى عند item/started (قبل تطبيق الرقعة).
@@ -299,8 +315,11 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
       }
       case 'item/agentMessage/delta': {
         if (p.delta) {
-          emit({ type: 'stream_text', text: p.delta });
-          agentText.set(p.itemId || '_', (agentText.get(p.itemId || '_') || '') + p.delta);
+          const itemId = p.itemId || '_';
+          const phase = normalizeAgentPhase(p.phase || agentPhase.get(itemId));
+          if (p.phase) agentPhase.set(itemId, phase);
+          emit({ type: 'stream_text', text: p.delta, phase });
+          agentText.set(itemId, (agentText.get(itemId) || '') + p.delta);
         }
         break;
       }
@@ -308,6 +327,12 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
         // بداية عنصر: لعناصر تغيير الملفات نلتقط لقطة «قبل» الآن (قبل تطبيق الرقعة —
         // اللحظة الصحيحة للتراجع، نظير PreToolUse) ونخزّن مساراتها لمربع الإذن.
         const it = p.item || {};
+        if (it.type === 'agentMessage' && it.id && it.phase) agentPhase.set(it.id, normalizeAgentPhase(it.phase));
+        if (it.type === 'commandExecution' && it.id) {
+          const command = typeof it.command === 'string' ? it.command : (Array.isArray(it.command) ? it.command.join(' ') : '');
+          emitToolStart(it.id, 'Shell', { command, cwd: it.cwd || cwd });
+          startedToolCards.add(it.id);
+        }
         if (it.type === 'fileChange' && Array.isArray(it.changes)) {
           const meta = [];
           for (const ch of it.changes) {
@@ -330,7 +355,7 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
             .filter((s) => s && s.step)
             .map((s) => mark(s.status) + ' ' + String(s.step))
             .join('\n');
-          if (lines) emitAssistantText('📋 الخطة:\n' + lines);
+          if (lines) emitAssistantText('📋 الخطة:\n' + lines, 'commentary');
         }
         break;
       }
@@ -357,13 +382,16 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
     if (t === 'agentMessage') {
       // النص الكامل — نُصدر assistant (يستبدل بثّ stream_text في الواجهة)
       const text = (typeof item.text === 'string' && item.text) || agentText.get(item.id) || '';
-      emitAssistantText(text);
+      const phase = normalizeAgentPhase(item.phase || agentPhase.get(item.id));
+      emitAssistantText(text, phase);
       agentText.delete(item.id);
+      agentPhase.delete(item.id);
     } else if (t === 'commandExecution') {
       const cmd = typeof item.command === 'string' ? item.command : (Array.isArray(item.command) ? item.command.join(' ') : '');
       const out = item.aggregatedOutput || item.stdout || '';
       const isErr = typeof item.exitCode === 'number' ? item.exitCode !== 0 : false;
-      emitToolCard(item.id, 'Shell', { command: cmd, cwd: item.cwd || cwd }, out, isErr);
+      if (startedToolCards.delete(item.id)) emitToolResult(item.id, out, isErr);
+      else emitToolCard(item.id, 'Shell', { command: cmd, cwd: item.cwd || cwd }, out, isErr);
     } else if (t === 'fileChange') {
       // نفضّل بيانات item/started الملتقطة (قد يختصر item/completed الحقول)؛ وإلا item الحالي
       const changes = fileChangeMeta.get(item.id)
@@ -379,7 +407,7 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
         || (typeof item.summary === 'string' && item.summary)
         || (Array.isArray(item.content) ? item.content.map((c) => (c && (c.text || c.summary)) || '').filter(Boolean).join(' ') : '');
       r = String(r || '').trim();
-      if (r) emitAssistantText('💭 ' + (r.length > 600 ? r.slice(0, 600) + '…' : r));
+      if (r) emitAssistantText('💭 ' + (r.length > 600 ? r.slice(0, 600) + '…' : r), 'commentary');
     }
     // WebSearch/غيرها: نص الوكيل يكفي
   }
@@ -393,7 +421,7 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
     if (isError && errMsg) {
       let human = String(errMsg);
       try { const j = JSON.parse(human); if (j && j.detail) human = j.detail; } catch {}
-      emitAssistantText('⚠️ تعذّر إكمال الدور: ' + human);
+      emitAssistantText('⚠️ تعذّر إكمال الدور: ' + human, 'final_answer');
     }
     emit({
       type: 'result', subtype: isError ? 'error' : 'success',

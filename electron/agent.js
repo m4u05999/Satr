@@ -7,8 +7,9 @@
  *  - مقاطعة حقيقية أثناء عمل النموذج عبر interrupt()‎ — تتطلب إدخالاً بثّياً،
  *    لذا نمرر البرومبت كمولّد غير متزامن يبقى مفتوحاً حتى نهاية الدور
  *
- * رسائل SDK من نوع system/assistant/user/result لها نفس بنية stream-json
- * التي تتعامل معها الواجهة أصلاً، فتمرَّر كما هي عبر emit.
+ * رسائل SDK من نوع system/user/result تمرّ كما هي. رسالة assistant تُطبَّع للعرض:
+ * text ⇒ final_answer، وthinking/redacted_thinking ⇒ نص commentary؛ فتعرض الواجهة
+ * سجل التفكير بالعقد نفسه الذي يستخدمه محرك Codex، دون كشف بيانات التفكير المحجوبة.
  */
 
 const fs = require('fs');
@@ -103,6 +104,46 @@ function resolveClaudeBin(force) {
 
 // الأدوات الموافَق عليها «دائماً» — تعيش طوال عمر التطبيق
 const alwaysAllowed = new Set();
+const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
+
+// تطبيع رسالة Claude المكتملة لعقد العرض الموحّد. لا نعدّل كائن SDK الأصلي لأن بقية
+// خصائص الرسالة (session/uuid/parent_tool_use_id) تظل جزءاً من العقد الحي.
+function annotateAssistantMessage(msg) {
+  if (!msg || msg.type !== 'assistant' || !msg.message || !Array.isArray(msg.message.content)) return msg;
+  const content = [];
+  for (const block of msg.message.content) {
+    if (!block || typeof block !== 'object') continue;
+    if (block.type === 'text') {
+      content.push({ ...block, phase: 'final_answer' });
+    } else if (block.type === 'thinking') {
+      const text = typeof block.thinking === 'string' ? block.thinking : '';
+      if (text) content.push({ type: 'text', text, phase: 'commentary' });
+    } else if (block.type === 'redacted_thinking') {
+      // block.data مادة مشفّرة/محجوبة وليست نصاً للعرض؛ لا نمررها إلى الواجهة.
+      content.push({ type: 'text', text: REDACTED_THINKING_NOTICE, phase: 'commentary' });
+    } else {
+      content.push(block); // tool_use وبقية الكتل تبقى حرفياً كما كانت
+    }
+  }
+  return { ...msg, message: { ...msg.message, content } };
+}
+
+// يحوّل حدث بث SDK واحداً إلى عقد سطر، أو null إن لم يكن نصاً قابلاً للعرض.
+function phaseEventFromStreamEvent(ev) {
+  if (ev && ev.type === 'content_block_delta' && ev.delta) {
+    if (ev.delta.type === 'text_delta' && ev.delta.text) {
+      return { type: 'stream_text', text: ev.delta.text, phase: 'final_answer' };
+    }
+    if (ev.delta.type === 'thinking_delta' && ev.delta.thinking) {
+      return { type: 'stream_text', text: ev.delta.thinking, phase: 'commentary' };
+    }
+  }
+  if (ev && ev.type === 'content_block_start' && ev.content_block &&
+      ev.content_block.type === 'redacted_thinking') {
+    return { type: 'stream_text', text: REDACTED_THINKING_NOTICE, phase: 'commentary' };
+  }
+  return null;
+}
 
 /**
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
@@ -424,12 +465,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     try {
       for await (const msg of q) {
         if (msg.type === 'stream_event') {
-          const ev = msg.event;
-          if (ev && ev.type === 'content_block_delta' && ev.delta &&
-              ev.delta.type === 'text_delta' && ev.delta.text) {
-            emit({ type: 'stream_text', text: ev.delta.text });
-          }
-        } else if (msg.type === 'system' || msg.type === 'assistant' || msg.type === 'user') {
+          const phaseEvent = phaseEventFromStreamEvent(msg.event);
+          if (phaseEvent) emit(phaseEvent);
+        } else if (msg.type === 'assistant') {
+          emit(annotateAssistantMessage(msg));
+        } else if (msg.type === 'system' || msg.type === 'user') {
           emit(msg);
         } else if (msg.type === 'result') {
           emit(msg);

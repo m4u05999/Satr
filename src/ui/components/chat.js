@@ -266,39 +266,131 @@ class SatrChat extends HTMLElement {
     const who = document.createElement('div'); who.className = 'who';
     who.textContent = label || 'النموذج'; // نص لا HTML (اسم المحرك آمن لكن textContent أنظف)
     w.appendChild(who);
-    // مجموعة الإجراءات القابلة للطيّ: مخفية حتى أول أداة، وتنطوي عند انتهاء الدور
-    const toolsWrap = document.createElement('div'); toolsWrap.className = 'tools-wrap';
-    const toolsHead = document.createElement('div'); toolsHead.className = 'tools-head';
-    const chev = document.createElement('span'); chev.className = 'chev'; chev.textContent = '▼';
+
+    // مسار العمل الحي: يجمع السرد المرحلي والتنفيذ والتغييرات في سجل واحد خفيف قابل للطي.
+    const worklog = document.createElement('section'); worklog.className = 'worklog working collapsed';
+    const workToggle = document.createElement('button');
+    workToggle.type = 'button'; workToggle.className = 'worklog-toggle'; workToggle.setAttribute('aria-expanded', 'false');
+    workToggle.disabled = true;
+    const workDot = document.createElement('span'); workDot.className = 'work-dot';
+    const workTitle = document.createElement('span'); workTitle.className = 'work-title'; workTitle.textContent = 'يستعد';
+    workTitle.setAttribute('aria-live', 'polite');
+    const workMeta = document.createElement('span'); workMeta.className = 'work-meta';
+    const workChev = document.createElement('span'); workChev.className = 'work-chev'; workChev.textContent = '⌄';
+    workToggle.appendChild(workDot); workToggle.appendChild(workTitle); workToggle.appendChild(workMeta); workToggle.appendChild(workChev);
+    const workBody = document.createElement('div'); workBody.className = 'worklog-body';
+
+    const commentaryWrap = document.createElement('section'); commentaryWrap.className = 'work-section commentary-wrap'; commentaryWrap.hidden = true;
+    const commentaryHead = document.createElement('div'); commentaryHead.className = 'work-section-head'; commentaryHead.textContent = 'سجل التفكير';
+    const commentaryMd = document.createElement('div'); commentaryMd.className = 'md commentary-md'; commentaryMd.dir = 'auto';
+    commentaryWrap.appendChild(commentaryHead); commentaryWrap.appendChild(commentaryMd);
+
+    const toolsWrap = document.createElement('section'); toolsWrap.className = 'work-section tools-wrap'; toolsWrap.hidden = true;
+    const toolsHead = document.createElement('div'); toolsHead.className = 'work-section-head tools-head';
     const toolsLabel = document.createElement('span'); toolsLabel.textContent = 'الإجراءات';
-    toolsHead.appendChild(chev); toolsHead.appendChild(toolsLabel);
+    toolsHead.appendChild(toolsLabel);
     const tools = document.createElement('div'); tools.className = 'tools';
     toolsWrap.appendChild(toolsHead); toolsWrap.appendChild(tools);
-    toolsWrap.style.display = 'none';
-    toolsHead.addEventListener('click', () => toolsWrap.classList.toggle('collapsed'));
     let toolCount = 0;
+
     // بطاقات الوكلاء الفرعيين (المرحلة 14.2): أداة الإطلاق (Task/Agent) تصير بطاقة،
     // وكل ما يصل بـ parent_tool_use_id يتوجّه داخلها (أدوات متداخلة + سجل نصي حي)
+    const agentsWrap = document.createElement('section'); agentsWrap.className = 'work-section agents-wrap'; agentsWrap.hidden = true;
+    const agentsHead = document.createElement('div'); agentsHead.className = 'work-section-head'; agentsHead.textContent = 'الوكلاء الفرعيون';
     const agentsFlow = document.createElement('div'); agentsFlow.className = 'agents-flow';
+    agentsWrap.appendChild(agentsHead); agentsWrap.appendChild(agentsFlow);
     const agentCards = {}; // tool_use_id للإطلاق → { el, tools, text, buf }
+    let agentCount = 0;
+
+    const diffsWrap = document.createElement('section'); diffsWrap.className = 'work-section diffs-wrap'; diffsWrap.hidden = true;
+    const diffsHead = document.createElement('div'); diffsHead.className = 'work-section-head'; diffsHead.textContent = 'التغييرات';
     const diffs = document.createElement('div'); diffs.className = 'diffs';
+    diffsWrap.appendChild(diffsHead); diffsWrap.appendChild(diffs);
+
+    workBody.appendChild(commentaryWrap); workBody.appendChild(toolsWrap); workBody.appendChild(agentsWrap); workBody.appendChild(diffsWrap);
+    worklog.appendChild(workToggle); worklog.appendChild(workBody);
+
+    // الإجابة النهائية لها سطح مستقل وواضح، بينما يبقى سجل العمل خفيفاً فوقها.
+    const answerWrap = document.createElement('section'); answerWrap.className = 'answer-wrap'; answerWrap.hidden = true;
+    const answerLabel = document.createElement('div'); answerLabel.className = 'answer-label'; answerLabel.textContent = 'الإجابة';
     const bubble = document.createElement('div'); bubble.className = 'bubble';
     const md = document.createElement('div'); md.className = 'md'; md.dir = 'auto';
-    bubble.appendChild(md); bubble.style.display = 'none';
-    const status = document.createElement('div');
-    status.className = 'thinking'; status.textContent = 'يعمل';
-    w.appendChild(toolsWrap); w.appendChild(agentsFlow); w.appendChild(diffs); w.appendChild(bubble); w.appendChild(status);
+    bubble.appendChild(md); answerWrap.appendChild(answerLabel); answerWrap.appendChild(bubble);
+    w.appendChild(worklog); w.appendChild(answerWrap);
     thread.appendChild(w); scrollDown();
 
-    let fullText = '';
-    let partial = '';      // نص جزئي يصل حرفاً بحرف من بث SDK
-    let lastRender = 0;
+    const textState = {
+      commentary: { full: '', partial: '' },
+      final_answer: { full: '', partial: '' },
+    };
+    const lastRender = { commentary: 0, final_answer: 0 };
+    let diffCount = 0;
+    let hasActivity = false;
+    let answerStarted = false;
+    let manuallyCollapsed = false;
     const toolEls = {};
-    function renderNow() {
-      bubble.style.display = '';
-      md.innerHTML = renderMD(partial ? (fullText ? fullText + '\n\n' + partial : partial) : fullText);
+
+    function normalizePhase(phase) { return phase === 'commentary' ? 'commentary' : 'final_answer'; }
+    function phaseText(phase) {
+      const state = textState[phase];
+      return state.partial ? (state.full ? state.full + '\n\n' + state.partial : state.partial) : state.full;
+    }
+    function setWorklogCollapsed(collapsed) {
+      worklog.classList.toggle('collapsed', collapsed);
+      workToggle.setAttribute('aria-expanded', String(!collapsed));
+    }
+    workToggle.addEventListener('click', () => {
+      manuallyCollapsed = true;
+      setWorklogCollapsed(!worklog.classList.contains('collapsed'));
+    });
+    function updateWorkMeta() {
+      const parts = [];
+      if (phaseText('commentary')) parts.push('سرد حي');
+      if (toolCount) parts.push(toolCount + ' إجراء');
+      if (agentCount) parts.push(agentCount + ' وكيل');
+      if (diffCount) parts.push(diffCount + ' تغيير');
+      workMeta.textContent = parts.join(' · ');
+    }
+    function revealActivity(title) {
+      hasActivity = true;
+      workToggle.disabled = false;
+      workTitle.textContent = title;
+      if (!manuallyCollapsed && !answerStarted) setWorklogCollapsed(false);
+      updateWorkMeta();
+    }
+    function startAnswer() {
+      if (answerStarted) return;
+      answerStarted = true;
+      answerWrap.hidden = false;
+      worklog.classList.add('answering');
+      workTitle.textContent = 'يصوغ الإجابة';
+      if (hasActivity) setWorklogCollapsed(true);
+    }
+    function renderPhase(phase) {
+      const text = phaseText(phase);
+      if (phase === 'commentary') {
+        commentaryWrap.hidden = false;
+        commentaryMd.innerHTML = renderMD(text);
+        revealActivity('يفكّر ويستكشف');
+      } else {
+        startAnswer();
+        md.innerHTML = renderMD(text);
+      }
       scrollDown();
     }
+    function flushTextSurfaces() {
+      const commentaryText = phaseText('commentary');
+      const answerText = phaseText('final_answer');
+      if (commentaryText) {
+        commentaryWrap.hidden = false;
+        commentaryMd.innerHTML = renderMD(commentaryText);
+      }
+      if (answerText) {
+        answerWrap.hidden = false;
+        md.innerHTML = renderMD(answerText);
+      }
+    }
+
     // إنشاء بطاقة وكيل فرعي عند استدعاء أداة الإطلاق (Task/Agent)
     function createAgentCard(id, inp) {
       const card = document.createElement('div');
@@ -314,13 +406,16 @@ class SatrChat extends HTMLElement {
       const text = document.createElement('div'); text.className = 'agent-text';
       card.appendChild(head); card.appendChild(nested); card.appendChild(text);
       agentsFlow.appendChild(card);
+      agentsWrap.hidden = false;
+      agentCount++;
+      revealActivity('ينسّق وكيلاً فرعياً');
       agentCards[id] = { el: card, tools: nested, text, buf: '' };
       if (id) toolEls[id] = card; // toolDone يعلّم البطاقة ✓/✗ عبر .state داخلها
     }
 
     return {
       el: w, // جذر البطاقة — لإدراج تنبيهات قبل الرد (تنبيه 📎 الحقن مثلاً)
-      addText(t, parentId) {
+      addText(t, parentId, phase) {
         // نص وكيل فرعي (forwardSubagentText) ⇐ سجل بطاقته المتداخل لا النص الرئيسي
         const card = parentId ? agentCards[parentId] : null;
         if (card) {
@@ -330,15 +425,21 @@ class SatrChat extends HTMLElement {
           scrollDown();
           return;
         }
-        // الرسالة المكتملة تحل محل النص الجزئي المتراكم لنفس الكتلة
-        partial = '';
-        fullText += (fullText ? '\n\n' : '') + t;
-        renderNow();
+        // الرسالة المكتملة تحل محل النص الجزئي المتراكم للمرحلة نفسها فقط.
+        const normalized = normalizePhase(phase);
+        const state = textState[normalized];
+        state.partial = '';
+        state.full += (state.full ? '\n\n' : '') + t;
+        renderPhase(normalized);
       },
-      addDelta(t) {
-        partial += t;
+      addDelta(t, phase) {
+        const normalized = normalizePhase(phase);
+        textState[normalized].partial += t;
         const now = Date.now();
-        if (now - lastRender > 80) { lastRender = now; renderNow(); } // خنق إعادة الرسم
+        if (now - lastRender[normalized] > 80) {
+          lastRender[normalized] = now;
+          renderPhase(normalized);
+        } // خنق إعادة الرسم لكل مرحلة على حدة
       },
       addTool(id, name, inp, parentId) {
         const card = parentId ? agentCards[parentId] : null;
@@ -354,18 +455,18 @@ class SatrChat extends HTMLElement {
         el.querySelector('.name').textContent = name;
         el.querySelector('.detail').textContent = toolDetail(inp);
         if (id) toolEls[id] = el;
+        toolCount++;
+        toolsLabel.textContent = 'الإجراءات (' + toolCount + ')';
         if (card) {
           // أداة متداخلة من وكيل فرعي ⇐ داخل بطاقة وكيلها، ملتصقة بآخر إجراء
           card.tools.appendChild(el);
           card.tools.scrollTop = card.tools.scrollHeight;
         } else {
           tools.appendChild(el);
-          // إظهار المجموعة عند أول أداة + تحديث العدّاد + التصاق القائمة بآخر إجراء
-          toolCount++;
-          toolsLabel.textContent = 'الإجراءات (' + toolCount + ')';
-          toolsWrap.style.display = '';
+          toolsWrap.hidden = false;
           tools.scrollTop = tools.scrollHeight;
         }
+        revealActivity('ينفّذ ' + name);
         scrollDown();
       },
       toolDone(id, isError) {
@@ -373,15 +474,18 @@ class SatrChat extends HTMLElement {
         if (!el) return;
         el.classList.add('done');
         el.querySelector('.state').textContent = isError ? '✗' : '✓';
-        if (isError) el.querySelector('.state').style.color = 'var(--red)';
+        if (isError) el.classList.add('error');
+        workTitle.textContent = isError ? 'واجه عائقاً ويتابع' : 'يتابع العمل';
       },
       addDiff(ev) {
         diffs.appendChild(bDiff(ev));
+        diffsWrap.hidden = false;
+        diffCount++;
+        revealActivity('يراجع التغييرات');
         scrollDown();
       },
       // بطاقة نتيجة ضغط المحادثة (/ضغط): من X رمز ← Y رمز
       compacted(meta) {
-        status.remove();
         const fmt = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : '—');
         const card = document.createElement('div');
         card.className = 'compact-card';
@@ -398,14 +502,22 @@ class SatrChat extends HTMLElement {
           const unit = document.createElement('span'); unit.className = 'sub'; unit.textContent = 'رمز · المحادثة مستمرة';
           card.appendChild(nums); card.appendChild(unit);
         }
-        w.appendChild(card); scrollDown();
+        workBody.appendChild(card);
+        revealActivity('يضغط المحادثة');
+        scrollDown();
       },
       finish(resultObj) {
-        status.remove();
-        // انتهى الدور: تُطوى قائمة الإجراءات لملخص سطر واحد (الرأس بعدّاده يبقى)
-        if (toolCount) toolsWrap.classList.add('collapsed');
-        // أزرار النسخ تُحقن بعد اكتمال النص (البث يعيد بناء innerHTML فيضيعها)
-        if (fullText) { addCodeCopyButtons(md); addMsgCopy(who, () => fullText); }
+        flushTextSurfaces();
+        worklog.classList.remove('working', 'answering');
+        worklog.classList.add(resultObj && resultObj.is_error ? 'failed' : 'done');
+        workTitle.textContent = resultObj && resultObj.is_error ? 'اكتمل مع خطأ' : 'اكتمل العمل';
+        if (hasActivity) setWorklogCollapsed(true);
+        // أزرار النسخ تُحقن بعد اكتمال النص (البث يعيد بناء innerHTML فيضيعها).
+        const answerText = phaseText('final_answer');
+        const commentaryText = phaseText('commentary');
+        if (answerText) addCodeCopyButtons(md);
+        if (commentaryText) addCodeCopyButtons(commentaryMd);
+        if (answerText || commentaryText) addMsgCopy(who, () => answerText || commentaryText);
         if (resultObj) {
           const cost = typeof resultObj.total_cost_usd === 'number' ? resultObj.total_cost_usd : 0;
           totalCost += cost;
@@ -418,16 +530,24 @@ class SatrChat extends HTMLElement {
         }
       },
       error(text) {
-        status.remove();
+        worklog.classList.remove('working', 'answering');
+        worklog.classList.add('failed');
+        workTitle.textContent = 'تعذّر الإكمال';
         const e = document.createElement('div');
         e.className = 'error-box'; e.dir = 'auto'; e.textContent = text;
         w.appendChild(e); scrollDown();
       },
       stopped() {
-        // إزالة مؤشر «يعمل» عند الإيقاف اليدوي — آمنة للاستدعاء المتكرر
-        status.remove();
-        if (toolCount) toolsWrap.classList.add('collapsed');
-        if (fullText || partial) { addCodeCopyButtons(md); addMsgCopy(who, () => fullText || partial); }
+        flushTextSurfaces();
+        worklog.classList.remove('working', 'answering');
+        worklog.classList.add('stopped');
+        workTitle.textContent = 'توقّف العمل';
+        if (hasActivity) setWorklogCollapsed(true);
+        const answerText = phaseText('final_answer');
+        const commentaryText = phaseText('commentary');
+        if (answerText) addCodeCopyButtons(md);
+        if (commentaryText) addCodeCopyButtons(commentaryMd);
+        if (answerText || commentaryText) addMsgCopy(who, () => answerText || commentaryText);
         if (!w.querySelector('.stopped-note')) {
           const n = document.createElement('div');
           n.className = 'meta stopped-note';
@@ -450,6 +570,15 @@ class SatrChat extends HTMLElement {
     w.appendChild(whoEl);
     const toolNames = Array.isArray(msg.tools) ? msg.tools : [];
     if (toolNames.length) {
+      const worklog = document.createElement('details'); worklog.className = 'worklog history-worklog done';
+      const summary = document.createElement('summary'); summary.className = 'worklog-toggle';
+      const dot = document.createElement('span'); dot.className = 'work-dot';
+      const title = document.createElement('span'); title.className = 'work-title'; title.textContent = 'سجل التنفيذ';
+      const meta = document.createElement('span'); meta.className = 'work-meta'; meta.textContent = toolNames.length + ' إجراء';
+      const chev = document.createElement('span'); chev.className = 'work-chev'; chev.textContent = '⌄';
+      summary.appendChild(dot); summary.appendChild(title); summary.appendChild(meta); summary.appendChild(chev);
+      const body = document.createElement('div'); body.className = 'worklog-body';
+      const section = document.createElement('section'); section.className = 'work-section tools-wrap';
       const tools = document.createElement('div'); tools.className = 'tools';
       for (const name of toolNames.slice(0, 6)) {
         const t = document.createElement('div');
@@ -464,13 +593,15 @@ class SatrChat extends HTMLElement {
         more.textContent = '+' + (toolNames.length - 6) + ' أداة أخرى';
         tools.appendChild(more);
       }
-      w.appendChild(tools);
+      section.appendChild(tools); body.appendChild(section); worklog.appendChild(summary); worklog.appendChild(body); w.appendChild(worklog);
     }
     if (msg.text) {
+      const answerWrap = document.createElement('section'); answerWrap.className = 'answer-wrap history-answer';
+      const answerLabel = document.createElement('div'); answerLabel.className = 'answer-label'; answerLabel.textContent = 'الإجابة';
       const bubble = document.createElement('div'); bubble.className = 'bubble';
       const md = document.createElement('div'); md.className = 'md'; md.dir = 'auto';
       md.innerHTML = renderMD(msg.text);
-      bubble.appendChild(md); w.appendChild(bubble);
+      bubble.appendChild(md); answerWrap.appendChild(answerLabel); answerWrap.appendChild(bubble); w.appendChild(answerWrap);
       addCodeCopyButtons(md);
       addMsgCopy(w.querySelector('.who'), () => msg.text);
     }

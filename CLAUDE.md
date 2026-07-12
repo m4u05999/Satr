@@ -212,10 +212,14 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
 3. الأحداث تصل الواجهة عبر `satr:event` — أحداث تشغيل ملغى تُحجب بـ `runSeq` في main.js
 4. الواجهة تعالج الأحداث حسب `type`:
    - `system` (init): يحمل `session_id`
-   - `assistant`: رسالة فيها `message.content[]` من نوع `text` أو `tool_use` (لها `id`, `name`, `input`)
+   - `assistant`: رسالة فيها `message.content[]` من نوع `text` أو `tool_use` (لها `id`, `name`, `input`).
+     نصا Claude وCodex يحملان `phase: commentary | final_answer` لفصل سجل العمل عن الإجابة؛
+     `agent.js` يطبّع كتل Claude ‏`thinking` إلى نص commentary، و`redacted_thinking` إلى
+     إشعار آمن بلا بياناتها المشفّرة. غياب phase يعني `final_answer` للتوافق مع المحوّلات.
    - `user`: نتائج الأدوات `tool_result` (لها `tool_use_id`, `is_error`)
    - `result`: النهائي — فيه `total_cost_usd`, `duration_ms`, `session_id`, `is_error`
-   - `stream_text` (SDK فقط): جزء نصي تدريجي `{text}` — يُعرض فوراً ويُستبدل بنص `assistant` المكتمل
+   - `stream_text`: جزء نصي تدريجي `{text, phase?}` — يُعرض فوراً ويُستبدل بنص `assistant`
+     المكتمل؛ المحركان الأصليان يرسلان phase، والمحوّلات التي تغيب عنها تتراجع إلى الإجابة.
    - `permission_request` (SDK فقط): `{id, tool, input}` — تفتح مربع حوار عربياً،
      والرد عبر `window.satr.permission(id, allow, always)` → `satr:permission`
      («دائماً» تُحفظ لعمر التطبيق في agent.js)

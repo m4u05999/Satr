@@ -254,7 +254,7 @@
     const block = currentBlock;
     if (!block || block.done) return;
     if (ev.type === 'stream_text') {
-      if (ev.text) block.addDelta(ev.text);
+      if (ev.text) block.addDelta(ev.text, ev.phase);
       return;
     }
     if (ev.type === 'system' && ev.subtype === 'commands_changed') {
@@ -269,7 +269,7 @@
     } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
       // parent_tool_use_id (المرحلة 14.2): رسائل الوكيل الفرعي تتوجه لبطاقة وكيلها
       for (const c of ev.message.content) {
-        if (c.type === 'text' && c.text && c.text.trim()) block.addText(c.text, ev.parent_tool_use_id);
+        if (c.type === 'text' && c.text && c.text.trim()) block.addText(c.text, ev.parent_tool_use_id, c.phase || ev.phase);
         else if (c.type === 'tool_use') block.addTool(c.id, c.name, c.input, ev.parent_tool_use_id);
       }
     } else if (ev.type === 'user' && ev.message && Array.isArray(ev.message.content)) {

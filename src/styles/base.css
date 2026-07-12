@@ -19,6 +19,8 @@
     --gold-strong: #E5B655;    /* تحويم/توهج */
     --gold-soft: rgba(217, 164, 65, 0.12);
     --gold-border: rgba(217, 164, 65, 0.35);
+    --chat-user-surface: rgba(217, 164, 65, 0.09);
+    --chat-answer-surface: rgba(217, 164, 65, 0.055);
     /* دلالية — Grass/Red الداكنان من Radix */
     --green: #71d083;          /* grass11 */
     --green-soft: rgba(113, 208, 131, 0.12);
@@ -62,6 +64,8 @@
     --gold-strong: #b07d1a;
     --gold-soft: rgba(217, 164, 65, 0.16);
     --gold-border: rgba(154, 106, 16, 0.4);
+    --chat-user-surface: rgba(154, 106, 16, 0.08);
+    --chat-answer-surface: rgba(154, 106, 16, 0.045);
     /* دلالية — أغمق من نسخ الداكن لتقرأ على خلفية فاتحة */
     --green: #2f8a46;
     --green-soft: rgba(47, 138, 70, 0.12);
@@ -157,7 +161,7 @@
   }
   #jumpDown[hidden] { display: none; }
   #jumpDown:hover { background: var(--gold-soft); }
-  .thread { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+  .thread { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 30px; }
   .empty { text-align: center; color: var(--text-dim); margin-top: 12vh; }
   .empty .big { font-size: 40px; font-weight: 700; color: var(--gold); margin-bottom: 10px; }
   .empty p { max-width: 500px; margin: 6px auto; font-size: 14px; unicode-bidi: plaintext; }
@@ -168,14 +172,26 @@
 
   /* دخول ناعم للرسائل الجديدة (الدفعة 4.1) — انزياح طفيف + ظهور، يحترم تفضيل تقليل الحركة */
   @keyframes rise { from { opacity: 0; transform: translateY(5px); } }
-  .msg { display: flex; flex-direction: column; gap: 6px; animation: rise var(--dur) var(--ease); }
-  .msg .who { font-size: 12px; color: var(--text-dim); }
-  .msg.user .bubble {
-    background: var(--gold-soft); border: 1px solid var(--gold-border);
-    border-radius: 14px 14px 4px 14px; padding: 12px 16px;
-    align-self: flex-start; max-width: 92%; white-space: pre-wrap; unicode-bidi: plaintext;
+  @keyframes answerIn { from { opacity: 0; transform: translateY(7px); } }
+  @keyframes workPulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--gold-soft); }
+    50% { box-shadow: 0 0 0 6px var(--gold-soft); }
   }
-  .msg.assistant .bubble { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 18px; }
+  .msg { display: flex; flex-direction: column; min-width: 0; animation: rise var(--dur) var(--ease); }
+  .msg .who { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .msg.user { align-self: flex-start; max-width: 78%; gap: 6px; }
+  .msg.user .who { color: var(--gold); font-weight: 600; }
+  .msg.user .bubble {
+    background: var(--chat-user-surface); border: 0; border-inline-start: 2px solid var(--gold-border);
+    border-radius: 12px 3px 12px 12px; padding: 10px 15px;
+    white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext;
+  }
+  .msg.assistant { position: relative; gap: 10px; padding-inline-start: 24px; }
+  .msg.assistant::before {
+    content: ''; position: absolute; inset-inline-start: 5px; top: 8px; bottom: 8px;
+    width: 1px; background: var(--border-dim);
+  }
+  .msg.assistant > .who { color: var(--gold); font-weight: 650; letter-spacing: .01em; }
 
   .md { unicode-bidi: plaintext; }
   /* الفقرات تحلّ اتجاهها الأساسي بنفسها من أول حرف قوي —
@@ -199,7 +215,7 @@
   .md table { border-collapse: collapse; margin: .5em 0; direction: rtl; display: block; overflow-x: auto; max-width: 100%; }
   .md th, .md td { border: 1px solid var(--border); padding: 5px 11px; font-size: .93em; text-align: start; vertical-align: top; }
   .md th { background: var(--surface-2); color: var(--gold); font-weight: 600; white-space: nowrap; }
-  .md tbody tr:nth-child(even) { background: rgba(255,255,255,.025); }
+  .md tbody tr:nth-child(even) { background: var(--surface-2); }
   .md hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
   .md code { font-family: var(--mono); background: var(--bg); padding: 1px 6px; border-radius: 5px; font-size: .88em; direction: ltr; unicode-bidi: embed; }
   .md pre { direction: ltr; text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; overflow-x: auto; line-height: 1.55; position: relative; }
@@ -211,42 +227,106 @@
   }
   .md pre:hover .code-copy { opacity: 1; }
   /* زر نسخ الرسالة كاملة: في سطر «من» — يظهر عند التحويم على الرسالة */
-  .msg .who { display: flex; align-items: center; gap: 8px; }
   .msg-copy {
     font-size: 11px; padding: 1px 9px; border-radius: 6px; color: var(--text-dim);
     opacity: 0; transition: opacity var(--dur) var(--ease);
   }
-  .msg:hover .msg-copy { opacity: 1; }
+  .msg:hover .msg-copy, .msg-copy:focus-visible { opacity: 1; }
 
-  .tools { display: flex; flex-direction: column; gap: 6px; }
-  /* مجموعة الإجراءات القابلة للطيّ (لقطة قبول: الأدوات كانت تتكدس عموداً يملأ الشاشة):
-     رأس بعدّاد + قائمة مقيدة الارتفاع تلتصق بآخر إجراء أثناء البث، وتنطوي تلقائياً
-     عند انتهاء الدور (الرأس يبقى ملخصاً قابلاً للفتح) */
-  .tools-wrap { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; align-self: stretch; }
-  .tools-head { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none; }
-  .tools-head:hover { color: var(--gold); }
-  .tools-head .chev { transition: transform var(--dur) var(--ease); font-size: 10px; }
-  .tools-wrap.collapsed .chev { transform: rotate(-90deg); }
-  .tools-wrap .tools { max-height: 176px; overflow-y: auto; padding: 0 10px 8px; }
-  .tools-wrap.collapsed .tools { display: none; }
+  /* سجل العمل: خط زمني خفيف لا ينافس الإجابة، ويجمع التفكير والتنفيذ والفرق. */
+  .worklog { min-width: 0; color: var(--text-dim); }
+  .worklog-toggle {
+    display: flex; align-items: center; gap: 9px; width: 100%; min-height: 28px;
+    padding: 2px 0; border: 0; border-radius: 0; background: transparent;
+    color: var(--text-dim); font-family: var(--sans); font-size: 12.5px; text-align: start;
+  }
+  .worklog-toggle:hover { border: 0; background: transparent; color: var(--text); }
+  .worklog-toggle:disabled { cursor: default; }
+  .worklog-toggle:disabled .work-chev { visibility: hidden; }
+  summary.worklog-toggle { cursor: pointer; list-style: none; }
+  summary.worklog-toggle::-webkit-details-marker { display: none; }
+  .work-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--gold); }
+  .worklog.working .work-dot, .worklog.answering .work-dot { animation: workPulse 1.55s var(--ease) infinite; }
+  .worklog.done .work-dot { background: var(--green); }
+  .worklog.failed .work-dot { background: var(--red); }
+  .worklog.stopped .work-dot { background: var(--text-faint); }
+  .work-title { font-weight: 600; color: var(--text-dim); }
+  .worklog.working .work-title, .worklog.answering .work-title { color: var(--gold); }
+  .worklog.failed .work-title { color: var(--red); }
+  .work-meta { margin-inline-start: auto; color: var(--text-faint); font-size: 11.5px; unicode-bidi: plaintext; }
+  .work-chev { flex: none; color: var(--text-faint); font-size: 15px; transition: transform var(--dur) var(--ease); }
+  .worklog.collapsed .work-chev { transform: rotate(90deg); }
+  .history-worklog[open] .work-chev { transform: rotate(180deg); }
+  .worklog-body {
+    margin: 5px 4px 2px 0; padding: 2px 16px 2px 0;
+    border-inline-start: 1px dashed var(--border); overflow: hidden;
+  }
+  .worklog.collapsed .worklog-body { display: none; }
+  .work-section { padding: 10px 0; border-bottom: 1px solid var(--border-dim); }
+  .work-section:last-child { border-bottom: 0; }
+  .work-section[hidden], .answer-wrap[hidden] { display: none; }
+  .work-section-head {
+    margin-bottom: 6px; color: var(--text-faint); font-size: 11.5px; font-weight: 600;
+  }
+  .commentary-md {
+    max-height: 240px; overflow-y: auto; padding-inline-end: 8px;
+    color: var(--text-dim); font-size: 13.5px; line-height: 1.75;
+  }
+  .commentary-md h1, .commentary-md h2, .commentary-md h3 { color: var(--text-dim); }
+  .commentary-md pre, .commentary-md code { background: var(--surface-2); }
+
+  .tools { display: flex; flex-direction: column; gap: 4px; }
+  .tools-wrap .tools { max-height: 184px; overflow-y: auto; }
   .tool {
     display: flex; align-items: center; gap: 8px;
     font-family: var(--mono); font-size: 12px; direction: ltr;
-    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
-    padding: 5px 10px; color: var(--text-dim); align-self: flex-start; max-width: 100%; overflow: hidden;
+    background: transparent; border: 0; border-radius: 7px;
+    padding: 4px 8px; color: var(--text-dim); align-self: stretch; max-width: 100%; overflow: hidden;
   }
+  .tool:hover { background: var(--surface-2); }
   .tool .name { color: var(--gold); font-weight: 600; }
-  .tool .detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px; }
-  .tool.done { border-color: var(--green-border); }
+  .tool .detail { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; }
+  .tool .state { flex: none; margin-left: auto; }
   .tool.done .state { color: var(--green); }
+  .tool.done.error .state { color: var(--red); }
 
-  .meta { font-size: 12px; color: var(--text-dim); font-family: var(--mono); direction: ltr; text-align: right; }
+  .worklog .agent-card { background: transparent; border-color: var(--border); }
+  .worklog .agent-head { background: var(--surface-2); }
+  .worklog .agent-card.error .agent-head .state { color: var(--red); }
+  .worklog .compact-card { border: 0; background: transparent; padding-inline: 0; }
+
+  /* الإجابة هي ذروة الدور: سطح مضيء بخفة وحد جانبي، لا بطاقة ثقيلة مستقلة. */
+  .answer-wrap { min-width: 0; animation: answerIn calc(var(--dur) * 1.5) var(--ease); }
+  .answer-label {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+    color: var(--gold); font-size: 12px; font-weight: 700;
+  }
+  .answer-label::after { content: ''; height: 1px; flex: 1; background: var(--gold-border); }
+  .answer-wrap .bubble {
+    min-width: 0; padding: 17px 20px;
+    border: 0; border-inline-start: 2px solid var(--gold);
+    border-radius: 3px 14px 14px 3px;
+    background: linear-gradient(135deg, var(--chat-answer-surface), var(--surface));
+    box-shadow: inset 0 0 0 1px var(--border-dim);
+  }
+  .answer-wrap .md { font-size: 15.5px; line-height: 1.85; }
+  .history-answer { animation: none; }
+
+  .meta { align-self: flex-end; font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); direction: ltr; text-align: right; }
   .error-box { background: var(--red-soft); border: 1px solid var(--red-border); color: var(--red); border-radius: 10px; padding: 10px 14px; font-size: 13px; white-space: pre-wrap; unicode-bidi: plaintext; }
   .notice { color: var(--text-dim); font-size: 13px; text-align: center; }
   /* إشعار بزرّ فعل (م-1: اقتراح «افتح المعاينة» عند رصد خادم تطوير) */
   .notice .notice-act { margin-inline-start: 10px; font-size: 12px; padding: 2px 12px; border-radius: 8px; }
-  .thinking { color: var(--text-dim); font-size: 13px; }
-  .thinking::after { content: ' …'; animation: blink 1s steps(1) infinite; }
+
+  @media (max-width: 700px) {
+    main { padding: 20px 12px 12px; }
+    .thread { gap: 24px; }
+    .msg.user { max-width: 92%; }
+    .msg.assistant { padding-inline-start: 18px; }
+    .answer-wrap .bubble { padding: 14px 15px; }
+    .worklog-body { padding-inline-start: 12px; }
+    .work-meta { display: none; }
+  }
 
   /* ===== الإدخال + قائمة الأوامر ===== */
   /* منذ ت-10: footer داخل مكوّن satr-composer (بلا Shadow — غلاف شفاف للتخطيط) */
