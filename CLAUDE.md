@@ -53,8 +53,9 @@ electron/exporter.js ← تصدير المحادثة Markdown (الدفعة 4.8 
                        (تحديد الملف بمعرّف الجلسة UUID بمسح مجلدات المشاريع — لا اشتقاق
                        ترميز اسم المجلد من cwd) ومحادثات المحوّلات عبر chats.read(cap=0).
                        الحفظ في الواجهة (Blob + تنزيل) — لا مسار كتابة في العملية الرئيسية
-electron/skills.js   ← سرد المهارات المكتشَفة (<cwd>/.claude/skills و ~/.claude/skills) للوحة
-                       /مهارات (قراءة فقط + تحليل مقدمة SKILL.md، المشروع يفوز عند تكرار الاسم)
+electron/skills.js   ← فهرس مهارات محمول: .agents/skills هو المعيار و.claude/skills للتوافق
+                       (مشروع ثم مستخدم)، metadata فقط أولاً ثم SKILL.md/الموارد عند الطلب؛
+                       تحقق مسار/حجم ولا تنفيذ تلقائي للسكربتات
 electron/diff.js     ← حساب فرق الأسطر (قصّ بادئة/لاحقة + LCS محدود + طيّ السياق)
                        دالة نقية بلا اعتماديات — المرحلة 3
 electron/inject.js   ← حقن @الملفات للمحوّلات (الدفعة 1.1 من ROADMAP): يقرأ الملفات المُشار
@@ -190,8 +191,10 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
      محرك **sdk** فقط يدعمها (agent.js يبني `content` كمصفوفة كتل نص+صورة)؛ محرك **cli**
      يتجاهلها (الواجهة تنبّه وتُسقطها). طلب بلا نص يُقبل إن رافقته صورة.
    - `skills` (لوحة /مهارات): `'all'` أو مصفوفة أسماء مفعّلة. تُنقّى في main.js
-     (`sanitizeSkills` + `SAFE_SKILL`) وتُمرَّر كخيار `skills` للـ SDK في agent.js. محرك
-     **sdk** فقط (مسار cli لا يضبطها). انظر «لوحة المهارات» أدناه.
+     (`sanitizeSkills` + `SAFE_SKILL`) وتُمرَّر لكل المحرّكات. SDK يمرّر مهارات `.claude`
+     للـ runtime الأصلي ويعرض `.agents` عبر أداتي MCP محليتين للتحميل التدريجي؛ Codex
+     يرفق `UserInput(type:'skill', name, path)` الأصلي؛ والمحوّلات تعرض metadata في system
+     context وتحمّل المحتوى فقط عبر `load_skill`/`read_skill_resource`.
    - `effort` (⚙ — المرحلة 14.4): مستوى جهد التفكير `low|medium|high|xhigh|max` أو فارغ
      (الافتراضي). يُنقّى بـ `EFFORT_LEVELS` في main.js ويُمرَّر كخيار `effort` — الـ SDK
      يخفّضه صامتاً إن لم يدعمه النموذج. محرك **sdk** فقط.
@@ -352,17 +355,24 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 
 ### لوحة المهارات (Skills)
 
-- **السرد**: IPC للقراءة فقط `satr:listSkills(cwd)` (`electron/skills.js`) يفحص
-  `<cwd>/.claude/skills/*/SKILL.md` و `~/.claude/skills/*/SKILL.md`، يحلّل مقدمة YAML البسيطة
-  (`name`/`description` بلا اعتماديات) ويعيد `[{name, description, source}]`. عند تكرار الاسم
-  تفوز مهارة المشروع (تُفحص أولاً).
-- **التفعيل**: محرك SDK يكتشف المهارات من القرص عند كل تشغيل؛ خيار `skills` يفلتر ما يُعرض
-  للنموذج: `'all'` (كل المكتشفة) أو مصفوفة أسماء. agent.js يضبطه **دائماً صراحةً** — تركه
-  محذوفاً يجعل التحميل يعتمد على افتراضيات الـ CLI وغير مضمون (انظر توثيق الخيار في sdk.d.ts).
+- **السرد والأولوية**: IPC للقراءة فقط `satr:listSkills(cwd)` (`electron/skills.js`) يفحص
+  `.agents/skills/*/SKILL.md` ثم `.claude/skills/*/SKILL.md` في المشروع، ثم المسارين نفسيهما
+  تحت home. أول اسم يفوز، لذلك القياسي `.agents` يغلب نسخة التوافق `.claude`. يعاد
+  `[{name, description, source, format, location}]` بلا مسارات مطلقة للواجهة.
+- **progressive disclosure**: الفهرس يقرأ رأس `SKILL.md` فقط. المحتوى الكامل (≤128KiB)
+  والموارد النصية (≤256KiB للملف، ≤100 مورداً، عمق ≤5) لا تُقرأ إلا باستدعاء الأداة.
+  `realpath` يحصر المورد داخل مجلد المهارة؛ الثنائي و`..` مرفوضان؛ السكربت يُعرض كنص ولا
+  يُنفّذ تلقائياً. catalog metadata مسقوف بـ16KiB ونتيجة الأداة بـ48K محرفاً.
+- **المحرّكات**: Claude SDK يبقي runtime `.claude` الأصلي وplugin skills، ويخدم `.agents`
+  بأداتي `load_skill` و`read_skill_resource` للقراءة فقط. Codex 0.144.1 يأخذ مدخلات skill
+  الأصلية في `turn/start`. Gemini وعائلة OpenAI-compatible تعلنان الأداتين ضمن الحلقة؛
+  Claude CLI الاحتياطي يستقبل metadata ومسارات `.agents` في stdin من دون محتوى المهارة.
 - **الواجهة**: أمر `/مهارات` يفتح لوحة جانبية بمربعات اختيار. تُخزَّن **المهارات المعطّلة** في
   localStorage (`satr_disabled_skills`) لا المفعّلة، فيُفعَّل أي جديد تلقائياً. عند الإرسال:
   لا معطّل ⇐ `'all'`؛ غير ذلك ⇐ مصفوفة (المكتشف ناقص المعطّل)، ومصفوفة فارغة = لا مهارات.
-- **مثال**: `.claude/skills/tafqeet/SKILL.md` (تفقيط الأرقام بالعربية) — مهارة مشروع للتجربة.
+- **مثال**: `.agents/skills/tafqeet/SKILL.md` (تفقيط الأرقام بالعربية) — مهارة قياسية للتجربة.
+- **التحقق**: `npm run test:skills` يثبت precedence والتحميل التدريجي وحدود الموارد وأدوات
+  المحوّلات ومدخلات Codex، ثم `npm run eval:agent` يحمي baseline الوكيل 12/12.
 
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 

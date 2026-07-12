@@ -20,6 +20,7 @@ const path = require('path');
 const files = require('./files');
 const search = require('./search'); // بحث «دلالي خفيف» (4.6) — أداة search_code
 const inject = require('./inject'); // resolveInside — تحقق مسار موحّد
+const skills = require('./skills'); // مهارات محمولة: تحميل تدريجي لـ SKILL.md وموارده
 const { computeDiff } = require('./diff');
 const term = require('./term'); // طرفية النموذج المرئية (2.3) — نفس مفرد المرحلة 16
 
@@ -104,6 +105,35 @@ const DEFS = [
           query: { type: 'string', description: 'Space-separated words to search for (1-8 words, 2+ characters each)' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'load_skill',
+      description: "Load the instructions for one enabled Satr Agent Skill when its description matches the current task. Skills use progressive disclosure: call this only when relevant. Bundled scripts are resources to inspect, never automatic commands.",
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Exact enabled skill name from the portable skills catalog' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_skill_resource',
+      description: "Read one text resource bundled with an enabled Agent Skill after load_skill lists it. The path must be relative to that skill directory. This reads content only and never executes scripts.",
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Exact enabled skill name' },
+          resource: { type: 'string', description: 'Relative resource path returned by load_skill' },
+        },
+        required: ['name', 'resource'],
       },
     },
   },
@@ -287,6 +317,28 @@ async function run(name, cwd, args, ctx) {
         .join('\n');
       if (content.length > MAX_RESULT) content = content.slice(0, MAX_RESULT) + '\n…(قُصّت النتائج)';
       if (r.partial) content += '\n(مسح جزئي — نفدت ميزانية الوقت قبل تغطية كل الملفات)';
+      return { ok: true, content };
+    }
+    if (name === 'load_skill') {
+      const skillName = args && typeof args.name === 'string' ? args.name.trim() : '';
+      if (!skillName) return { ok: false, content: 'خطأ: وسيطة name مطلوبة' };
+      const loaded = skills.loadSkill(ctx && ctx.skillContext, skillName);
+      if (!loaded.ok) return { ok: false, content: 'خطأ: ' + (loaded.message || loaded.error) };
+      const resources = loaded.resources.length
+        ? loaded.resources.map((item) => '- ' + item.path + (Number.isFinite(item.bytes) ? ' (' + item.bytes + ' bytes)' : '')).join('\n')
+        : '(لا موارد إضافية)';
+      let content = loaded.instructions + '\n\n[Bundled resources — inspect with read_skill_resource; do not execute automatically]\n' + resources;
+      if (content.length > MAX_RESULT) content = content.slice(0, MAX_RESULT) + '\n…(قُصّت المهارة — تجاوزت سقف النتيجة)';
+      return { ok: true, content };
+    }
+    if (name === 'read_skill_resource') {
+      const skillName = args && typeof args.name === 'string' ? args.name.trim() : '';
+      const resource = args && typeof args.resource === 'string' ? args.resource.trim() : '';
+      if (!skillName || !resource) return { ok: false, content: 'خطأ: الوسيطتان name و resource مطلوبتان' };
+      const loaded = skills.readResource(ctx && ctx.skillContext, skillName, resource);
+      if (!loaded.ok) return { ok: false, content: 'خطأ: ' + (loaded.message || loaded.error) };
+      let content = loaded.content;
+      if (content.length > MAX_RESULT) content = content.slice(0, MAX_RESULT) + '\n…(قُصّ المورد — تجاوز سقف النتيجة)';
       return { ok: true, content };
     }
     if (name === 'write_file') {

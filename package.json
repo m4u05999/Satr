@@ -7,6 +7,9 @@
   "author": "Moxa",
   "license": "MIT",
   "scripts": {
+    "eval:agent": "node scripts/agent-eval.js",
+    "eval:agent:baseline": "node scripts/agent-eval.js --report docs/AGENT-EVAL-BASELINE.md",
+    "test:skills": "node scripts/skills-test.js",
     "prestart": "node scripts/update-csp.js",
     "start": "electron .",
     "predist": "node scripts/update-csp.js",

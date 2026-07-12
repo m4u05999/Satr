@@ -11,6 +11,7 @@
  */
 
 const { spawn } = require('child_process');
+const skillCatalog = require('../skills');
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
@@ -20,6 +21,8 @@ const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 //   permissionMode ضمن PERMISSION_MODES (الافتراضي 'default').
 function start(input, cwd, emit) {
   const { prompt, sessionId, model, permissionMode } = input;
+  const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
+  const portablePrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true, includePaths: true });
 
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (sessionId) args.push('--resume', sessionId);
@@ -33,7 +36,10 @@ function start(input, cwd, emit) {
   const child = spawn(CLAUDE_BIN, args, { cwd, shell: IS_WIN, detached: IS_WIN, windowsHide: true });
 
   // البرومبت عبر stdin لتجنب مشاكل الاقتباس
-  child.stdin.write(prompt, 'utf8');
+  const inputPrompt = portablePrompt
+    ? portablePrompt + '\n\n<user_request>\n' + prompt + '\n</user_request>'
+    : prompt;
+  child.stdin.write(inputPrompt, 'utf8');
   child.stdin.end();
 
   // تجزئة المخرجات إلى أسطر JSON وإرسالها للواجهة مفسَّرة

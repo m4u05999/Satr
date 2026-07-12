@@ -1,84 +1,296 @@
 /**
- * سطر 2.0 — سرد المهارات (Skills) المكتشَفة (قراءة فقط)
+ * فهرس مهارات «سطر» المحمول + تحميلها التدريجي.
  *
- * يفحص مجلدي المهارات اللذين يكتشفهما Claude Agent SDK تلقائياً:
- *   - مهارات المشروع: <cwd>/.claude/skills/<اسم>/SKILL.md
- *   - مهارات المستخدم: ~/.claude/skills/<اسم>/SKILL.md
- * ويعيد لكل مهارة { name, description, source } لعرضها في لوحة /مهارات.
- * عند تكرار الاسم تفوز مهارة المشروع (تُفحص أولاً) — مطابقةً لسلوك Claude Code.
- *
- * هذا السرد للعرض فقط؛ الـ SDK نفسه يكتشف المهارات من القرص عند كل تشغيل.
- * تفعيل/تعطيل المهارات يتم عبر خيار `skills` الذي يمرّره agent.js (انظر main.js).
+ * المسار القياسي هو .agents/skills مع إبقاء .claude/skills للتوافق. ترتيب الفوز:
+ * مشروع قياسي ← مشروع Claude ← مستخدم قياسي ← مستخدم Claude. الفهرس يعرض metadata
+ * فقط؛ محتوى SKILL.md والموارد لا يُقرأ إلا عند استدعاء loadSkill/readResource.
+ * لا تُنفّذ السكربتات تلقائياً، وكل قراءة محصورة داخل جذر المهارة وبسقوف حجم.
  */
 
+'use strict';
+
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const fsp = require('fs/promises');
 
-const USER_SKILLS = path.join(os.homedir(), '.claude', 'skills');
-const SAFE_DIR = /^[A-Za-z0-9._-]{1,80}$/; // اسم مجلد المهارة — مكوّن مسار واحد بلا فواصل
-const HEAD_BYTES = 16 * 1024; // نقرأ رأس SKILL.md فقط (المقدمة name/description تظهر مبكراً)
+const SAFE_DIR = /^[A-Za-z0-9._-]{1,80}$/;
+const SAFE_NAME = /^[A-Za-z0-9_:.-]{1,64}$/;
+const HEAD_BYTES = 16 * 1024;
 const MAX_SKILLS = 200;
+const MAX_SKILL_BYTES = 128 * 1024;
+const MAX_RESOURCE_BYTES = 256 * 1024;
+const MAX_RESOURCES = 100;
+const MAX_RESOURCE_DEPTH = 5;
+const MAX_CATALOG_CHARS = 16 * 1024;
 
-// تحليل مقدمة YAML البسيطة في رأس SKILL.md (key: value سطراً سطراً، بلا اعتماديات)
 function parseFrontmatter(text) {
-  const t = text.replace(/^﻿/, ''); // إزالة BOM إن وُجد
-  const m = t.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
-  if (!m) return null;
-  const out = {};
-  for (const raw of m[1].split('\n')) {
+  const clean = String(text || '').replace(/^﻿/, '');
+  const match = clean.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return null;
+  const output = {};
+  const lines = match[1].split('\n');
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const raw = lines[lineIndex];
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
-    const idx = line.indexOf(':');
-    if (idx < 0) continue;
-    const key = line.slice(0, idx).trim();
-    let val = line.slice(idx + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
-      val = val.slice(1, -1);
-    out[key] = val;
+    const index = line.indexOf(':');
+    if (index < 0) continue;
+    const key = line.slice(0, index).trim();
+    let value = line.slice(index + 1).trim();
+    if (value === '|' || value === '>') {
+      const folded = value === '>';
+      const parts = [];
+      while (lineIndex + 1 < lines.length && /^\s+/.test(lines[lineIndex + 1])) {
+        lineIndex++;
+        parts.push(lines[lineIndex].trim());
+      }
+      value = parts.join(folded ? ' ' : '\n').trim();
+    }
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    output[key] = value;
   }
-  return out;
+  return output;
 }
 
-// يفحص مجلد مهارات واحداً ويضيف ما يجده إلى out (تجاهل المكرر بالاسم عبر seen)
-async function scanDir(root, source, seen, out) {
+function rootsFor(cwd, home) {
+  const roots = [];
+  if (typeof cwd === 'string' && cwd.trim()) {
+    const project = path.resolve(cwd.trim());
+    roots.push(
+      { root: path.join(project, '.agents', 'skills'), source: 'project', format: 'standard', location: '.agents/skills' },
+      { root: path.join(project, '.claude', 'skills'), source: 'project', format: 'claude', location: '.claude/skills' },
+    );
+  }
+  const userHome = home || os.homedir();
+  roots.push(
+    { root: path.join(userHome, '.agents', 'skills'), source: 'user', format: 'standard', location: '~/.agents/skills' },
+    { root: path.join(userHome, '.claude', 'skills'), source: 'user', format: 'claude', location: '~/.claude/skills' },
+  );
+  return roots;
+}
+
+function readHead(file) {
+  let descriptor = null;
+  try {
+    descriptor = fs.openSync(file, 'r');
+    const buffer = Buffer.alloc(HEAD_BYTES);
+    const bytes = fs.readSync(descriptor, buffer, 0, HEAD_BYTES, 0);
+    return buffer.toString('utf8', 0, bytes);
+  } finally {
+    if (descriptor != null) try { fs.closeSync(descriptor); } catch {}
+  }
+}
+
+function scanRoot(spec, seen, output) {
   let entries;
-  try { entries = await fsp.readdir(root, { withFileTypes: true }); } catch { return; }
-  for (const e of entries) {
-    if (out.length >= MAX_SKILLS) return;
-    if (!e.isDirectory() || !SAFE_DIR.test(e.name)) continue;
-    const file = path.join(root, e.name, 'SKILL.md');
-    let head = '';
-    let fh = null;
+  try { entries = fs.readdirSync(spec.root, { withFileTypes: true }); } catch { return; }
+  for (const entry of entries) {
+    if (output.length >= MAX_SKILLS) return;
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_DIR.test(entry.name)) continue;
+    const directory = path.join(spec.root, entry.name);
+    const file = path.join(directory, 'SKILL.md');
+    let stat;
+    let head;
     try {
-      fh = await fsp.open(file, 'r');
-      const buf = Buffer.alloc(HEAD_BYTES);
-      const { bytesRead } = await fh.read(buf, 0, HEAD_BYTES, 0);
-      head = buf.toString('utf8', 0, bytesRead);
-    } catch { continue; } // لا يوجد SKILL.md في هذا المجلد — ليس مهارة
-    finally { if (fh) await fh.close().catch(() => {}); }
-    const fm = parseFrontmatter(head) || {};
-    const name = (typeof fm.name === 'string' && fm.name.trim()) ? fm.name.trim() : e.name;
-    if (seen.has(name)) continue; // مهارة المشروع (فُحصت أولاً) تفوز بنفس الاسم
+      stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SKILL_BYTES) continue;
+      head = readHead(file);
+    } catch { continue; }
+    const frontmatter = parseFrontmatter(head) || {};
+    const declared = typeof frontmatter.name === 'string' ? frontmatter.name.trim() : '';
+    const name = SAFE_NAME.test(declared) ? declared : entry.name;
+    if (!SAFE_NAME.test(name) || seen.has(name)) continue;
     seen.add(name);
-    out.push({
+    output.push({
       name,
-      description: typeof fm.description === 'string' ? fm.description.trim().slice(0, 300) : '',
-      source,
+      description: typeof frontmatter.description === 'string'
+        ? frontmatter.description.trim().slice(0, 500) : '',
+      source: spec.source,
+      format: spec.format,
+      location: spec.location,
+      directory,
+      file,
     });
   }
 }
 
-// قائمة المهارات المكتشَفة لمجلد المشروع المعطى + مهارات المستخدم. مرتبة أبجدياً.
-async function listSkills(cwd) {
-  const out = [];
+function discoverSkills(cwd, options) {
+  const output = [];
   const seen = new Set();
-  if (typeof cwd === 'string' && cwd.trim()) {
-    await scanDir(path.join(cwd.trim(), '.claude', 'skills'), 'project', seen, out);
-  }
-  await scanDir(USER_SKILLS, 'user', seen, out);
-  out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return out;
+  for (const root of rootsFor(cwd, options && options.home)) scanRoot(root, seen, output);
+  output.sort((left, right) => left.name.localeCompare(right.name, 'en'));
+  return output;
 }
 
-module.exports = { listSkills };
+function publicSkill(skill) {
+  return {
+    name: skill.name,
+    description: skill.description,
+    source: skill.source,
+    format: skill.format,
+    location: skill.location,
+  };
+}
+
+async function listSkills(cwd) {
+  return discoverSkills(cwd).map(publicSkill);
+}
+
+function resolveSelection(cwd, selection, options) {
+  const catalog = discoverSkills(cwd, options);
+  const requested = Array.isArray(selection) ? new Set(selection.filter((name) => SAFE_NAME.test(name))) : null;
+  const enabled = selection === 'all' || !requested
+    ? catalog
+    : catalog.filter((skill) => requested.has(skill.name));
+  const known = new Set(catalog.map((skill) => skill.name));
+  const unresolved = requested ? [...requested].filter((name) => !known.has(name)) : [];
+  const nativeClaude = selection === 'all' || !requested
+    ? 'all'
+    : enabled.filter((skill) => skill.format === 'claude').map((skill) => skill.name).concat(unresolved);
+  return {
+    cwd: path.resolve(cwd),
+    enabled,
+    enabledNames: new Set(enabled.map((skill) => skill.name)),
+    nativeClaude,
+    unresolved,
+  };
+}
+
+function skillFromContext(context, name) {
+  if (!context || !SAFE_NAME.test(name || '')) return null;
+  return context.enabled.find((skill) => skill.name === name) || null;
+}
+
+function realInside(root, target) {
+  let realRoot;
+  let realTarget;
+  try {
+    realRoot = fs.realpathSync(root);
+    realTarget = fs.realpathSync(target);
+  } catch { return null; }
+  const prefix = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
+  return realTarget === realRoot || realTarget.startsWith(prefix) ? realTarget : null;
+}
+
+function looksBinary(buffer) {
+  const limit = Math.min(buffer.length, 8192);
+  for (let index = 0; index < limit; index++) if (buffer[index] === 0) return true;
+  return false;
+}
+
+function listResources(skill) {
+  const resources = [];
+  function walk(directory, depth) {
+    if (depth > MAX_RESOURCE_DEPTH || resources.length >= MAX_RESOURCES) return;
+    let entries;
+    try { entries = fs.readdirSync(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (resources.length >= MAX_RESOURCES) return;
+      if (entry.isSymbolicLink()) continue;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(absolute, depth + 1);
+      else if (entry.isFile() && !(depth === 0 && entry.name === 'SKILL.md')) {
+        const relative = path.relative(skill.directory, absolute).split(path.sep).join('/');
+        let size = null;
+        try { size = fs.statSync(absolute).size; } catch {}
+        resources.push({ path: relative, bytes: size });
+      }
+    }
+  }
+  walk(skill.directory, 0);
+  return resources.sort((left, right) => left.path.localeCompare(right.path, 'en'));
+}
+
+function loadSkill(context, name) {
+  const skill = skillFromContext(context, name);
+  if (!skill) return { ok: false, error: 'not_enabled', message: 'المهارة غير مفعّلة أو غير موجودة' };
+  try {
+    const file = realInside(skill.directory, skill.file);
+    if (!file) return { ok: false, error: 'outside', message: 'ملف المهارة خارج جذرها' };
+    const stat = fs.statSync(file);
+    if (!stat.isFile() || stat.size > MAX_SKILL_BYTES) return { ok: false, error: 'too_big', message: 'ملف المهارة أكبر من الحد' };
+    const buffer = fs.readFileSync(file);
+    if (looksBinary(buffer)) return { ok: false, error: 'binary', message: 'ملف المهارة ليس نصياً' };
+    return {
+      ok: true,
+      name: skill.name,
+      description: skill.description,
+      instructions: buffer.toString('utf8'),
+      resources: listResources(skill),
+      source: skill.source,
+      format: skill.format,
+    };
+  } catch (error) {
+    return { ok: false, error: 'read_failed', message: String((error && error.message) || error) };
+  }
+}
+
+function readResource(context, name, resource) {
+  const skill = skillFromContext(context, name);
+  if (!skill) return { ok: false, error: 'not_enabled', message: 'المهارة غير مفعّلة أو غير موجودة' };
+  if (typeof resource !== 'string' || !resource.trim() || path.isAbsolute(resource)) {
+    return { ok: false, error: 'bad_path', message: 'مسار المورد يجب أن يكون نسبياً' };
+  }
+  const parts = resource.replace(/\\/g, '/').split('/');
+  if (parts.includes('..') || parts.includes('') || parts.length > MAX_RESOURCE_DEPTH + 2) {
+    return { ok: false, error: 'bad_path', message: 'مسار مورد غير صالح' };
+  }
+  try {
+    const wanted = path.resolve(skill.directory, ...parts);
+    const file = realInside(skill.directory, wanted);
+    if (!file) return { ok: false, error: 'outside', message: 'المورد خارج جذر المهارة' };
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) return { ok: false, error: 'not_file', message: 'المورد ليس ملفاً' };
+    if (stat.size > MAX_RESOURCE_BYTES) return { ok: false, error: 'too_big', message: 'المورد أكبر من الحد' };
+    const buffer = fs.readFileSync(file);
+    if (looksBinary(buffer)) return { ok: false, error: 'binary', message: 'المورد ثنائي ولا يُقرأ نصياً' };
+    return { ok: true, name: skill.name, resource: parts.join('/'), content: buffer.toString('utf8') };
+  } catch (error) {
+    return { ok: false, error: 'read_failed', message: String((error && error.message) || error) };
+  }
+}
+
+function catalogPrompt(context, options) {
+  if (!context || !context.enabled.length) return '';
+  const onlyStandard = !!(options && options.onlyStandard);
+  const includePaths = !!(options && options.includePaths);
+  const skills = onlyStandard
+    ? context.enabled.filter((skill) => skill.format === 'standard')
+    : context.enabled;
+  if (!skills.length) return '';
+  const lines = [
+    '<satr_portable_skills>',
+    'The following user-approved skills are available. Use progressive disclosure: load a skill only when its description matches the task. For names listed here, prefer load_skill over any native skill with the same name. Never execute a bundled script merely because it exists.',
+  ];
+  let included = 0;
+  for (const skill of skills) {
+    let line = '- ' + skill.name + ': ' + (skill.description || '(no description)');
+    if (includePaths) line += ' [SKILL.md: ' + skill.file + ']';
+    if (lines.join('\n').length + line.length + 128 > MAX_CATALOG_CHARS) break;
+    lines.push(line);
+    included++;
+  }
+  if (included < skills.length) lines.push('- … ' + (skills.length - included) + ' additional skills omitted from metadata due to the context limit.');
+  lines.push('Use load_skill(name) and read_skill_resource(name, resource) when those tools are available.', '</satr_portable_skills>');
+  return lines.join('\n');
+}
+
+function codexInputs(context) {
+  if (!context) return [];
+  return context.enabled.map((skill) => ({ type: 'skill', name: skill.name, path: skill.file }));
+}
+
+module.exports = {
+  listSkills,
+  discoverSkills,
+  resolveSelection,
+  loadSkill,
+  readResource,
+  catalogPrompt,
+  codexInputs,
+  SAFE_NAME,
+  MAX_SKILL_BYTES,
+  MAX_RESOURCE_BYTES,
+};

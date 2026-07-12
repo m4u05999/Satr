@@ -1,4 +1,4 @@
-// <satr-skills-panel> — لوحة «/مهارات»: المهارات المكتشفة واختيار المفعّل (تفكيك ت-2).
+// <satr-skills-panel> — لوحة «/مهارات»: .agents معيار «سطر» و.claude للتوافق.
 // المكوّن يملك حالة المهارات كاملة: القائمة المجلوبة لكل cwd + مجموعة المعطّلة
 // (localStorage ‏satr_disabled_skills — نخزّن المعطّل لا المفعّل ليُفعَّل أي جديد تلقائياً
 // مطابقةً لمعنى 'all'). العقد: open(cwd) يفتح ويجلب من القرص، close() يغلق،
@@ -74,8 +74,9 @@ class SatrSkillsPanel extends HTMLElement {
       '<div class="skill-hint" dir="rtl">' +
       '<p>لا توجد مهارات مكتشَفة بعد.</p>' +
       '<p>أضِف مهارة بإنشاء ملف <code>SKILL.md</code> في أحد المسارين:</p>' +
-      '<p>• للمشروع الحالي: <code dir="ltr">.claude/skills/&lt;الاسم&gt;/SKILL.md</code></p>' +
-      '<p>• لكل المشاريع: <code dir="ltr">~/.claude/skills/&lt;الاسم&gt;/SKILL.md</code></p>' +
+      '<p>• للمشروع الحالي: <code dir="ltr">.agents/skills/&lt;الاسم&gt;/SKILL.md</code></p>' +
+      '<p>• لكل المشاريع: <code dir="ltr">~/.agents/skills/&lt;الاسم&gt;/SKILL.md</code></p>' +
+      '<p>مسارات <code dir="ltr">.claude/skills/</code> القديمة تبقى مدعومة للتوافق.</p>' +
       '<p>يبدأ الملف بمقدمة <code>name</code> و<code>description</code> ثم تعليمات المهارة — ثم أعِد فتح هذه اللوحة.</p>' +
       '</div>';
   }
@@ -100,7 +101,9 @@ class SatrSkillsPanel extends HTMLElement {
       const r = document.createElement('div'); r.className = 'skill-row';
       const nm = document.createElement('span'); nm.className = 'skill-name'; nm.dir = 'ltr'; nm.textContent = s.name;
       const src = document.createElement('span'); src.className = 'skill-src';
-      src.textContent = s.source === 'project' ? 'المشروع' : 'المستخدم';
+      const scope = s.source === 'project' ? 'المشروع' : 'المستخدم';
+      const format = s.format === 'standard' ? 'قياسية' : 'Claude';
+      src.textContent = scope + ' · ' + format;
       r.appendChild(nm); r.appendChild(src);
       const desc = document.createElement('div'); desc.className = 'skill-desc';
       desc.textContent = s.description || '(بلا وصف)';

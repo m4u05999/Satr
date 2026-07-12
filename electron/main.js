@@ -317,6 +317,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
         sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
         model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
         permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
+        skills: sanitizeSkills(payload.skills),
       }, cwd, emit);
       return { started: true, engine: 'codex' };
     } catch (e) {
@@ -341,6 +342,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
       sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
       model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
       permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
+      skills: sanitizeSkills(payload.skills),
       extraDirs: sanitizeExtraDirs(payload.extraDirs), // متاحة للمحوّلات؛ cli/gemini الحاليان لا يستخدمانها
     };
     try {

@@ -24,6 +24,7 @@ const os = require('os');
 const { spawn, execSync } = require('child_process');
 
 const { computeDiff } = require('./diff');
+const skillCatalog = require('./skills');
 
 const IS_WIN = process.platform === 'win32';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة تراجع ولا نعرض فرقاً
@@ -149,7 +150,7 @@ function decodeBase64(s) { try { return Buffer.from(s, 'base64').toString('utf8'
 /**
  * يبدأ دوراً واحداً ويعيد مقبضاً فيه stop و resolvePermission (نفس عقد agent.start).
  */
-async function start({ prompt, images, sessionId, model, permissionMode }, cwd, emit) {
+async function start({ prompt, images, sessionId, model, permissionMode, skills }, cwd, emit) {
   const bin = resolveCodexBin();
   if (!bin) {
     emit({ type: 'spawn_error', text: 'لم يُعثر على Codex CLI. ثبّته: npm install -g @openai/codex' });
@@ -159,6 +160,7 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
 
   const proc = spawn(bin, ['app-server'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
   const startedAt = Date.now();
+  const skillContext = skillCatalog.resolveSelection(cwd, skills);
 
   // ترقيم الطلبات وربط الردود؛ pending للأذونات المعلّقة (id طلب الخادم → معلومات)
   let reqId = 0;
@@ -483,7 +485,8 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
         + '(«سطر» منصّة عربية)، مع إبقاء الكود والمسارات والأوامر والمصطلحات التقنية بالإنجليزية '
         + 'LTR؛ وإن طلب لغة أخرى صراحةً فاتّبعه. '
         + 'أنت تعمل داخل تطبيق «سطر» (Satr) — واجهة عربية لسطح المكتب '
-        + 'تُشغّل Codex بجوار Claude Code.'
+        + 'تُشغّل Codex بجوار Claude Code. '
+        + 'لا تستخدم من Agent Skills إلا المهارات المرفقة صراحةً بمدخلات هذا الدور.'
         + (model ? ' النموذج المختار حالياً في واجهة «سطر» هو «' + model + '» (من OpenAI Codex).' : '');
       const startParams = { cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, experimentalRawEvents: false, persistExtendedHistory: false };
       if (sessionId) {
@@ -506,6 +509,7 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
       // مدخلات الدور: نصّ + صور (نماذج Codex تقبل الصور — تحقّق حيّ). الصور base64
       // تُمرَّر كـ data-URL (لا حاجة لملف مؤقت — كلا الشكلين image/localImage يعمل).
       const inputItems = [];
+      inputItems.push(...skillCatalog.codexInputs(skillContext));
       if (prompt) inputItems.push({ type: 'text', text: prompt, text_elements: [] });
       if (Array.isArray(images)) {
         for (const im of images) {

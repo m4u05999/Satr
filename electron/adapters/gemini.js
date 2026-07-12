@@ -23,6 +23,7 @@ const crypto = require('crypto');
 const keys = require('../keys');
 const chats = require('../chats'); // ذاكرة على القرص (1.3): استئناف بعد إعادة التشغيل
 const tools = require('../tools'); // أدوات الوكيل (2.1–2.3)
+const skillCatalog = require('../skills'); // فهرس المهارات المحمولة والتحميل التدريجي
 
 // ---- بِتّات خاصة بمزوّد Gemini ----
 const API_HOST = 'generativelanguage.googleapis.com';
@@ -71,6 +72,8 @@ function resolveApiKey() {
 
 function start(input, cwd, emit) {
   const { prompt, sessionId, model, permissionMode } = input;
+  const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
+  const skillPrompt = skillCatalog.catalogPrompt(skillContext);
   const autoAllowWrites = permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions';
 
   const apiKey = resolveApiKey();
@@ -123,6 +126,7 @@ function start(input, cwd, emit) {
       const done = (r) => { if (!settled) { settled = true; resolve(r); } };
 
       const bodyObj = { contents };
+      if (skillPrompt) bodyObj.systemInstruction = { parts: [{ text: skillPrompt }] };
       if (withTools) bodyObj.tools = geminiToolDefs();
       const body = JSON.stringify(bodyObj);
 
@@ -238,10 +242,10 @@ function start(input, cwd, emit) {
             const allowed = await askPermission(c.id, c.name, c.args, tier);
             if (aborted) return;
             out = allowed
-              ? await tools.run(c.name, cwd, c.args, { emit, id: c.id })
+              ? await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext })
               : { ok: false, content: 'رفض المستخدم هذا الإجراء — لا تعاود المحاولة نفسها؛ اشرح ما كنت ستفعله أو اقترح بديلاً' };
           } else {
-            out = await tools.run(c.name, cwd, c.args);
+            out = await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext });
           }
           emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: c.id, is_error: !out.ok }] } });
           responseParts.push({ functionResponse: { name: c.name, response: { result: out.content } } });

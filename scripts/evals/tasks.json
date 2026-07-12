@@ -1,0 +1,390 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "read-file",
+      "title": "قراءة ملف داخل المشروع",
+      "tags": ["read", "contract"],
+      "prompt": "اقرأ src/config.js وأخبرني بقيمة المنفذ فقط. SATR-EVAL-READ-01",
+      "fixture": {
+        "files": {
+          "src/config.js": "export const port = 4173;\n"
+        }
+      },
+      "replay": [
+        { "type": "tool", "id": "read-1", "name": "read_file", "args": { "path": "src/config.js" } },
+        { "type": "assistant_text", "text": "المنفذ هو 4173." }
+      ],
+      "expected": {
+        "files": [
+          { "path": "src/config.js", "content": "export const port = 4173;\n" }
+        ],
+        "replay": {
+          "ordered_events": ["system", "assistant", "user", "stream_text", "assistant", "result", "proc_done"],
+          "tool_results": [
+            { "id": "read-1", "ok": true, "contains": "4173" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "search-code",
+      "title": "بحث نصي في المشروع",
+      "tags": ["search", "context"],
+      "prompt": "ابحث عن الدالة buildGreeting وحدد ملفها. SATR-EVAL-SEARCH-02",
+      "fixture": {
+        "files": {
+          "src/greeting.js": "export function buildGreeting(name) {\n  return `مرحباً ${name}`;\n}\n",
+          "src/other.js": "export const enabled = true;\n"
+        }
+      },
+      "replay": [
+        { "type": "tool", "id": "search-1", "name": "search_code", "args": { "query": "buildGreeting" } },
+        { "type": "assistant_text", "text": "الدالة موجودة في src/greeting.js." }
+      ],
+      "expected": {
+        "files": [
+          { "path": "src/greeting.js", "content": "export function buildGreeting(name) {\n  return `مرحباً ${name}`;\n}\n" }
+        ],
+        "replay": {
+          "ordered_events": ["system", "assistant", "user", "result", "proc_done"],
+          "tool_results": [
+            { "id": "search-1", "ok": true, "contains": "src/greeting.js" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "single-edit",
+      "title": "تحرير ملف واحد بإذن",
+      "tags": ["write", "permission", "diff"],
+      "prompt": "غيّر عنوان التطبيق من قديم إلى جديد في src/app.js. SATR-EVAL-EDIT-03",
+      "fixture": {
+        "files": {
+          "src/app.js": "export const title = 'قديم';\n"
+        }
+      },
+      "replay": [
+        {
+          "type": "tool",
+          "id": "edit-1",
+          "name": "edit_file",
+          "permission": "allow",
+          "args": {
+            "path": "src/app.js",
+            "old_string": "export const title = 'قديم';",
+            "new_string": "export const title = 'جديد';"
+          }
+        },
+        { "type": "assistant_text", "text": "تم تحديث العنوان." }
+      ],
+      "expected": {
+        "files": [
+          { "path": "src/app.js", "content": "export const title = 'جديد';\n" }
+        ],
+        "replay": {
+          "ordered_events": ["system", "assistant", "permission_request", "file_edit", "user", "result", "proc_done"],
+          "event_counts": { "file_edit": 1, "permission_request": 1 },
+          "tool_results": [
+            { "id": "edit-1", "ok": true, "contains": "عُدّل الملف" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "multi-edit",
+      "title": "تحرير متعدد الملفات",
+      "tags": ["write", "multi-file", "diff"],
+      "prompt": "وحّد إصدار الواجهة والخادم على 2.9.0. SATR-EVAL-MULTI-04",
+      "fixture": {
+        "files": {
+          "client/version.js": "export const version = '2.8.0';\n",
+          "server/version.js": "exports.version = '2.8.0';\n"
+        }
+      },
+      "replay": [
+        {
+          "type": "tool",
+          "id": "multi-1",
+          "name": "edit_file",
+          "permission": "allow",
+          "args": {
+            "path": "client/version.js",
+            "old_string": "2.8.0",
+            "new_string": "2.9.0"
+          }
+        },
+        {
+          "type": "tool",
+          "id": "multi-2",
+          "name": "edit_file",
+          "permission": "allow",
+          "args": {
+            "path": "server/version.js",
+            "old_string": "2.8.0",
+            "new_string": "2.9.0"
+          }
+        },
+        { "type": "assistant_text", "text": "وُحّد الإصدار في الملفين." }
+      ],
+      "expected": {
+        "files": [
+          { "path": "client/version.js", "content": "export const version = '2.9.0';\n" },
+          { "path": "server/version.js", "content": "exports.version = '2.9.0';\n" }
+        ],
+        "replay": {
+          "event_counts": { "file_edit": 2, "permission_request": 2 },
+          "tool_results": [
+            { "id": "multi-1", "ok": true },
+            { "id": "multi-2", "ok": true }
+          ]
+        }
+      }
+    },
+    {
+      "id": "powershell-command",
+      "title": "تنفيذ أمر PowerShell مرئي",
+      "tags": ["windows", "powershell", "exec"],
+      "platforms": ["win32"],
+      "prompt": "شغّل أمراً آمناً يطبع SATR_POWERSHELL_OK. SATR-EVAL-PS-05",
+      "fixture": { "files": {} },
+      "replay": [
+        {
+          "type": "tool",
+          "id": "exec-1",
+          "name": "run_command",
+          "replay_executor": "process",
+          "permission": "allow",
+          "args": {
+            "command": "Write-Output SATR_POWERSHELL_OK",
+            "timeout_seconds": 20
+          }
+        },
+        { "type": "assistant_text", "text": "نجح أمر PowerShell." }
+      ],
+      "expected": {
+        "files": [],
+        "replay": {
+          "ordered_events": ["assistant", "permission_request", "user", "result", "proc_done"],
+          "event_counts": { "permission_request": 1 },
+          "tool_results": [
+            { "id": "exec-1", "ok": true, "contains": "SATR_POWERSHELL_OK" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "arabic-path",
+      "title": "مسار واسم ملف عربيان",
+      "tags": ["arabic", "path", "utf8"],
+      "prompt": "حدّث مصدر/رسالة.txt مع الحفاظ على UTF-8. SATR-EVAL-ARPATH-06",
+      "fixture": {
+        "files": {
+          "مصدر/رسالة.txt": "الحالة: قديمة\n"
+        }
+      },
+      "replay": [
+        {
+          "type": "tool",
+          "id": "arabic-path-1",
+          "name": "edit_file",
+          "permission": "allow",
+          "args": {
+            "path": "مصدر/رسالة.txt",
+            "old_string": "الحالة: قديمة",
+            "new_string": "الحالة: جاهزة"
+          }
+        },
+        { "type": "assistant_text", "text": "حُدّث الملف العربي." }
+      ],
+      "expected": {
+        "files": [
+          { "path": "مصدر/رسالة.txt", "content": "الحالة: جاهزة\n" }
+        ],
+        "replay": {
+          "event_counts": { "file_edit": 1 },
+          "tool_results": [
+            { "id": "arabic-path-1", "ok": true }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rtl-content",
+      "title": "حفظ نص عربي RTL وتشكيل",
+      "tags": ["arabic", "rtl", "utf8"],
+      "prompt": "أنشئ ملف الترحيب بالنص العربي المشكول المحدد. SATR-EVAL-RTL-07",
+      "fixture": { "files": {} },
+      "replay": [
+        {
+          "type": "tool",
+          "id": "rtl-1",
+          "name": "write_file",
+          "permission": "allow",
+          "args": {
+            "path": "واجهة/ترحيب.txt",
+            "content": "أَهْلًا وَسَهْلًا بِكُمْ في «سطر».\n"
+          }
+        },
+        { "type": "assistant_text", "text": "أُنشئ ملف الترحيب." }
+      ],
+      "expected": {
+        "files": [
+          { "path": "واجهة/ترحيب.txt", "content": "أَهْلًا وَسَهْلًا بِكُمْ في «سطر».\n" }
+        ],
+        "replay": {
+          "event_counts": { "file_edit": 1 },
+          "tool_results": [
+            { "id": "rtl-1", "ok": true, "contains": "أُنشئ الملف" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "permission-denied",
+      "title": "رفض إذن الكتابة",
+      "tags": ["permission", "deny", "safety"],
+      "prompt": "غيّر config.json، لكن احترم رفض المستخدم. SATR-EVAL-DENY-08",
+      "fixture": {
+        "files": {
+          "config.json": "{\"safe\":true}\n"
+        }
+      },
+      "replay": [
+        {
+          "type": "tool",
+          "id": "deny-1",
+          "name": "write_file",
+          "permission": "deny",
+          "args": {
+            "path": "config.json",
+            "content": "{\"safe\":false}\n"
+          }
+        },
+        { "type": "assistant_text", "text": "لم أغيّر الملف لأن الإذن رُفض." }
+      ],
+      "expected": {
+        "files": [
+          { "path": "config.json", "content": "{\"safe\":true}\n" }
+        ],
+        "replay": {
+          "event_counts": { "permission_request": 1, "file_edit": 0 },
+          "tool_results": [
+            { "id": "deny-1", "ok": false, "contains": "رفض المستخدم" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "interrupt-run",
+      "title": "مقاطعة التشغيل قبل التعديل",
+      "tags": ["interrupt", "lifecycle"],
+      "live": false,
+      "interrupt_after_ms": 20,
+      "prompt": "انتظر ثم أنشئ late.txt؛ ستأتي المقاطعة أولاً. SATR-EVAL-STOP-09",
+      "fixture": { "files": {} },
+      "replay": [
+        { "type": "delay", "ms": 100 },
+        {
+          "type": "tool",
+          "id": "late-1",
+          "name": "write_file",
+          "permission": "allow",
+          "args": { "path": "late.txt", "content": "يجب ألا يُكتب\n" }
+        }
+      ],
+      "expected": {
+        "files": [
+          { "path": "late.txt", "absent": true }
+        ],
+        "replay": {
+          "ordered_events": ["system", "stopped", "result", "proc_done"],
+          "event_counts": { "file_edit": 0, "stopped": 1 },
+          "interrupted": true
+        }
+      }
+    },
+    {
+      "id": "test-failure",
+      "title": "التقاط فشل اختبار ورمز الخروج",
+      "tags": ["verification", "exec", "failure"],
+      "prompt": "شغّل اختباراً متوقع الفشل وسجّل exit code من دون ادعاء النجاح. SATR-EVAL-FAIL-10",
+      "fixture": { "files": {} },
+      "replay": [
+        {
+          "type": "tool",
+          "id": "test-1",
+          "name": "run_command",
+          "replay_executor": "process",
+          "permission": "allow",
+          "args": {
+            "command": "node -e \"process.stderr.write('EXPECTED_TEST_FAILURE');process.exit(7)\"; exit $LASTEXITCODE",
+            "timeout_seconds": 20
+          }
+        },
+        { "type": "assistant_text", "text": "الاختبار فشل كما هو متوقع برمز 7." }
+      ],
+      "expected": {
+        "files": [],
+        "replay": {
+          "event_counts": { "permission_request": 1 },
+          "tool_results": [
+            { "id": "test-1", "ok": false, "contains": "exit code: 7" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "session-resume",
+      "title": "استئناف جلسة بالمعرّف نفسه",
+      "tags": ["session", "resume"],
+      "live": false,
+      "prompt": "احفظ قرار استخدام npm ثم استأنف الجلسة نفسها. SATR-EVAL-RESUME-11",
+      "fixture": { "files": {} },
+      "replay": [
+        {
+          "type": "session_save",
+          "session_id": "eval-resume-11",
+          "messages": [
+            { "role": "user", "content": "استخدم npm" },
+            { "role": "assistant", "content": "سأستخدم npm" }
+          ]
+        },
+        { "type": "session_resume", "session_id": "eval-resume-11" },
+        { "type": "assistant_text", "text": "استؤنفت الجلسة مع القرار السابق." }
+      ],
+      "expected": {
+        "files": [],
+        "replay": {
+          "event_counts": { "system": 2 },
+          "session_resumed": true
+        }
+      }
+    },
+    {
+      "id": "large-tool-result",
+      "title": "قص نتيجة أداة كبيرة وحماية trace",
+      "tags": ["limits", "privacy", "context"],
+      "prompt": "اقرأ big.txt ولا تحفظ محتواه الكامل في trace. SATR-EVAL-LARGE-12",
+      "fixture": {
+        "files": {
+          "big.txt": { "repeat": "سطر كبير 0123456789\n", "count": 4000 }
+        }
+      },
+      "replay": [
+        { "type": "tool", "id": "large-1", "name": "read_file", "args": { "path": "big.txt" } },
+        { "type": "assistant_text", "text": "قُرئ الملف ضمن سقف النتيجة." }
+      ],
+      "expected": {
+        "files": [
+          { "path": "big.txt", "content": { "repeat": "سطر كبير 0123456789\n", "count": 4000 } }
+        ],
+        "replay": {
+          "tool_results": [
+            { "id": "large-1", "ok": true, "contains": "قُصّ الملف", "max_bytes": 120000 }
+          ]
+        }
+      }
+    }
+  ]
+}

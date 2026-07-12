@@ -31,6 +31,7 @@ const crypto = require('crypto');
 const keys = require('../keys');
 const chats = require('../chats'); // ذاكرة على القرص (1.3): استئناف بعد إعادة التشغيل
 const tools = require('../tools'); // أدوات الوكيل (2.1): read_file / list_files
+const skillCatalog = require('../skills'); // metadata فقط أولاً؛ المحتوى عبر load_skill عند الطلب
 
 const MAX_TURNS = 40;       // آخر 40 رسالة لكل جلسة (سقف الرموز)
 const MAX_SESSIONS = 50;    // سقف الجلسات في الكاش الحيّ لكل مزوّد
@@ -73,6 +74,8 @@ function make(config) {
 
   function start(input, cwd, emit) {
     const { prompt, sessionId, model, permissionMode } = input;
+    const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
+    const skillPrompt = skillCatalog.catalogPrompt(skillContext);
     // acceptEdits/bypassPermissions تمرّان الكتابة بلا سؤال (نفس دلالة أوضاع SDK)
     const autoAllowWrites = permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions';
 
@@ -126,7 +129,10 @@ function make(config) {
         let settled = false;
         const done = (r) => { if (!settled) { settled = true; resolve(r); } };
 
-        const bodyObj = { model: useModel, messages, stream: true };
+        const requestMessages = skillPrompt
+          ? [{ role: 'system', content: skillPrompt }].concat(messages)
+          : messages;
+        const bodyObj = { model: useModel, messages: requestMessages, stream: true };
         if (withTools) bodyObj.tools = tools.defs();
         const body = JSON.stringify(bodyObj);
 
@@ -253,10 +259,10 @@ function make(config) {
               const allowed = await askPermission(c.id, c.name, parsed, tier);
               if (aborted) return;
               out = allowed
-                ? await tools.run(c.name, cwd, parsed, { emit, id: c.id })
+                ? await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext })
                 : { ok: false, content: 'رفض المستخدم هذا الإجراء — لا تعاود المحاولة نفسها؛ اشرح ما كنت ستفعله أو اقترح بديلاً' };
             } else {
-              out = await tools.run(c.name, cwd, parsed);
+              out = await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext });
             }
             emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: c.id, is_error: !out.ok }] } });
             messages.push({ role: 'tool', tool_call_id: c.id, content: out.content });

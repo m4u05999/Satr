@@ -20,12 +20,18 @@ const { computeDiff } = require('./diff');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
 const preview = require('./preview'); // م-3: أدوات قراءة المعاينة للوكيل (موديول مشترك)
+const skillCatalog = require('./skills'); // .agents قياسي + .claude توافق؛ تحميل تدريجي
 
 const IS_WIN = process.platform === 'win32';
 
 // أدوات تعديل الملفات التي نعرض لها فرقاً (Diff) — المرحلة 3
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
+const PORTABLE_SKILL_TOOLS = new Set([
+  'mcp__satr-skills__load_skill',
+  'mcp__satr-skills__read_skill_resource',
+]);
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة ولا نعرض فرقاً (أداء وذاكرة)
+const MAX_SKILL_TOOL_CHARS = 48 * 1024;
 
 // لقطات الملفات قبل التعديل — تعيش بعد انتهاء التشغيل ليعمل «تراجع» لاحقاً.
 // المفتاح tool_use_id (فريد عالمياً)، والقيمة { file_path, before } حيث
@@ -171,6 +177,8 @@ function phaseEventFromStreamEvent(ev) {
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
  */
 async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs, browserControl }, cwd, emit) {
+  const skillContext = skillCatalog.resolveSelection(cwd, skills);
+  const portableSkillPrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true });
   const { query } = await loadSdk();
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
@@ -285,6 +293,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     stderr: (data) => emit({ type: 'stderr', text: String(data) }),
     canUseTool: async (toolName, input, { signal, toolUseID }) => {
       if (alwaysAllowed.has(toolName)) return { behavior: 'allow', updatedInput: input };
+      // تحميل مهارة اختارها المستخدم ومورد نصي محصور داخلها قراءة فقط — بلا مربع إذن.
+      if (PORTABLE_SKILL_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
       // وضع تحكّم المتصفح: يوافق على أدوات المتصفح فقط (لا run_in_terminal ولا الملفّات)
       if (browserControl && BROWSER_AUTO_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
       const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
@@ -308,7 +318,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // المهارات (Skills): 'all' لتفعيل كل المكتشفة، أو مصفوفة أسماء مختارة من لوحة /مهارات.
   // نضبطه صراحةً دائماً — تركه محذوفاً يجعل التحميل يعتمد على افتراضيات الـ CLI وغير
   // مضمون (انظر توثيق خيار skills في الـ SDK). مصفوفة فارغة = لا مهارات مفعّلة.
-  options.skills = (skills === 'all' || Array.isArray(skills)) ? skills : 'all';
+  options.skills = skillContext.nativeClaude;
 
   // AskUserQuestion أداة تفاعلية تعرض قائمة خيارات قابلة للنقر وتنتظر اختيار المستخدم —
   // تتطلب واجهة اختيار حية لا يوفّرها «سطر» (canUseTool يعطي سماح/رفض فقط، لا يعيد نتيجة
@@ -343,7 +353,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'حصراً. لا تكتب ولا تشغّل سكربتات puppeteer أو playwright أو selenium ولا تثبّت ' +
       'puppeteer-core، ولا تُطلق Chrome/متصفحاً منفصلاً (headless أو غيره) لالتقاط لقطات — ' +
       'فذلك أبطأ وأكلف ويترك ملفات مؤقتة في المشروع، وأدوات «سطر» تعطيك النتيجة نفسها ' +
-      'لحظياً من المعاينة القائمة. المعاينة متصفح حقيقي كامل؛ استعمله عبر هذه الأدوات.',
+      'لحظياً من المعاينة القائمة. المعاينة متصفح حقيقي كامل؛ استعمله عبر هذه الأدوات.' +
+      (portableSkillPrompt ? '\n\n' + portableSkillPrompt : ''),
   };
   // جهد التفكير (المرحلة 14.4): منقّى في main.js — الـ SDK يخفّضه صامتاً إن لم يدعمه النموذج
   if (effort) options.effort = effort;
@@ -374,6 +385,42 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         const head = (r.timedOut ? '[انتهت المهلة — قد يكون أمراً طويلاً/تفاعلياً]\n' : '') +
           'exit code: ' + (r.exitCode === null ? 'غير معروف' : r.exitCode) + '\n---\n';
         return { content: [{ type: 'text', text: head + (r.output || '(لا خرج)') }], isError: r.exitCode !== 0 && r.exitCode !== null };
+      }
+    );
+    const loadSkillTool = sdk.tool(
+      'load_skill',
+      'حمّل تعليمات مهارة محمولة مفعّلة عندما يطابق وصفها المهمة. لا تستدعها إلا عند ' +
+      'الحاجة، ولا تنفّذ أي سكربت مرفق تلقائياً.',
+      { name: z.string().describe('اسم المهارة المفعّلة كما ظهر في الفهرس') },
+      async (args) => {
+        const loaded = skillCatalog.loadSkill(skillContext, String((args && args.name) || ''));
+        if (!loaded.ok) return { content: [{ type: 'text', text: 'تعذّر تحميل المهارة: ' + (loaded.message || loaded.error) }], isError: true };
+        const resources = loaded.resources.length
+          ? loaded.resources.map((item) => '- ' + item.path + (Number.isFinite(item.bytes) ? ' (' + item.bytes + ' bytes)' : '')).join('\n')
+          : '(لا موارد إضافية)';
+        let text = loaded.instructions + '\n\n[الموارد المرفقة — اقرأها بـ read_skill_resource ولا تنفّذها تلقائياً]\n' + resources;
+        if (text.length > MAX_SKILL_TOOL_CHARS) text = text.slice(0, MAX_SKILL_TOOL_CHARS) + '\n…(قُصّت المهارة — تجاوزت سقف النتيجة)';
+        return { content: [{ type: 'text', text }] };
+      }
+    );
+    const readSkillResourceTool = sdk.tool(
+      'read_skill_resource',
+      'اقرأ مورداً نصياً مرفقاً بمهارة مفعّلة بعد أن تسرده load_skill. القراءة لا تنفّذ السكربت.',
+      {
+        name: z.string().describe('اسم المهارة المفعّلة'),
+        resource: z.string().describe('مسار المورد النسبي كما أعادته load_skill'),
+      },
+      async (args) => {
+        const loaded = skillCatalog.readResource(
+          skillContext,
+          String((args && args.name) || ''),
+          String((args && args.resource) || ''),
+        );
+        if (!loaded.ok) return { content: [{ type: 'text', text: 'تعذّرت قراءة المورد: ' + (loaded.message || loaded.error) }], isError: true };
+        const text = loaded.content.length > MAX_SKILL_TOOL_CHARS
+          ? loaded.content.slice(0, MAX_SKILL_TOOL_CHARS) + '\n…(قُصّ المورد — تجاوز سقف النتيجة)'
+          : loaded.content;
+        return { content: [{ type: 'text', text }] };
       }
     );
     // أداة open_preview (م-1-ب): يفتح بها النموذج لوحة المعاينة المدمجة على عنوان —
@@ -660,6 +707,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
       'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, screenshotTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool] }),
+      'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }
 
