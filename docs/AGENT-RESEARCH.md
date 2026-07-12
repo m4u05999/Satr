@@ -365,6 +365,10 @@ METR عرّفت 50%-time horizon بطول المهمة البشرية التي �
 
 ### الأولوية 2 — سجل مهام موحد ودائم `Task Ledger`
 
+> **نُفّذت في 2026-07-12 وتنتظر مراجعة Claude وقبول المالك:** schema `task_update` v1، تخزين دائم منقّى
+> بلا prompts، تطبيع Codex وClaude وأداة المحوّلات، وعرض progress/dependencies/owner/evidence
+> مع إيقاف واستئناف صريحين. التحقق: `npm run test:tasks` وbaseline ‏12/12.
+
 | الأثر | الجهد | المخاطرة |
 |---:|---:|---:|
 | 5 | 4 | 3 |

@@ -20,12 +20,12 @@ const SAFE_TASK_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const STATUSES = new Set(['pending', 'in_progress', 'completed', 'blocked']);
 const LEDGER_STATES = new Set(['active', 'paused', 'completed']);
 const MODES = new Set(['replace', 'merge']);
-const MAX_TASKS = 100;
-const MAX_DEPENDENCIES = 20;
-const MAX_EVIDENCE = 12;
-const MAX_TITLE = 500;
+const MAX_TASKS = 50;
+const MAX_DEPENDENCIES = 12;
+const MAX_EVIDENCE = 6;
+const MAX_TITLE = 300;
 const MAX_OWNER = 80;
-const MAX_EVIDENCE_TEXT = 800;
+const MAX_EVIDENCE_TEXT = 300;
 const MAX_FILE = 512 * 1024;
 
 function cleanText(value, max) {
@@ -148,7 +148,9 @@ function writeBestEffort(ledger, options) {
     const dir = path.dirname(file);
     fs.mkdirSync(dir, { recursive: true });
     const temp = file + '.tmp-' + process.pid + '-' + Date.now();
-    fs.writeFileSync(temp, JSON.stringify(ledger), 'utf8');
+    const serialized = JSON.stringify(ledger);
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_FILE) return false;
+    fs.writeFileSync(temp, serialized, 'utf8');
     fs.renameSync(temp, file);
     return true;
   } catch {

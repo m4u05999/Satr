@@ -532,6 +532,25 @@ ipcMain.handle('satr:listFiles', (event, cwd) => {
 
 const SAFE_ENGINE = /^[a-z0-9_-]{1,32}$/;
 
+// ---------- سجلّ المهام الدائم (الأولوية 2) ----------
+// قراءة snapshot أو تغيير حالة ledger فقط. لا تحرير مهام خفيّ من الواجهة؛ الوكيل
+// يحدّثها عبر task_update، والمستخدم يملك إيقافاً/استئنافاً صريحين ظاهرين.
+const TASK_ACTIONS = new Set(['pause', 'resume']);
+
+ipcMain.handle('satr:taskLedger', (event, payload) => {
+  const p = payload || {};
+  if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')) return null;
+  return tasks.load(p.engine, p.sessionId);
+});
+
+ipcMain.handle('satr:taskAction', (event, payload) => {
+  const p = payload || {};
+  if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '') || !TASK_ACTIONS.has(p.action)) return null;
+  const ledger = tasks.action(p.engine, p.sessionId, p.action);
+  if (ledger) emitToWindow(ledger);
+  return ledger;
+});
+
 ipcMain.handle('satr:lastChat', (event, payload) => {
   const eng = payload && typeof payload.engine === 'string' ? payload.engine : '';
   if (!SAFE_ENGINE.test(eng)) return { sid: null };

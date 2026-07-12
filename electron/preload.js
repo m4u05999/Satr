@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('satr', {
   forgetChat: (engine) => ipcRenderer.invoke('satr:forgetChat', { engine }),
   listChats: () => ipcRenderer.invoke('satr:listChats'),                     // تصفح محادثات المحوّلات (الدفعة 4)
   readChat: (provider, id) => ipcRenderer.invoke('satr:readChat', { provider, id }),
+  taskLedger: (engine, sessionId) => ipcRenderer.invoke('satr:taskLedger', { engine, sessionId }),
+  taskAction: (engine, sessionId, action) => ipcRenderer.invoke('satr:taskAction', { engine, sessionId, action }),
   // قنوات Enterprise (الدفعة 3) — تفشل بهدوء في البناء المجتمعي (لا معالج مسجَّل)
   eeUsage: () => ipcRenderer.invoke('satr:ee:usage'),
   eeAudit: () => ipcRenderer.invoke('satr:ee:audit'),

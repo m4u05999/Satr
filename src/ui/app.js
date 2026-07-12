@@ -96,6 +96,7 @@
     if (sid && !sessionId) {
       sessionId = sid;
       $('sessionInfo').textContent = 'جلسة: ' + sid.slice(0, 8) + ' (مستأنفة)';
+      loadTaskLedger(e, sid);
     }
   }
   function modelsForEngine(engine) {
@@ -150,6 +151,7 @@
       $('sessionInfo').textContent = sessionId
         ? ('جلسة: ' + sessionId.slice(0, 8) + ' (مستأنفة)')
         : 'لا جلسة';
+      if (!sessionId) chatEl.clearTaskLedger();
     }
     lastEngine = e;
   });
@@ -173,6 +175,32 @@
   // deadSessionRecovery (تلمس حالة القشرة والمحرّر)، وengineLabel (تقرأ providersCache).
   const chatEl = document.querySelector('satr-chat');
   function addNotice(text) { chatEl.addNotice(text); }
+
+  async function loadTaskLedger(engine, sid) {
+    if (!engine || !sid) { chatEl.clearTaskLedger(); return; }
+    try {
+      const ledger = await window.satr.taskLedger(engine, sid);
+      if (ledger && ledger.session_id === sid) chatEl.showTaskLedger(ledger);
+      else chatEl.clearTaskLedger();
+    } catch (e) { /* أفضل جهد: فشل ledger لا يمنع استئناف المحادثة */ }
+  }
+
+  chatEl.addEventListener('task-action', async (event) => {
+    const detail = event.detail || {};
+    if (detail.action === 'pause' && busy) {
+      await window.satr.stop();
+      if (currentBlock && !currentBlock.done) currentBlock.stopped();
+      endRun();
+    }
+    try {
+      const ledger = await window.satr.taskAction(detail.engine, detail.sessionId, detail.action);
+      if (!ledger) { addNotice('تعذّر تغيير حالة سجل المهام'); return; }
+      chatEl.showTaskLedger(ledger);
+      addNotice(detail.action === 'pause'
+        ? '⏸ أُوقفت الخطة والدور الجاري — حالتها محفوظة'
+        : '▶ استؤنفت الخطة — أرسل طلباً للمتابعة');
+    } catch (e) { addNotice('تعذّر تغيير حالة سجل المهام'); }
+  });
 
   // اسم المحرك المعروض في رأس الرد — يتبع المحرك المختار (لا يُنسب DeepSeek لـ Claude)
   function engineLabel() {
@@ -256,6 +284,10 @@
     // التحديث التلقائي (17): مستقل عن الدور — إشعار لطيف أسفل النافذة
     if (ev.type === 'update') {
       handleUpdateEvent(ev);
+      return;
+    }
+    if (ev.type === 'task_update') {
+      chatEl.showTaskLedger(ev);
       return;
     }
     const block = currentBlock;
@@ -606,6 +638,7 @@
     // يصفّر جلسة محوّل غير مرتبطة بمجلد أصلاً
     sessionCwd = $('cwd').value.trim();
     $('sessionInfo').textContent = 'جلسة: ' + c.id.slice(0, 8) + ' (مستأنفة)';
+    loadTaskLedger(c.provider, c.id);
     addNotice('📂 استؤنفت محادثة ' + label + ' — أرسل رسالتك للمتابعة');
     chatEl.scrollToEnd(true);
   }
@@ -621,6 +654,7 @@
     $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8);
     if (data.cwd) { $('cwd').value = data.cwd; localStorage.setItem('satr_cwd', data.cwd); }
     sessionCwd = $('cwd').value.trim(); // الجلسة المستأنفة مرتبطة بمجلدها هذا
+    loadTaskLedger($('engine').value, s.id);
     if (data.total > data.messages.length)
       addNotice('عرض آخر ' + data.messages.length + ' من أصل ' + data.total + ' رسالة');
     for (const msg of data.messages) {
@@ -661,6 +695,7 @@
     }
     sessionId = s.id; // الرسالة القادمة تُرسل بـ sessionId فيستأنفها thread/resume
     $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8) + ' (Codex مستأنفة)';
+    loadTaskLedger('codex', s.id);
     addNotice('📂 استؤنفت جلسة Codex — أرسل رسالتك للمتابعة');
     chatEl.scrollToEnd(true);
     input.focus();

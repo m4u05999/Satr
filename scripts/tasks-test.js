@@ -71,6 +71,9 @@ async function main() {
     assert.strictEqual(sanitized[0].id, 'task-1');
     assert.strictEqual(sanitized[0].status, 'pending');
     assert.deepStrictEqual(sanitized[0].dependencies, []);
+    assert.strictEqual(tasks.sanitizeTasks(Array.from({ length: 80 }, (_, index) => ({
+      id: 'bounded-' + index, title: 'مهمة ' + index, status: 'pending',
+    }))).length, 50);
 
     const definitions = tools.defs().map((definition) => definition.function.name);
     assert(definitions.includes('update_task_ledger'));

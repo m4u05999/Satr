@@ -59,6 +59,15 @@ node scripts/skills-test.js --live-sdk
 
 كل probe تنشئ skill مؤقتة داخل مجلد مؤقت، تعمل بوضع `plan`، وترفض أي إذن غير متوقع.
 
+## تحقق `Task Ledger`
+
+```powershell
+npm run test:tasks
+```
+
+يغطي schema v1 والتخزين والاستئناف و`merge` والاعتماديات والأدلة والإيقاف/الاستئناف
+وحدود الإدخال وأداة المحوّلات، بلا شبكة وبلا browser أو preview.
+
 ## المهام الاثنتا عشرة
 
 1. قراءة ملف.

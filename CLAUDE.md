@@ -56,6 +56,9 @@ electron/exporter.js ← تصدير المحادثة Markdown (الدفعة 4.8 
 electron/skills.js   ← فهرس مهارات محمول: .agents/skills هو المعيار و.claude/skills للتوافق
                        (مشروع ثم مستخدم)، metadata فقط أولاً ثم SKILL.md/الموارد عند الطلب؛
                        تحقق مسار/حجم ولا تنفيذ تلقائي للسكربتات
+electron/tasks.js    ← Task Ledger موحّد ودائم تحت ~/.satr/tasks/<engine>/<session>.json:
+                       pending/in_progress/completed/blocked + dependencies/owner/evidence؛
+                       schema v1، تنقية وسقوف وكتابة ذرية أفضل جهد، بلا prompts/transcript
 electron/diff.js     ← حساب فرق الأسطر (قصّ بادئة/لاحقة + LCS محدود + طيّ السياق)
                        دالة نقية بلا اعتماديات — المرحلة 3
 electron/inject.js   ← حقن @الملفات للمحوّلات (الدفعة 1.1 من ROADMAP): يقرأ الملفات المُشار
@@ -195,6 +198,12 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
      للـ runtime الأصلي ويعرض `.agents` عبر أداتي MCP محليتين للتحميل التدريجي؛ Codex
      يرفق `UserInput(type:'skill', name, path)` الأصلي؛ والمحوّلات تعرض metadata في system
      context وتحمّل المحتوى فقط عبر `load_skill`/`read_skill_resource`.
+   - `task_update` (Task Ledger، schema v1): snapshot كامل بعد التنقية والحفظ، بالشكل
+     `{type, schema_version:1, engine, session_id, revision, state, source, updated_at,
+     tasks:[{id,title,status,dependencies,owner,evidence:[{text,kind?}]}]}`. الحالات
+     `pending|in_progress|completed|blocked`، وحالة السجل `active|paused|completed`.
+     `main.js` هو نقطة التثبيت: يعترض الحدث الخام من المحرك، يربطه بالمحرك والجلسة
+     المنقّيين، يستدعي `tasks.apply()`، ثم يبث snapshot المحفوظ للواجهة والمراقبة.
    - `effort` (⚙ — المرحلة 14.4): مستوى جهد التفكير `low|medium|high|xhigh|max` أو فارغ
      (الافتراضي). يُنقّى بـ `EFFORT_LEVELS` في main.js ويُمرَّر كخيار `effort` — الـ SDK
      يخفّضه صامتاً إن لم يدعمه النموذج. محرك **sdk** فقط.
@@ -373,6 +382,23 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **مثال**: `.agents/skills/tafqeet/SKILL.md` (تفقيط الأرقام بالعربية) — مهارة قياسية للتجربة.
 - **التحقق**: `npm run test:skills` يثبت precedence والتحميل التدريجي وحدود الموارد وأدوات
   المحوّلات ومدخلات Codex، ثم `npm run eval:agent` يحمي baseline الوكيل 12/12.
+
+### سجل المهام الدائم (Task Ledger — الأولوية 2)
+
+- **التخزين**: `electron/tasks.js` يحفظ snapshot فقط تحت
+  `~/.satr/tasks/<engine>/<session_id>.json`؛ لا prompt ولا transcript. المعرّفات منقّاة
+  كمكوّن مسار واحد، والسجل ≤50 مهمة، والدليل ≤6 بنود للمهمة، والملف ≤512KiB.
+  الكتابة عبر ملف مؤقت ثم rename وأفضل جهد؛ فشل القرص لا يكسر الدور.
+- **المحرّكات**: Codex يطبّع `turn/plan/updated` المثبّت من schema v2. Claude SDK
+  يطبّع أدوات `TodoWrite` و`TaskCreate` و`TaskUpdate` ورسائل النظام الحقيقية
+  `task_started/task_updated/task_progress/task_notification` المثبتة من `sdk.d.ts`؛
+  لا يعتمد على تخمين حدث غير موجود. المحوّلات تملك أداة `update_task_ledger` في حلقة الأدوات.
+- **العرض**: `<satr-chat>` يعرض التقدم والحالات والاعتماديات والمالك ودليل التحقق في بطاقة
+  خفيفة أعلى الخيط. `satr:taskLedger` يعيد snapshot عند استئناف جلسة، و`satr:taskAction`
+  يقبل `pause|resume` فقط. الإيقاف زر ظاهر يوقف الدور ويحفظ ledger؛ الاستئناف ظاهر ولا
+  يرسل prompt تلقائياً — يطلب من المستخدم إرسال متابعة.
+- **التحقق**: `npm run test:tasks` يغطي schema/التخزين/merge/الأدلة/الإيقاف والاستئناف
+  وحدود الإدخال وأداة المحوّلات. `npm run eval:agent` يبقى baseline ‏12/12.
 
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 

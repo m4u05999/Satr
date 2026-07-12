@@ -7,6 +7,7 @@
 // العقد للخارج (تستدعيه القشرة وقت التفاعل — بعد تحميل الوحدات):
 //   addUserMsg(text, images) · addNotice(text) · addNoticeBefore(text, beforeEl)
 //   addStandaloneDiff(ev) · addHistoryAssistant(msg, label) · newAssistantBlock(label)
+//   showTaskLedger(ledger) · clearTaskLedger()
 //   reset() «جلسة جديدة» · clearThread() «استئناف محوّل» · scrollToEnd(force)
 //   notifyTurnDone(isError) · toolDetail(input)
 //
@@ -223,6 +224,101 @@ class SatrChat extends HTMLElement {
     const n = document.createElement('div');
     n.className = 'notice'; n.textContent = text;
     thread.appendChild(n); scrollDown();
+  }
+
+  let taskLedgerEl = null;
+  let taskLedgerSession = null;
+
+  function taskStateText(state) {
+    if (state === 'paused') return 'متوقفة';
+    if (state === 'completed') return 'مكتملة';
+    return 'قيد العمل';
+  }
+
+  function taskStatusIcon(status) {
+    if (status === 'completed') return '✓';
+    if (status === 'in_progress') return '●';
+    if (status === 'blocked') return '⚠';
+    return '○';
+  }
+
+  function clearTaskLedger() {
+    if (taskLedgerEl && taskLedgerEl.parentNode) taskLedgerEl.remove();
+    taskLedgerEl = null;
+    taskLedgerSession = null;
+  }
+
+  function showTaskLedger(ledger) {
+    if (!ledger || !Array.isArray(ledger.tasks) || !ledger.tasks.length) {
+      clearTaskLedger();
+      return;
+    }
+    hideEmpty();
+    if (!taskLedgerEl || taskLedgerSession !== ledger.engine + ':' + ledger.session_id) {
+      clearTaskLedger();
+      taskLedgerEl = document.createElement('section');
+      taskLedgerEl.className = 'task-ledger';
+      taskLedgerSession = ledger.engine + ':' + ledger.session_id;
+      thread.prepend(taskLedgerEl);
+    }
+    taskLedgerEl.className = 'task-ledger state-' + ledger.state;
+    taskLedgerEl.innerHTML = '';
+
+    const completed = ledger.tasks.filter((task) => task.status === 'completed').length;
+    const head = document.createElement('div'); head.className = 'task-ledger-head';
+    const title = document.createElement('div'); title.className = 'task-ledger-title'; title.textContent = 'سجل المهام';
+    const progressText = document.createElement('span'); progressText.className = 'task-ledger-progress-text';
+    progressText.textContent = completed + ' من ' + ledger.tasks.length + ' · ' + taskStateText(ledger.state);
+    head.appendChild(title); head.appendChild(progressText);
+
+    const actions = document.createElement('div'); actions.className = 'task-ledger-actions';
+    if (ledger.state !== 'completed') {
+      const action = document.createElement('button'); action.type = 'button'; action.className = 'task-ledger-action';
+      action.textContent = ledger.state === 'paused' ? '▶ استئناف الخطة' : '⏸ إيقاف الخطة';
+      action.addEventListener('click', () => this.dispatchEvent(new CustomEvent('task-action', {
+        bubbles: true,
+        detail: { action: ledger.state === 'paused' ? 'resume' : 'pause', engine: ledger.engine, sessionId: ledger.session_id },
+      })));
+      actions.appendChild(action);
+    }
+    head.appendChild(actions);
+
+    const track = document.createElement('div'); track.className = 'task-progress-track';
+    const fill = document.createElement('div'); fill.className = 'task-progress-fill';
+    fill.style.width = Math.round((completed / ledger.tasks.length) * 100) + '%';
+    track.appendChild(fill);
+
+    const list = document.createElement('div'); list.className = 'task-list';
+    for (const task of ledger.tasks) {
+      const item = document.createElement('article'); item.className = 'task-item status-' + task.status;
+      const row = document.createElement('div'); row.className = 'task-row';
+      const icon = document.createElement('span'); icon.className = 'task-status-icon'; icon.textContent = taskStatusIcon(task.status);
+      const taskTitle = document.createElement('span'); taskTitle.className = 'task-title'; taskTitle.dir = 'auto'; taskTitle.textContent = task.title;
+      row.appendChild(icon); row.appendChild(taskTitle);
+      if (task.owner) {
+        const owner = document.createElement('span'); owner.className = 'task-owner'; owner.textContent = task.owner;
+        row.appendChild(owner);
+      }
+      item.appendChild(row);
+      if (Array.isArray(task.dependencies) && task.dependencies.length) {
+        const dependencies = document.createElement('div'); dependencies.className = 'task-dependencies';
+        dependencies.textContent = 'يعتمد على: ' + task.dependencies.join('، '); dependencies.dir = 'auto';
+        item.appendChild(dependencies);
+      }
+      if (Array.isArray(task.evidence) && task.evidence.length) {
+        const details = document.createElement('details'); details.className = 'task-evidence';
+        const summary = document.createElement('summary'); summary.textContent = 'دليل التحقق (' + task.evidence.length + ')';
+        const evidenceList = document.createElement('ul');
+        for (const evidence of task.evidence) {
+          const evidenceItem = document.createElement('li'); evidenceItem.dir = 'auto'; evidenceItem.textContent = evidence.text || '';
+          evidenceList.appendChild(evidenceItem);
+        }
+        details.appendChild(summary); details.appendChild(evidenceList); item.appendChild(details);
+      }
+      list.appendChild(item);
+    }
+    taskLedgerEl.appendChild(head); taskLedgerEl.appendChild(track); taskLedgerEl.appendChild(list);
+    scrollDown();
   }
 
   // تنبيه يُدرج قبل عنصر معيّن في الخيط (تنبيهات حقن @ فوق بطاقة الرد لا في الذيل —
@@ -624,12 +720,16 @@ class SatrChat extends HTMLElement {
 
   // «جلسة جديدة»: حالة فارغة + تصفير الكلفة التراكمية وشريطها
   function reset() {
+    taskLedgerEl = null;
+    taskLedgerSession = null;
     totalCost = 0;
     $('costInfo').textContent = '';
     thread.innerHTML = '<div class="empty" id="empty"><div class="big">سطر</div><p>جلسة جديدة — اكتب طلبك الأول.</p></div>';
   }
   // تفريغ الخيط لاستئناف محادثة محوّل (نظير reset دون حالة الفراغ — التاريخ سيُبنى فوراً)
   function clearThread() {
+    taskLedgerEl = null;
+    taskLedgerSession = null;
     totalCost = 0;
     $('costInfo').textContent = '';
     thread.innerHTML = '';
@@ -642,6 +742,8 @@ class SatrChat extends HTMLElement {
     this.addActionNotice = addActionNotice;
     this.addStandaloneDiff = addStandaloneDiff;
     this.addHistoryAssistant = addHistoryAssistant;
+    this.showTaskLedger = showTaskLedger;
+    this.clearTaskLedger = clearTaskLedger;
     this.newAssistantBlock = newAssistantBlock;
     this.reset = reset;
     this.clearThread = clearThread;
