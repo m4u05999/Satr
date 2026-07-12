@@ -42,6 +42,8 @@ electron/repomap.js  ← خريطة مستودع تقريبية مقتصدة ل�
                        files.listFiles/readText وتطبيع search.js؛ بلا parser أو اعتماديات
 electron/context.js  ← سياق المزوّدات العمياء: يحقن خلاصة repomap صغيرة ويحسب تقدير
                        رموز محلياً (heuristic) موسوماً estimate؛ usage الحقيقي يظلّ مقدّماً
+electron/orchestrator.js ← منسّق باحثين قراءة فقط (الأولوية 6/الخطوة 1): 1–3 أدوار SDK
+                       متوازية بوضع plan، مهلة/إيقاف جماعي، خلاصات ومصادر وكلفة حية
 electron/gitdiff.js  ← فروقات git للوحة «تغييرات المشروع» ± (الدفعة 4.7 — قراءة فقط):
                        git بمصفوفة وسائط بلا shell، status --porcelain -z (أسماء عربية
                        خام)، المعدَّل عبر تحليل git diff الموحّد (دقيق لأي حجم — سقف LCS
@@ -234,6 +236,9 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
    - `memory_candidate` (schema v1): مرشّحة منقّاة `{kind,content,source,confidence,scope,
      shareable}` للعرض فقط. `main.js` يعيد بناء المصدر ويرفض أنماط الأسرار قبل renderer؛ لا
      كتابة حتى `satr:memorySave` من زر المستخدم. `memory_rejected` لا يحمل المحتوى المرفوض.
+   - `research_update` (schema v1): snapshot حيّ لفريق البحث `{run:{id,state,question,
+     workers[],summary,sources,cost}}`. كل worker يحمل الحالة والخلاصة والمصادر والمدة والكلفة
+     وعدد الأذونات المرفوضة. لا transcript ولا محتوى ملفات في الحدث.
    - `effort` (⚙ — المرحلة 14.4): مستوى جهد التفكير `low|medium|high|xhigh|max` أو فارغ
      (الافتراضي). يُنقّى بـ `EFFORT_LEVELS` في main.js ويُمرَّر كخيار `effort` — الـ SDK
      يخفّضه صامتاً إن لم يدعمه النموذج. محرك **sdk** فقط.
@@ -518,6 +523,26 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `context_estimate` لميزانية بداية الدور. لا تكلفة مالية مشتقة من هذا التقدير.
 - **التحقق**: `npm run test:context` يغطي سقف الخلاصة، وسم estimate، أولوية usage الحقيقي،
   fallback التقديري، ودورة HTTP فعلية تثبت وصول الخلاصة والميزانية لمحوّل OpenAI-compatible.
+
+### منسّق باحثين للقراءة فقط (الأولوية 6 — الخطوة 1)
+
+- **النطاق الصغير**: `electron/orchestrator.js` يشغّل 1–3 باحثين متوازيين على سؤال واحد.
+  هذه الجولة تستخدم محرك SDK فقط من IPC، لكن النواة تستدعي عقد `engine.start` صندوقاً أسود
+  وقابلة لحقن resolver للمحوّلات لاحقاً. لا Codex ولا worktree ولا كتابة أو دمج.
+- **الأمان fail-closed**: كل دور يُمرّر حتماً بـ`permissionMode:'plan'` و`browserControl:false`
+  وSkills فارغة. أي `permission_request` يُرفض آلياً (ميزانية إذن صفرية)، وقائمة الأدوات
+  البيضاء هي `Read|Grep|Glob` فقط؛ `Task/Agent/Bash/Edit/Write` وأي أداة أخرى توقف الباحث.
+  وصول `file_edit` أو طرفية نموذج أو نتيجة تحقق يوقفه كخرق. لكل باحث مهلة 90ث وسقف خلاصة
+  12k محرفاً و24 مصدراً؛ التوازي الأقصى 3، وتشغيل فريق ثانٍ أثناء الأول يُرفض بـ`busy`.
+- **الجمع والإيقاف**: المصادر تأتي من مدخلات Read/Grep ومن المسارات المذكورة في الخلاصة،
+  وتُنقّى إلى مسارات نسبية داخل cwd. النهاية تدمج خلاصات الباحثين والمصادر بلا تكرار وتجمع
+  usage/التكلفة. `stop(runId)` يقاطع كل مقابض الفريق، وإغلاق التطبيق يستدعي `stopAll()`.
+- **IPC والواجهة**: `satr:researchStart {cwd,question,count}` و`satr:researchStop {runId}`
+  و`satr:researchLatest {cwd}` منقّاة في `main.js` (آخر نتيجة محصورة بالمشروع الحالي). الأمر `/بحث` يفتح `satr-research-panel`؛
+  بطاقات بهيئة `agent-card` تعرض الحالة والكلفة والخلاصة والمصادر، وزر «إيقاف الكل» يقاطع
+  الفريق. النقر على مصدر يفتح عارض الملف عند السطر إن وُجد.
+- **التحقق**: `npm run test:orchestrator` يغطي باحثاً واحداً، التوازي 3، فرض plan ورفض
+  الإذن، المهلة، الإيقاف الجماعي، fail-closed لأحداث الكتابة ومنع الأدوات غير المقروءة.
 
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 

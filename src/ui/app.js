@@ -177,6 +177,7 @@
   // deadSessionRecovery (تلمس حالة القشرة والمحرّر)، وengineLabel (تقرأ providersCache).
   const chatEl = document.querySelector('satr-chat');
   const memoryEl = document.querySelector('satr-memory-panel');
+  const researchEl = document.querySelector('satr-research-panel');
   function addNotice(text) { chatEl.addNotice(text); }
 
   async function loadTaskLedger(engine, sid) {
@@ -344,6 +345,10 @@
     }
     if (ev.type === 'memory_rejected') {
       addNotice('🔒 رُفض اقتراح ذاكرة لأنه قد يحتوي سراً أو قيمة غير آمنة؛ لم يُحفظ ولم يُعرض.');
+      return;
+    }
+    if (ev.type === 'research_update') {
+      researchEl.handleEvent(ev);
       return;
     }
     const block = currentBlock;
@@ -572,6 +577,7 @@
     { cmd: '/جديدة',   en: '/new',    desc: 'بدء جلسة جديدة (مسح المحادثة الحالية)', run: () => newSession() },
     { cmd: '/جلسات',   en: '/sessions', desc: 'تصفح الجلسات المحفوظة واستئنافها',     run: () => openSessions() },
     { cmd: '/ذاكرة',   en: '/memory', desc: 'مراجعة ذاكرة المشروع الشخصية والبحث والتعديل والحذف', run: () => openMemory() },
+    { cmd: '/بحث',     en: '/research', desc: 'تشغيل 1–3 باحثين للقراءة فقط وإعادة خلاصة ومصادر', sdkOnly: true, run: () => openResearch() },
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
     { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
     { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', sdkOnly: true, run: () => openMcp() },
@@ -772,7 +778,7 @@
   // — قرار خطة التفكيك). لوحة الوكلاء خارج القائمة: لم يكن لها معالج أصلاً (تطابق حرفي).
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    for (const tag of ['satr-skills-panel', 'satr-mcp-panel', 'satr-context-panel', 'satr-sessions-panel', 'satr-memory-panel']) {
+    for (const tag of ['satr-skills-panel', 'satr-mcp-panel', 'satr-context-panel', 'satr-sessions-panel', 'satr-memory-panel', 'satr-research-panel']) {
       const el = document.querySelector(tag);
       if (el && el.close) el.close();
     }
@@ -866,6 +872,15 @@
   function openMemory() {
     memoryEl.open($('cwd').value.trim());
   }
+
+  function openResearch() {
+    researchEl.open($('cwd').value.trim());
+  }
+
+  researchEl.addEventListener('research-source', (event) => {
+    const detail = event.detail || {};
+    if (detail.rel) openViewer(detail.rel, detail.line || 0);
+  });
 
   // ---------- لوحتا الموصّلات والسياق: انتقلتا لمكوّنين (تفكيك ت-3) ----------
   // القشرة تفتح بحالتها (cwd/sessionId/busy تُمرَّر لحظة الفتح)، وأزرار «تحديث» داخل

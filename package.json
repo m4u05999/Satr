@@ -15,6 +15,7 @@
     "test:memory": "node scripts/memory-test.js",
     "test:repomap": "node scripts/repomap-test.js",
     "test:context": "node scripts/context-test.js",
+    "test:orchestrator": "node scripts/orchestrator-test.js",
     "test:codexmcp": "node scripts/codexmcp-test.js",
     "prestart": "node scripts/update-csp.js",
     "start": "electron .",

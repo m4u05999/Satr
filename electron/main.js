@@ -22,6 +22,7 @@ const checkpoints = require('./checkpoints');
 const memory = require('./memory');
 const agentsList = require('./agents');
 const agent = require('./agent');
+const orchestrator = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const adapters = require('./adapters');
@@ -724,6 +725,30 @@ ipcMain.handle('satr:memoryDelete', (event, payload) => {
   return memory.remove(cwd, p.id);
 });
 
+// ---------- منسّق باحثين للقراءة فقط (الأولوية 6 — الخطوة 1) ----------
+// لا اختيار محرك من renderer في هذه الجولة: SDK فقط، permissionMode=plan يُفرض في النواة.
+ipcMain.handle('satr:researchStart', (event, payload) => {
+  const p = payload || {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  const question = cleanMemoryText(p.question, 4000);
+  if (!cwd || !question || !Number.isInteger(p.count) || p.count < 1 || p.count > 3) {
+    return { ok: false, error: 'bad_input' };
+  }
+  return orchestrator.start({ question, count: p.count, engine: 'sdk' }, cwd, emitToWindow);
+});
+
+ipcMain.handle('satr:researchStop', (event, payload) => {
+  const p = payload || {};
+  if (!orchestrator.SAFE_RUN_ID.test(p.runId || '')) return { ok: false, error: 'bad_input' };
+  return orchestrator.stop(p.runId);
+});
+
+ipcMain.handle('satr:researchLatest', (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  return { ok: true, run: orchestrator.latest(cwd) };
+});
+
 ipcMain.handle('satr:taskLedger', (event, payload) => {
   const p = payload || {};
   if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')) return null;
@@ -984,12 +1009,13 @@ app.whenReady().then(() => { try { keys.migrate(); } catch (e) { /* أفضل ج�
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {
   stopAll();
+  orchestrator.stopAll();
   // إنهاء عمليات الخلفية المتتبَّعة كي لا تبقى خوادم تطوير بلا واجهة تديرها بعد الإغلاق
   bgprocs.killAll();
   term.killAll(); // صدفة الطرفية المدمجة تموت مع «سطر» (المرحلة 8)
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => { bgprocs.killAll(); term.killAll(); });
+app.on('before-quit', () => { orchestrator.stopAll(); bgprocs.killAll(); term.killAll(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
