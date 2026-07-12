@@ -550,9 +550,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
         + 'وللتفاعل مع الصفحة: خذ لقطة بـ browser_snapshot (تعطيك كل عنصر بصيغة [ref] role "name")، '
         + 'ثم مرّر الـ ref إلى browser_click/browser_type/browser_select_option/browser_press_key '
         + '(تطلب إذن المستخدم)، وأعد أخذ اللقطة بعد كل فعل لأن المُعرّفات تتغيّر. '
-        + 'عند توليد الصور/الفيديو (مثل Higgsfield) اكتب البرومبت بالإنجليزية دائماً حتى لو '
-        + 'طلب المستخدم بالعربية (المولّدات أضعف بالعربية)، ووسّعه بتفاصيل بصرية، ولا تُدرج '
-        + 'نصاً عربياً ليُرسَم داخل الصورة (يخرج مقطّعاً) — ضع النص العربي كطبقة HTML فوقها. '
+        + 'عند توليد الصور/الفيديو (مثل Higgsfield) اكتب برومبتاً غنيّاً بالتفاصيل البصرية '
+        + '(الإنجليزية أوثق تحكّماً، والنماذج الأحدث تفهم العربية أيضاً). النص داخل الصورة '
+        + 'مشروط بالنموذج: النماذج الحديثة (GPT Image وNano Banana Pro/2) تكتب العربية سليمة، '
+        + 'والأقدم تكسرها — فاختر نموذجاً قوياً بالعربية عند الحاجة (models_explore) أو ضع '
+        + 'النص العربي كطبقة HTML فوق الصورة؛ لا تمنعه منعاً مطلقاً. '
         + 'لا تستخدم من Agent Skills إلا المهارات المرفقة صراحةً بمدخلات هذا الدور.'
         + (model ? ' النموذج المختار حالياً في واجهة «سطر» هو «' + model + '» (من OpenAI Codex).' : '');
       const startParams = { cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, experimentalRawEvents: false, persistExtendedHistory: false };
