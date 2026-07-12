@@ -63,6 +63,9 @@ const previewSheet = sheet(`
   }
   :host(.ctl-mode) #pvCtlBadge { display: inline-flex; }
   :host(.ctl-mode) { border-inline-start-color: var(--gold); }
+  /* معاينة متجاوبة (محاكاة الأجهزة): زرّ يدوّر بين كامل/موبايل/لوحي. حين يُختار جهاز
+     يُعرَض المحتوى بعرضه موسّطاً في pvBox (الجوانب خلفية اللوحة) فتتفاعل media queries. */
+  #pvDevice.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   /* شريط التحديد بالتأشير (م-2): يظهر أسفل الرأس عند التقاط عنصر */
   #pvPickBar { display: none; flex-direction: column; gap: 6px; padding: 8px 10px;
     background: var(--surface); border-bottom: 1px solid var(--gold-border); }
@@ -114,6 +117,7 @@ const MARKUP = `
     <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل">🔄</button>
     <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)">🎯</button>
     <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (mp4)">⏺</button>
+    <button id="pvDevice" type="button" title="محاكاة الأجهزة: كامل/موبايل/لوحي (لاختبار التصميم المتجاوب)">🖥️</button>
     <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
@@ -173,18 +177,44 @@ class SatrPreviewPanel extends HTMLElement {
     // المقبض) يغيّر المستطيل، وResizeObserver يلتقطه كله. إحداثيات CSS px = DIP.
     let boundsRaf = 0;
     let held = false; // محجوب مؤقتاً أثناء مربع إذن (يبرز فوق العرض) — لا نبلّغ مستطيلاً
+    // معاينة متجاوبة: 0 = كامل عرض pvBox؛ رقم = عرض جهاز يُعرَض موسّطاً (تتفاعل media queries).
+    const DEVICES = [
+      { icon: '🖥️', label: 'كامل', w: 0 },
+      { icon: '📱', label: 'موبايل', w: 390 },
+      { icon: '📲', label: 'لوحي', w: 768 },
+    ];
+    let deviceIdx = 0;
+    try { deviceIdx = Math.max(0, Math.min(DEVICES.length - 1, parseInt(localStorage.getItem('satr_preview_device') || '0', 10) || 0)); } catch (e) {}
     const reportBounds = () => {
       if (!this.hasAttribute('open') || !started || held) return;
       cancelAnimationFrame(boundsRaf);
       boundsRaf = requestAnimationFrame(() => {
         const r = box.getBoundingClientRect();
         if (r.width < 2 || r.height < 2) return;
-        window.satr.previewBounds(Math.round(r.left), Math.round(r.top),
-          Math.round(r.width), Math.round(r.height));
+        const dev = DEVICES[deviceIdx].w;
+        let x = r.left, w = r.width;
+        if (dev && dev < r.width) { x = r.left + Math.round((r.width - dev) / 2); w = dev; } // توسيط بعرض الجهاز
+        window.satr.previewBounds(Math.round(x), Math.round(r.top), Math.round(w), Math.round(r.height));
       });
     };
     new ResizeObserver(reportBounds).observe(box);
     window.addEventListener('resize', reportBounds);
+
+    // زرّ محاكاة الأجهزة: يدوّر كامل→موبايل→لوحي، يحدّث الأيقونة/الحالة ويعيد قياس العرض.
+    const deviceBtn = $('pvDevice');
+    const paintDevice = () => {
+      const d = DEVICES[deviceIdx];
+      deviceBtn.textContent = d.icon;
+      deviceBtn.classList.toggle('on', d.w > 0);
+      deviceBtn.title = 'محاكاة الأجهزة: ' + d.label + (d.w ? ' (' + d.w + '‏px)' : '') + ' — انقر للتبديل';
+    };
+    paintDevice();
+    deviceBtn.addEventListener('click', () => {
+      deviceIdx = (deviceIdx + 1) % DEVICES.length;
+      try { localStorage.setItem('satr_preview_device', String(deviceIdx)); } catch (e) {}
+      paintDevice();
+      reportBounds();
+    });
 
     // م-1-د: تذكّر آخر عنوان **لكل مجلد مشروع** (لا عنواناً عاماً واحداً) — لكل مشروع
     // منفذه، فالنقر على 🌐 يعيد عنوان المشروع الحالي لا آخر ما فُتح في أي مكان. المفتاح

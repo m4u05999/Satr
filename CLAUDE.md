@@ -798,6 +798,12 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   app.js** (كان Codex يحرّره). (3) لقطة الصفحة كاملةً: `screenshot` يقبل `full_page=true`
   ⇒ `preview.screenshotFull` عبر CDP `Page.captureScreenshot` (`captureBeyondViewport`،
   سقف 20000px، سقوط رشيق). تحقّق حيّ: صفحة 2400px التُقطت 783×2400 مقابل 800×600 للعرض.
+- **معاينة متجاوبة/محاكاة الأجهزة (2026-07-12)**: زرّ `#pvDevice` في رأس اللوحة يدوّر
+  كامل/موبايل(390)/لوحي(768) — `reportBounds` يبلّغ مستطيلاً بعرض الجهاز **موسّطاً** في
+  pvBox (الجوانب خلفية اللوحة)، فعرض WebContentsView الأضيق = viewport الصفحة ⇒ تتفاعل
+  media queries حقيقةً (لا محاكاة CDP). لقطة الوكيل تعكس مقاس الجهاز. **preview-panel.js
+  وحده** (بلا تصادم). الاختيار يُحفظ `satr_preview_device`. تحقّق حيّ: عرض 390 ⇒
+  `innerWidth=390` والصفحة تُعيد التدفّق وmedia query تُفعَّل.
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
   رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`
