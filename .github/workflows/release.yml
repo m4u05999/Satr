@@ -1,0 +1,103 @@
+name: التحقق وإصدار ويندوز
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*.*.*'
+  pull_request:
+
+# القراءة هي الأصل؛ مهمة الإصدار وحدها ترفع الصلاحية إلى الكتابة.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: التحقق الخفيف
+    runs-on: windows-latest
+    steps:
+      - name: جلب المستودع
+        uses: actions/checkout@v6
+
+      - name: إعداد Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: تثبيت الاعتماديات المقفلة
+        run: npm ci
+
+      - name: فحص صياغة ملفات العملية الرئيسية
+        shell: pwsh
+        run: |
+          foreach ($file in Get-ChildItem electron -Filter *.js -File) {
+            node --check $file.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "فشل الفحص النحوي: $($file.FullName)"
+            }
+          }
+
+      - name: التحقق من تزامن CSP
+        shell: pwsh
+        run: |
+          node scripts/update-csp.js
+          git diff --exit-code -- src/index.html
+
+  release:
+    name: بناء ونشر مثبّت ويندوز
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: جلب المستودع
+        uses: actions/checkout@v6
+
+      - name: إعداد Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # يمنع إنشاء إصدار بعنوان لا يطابق النسخة المبنية فعلياً.
+      - name: مطابقة الوسم مع package.json
+        shell: pwsh
+        run: |
+          $tagVersion = '${{ github.ref_name }}' -replace '^v', ''
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($tagVersion -ne $packageVersion) {
+            throw "الوسم v$tagVersion لا يطابق package.json ($packageVersion)"
+          }
+
+      - name: تثبيت الاعتماديات المقفلة
+        run: npm ci
+
+      # npmRebuild:false في package.json يمنع إعادة بناء node-pty تحت Electron.
+      - name: بناء الأصول ورفعها إلى مسودة الإصدار
+        run: npm run dist -- --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: التحقق من أصول التحديث
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assets = @(gh release view '${{ github.ref_name }}' --json assets --jq '.assets[].name')
+          if (-not ($assets | Where-Object { $_ -like '*.exe' })) {
+            throw 'لم يُرفع مثبّت exe'
+          }
+          if (-not ($assets | Where-Object { $_ -eq 'latest.yml' })) {
+            throw 'لم يُرفع latest.yml'
+          }
+          if (-not ($assets | Where-Object { $_ -like '*.blockmap' })) {
+            throw 'لم يُرفع blockmap'
+          }
+
+      # electron-builder ينشئ مسودة افتراضياً؛ هذه الخطوة تنشرها بلا تدخل يدوي.
+      - name: نشر إصدار GitHub
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit '${{ github.ref_name }}' --draft=false --latest
