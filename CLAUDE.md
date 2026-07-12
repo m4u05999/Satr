@@ -928,6 +928,25 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
     (`throttle_unavailable`) والواجهة تنبّه «أغلِق DevTools» — استعمل تبويب Network فيها حينها.
   - تحقّق: `node --check` + مسبار معزول يُصرِّف كل سكربتات الحقن العشرة (0 فشل) + إقلاع نظيف
     (`ELECTRON_ENABLE_LOGGING`، 20ث بلا أخطاء JS — العروض المتبقية بيئية GPU/cache).
+- **رؤية الويب لـ Codex (الخيار 1 — 2026-07-12)**: إعطاء محرك Codex نفس رؤية الويب التي
+  يملكها SDK (open_preview/read_page/browser_snapshot/browser_console/browser_network/
+  screenshot) على **نفس** لوحة المعاينة. `electron/codexmcp.js`: خادم MCP‏ **streamable-HTTP
+  داخل العملية** (http المدمجة، صفر اعتماديات) يستمع على 127.0.0.1 بمنفذ ورمز عشوائيين،
+  كل طلب يتحقّق من `Authorization: Bearer` بزمن ثابت، ويفوّض الأدوات مباشرةً إلى
+  `preview.js` (نفس نسخة WebContentsView). `electron/codex.js` يبدأ الخادم **قبل** spawn
+  ويحقن إعداده في `codex app-server` عبر تجاوزات `-c`:
+  `mcp_servers.satr_preview.url="…"` + `bearer_token_env_var="SATR_MCP_TOKEN"` (الرمز في
+  البيئة)، ويوقفه في cleanup. **قرارات مثبّتة بفحص codex-cli 0.144.1 واختبار حيّ**: (1)
+  codex يدعم نقل `streamable_http` (رابط+bearer) لا stdio فقط؛ (2) `mcpServers` في طبقات
+  الإعداد لا في `thread/start`، لكن `-c` وقت الإطلاق يحقنه **لكل جلسة بلا تلويث
+  config.toml العام وبلا عملية جسر**؛ (3) الرمز يُقرأ من **متغيّر بيئة** لا حرفياً. اختبار
+  حيّ بـ codex حقيقي: `initialize → tools/list → satr_preview=ready` (بينما فشلت خوادمه
+  الأخرى). إشعار `mcpServer/startupStatus/updated` (كان يُتجاهَل) يُرصد الآن لفشل
+  satr_preview فقط (تدهور رشيق: Codex يعمل بلا رؤية إن فشل). open_preview يبثّ
+  `preview_open` للواجهة (app.js يفتح اللوحة generically لأي محرك). الأدوات **قراءة/رؤية
+  فقط** في هذه الدفعة (أفعال النقر/الكتابة دفعة لاحقة). تحقّق: `npm run test:codexmcp`
+  (18 — عقد JSON-RPC + المصادقة) + `eval:agent` 12/12 + إقلاع نظيف. codex.js محجوز لـ Claude
+  (حدّ ملكية الملفات في الفريق الثلاثي).
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
   رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`

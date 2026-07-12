@@ -25,6 +25,8 @@ const { spawn, execSync } = require('child_process');
 
 const { computeDiff } = require('./diff');
 const skillCatalog = require('./skills');
+const preview = require('./preview');   // وحدة المعاينة المشتركة (رؤية الويب لـ Codex — الخيار 1)
+const codexmcp = require('./codexmcp');  // خادم MCP‏ streamable-HTTP داخل العملية
 
 const IS_WIN = process.platform === 'win32';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة تراجع ولا نعرض فرقاً
@@ -158,7 +160,29 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
     return { resolvePermission() { return false; }, async stop() {} };
   }
 
-  const proc = spawn(bin, ['app-server'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+  // رؤية الويب لـ Codex (الخيار 1): نستضيف خادم MCP‏ streamable-HTTP **داخل العملية**
+  // (electron/codexmcp.js) بوصول مباشر لـ preview.js، ونحقن إعداده في `codex app-server`
+  // عبر تجاوزات `-c` وقت الإطلاق (بلا تلويث ~/.codex/config.toml وبلا عملية جسر). الرمز
+  // يُمرَّر عبر متغيّر بيئة (codex يقرأه من bearer_token_env_var). أثبته اختبار حيّ:
+  // codex اتصل، طلب tools/list، وأبلغ satr_preview=ready. أي فشل هنا لا يكسر الدور —
+  // Codex يعمل بلا رؤية ويب (تدهور رشيق). open_preview يبثّ preview_open للواجهة لتفتح اللوحة.
+  let mcpHost = null;
+  try {
+    mcpHost = await codexmcp.start({
+      preview,
+      openPreview: (url) => emit({ type: 'preview_open', url }),
+    });
+  } catch (e) { mcpHost = null; }
+  const appServerArgs = ['app-server'];
+  const spawnEnv = Object.assign({}, process.env);
+  if (mcpHost) {
+    appServerArgs.push(
+      '-c', 'mcp_servers.satr_preview.url="' + mcpHost.url + '"',
+      '-c', 'mcp_servers.satr_preview.bearer_token_env_var="SATR_MCP_TOKEN"',
+    );
+    spawnEnv.SATR_MCP_TOKEN = mcpHost.token;
+  }
+  const proc = spawn(bin, appServerArgs, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: spawnEnv });
   const startedAt = Date.now();
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
 
@@ -379,8 +403,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
         finishTurn(p.turn || { status: 'failed', error: p.error });
         break;
       }
+      case 'mcpServer/startupStatus/updated': {
+        // رؤية الويب (الخيار 1): نرصد حالة خادمنا satr_preview فقط. الفشل نادر (المنفذ
+        // محلي والرمز يُمرَّر بالبيئة) لكن إن حدث نُبلّغه كـ stderr للتشخيص بلا كسر الدور.
+        if (p && p.name === 'satr_preview' && p.status === 'failed') {
+          emit({ type: 'stderr', text: 'تعذّر ربط رؤية الويب (satr_preview MCP) — يعمل Codex بلا معاينة.' });
+        }
+        break;
+      }
       default:
-        // rate limits / token usage / mcp startup … لا تعنينا في المرحلة 1
+        // rate limits / token usage … لا تعنينا في المرحلة 1
         break;
     }
   }
@@ -449,6 +481,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
     }
     try { proc.stdin.end(); } catch {}
     setTimeout(() => { try { proc.kill(); } catch {} }, 500);
+    if (mcpHost) { try { mcpHost.stop(); } catch {} mcpHost = null; } // أوقِف خادم رؤية الويب MCP
     if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
   }
   let emittedDone = false;
@@ -492,6 +525,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
         + 'LTR؛ وإن طلب لغة أخرى صراحةً فاتّبعه. '
         + 'أنت تعمل داخل تطبيق «سطر» (Satr) — واجهة عربية لسطح المكتب '
         + 'تُشغّل Codex بجوار Claude Code. '
+        + 'وفيه متصفح معاينة مدمج: عند تشغيل خادم ويب محلي استعمل أداة open_preview (من خادم '
+        + 'satr_preview) لعرضه داخل «سطر» بدل فتح متصفح خارجي، ثم افحص ما بنيته بأدوات المعاينة: '
+        + 'read_page (بنية الصفحة النصية) وbrowser_snapshot (العناصر التفاعلية) وscreenshot '
+        + '(لقطة بصرية) وbrowser_console (أخطاء JavaScript) وbrowser_network (طلبات الشبكة برموز '
+        + 'الحالة) — استعملها للتحقق من نتيجة تعديلاتك وتصحيح نفسك. '
         + 'لا تستخدم من Agent Skills إلا المهارات المرفقة صراحةً بمدخلات هذا الدور.'
         + (model ? ' النموذج المختار حالياً في واجهة «سطر» هو «' + model + '» (من OpenAI Codex).' : '');
       const startParams = { cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, experimentalRawEvents: false, persistExtendedHistory: false };
