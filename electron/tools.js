@@ -111,6 +111,35 @@ const DEFS = [
   {
     type: 'function',
     function: {
+      name: 'update_task_ledger',
+      description: 'Create or update the visible persistent task plan. Include status, dependencies, owner, and concrete verification evidence when available. Use replace for a complete plan and merge for incremental updates.',
+      parameters: {
+        type: 'object',
+        properties: {
+          mode: { type: 'string', enum: ['replace', 'merge'] },
+          tasks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                title: { type: 'string' },
+                status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'blocked'] },
+                dependencies: { type: 'array', items: { type: 'string' } },
+                owner: { type: 'string' },
+                evidence: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['id', 'title', 'status'],
+            },
+          },
+        },
+        required: ['tasks'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'load_skill',
       description: "Load the instructions for one enabled Satr Agent Skill when its description matches the current task. Skills use progressive disclosure: call this only when relevant. Bundled scripts are resources to inspect, never automatic commands.",
       parameters: {
@@ -318,6 +347,19 @@ async function run(name, cwd, args, ctx) {
       if (content.length > MAX_RESULT) content = content.slice(0, MAX_RESULT) + '\n…(قُصّت النتائج)';
       if (r.partial) content += '\n(مسح جزئي — نفدت ميزانية الوقت قبل تغطية كل الملفات)';
       return { ok: true, content };
+    }
+    if (name === 'update_task_ledger') {
+      if (!ctx || typeof ctx.emit !== 'function') return { ok: false, content: 'تعذّر تحديث سجل المهام في هذا المحرك' };
+      const taskList = args && Array.isArray(args.tasks) ? args.tasks : [];
+      if (!taskList.length && (!args || args.mode !== 'replace')) return { ok: false, content: 'خطأ: tasks مطلوبة' };
+      ctx.emit({
+        type: 'task_update',
+        schema_version: 1,
+        mode: args && args.mode === 'replace' ? 'replace' : 'merge',
+        source: 'adapter_tool',
+        tasks: taskList,
+      });
+      return { ok: true, content: 'حُدّث سجل المهام المرئي والدائم.' };
     }
     if (name === 'load_skill') {
       const skillName = args && typeof args.name === 'string' ? args.name.trim() : '';

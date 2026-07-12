@@ -16,6 +16,7 @@ const gitdiff = require('./gitdiff'); // فروقات git للوحة التغي�
 const gitactions = require('./gitactions'); // أفعال git للوحة التغييرات (stage/unstage/discard/commit)
 const exporter = require('./exporter'); // تصدير المحادثة Markdown (الدفعة 4.8) — قراءة فقط
 const skills = require('./skills');
+const tasks = require('./tasks');
 const agentsList = require('./agents');
 const agent = require('./agent');
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
@@ -299,10 +300,23 @@ ipcMain.handle('satr:send', async (event, payload) => {
   stopAll(); // طلب جديد يلغي السابق
 
   const token = ++runSeq;
-  const emit = (obj) => { if (token === runSeq) emitToWindow(obj); };
+  const runEngine = (payload.engine === 'codex' || adapters.get(payload.engine)) ? payload.engine : 'sdk';
+  let activeSessionId = payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null;
+  const emit = (obj) => {
+    if (token !== runSeq || !obj || typeof obj !== 'object') return;
+    if (obj.type === 'system' && SAFE_SESSION.test(obj.session_id || '')) activeSessionId = obj.session_id;
+    if (obj.type === 'task_update') {
+      const eventSessionId = SAFE_SESSION.test(obj.session_id || '') ? obj.session_id : activeSessionId;
+      if (!eventSessionId) return;
+      const ledger = tasks.apply({ ...obj, engine: runEngine, session_id: eventSessionId });
+      if (ledger) emitToWindow(ledger);
+      return;
+    }
+    emitToWindow(obj);
+  };
 
   // مجرى المراقبة (§4.7): حدث وصفي ببداية الدور — للتدقيق (من طلب ماذا وأين)
-  lastEngine = (payload.engine === 'codex' || adapters.get(payload.engine)) ? payload.engine : 'sdk';
+  lastEngine = runEngine;
   try {
     features.notify({ type: 'prompt', engine: lastEngine, cwd, prompt: prompt.slice(0, 2000) });
   } catch (e) { /* عزل */ }

@@ -169,7 +169,6 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
   let threadId = null;
   let finished = false;
   let stopping = false;
-  let planEmitted = false; // خطة المهام (turn/plan/updated) تُعرض مرة واحدة لكل دور
 
   // تراكم نصّ رسالة الوكيل الحالية (نبثّه deltas ثم نُصدر assistant مكتملاً)
   const agentText = new Map();     // itemId → نص متراكم
@@ -348,17 +347,24 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
         break;
       }
       case 'turn/plan/updated': {
-        // خطة المهام (todo list) — نعرضها مرة واحدة عند أول ظهور كقائمة تحقّق نصّية
-        // ضمن كتلة المساعد (تظهر قبل الإجابة). التحديثات اللاحقة للحالة لا تُعاد (تجنّب التكرار).
-        if (!planEmitted && Array.isArray(p.plan) && p.plan.length) {
-          planEmitted = true;
-          const mark = (st) => st === 'completed' ? '☑' : st === 'inProgress' ? '▶' : '☐';
-          const lines = p.plan
-            .filter((s) => s && s.step)
-            .map((s) => mark(s.status) + ' ' + String(s.step))
-            .join('\n');
-          if (lines) emitAssistantText('📋 الخطة:\n' + lines, 'commentary');
-        }
+        // عقد Codex v2 المثبّت بالـschema: plan[{step,status pending|inProgress|completed}].
+        // التفكير يبقى transcript؛ الخطة تُطبّع كحالة task_update كاملة قابلة للحفظ والقياس.
+        if (Array.isArray(p.plan)) emit({
+          type: 'task_update',
+          schema_version: 1,
+          session_id: p.threadId || threadId,
+          mode: 'replace',
+          source: 'codex_plan',
+          tasks: p.plan.map((item, index) => ({
+            id: 'codex-plan-' + (index + 1),
+            title: item && item.step,
+            status: item && item.status === 'inProgress' ? 'in_progress'
+              : item && item.status === 'completed' ? 'completed' : 'pending',
+            owner: 'Codex',
+            dependencies: [],
+            evidence: [],
+          })),
+        });
         break;
       }
       case 'item/completed': {

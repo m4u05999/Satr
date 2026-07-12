@@ -134,6 +134,106 @@ const BROWSER_AUTO_TOOLS = new Set([
 ]);
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
 
+// تطبيع أدوات Todo/Task ورسائل Agent الفعلية في SDK إلى عقد task_update الموحّد.
+// لا نتدخل في تنفيذ الأدوات؛ نرصد رسائلها الموثّقة فقط ونترك التخزين لـ main.js.
+function taskStatusFromClaude(status) {
+  if (status === 'running' || status === 'in_progress') return 'in_progress';
+  if (status === 'completed') return 'completed';
+  if (status === 'failed' || status === 'killed' || status === 'paused' || status === 'stopped') return 'blocked';
+  return 'pending';
+}
+
+function emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingCreates) {
+  const sessionId = msg && msg.session_id;
+  if (!sessionId) return;
+  const send = (mode, source, taskList) => emit({
+    type: 'task_update', schema_version: 1, session_id: sessionId, mode, source, tasks: taskList,
+  });
+
+  if (msg.type === 'assistant' && msg.message && Array.isArray(msg.message.content)) {
+    for (const block of msg.message.content) {
+      if (!block || block.type !== 'tool_use' || !block.input) continue;
+      if (block.name === 'TodoWrite' && Array.isArray(block.input.todos)) {
+        send('replace', 'claude_todo', block.input.todos.map((todo, index) => ({
+          id: 'claude-todo-' + (index + 1),
+          title: todo && todo.content,
+          status: taskStatusFromClaude(todo && todo.status),
+          owner: 'Claude', dependencies: [], evidence: [],
+        })));
+      } else if (block.name === 'TaskCreate' && block.id) {
+        pendingCreates.set(block.id, block.input);
+      } else if (block.name === 'TaskUpdate' && block.input.taskId) {
+        const id = String(block.input.taskId);
+        const title = block.input.subject || block.input.description || taskTitles.get(id) || ('مهمة ' + id);
+        const status = block.input.status ? taskStatusFromClaude(block.input.status) : (taskStatuses.get(id) || 'pending');
+        taskTitles.set(id, title);
+        taskStatuses.set(id, status);
+        const metadata = block.input.metadata && typeof block.input.metadata === 'object' ? block.input.metadata : {};
+        send('merge', 'claude_task', [{
+          id,
+          title,
+          status,
+          owner: block.input.owner || '',
+          dependencies: Array.isArray(block.input.addBlockedBy) ? block.input.addBlockedBy : [],
+          evidence: Array.isArray(metadata.evidence) ? metadata.evidence : [],
+        }]);
+      }
+    }
+    return;
+  }
+
+  if (msg.type === 'user' && msg.tool_use_result && msg.message && Array.isArray(msg.message.content)) {
+    const result = msg.tool_use_result;
+    const task = result && result.task;
+    if (task && task.id) {
+      const resultBlock = msg.message.content.find((block) => block && block.type === 'tool_result');
+      const created = resultBlock && pendingCreates.get(resultBlock.tool_use_id);
+      const id = String(task.id);
+      const title = (created && (created.subject || created.description)) || task.subject || ('مهمة ' + id);
+      taskTitles.set(id, title);
+      taskStatuses.set(id, 'pending');
+      if (resultBlock) pendingCreates.delete(resultBlock.tool_use_id);
+      send('merge', 'claude_task', [{ id, title, status: 'pending', owner: '', dependencies: [], evidence: [] }]);
+    }
+    return;
+  }
+
+  if (msg.type !== 'system' || !msg.task_id) return;
+  const id = String(msg.task_id);
+  if (msg.subtype === 'task_started') {
+    const title = msg.description || ('مهمة وكيل ' + id);
+    taskTitles.set(id, title);
+    taskStatuses.set(id, 'in_progress');
+    send('merge', 'claude_agent', [{ id, title, status: 'in_progress', owner: msg.subagent_type || 'Claude', evidence: [] }]);
+  } else if (msg.subtype === 'task_updated') {
+    const patch = msg.patch || {};
+    const title = patch.description || taskTitles.get(id) || ('مهمة وكيل ' + id);
+    const status = patch.status ? taskStatusFromClaude(patch.status) : (taskStatuses.get(id) || 'pending');
+    taskTitles.set(id, title);
+    taskStatuses.set(id, status);
+    send('merge', 'claude_agent', [{
+      id, title, status, owner: '',
+      evidence: patch.error ? [{ text: String(patch.error), kind: 'error' }] : [],
+    }]);
+  } else if (msg.subtype === 'task_progress') {
+    const title = msg.description || taskTitles.get(id) || ('مهمة وكيل ' + id);
+    taskTitles.set(id, title);
+    taskStatuses.set(id, 'in_progress');
+    send('merge', 'claude_agent', [{
+      id, title, status: 'in_progress', owner: msg.subagent_type || 'Claude',
+      evidence: msg.summary ? [{ text: String(msg.summary), kind: 'progress' }] : [],
+    }]);
+  } else if (msg.subtype === 'task_notification') {
+    const title = taskTitles.get(id) || msg.summary || ('مهمة وكيل ' + id);
+    const status = taskStatusFromClaude(msg.status);
+    taskStatuses.set(id, status);
+    send('merge', 'claude_agent', [{
+      id, title, status, owner: 'Claude',
+      evidence: msg.summary ? [{ text: String(msg.summary), kind: 'result' }] : [],
+    }]);
+  }
+}
+
 // تطبيع رسالة Claude المكتملة لعقد العرض الموحّد. لا نعدّل كائن SDK الأصلي لأن بقية
 // خصائص الرسالة (session/uuid/parent_tool_use_id) تظل جزءاً من العقد الحي.
 function annotateAssistantMessage(msg) {
@@ -183,6 +283,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   const { query } = await loadSdk();
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
+  const taskTitles = new Map(); // task_id → عنوان؛ يربط رسائل Claude الجزئية بلا افتراضات
+  const taskStatuses = new Map(); // task_id → حالة؛ تحديث owner وحده لا يعيدها pending
+  const pendingTaskCreates = new Map(); // tool_use_id لـTaskCreate → input حتى تصل نتيجته ذات id
   let closeInput;
   const inputClosed = new Promise((resolve) => { closeInput = resolve; });
 
@@ -737,6 +840,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   (async () => {
     try {
       for await (const msg of q) {
+        emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingTaskCreates);
         if (msg.type === 'stream_event') {
           const phaseEvent = phaseEventFromStreamEvent(msg.event);
           if (phaseEvent) emit(phaseEvent);

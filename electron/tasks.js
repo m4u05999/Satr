@@ -160,12 +160,19 @@ function mergeTasks(previous, incoming) {
   const map = new Map(previous.map((task) => [task.id, task]));
   for (const task of incoming) {
     const old = map.get(task.id);
+    const dependencies = old
+      ? [...new Set(old.dependencies.concat(task.dependencies))].slice(0, MAX_DEPENDENCIES)
+      : task.dependencies;
+    const evidence = old
+      ? old.evidence.concat(task.evidence).filter((item, index, values) =>
+        values.findIndex((other) => other.text === item.text && other.kind === item.kind) === index).slice(-MAX_EVIDENCE)
+      : task.evidence;
     map.set(task.id, old ? {
       ...old,
       ...task,
-      dependencies: task.dependencies.length ? task.dependencies : old.dependencies,
+      dependencies,
       owner: task.owner || old.owner,
-      evidence: task.evidence.length ? task.evidence : old.evidence,
+      evidence,
     } : task);
   }
   return [...map.values()].slice(0, MAX_TASKS);

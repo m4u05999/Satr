@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const tasks = require('../electron/tasks');
+const tools = require('../electron/tools');
 
 async function main() {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'satr-tasks-test-'));
@@ -42,6 +43,12 @@ async function main() {
     assert.strictEqual(merged.state, 'completed');
     assert.strictEqual(merged.tasks[1].owner, 'الوكيل');
     assert.strictEqual(merged.tasks[1].evidence[0].kind, 'test');
+    const accumulated = tasks.apply({
+      schema_version: 1, engine, session_id: sessionId, mode: 'merge', source: 'more_evidence',
+      tasks: [{ id: 'plan-2', title: 'تنفيذ الوحدة', status: 'completed', dependencies: ['external-check'], evidence: ['مراجعة يدوية'] }],
+    }, options);
+    assert.deepStrictEqual(accumulated.tasks[1].dependencies, ['plan-1', 'external-check']);
+    assert.strictEqual(accumulated.tasks[1].evidence.length, 2);
 
     const paused = tasks.action(engine, sessionId, 'pause', options);
     assert.strictEqual(paused.state, 'paused');
@@ -54,7 +61,7 @@ async function main() {
     assert.strictEqual(resumed.state, 'active');
 
     const loaded = tasks.load(engine, sessionId, options);
-    assert.strictEqual(loaded.revision, 5);
+    assert.strictEqual(loaded.revision, 6);
     assert.strictEqual(loaded.tasks.length, 2);
     assert(!JSON.stringify(loaded).includes(root));
 
@@ -65,9 +72,18 @@ async function main() {
     assert.strictEqual(sanitized[0].status, 'pending');
     assert.deepStrictEqual(sanitized[0].dependencies, []);
 
+    const definitions = tools.defs().map((definition) => definition.function.name);
+    assert(definitions.includes('update_task_ledger'));
+    let emitted = null;
+    const toolResult = await tools.run('update_task_ledger', root, {
+      mode: 'replace', tasks: [{ id: 'adapter-1', title: 'اختبار المحوّل', status: 'in_progress' }],
+    }, { emit: (event) => { emitted = event; } });
+    assert.strictEqual(toolResult.ok, true);
+    assert(emitted && emitted.type === 'task_update' && emitted.source === 'adapter_tool');
+
     console.log('✓ task ledger schema and persistence');
     console.log('✓ task ledger merge, pause, and resume');
-    console.log('✓ task ledger input boundaries');
+    console.log('✓ task ledger input boundaries and adapter tool');
   } finally {
     await fsp.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
