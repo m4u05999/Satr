@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const files = require('./files');
 const search = require('./search'); // بحث «دلالي خفيف» (4.6) — أداة search_code
+const repomap = require('./repomap'); // خريطة رموز/ملفات تقريبية للمزوّدات العمياء
 const inject = require('./inject'); // resolveInside — تحقق مسار موحّد
 const skills = require('./skills'); // مهارات محمولة: تحميل تدريجي لـ SKILL.md وموارده
 const verify = require('./verify'); // تحقق صريح من .satr/verify.json — لا تشغيل تلقائي
@@ -107,6 +108,19 @@ const DEFS = [
           query: { type: 'string', description: 'Space-separated words to search for (1-8 words, 2+ characters each)' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'repo_map',
+      description: "Build a compact approximate map of the user's repository before choosing files to read. Returns prioritized file paths and prominent regex-detected definitions (function/class/const/export) with line numbers. This is an estimate, not a parser; verify with search_code and read_file before editing.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Optional task keywords used only to prioritize relevant paths and symbols (up to 8 terms)' },
+        },
       },
     },
   },
@@ -392,6 +406,12 @@ async function run(name, cwd, args, ctx) {
       if (content.length > MAX_RESULT) content = content.slice(0, MAX_RESULT) + '\n…(قُصّت النتائج)';
       if (r.partial) content += '\n(مسح جزئي — نفدت ميزانية الوقت قبل تغطية كل الملفات)';
       return { ok: true, content };
+    }
+    if (name === 'repo_map') {
+      // خريطة تقريبية مقتصدة — قراءة بلا إذن، وتعيد استخدام files/search المؤمّنتين.
+      const query = args && typeof args.query === 'string' ? args.query.trim().slice(0, 200) : '';
+      const result = await repomap.build(cwd, query);
+      return { ok: true, content: result.text };
     }
     if (name === 'verification_config') {
       return { ok: true, content: verify.formatConfig(verify.loadConfig(cwd)) };
