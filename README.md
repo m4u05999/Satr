@@ -128,7 +128,7 @@ ConPTY) وفوقه **عارضان يتبادلان بذكاء**:
 **تحقّق من سلامة الملف (اختياري)** — يجب أن يطابق بصمة SHA-256 لإصدار v2.8.0:
 ```powershell
 (Get-FileHash "$HOME\Downloads\Satr-Setup-2.8.0.exe" -Algorithm SHA256).Hash
-# 84C486AD0BB1B017717A3E6ED643B4B2093221B8B647448F4B5DDDE1480D0DEE
+# 954C2874ED93E6155CC6C85EA49138E033FD1277E464B7CBEE8F7BE762987A07
 ```
 
 ### تنبيه: تحذير Windows SmartScreen (عند التشغيل)
