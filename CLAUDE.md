@@ -59,6 +59,10 @@ electron/skills.js   ← فهرس مهارات محمول: .agents/skills هو �
 electron/tasks.js    ← Task Ledger موحّد ودائم تحت ~/.satr/tasks/<engine>/<session>.json:
                        pending/in_progress/completed/blocked + dependencies/owner/evidence؛
                        schema v1، تنقية وسقوف وكتابة ذرية أفضل جهد، بلا prompts/transcript
+electron/verify.js   ← قارئ/مشغّل .satr/verify.json الصريح: ≤6 أوامر أحادية السطر، لا تخمين
+                       ولا تشغيل تلقائي؛ التنفيذ في طرفية النموذج بعد إذن exec والخرج مسقوف
+electron/checkpoints.js ← checkpoint لكل دور يجمع file_edit IDs وmetadata تحت ~/.satr/checkpoints؛
+                       استعادة عكسية لآخر checkpoint الحي عبر undo القائمة، بلا Git history
 electron/diff.js     ← حساب فرق الأسطر (قصّ بادئة/لاحقة + LCS محدود + طيّ السياق)
                        دالة نقية بلا اعتماديات — المرحلة 3
 electron/inject.js   ← حقن @الملفات للمحوّلات (الدفعة 1.1 من ROADMAP): يقرأ الملفات المُشار
@@ -204,6 +208,13 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
      `pending|in_progress|completed|blocked`، وحالة السجل `active|paused|completed`.
      `main.js` هو نقطة التثبيت: يعترض الحدث الخام من المحرك، يربطه بالمحرك والجلسة
      المنقّيين، يستدعي `tasks.apply()`، ثم يبث snapshot المحفوظ للواجهة والمراقبة.
+   - `checkpoint_update` (schema v1): `{id,engine,session_id,previous_id,state,
+     edit_count,files,verification,restorable}`. الحالات `open|ready|passed|failed|
+     restored|partial`. لا يحمل snapshots أو محتوى ملفات؛ `restorable` لا يكون true إلا
+     لآخر checkpoint ذي لقطات undo حية وفي cwd نفسه.
+   - `verification_result` (schema v1): `{engine,session_id,checkpoint_id,task_title,
+     linked_task,passed,summary,checks[]}`. الخرج مقصوص في الحدث/tool_result؛ التخزين الدائم
+     داخل checkpoint يحتفظ `SHA-256` والحجم والحالة فقط، لا الخرج الكامل.
    - `effort` (⚙ — المرحلة 14.4): مستوى جهد التفكير `low|medium|high|xhigh|max` أو فارغ
      (الافتراضي). يُنقّى بـ `EFFORT_LEVELS` في main.js ويُمرَّر كخيار `effort` — الـ SDK
      يخفّضه صامتاً إن لم يدعمه النموذج. محرك **sdk** فقط.
@@ -399,6 +410,42 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   يرسل prompt تلقائياً — يطلب من المستخدم إرسال متابعة.
 - **التحقق**: `npm run test:tasks` يغطي schema/التخزين/merge/الأدلة/الإيقاف والاستئناف
   وحدود الإدخال وأداة المحوّلات. `npm run eval:agent` يبقى baseline ‏12/12.
+
+### حلقة التحقق وcheckpoint الدور (الأولوية 3)
+
+- **إعداد صريح فقط**: لا يكتشف «سطر» أوامر من `package.json` ولا يخمّنها. المشروع يضيف:
+
+  ```json
+  {
+    "version": 1,
+    "commands": [
+      { "id": "lint", "label": "فحص التنسيق", "command": "npm run lint", "timeout_seconds": 120 },
+      { "id": "test", "label": "الاختبارات", "command": "npm test", "timeout_seconds": 300 }
+    ]
+  }
+  ```
+
+  الملف `.satr/verify.json` داخل `cwd` حصراً، symlink مرفوض، ≤64KiB، ≤6 أوامر، وكل
+  command سطر واحد ≤1000 محرف. قراءة `verification_config` بلا إذن ولا تنفيذ؛
+  `verify_project` طبقة `exec` فيعرض مربع الإذن العربي الأوامر الفعلية ثم يشغّل snapshot
+  نفسه في طرفية النموذج. لا «موافقة دائمة» للتحقق.
+- **المحرّكات**: Claude SDK يملك خادم MCP مستقل `satr-verify` خارج `satr-terminal`؛
+  المحوّلات تملك الأداتين في `tools.js`. Codex لم يُعدّل: `main.js` يجمع تعديلاته مثل
+  غيره، وزر التحقق اليدوي يعيد ملخص النتيجة إلى دوره التالي مرة واحدة عبر
+  `<satr_verification_result>` ثم يعلّمها مستهلكة.
+- **checkpoint**: يبدأ مع الدور ولا يظهر/يُحفظ حتى أول `file_edit`. يجمع ≤50 edit ID
+  وملخص الملفات، ويربط تلقائياً بالمهمة فقط حين توجد مهمة `in_progress` وحيدة. عند
+  التحقق تُضاف evidence من نوع `verification_pass|verification_fail` إلى المهمة المطابقة
+  بالعنوان دون تغيير حالتها خفيةً.
+- **الاستعادة**: زر ظاهر مع تأكيد؛ آخر checkpoint الحي فقط، وفي cwd نفسه، ويستدعي undo
+  لكل edit ID بالعكس. لا `git reset` ولا commit ولا لمس history. بعد إعادة تشغيل التطبيق
+  تبقى metadata وhashes للمقارنة لكن `restorable=false` لأن snapshots الذاكرية انتهت.
+  الفشل يوقف السلسلة فوراً ويعلّم checkpoint `partial` بدلاً من متابعة قد تفسد الملفات.
+- **IPC**: `satr:checkpointLatest(engine,sessionId)` قراءة فقط؛
+  `satr:verifyCheckpoint(...)` يفتح permission_request؛ `satr:checkpointRestore(...)`
+  يتحقق من engine/session/checkpoint/cwd في `main.js` ثم يستخدم undo الموحّدة.
+- **التحقق**: `npm run test:verify` يغطي schema/رفض الأسطر المتعددة/runner/حدود الخرج/
+  persistence/reverse restore/cwd/عودة النتيجة مرة واحدة. `npm run eval:agent` يبقى 12/12.
 
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 

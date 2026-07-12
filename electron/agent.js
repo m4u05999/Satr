@@ -32,6 +32,7 @@ const PORTABLE_SKILL_TOOLS = new Set([
   'mcp__satr-skills__read_skill_resource',
 ]);
 const READ_ONLY_VERIFY_TOOLS = new Set(['mcp__satr-verify__verification_config']);
+const VERIFY_EXEC_TOOL = 'mcp__satr-verify__verify_project';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة ولا نعرض فرقاً (أداء وذاكرة)
 const MAX_SKILL_TOOL_CHARS = 48 * 1024;
 
@@ -908,7 +909,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       const p = pending.get(id);
       if (!p) return false;
       pending.delete(id);
-      if (allow && always) alwaysAllowed.add(p.toolName);
+      if (allow && always && p.toolName !== VERIFY_EXEC_TOOL) alwaysAllowed.add(p.toolName);
       p.resolve(allow
         ? { behavior: 'allow', updatedInput: p.input }
         : { behavior: 'deny', message: 'رفض المستخدم استخدام هذه الأداة' });

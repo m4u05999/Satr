@@ -215,6 +215,7 @@
 
   chatEl.addEventListener('checkpoint-verify', async (event) => {
     const detail = event.detail || {};
+    if (busy) { addNotice('أوقف الدور الجاري قبل تشغيل تحقق checkpoint سابق'); return; }
     try {
       const result = await window.satr.verifyCheckpoint(
         detail.engine, detail.sessionId, detail.checkpointId, $('cwd').value.trim(), []);
@@ -228,6 +229,7 @@
 
   chatEl.addEventListener('checkpoint-restore', async (event) => {
     const detail = event.detail || {};
+    if (busy) { addNotice('أوقف الدور الجاري قبل استعادة checkpoint'); return; }
     if (!confirm('استعادة هذا checkpoint ستعكس تعديلات الدور بالترتيب العكسي. هل تريد المتابعة؟')) return;
     try {
       const result = await window.satr.checkpointRestore(

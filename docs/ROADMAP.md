@@ -310,6 +310,13 @@
 
 ## قيود ثابتة عبر كل الدفعات
 
+- **أولوية الوكيل 3 — منفّذة وتنتظر القبول (2026-07-12) — تحقق + checkpoint للدور**:
+  `.satr/verify.json` صريح بلا تخمين/تشغيل تلقائي، وأداة `verify_project` خلف إذن exec
+  تشغّل الأوامر في الطرفية المرئية وتربط pass/fail بدليل Task Ledger. `checkpoints.js`
+  يجمع edit IDs ويحفظ metadata/hashes فقط؛ آخر checkpoint الحي يُستعاد بالعكس داخل cwd
+  عبر undo القائمة، بلا لمس Git history. بطاقة الدردشة تعرض الملفات والنتائج والمقارنة
+  والاستعادة. تحقق: `test:verify` أخضر ومرصد الوكيل 12/12. لم يُعدّل `codex.js` أو المعاينة.
+
 - **أولوية الوكيل 2 — منفّذة وتنتظر القبول (2026-07-12) — Task Ledger موحّد ودائم**: عقد
   `task_update` schema v1 + مخزن `electron/tasks.js` تحت `~/.satr/tasks/` بلا prompts؛
   Codex يطبّع `turn/plan/updated`، وClaude يطبّع `TodoWrite/Task*` و`system.task_*`،
