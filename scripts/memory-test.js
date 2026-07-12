@@ -47,6 +47,8 @@ async function main() {
     }
     const boundedQuery = memory.search(project, Array.from({ length: 30 }, (_, i) => 'term' + i).join(' '), options);
     assert(boundedQuery.query_terms.length <= memory.MAX_QUERY_TERMS);
+    const stored = JSON.parse(await fsp.readFile(memory.fileFor(project, options), 'utf8'));
+    assert(stored.items.every((item) => Array.isArray(item.keywords) && item.keywords.length <= memory.MAX_INDEX_TERMS));
     const retrieved = memory.retrieve(project, 'اختبار الفهرس', { ...options, maxItems: 3, maxChars: 700 });
     assert(retrieved.items.length <= 3);
     assert(retrieved.text.length <= 700);
