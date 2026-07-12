@@ -19,6 +19,17 @@ let lastBounds = null; // آخر مستطيل أبلغته الواجهة — ي
 
 const PARTITION = 'persist:preview';
 
+// ---------- التقاط الـ console وأخطاء الشبكة (البند 1 — «الوكيل يرى أخطاء التشغيل») ----------
+// الوكيل يبني صفحة ويعاينها لكنه أعمى عن أخطاء JavaScript وقت التشغيل وفشل طلبات الشبكة.
+// نلتقطها من الصفحة المعزولة ونبثّها له عبر أداة browser_console فتُغلق حلقة «ابنِ→عايِن→صحّح».
+// مخزنان دائريّان يُصفَّران عند تنقّل الإطار الرئيسي (كي يعكسا الصفحة الحالية).
+let consoleBuf = []; // {level, message, line, source}
+let netErrBuf = [];  // {url, error, type}
+const LOG_CAP = 300;
+const LEVELS = ['verbose', 'info', 'warning', 'error']; // ترميز Electron لـ console-message
+function pushLog(arr, item) { arr.push(item); if (arr.length > LOG_CAP) arr.shift(); }
+function resetLogs() { consoleBuf = []; netErrBuf = []; }
+
 function emit(ev) {
   if (typeof sender === 'function') { try { sender(ev); } catch (e) {} }
 }
@@ -41,6 +52,24 @@ function wirePermissions() {
   } catch (e) {}
 }
 
+// التقاط طلبات الشبكة الفاشلة على مستوى جلسة المعاينة (مرة واحدة — مستقلة عن العرض)
+let netWired = false;
+function wireNetwork() {
+  if (netWired) return;
+  netWired = true;
+  try {
+    session.fromPartition(PARTITION).webRequest.onErrorOccurred((details) => {
+      // ERR_ABORTED = أُلغي بتنقّل جديد (ليس خطأً) — نتجاهله كي لا نضجّ سجل الوكيل
+      if (!details || details.error === 'net::ERR_ABORTED') return;
+      pushLog(netErrBuf, {
+        url: String(details.url || '').slice(0, 500),
+        error: String(details.error || ''),
+        type: String(details.resourceType || ''),
+      });
+    });
+  } catch (e) {}
+}
+
 function wireEvents(wc) {
   const nav = () => emit({
     type: 'nav',
@@ -53,6 +82,19 @@ function wireEvents(wc) {
   wc.on('page-title-updated', (e, title) => emit({ type: 'title', title: String(title || '').slice(0, 200) }));
   wc.on('did-start-loading', () => emit({ type: 'loading', loading: true }));
   wc.on('did-stop-loading', () => emit({ type: 'loading', loading: false }));
+  // التقاط رسائل console الصفحة (تشمل الأخطاء غير الملتقطة) للوكيل عبر browser_console
+  wc.on('console-message', (e, level, message, line, sourceId) => {
+    pushLog(consoleBuf, {
+      level: Number(level) || 0,
+      message: String(message || '').slice(0, 2000),
+      line: Number(line) || 0,
+      source: String(sourceId || '').slice(0, 300),
+    });
+  });
+  // تصفير السجلّ عند تنقّل الإطار الرئيسي لصفحة جديدة (لا للتنقّل داخل الصفحة) — يعكس الحالية
+  wc.on('did-start-navigation', (e, url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) resetLogs();
+  });
   // فشل التحميل الرئيسي فقط (-3 = أُجهض بتنقل جديد — ليس خطأ)
   wc.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (isMainFrame && code !== -3) emit({ type: 'failed', code, desc: String(desc || ''), url: String(url || '') });
@@ -71,6 +113,7 @@ function ensureView(win, send) {
   sender = send;
   if (view && !view.webContents.isDestroyed()) return view;
   wirePermissions();
+  wireNetwork();
   view = new WebContentsView({
     webPreferences: {
       sandbox: true,
@@ -253,6 +296,19 @@ async function readPage() {
     const data = await wc.executeJavaScript(READ_SCRIPT, true);
     return { ok: true, page: data };
   } catch (e) { return { error: 'read_failed' }; }
+}
+
+// سجلّ الـ console وأخطاء الشبكة الملتقطة للصفحة الحالية (لا executeJavaScript — بثّ حيّ).
+// LEVELS يترجم ترميز Electron، والأخطاء تُبرَز أولاً في العرض ليركّز عليها الوكيل.
+function getConsole() {
+  if (!currentWC()) return { error: 'closed' };
+  const logs = consoleBuf.slice(-150).map((l) => ({
+    level: LEVELS[l.level] || 'log',
+    message: l.message,
+    line: l.line,
+    source: l.source,
+  }));
+  return { ok: true, logs, netErrors: netErrBuf.slice(-80) };
 }
 
 // ---------- لقطة شجرة الوصول بمُعرّفات ثابتة (ترقية أفعال المتصفح 2026-07-12) ----------
@@ -460,4 +516,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, screenshot, clickElement, typeText, captureFrame, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, screenshot, clickElement, typeText, captureFrame, close, destroy, isHttpUrl };
