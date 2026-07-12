@@ -23,6 +23,10 @@ const MAX_SYMBOL_CANDIDATES = 120;
 const MAX_TOTAL_SYMBOLS = 500;
 const MAX_SYMBOL_TEXT = 180;
 const MAX_OUTPUT_CHARS = 24 * 1024;
+const SUMMARY_MAX_FILES_SCAN = 160;
+const SUMMARY_MAX_FILES_OUT = 24;
+const SUMMARY_TIME_BUDGET_MS = 600;
+const SUMMARY_MAX_CHARS = 3200;
 
 const SOURCE_EXTENSIONS = new Set([
   '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx',
@@ -266,8 +270,24 @@ async function build(cwd, query, options) {
   return result;
 }
 
+async function summarize(cwd, query, options) {
+  const settings = options || {};
+  const result = await build(cwd, query, {
+    ...settings,
+    maxFiles: Math.min(Number(settings.maxFiles) || SUMMARY_MAX_FILES_SCAN, SUMMARY_MAX_FILES_SCAN),
+    maxFilesOut: Math.min(Number(settings.maxFilesOut) || SUMMARY_MAX_FILES_OUT, SUMMARY_MAX_FILES_OUT),
+    timeBudgetMs: Math.min(Number(settings.timeBudgetMs) || SUMMARY_TIME_BUDGET_MS, SUMMARY_TIME_BUDGET_MS),
+    maxOutputChars: Math.min(Number(settings.maxOutputChars) || SUMMARY_MAX_CHARS, SUMMARY_MAX_CHARS),
+  });
+  const summary = result.total
+    ? result.text.replace('<satr_repo_map ', '<satr_repo_map mode="summary" ')
+    : '';
+  return { ...result, summary };
+}
+
 module.exports = {
   build,
+  summarize,
   extractSymbols,
   patternsFor,
   TIME_BUDGET_MS,
@@ -277,4 +297,8 @@ module.exports = {
   MAX_SYMBOLS_PER_FILE,
   MAX_TOTAL_SYMBOLS,
   MAX_OUTPUT_CHARS,
+  SUMMARY_MAX_FILES_SCAN,
+  SUMMARY_MAX_FILES_OUT,
+  SUMMARY_TIME_BUDGET_MS,
+  SUMMARY_MAX_CHARS,
 };

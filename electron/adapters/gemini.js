@@ -25,6 +25,7 @@ const chats = require('../chats'); // ذاكرة على القرص (1.3): است
 const tools = require('../tools'); // أدوات الوكيل (2.1–2.3)
 const skillCatalog = require('../skills'); // فهرس المهارات المحمولة والتحميل التدريجي
 const memory = require('../memory'); // ذاكرة مشروع شخصية مُقَرّة ضمن ميزانية
+const contextBudget = require('../context'); // خلاصة repo map + usage تقديري موسوم estimate
 
 // ---- بِتّات خاصة بمزوّد Gemini ----
 const API_HOST = 'generativelanguage.googleapis.com';
@@ -76,7 +77,7 @@ function start(input, cwd, emit) {
   const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
   const skillPrompt = skillCatalog.catalogPrompt(skillContext);
   const memoryPrompt = memory.retrieve(cwd, prompt).text;
-  const contextPrompt = [skillPrompt, memoryPrompt].filter(Boolean).join('\n\n');
+  let contextPrompt = [skillPrompt, memoryPrompt].filter(Boolean).join('\n\n');
   const autoAllowWrites = permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions';
 
   const apiKey = resolveApiKey();
@@ -109,6 +110,8 @@ function start(input, cwd, emit) {
   let callSeq = 0;    // Gemini لا يصدر معرّفات نداءات — نولّدها لبطاقات الواجهة
   // استهلاك الدور (3.3): آخر usageMetadata (طلب Gemini يشمل السجل كاملاً فالأخير أشمل)
   const usageTotal = { input_tokens: 0, output_tokens: 0 };
+  const estimatedUsage = { input_tokens: 0, output_tokens: 0 };
+  let contextEstimate = null;
 
   // ---------- الإذن العربي (نفس عقد openai-compatible — 2.2/2.3) ----------
   const pendingPerms = new Map();
@@ -131,6 +134,7 @@ function start(input, cwd, emit) {
       const bodyObj = { contents };
       if (contextPrompt) bodyObj.systemInstruction = { parts: [{ text: contextPrompt }] };
       if (withTools) bodyObj.tools = geminiToolDefs();
+      estimatedUsage.input_tokens += contextBudget.estimateTokens(bodyObj);
       const body = JSON.stringify(bodyObj);
 
       const handleFrame = (jsonStr) => {
@@ -207,6 +211,16 @@ function start(input, cwd, emit) {
 
   // حلقة الوكيل (2.4): functionCall ⇒ إذن حسب الطبقة ⇒ تنفيذ محلي ⇒ functionResponse ⇒ معاودة
   (async () => {
+    const builtContext = await contextBudget.buildBlindContext({
+      cwd,
+      prompt,
+      systemParts: [skillPrompt, memoryPrompt],
+      history,
+      toolDefinitions: tools.defs(),
+    });
+    if (aborted) return;
+    contextPrompt = builtContext.systemPrompt;
+    contextEstimate = builtContext.estimate;
     const contents = history.concat([{ role: 'user', parts: [{ text: prompt }] }]);
     let rounds = 0;
     while (true) {
@@ -221,6 +235,7 @@ function start(input, cwd, emit) {
         fail(r.error);
         return;
       }
+      estimatedUsage.output_tokens += contextBudget.estimateTokens({ text: r.text, calls: r.calls });
 
       if (r.calls.length && rounds < MAX_TOOL_ROUNDS) {
         rounds++;
@@ -275,7 +290,8 @@ function start(input, cwd, emit) {
       emit({
         type: 'result', session_id: sid, is_error: false,
         duration_ms: Date.now() - startedAt, num_turns: rounds + 1,
-        usage: (usageTotal.input_tokens || usageTotal.output_tokens) ? { ...usageTotal } : undefined,
+        usage: contextBudget.resolveUsage(usageTotal, estimatedUsage),
+        context_estimate: contextEstimate,
         provider: PROVIDER,
       });
       emit({ type: 'proc_done', code: 0 });

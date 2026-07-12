@@ -33,6 +33,7 @@ const chats = require('../chats'); // ذاكرة على القرص (1.3): است
 const tools = require('../tools'); // أدوات الوكيل (2.1): read_file / list_files
 const skillCatalog = require('../skills'); // metadata فقط أولاً؛ المحتوى عبر load_skill عند الطلب
 const memory = require('../memory'); // ذاكرة مشروع شخصية مُقَرّة ضمن ميزانية
+const contextBudget = require('../context'); // خلاصة repo map + usage تقديري موسوم estimate
 
 const MAX_TURNS = 40;       // آخر 40 رسالة لكل جلسة (سقف الرموز)
 const MAX_SESSIONS = 50;    // سقف الجلسات في الكاش الحيّ لكل مزوّد
@@ -78,7 +79,7 @@ function make(config) {
     const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
     const skillPrompt = skillCatalog.catalogPrompt(skillContext);
     const memoryPrompt = memory.retrieve(cwd, prompt).text;
-    const contextPrompt = [skillPrompt, memoryPrompt].filter(Boolean).join('\n\n');
+    let contextPrompt = [skillPrompt, memoryPrompt].filter(Boolean).join('\n\n');
     // acceptEdits/bypassPermissions تمرّان الكتابة بلا سؤال (نفس دلالة أوضاع SDK)
     const autoAllowWrites = permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions';
 
@@ -108,6 +109,8 @@ function make(config) {
     let toolsOk = true; // يُعطَّل بعد رفض المزوّد للأدوات (نموذج لا يدعم tool-calling)
     // استهلاك الرموز عبر جولات الدور (3.3): يُجمَع من إطارات usage إن وفّرها المزوّد
     const usageTotal = { input_tokens: 0, output_tokens: 0 };
+    const estimatedUsage = { input_tokens: 0, output_tokens: 0 };
+    let contextEstimate = null;
 
     // ---------- الإذن العربي لأدوات الكتابة والتنفيذ (2.2/2.3) ----------
     // نفس عقد مسار SDK: permission_request للواجهة، والرد يصل عبر resolvePermission
@@ -137,6 +140,7 @@ function make(config) {
           : messages;
         const bodyObj = { model: useModel, messages: requestMessages, stream: true };
         if (withTools) bodyObj.tools = tools.defs();
+        estimatedUsage.input_tokens += contextBudget.estimateTokens(bodyObj);
         const body = JSON.stringify(bodyObj);
 
         // إطار SSE: data: {choices[0].delta{content|tool_calls}} أو data: [DONE]
@@ -224,6 +228,16 @@ function make(config) {
 
     // حلقة الوكيل (2.1): نداءات أدوات ⇒ تنفيذ محلي وإعادة الطلب؛ نص فقط ⇒ انتهى الدور
     (async () => {
+      const builtContext = await contextBudget.buildBlindContext({
+        cwd,
+        prompt,
+        systemParts: [skillPrompt, memoryPrompt],
+        history,
+        toolDefinitions: tools.defs(),
+      });
+      if (aborted) return;
+      contextPrompt = builtContext.systemPrompt;
+      contextEstimate = builtContext.estimate;
       const messages = history.concat([{ role: 'user', content: prompt }]);
       let rounds = 0;
       while (true) {
@@ -238,6 +252,7 @@ function make(config) {
           fail(r.error);
           return;
         }
+        estimatedUsage.output_tokens += contextBudget.estimateTokens({ text: r.text, calls: r.calls });
 
         if (r.calls.length && rounds < MAX_TOOL_ROUNDS) {
           rounds++;
@@ -291,7 +306,8 @@ function make(config) {
           type: 'result', session_id: sid, is_error: false,
           duration_ms: Date.now() - startedAt, num_turns: rounds + 1,
           // استهلاك الدور (3.3) — إن وفّره المزوّد؛ مجرى المراقبة (§4.7) يلتقطه للوحة الاستهلاك
-          usage: (usageTotal.input_tokens || usageTotal.output_tokens) ? { ...usageTotal } : undefined,
+          usage: contextBudget.resolveUsage(usageTotal, estimatedUsage),
+          context_estimate: contextEstimate,
           provider: providerId || undefined,
         });
         emit({ type: 'proc_done', code: 0 });

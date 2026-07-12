@@ -40,6 +40,8 @@ electron/search.js   ← بحث محتوى «دلالي خفيف» (الدفعة
 electron/repomap.js  ← خريطة مستودع تقريبية مقتصدة للمزوّدات العمياء: مسارات + أبرز
                        function/class/const/export بتعابير regex حسب اللغة، فوق
                        files.listFiles/readText وتطبيع search.js؛ بلا parser أو اعتماديات
+electron/context.js  ← سياق المزوّدات العمياء: يحقن خلاصة repomap صغيرة ويحسب تقدير
+                       رموز محلياً (heuristic) موسوماً estimate؛ usage الحقيقي يظلّ مقدّماً
 electron/gitdiff.js  ← فروقات git للوحة «تغييرات المشروع» ± (الدفعة 4.7 — قراءة فقط):
                        git بمصفوفة وسائط بلا shell، status --porcelain -z (أسماء عربية
                        خام)، المعدَّل عبر تحليل git diff الموحّد (دقيق لأي حجم — سقف LCS
@@ -491,6 +493,24 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   التعديل. لا تكامل في `agent.js` أو `codex.js` لأن المحرّكين الأصليين يملكان أدوات بحثهما.
 - **التحقق**: `npm run test:repomap` يغطي الاستخراج متعدد اللغات، تجاهل المجلدات الثقيلة،
   الملف الضخم، أولوية الاستعلام وسقوف الوقت/الملفات/الرموز/الناتج وعقد القراءة بلا إذن.
+
+#### حقن الخلاصة وتقدير الميزانية (الأولوية 5 — الدفعة الثانية)
+
+- **الخلاصة التلقائية**: `repomap.summarize(cwd,prompt)` تبني في بداية كل دور للمحوّلات
+  العمياء نسخة أصغر موسومة `<satr_repo_map mode="summary" estimate="true">`: حتى 160 ملفاً
+  ممسوحاً، 24 ملفاً في الخلاصة، 600ms و3200 محرف (≈1600 رمز تقديري في أسوأ توزيع محارف).
+  تُدمج مع سياق Skills والذاكرة في system context لعائلتَي OpenAI-compatible وGemini،
+  قبل أول طلب؛ محركا SDK وCodex لا يتأثران.
+- **ميزانية تقديرية صريحة**: `electron/context.js` يستخدم heuristic محلياً (ASCII نحو 4
+  محارف/رمز، وغير ASCII نحو محرفين/رمز) ويحقن كتلة
+  `<satr_context_budget estimate="true" method="character_heuristic">`. الرقم إرشادي لا
+  يُنسب إلى tokenizer المزوّد، ويوجّه النموذج لاختيار الملفات ثم التدرج بـ`search_code/read_file`.
+- **عقد usage**: كل طلب وجولة يضيفان تقدير input/output محلياً. إن أعاد API usage حقيقياً
+  فهو المصدر المقدّم بلا تغيير؛ إن غاب يعود `result.usage` بالشكل
+  `{input_tokens,output_tokens,estimate:true,method:'character_heuristic'}`، ومعه
+  `context_estimate` لميزانية بداية الدور. لا تكلفة مالية مشتقة من هذا التقدير.
+- **التحقق**: `npm run test:context` يغطي سقف الخلاصة، وسم estimate، أولوية usage الحقيقي،
+  fallback التقديري، ودورة HTTP فعلية تثبت وصول الخلاصة والميزانية لمحوّل OpenAI-compatible.
 
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 
