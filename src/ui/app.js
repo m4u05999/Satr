@@ -277,7 +277,11 @@
       // parent_tool_use_id (المرحلة 14.2): رسائل الوكيل الفرعي تتوجه لبطاقة وكيلها
       for (const c of ev.message.content) {
         if (c.type === 'text' && c.text && c.text.trim()) block.addText(c.text, ev.parent_tool_use_id, c.phase || ev.phase);
-        else if (c.type === 'tool_use') block.addTool(c.id, c.name, c.input, ev.parent_tool_use_id);
+        else if (c.type === 'tool_use') {
+          block.addTool(c.id, c.name, c.input, ev.parent_tool_use_id);
+          // مؤشّر «الوكيل يقود المتصفح» (الخيار 2): يتجاهل ما ليس أداة متصفح داخل المكوّن
+          if (previewEl.flashAgentActivity) previewEl.flashAgentActivity(c.name);
+        }
       }
     } else if (ev.type === 'user' && ev.message && Array.isArray(ev.message.content)) {
       for (const c of ev.message.content) {

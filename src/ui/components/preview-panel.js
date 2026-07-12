@@ -38,6 +38,22 @@ const previewSheet = sheet(`
   #pvPick.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   #pvRec.rec { color: #fff; border-color: var(--red); background: var(--red); animation: pvRecPulse 1.4s infinite; }
   @keyframes pvRecPulse { 50% { opacity: .55; } }
+  /* مؤشّر «الوكيل يقود المتصفح» (الخيار 2): شارة عابرة فوق الرأس (لا يغطّيها العرض الأصلي
+     لأنه يطفو فوق pvBox فقط) + خيط علوي نابض. يظهران أثناء تنفيذ الوكيل فعلَ متصفح. */
+  #pvAgentTag {
+    position: absolute; top: 5px; inset-inline: 0; margin-inline: auto; width: max-content;
+    max-width: 70%; z-index: 8; display: none; align-items: center; gap: 5px;
+    background: var(--gold); color: #1A1408; border-radius: 999px; padding: 3px 12px;
+    font-size: 11.5px; font-weight: 600; box-shadow: var(--shadow-pop);
+    pointer-events: none; unicode-bidi: plaintext; white-space: nowrap;
+  }
+  #pvAgentTag.show { display: flex; animation: pop var(--dur) var(--ease); }
+  #pvAgentLine {
+    position: absolute; top: 0; inset-inline: 0; height: 3px; z-index: 7;
+    background: var(--gold); display: none; pointer-events: none;
+  }
+  #pvAgentLine.show { display: block; animation: pvAgentPulse 1.2s var(--ease) infinite; }
+  @keyframes pvAgentPulse { 50% { opacity: .28; } }
   /* شريط التحديد بالتأشير (م-2): يظهر أسفل الرأس عند التقاط عنصر */
   #pvPickBar { display: none; flex-direction: column; gap: 6px; padding: 8px 10px;
     background: var(--surface); border-bottom: 1px solid var(--gold-border); }
@@ -79,6 +95,8 @@ const previewSheet = sheet(`
 
 const MARKUP = `
   <div id="pvResizer" title="اسحب لتغيير العرض"></div>
+  <div id="pvAgentLine"></div>
+  <div id="pvAgentTag"></div>
   <div class="pv-head">
     <button id="pvClose" type="button" title="إغلاق المعاينة">✕</button>
     <button id="pvBack" type="button" title="رجوع" disabled>→</button>
@@ -420,6 +438,29 @@ class SatrPreviewPanel extends HTMLElement {
       if (!started) return;
       if (held) window.satr.previewBounds(0, 0, 0, 0); // العرض بحجم صفر ⇒ مخفي، المربع يظهر
       else reportBounds(); // استعادة الموضع الفعلي بعد الرد
+    };
+
+    // ---------- مؤشّر «الوكيل يقود المتصفح» (الخيار 2) ----------
+    // القشرة تستدعيها عند كل tool_use لأداة متصفح فتظهر شارة عابرة + خيط علوي نابض في
+    // رأس اللوحة (المنطقة الوحيدة غير المغطّاة بالعرض الأصلي). غير أداة متصفح ⇒ تجاهل.
+    const agentTag = $('pvAgentTag'), agentLine = $('pvAgentLine');
+    const ACTION_LABELS = {
+      open_preview: 'يفتح المعاينة', browser_navigate: 'يتصفّح', read_page: 'يقرأ الصفحة',
+      browser_console: 'يفحص الأخطاء', screenshot: 'يلتقط لقطة', browser_screenshot_element: 'يلتقط عنصراً',
+      browser_snapshot: 'يفحص العناصر', browser_click: 'ينقر', browser_type: 'يكتب',
+      browser_select_option: 'يختار', browser_press_key: 'يضغط مفتاحاً', browser_scroll: 'يمرّر',
+      browser_hover: 'يحوّم', browser_wait_for: 'ينتظر',
+    };
+    let agentTimer = 0;
+    this.flashAgentActivity = (toolName) => {
+      const bare = String(toolName || '').replace('mcp__satr-terminal__', '');
+      const label = ACTION_LABELS[bare];
+      if (!label) return; // ليست أداة متصفح — لا تُظهر شيئاً
+      agentTag.textContent = '🤖 الوكيل ' + label + '…';
+      agentTag.classList.add('show');
+      agentLine.classList.add('show');
+      clearTimeout(agentTimer);
+      agentTimer = setTimeout(() => { agentTag.classList.remove('show'); agentLine.classList.remove('show'); }, 2500);
     };
   }
 }
