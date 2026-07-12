@@ -452,6 +452,7 @@
     { cmd: '/تخطيط',   en: '/plan',   desc: 'وضع التخطيط فقط — تحليل بدون تنفيذ',     run: () => setPerm('plan', 'وضع التخطيط') },
     { cmd: '/تنفيذ',   en: '/edit',   desc: 'قبول التعديلات تلقائياً',                run: () => setPerm('acceptEdits', 'قبول التعديلات تلقائياً') },
     { cmd: '/مجلد',    en: '/folder', desc: 'اختيار مجلد المشروع',                   run: () => $('pickFolder').click() },
+    { cmd: '/كودكس-حالة', en: '/codex-status', desc: 'عرض حالة تثبيت Codex وتسجيل الدخول', run: () => showCodexStatus() },
   ];
 
   // قائمة أوامر «/» حسب المحرك: أوامر Claude-الخاصة (sdkOnly) تُخفى مع Codex (المرحلة 4)
@@ -471,6 +472,25 @@
       addNotice('⚠️ Codex غير مثبَّت. ثبّته بالأمر:  npm install -g @openai/codex  ثم أعد المحاولة.');
     } else if (!s.auth || !s.auth.ok) {
       addNotice('⚠️ Codex غير مسجَّل الدخول. نفّذ في الطرفية:  codex login  (اشتراك ChatGPT) ثم أعد المحاولة.');
+    }
+  }
+
+  async function showCodexStatus() {
+    let status = null;
+    try { status = await window.satr.codexStatus(); } catch (e) {
+      addNotice('✗ تعذّر التحقق من حالة Codex');
+      return;
+    }
+    if (!status || !status.installed) {
+      addNotice('⚠️ Codex غير مثبَّت، وغير مسجَّل الدخول.');
+    } else if (!status.auth || !status.auth.ok) {
+      addNotice('⚠️ Codex مثبَّت، لكنه غير مسجَّل الدخول.');
+    } else if (status.auth.method === 'chatgpt') {
+      addNotice('✓ Codex مثبَّت ومسجَّل الدخول عبر اشتراك ChatGPT.');
+    } else if (status.auth.method === 'apikey') {
+      addNotice('✓ Codex مثبَّت ومسجَّل الدخول عبر مفتاح API.');
+    } else {
+      addNotice('⚠️ Codex مثبَّت ومسجَّل الدخول بطريقة غير معروفة.');
     }
   }
 
