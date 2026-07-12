@@ -25,10 +25,11 @@ const PARTITION = 'persist:preview';
 // مخزنان دائريّان يُصفَّران عند تنقّل الإطار الرئيسي (كي يعكسا الصفحة الحالية).
 let consoleBuf = []; // {level, message, line, source}
 let netErrBuf = [];  // {url, error, type}
+let netReqBuf = [];  // {method, url, status, type, fromCache} — كل الطلبات (البند ب)
 const LOG_CAP = 300;
 const LEVELS = ['verbose', 'info', 'warning', 'error']; // ترميز Electron لـ console-message
 function pushLog(arr, item) { arr.push(item); if (arr.length > LOG_CAP) arr.shift(); }
-function resetLogs() { consoleBuf = []; netErrBuf = []; }
+function resetLogs() { consoleBuf = []; netErrBuf = []; netReqBuf = []; }
 
 function emit(ev) {
   if (typeof sender === 'function') { try { sender(ev); } catch (e) {} }
@@ -58,7 +59,8 @@ function wireNetwork() {
   if (netWired) return;
   netWired = true;
   try {
-    session.fromPartition(PARTITION).webRequest.onErrorOccurred((details) => {
+    const wr = session.fromPartition(PARTITION).webRequest;
+    wr.onErrorOccurred((details) => {
       // ERR_ABORTED = أُلغي بتنقّل جديد (ليس خطأً) — نتجاهله كي لا نضجّ سجل الوكيل
       if (!details || details.error === 'net::ERR_ABORTED') return;
       const entry = {
@@ -68,6 +70,22 @@ function wireNetwork() {
       };
       pushLog(netErrBuf, entry);
       emit({ type: 'neterr', url: entry.url, error: entry.error, resourceType: entry.type });
+    });
+    // سجلّ الشبكة الكامل (البند ب): كل طلب مكتمل (لا الفاشل فقط) — للوكيل عبر
+    // browser_network وللمستخدم في لوحة 🐞. نتجاهل data:/blob: (ضجيج بلا قيمة تشخيص).
+    wr.onCompleted((details) => {
+      if (!details) return;
+      const u = String(details.url || '');
+      if (u.startsWith('data:') || u.startsWith('blob:')) return;
+      const entry = {
+        method: String(details.method || 'GET').slice(0, 8),
+        url: u.slice(0, 500),
+        status: Number(details.statusCode) || 0,
+        type: String(details.resourceType || ''),
+        fromCache: !!details.fromCache,
+      };
+      pushLog(netReqBuf, entry);
+      emit({ type: 'netreq', method: entry.method, url: entry.url, status: entry.status, resourceType: entry.type, fromCache: entry.fromCache });
     });
   } catch (e) {}
 }
@@ -104,6 +122,10 @@ function wireEvents(wc) {
   wc.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (isMainFrame && code !== -3) emit({ type: 'failed', code, desc: String(desc || ''), url: String(url || '') });
   });
+  // حالة DevTools (البند أ): نبثّها كي يعكس زرّ اللوحة الفتح/الإغلاق حتى لو أغلقها
+  // المستخدم من نافذة DevTools مباشرة (نافذة منفصلة mode:'detach' — لا طبقة فوق pvBox).
+  wc.on('devtools-opened', () => emit({ type: 'devtools', open: true }));
+  wc.on('devtools-closed', () => emit({ type: 'devtools', open: false }));
   // نافذة منبثقة (target=_blank…): لا نوافذ — رابط http/https يُفتح في نفس العرض
   wc.setWindowOpenHandler(({ url }) => {
     if (isHttpUrl(url)) { try { wc.loadURL(url); } catch (e) {} }
@@ -158,8 +180,65 @@ function action(name) {
     if (name === 'back') { if (h ? h.canGoBack() : wc.canGoBack()) (h ? h.goBack() : wc.goBack()); }
     else if (name === 'forward') { if (h ? h.canGoForward() : wc.canGoForward()) (h ? h.goForward() : wc.goForward()); }
     else if (name === 'reload') wc.reload();
+    // DevTools حقيقية للعرض المعزول (البند أ): زرّ toggle. نافذة **منفصلة** (mode:'detach')
+    // تتجنّب قيد الطفو فوق pvBox — لا تختبئ خلف العرض الأصلي. تعمل على الصفحة المعروضة
+    // نفسها فيفحص المستخدم شبكتها/عناصرها/console بأدوات Chromium الكاملة.
+    else if (name === 'devtools') {
+      if (wc.isDevToolsOpened()) wc.closeDevTools();
+      else wc.openDevTools({ mode: 'detach' });
+    }
+    // مسح تخزين الصفحة (البند د): كوكيز + cache + localStorage/IndexedDB لـ partition
+    // المعاينة، ثم إعادة تحميل كي تبدأ الصفحة بحالة نظيفة (اختبار أول زيارة/تسجيل خروج).
+    else if (name === 'clear_storage') {
+      try {
+        session.fromPartition(PARTITION).clearStorageData({
+          storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'serviceworkers', 'cachestorage', 'shadercache'],
+        }).then(() => { try { wc.reload(); } catch (e) {} }).catch(() => {});
+      } catch (e) {}
+    }
+    // محاكاة الشبكة (البند د): تعيد نتيجة setNetwork (قد تفشل إن كانت DevTools مفتوحة)
+    else if (name === 'net_online' || name === 'net_offline' || name === 'net_slow' || name === 'net_fast') {
+      return setNetwork(name);
+    }
   } catch (e) {}
   return { ok: true };
+}
+
+// ---------- محاكاة شبكة بطيئة (البند د) ----------
+// عبر CDP Network.emulateNetworkConditions (يُبقي debugger مرفقاً ما دامت المحاكاة فعّالة).
+// **حدّ موثّق**: DevTools تحتجز عميل debugger الوحيد — إن كانت مفتوحة تعذّرت المحاكاة من
+// هنا (استعمل تبويب Network في DevTools نفسها حينها). net_online يُوقف المحاكاة ويفصل.
+const NET_PRESETS = {
+  net_offline: { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 },
+  net_slow: { offline: false, latency: 400, downloadThroughput: 50 * 1024, uploadThroughput: 50 * 1024 },   // ~Slow 3G
+  net_fast: { offline: false, latency: 150, downloadThroughput: 180 * 1024, uploadThroughput: 84 * 1024 },  // ~Fast 3G
+};
+let netThrottled = false; // هل debugger مرفق للمحاكاة الآن؟
+function setNetwork(preset) {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  const dbg = wc.debugger;
+  try {
+    if (preset === 'net_online') {
+      // إيقاف المحاكاة: أعِد الظروف الطبيعية ثم افصل debugger
+      if (netThrottled) {
+        try { dbg.sendCommand('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }); } catch (e) {}
+        try { dbg.detach(); } catch (e) {}
+        netThrottled = false;
+      }
+      return { ok: true, preset: 'net_online' };
+    }
+    const cond = NET_PRESETS[preset];
+    if (!cond) return { error: 'bad_preset' };
+    if (!dbg.isAttached || !dbg.isAttached()) { dbg.attach('1.3'); }
+    dbg.sendCommand('Network.enable').catch(() => {});
+    dbg.sendCommand('Network.emulateNetworkConditions', cond).catch(() => {});
+    netThrottled = true;
+    return { ok: true, preset };
+  } catch (e) {
+    // DevTools مفتوحة غالباً (عميل debugger محجوز) — سقوط رشيق
+    return { error: 'throttle_unavailable' };
+  }
 }
 
 // الواجهة تبلّغ مستطيل مساحة العرض داخل النافذة (تقيسه بـ getBoundingClientRect)
@@ -210,7 +289,29 @@ const PICK_SCRIPT = `(function(){
       var text = '';
       try { text = (el.textContent || '').replace(/\\s+/g, ' ').trim(); } catch(e){}
       if (text.length > 140) text = text.slice(0, 140) + '…';
-      return { selector: cssPath(el), tag: el.tagName.toLowerCase(), html: html, text: text };
+      // فحص محسّن (البند ج): box-model + أبرز الأنماط المحسوبة — يراها المستخدم قبل الإرسال
+      // وتُمرَّر للوكيل في سياق الطلب فيعرف الحالة الحالية بلا قراءة CSS يدوياً.
+      var box = null, styles = null;
+      try {
+        var r = el.getBoundingClientRect();
+        var cs = getComputedStyle(el);
+        box = {
+          w: Math.round(r.width), h: Math.round(r.height),
+          pad: [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(function(v){ return parseFloat(v) || 0; }),
+          mar: [cs.marginTop, cs.marginRight, cs.marginBottom, cs.marginLeft].map(function(v){ return parseFloat(v) || 0; }),
+          bord: parseFloat(cs.borderTopWidth) || 0,
+        };
+        var idAttr = el.id ? '#' + el.id : '';
+        var clsAttr = (el.className && el.className.baseVal !== undefined) ? el.className.baseVal : (typeof el.className === 'string' ? el.className : '');
+        styles = {
+          id: idAttr,
+          cls: clsAttr ? String(clsAttr).trim().split(/\\s+/).slice(0, 6).join(' ') : '',
+          display: cs.display, position: cs.position,
+          color: cs.color, background: cs.backgroundColor,
+          font: (parseFloat(cs.fontSize) || 0) + 'px ' + (cs.fontWeight || '') + ' ' + (cs.fontFamily || '').split(',')[0].replace(/["']/g, ''),
+        };
+      } catch(e){}
+      return { selector: cssPath(el), tag: el.tagName.toLowerCase(), html: html, text: text, box: box, styles: styles };
     }
     function move(e){
       var el = document.elementFromPoint(e.clientX, e.clientY);
@@ -314,6 +415,13 @@ function getConsole() {
     source: l.source,
   }));
   return { ok: true, logs, netErrors: netErrBuf.slice(-80) };
+}
+
+// سجلّ الشبكة الكامل للصفحة الحالية (البند ب): كل الطلبات المكتملة + الفاشلة. للوكيل
+// عبر browser_network (تشخيص: أي طلب رجع 404/500، أو لم يُطلب أصلاً). بثّ حيّ — لا executeJavaScript.
+function getNetwork() {
+  if (!currentWC()) return { error: 'closed' };
+  return { ok: true, requests: netReqBuf.slice(-150), netErrors: netErrBuf.slice(-80) };
 }
 
 // ---------- لقطة شجرة الوصول بمُعرّفات ثابتة (ترقية أفعال المتصفح 2026-07-12) ----------
@@ -676,10 +784,11 @@ function close() {
   try { if (hostWin && !hostWin.isDestroyed()) hostWin.contentView.removeChildView(view); } catch (e) {}
   try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {}
   view = null;
+  netThrottled = false; // عرض جديد يبدأ بلا محاكاة شبكة (debugger مات مع الإغلاق)
   return { ok: true };
 }
 
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, screenshot, screenshotFull, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, close, destroy, isHttpUrl };

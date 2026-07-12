@@ -69,6 +69,8 @@ const previewSheet = sheet(`
   /* لوحة Console/أخطاء للمستخدم (الخيار 2): لوحة سفلية تعرض رسائل console وأخطاء الشبكة
      حيّاً (بثّ من preview.js). أسفل pvBox فلا يغطّيها العرض الأصلي (يطفو فوق pvBox فقط). */
   #pvConsoleBtn.has-err { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+  #pvDevtools.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  #pvNet.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   #pvConsole { display: none; flex-direction: column; height: 170px; min-height: 0;
     background: var(--bg-deep); border-top: 1px solid var(--border); }
   #pvConsole.show { display: flex; }
@@ -84,7 +86,14 @@ const previewSheet = sheet(`
   #pcLog .pc-line.error, #pcLog .pc-line.net { color: var(--red); }
   #pcLog .pc-line.warning { color: var(--gold-strong); }
   #pcLog .pc-line.log, #pcLog .pc-line.info, #pcLog .pc-line.verbose { color: var(--text-dim); }
+  #pcLog .pc-line.netreq { color: var(--text-dim); }
+  #pcLog .pc-line.netreq.bad { color: var(--red); }
   #pcLog .pc-src { color: var(--text-faint); }
+  /* مرشّح فئة السجلّ (البند ب): إخفاء الفئة غير المختارة عبر صنف على الحاوية */
+  #pcLog.only-console .pc-line[data-cat="net"] { display: none; }
+  #pcLog.only-net .pc-line[data-cat="console"] { display: none; }
+  .pc-filt { color: var(--text-faint) !important; }
+  .pc-filt.on { color: var(--gold) !important; border-color: var(--gold-border) !important; }
   #pcLog .pc-empty { padding: 16px; text-align: center; color: var(--text-faint); font-size: 12px; direction: rtl; }
   /* شريط التحديد بالتأشير (م-2): يظهر أسفل الرأس عند التقاط عنصر */
   #pvPickBar { display: none; flex-direction: column; gap: 6px; padding: 8px 10px;
@@ -94,6 +103,14 @@ const previewSheet = sheet(`
   #pvPickBar .pb-tag { font-family: var(--mono); color: var(--gold); direction: ltr; flex: none; }
   #pvPickBar .pb-text { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; unicode-bidi: plaintext; }
+  /* فحص محسّن (البند ج): بطاقة الأنماط/box-model — شرائح صغيرة LTR */
+  #pvPickBar .pb-info { display: flex; flex-wrap: wrap; gap: 4px 6px; direction: ltr; }
+  #pvPickBar .pb-info:empty { display: none; }
+  #pvPickBar .pb-chip { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim);
+    background: var(--bg); border: 1px solid var(--border-dim); border-radius: 6px; padding: 1px 6px;
+    unicode-bidi: plaintext; display: inline-flex; align-items: center; gap: 4px; }
+  #pvPickBar .pb-chip b { color: var(--text-faint); font-weight: 400; }
+  #pvPickBar .pb-sw { width: 11px; height: 11px; border-radius: 3px; border: 1px solid var(--border-strong); flex: none; }
   #pvPickBar .pb-row { display: flex; gap: 6px; }
   #pvPickBar #pbInput { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
     color: var(--text); border-radius: 8px; padding: 6px 10px; font-size: 13px; font-family: var(--sans);
@@ -139,6 +156,9 @@ const MARKUP = `
     <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (mp4)">⏺</button>
     <button id="pvDevice" type="button" title="محاكاة الأجهزة: كامل/موبايل/لوحي (لاختبار التصميم المتجاوب)">🖥️</button>
     <button id="pvConsoleBtn" type="button" title="لوحة Console والأخطاء (رسائل الصفحة وأخطاء الشبكة)">🐞</button>
+    <button id="pvDevtools" type="button" title="أدوات المطوّر (DevTools) — فحص كامل للصفحة في نافذة منفصلة">🔧</button>
+    <button id="pvNet" type="button" title="محاكاة سرعة الشبكة: عادي/بطيء/سريع/غير متصل">🚦</button>
+    <button id="pvClearStore" type="button" title="مسح تخزين الصفحة (كوكيز + localStorage + cache) وإعادة التحميل">🧹</button>
     <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
@@ -153,7 +173,10 @@ const MARKUP = `
   <!-- لوحة Console/أخطاء للمستخدم (الخيار 2): تُملأ حيّاً من أحداث preview.js -->
   <div id="pvConsole">
     <div class="pc-head">
-      <span class="pc-title">Console والأخطاء</span>
+      <span class="pc-title">Console والشبكة</span>
+      <button id="pcFiltAll" class="pc-filt on" type="button" title="عرض الكل">الكل</button>
+      <button id="pcFiltConsole" class="pc-filt" type="button" title="رسائل console والأخطاء فقط">Console</button>
+      <button id="pcFiltNet" class="pc-filt" type="button" title="طلبات الشبكة فقط">الشبكة</button>
       <button id="pcClear" type="button" title="مسح السجلّ">مسح</button>
       <button id="pcClose" type="button" title="إغلاق اللوحة">✕</button>
     </div>
@@ -162,6 +185,7 @@ const MARKUP = `
   <!-- شريط التحديد بالتأشير (م-2): يظهر بعد التقاط عنصر — ملخّص + طلب التعديل -->
   <div id="pvPickBar">
     <div class="pb-el"><span class="pb-tag" id="pbTag"></span><span class="pb-text" id="pbText"></span></div>
+    <div class="pb-info" id="pbInfo"></div>
     <div class="pb-row">
       <input id="pbInput" type="text" placeholder="ماذا تريد أن يتغيّر في هذا العنصر؟ (مثال: اجعله أخضر)">
       <button id="pbSend" type="button" title="إرسال للوكيل">إرسال</button>
@@ -264,17 +288,19 @@ class SatrPreviewPanel extends HTMLElement {
       consoleBtn.textContent = pcErrBadge > 0 ? '🐞 ' + (pcErrBadge > 99 ? '99+' : pcErrBadge) : '🐞';
     };
     const pcClearLog = () => { pcErrBadge = 0; pcPaintBadge(); pcEmpty(); };
-    const pcAppend = (cls, text, srcText) => {
+    // cat = 'console' | 'net' (فئة المرشّح)؛ cls = صنف اللون؛ isErr = يُحسب في العدّاد
+    const pcAppend = (cls, text, srcText, cat, isErr) => {
       const empty = pcLog.querySelector('.pc-empty'); if (empty) empty.remove();
       const atBottom = pcLog.scrollHeight - pcLog.scrollTop - pcLog.clientHeight < 24;
       const line = document.createElement('div');
       line.className = 'pc-line ' + cls;
+      line.dataset.cat = cat || 'console';
       line.textContent = text;
       if (srcText) { const s = document.createElement('span'); s.className = 'pc-src'; s.textContent = '  ' + srcText; line.appendChild(s); }
       pcLog.appendChild(line);
       while (pcLog.childElementCount > PC_CAP) pcLog.removeChild(pcLog.firstChild);
       if (atBottom) pcLog.scrollTop = pcLog.scrollHeight; // التصاق بالذيل إن كان القارئ عنده
-      if ((cls === 'error' || cls === 'warning' || cls === 'net') && !consolePanel.classList.contains('show')) { pcErrBadge++; pcPaintBadge(); }
+      if (isErr && !consolePanel.classList.contains('show')) { pcErrBadge++; pcPaintBadge(); }
     };
     pcEmpty();
     consoleBtn.addEventListener('click', () => {
@@ -284,11 +310,70 @@ class SatrPreviewPanel extends HTMLElement {
     });
     $('pcClose').addEventListener('click', () => { consolePanel.classList.remove('show'); reportBounds(); });
     $('pcClear').addEventListener('click', pcClearLog);
+    // مرشّح الفئة (البند ب): الكل / console / الشبكة — يضيف صنفاً على الحاوية (CSS يخفي الباقي)
+    const filtBtns = { all: $('pcFiltAll'), console: $('pcFiltConsole'), net: $('pcFiltNet') };
+    const setFilter = (mode) => {
+      pcLog.classList.toggle('only-console', mode === 'console');
+      pcLog.classList.toggle('only-net', mode === 'net');
+      Object.keys(filtBtns).forEach((k) => filtBtns[k].classList.toggle('on', k === mode));
+    };
+    filtBtns.all.addEventListener('click', () => setFilter('all'));
+    filtBtns.console.addEventListener('click', () => setFilter('console'));
+    filtBtns.net.addEventListener('click', () => setFilter('net'));
+
+    // ---------- DevTools حقيقية بزرّ (البند أ) ----------
+    // نافذة DevTools منفصلة (mode:'detach' في preview.js) للعرض المعزول — تتجنّب قيد
+    // الطفو فوق pvBox. الحالة الفعلية تصل عبر حدث devtools (يعكس إغلاق المستخدم للنافذة).
+    const devtoolsBtn = $('pvDevtools');
+    devtoolsBtn.addEventListener('click', () => {
+      if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم افتح أدوات المطوّر.'); return; }
+      window.satr.previewAction('devtools');
+    });
+
+    // ---------- محاكاة الشبكة + مسح التخزين (البند د) ----------
+    // 🚦 يدوّر بين عادي/بطيء/سريع/غير متصل (previewAction بأسماء net_*). حدّ موثّق:
+    // DevTools تحجز عميل debugger — إن فشلت المحاكاة (throttle_unavailable) نُظهر تنبيهاً.
+    const netBtn = $('pvNet');
+    const NET_MODES = [
+      { key: 'net_online', icon: '🚦', label: 'عادي' },
+      { key: 'net_slow', icon: '🐢', label: 'بطيء (~Slow 3G)' },
+      { key: 'net_fast', icon: '🐇', label: 'سريع (~Fast 3G)' },
+      { key: 'net_offline', icon: '✈️', label: 'غير متصل' },
+    ];
+    let netIdx = 0;
+    netBtn.addEventListener('click', async () => {
+      if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم غيّر سرعة الشبكة.'); return; }
+      netIdx = (netIdx + 1) % NET_MODES.length;
+      const m = NET_MODES[netIdx];
+      const r = await window.satr.previewAction(m.key);
+      if (r && r.error === 'throttle_unavailable') {
+        netIdx = 0; // فشل — أعِد للوضع العادي بصرياً
+        showErr('تعذّرت محاكاة الشبكة (أغلِق DevTools أولاً — تستعمل نفس القناة).');
+      }
+      netBtn.textContent = m.icon;
+      netBtn.classList.toggle('on', netIdx !== 0);
+      netBtn.title = 'محاكاة سرعة الشبكة: ' + NET_MODES[netIdx].label + ' — انقر للتبديل';
+    });
+
+    const clearStoreBtn = $('pvClearStore');
+    clearStoreBtn.addEventListener('click', () => {
+      if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم امسح التخزين.'); return; }
+      if (!confirm('مسح كوكيز الصفحة وlocalStorage والـ cache ثم إعادة تحميلها؟')) return;
+      window.satr.previewAction('clear_storage');
+    });
     // تُستهلك في onPreview أدناه (نفس القناة satr:preview)
     this._pcConsole = (ev) => {
-      if (ev.type === 'console') pcAppend(ev.levelLabel || 'log', '[' + (ev.levelLabel || 'log') + '] ' + (ev.message || ''), ev.source ? (ev.source + ':' + ev.line) : '');
-      else if (ev.type === 'neterr') pcAppend('net', '🌐 ' + (ev.error || 'network error') + ' → ' + (ev.url || ''), ev.resourceType || '');
-      else if (ev.type === 'console_clear') pcClearLog();
+      if (ev.type === 'console') {
+        const lvl = ev.levelLabel || 'log';
+        pcAppend(lvl, '[' + lvl + '] ' + (ev.message || ''), ev.source ? (ev.source + ':' + ev.line) : '', 'console', lvl === 'error' || lvl === 'warning');
+      } else if (ev.type === 'neterr') {
+        pcAppend('net', '🌐 ' + (ev.error || 'network error') + ' → ' + (ev.url || ''), ev.resourceType || '', 'net', true);
+      } else if (ev.type === 'netreq') {
+        // البند ب: سجلّ الشبكة الكامل — كل طلب مكتمل (لون أحمر لرمز خطأ ≥400)
+        const bad = ev.status >= 400 || ev.status === 0;
+        pcAppend('netreq' + (bad ? ' bad' : ''), (ev.status || '—') + ' ' + (ev.method || 'GET') + ' ' + (ev.url || ''),
+          (ev.resourceType || '') + (ev.fromCache ? ' · كاش' : ''), 'net', bad);
+      } else if (ev.type === 'console_clear') pcClearLog();
     };
 
     // م-1-د: تذكّر آخر عنوان **لكل مجلد مشروع** (لا عنواناً عاماً واحداً) — لكل مشروع
@@ -387,8 +472,10 @@ class SatrPreviewPanel extends HTMLElement {
         // (يُظهر صفحة خطأ المتصفح) و⟳ يعيد المحاولة عليه مباشرة.
         showErr('تعذّر الوصول إلى ' + (ev.url || 'العنوان') +
           ' — تأكد أن خادم التطوير يعمل (اطلب من الوكيل «شغّل المشروع») ثم اضغط ⟳.');
-      } else if (ev.type === 'console' || ev.type === 'neterr' || ev.type === 'console_clear') {
-        this._pcConsole(ev); // لوحة Console/أخطاء للمستخدم (الخيار 2)
+      } else if (ev.type === 'devtools') {
+        devtoolsBtn.classList.toggle('on', !!ev.open); // البند أ: عكس فتح/إغلاق DevTools
+      } else if (ev.type === 'console' || ev.type === 'neterr' || ev.type === 'netreq' || ev.type === 'console_clear') {
+        this._pcConsole(ev); // لوحة Console/الشبكة للمستخدم (الخيار 2 + البند ب)
       }
       // ev.type === 'title' متاح مستقبلاً (لا مكان لعرضه في رأس م-1 المضغوط)
     });
@@ -397,12 +484,37 @@ class SatrPreviewPanel extends HTMLElement {
     // زر 🎯 يبدأ وضع التحديد: previewPick يعيد Promise يُحلّ عند نقر المستخدم على عنصر
     // في الصفحة (أو null عند الإلغاء/Escape). ثم يظهر شريط بملخّص العنصر وحقل طلب التعديل.
     const pickBtn = $('pvPick'), pickBar = $('pvPickBar');
-    const pbTag = $('pbTag'), pbText = $('pbText'), pbInput = $('pbInput');
+    const pbTag = $('pbTag'), pbText = $('pbText'), pbInput = $('pbInput'), pbInfo = $('pbInfo');
     let picking = false;
     let picked = null; // العنصر الملتقط {selector, tag, html, text}
 
     const endPickMode = () => { picking = false; pickBtn.classList.remove('on'); };
-    const closePickBar = () => { pickBar.classList.remove('show'); picked = null; pbInput.value = ''; };
+    const closePickBar = () => { pickBar.classList.remove('show'); picked = null; pbInput.value = ''; pbInfo.textContent = ''; };
+
+    // البند ج: يبني شرائح الأنماط/box-model في بطاقة الفحص (شرائح صغيرة LTR + عيّنات لون)
+    const renderPickInfo = (p) => {
+      pbInfo.textContent = '';
+      const chip = (label, val, swatch) => {
+        const c = document.createElement('span');
+        c.className = 'pb-chip';
+        if (swatch) { const sw = document.createElement('span'); sw.className = 'pb-sw'; sw.style.background = swatch; c.appendChild(sw); }
+        const b = document.createElement('b'); b.textContent = label; c.appendChild(b);
+        c.appendChild(document.createTextNode(' ' + val));
+        pbInfo.appendChild(c);
+      };
+      const s = p.styles, box = p.box;
+      if (s && s.cls) chip('class', '.' + s.cls.split(' ').join('.'));
+      if (box) chip('size', box.w + '×' + box.h);
+      if (s && s.display) chip('display', s.display + (s.position && s.position !== 'static' ? ' · ' + s.position : ''));
+      if (s && s.color) chip('color', s.color, s.color);
+      if (s && s.background && s.background !== 'rgba(0, 0, 0, 0)') chip('bg', s.background, s.background);
+      if (s && s.font) chip('font', s.font);
+      if (box) {
+        const nz = (a) => a.some((v) => v > 0);
+        if (nz(box.pad)) chip('padding', box.pad.join(' '));
+        if (nz(box.mar)) chip('margin', box.mar.join(' '));
+      }
+    };
 
     const startPick = async () => {
       if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم استخدم التحديد.'); return; }
@@ -413,8 +525,9 @@ class SatrPreviewPanel extends HTMLElement {
       endPickMode();
       if (!r || !r.ok || !r.pick) return; // أُلغي أو فشل — بلا ضجيج
       picked = r.pick;
-      pbTag.textContent = '<' + picked.tag + '>';
+      pbTag.textContent = '<' + picked.tag + '>' + ((picked.styles && picked.styles.id) ? picked.styles.id : '');
       pbText.textContent = picked.text || '(بلا نص)';
+      renderPickInfo(picked); // البند ج: بطاقة الأنماط/box-model
       pickBar.classList.add('show');
       pbInput.focus();
     };
@@ -427,7 +540,7 @@ class SatrPreviewPanel extends HTMLElement {
       // يُرسل للقشرة سياق العنصر + الطلب — القشرة تركّبه وترسله كدور محادثة عادي
       this.dispatchEvent(new CustomEvent('preview-edit', {
         bubbles: true,
-        detail: { instruction, url: urlIn.value, tag: picked.tag, selector: picked.selector, html: picked.html, text: picked.text },
+        detail: { instruction, url: urlIn.value, tag: picked.tag, selector: picked.selector, html: picked.html, text: picked.text, box: picked.box, styles: picked.styles },
       }));
       closePickBar();
     };
@@ -563,7 +676,7 @@ class SatrPreviewPanel extends HTMLElement {
     const agentTag = $('pvAgentTag'), agentLine = $('pvAgentLine');
     const ACTION_LABELS = {
       open_preview: 'يفتح المعاينة', browser_navigate: 'يتصفّح', read_page: 'يقرأ الصفحة',
-      browser_console: 'يفحص الأخطاء', screenshot: 'يلتقط لقطة', browser_screenshot_element: 'يلتقط عنصراً',
+      browser_console: 'يفحص الأخطاء', browser_network: 'يفحص الشبكة', screenshot: 'يلتقط لقطة', browser_screenshot_element: 'يلتقط عنصراً',
       browser_snapshot: 'يفحص العناصر', browser_click: 'ينقر', browser_type: 'يكتب',
       browser_select_option: 'يختار', browser_press_key: 'يضغط مفتاحاً', browser_scroll: 'يمرّر',
       browser_hover: 'يحوّم', browser_wait_for: 'ينتظر',

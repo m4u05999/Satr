@@ -883,6 +883,30 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   buffers الوكيل. المكوّن: سقف 500 سطر DOM، شارة عدّاد أخطاء غير مرئية على الزرّ، التصاق
   بالذيل، مسح، وتصفير عند التنقّل. أسفل pvBox فلا يغطّيها العرض الطافي (فتحها يصغّر pvBox
   ⇒ reportBounds). تحقّق حيّ: بثّ error/warning/info + neterr + console_clear عند التنقّل.
+- **تطويرات المتصفح المِلكية أ/ب/ج/د (الخيار 2 — 2026-07-12)**: أربعة تحسينات تُكمِل أدوات
+  المطوّر المدمجة. **كلها عبر قناة المعاينة القائمة**: الأفعال بلا وسائط تمرّ بـ
+  `previewAction` (main.js: أُضيفت للـ `PREVIEW_ACTIONS` الآمنة)، والأحداث الجديدة تُبثّ
+  من `preview.js` عبر `previewSender` **بلا تعديل main.js آخر** (صفر تصادم مع Codex).
+  - **(أ) DevTools حقيقية بزرّ 🔧**: `action('devtools')` ⇒ `wc.openDevTools({mode:'detach'})`
+    (نافذة **منفصلة** تتجنّب قيد الطفو فوق pvBox — لا تختبئ خلف العرض). toggle، والحالة
+    الفعلية تصل بحدث `devtools {open}` (يعكس إغلاق المستخدم للنافذة مباشرةً).
+  - **(ب) سجلّ الشبكة الكامل**: `webRequest.onCompleted` يلتقط **كل** طلب (لا الفاشل فقط —
+    method/url/status/type/fromCache، تجاهل data:/blob:) في `netReqBuf` (سقف 300)، يُبثّ
+    حيّاً كحدث `netreq`. للوكيل عبر أداة **`browser_network`** (تُبرز الطلبات ≥400 أولاً —
+    ضمن BROWSER_AUTO_TOOLS + systemPrompt)، وللمستخدم في لوحة 🐞 بمرشّح فئة (الكل/Console/
+    الشبكة). أحمر لرمز حالة ≥400.
+  - **(ج) فحص العنصر المحسّن**: `describe()` في PICK_SCRIPT صار يعيد **box-model** (أبعاد/
+    padding/margin/border من getBoundingClientRect+getComputedStyle) و**أبرز الأنماط
+    المحسوبة** (id/class/display/position/color/background/font). شريط 🎯 يعرضها شرائحَ
+    صغيرة LTR مع عيّنات لون؛ والحقول تُمرَّر أيضاً في حدث `preview-edit` (لاستهلاك app.js
+    مستقبلاً — لم يُعدَّل app.js فهو نشط لدى Codex؛ البطاقة المرئية هي ثمرة البند).
+  - **(د) مسح تخزين 🧹 + محاكاة شبكة 🚦**: `action('clear_storage')` يمسح كوكيز+localStorage+
+    cache+SW لـ partition المعاينة ثم يعيد التحميل (تأكيد confirm في الواجهة). ومحاكاة
+    الشبكة عبر CDP `Network.emulateNetworkConditions` (net_online/slow/fast/offline — زرّ
+    يدوّرها). **حدّ موثّق**: DevTools تحجز عميل debugger الوحيد؛ إن كانت مفتوحة تفشل المحاكاة
+    (`throttle_unavailable`) والواجهة تنبّه «أغلِق DevTools» — استعمل تبويب Network فيها حينها.
+  - تحقّق: `node --check` + مسبار معزول يُصرِّف كل سكربتات الحقن العشرة (0 فشل) + إقلاع نظيف
+    (`ELECTRON_ENABLE_LOGGING`، 20ث بلا أخطاء JS — العروض المتبقية بيئية GPU/cache).
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
   رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`

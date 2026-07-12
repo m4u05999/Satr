@@ -526,7 +526,12 @@ ipcMain.handle('satr:termKill', (event, p) => {
 // متصفح WebContentsView معزول (التفاصيل والعزل في electron/preview.js) — التنقية هنا
 // (القاعدة 2): http/https حصراً بسقف طول، أفعال من قائمة، ومستطيل أعداد صحيحة محدودة.
 // أحداثه للواجهة عبر قناة مستقلة satr:preview (nav/title/loading/failed).
-const PREVIEW_ACTIONS = new Set(['back', 'forward', 'reload']);
+// أفعال المعاينة عبر previewAction (سلسلة واحدة بلا وسائط): تنقّل + DevTools (البند أ) +
+// مسح التخزين ومحاكاة الشبكة (البند د). كلها آمنة (تعمل على العرض المعزول فقط).
+const PREVIEW_ACTIONS = new Set([
+  'back', 'forward', 'reload', 'devtools', 'clear_storage',
+  'net_online', 'net_offline', 'net_slow', 'net_fast',
+]);
 function previewSender(ev) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:preview', ev);
 }
