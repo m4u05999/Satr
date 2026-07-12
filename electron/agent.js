@@ -613,10 +613,12 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     const screenshotTool = sdk.tool(
       'screenshot',
       'التقط لقطة شاشة للصفحة المعروضة في لوحة المعاينة المدمجة لتراها بصرياً وتتحقق ' +
-      'من مظهرها. افتح المعاينة أولاً (open_preview) إن لزم.',
-      {},
-      async () => {
-        const r = await preview.screenshot();
+      'من مظهرها. افتح المعاينة أولاً (open_preview) إن لزم. مرّر full_page=true للصفحة ' +
+      'كاملةً (بالتمرير) بدل نافذة العرض المرئية فقط.',
+      { full_page: z.boolean().optional().describe('true = الصفحة كاملةً بالتمرير؛ false/غياب = نافذة العرض المرئية') },
+      async (args) => {
+        const full = !!(args && args.full_page);
+        const r = full ? await preview.screenshotFull() : await preview.screenshot();
         if (!r || !r.ok) {
           const why = r && r.error === 'closed'
             ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'

@@ -54,6 +54,15 @@ const previewSheet = sheet(`
   }
   #pvAgentLine.show { display: block; animation: pvAgentPulse 1.2s var(--ease) infinite; }
   @keyframes pvAgentPulse { 50% { opacity: .28; } }
+  /* مؤشّر دائم أن «وضع تحكّم المتصفح» مفعّل (الخيار A): شارة في الرأس + توهّج حافة اللوحة.
+     الحالة تُقرأ من aria-pressed لزرّ الوضع في المحرّر (MutationObserver — بلا تعديل app.js). */
+  #pvCtlBadge {
+    display: none; align-items: center; gap: 4px; flex: none; pointer-events: none;
+    background: var(--gold-soft); color: var(--gold-strong); border: 1px solid var(--gold-border);
+    border-radius: 999px; padding: 4px 9px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+  }
+  :host(.ctl-mode) #pvCtlBadge { display: inline-flex; }
+  :host(.ctl-mode) { border-inline-start-color: var(--gold); }
   /* شريط التحديد بالتأشير (م-2): يظهر أسفل الرأس عند التقاط عنصر */
   #pvPickBar { display: none; flex-direction: column; gap: 6px; padding: 8px 10px;
     background: var(--surface); border-bottom: 1px solid var(--gold-border); }
@@ -105,6 +114,7 @@ const MARKUP = `
     <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل">🔄</button>
     <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)">🎯</button>
     <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (mp4)">⏺</button>
+    <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
   <div id="pvBox">
@@ -451,6 +461,16 @@ class SatrPreviewPanel extends HTMLElement {
       browser_select_option: 'يختار', browser_press_key: 'يضغط مفتاحاً', browser_scroll: 'يمرّر',
       browser_hover: 'يحوّم', browser_wait_for: 'ينتظر',
     };
+    // مؤشّر «وضع تحكّم المتصفح مفعّل» (الخيار A): يقرأ حالة زرّ الوضع في المحرّر
+    // (#browserCtl، light DOM) من aria-pressed ويتابع تغيّره بـ MutationObserver —
+    // تكامل بلا تعديل app.js (ملف يحرّره Codex الآن). تشغيل الوضع ⇒ شارة رأس + توهّج حافة.
+    const ctlBtn = document.getElementById('browserCtl');
+    const syncCtlMode = () => {
+      this.classList.toggle('ctl-mode', !!(ctlBtn && ctlBtn.getAttribute('aria-pressed') === 'true'));
+    };
+    syncCtlMode();
+    if (ctlBtn) new MutationObserver(syncCtlMode).observe(ctlBtn, { attributes: true, attributeFilter: ['aria-pressed'] });
+
     let agentTimer = 0;
     this.flashAgentActivity = (toolName) => {
       const bare = String(toolName || '').replace('mcp__satr-terminal__', '');

@@ -460,6 +460,41 @@ async function screenshotElement(locator) {
   } catch (e) { return { error: 'shot_failed' }; }
 }
 
+// لقطة الصفحة **كاملةً** (بالتمرير — لا نافذة العرض فقط): عبر CDP
+// Page.captureScreenshot بـ captureBeyondViewport، لقطة واحدة للمحتوى القابل للتمرير كلّه.
+// سقف ارتفاع 20000px (أداء/رموز)، وسقوط للقطة العادية إن تعذّر CDP. scale:1 ⇒ 1 CSS px = 1 بكسل.
+const MAX_FULL_HEIGHT = 20000;
+async function screenshotFull() {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  const dbg = wc.debugger;
+  let attached = false;
+  try {
+    try { dbg.attach('1.3'); attached = true; } catch (e) { attached = dbg.isAttached && dbg.isAttached(); }
+    const metrics = await dbg.sendCommand('Page.getLayoutMetrics');
+    const size = metrics.cssContentSize || metrics.contentSize || {};
+    const width = Math.max(1, Math.ceil(size.width || 0));
+    const height = Math.min(Math.max(1, Math.ceil(size.height || 0)), MAX_FULL_HEIGHT);
+    const clip = { x: 0, y: 0, width, height, scale: 1 };
+    const shot = await dbg.sendCommand('Page.captureScreenshot', {
+      format: 'png', captureBeyondViewport: true, clip,
+    });
+    if (!shot || !shot.data) return { error: 'empty' };
+    return { ok: true, base64: shot.data, truncated: height >= MAX_FULL_HEIGHT };
+  } catch (e) {
+    // سقوط رشيق للقطة نافذة العرض العادية إن فشل مسار CDP
+    try {
+      const img = await wc.capturePage();
+      const png = img.toPNG();
+      if (png && png.length) return { ok: true, base64: png.toString('base64'), fellBack: true };
+    } catch (e2) {}
+    return { error: 'shot_failed' };
+  } finally {
+    if (attached) { try { dbg.detach(); } catch (e) {} }
+  }
+}
+
 // ---------- أدوات الفعل في المعاينة (م-4 + ترقية ref 2026-07-12 — خلف إذن إلزامي) ----------
 // الهدف (loc) إمّا **ref حتمي** من browser_snapshot (مثل e5 ⇒ [data-satr-ref="e5"]) أو
 // مُحدِّد CSS (تراجع للتوافق مع م-4). يُهرَّب بـ JSON.stringify — لا حقن.
@@ -642,4 +677,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, screenshot, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, screenshot, screenshotFull, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, close, destroy, isHttpUrl };
