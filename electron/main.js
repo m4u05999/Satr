@@ -313,11 +313,12 @@ ipcMain.handle('satr:send', async (event, payload) => {
     try {
       currentRun = await codex.start({
         prompt,
+        images, // مُنقّاة بـ sanitizeImages (نفس محرك SDK) — نماذج Codex تقبل الصور
         sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
         model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
         permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
       }, cwd, emit);
-      return { started: true, engine: 'codex', imagesIgnored: images.length > 0 };
+      return { started: true, engine: 'codex' };
     } catch (e) {
       currentRun = null;
       return { error: 'codex_failed', message: 'تعذّر تشغيل محرك Codex: ' + String((e && e.message) || e) };

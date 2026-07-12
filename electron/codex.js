@@ -148,7 +148,7 @@ function decodeBase64(s) { try { return Buffer.from(s, 'base64').toString('utf8'
 /**
  * يبدأ دوراً واحداً ويعيد مقبضاً فيه stop و resolvePermission (نفس عقد agent.start).
  */
-async function start({ prompt, sessionId, model, permissionMode }, cwd, emit) {
+async function start({ prompt, images, sessionId, model, permissionMode }, cwd, emit) {
   const bin = resolveCodexBin();
   if (!bin) {
     emit({ type: 'spawn_error', text: 'لم يُعثر على Codex CLI. ثبّته: npm install -g @openai/codex' });
@@ -166,6 +166,7 @@ async function start({ prompt, sessionId, model, permissionMode }, cwd, emit) {
   let threadId = null;
   let finished = false;
   let stopping = false;
+  let planEmitted = false; // خطة المهام (turn/plan/updated) تُعرض مرة واحدة لكل دور
 
   // تراكم نصّ رسالة الوكيل الحالية (نبثّه deltas ثم نُصدر assistant مكتملاً)
   const agentText = new Map();     // itemId → نص متراكم
@@ -319,6 +320,20 @@ async function start({ prompt, sessionId, model, permissionMode }, cwd, emit) {
         }
         break;
       }
+      case 'turn/plan/updated': {
+        // خطة المهام (todo list) — نعرضها مرة واحدة عند أول ظهور كقائمة تحقّق نصّية
+        // ضمن كتلة المساعد (تظهر قبل الإجابة). التحديثات اللاحقة للحالة لا تُعاد (تجنّب التكرار).
+        if (!planEmitted && Array.isArray(p.plan) && p.plan.length) {
+          planEmitted = true;
+          const mark = (st) => st === 'completed' ? '☑' : st === 'inProgress' ? '▶' : '☐';
+          const lines = p.plan
+            .filter((s) => s && s.step)
+            .map((s) => mark(s.status) + ' ' + String(s.step))
+            .join('\n');
+          if (lines) emitAssistantText('📋 الخطة:\n' + lines);
+        }
+        break;
+      }
       case 'item/completed': {
         onItemCompleted(p.item || {});
         break;
@@ -357,8 +372,16 @@ async function start({ prompt, sessionId, model, permissionMode }, cwd, emit) {
         if (ch.path) emitFileChange(item.id, ch.path, ch.kind);
       }
       fileChangeMeta.delete(item.id);
+    } else if (t === 'reasoning') {
+      // ملخّص تفكير (نادر الظهور — «سطر» لا يعرض تفكير Claude أصلاً). نعرضه مقتضباً إن وُجد.
+      // الحقل غير مضمون عبر الإصدارات فنجرّب text/summary/content دفاعياً.
+      let r = (typeof item.text === 'string' && item.text)
+        || (typeof item.summary === 'string' && item.summary)
+        || (Array.isArray(item.content) ? item.content.map((c) => (c && (c.text || c.summary)) || '').filter(Boolean).join(' ') : '');
+      r = String(r || '').trim();
+      if (r) emitAssistantText('💭 ' + (r.length > 600 ? r.slice(0, 600) + '…' : r));
     }
-    // Plan/Reasoning/WebSearch: نتجاهلها في المرحلة 1 (نص الوكيل يكفي)
+    // WebSearch/غيرها: نص الوكيل يكفي
   }
 
   function finishTurn(turn) {
@@ -449,7 +472,19 @@ async function start({ prompt, sessionId, model, permissionMode }, cwd, emit) {
         threadId = r && r.thread && r.thread.id;
       }
       if (threadId) emit({ type: 'system', subtype: 'init', session_id: threadId });
-      const turnParams = { threadId, input: [{ type: 'text', text: prompt, text_elements: [] }] };
+      // مدخلات الدور: نصّ + صور (نماذج Codex تقبل الصور — تحقّق حيّ). الصور base64
+      // تُمرَّر كـ data-URL (لا حاجة لملف مؤقت — كلا الشكلين image/localImage يعمل).
+      const inputItems = [];
+      if (prompt) inputItems.push({ type: 'text', text: prompt, text_elements: [] });
+      if (Array.isArray(images)) {
+        for (const im of images) {
+          if (im && im.media_type && im.data) {
+            inputItems.push({ type: 'image', url: 'data:' + im.media_type + ';base64,' + im.data });
+          }
+        }
+      }
+      if (!inputItems.length) inputItems.push({ type: 'text', text: prompt || '', text_elements: [] });
+      const turnParams = { threadId, input: inputItems };
       if (model) turnParams.model = model;
       await request('turn/start', turnParams);
       // الأحداث تصل عبر notifications؛ الدور ينتهي بـ turn/completed

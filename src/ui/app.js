@@ -348,9 +348,10 @@
     const prompt = input.value.trim();
     const engine = $('engine').value;
     let images = composerEl.getImages ? composerEl.getImages() : [];
-    // الصور تُرسَل عبر محرك SDK فقط — أي محرك آخر ننبّه ونتجاهلها
-    if (engine !== 'sdk' && images.length) {
-      addNotice('الصور مدعومة في محرك SDK فقط — لم تُرسَل الصور المرفقة');
+    // الصور مدعومة في المحرّكين الأصيلين (SDK وCodex) — نماذج Codex تقبل الصور.
+    // المحوّلات العمياء (REST) لا تدعمها: ننبّه ونتجاهلها.
+    if (engine !== 'sdk' && engine !== 'codex' && images.length) {
+      addNotice('الصور مدعومة في محرّكي SDK وCodex فقط — لم تُرسَل الصور المرفقة');
       images = [];
     }
     if (!prompt && !images.length) return;
