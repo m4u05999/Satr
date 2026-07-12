@@ -12,6 +12,7 @@
     "test:skills": "node scripts/skills-test.js",
     "test:tasks": "node scripts/tasks-test.js",
     "test:verify": "node scripts/verify-test.js",
+    "test:memory": "node scripts/memory-test.js",
     "prestart": "node scripts/update-csp.js",
     "start": "electron .",
     "predist": "node scripts/update-csp.js",
