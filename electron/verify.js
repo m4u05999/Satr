@@ -96,13 +96,11 @@ async function visibleExecutor(cwd, check, ctx) {
   };
 }
 
-async function run(cwd, requestedIds, ctx, options) {
-  const config = loadConfig(cwd);
-  const selected = selectChecks(config, requestedIds);
-  if (!selected.ok) return { ok: false, error: selected.error, passed: false, checks: [] };
+async function runChecks(cwd, checks, ctx, options) {
+  if (!Array.isArray(checks) || !checks.length) return { ok: false, error: 'empty', passed: false, checks: [] };
   const execute = options && typeof options.execute === 'function' ? options.execute : visibleExecutor;
   const results = [];
-  for (const check of selected.checks) {
+  for (const check of checks.slice(0, MAX_CHECKS)) {
     const started = Date.now();
     let outcome;
     try { outcome = await execute(cwd, check, ctx); }
@@ -131,6 +129,13 @@ async function run(cwd, requestedIds, ctx, options) {
   };
 }
 
+async function run(cwd, requestedIds, ctx, options) {
+  const config = loadConfig(cwd);
+  const selected = selectChecks(config, requestedIds);
+  if (!selected.ok) return { ok: false, error: selected.error, passed: false, checks: [] };
+  return runChecks(cwd, selected.checks, ctx, options);
+}
+
 function formatConfig(config) {
   if (!config || !config.ok) {
     if (config && config.error === 'notfound') return 'لا يوجد ملف .satr/verify.json في المشروع.';
@@ -157,6 +162,7 @@ module.exports = {
   loadConfig,
   selectChecks,
   run,
+  runChecks,
   formatConfig,
   formatResult,
   SAFE_CHECK_ID,

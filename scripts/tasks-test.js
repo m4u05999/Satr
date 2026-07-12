@@ -60,8 +60,15 @@ async function main() {
     const resumed = tasks.action(engine, sessionId, 'resume', options);
     assert.strictEqual(resumed.state, 'active');
 
+    const evidenced = tasks.addEvidence(engine, sessionId, { task_title: 'تنفيذ الوحدة' }, [
+      { text: 'نجح npm test', kind: 'verification_pass' },
+    ], options);
+    assert(evidenced);
+    assert(evidenced.tasks[1].evidence.some((item) => item.kind === 'verification_pass'));
+    assert.strictEqual(tasks.addEvidence(engine, sessionId, { task_title: 'غير موجودة' }, ['دليل'], options), null);
+
     const loaded = tasks.load(engine, sessionId, options);
-    assert.strictEqual(loaded.revision, 6);
+    assert.strictEqual(loaded.revision, 7);
     assert.strictEqual(loaded.tasks.length, 2);
     assert(!JSON.stringify(loaded).includes(root));
 

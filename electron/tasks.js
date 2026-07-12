@@ -230,11 +230,32 @@ function action(engine, sessionId, actionName, options) {
   return publicLedger(ledger);
 }
 
+function addEvidence(engine, sessionId, selector, evidence, options) {
+  const file = fileFor(engine, sessionId, options);
+  if (!file) return null;
+  const previous = readFile(file);
+  if (!previous || !selector || !Array.isArray(evidence) || !evidence.length) return null;
+  const taskId = cleanText(selector.task_id, 128);
+  const taskTitle = cleanText(selector.task_title, MAX_TITLE);
+  const task = previous.tasks.find((item) => taskId && item.id === taskId)
+    || previous.tasks.find((item) => taskTitle && item.title === taskTitle);
+  if (!task) return null;
+  return apply({
+    schema_version: SCHEMA_VERSION,
+    engine,
+    session_id: sessionId,
+    mode: 'merge',
+    source: 'verification',
+    tasks: [{ ...task, evidence }],
+  }, options);
+}
+
 module.exports = {
   SCHEMA_VERSION,
   apply,
   load,
   action,
+  addEvidence,
   sanitizeTasks,
   SAFE_ENGINE,
   SAFE_SESSION,

@@ -21,6 +21,7 @@ const bgprocs = require('./bgprocs');
 const term = require('./term');
 const preview = require('./preview'); // م-3: أدوات قراءة المعاينة للوكيل (موديول مشترك)
 const skillCatalog = require('./skills'); // .agents قياسي + .claude توافق؛ تحميل تدريجي
+const verify = require('./verify'); // تحقق صريح مستقل عن أدوات المتصفح
 
 const IS_WIN = process.platform === 'win32';
 
@@ -30,6 +31,7 @@ const PORTABLE_SKILL_TOOLS = new Set([
   'mcp__satr-skills__load_skill',
   'mcp__satr-skills__read_skill_resource',
 ]);
+const READ_ONLY_VERIFY_TOOLS = new Set(['mcp__satr-verify__verification_config']);
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة ولا نعرض فرقاً (أداء وذاكرة)
 const MAX_SKILL_TOOL_CHARS = 48 * 1024;
 
@@ -399,6 +401,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       if (alwaysAllowed.has(toolName)) return { behavior: 'allow', updatedInput: input };
       // تحميل مهارة اختارها المستخدم ومورد نصي محصور داخلها قراءة فقط — بلا مربع إذن.
       if (PORTABLE_SKILL_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
+      // قراءة إعداد التحقق فقط؛ verify_project نفسه يبقى خلف مربع إذن canUseTool.
+      if (READ_ONLY_VERIFY_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
       // وضع تحكّم المتصفح: يوافق على أدوات المتصفح فقط (لا run_in_terminal ولا الملفّات)
       if (browserControl && BROWSER_AUTO_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
       const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
@@ -833,6 +837,35 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     options.mcpServers = Object.assign({}, options.mcpServers, {
       'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
+    });
+  }
+
+  // خادم تحقق مستقل بعد كتلة satr-terminal: لا يغيّر أدوات المتصفح أو توجيهها.
+  if (sdk.createSdkMcpServer && sdk.tool && z) {
+    const configTool = sdk.tool(
+      'verification_config',
+      'اقرأ أوامر التحقق الصريحة من .satr/verify.json دون تشغيلها.',
+      {},
+      async () => ({ content: [{ type: 'text', text: verify.formatConfig(verify.loadConfig(cwd)) }] })
+    );
+    const verifyTool = sdk.tool(
+      'verify_project',
+      'شغّل checks من .satr/verify.json في الطرفية المرئية بعد إذن المستخدم. لا تخترع أوامر. ' +
+      'مرّر عنوان المهمة الظاهر حرفياً لربط النتيجة بدليلها.',
+      {
+        checks: z.array(z.string()).max(6).optional().describe('معرّفات checks من verification_config؛ الفراغ يعني الكل'),
+        task_title: z.string().describe('عنوان المهمة الحرفي في Task Ledger'),
+      },
+      async (args) => {
+        const taskTitle = String((args && args.task_title) || '').trim();
+        if (!taskTitle) return { content: [{ type: 'text', text: 'task_title مطلوبة لربط الدليل.' }], isError: true };
+        const result = await verify.run(cwd, args && args.checks, { emit });
+        emit({ type: 'verification_result', schema_version: 1, task_title: taskTitle, ...result });
+        return { content: [{ type: 'text', text: verify.formatResult(result) }], isError: !result.ok };
+      }
+    );
+    options.mcpServers = Object.assign({}, options.mcpServers, {
+      'satr-verify': sdk.createSdkMcpServer({ name: 'satr-verify', version: '1.0.0', tools: [configTool, verifyTool] }),
     });
   }
 

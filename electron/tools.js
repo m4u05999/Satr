@@ -21,6 +21,7 @@ const files = require('./files');
 const search = require('./search'); // بحث «دلالي خفيف» (4.6) — أداة search_code
 const inject = require('./inject'); // resolveInside — تحقق مسار موحّد
 const skills = require('./skills'); // مهارات محمولة: تحميل تدريجي لـ SKILL.md وموارده
+const verify = require('./verify'); // تحقق صريح من .satr/verify.json — لا تشغيل تلقائي
 const { computeDiff } = require('./diff');
 const term = require('./term'); // طرفية النموذج المرئية (2.3) — نفس مفرد المرحلة 16
 
@@ -65,7 +66,7 @@ function undoEdit(id) {
 // null    = قراءة بلا إذن (تطابق Claude Code)
 function permissionTier(name) {
   if (WRITE_TOOLS.has(name)) return 'write';
-  if (name === 'run_command') return 'exec';
+  if (name === 'run_command' || name === 'verify_project') return 'exec';
   return null;
 }
 function needsPermission(name) { return permissionTier(name) !== null; }
@@ -105,6 +106,29 @@ const DEFS = [
           query: { type: 'string', description: 'Space-separated words to search for (1-8 words, 2+ characters each)' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'verification_config',
+      description: 'Read the explicit .satr/verify.json checks approved for this project. This only reads configuration and never runs commands.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'verify_project',
+      description: 'Run configured verification checks from .satr/verify.json in the visible terminal after user permission. Never invent commands. Provide the exact ledger task title so evidence can be linked.',
+      parameters: {
+        type: 'object',
+        properties: {
+          checks: { type: 'array', items: { type: 'string' }, description: 'Configured check IDs; omit or empty means all configured checks' },
+          task_title: { type: 'string', description: 'Exact visible Task Ledger title to receive verification evidence' },
+        },
+        required: ['task_title'],
       },
     },
   },
@@ -347,6 +371,18 @@ async function run(name, cwd, args, ctx) {
       if (content.length > MAX_RESULT) content = content.slice(0, MAX_RESULT) + '\n…(قُصّت النتائج)';
       if (r.partial) content += '\n(مسح جزئي — نفدت ميزانية الوقت قبل تغطية كل الملفات)';
       return { ok: true, content };
+    }
+    if (name === 'verification_config') {
+      return { ok: true, content: verify.formatConfig(verify.loadConfig(cwd)) };
+    }
+    if (name === 'verify_project') {
+      const taskTitle = args && typeof args.task_title === 'string' ? args.task_title.trim() : '';
+      if (!taskTitle) return { ok: false, content: 'خطأ: task_title مطلوبة لربط دليل التحقق بالمهمة' };
+      const result = await verify.run(cwd, args && args.checks, ctx);
+      if (ctx && typeof ctx.emit === 'function') {
+        ctx.emit({ type: 'verification_result', schema_version: 1, task_title: taskTitle, ...result });
+      }
+      return { ok: !!result.ok, content: verify.formatResult(result) };
     }
     if (name === 'update_task_ledger') {
       if (!ctx || typeof ctx.emit !== 'function') return { ok: false, content: 'تعذّر تحديث سجل المهام في هذا المحرك' };

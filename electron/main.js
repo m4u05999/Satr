@@ -17,6 +17,8 @@ const gitactions = require('./gitactions'); // أفعال git للوحة الت�
 const exporter = require('./exporter'); // تصدير المحادثة Markdown (الدفعة 4.8) — قراءة فقط
 const skills = require('./skills');
 const tasks = require('./tasks');
+const verify = require('./verify');
+const checkpoints = require('./checkpoints');
 const agentsList = require('./agents');
 const agent = require('./agent');
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
@@ -283,6 +285,46 @@ bgprocs.setNotifier((procs) => emitToWindow({ type: 'bg_procs', procs }));
 // رقم تسلسلي للتشغيل: أحداث متأخرة من تشغيل أُلغي (proc_done مثلاً)
 // لا يجوز أن تصل للواجهة فتُنهي رسالة التشغيل الجديد قبل أوانها
 let runSeq = 0;
+const pendingVerificationPermissions = new Map(); // verify_<n> → resolve(allow)، إذن واحد لكل suite
+let verificationPermissionSeq = 0;
+
+function activeTaskRef(engine, sessionId) {
+  const ledger = tasks.load(engine, sessionId);
+  if (!ledger || !Array.isArray(ledger.tasks)) return null;
+  const active = ledger.tasks.filter((task) => task.status === 'in_progress');
+  return active.length === 1 ? { id: active[0].id, title: active[0].title } : null;
+}
+
+function publishVerification({ engine, sessionId, runId, checkpointId, taskTitle, result }) {
+  const checkpoint = runId
+    ? checkpoints.recordVerification(runId, result)
+    : checkpoints.recordVerificationForCheckpoint(checkpointId, result);
+  const linkedTitle = taskTitle || (checkpoint && checkpoint.task_title) || '';
+  const evidence = result && Array.isArray(result.checks) ? result.checks.map((check) => ({
+    kind: check.passed ? 'verification_pass' : 'verification_fail',
+    text: (check.passed ? 'نجح ' : 'فشل ') + (check.label || check.id)
+      + ' (exit ' + (check.exit_code == null ? 'غير معروف' : check.exit_code) + ')',
+  })) : [];
+  const ledger = linkedTitle && sessionId
+    ? tasks.addEvidence(engine, sessionId, { task_title: linkedTitle }, evidence) : null;
+  const event = {
+    type: 'verification_result',
+    schema_version: 1,
+    engine,
+    session_id: sessionId,
+    checkpoint_id: checkpoint ? checkpoint.id : (checkpointId || null),
+    task_title: linkedTitle,
+    linked_task: !!ledger,
+    ok: !!(result && result.ok),
+    passed: !!(result && result.passed),
+    summary: result && result.summary || '',
+    checks: result && Array.isArray(result.checks) ? result.checks : [],
+  };
+  if (ledger) emitToWindow(ledger);
+  emitToWindow(event);
+  if (checkpoint) emitToWindow(checkpoint);
+  return { event, checkpoint, ledger };
+}
 
 ipcMain.handle('satr:send', async (event, payload) => {
   const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : '';
@@ -302,15 +344,41 @@ ipcMain.handle('satr:send', async (event, payload) => {
   const token = ++runSeq;
   const runEngine = (payload.engine === 'codex' || adapters.get(payload.engine)) ? payload.engine : 'sdk';
   let activeSessionId = payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null;
+  const runId = 'run-' + token;
+  checkpoints.begin({ runId, engine: runEngine, sessionId: activeSessionId, cwd });
   const emit = (obj) => {
     if (token !== runSeq || !obj || typeof obj !== 'object') return;
-    if (obj.type === 'system' && SAFE_SESSION.test(obj.session_id || '')) activeSessionId = obj.session_id;
+    if (obj.type === 'system' && SAFE_SESSION.test(obj.session_id || '')) {
+      activeSessionId = obj.session_id;
+      checkpoints.bindSession(runId, activeSessionId);
+    }
     if (obj.type === 'task_update') {
       const eventSessionId = SAFE_SESSION.test(obj.session_id || '') ? obj.session_id : activeSessionId;
       if (!eventSessionId) return;
       const ledger = tasks.apply({ ...obj, engine: runEngine, session_id: eventSessionId });
       if (ledger) emitToWindow(ledger);
       return;
+    }
+    if (obj.type === 'file_edit') {
+      const checkpoint = checkpoints.addEdit(runId, obj, activeSessionId ? activeTaskRef(runEngine, activeSessionId) : null);
+      emitToWindow(obj);
+      if (checkpoint) emitToWindow(checkpoint);
+      return;
+    }
+    if (obj.type === 'verification_result') {
+      if (!activeSessionId || !obj.ok) { emitToWindow(obj); return; }
+      publishVerification({
+        engine: runEngine,
+        sessionId: activeSessionId,
+        runId,
+        taskTitle: typeof obj.task_title === 'string' ? obj.task_title.trim().slice(0, 300) : '',
+        result: obj,
+      });
+      return;
+    }
+    if (obj.type === 'result' || obj.type === 'proc_done') {
+      const checkpoint = checkpoints.finish(runId);
+      if (checkpoint) emitToWindow(checkpoint);
     }
     emitToWindow(obj);
   };
@@ -484,6 +552,12 @@ ipcMain.handle('satr:permission', (event, p) => {
   if (!ok && currentCliRun && typeof currentCliRun.resolvePermission === 'function') {
     ok = currentCliRun.resolvePermission(p.id, !!p.allow, !!p.always);
   }
+  if (!ok && pendingVerificationPermissions.has(p.id)) {
+    const resolve = pendingVerificationPermissions.get(p.id);
+    pendingVerificationPermissions.delete(p.id);
+    resolve(!!p.allow);
+    ok = true;
+  }
   // مجرى المراقبة (§4.7): قرار الإذن — عنصر أساسي في سجل التدقيق (3.4)
   try {
     features.notify({ type: 'permission_reply', id: p.id, allow: !!p.allow, always: !!p.always, engine: lastEngine });
@@ -495,15 +569,18 @@ ipcMain.handle('satr:permission', (event, p) => {
 // المعرّف هو tool_use_id الذي أصدره المحرك؛ نتحقق من شكله قبل تمريره.
 // المسار نفسه مخزَّن في لقطة agent.js (ليس مدخلاً من الواجهة) فلا حقن مسارات.
 const SAFE_EDIT_ID = /^[A-Za-z0-9_:.-]{1,128}$/;
-ipcMain.handle('satr:undoEdit', (event, id) => {
-  if (typeof id !== 'string' || !SAFE_EDIT_ID.test(id)) return { ok: false, error: 'bad_id' };
-  // لقطات SDK أولاً ثم أدوات المحوّلات (2.2) ثم Codex (المرحلة 1) — المعرّفات لا تتصادم
+function undoAnyEdit(id) {
   const r = agent.undoEdit(id);
   if (r && r.ok) return r;
   const r2 = agentTools.undoEdit(id);
   if (r2 && r2.ok) return r2;
   const r3 = codex.undoEdit(id);
   return (r3 && r3.ok) ? r3 : r;
+}
+ipcMain.handle('satr:undoEdit', (event, id) => {
+  if (typeof id !== 'string' || !SAFE_EDIT_ID.test(id)) return { ok: false, error: 'bad_id' };
+  // لقطات SDK أولاً ثم أدوات المحوّلات ثم Codex — نفس المسار تستعمله استعادة checkpoint.
+  return undoAnyEdit(id);
 });
 
 // ---------- التحديث التلقائي (المرحلة 17) — رد الواجهة على «أعد التشغيل الآن» ----------
@@ -549,6 +626,69 @@ ipcMain.handle('satr:taskAction', (event, payload) => {
   const ledger = tasks.action(p.engine, p.sessionId, p.action);
   if (ledger) emitToWindow(ledger);
   return ledger;
+});
+
+// ---------- تحقق المشروع وcheckpoints (الأولوية 3) ----------
+const SAFE_CHECKPOINT_ID = /^cp-[A-Za-z0-9-]{3,80}$/;
+
+ipcMain.handle('satr:checkpointLatest', (event, payload) => {
+  const p = payload || {};
+  if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')) return null;
+  return checkpoints.latest(p.engine, p.sessionId);
+});
+
+ipcMain.handle('satr:checkpointRestore', async (event, payload) => {
+  const p = payload || {};
+  if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')
+      || !SAFE_CHECKPOINT_ID.test(p.checkpointId || '') || typeof p.cwd !== 'string' || !p.cwd.trim()) {
+    return { ok: false, error: 'bad_input' };
+  }
+  try { if (!fs.statSync(p.cwd).isDirectory()) throw new Error(); }
+  catch { return { ok: false, error: 'bad_cwd' }; }
+  const result = await checkpoints.restore({
+    engine: p.engine, sessionId: p.sessionId, checkpointId: p.checkpointId, cwd: p.cwd,
+  }, async (editId) => undoAnyEdit(editId));
+  if (result.checkpoint) emitToWindow(result.checkpoint);
+  return result;
+});
+
+ipcMain.handle('satr:verifyCheckpoint', async (event, payload) => {
+  const p = payload || {};
+  if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')
+      || !SAFE_CHECKPOINT_ID.test(p.checkpointId || '') || typeof p.cwd !== 'string' || !p.cwd.trim()) {
+    return { ok: false, error: 'bad_input' };
+  }
+  try { if (!fs.statSync(p.cwd).isDirectory()) throw new Error(); }
+  catch { return { ok: false, error: 'bad_cwd' }; }
+  const configured = verify.loadConfig(p.cwd);
+  const selected = verify.selectChecks(configured, p.checks);
+  if (!selected.ok) return { ok: false, error: selected.error };
+  const latest = checkpoints.latest(p.engine, p.sessionId);
+  if (!latest || latest.id !== p.checkpointId || !latest.restorable) return { ok: false, error: 'not_restorable' };
+  const permissionId = 'verify_' + (++verificationPermissionSeq);
+  const allowed = await new Promise((resolve) => {
+    pendingVerificationPermissions.set(permissionId, resolve);
+    emitToWindow({
+      type: 'permission_request',
+      id: permissionId,
+      tool: 'verify_project',
+      input: {
+        checks: selected.checks.map((check) => ({ id: check.id, command: check.command })),
+        task_title: latest.task_title || '',
+      },
+    });
+  });
+  if (!allowed) return { ok: false, error: 'denied' };
+  // ننفّذ snapshot الأوامر نفسه الذي ظهر في مربع الإذن؛ لا نعيد قراءة الملف بعد الموافقة.
+  const result = await verify.runChecks(p.cwd, selected.checks, { emit: emitToWindow });
+  const published = publishVerification({
+    engine: p.engine,
+    sessionId: p.sessionId,
+    checkpointId: p.checkpointId,
+    taskTitle: latest.task_title || '',
+    result,
+  });
+  return { ok: !!result.ok, passed: !!result.passed, checkpoint: published.checkpoint };
 });
 
 ipcMain.handle('satr:lastChat', (event, payload) => {
