@@ -479,7 +479,10 @@ async function start({ prompt, images, sessionId, model, permissionMode }, cwd, 
       // تعريف الوكيل ببيئته والنموذج المختار (نظير systemPrompt في agent.js). النماذج لا
       // تعرف اسمها الرمزي (بيانات التدريب تسبق الإصدار) فتُعرّف نفسها عموماً بـ GPT-5؛
       // حقن الاسم هنا يجعلها تجيب بدقّة. developerInstructions إضافي (لا يستبدل تعليمات Codex).
-      const devInstructions = 'أنت تعمل داخل تطبيق «سطر» (Satr) — واجهة عربية لسطح المكتب '
+      const devInstructions = 'تواصل مع المستخدم بالعربية افتراضياً في كل شرحك وردودك '
+        + '(«سطر» منصّة عربية)، مع إبقاء الكود والمسارات والأوامر والمصطلحات التقنية بالإنجليزية '
+        + 'LTR؛ وإن طلب لغة أخرى صراحةً فاتّبعه. '
+        + 'أنت تعمل داخل تطبيق «سطر» (Satr) — واجهة عربية لسطح المكتب '
         + 'تُشغّل Codex بجوار Claude Code.'
         + (model ? ' النموذج المختار حالياً في واجهة «سطر» هو «' + model + '» (من OpenAI Codex).' : '');
       const startParams = { cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, experimentalRawEvents: false, persistExtendedHistory: false };
