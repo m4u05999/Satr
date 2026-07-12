@@ -18,6 +18,7 @@ const gitdiff = require('./gitdiff');
 const ROOT = path.join(os.homedir(), '.satr', 'worktrees');
 const GIT_TIMEOUT_MS = 30000;
 const MAX_BUFFER = 16 * 1024 * 1024;
+const MAX_PATCH_BYTES = 4 * 1024 * 1024;
 const SAFE_ID = /^wt-[a-z0-9-]{6,80}$/;
 const MAX_LIVE = 8;
 
@@ -148,6 +149,18 @@ function createManager(options) {
     return { ok: true, files: result.files || [], more: result.more || 0, partial: !!result.partial };
   }
 
+  async function patch(id) {
+    const record = recordFor(id);
+    if (!record || !inside(record.storageRoot, record.path)) return { ok: false, error: 'not_found' };
+    const intent = await runGit(record.path, ['add', '-N', '--', '.'], settings);
+    if (!intent.ok) return { ok: false, error: 'patch_failed', message: intent.err.trim().slice(0, 1000) };
+    const result = await runGit(record.path, ['diff', '--binary', '--full-index', '--no-ext-diff', '--no-textconv', 'HEAD', '--'], settings);
+    if (!result.ok) return { ok: false, error: 'patch_failed', message: result.err.trim().slice(0, 1000) };
+    const bytes = Buffer.byteLength(result.out, 'utf8');
+    if (bytes > MAX_PATCH_BYTES) return { ok: false, error: 'patch_too_large', bytes };
+    return { ok: true, patch: result.out, bytes, head: record.head, sourceRoot: record.repoRoot };
+  }
+
   async function remove(id) {
     const record = recordFor(id);
     if (!record) return { ok: false, error: 'not_found' };
@@ -175,7 +188,7 @@ function createManager(options) {
     return results;
   }
 
-  return { create, diff, remove, removeAll, contains, get, repository };
+  return { create, diff, patch, remove, removeAll, contains, get, repository };
 }
 
 const singleton = createManager();
@@ -184,6 +197,7 @@ module.exports = {
   createManager,
   create: singleton.create,
   diff: singleton.diff,
+  patch: singleton.patch,
   remove: singleton.remove,
   removeAll: singleton.removeAll,
   contains: singleton.contains,
@@ -191,4 +205,5 @@ module.exports = {
   repository: singleton.repository,
   SAFE_ID,
   ROOT,
+  MAX_PATCH_BYTES,
 };

@@ -125,6 +125,8 @@ function publicRun(run) {
     ownership: run.ownership.slice(),
     changes: { ...run.changes, files: run.changes.files.map((file) => ({ ...file })) },
     worktree: run.worktree ? { ...run.worktree } : null,
+    artifact_ready: !!(run._artifact && run._artifact.patch),
+    patch_bytes: Math.max(0, Number(run._artifact && run._artifact.bytes) || 0),
     merged: false,
     merge_supported: false,
   };
@@ -194,6 +196,19 @@ function create(options) {
           desiredState = 'failed';
           error = 'رُصد فرق خارج الملكية المعلنة: ' + outside.rel;
         }
+      }
+      let artifact = { ok: false, error: 'patch_failed' };
+      try { artifact = await manager.patch(run._worktreeId); } catch { /* أفضل جهد */ }
+      if (artifact && artifact.ok) {
+        run._artifact = {
+          patch: artifact.patch,
+          bytes: artifact.bytes,
+          head: artifact.head,
+          sourceRoot: artifact.sourceRoot,
+        };
+      } else if (desiredState === 'completed') {
+        desiredState = 'failed';
+        error = (artifact && artifact.error) || 'patch_failed';
       }
       let removed = { ok: false, error: 'remove_failed' };
       try { removed = await manager.remove(run._worktreeId); } catch { /* أفضل جهد */ }
@@ -272,6 +287,7 @@ function create(options) {
       _finishing: false,
       _finishPromise: null,
       _timer: null,
+      _artifact: null,
     };
     runs.set(run.id, run);
     activeRunId = run.id;
@@ -378,7 +394,14 @@ function create(options) {
     return run ? publicRun(run) : null;
   }
 
-  return { start, stop, stopAll, latest };
+  function artifact(runId) {
+    if (!SAFE_RUN_ID.test(runId || '')) return null;
+    const run = runs.get(runId);
+    if (!run || run.state !== 'completed' || !run._artifact || !run._artifact.patch) return null;
+    return { ...run._artifact, ownership: run.ownership.slice(), changes: publicChanges(run.changes) };
+  }
+
+  return { start, stop, stopAll, latest, artifact };
 }
 
 const singleton = create();
@@ -389,6 +412,7 @@ module.exports = {
   stop: singleton.stop,
   stopAll: singleton.stopAll,
   latest: singleton.latest,
+  artifact: singleton.artifact,
   SAFE_RUN_ID,
   MAX_WRITE_PERMISSIONS,
   MAX_OWNERSHIP_PATTERNS,

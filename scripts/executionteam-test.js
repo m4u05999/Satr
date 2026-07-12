@@ -167,7 +167,12 @@ async function main() {
     assert(completed.agents.every((agent) => agent.changes.files.length === 1));
     assert.strictEqual(completed.cost.usd, 0.03);
     assert.strictEqual(completed.merged, false);
-    assert.strictEqual(completed.merge_supported, false);
+    assert.strictEqual(completed.merge_supported, true);
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(completed, 'patch'), false);
+    const teamArtifact = team.artifact(completed.id);
+    assert(teamArtifact && teamArtifact.patch.includes('src/a.js'));
+    assert(teamArtifact.patch.includes('src/b.js'));
+    assert(teamArtifact.patch.includes('src/c.js'));
     for (const name of ['a.js', 'b.js', 'c.js']) {
       assert.strictEqual(await fsp.readFile(path.join(project, 'src', name), 'utf8'), 'export const value = 1;\n');
     }

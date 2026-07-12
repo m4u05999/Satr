@@ -1,5 +1,5 @@
 // <satr-execution-panel> — فريق من 1–3 عوامل داخل worktrees معزولة وملكيات كتابة معلنة.
-// لا merge: تعرض اللوحة حالة كل عامل وملكيته وملخص git diff بعد حذف نسخه المؤقتة.
+// المراجع قراءة فقط؛ زر الدمج لا يظهر إلا بعد مراجعته ويتطلب تأكيداً صريحاً.
 import { sheet } from '../lib/sheet.js';
 import { panelSheet } from '../lib/panel.css.js';
 
@@ -19,6 +19,7 @@ const ownSheet = sheet(`
   .ownership { width: 100%; min-height: 38px; resize: vertical; direction: ltr; text-align: left; font-family: var(--mono); }
   .start { color: var(--gold); border-color: var(--gold-border); justify-self: start; }
   .stop { color: var(--red); }
+  .merge { color: var(--green); border-color: var(--green-border); }
   .hint, .status { color: var(--text-dim); font-size: 11.5px; line-height: 1.7; }
   .status { padding: 8px 13px; min-height: 32px; border-bottom: 1px solid var(--border); }
   .agent-card { margin: 11px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
@@ -38,6 +39,9 @@ const ownSheet = sheet(`
   .change .nums { direction: ltr; font-family: var(--mono); color: var(--text-dim); }
   .warning, .no-merge { margin: 10px 12px; padding: 9px 11px; border: 1px solid var(--gold-border); border-radius: 9px; color: var(--gold); font-size: 11.5px; line-height: 1.7; }
   .warning { color: var(--red); border-color: var(--red-border); }
+  .review-card { margin: 11px 12px; border: 1px solid var(--gold-border); border-radius: 10px; overflow: hidden; }
+  .review-head { padding: 8px 11px; color: var(--gold); font-weight: 600; background: var(--gold-soft); }
+  .recommendation { padding: 7px 11px; color: var(--text-dim); font-size: 11.5px; border-top: 1px solid var(--border); }
   .empty { padding: 24px 16px; text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.8; }
 `);
 
@@ -54,7 +58,7 @@ class SatrExecutionPanel extends HTMLElement {
     root.adoptedStyleSheets = [panelSheet, ownSheet];
     root.innerHTML =
       '<div class="panel-head"><span>فريق تنفيذ معزول</span><div class="panel-head-actions">' +
-        '<button class="stop" type="button" hidden>إيقاف الكل</button><button class="close" type="button">✕</button>' +
+        '<button class="merge" type="button" hidden>دمج</button><button class="stop" type="button" hidden>إيقاف الكل</button><button class="close" type="button">✕</button>' +
       '</div></div><div class="setup">' +
         '<label class="team-size">عدد العوامل <select class="count"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>' +
         this._inputMarkup(1) + this._inputMarkup(2) + this._inputMarkup(3) +
@@ -65,14 +69,18 @@ class SatrExecutionPanel extends HTMLElement {
     this._inputs = [...root.querySelectorAll('.worker-input')];
     this._start = root.querySelector('.start');
     this._stop = root.querySelector('.stop');
+    this._merge = root.querySelector('.merge');
     this._status = root.querySelector('.status');
     this._list = root.querySelector('.panel-list');
     this._cwd = '';
     this._team = null;
+    this._review = null;
+    this._reviewRequested = false;
     root.querySelector('.close').addEventListener('click', () => this.close());
     this._count.addEventListener('change', () => this._syncInputs());
     this._start.addEventListener('click', () => this._startExecution());
     this._stop.addEventListener('click', () => this._stopExecution());
+    this._merge.addEventListener('click', () => this._mergeExecution());
     this._syncInputs();
   }
 
@@ -84,6 +92,7 @@ class SatrExecutionPanel extends HTMLElement {
 
   close() { this.removeAttribute('open'); }
   _terminal(state) { return ['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed', 'conflict'].includes(state); }
+  _reviewActive() { return this._review && !['completed', 'failed', 'timed_out', 'stopped'].includes(this._review.state); }
   _syncInputs() {
     const count = Number(this._count.value) || 1;
     this._inputs.forEach((input, index) => { input.hidden = index >= count; });
@@ -121,11 +130,14 @@ class SatrExecutionPanel extends HTMLElement {
     this._list.innerHTML = '';
     if (!team) {
       this._list.innerHTML = '<div class="empty">كل عامل يعمل في worktree مستقل. لا تغيير ولا دمج في مجلد مشروعك.</div>';
-      this._stop.hidden = true; this._start.disabled = false; return;
+      this._stop.hidden = true; this._merge.hidden = true; this._start.disabled = false; return;
     }
     const active = !this._terminal(team.state);
-    this._stop.hidden = !active; this._start.disabled = active;
-    this._status.textContent = STATES[team.state] || team.state;
+    const reviewActive = this._reviewActive();
+    this._stop.hidden = !active && !reviewActive; this._start.disabled = active || reviewActive;
+    this._stop.textContent = reviewActive ? 'إيقاف المراجع' : 'إيقاف الكل';
+    this._merge.hidden = !(this._review && this._review.state === 'completed' && team.merge_supported && !team.merged);
+    this._status.textContent = reviewActive ? 'المراجع الثاني يراجع الفرق…' : (STATES[team.state] || team.state);
     for (const agent of team.agents || []) {
       const card = document.createElement('article'); card.className = 'agent-card ' + agent.state;
       const head = document.createElement('div'); head.className = 'agent-head';
@@ -145,9 +157,27 @@ class SatrExecutionPanel extends HTMLElement {
       warning.textContent = 'أوقف الفريق بسبب تعارض ملكية أو لمس الملف نفسه. لم يُدمج أي تغيير.';
       this._list.appendChild(warning);
     }
+    if (this._review) {
+      const reviewCard = document.createElement('section'); reviewCard.className = 'review-card';
+      const reviewHead = document.createElement('div'); reviewHead.className = 'review-head';
+      reviewHead.textContent = '🔎 المراجع الثاني — ' + (this._review.state === 'completed' ? 'اكتملت المراجعة' : this._review.state === 'running' ? 'يراجع…' : 'تعذّرت المراجعة');
+      reviewCard.appendChild(reviewHead);
+      const summary = document.createElement('div'); summary.className = 'summary'; summary.dir = 'auto';
+      summary.textContent = this._review.summary || this._review.error || 'يفحص المخاطر والملاحظات والتوصية بلا أدوات أو كتابة.';
+      reviewCard.appendChild(summary);
+      if (this._review.recommendation) {
+        const labels = { accept: 'اقبل', modify: 'عدّل', reject: 'ارفض' };
+        const recommendation = document.createElement('div'); recommendation.className = 'recommendation';
+        recommendation.textContent = 'التوصية: ' + (labels[this._review.recommendation] || this._review.recommendation);
+        reviewCard.appendChild(recommendation);
+      }
+      this._list.appendChild(reviewCard);
+    }
     if (this._terminal(team.state)) {
       const notice = document.createElement('div'); notice.className = 'no-merge';
-      notice.textContent = 'لم يُدمج أي تغيير في مشروعك. الدمج غير متاح ويحتاج بوابة مراجعة وموافقة صريحة في خطوة لاحقة.';
+      notice.textContent = team.merged
+        ? 'طُبّق الفرق على شجرة عمل مشروعك بعد المراجعة والموافقة الصريحة. لم يُنشأ commit.'
+        : 'لم يُدمج أي تغيير بعد. زر الدمج لا يتاح إلا بعد مراجعة ثانية وموافقة صريحة.';
       this._list.appendChild(notice);
     }
   }
@@ -178,22 +208,74 @@ class SatrExecutionPanel extends HTMLElement {
       this._status.textContent = labels[result && result.error] || 'تعذّر بدء فريق التنفيذ.';
       this._start.disabled = false; return;
     }
-    this._team = result.team; this._render();
+    this._team = result.team; this._review = null; this._reviewRequested = false; this._render();
   }
 
   async _stopExecution() {
     if (!this._team) return;
     this._stop.disabled = true;
     try {
-      const result = await window.satr.executionTeamStop(this._team.id);
-      if (result && result.team) this._team = result.team;
+      if (this._reviewActive()) {
+        const result = await window.satr.executionReviewStop(this._review.id);
+        if (result && result.review) this._review = result.review;
+      } else {
+        const result = await window.satr.executionTeamStop(this._team.id);
+        if (result && result.team) this._team = result.team;
+      }
     } catch { this._status.textContent = 'تعذّر إيقاف الفريق.'; }
     this._stop.disabled = false; this._render();
   }
 
   handleEvent(event) {
-    if (!event || event.type !== 'execution_team_update' || !event.team) return;
-    this._team = event.team; this._render();
+    if (!event) return;
+    if (event.type === 'execution_team_update' && event.team) {
+      this._team = event.team; this._render();
+      if (this._team.state === 'completed' && this._team.merge_supported && !this._review) this._startReview();
+    } else if (event.type === 'execution_review_update' && event.review) {
+      this._review = event.review; this._render();
+    }
+  }
+
+  async _startReview() {
+    if (!this._team || this._review || this._reviewRequested || !this._team.merge_supported) return;
+    this._reviewRequested = true; this._status.textContent = 'جارٍ تشغيل المراجع الثاني…';
+    let errorText = '';
+    try {
+      const result = await window.satr.executionReviewStart(this._team.id);
+      if (result && result.review) this._review = result.review;
+      else {
+        const labels = { secret_detected: 'رُفضت المراجعة لأن الفرق قد يحوي سراً.', diff_too_large: 'الفرق أكبر من ميزانية المراجعة.' };
+        errorText = labels[result && result.error] || 'تعذّر بدء المراجعة الثانية.';
+        this._review = { state: 'failed', summary: '', error: errorText, recommendation: '' };
+      }
+    } catch {
+      errorText = 'تعذّر بدء المراجعة الثانية.';
+      this._review = { state: 'failed', summary: '', error: errorText, recommendation: '' };
+    }
+    this._render();
+    if (errorText) this._status.textContent = errorText;
+  }
+
+  async _mergeExecution() {
+    if (!this._team || !this._review || this._review.state !== 'completed') return;
+    if (!confirm('سيُطبّق «سطر» الفرق المراجع على شجرة عمل مشروعك الآن، بلا commit. يجب أن يكون HEAD مطابقاً والشجرة نظيفة. هل تريد الدمج؟')) return;
+    this._merge.disabled = true; this._status.textContent = 'يتحقق من التعارض ثم يطبّق الفرق…';
+    let result;
+    let statusText = '';
+    try { result = await window.satr.executionMerge(this._team.id, this._review.id, true); } catch { result = null; }
+    if (result && result.ok) {
+      if (result.team) this._team = result.team;
+      statusText = 'تم تطبيق الفرق بلا commit.';
+    } else {
+      const labels = {
+        confirmation_required: 'يتطلب الدمج موافقة صريحة.', review_required: 'يجب اكتمال المراجعة أولاً.',
+        dirty_worktree: 'شجرة عمل المشروع غير نظيفة؛ لم يُطبّق شيء.', head_changed: 'تغيّر HEAD منذ التنفيذ؛ لم يُطبّق شيء.',
+        conflict: 'يتعارض الفرق مع المشروع الحالي؛ لم يُطبّق شيء.', apply_failed: 'تعذّر تطبيق الفرق؛ لم يُنشأ commit.',
+      };
+      statusText = labels[result && result.error] || 'تعذّر دمج الفرق بأمان.';
+    }
+    this._merge.disabled = false; this._render();
+    this._status.textContent = statusText;
   }
 
   async open(cwd) {
@@ -202,8 +284,14 @@ class SatrExecutionPanel extends HTMLElement {
     try {
       const latest = await window.satr.executionTeamLatest(this._cwd);
       this._team = latest && latest.team ? latest.team : null;
-    } catch { this._team = null; }
+      if (this._team) {
+        const reviewed = await window.satr.executionReviewLatest(this._team.id);
+        this._review = reviewed && reviewed.review ? reviewed.review : null;
+      } else this._review = null;
+    } catch { this._team = null; this._review = null; }
+    this._reviewRequested = !!this._review;
     this._render();
+    if (this._team && this._team.state === 'completed' && this._team.merge_supported && !this._review) this._startReview();
   }
 }
 

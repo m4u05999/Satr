@@ -25,6 +25,8 @@ const agent = require('./agent');
 const orchestrator = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
 const executor = require('./executor'); // عامل SDK واحد داخل worktree معزول — الخطوة 2
 const executionTeam = require('./executionteam'); // 1–3 عوامل بملكية ملفات — الخطوة 3
+const reviewer = require('./reviewer'); // مراجع فرق قراءة فقط — الخطوة 4
+const merger = require('./merger'); // تطبيق patch بموافقة صريحة — الخطوة 4
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const adapters = require('./adapters');
@@ -812,6 +814,48 @@ ipcMain.handle('satr:executionTeamLatest', (event, payload) => {
   return { ok: true, team: executionTeam.latest(cwd) };
 });
 
+// ---------- مراجعة ثانية ودمج صريح لفرق الفريق (الأولوية 6 — الخطوة 4) ----------
+ipcMain.handle('satr:executionReviewStart', (event, payload) => {
+  const p = payload || {};
+  if (!executionTeam.SAFE_RUN_ID.test(p.teamId || '')) return { ok: false, error: 'bad_input' };
+  const artifact = executionTeam.artifact(p.teamId);
+  if (!artifact) return { ok: false, error: 'not_available' };
+  return reviewer.start({
+    teamId: p.teamId,
+    patch: artifact.patch,
+    files: artifact.files,
+    engine: 'sdk',
+  }, artifact.sourceRoot, emitToWindow);
+});
+
+ipcMain.handle('satr:executionReviewStop', async (event, payload) => {
+  const p = payload || {};
+  if (!reviewer.SAFE_REVIEW_ID.test(p.reviewId || '')) return { ok: false, error: 'bad_input' };
+  return reviewer.stop(p.reviewId);
+});
+
+ipcMain.handle('satr:executionReviewLatest', (event, payload) => {
+  const p = payload || {};
+  if (!executionTeam.SAFE_RUN_ID.test(p.teamId || '')) return { ok: false, error: 'bad_input' };
+  return { ok: true, review: reviewer.latest(p.teamId) };
+});
+
+ipcMain.handle('satr:executionMerge', async (event, payload) => {
+  const p = payload || {};
+  if (!executionTeam.SAFE_RUN_ID.test(p.teamId || '') || !reviewer.SAFE_REVIEW_ID.test(p.reviewId || '') || p.confirmed !== true) {
+    return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
+  }
+  const review = reviewer.latest(p.teamId);
+  const artifact = executionTeam.artifact(p.teamId);
+  if (!review || review.id !== p.reviewId || review.state !== 'completed' || !artifact) {
+    return { ok: false, error: 'review_required' };
+  }
+  const result = await merger.apply({ ...artifact, confirmed: true });
+  if (!result.ok) return result;
+  const marked = executionTeam.markMerged(p.teamId);
+  return { ...result, team: marked && marked.team ? marked.team : null };
+});
+
 ipcMain.handle('satr:taskLedger', (event, payload) => {
   const p = payload || {};
   if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')) return null;
@@ -1075,12 +1119,13 @@ app.on('window-all-closed', () => {
   orchestrator.stopAll();
   executor.stopAll();
   executionTeam.stopAll();
+  reviewer.stopAll();
   // إنهاء عمليات الخلفية المتتبَّعة كي لا تبقى خوادم تطوير بلا واجهة تديرها بعد الإغلاق
   bgprocs.killAll();
   term.killAll(); // صدفة الطرفية المدمجة تموت مع «سطر» (المرحلة 8)
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => { orchestrator.stopAll(); executor.stopAll(); executionTeam.stopAll(); bgprocs.killAll(); term.killAll(); });
+app.on('before-quit', () => { orchestrator.stopAll(); executor.stopAll(); executionTeam.stopAll(); reviewer.stopAll(); bgprocs.killAll(); term.killAll(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });

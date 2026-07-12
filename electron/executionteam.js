@@ -55,6 +55,8 @@ function agentPublic(worker) {
       ? { ...snapshot.changes, files: snapshot.changes.files.map((file) => ({ ...file })) }
       : { files: [], more: 0, partial: false, added: 0, removed: 0 },
     worktree: snapshot.worktree ? { ...snapshot.worktree } : null,
+    artifact_ready: snapshot.artifact_ready === true,
+    patch_bytes: Math.max(0, Number(snapshot.patch_bytes) || 0),
     merged: false,
     merge_supported: false,
   };
@@ -62,6 +64,7 @@ function agentPublic(worker) {
 
 function teamPublic(team) {
   const agents = team.agents.map(agentPublic);
+  const artifactReady = team.state === 'completed' && agents.length > 0 && agents.every((agent) => agent.artifact_ready === true);
   const cost = agents.reduce((total, agent) => ({
     usd: total.usd + (Number(agent.cost.usd) || 0),
     input_tokens: total.input_tokens + (Number(agent.cost.input_tokens) || 0),
@@ -79,8 +82,8 @@ function teamPublic(team) {
     cost,
     conflicts: team.conflicts.map((conflict) => ({ ...conflict })),
     agents,
-    merged: false,
-    merge_supported: false,
+    merged: team._merged === true,
+    merge_supported: artifactReady && team._merged !== true,
   };
 }
 
@@ -195,6 +198,7 @@ function create(options) {
       _emit: emit,
       _stopRequested: false,
       _conflictStopping: false,
+      _merged: false,
     };
     runs.set(team.id, team);
     while (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value);
@@ -258,7 +262,41 @@ function create(options) {
     return team ? teamPublic(team) : null;
   }
 
-  return { start, stop, stopAll, latest };
+  function artifact(runId) {
+    if (!SAFE_RUN_ID.test(runId || '')) return null;
+    const team = runs.get(runId);
+    if (!team || team.state !== 'completed' || team._merged) return null;
+    const artifacts = team.agents.map((worker) => {
+      if (!worker.executor || !worker.snapshot || typeof worker.executor.artifact !== 'function') return null;
+      return worker.executor.artifact(worker.snapshot.id);
+    });
+    if (artifacts.some((item) => !item || !item.patch)) return null;
+    const head = artifacts[0].head;
+    const sourceRoot = artifacts[0].sourceRoot;
+    if (artifacts.some((item) => item.head !== head || path.resolve(item.sourceRoot) !== path.resolve(sourceRoot))) return null;
+    return {
+      teamId: team.id,
+      cwd: team._cwd,
+      sourceRoot,
+      head,
+      patch: artifacts.map((item) => item.patch.trimEnd()).filter(Boolean).join('\n') + '\n',
+      bytes: artifacts.reduce((sum, item) => sum + item.bytes, 0),
+      ownership: team.agents.map((worker) => worker.ownership.slice()),
+      files: team.agents.flatMap((worker) => ((worker.snapshot && worker.snapshot.changes && worker.snapshot.changes.files) || [])
+        .map((file) => ({ ...file, agent: worker.label }))),
+    };
+  }
+
+  function markMerged(runId) {
+    if (!SAFE_RUN_ID.test(runId || '')) return { ok: false, error: 'bad_input' };
+    const team = runs.get(runId);
+    if (!team || team.state !== 'completed' || team._merged) return { ok: false, error: 'not_available' };
+    team._merged = true;
+    publish(team);
+    return { ok: true, team: teamPublic(team) };
+  }
+
+  return { start, stop, stopAll, latest, artifact, markMerged };
 }
 
 const singleton = create();
@@ -269,6 +307,8 @@ module.exports = {
   stop: singleton.stop,
   stopAll: singleton.stopAll,
   latest: singleton.latest,
+  artifact: singleton.artifact,
+  markMerged: singleton.markMerged,
   ownershipConflicts,
   SAFE_RUN_ID,
   MAX_AGENTS,
