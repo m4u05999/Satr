@@ -171,6 +171,15 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
     mcpHost = await codexmcp.start({
       preview,
       openPreview: (url) => emit({ type: 'preview_open', url }),
+      // أفعال المتصفح (نقر/كتابة/اختيار/مفتاح) تمرّ بمربع الإذن العربي نفسه — Codex لا
+      // يبوّب نداءات MCP، فنبوّبها هنا (نفس قناة أذونات الأوامر: emit + resolvePermission).
+      // bypassPermissions أو «موافقة دائمة» للأداة يعفيان. رفض ⇒ لا يُنفَّذ الفعل.
+      requestPermission: (toolName, input) => new Promise((resolve) => {
+        if (permissionMode === 'bypassPermissions' || alwaysAllowed.has(toolName)) { resolve(true); return; }
+        const permId = 'cxmcp_' + (++mcpPermSeq) + '_' + Math.random().toString(36).slice(2, 6);
+        mcpPerms.set(permId, { resolve, tool: toolName });
+        emit({ type: 'permission_request', id: permId, tool: toolName, input: input || {} });
+      }),
     });
   } catch (e) { mcpHost = null; }
   const appServerArgs = ['app-server'];
@@ -190,6 +199,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
   let reqId = 0;
   const replies = new Map();       // id طلبنا → {resolve, reject}
   const perms = new Map();         // id طلب الخادم (إذن) → {reqId, tool}
+  const mcpPerms = new Map();      // إذن فعل متصفح MCP معلّق: permId → {resolve, tool}
+  let mcpPermSeq = 0;
   let threadId = null;
   let finished = false;
   let stopping = false;
@@ -479,6 +490,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
       try { respond(info.serverId, { decision: 'cancel' }); } catch {}
       perms.delete(permId);
     }
+    // فكّ أي إذن فعل متصفح معلّق بالرفض (لا يعلّق نداء MCP بعد إنهاء الدور)
+    for (const [permId, info] of mcpPerms) { try { info.resolve(false); } catch {} mcpPerms.delete(permId); }
     try { proc.stdin.end(); } catch {}
     setTimeout(() => { try { proc.kill(); } catch {} }, 500);
     if (mcpHost) { try { mcpHost.stop(); } catch {} mcpHost = null; } // أوقِف خادم رؤية الويب MCP
@@ -530,6 +543,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
         + 'read_page (بنية الصفحة النصية) وbrowser_snapshot (العناصر التفاعلية) وscreenshot '
         + '(لقطة بصرية) وbrowser_console (أخطاء JavaScript) وbrowser_network (طلبات الشبكة برموز '
         + 'الحالة) — استعملها للتحقق من نتيجة تعديلاتك وتصحيح نفسك. '
+        + 'وللتفاعل مع الصفحة: خذ لقطة بـ browser_snapshot (تعطيك كل عنصر بصيغة [ref] role "name")، '
+        + 'ثم مرّر الـ ref إلى browser_click/browser_type/browser_select_option/browser_press_key '
+        + '(تطلب إذن المستخدم)، وأعد أخذ اللقطة بعد كل فعل لأن المُعرّفات تتغيّر. '
         + 'لا تستخدم من Agent Skills إلا المهارات المرفقة صراحةً بمدخلات هذا الدور.'
         + (model ? ' النموذج المختار حالياً في واجهة «سطر» هو «' + model + '» (من OpenAI Codex).' : '');
       const startParams = { cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, experimentalRawEvents: false, persistExtendedHistory: false };
@@ -579,6 +595,14 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
   return {
     // رد الواجهة على طلب إذن → قرار Codex بمفردات v2 (accept/acceptForSession/decline)
     resolvePermission(id, allow, always) {
+      // فعل متصفح MCP معلّق (لا serverId — نحلّ Promise الأداة مباشرةً)
+      const mcp = mcpPerms.get(id);
+      if (mcp) {
+        mcpPerms.delete(id);
+        if (allow && always) alwaysAllowed.add(mcp.tool);
+        try { mcp.resolve(!!allow); } catch {}
+        return true;
+      }
       const info = perms.get(id);
       if (!info) return false;
       perms.delete(id);
@@ -594,6 +618,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
         try { respond(info.serverId, { decision: 'cancel' }); } catch {}
         perms.delete(permId);
       }
+      for (const [permId, info] of mcpPerms) { try { info.resolve(false); } catch {} mcpPerms.delete(permId); }
       if (threadId) { try { await request('turn/interrupt', { threadId }); } catch {} }
       cleanup(0);
     },

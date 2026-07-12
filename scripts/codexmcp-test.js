@@ -20,6 +20,14 @@ const preview = {
   getNetwork: () => ({ ok: true, requests: [{ method: 'GET', url: 'http://x/api', status: 404, type: 'xhr', fromCache: false }], netErrors: [] }),
   screenshot: async () => ({ ok: true, base64: Buffer.from('PNG').toString('base64') }),
   screenshotFull: async () => ({ ok: true, base64: 'AA==' }),
+  screenshotElement: async () => ({ ok: true, base64: 'BB==' }),
+  waitFor: async () => ({ ok: true, found: true }),
+  scroll: async () => ({ ok: true, scrollY: 120, moved: 120, max: 2000 }),
+  hover: async () => ({ ok: true, tag: 'a' }),
+  clickElement: async () => ({ ok: true, tag: 'button', text: 'إرسال' }),
+  typeText: async () => ({ ok: true, tag: 'input' }),
+  selectOption: async () => ({ ok: true, label: 'الأول' }),
+  pressKey: () => ({ ok: true, key: 'Enter' }),
 };
 
 function post(url, token, msg) {
@@ -60,7 +68,9 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
   j = JSON.parse(r.body);
   const names = j.result.tools.map((t) => t.name);
-  ['open_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network', 'screenshot']
+  ['open_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network', 'screenshot',
+   'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover',
+   'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
 
@@ -90,6 +100,30 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   const srv2 = await codexmcp.start({ preview, onActivity: (m) => { seen = m; } });
   await post(srv2.url, srv2.token, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
   ok(seen === 'tools/list', 'onActivity يُستدعى بطريقة الطلب');
+
+  // بوابة الإذن: الأفعال تمرّ بـ requestPermission، والقراءة/الرؤية لا
+  const asked = [];
+  const gate = (decision) => async (tool, input) => { asked.push(tool); return decision; };
+
+  // (أ) رفض ⇒ browser_click لا يُنفَّذ ويعيد خطأ إذن
+  let srv3 = await codexmcp.start({ preview, requestPermission: gate(false) });
+  let rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_click', arguments: { ref: 'e5' } } });
+  let jj = JSON.parse(rr.body);
+  ok(asked.includes('browser_click') && jj.result.isError && /رُفض الإذن/.test(jj.result.content[0].text), 'رفض الإذن ⇒ browser_click لا يُنفَّذ');
+  await srv3.stop();
+
+  // (ب) قبول ⇒ browser_type يُنفَّذ
+  asked.length = 0;
+  srv3 = await codexmcp.start({ preview, requestPermission: gate(true) });
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_type', arguments: { ref: 'e7', text: 'x' } } });
+  jj = JSON.parse(rr.body);
+  ok(asked.includes('browser_type') && !jj.result.isError && /كُتب النص/.test(jj.result.content[0].text), 'قبول الإذن ⇒ browser_type يُنفَّذ');
+
+  // (ج) القراءة/الرؤية لا تطلب إذناً (read_page لا تستدعي requestPermission)
+  asked.length = 0;
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'read_page', arguments: {} } });
+  ok(asked.length === 0, 'read_page لا تطلب إذناً (قراءة فقط)');
+  await srv3.stop();
 
   await srv.stop();
   await srv2.stop();

@@ -963,10 +963,19 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   حيّ بـ codex حقيقي: `initialize → tools/list → satr_preview=ready` (بينما فشلت خوادمه
   الأخرى). إشعار `mcpServer/startupStatus/updated` (كان يُتجاهَل) يُرصد الآن لفشل
   satr_preview فقط (تدهور رشيق: Codex يعمل بلا رؤية إن فشل). open_preview يبثّ
-  `preview_open` للواجهة (app.js يفتح اللوحة generically لأي محرك). الأدوات **قراءة/رؤية
-  فقط** في هذه الدفعة (أفعال النقر/الكتابة دفعة لاحقة). تحقّق: `npm run test:codexmcp`
-  (18 — عقد JSON-RPC + المصادقة) + `eval:agent` 12/12 + إقلاع نظيف. codex.js محجوز لـ Claude
+  `preview_open` للواجهة (app.js يفتح اللوحة generically لأي محرك). codex.js محجوز لـ Claude
   (حدّ ملكية الملفات في الفريق الثلاثي).
+  - **طقم الأفعال الكامل (دفعة تالية — 2026-07-12)**: أُضيفت بقية أدوات SDK بتكافؤ كامل:
+    browser_screenshot_element/wait_for/scroll/hover (رؤية/قراءة — بلا إذن) +
+    browser_click/type/select_option/press_key (تُغيّر الصفحة). **الأمان (حرج)**: Codex
+    **لا** يبوّب نداءات MCP (طبقة موافقته للأوامر/الملفات فقط) فالأفعال كانت ستُنفَّذ بلا
+    سؤال — خطر مع صفحات غير موثوقة (حقن برومبت). الحل: `codexmcp.js` يمرّر الأفعال الأربع
+    التي تُغيّر الصفحة عبر `deps.requestPermission(tool, input)` الذي يوفّره codex.js فيبثّ
+    `permission_request` (مربع الإذن العربي نفسه) وينتظر الردّ عبر `mcpPerms` +
+    `resolvePermission` (قناة أذونات الأوامر نفسها). bypassPermissions أو «موافقة دائمة»
+    للأداة يعفيان؛ الرفض/إيقاف الدور يفكّ الإذن المعلّق. القراءة/الرؤية لا تُبوَّب. تحقّق:
+    `npm run test:codexmcp` (29 — يشمل بوابة الإذن قبولاً/رفضاً وعدم تبويب القراءة) +
+    `eval:agent` 12/12 + إقلاع نظيف.
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
   رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`

@@ -56,6 +56,20 @@ function whyClosed(err, extra) {
 function buildTools(deps) {
   const preview = deps.preview;
   const openPreview = typeof deps.openPreview === 'function' ? deps.openPreview : null;
+  // بوابة الإذن لأفعال المتصفح (النقر/الكتابة/الاختيار/المفتاح): Codex **لا** يمرّر نداءات
+  // MCP عبر طبقة موافقته (execCommandApproval للأوامر/الملفات فقط)، فالأفعال ستُنفَّذ بلا
+  // سؤال — خطر مع صفحات ويب غير موثوقة (حقن برومبت). لذا نمرّرها عبر مربع الإذن العربي
+  // نفسه: codex.js يوفّر requestPermission(tool, input) الذي يبثّ permission_request
+  // وينتظر ردّ المستخدم (نفس قناة أذونات الأوامر). القراءة/الرؤية لا تُبوَّب (آمنة).
+  const requestPermission = typeof deps.requestPermission === 'function' ? deps.requestPermission : null;
+  const guard = async (toolName, input, fn) => {
+    if (requestPermission) {
+      let allowed = false;
+      try { allowed = await requestPermission(toolName, input); } catch (e) { allowed = false; }
+      if (!allowed) return textResult('رُفض الإذن — لم يُنفَّذ الفعل ' + toolName + '.', true);
+    }
+    return fn();
+  };
   return [
     {
       name: 'open_preview',
@@ -175,6 +189,136 @@ function buildTools(deps) {
         if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّر التقاط اللقطة'), true);
         return imageResult(r.base64);
       },
+    },
+    {
+      name: 'browser_screenshot_element',
+      description: 'التقط لقطة بصرية لعنصر واحد في الصفحة المعروضة (بـ ref من browser_snapshot أو '
+        + 'مُحدِّد CSS) لتفحص مظهره عن قرب — أوفر من لقطة الصفحة كاملة. قراءة فقط.',
+      inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'ref (مثل e6) أو مُحدِّد CSS' } }, required: ['ref'] },
+      handler: async (args) => {
+        const r = await preview.screenshotElement(String((args && args.ref) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.'
+            : r && r.error === 'not_visible' ? 'العنصر غير ظاهر (بلا أبعاد).' : whyClosed(r && r.error, 'تعذّر التقاط اللقطة');
+          return textResult(why, true);
+        }
+        return imageResult(r.base64);
+      },
+    },
+    {
+      name: 'browser_wait_for',
+      description: 'انتظر ظهور نصّ معيّن أو عنصر (بمُحدِّد CSS) في الصفحة المعروضة، بمهلة. مفيد بعد '
+        + 'نقر أو تنقّل يحمّل محتوى ديناميكياً قبل أخذ لقطة جديدة. مرّر text أو selector. قراءة فقط.',
+      inputSchema: { type: 'object', properties: {
+        text: { type: 'string', description: 'نصّ يُنتظر ظهوره' },
+        selector: { type: 'string', description: 'مُحدِّد CSS يُنتظر ظهوره' },
+        timeout_ms: { type: 'number', description: 'المهلة (افتراضي 8000، أقصى 30000)' },
+      } },
+      handler: async (args) => {
+        const a = args || {};
+        const r = await preview.waitFor({ text: a.text, selector: a.selector }, a.timeout_ms);
+        if (!r || (!r.ok && r.error)) {
+          const why = r && r.error === 'bad_condition' ? 'حدّد text أو selector صالحاً.' : whyClosed(r && r.error, 'تعذّر الانتظار');
+          return textResult(why, true);
+        }
+        return textResult(r.found ? 'ظهر المطلوب.' : 'انتهت المهلة ولم يظهر المطلوب.', !r.found);
+      },
+    },
+    {
+      name: 'browser_scroll',
+      description: 'مرّر الصفحة المعروضة لكشف محتوى خارج نافذة العرض (قبل لقطة جديدة). '
+        + 'direction: down/up/top/bottom.',
+      inputSchema: { type: 'object', properties: {
+        direction: { type: 'string', description: 'down (افتراضي)/up/top/bottom' },
+        amount: { type: 'number', description: 'مقدار التمرير بالبكسل (اختياري)' },
+      } },
+      handler: async (args) => {
+        const r = await preview.scroll(String((args && args.direction) || 'down'), args && args.amount);
+        if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّر التمرير'), true);
+        return textResult('مُرّرت الصفحة (scrollY=' + r.scrollY + ').');
+      },
+    },
+    {
+      name: 'browser_hover',
+      description: 'حوّم المؤشر فوق عنصر لإظهار قائمة/محتوى يظهر عند التحويم. مرّر ref (من '
+        + 'browser_snapshot) أو مُحدِّد CSS.',
+      inputSchema: { type: 'object', properties: { ref: { type: 'string' } }, required: ['ref'] },
+      handler: async (args) => {
+        const r = await preview.hover(String((args && args.ref) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.' : whyClosed(r && r.error, 'تعذّر التحويم');
+          return textResult(why, true);
+        }
+        return textResult('حُوّم فوق <' + r.tag + '>.');
+      },
+    },
+    // ---------- أفعال تُغيّر الصفحة — خلف مربع الإذن العربي (guard) ----------
+    {
+      name: 'browser_click',
+      description: 'انقر عنصراً في الصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل e5 — '
+        + 'حتمي ومُفضَّل) أو مُحدِّد CSS. أعد أخذ اللقطة بعد النقر (الـ ref يتغيّر).',
+      inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'ref (مثل e5) أو مُحدِّد CSS' } }, required: ['ref'] },
+      handler: (args) => guard('browser_click', { ref: String((args && args.ref) || '') }, async () => {
+        const r = await preview.clickElement(String((args && args.ref) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'not_found' ? 'لم يُعثر على عنصر بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
+            : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.' : whyClosed(r && r.error, 'تعذّر النقر');
+          return textResult(why, true);
+        }
+        return textResult('نُقر على <' + r.tag + '>' + (r.text ? ' («' + r.text + '»)' : ''));
+      }),
+    },
+    {
+      name: 'browser_type',
+      description: 'اكتب نصاً في حقل إدخال بالصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل e7) '
+        + 'أو مُحدِّد CSS، مع النص. لملء النماذج بعد browser_snapshot.',
+      inputSchema: { type: 'object', properties: {
+        ref: { type: 'string', description: 'ref (مثل e7) أو مُحدِّد CSS' },
+        text: { type: 'string', description: 'النص المراد كتابته' },
+      }, required: ['ref', 'text'] },
+      handler: (args) => guard('browser_type', { ref: String((args && args.ref) || ''), text: String((args && args.text) || '') }, async () => {
+        const r = await preview.typeText(String((args && args.ref) || ''), String((args && args.text) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'not_found' ? 'لم يُعثر على حقل بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
+            : r && r.error === 'not_editable' ? 'العنصر ليس حقل إدخال قابلاً للكتابة.'
+            : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.' : whyClosed(r && r.error, 'تعذّرت الكتابة');
+          return textResult(why, true);
+        }
+        return textResult('كُتب النص في <' + r.tag + '>.');
+      }),
+    },
+    {
+      name: 'browser_select_option',
+      description: 'اختر خياراً من قائمة منسدلة <select>. مرّر ref (من browser_snapshot) أو مُحدِّد CSS، '
+        + 'مع value الخيار أو نصّه الظاهر.',
+      inputSchema: { type: 'object', properties: {
+        ref: { type: 'string', description: 'ref (مثل e9) أو مُحدِّد CSS' },
+        value: { type: 'string', description: 'قيمة الخيار أو نصّه الظاهر' },
+      }, required: ['ref', 'value'] },
+      handler: (args) => guard('browser_select_option', { ref: String((args && args.ref) || ''), value: String((args && args.value) || '') }, async () => {
+        const r = await preview.selectOption(String((args && args.ref) || ''), String((args && args.value) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'not_found' ? 'لم يُعثر على القائمة — أعد أخذ لقطة بـ browser_snapshot.'
+            : r && r.error === 'not_select' ? 'العنصر ليس قائمة منسدلة <select>.'
+            : r && r.error === 'no_option' ? 'لا خيار بهذه القيمة/النص في القائمة.' : whyClosed(r && r.error, 'تعذّر الاختيار');
+          return textResult(why, true);
+        }
+        return textResult('اختير «' + (r.label || '') + '».');
+      }),
+    },
+    {
+      name: 'browser_press_key',
+      description: 'اضغط مفتاحاً على العنصر المركّز في الصفحة (بعد browser_click لتركيزه). لإرسال '
+        + 'نموذج بـ Enter أو التنقّل بـ Tab/الأسهم. للكتابة استعمل browser_type.',
+      inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Enter/Tab/Escape/ArrowUp/ArrowDown/ArrowLeft/ArrowRight/Backspace/Delete/Home/End/PageUp/PageDown' } }, required: ['key'] },
+      handler: (args) => guard('browser_press_key', { key: String((args && args.key) || '') }, async () => {
+        const r = preview.pressKey(String((args && args.key) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'bad_key' ? 'مفتاح غير مدعوم (استعمل الأسماء المذكورة في وصف الأداة).' : whyClosed(r && r.error, 'تعذّر الضغط');
+          return textResult(why, true);
+        }
+        return textResult('ضُغط ' + r.key + '.');
+      }),
     },
   ];
 }
