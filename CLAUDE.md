@@ -711,6 +711,17 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   snapshot→act→snapshot). تحقّق حيّ (مسبار معزول 8/8، خادم HTTP فعلي): لقطة بأدوار/أسماء/
   refs صحيحة · نقر/كتابة بـ ref يغيّران DOM ويُطلقان input · wait_for (ظهور/مهلة) ·
   تراجع CSS · ref قديم بعد reload ⇒ not_found · مُحدِّد فاسد ⇒ bad_selector.
+- **وضع تحكّم المتصفح (نمط Comet — 2026-07-12)**: زرّ toggle `#browserCtl` بجوار زرّ
+  الإرسال (🖱️ متصفح) يمنح الوكيل صلاحية قيادة المعاينة بسلاسة (حلقة snapshot→act بلا مربع
+  إذن لكل فعل). العلم `browserControl` يمرّ في send (app.js `browserControlOn` +
+  localStorage `satr_browser_control`، منقّى في main.js boolean) إلى `agent.start`.
+  **الأمان (حرج، fail-safe)**: canUseTool يوافق تلقائياً **فقط** على أدوات المتصفح الثماني
+  المؤهَّلة (`BROWSER_AUTO_TOOLS` = mcp__satr-terminal__{open_preview,read_page,screenshot,
+  browser_snapshot,browser_click,browser_type,browser_navigate,browser_wait_for}) — و
+  **`run_in_terminal` وكل أدوات الملفّات تبقى تطلب إذناً** (ليست في المجموعة، فأي اسم
+  خاطئ يُقلّل الصلاحية لا يزيدها). معطّل افتراضياً، حالته ظاهرة (زرّ ذهبي `.active` +
+  aria-pressed) وإشعار عربي عند التبديل. محرك SDK فقط (أدوات المتصفح لا توجد في codex.js).
+  تهديد حقن البرومبت من صفحات الويب يبقى قائماً — لذا الوضع اختياري صريح يبادر به المستخدم.
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
   رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`

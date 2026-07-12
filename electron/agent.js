@@ -104,6 +104,22 @@ function resolveClaudeBin(force) {
 
 // الأدوات الموافَق عليها «دائماً» — تعيش طوال عمر التطبيق
 const alwaysAllowed = new Set();
+
+// «وضع تحكّم المتصفح» (زرّ بجوار الإرسال — نمط Comet): حين يفعّله المستخدم صراحةً تُوافَق
+// أدوات المتصفح الثماني تلقائياً فيتصفّح الوكيل بسلاسة (snapshot→act) بلا مربع إذن لكل فعل.
+// **الأمان (حرج)**: هذا الوضع اختياري صريح ومعطّل افتراضياً. يشمل **أدوات المتصفح فقط** —
+// و`run_in_terminal` (تنفيذ أوامر الصدفة) وكل أدوات الملفّات **تبقى تطلب إذناً** (ليست هنا).
+// الفصل مقصود: قيادة المتصفح ≠ تنفيذ أوامر على الجهاز. الأسماء مؤهَّلة بادئة خادم MCP.
+const BROWSER_AUTO_TOOLS = new Set([
+  'mcp__satr-terminal__open_preview',
+  'mcp__satr-terminal__read_page',
+  'mcp__satr-terminal__screenshot',
+  'mcp__satr-terminal__browser_snapshot',
+  'mcp__satr-terminal__browser_click',
+  'mcp__satr-terminal__browser_type',
+  'mcp__satr-terminal__browser_navigate',
+  'mcp__satr-terminal__browser_wait_for',
+]);
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
 
 // تطبيع رسالة Claude المكتملة لعقد العرض الموحّد. لا نعدّل كائن SDK الأصلي لأن بقية
@@ -149,7 +165,7 @@ function phaseEventFromStreamEvent(ev) {
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
  */
-async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs }, cwd, emit) {
+async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs, browserControl }, cwd, emit) {
   const { query } = await loadSdk();
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
@@ -264,6 +280,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     stderr: (data) => emit({ type: 'stderr', text: String(data) }),
     canUseTool: async (toolName, input, { signal, toolUseID }) => {
       if (alwaysAllowed.has(toolName)) return { behavior: 'allow', updatedInput: input };
+      // وضع تحكّم المتصفح: يوافق على أدوات المتصفح فقط (لا run_in_terminal ولا الملفّات)
+      if (browserControl && BROWSER_AUTO_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
       const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
       emit({ type: 'permission_request', id, tool: toolName, input });
       return new Promise((resolve) => {

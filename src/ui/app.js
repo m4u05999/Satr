@@ -343,6 +343,31 @@
   }
   function closePermDialog() { if (permEl.closeAll) permEl.closeAll(); }
 
+  // ---------- وضع تحكّم المتصفح (نمط Comet) ----------
+  // زرّ بجوار الإرسال يمنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح
+  // الثماني فقط — لا الطرفية ولا الملفّات). معطّل افتراضياً، حالته ظاهرة، تُحفظ محلياً.
+  let browserControlOn = false;
+  (function initBrowserControl() {
+    const btn = $('browserCtl');
+    if (!btn) return;
+    try { browserControlOn = localStorage.getItem('satr_browser_control') === '1'; } catch (e) {}
+    const paint = () => {
+      btn.classList.toggle('active', browserControlOn);
+      btn.setAttribute('aria-pressed', browserControlOn ? 'true' : 'false');
+    };
+    paint();
+    btn.addEventListener('click', () => {
+      browserControlOn = !browserControlOn;
+      try { localStorage.setItem('satr_browser_control', browserControlOn ? '1' : '0'); } catch (e) {}
+      paint();
+      if (chatEl.addActionNotice) {
+        chatEl.addActionNotice(browserControlOn
+          ? '🖱️ وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة بلا إذن لكل فعل (أفعال المتصفح فقط).'
+          : 'أُوقف وضع تحكّم المتصفح — عاد الإذن اليدوي لكل فعل متصفح.');
+      }
+    });
+  })();
+
   // ---------- الإرسال ----------
   async function send() {
     if (gated) return; // المحادثة محجوبة حتى تجتاز بوابة أول التشغيل
@@ -396,6 +421,7 @@
       effort: $('effort').value,
       extraDirs: topbarEl.getExtraDirs ? topbarEl.getExtraDirs() : [],
       images: images.map((i) => ({ media_type: i.media_type, data: i.data })),
+      browserControl: browserControlOn, // وضع تحكّم المتصفح (محرك SDK فقط)
     });
     if (r && r.error) {
       currentBlock.error(r.message || r.error);

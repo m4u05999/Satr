@@ -367,6 +367,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
       skills: sanitizeSkills(payload.skills),
       effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
       extraDirs: sanitizeExtraDirs(payload.extraDirs),
+      browserControl: payload.browserControl === true, // وضع تحكّم المتصفح (محرك SDK فقط)
     }, cwd, emit);
     return { started: true, engine: 'sdk' };
   } catch (e) {
