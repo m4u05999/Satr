@@ -62,13 +62,29 @@
     { value: '', label: 'الافتراضي' }, { value: 'claude-fable-5', label: 'Fable 5' },
     { value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' },
   ];
+  // نماذج Codex الحديثة (المرحلة 1): تُدرَج يدوياً لأن model/list في Codex قديم ولا
+  // يُظهر 5.6 (خلل موثّق openai/codex#31873) لكنها تعمل بتمرير -m صراحةً. مؤكَّدة حيّاً
+  // على اشتراك ChatGPT Plus بعد تحديث الـ CLI. لا نماذج قديمة (قرار المالك).
+  const CODEX_MODELS = [
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (الأقوى)' },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (متوازن)' },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (الأسرع)' },
+    { value: 'gpt-5.5', label: 'GPT-5.5' },
+  ];
   let providersCache = [];
-  // محوّل «أعمى» (1.3): غير sdk وليس من عائلة claude — له ذاكرة على القرص تُستأنف.
-  // فشل جلب المزوّدين ⇒ احتياطي بالاسم (sdk/cli معروفان).
+  // محوّل «أعمى» (1.3): غير sdk/codex وليس من عائلة claude — له ذاكرة على القرص تُستأنف.
+  // sdk وcodex محرّكان أصيلان (أذونات حية) فليسا أعميين. فشل جلب المزوّدين ⇒ احتياطي بالاسم.
   function isBlindEngine(e) {
-    if (e === 'sdk') return false;
+    if (e === 'sdk' || e === 'codex') return false;
     const p = providersCache.find((x) => x.name === e);
     return p ? p.family !== 'claude' : (e !== 'cli');
+  }
+  // مجموعة مخزن الجلسات: يُصفَّر sessionId عند تغيّرها لأن المُعرّف لا يصلح عبر المخازن.
+  // sdk وcli يتشاركان ~/.claude (نفس المجموعة)؛ codex مستقل (~/.codex)؛ وكل محوّل أعمى
+  // مستقل (~/.satr/chats/<provider>). التبديل داخل المجموعة يُبقي الجلسة، وبينها يبدأ نظيفاً.
+  function sessionGroup(e) {
+    if (e === 'sdk' || e === 'cli') return 'claude';
+    return e || '';
   }
   // استئناف آخر جلسة للمحوّل — المؤشر على **القرص** مع ملفات الذاكرة (satr:lastChat)
   // لا في localStorage (ثبت بالاختبار أنه قد لا يُكتب للقرص فيضيع المؤشر)
@@ -84,6 +100,7 @@
   }
   function modelsForEngine(engine) {
     if (engine === 'sdk') return CLAUDE_MODELS; // محرك SDK الخاص (خارج السجلّ)
+    if (engine === 'codex') return CODEX_MODELS; // محرك Codex الأصيل (خارج السجلّ)
     const p = providersCache.find((x) => x.name === engine);
     return (p && p.models && p.models.length) ? p.models : [{ value: '', label: 'الافتراضي' }];
   }
@@ -106,10 +123,13 @@
       sel.innerHTML = '';
       const add = (v, l) => { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.appendChild(o); };
       add('sdk', 'SDK — بث وأذونات حية'); // محرك SDK الخاص (ليس محوّلاً في السجلّ)
+      add('codex', 'Codex — OpenAI (بث وأذونات)'); // محرك Codex الأصيل (خاص ثانٍ)
       for (const p of list) add(p.name, p.label || p.name);
       if ([...sel.options].some((o) => o.value === saved)) sel.value = saved;
     }
     rebuildModels();
+    applyEngineCommands($('engine').value); // أوامر «/» للمحرك المستعاد (المرحلة 4)
+    if ($('engine').value === 'codex') checkCodexReady(); // إرشاد إن كان Codex المستعاد غير جاهز
     restoreAdapterSession(); // 1.3: استئناف محادثة المحوّل بعد إعادة التشغيل
     lastEngine = $('engine').value;
   }
@@ -118,15 +138,18 @@
     const e = $('engine').value;
     localStorage.setItem('satr_engine', e);
     rebuildModels();
-    // 1.3: لكل محوّل أعمى جلسته المستقلة — التبديل إليه يستأنف آخر جلسة (من القرص)،
-    // ومغادرته تصفّر المؤشر (sdk↔cli يتشاركان جلسات كلود فلا يُمسّان — السلوك القائم)
-    if (isBlindEngine(e)) {
+    applyEngineCommands(e); // إخفاء أوامر Claude-الخاصة مع Codex (المرحلة 4)
+    if (e === 'codex') checkCodexReady(); // إرشاد إن لم يكن Codex جاهزاً
+    // تصفير الجلسة عند تغيّر مخزن الجلسات: المُعرّف لا يصلح عبر المخازن (مُعرّف Claude في
+    // Codex ⇒ thread/resume يفشل ويبدأ خيطاً جديداً؛ ومُعرّف Codex في Claude ⇒ «No
+    // conversation found»). sdk↔cli يتشاركان ~/.claude فلا يُصفَّران. المحوّل الأعمى
+    // يستأنف آخر جلسته من القرص؛ Codex وsdk يبدآن نظيفَين (يُستأنفان من /جلسات — قرار مطابقة).
+    if (sessionGroup(e) !== sessionGroup(lastEngine)) {
       sessionId = null;
-      await restoreAdapterSession();
-      if (!sessionId) $('sessionInfo').textContent = 'لا جلسة';
-    } else if (lastEngine && isBlindEngine(lastEngine)) {
-      sessionId = null;
-      $('sessionInfo').textContent = 'لا جلسة';
+      if (isBlindEngine(e)) await restoreAdapterSession(); // لا أثر لغير الأعمى (يعود مبكراً)
+      $('sessionInfo').textContent = sessionId
+        ? ('جلسة: ' + sessionId.slice(0, 8) + ' (مستأنفة)')
+        : 'لا جلسة';
     }
     lastEngine = e;
   });
@@ -156,6 +179,7 @@
     const e = $('engine').value;
     if (e === 'sdk') return 'Claude Code';
     if (e === 'cli') return 'Claude Code (CLI)';
+    if (e === 'codex') return 'Codex';
     const p = providersCache.find((x) => x.name === e);
     return (p && p.label) ? p.label : (e || 'النموذج');
   }
@@ -270,7 +294,11 @@
       chatEl.notifyTurnDone(!!ev.is_error);
     } else if (ev.type === 'spawn_error') {
       if (deadSessionRecovery(ev.text)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
-      else block.error('فشل تشغيل أمر claude — تأكد أنه مثبت ومسجّل دخوله.\n' + (ev.text || ''));
+      else {
+        const eng = $('engine').value;
+        const name = eng === 'codex' ? 'Codex' : 'claude';
+        block.error('فشل تشغيل أمر ' + name + ' — تأكد أنه مثبت ومسجّل دخوله.\n' + (ev.text || ''));
+      }
       endRun();
     } else if (ev.type === 'proc_done') {
       block.finish(null);
@@ -411,19 +439,39 @@
   const COMMANDS = [
     { cmd: '/جديدة',   en: '/new',    desc: 'بدء جلسة جديدة (مسح المحادثة الحالية)', run: () => newSession() },
     { cmd: '/جلسات',   en: '/sessions', desc: 'تصفح الجلسات المحفوظة واستئنافها',     run: () => openSessions() },
-    { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', run: () => openSkills() },
-    { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', run: () => openAgents() },
-    { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل',  run: () => openMcp() },
-    { cmd: '/سياق',    en: '/context', desc: 'عرض امتلاء نافذة السياق وتوزيع الرموز',     run: () => openContext() },
-    { cmd: '/ضغط',     en: '/compact', desc: 'ضغط المحادثة (تلخيصها) لتوفير السياق',      run: () => compactConversation() },
-    { cmd: '/فيبل',    en: '/fable',  desc: 'التبديل إلى نموذج Fable 5',             run: () => setModel('claude-fable-5', 'Fable 5') },
-    { cmd: '/أوبس',    en: '/opus',   desc: 'التبديل إلى نموذج Opus',                run: () => setModel('opus', 'Opus') },
-    { cmd: '/سونيت',   en: '/sonnet', desc: 'التبديل إلى نموذج Sonnet',              run: () => setModel('sonnet', 'Sonnet') },
-    { cmd: '/هايكو',   en: '/haiku',  desc: 'التبديل إلى نموذج Haiku',               run: () => setModel('haiku', 'Haiku') },
+    { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
+    { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
+    { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', sdkOnly: true, run: () => openMcp() },
+    { cmd: '/سياق',    en: '/context', desc: 'عرض امتلاء نافذة السياق وتوزيع الرموز',    sdkOnly: true, run: () => openContext() },
+    { cmd: '/ضغط',     en: '/compact', desc: 'ضغط المحادثة (تلخيصها) لتوفير السياق',     sdkOnly: true, run: () => compactConversation() },
+    { cmd: '/فيبل',    en: '/fable',  desc: 'التبديل إلى نموذج Fable 5',            sdkOnly: true, run: () => setModel('claude-fable-5', 'Fable 5') },
+    { cmd: '/أوبس',    en: '/opus',   desc: 'التبديل إلى نموذج Opus',               sdkOnly: true, run: () => setModel('opus', 'Opus') },
+    { cmd: '/سونيت',   en: '/sonnet', desc: 'التبديل إلى نموذج Sonnet',             sdkOnly: true, run: () => setModel('sonnet', 'Sonnet') },
+    { cmd: '/هايكو',   en: '/haiku',  desc: 'التبديل إلى نموذج Haiku',              sdkOnly: true, run: () => setModel('haiku', 'Haiku') },
     { cmd: '/تخطيط',   en: '/plan',   desc: 'وضع التخطيط فقط — تحليل بدون تنفيذ',     run: () => setPerm('plan', 'وضع التخطيط') },
     { cmd: '/تنفيذ',   en: '/edit',   desc: 'قبول التعديلات تلقائياً',                run: () => setPerm('acceptEdits', 'قبول التعديلات تلقائياً') },
     { cmd: '/مجلد',    en: '/folder', desc: 'اختيار مجلد المشروع',                   run: () => $('pickFolder').click() },
   ];
+
+  // قائمة أوامر «/» حسب المحرك: أوامر Claude-الخاصة (sdkOnly) تُخفى مع Codex (المرحلة 4)
+  // لأنها تنادي دوال تحكّم Claude SDK (موصلات/سياق/مهارات/وكلاء/ضغط) أو نماذج Claude.
+  function applyEngineCommands(engine) {
+    const el = document.querySelector('satr-composer');
+    if (!el) return;
+    const list = engine === 'codex' ? COMMANDS.filter((c) => !c.sdkOnly) : COMMANDS;
+    customElements.whenDefined('satr-composer').then(() => { if (el.setCommands) el.setCommands(list); });
+  }
+  // إرشاد مضمّن حين يُختار Codex وهو غير جاهز (لا يحجب الإطلاق — Claude بوابة الإطلاق).
+  async function checkCodexReady() {
+    let s = null;
+    try { s = await window.satr.codexStatus(); } catch (e) { return; }
+    if (!s) return;
+    if (!s.installed) {
+      addNotice('⚠️ Codex غير مثبَّت. ثبّته بالأمر:  npm install -g @openai/codex  ثم أعد المحاولة.');
+    } else if (!s.auth || !s.auth.ok) {
+      addNotice('⚠️ Codex غير مسجَّل الدخول. نفّذ في الطرفية:  codex login  (اشتراك ChatGPT) ثم أعد المحاولة.');
+    }
+  }
 
   function setModel(v, label) {
     $('model').value = v; localStorage.setItem('satr_model', v);
@@ -451,7 +499,9 @@
   function openSessions() { sessionsEl.open(providersCache); }
   sessionsEl.addEventListener('session-resume', (e) => {
     const s = e.detail;
-    if (s.kind === 'chat') resumeChat(s); else resumeSession(s);
+    if (s.kind === 'chat') resumeChat(s);
+    else if (s.kind === 'codex') resumeCodexSession(s);
+    else resumeSession(s);
   });
   // تسمية مزوّد محادثة محوّل (الدفعة 4) — تبقى للقشرة (resumeChat يستخدمها)
   function providerLabel(name) {
@@ -513,6 +563,40 @@
     }
     addNotice('✓ استؤنفت الجلسة — أكمل من حيث توقفت');
     chatEl.scrollToEnd();
+    input.focus();
+  }
+
+  // استئناف جلسة Codex (تلميع المرحلة 4): محرك أصيل مرتبط بمجلد — نبدّل المحرك إلى codex
+  // يدوياً (دون حدث change) ونعرض التاريخ ونضبط sessionId؛ الرسالة التالية تستأنف عبر
+  // thread/resume في codex.js (يقرأ من ~/.codex/sessions طبيعياً).
+  async function resumeCodexSession(s) {
+    if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل استئناف جلسة أخرى'); return; }
+    const data = await window.satr.readCodexSession(s.id);
+    sessionsEl.close();
+    if (!data || data.error) { addNotice('✗ تعذّر فتح جلسة Codex'); return; }
+    const sel = $('engine');
+    if (![...sel.options].some((o) => o.value === 'codex')) { addNotice('✗ محرك Codex غير متاح'); return; }
+    sel.value = 'codex';
+    localStorage.setItem('satr_engine', 'codex');
+    rebuildModels();
+    applyEngineCommands('codex');
+    lastEngine = 'codex';
+    // تصفير العرض ثم عرض التاريخ
+    currentBlock = null;
+    if (composerEl.clearImages) composerEl.clearImages();
+    chatEl.clearThread();
+    if (data.cwd) { $('cwd').value = data.cwd; localStorage.setItem('satr_cwd', data.cwd); }
+    sessionCwd = $('cwd').value.trim();
+    if (data.total > data.messages.length)
+      addNotice('عرض آخر ' + data.messages.length + ' من أصل ' + data.total + ' رسالة');
+    for (const msg of (data.messages || [])) {
+      if (msg.role === 'user') chatEl.addUserMsg(msg.text);
+      else chatEl.addHistoryAssistant({ text: msg.text }, 'Codex');
+    }
+    sessionId = s.id; // الرسالة القادمة تُرسل بـ sessionId فيستأنفها thread/resume
+    $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8) + ' (Codex مستأنفة)';
+    addNotice('📂 استؤنفت جلسة Codex — أرسل رسالتك للمتابعة');
+    chatEl.scrollToEnd(true);
     input.focus();
   }
 
@@ -634,7 +718,7 @@
   // القشرة تحقن عناصر «/» الأصلية (معاودات نداء تنفيذها هنا) وتستقبل «composer-send»
   // (Enter/زر الإرسال) فتنفّذ send() — قرار الحالة حُسم بخيار الخطة الأرجح.
   const composerEl = document.querySelector('satr-composer');
-  customElements.whenDefined('satr-composer').then(() => composerEl.setCommands(COMMANDS));
+  applyEngineCommands($('engine').value); // أوامر «/» حسب المحرك (تُخفي Claude-الخاصة مع Codex)
   composerEl.addEventListener('composer-send', send);
   composerEl.addEventListener('notice', (e) => addNotice(e.detail));
   // ---------- لوحة المعاينة المدمجة (م-1 — الدفعة 5) ----------

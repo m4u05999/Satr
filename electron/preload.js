@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('satr', {
   preflight: () => ipcRenderer.invoke('satr:preflight'),
   features: () => ipcRenderer.invoke('satr:features'),
   providers: () => ipcRenderer.invoke('satr:providers'),
+  codexStatus: () => ipcRenderer.invoke('satr:codexStatus'),
   keysList: () => ipcRenderer.invoke('satr:keysList'),
   keySet: (name, value) => ipcRenderer.invoke('satr:keySet', { name, value }),
   keyDelete: (name) => ipcRenderer.invoke('satr:keyDelete', { name }),
@@ -17,6 +18,8 @@ contextBridge.exposeInMainWorld('satr', {
   stop: () => ipcRenderer.invoke('satr:stop'),
   listSessions: () => ipcRenderer.invoke('satr:listSessions'),
   readSession: (project, id) => ipcRenderer.invoke('satr:readSession', { project, id }),
+  listCodexSessions: () => ipcRenderer.invoke('satr:listCodexSessions'),
+  readCodexSession: (id) => ipcRenderer.invoke('satr:readCodexSession', { id }),
   listFiles: (cwd) => ipcRenderer.invoke('satr:listFiles', cwd),
   readFile: (cwd, rel) => ipcRenderer.invoke('satr:readFile', { cwd, rel }), // عارض القراءة (1.2)
   writeFile: (cwd, rel, content) => ipcRenderer.invoke('satr:writeFile', { cwd, rel, content }), // تحرير خفيف في العارض (الدفعة 4)

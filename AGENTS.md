@@ -1,0 +1,84 @@
+# AGENTS.md — دليل Codex لمشروع «سطر» (Satr)
+
+> هذا الملف لوكلاء Codex. النسخة الأشمل (بالتاريخ والدروس المفصّلة) في `CLAUDE.md` —
+> ارجع إليه عند الحاجة لتفاصيل ميزة بعينها. هنا **الجوهر الملزِم** كي لا ينحرف التطوير.
+> **الكود بالإنجليزية، والتعليقات والنصوص بالعربية، والقواعد أدناه غير قابلة للتفاوض.**
+
+## ما هذا المشروع
+تطبيق سطح مكتب **Electron** يحلّ عرض العربية (RTL + التشكيل) عند استخدام أدوات الذكاء
+الاصطناعي في سطر الأوامر (Claude Code أولاً، ثم Codex وغيرهما). يشغّل الأدوات في الخلفية
+ويعرض المحادثة في واجهة HTML عربية سليمة. الواجهة **صفر اعتماديات وقت تشغيل**.
+
+## القواعد الإلزامية (اقرأها قبل أي تعديل)
+1. **الأمان أولاً**: لا تعطّل `contextIsolation` أو `sandbox`، ولا تفعّل `nodeIntegration`.
+   كل قدرة جديدة تُكشف عبر `electron/preload.js` بدالة محدّدة فقط — **لا تكشف `ipcRenderer`
+   كاملاً أبداً**.
+2. **التحقق من المدخلات في `main.js`**: أي قيمة تدخل وسائط `spawn`/مساراً يجب أن تمرّ على
+   regex صارم (انظر `SAFE_SESSION`, `SAFE_MODEL`, `SAFE_ENGINE`, `SAFE_EDIT_ID`). البرومبت
+   آمن لأنه عبر stdin. مسارات الملفات تُتحقَّق داخل جذر المشروع حصراً (لا `..` ولا مطلق).
+3. **العربية أولاً**: كل نص واجهة بالعربية. النص المختلط `dir="auto"` أو
+   `unicode-bidi: plaintext`. الأكواد/المسارات/الأرقام التقنية `direction: ltr` دائماً.
+4. **الكود إنجليزي، التعليقات عربية**: أسماء المتغيّرات/الدوال إنجليزية، والشرح عربي.
+5. **أقل اعتماديات ممكنة**: لا تُضف حزمة npm إلا لضرورة قصوى مبرّرة وموثّقة في `CLAUDE.md`.
+   الواجهة صفر اعتماديات (xterm والخط **مُضمّنان vendored** في `src/vendor/`، ليسا اعتمادية
+   تشغيل). العملية الرئيسية: `@anthropic-ai/claude-agent-sdk` و`node-pty` (أصلية، مبرّرة) فقط.
+6. **لا تكسر العقد بين الطبقات**: أي تغيير في صيغة أحداث IPC يتطلّب تحديث الطرفين معاً
+   (`main.js` ⇄ `preload.js` ⇄ `src/ui/`) وتحديث التوثيق.
+7. **اختبر على ويندوز ذهنياً**: مسارات `\`، أوامر `.cmd`، ترميز UTF-8. هذه البيئة الأساسية.
+8. **CSP صارم — لا `unsafe-inline`**: ممنوع `<style>`/`<script>` مضمّن أو سمات `style=`/`onclick=`
+   في `index.html`. استعمل `styles/base.css` و`ui/app.js` و`addEventListener` وCSSOM. أنماط
+   المكوّنات عبر `adoptedStyleSheets` حصراً (`<style>` داخل Shadow **محجوب بـ CSP**).
+   `scripts/update-csp.js` يعمل تلقائياً قبل start/dist ويهشّ أي كتلة مضمّنة عائدة.
+
+## المعمارية (خريطة مختصرة)
+- `electron/main.js` — العملية الرئيسية: النافذة، توجيه المحرّكات، معالجات IPC، **كل التنقية**.
+- `electron/preload.js` — الجسر الآمن الوحيد (`window.satr`).
+- `electron/agent.js` — محرك Claude Agent SDK (بثّ + `canUseTool` + خطّافا Pre/PostToolUse للفرق).
+- `electron/codex.js` — **محرك Codex الأصيل** (فوق `codex app-server` JSON-RPC). خاص مثل sdk.
+- `electron/adapters/` — محوّلات المزوّدين «العمياء» (cli/gemini/deepseek/…): عقد
+  `start(input,cwd,emit)→{stop()}`. سجلّ قابل للحقن.
+- `electron/sessions.js` / `codexsessions.js` / `chats.js` — قراءة الجلسات (Claude/Codex/المحوّلات).
+- `electron/files.js` `search.js` `gitdiff.js` `gitactions.js` `diff.js` `inject.js` `tools.js`
+  `term.js` `preview.js` `keys.js` `features.js` `bgprocs.js` — انظر `CLAUDE.md` لتفاصيل كلٍّ.
+- `src/index.html` — هيكل الواجهة (وسوم المكوّنات). `src/styles/base.css` — Design Tokens + أنماط.
+- `src/ui/app.js` — قشرة الإقلاع والتوجيه + حالة التطبيق + مجرى `satr:event`.
+- `src/ui/components/` — مكوّنات Web Component (بادئة `satr-`). `src/ui/lib/` — وحدات ES مشتركة.
+
+## تدفّق البيانات وعقد الأحداث
+الواجهة تستدعي `window.satr.send({prompt, cwd, sessionId, model, permissionMode, engine, …})`.
+حسب `engine`: `sdk`→`agent.js`، `codex`→`codex.js` (كلاهما خاص، يسكن `currentRun` بـ
+`resolvePermission`+`stop`)، وغيرهما عبر `adapters.get(engine)` (`currentCliRun`). الأحداث تصل
+الواجهة عبر `satr:event` بأنواع موحّدة: `system`(init: session_id) · `assistant`(content[]:
+text/tool_use) · `user`(tool_result) · `stream_text` · `result`(التكلفة/المدة/session_id) ·
+`permission_request`→`window.satr.permission(id,allow,always)` · `file_edit`(بطاقة فرق)→
+`window.satr.undoEdit(id)` · `proc_done`/`stderr`/`spawn_error`. **أي محرك جديد يطبّع خرجه
+لهذه الأنواع نفسها فلا تتغيّر الواجهة.**
+
+## محرك Codex (إن عملت عليه)
+`electron/codex.js` يتكلّم JSON-RPC مع `codex app-server` (stdio، أسطر JSON بـ `\n`). نقاط حرجة
+مثبّتة بالتجربة (لا تكسرها):
+- طلب الإذن `ServerRequest` **قد يكون `id === 0`** ⇒ استعمل `id != null` لا فحص truthy.
+- مفردات قرار v2: **`accept | acceptForSession | decline | cancel`** (لا مفردات v1).
+- `approvalPolicy` الصالحة (0.144): `untrusted | on-request | granular | never`. **`never` لا
+  يعني «اقبل تلقائياً»** بل «لا تصعّد» فيحجب الكتابة بصندوق read-only. acceptEdits = on-request
+  مع قبول apply_patch تلقائياً في المعالج.
+- الأحداث بقناتين متوازيتين (`codex/event/*` v1 و`item/*`/`turn/*` v2) — **ابنِ على v2**.
+- لا تحزم ثنائي Codex — `resolveCodexBin` يحلّ المثبّت عالمياً. النماذج المعروضة **حديثة فقط**
+  (gpt-5.6-sol/terra/luna, gpt-5.5) — لا نماذج قديمة (قرار المالك).
+
+## البناء والتشغيل
+```
+npm install        # مرة واحدة
+npm start          # تشغيل للتطوير (يلتقط تعديلات المصدر عند إعادة التشغيل)
+npm run dist       # مثبّت ويندوز NSIS في dist/
+npm run dist:dir   # مجلد بلا مثبّت (أسرع للتجربة)
+```
+- **لا تحزم ثنائي claude** (نوجّه SDK للمثبّت عالمياً عبر `pathToClaudeCodeExecutable`).
+- **`npmRebuild: false`** — node-pty يشحن prebuilds تعمل تحت Electron 33 كما هي (لا Visual Studio).
+- بعد أي تعديل: شغّل `npm start`، تحقّق يدوياً من السلوك، ثم قدّم ملخّصاً. **لا تلتزم (commit)
+  إلا إن طلب المالك.** التزم عند حدود نظيفة (مهمة واحدة/التزام واحد).
+
+## أعراف العمل
+- عدّل ملفاً قائماً بأسلوبه المحيط (كثافة التعليقات، التسمية، الاصطلاح) — لا تُدخل نمطاً غريباً.
+- لا تُدخل لوناً صلباً جديداً في CSS — كل لون عبر متغيّر Token (شرط عمل الوضعين فاتح/داكن).
+- عند الشكّ في تفصيل ميزة، اقرأ قسمها في `CLAUDE.md` قبل التعديل — لا تُعِد اشتقاق ما هو موثّق.

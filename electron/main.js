@@ -18,6 +18,8 @@ const exporter = require('./exporter'); // تصدير المحادثة Markdown 
 const skills = require('./skills');
 const agentsList = require('./agents');
 const agent = require('./agent');
+const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
+const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const adapters = require('./adapters');
 const inject = require('./inject');
 const chats = require('./chats');
@@ -128,6 +130,14 @@ ipcMain.handle('satr:features', () => features.snapshot());
 
 // قائمة مزوّدي المحرّكات (طبقة المزوّد §4.2) — لبناء قائمة «المحرك» ديناميكياً في الواجهة
 ipcMain.handle('satr:providers', () => ({ providers: adapters.list() }));
+
+// حالة توفّر Codex (المرحلة 4): مثبَّت؟ ومسجَّل الدخول؟ — لإرشاد مضمّن حين يُختار المحرك
+// codex وهو غير جاهز (لا يحجب الإطلاق — Claude يبقى بوابة الإطلاق الوحيدة). force=true
+// يتجاوز تخزين resolveCodexBin ليلتقط تثبيتاً جرى بعد الإقلاع. لا يُعيد قيم الأسرار.
+ipcMain.handle('satr:codexStatus', () => {
+  const bin = codex.resolveCodexBin(true);
+  return { installed: !!bin, auth: codex.authStatus() };
+});
 
 // ---------- مركز مفاتيح المزوّدين (§4.3 — مخزن الأسرار) ----------
 // 🔒 أمان: الأسماء المقبولة محصورة بمفاتيح المزوّدين المسجّلين فقط، والقيم لا تُعاد
@@ -292,10 +302,27 @@ ipcMain.handle('satr:send', async (event, payload) => {
   const emit = (obj) => { if (token === runSeq) emitToWindow(obj); };
 
   // مجرى المراقبة (§4.7): حدث وصفي ببداية الدور — للتدقيق (من طلب ماذا وأين)
-  lastEngine = adapters.get(payload.engine) ? payload.engine : 'sdk';
+  lastEngine = (payload.engine === 'codex' || adapters.get(payload.engine)) ? payload.engine : 'sdk';
   try {
     features.notify({ type: 'prompt', engine: lastEngine, cwd, prompt: prompt.slice(0, 2000) });
   } catch (e) { /* عزل */ }
+
+  // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk (له resolvePermission+stop، فيسكن
+  // currentRun لا currentCliRun). ليس محوّلاً في السجلّ، فنوجّهه صراحةً قبل طبقة adapters.
+  if (payload.engine === 'codex') {
+    try {
+      currentRun = await codex.start({
+        prompt,
+        sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
+        model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
+        permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
+      }, cwd, emit);
+      return { started: true, engine: 'codex', imagesIgnored: images.length > 0 };
+    } catch (e) {
+      currentRun = null;
+      return { error: 'codex_failed', message: 'تعذّر تشغيل محرك Codex: ' + String((e && e.message) || e) };
+    }
+  }
 
   // المحرّكات غير SDK تمر عبر طبقة adapters (القاعدة 2: التنقية هنا في main.js)
   const adapter = adapters.get(payload.engine);
@@ -452,11 +479,13 @@ ipcMain.handle('satr:permission', (event, p) => {
 const SAFE_EDIT_ID = /^[A-Za-z0-9_:.-]{1,128}$/;
 ipcMain.handle('satr:undoEdit', (event, id) => {
   if (typeof id !== 'string' || !SAFE_EDIT_ID.test(id)) return { ok: false, error: 'bad_id' };
-  // لقطات SDK أولاً ثم لقطات أدوات المحوّلات (2.2) — المعرّفات لا تتصادم
+  // لقطات SDK أولاً ثم أدوات المحوّلات (2.2) ثم Codex (المرحلة 1) — المعرّفات لا تتصادم
   const r = agent.undoEdit(id);
   if (r && r.ok) return r;
   const r2 = agentTools.undoEdit(id);
-  return (r2 && r2.ok) ? r2 : r;
+  if (r2 && r2.ok) return r2;
+  const r3 = codex.undoEdit(id);
+  return (r3 && r3.ok) ? r3 : r;
 });
 
 // ---------- التحديث التلقائي (المرحلة 17) — رد الواجهة على «أعد التشغيل الآن» ----------
@@ -466,6 +495,10 @@ ipcMain.handle('satr:restartUpdate', () => { updater.quitAndInstall(); return { 
 
 ipcMain.handle('satr:listSessions', () => sessions.listSessions());
 ipcMain.handle('satr:readSession', (event, p) => sessions.readSession(p && p.project, p && p.id));
+
+// جلسات Codex (تلميع المرحلة 4 — قراءة فقط، التحقق من المعرّف داخل codexsessions.js)
+ipcMain.handle('satr:listCodexSessions', () => codexSessions.listCodexSessions());
+ipcMain.handle('satr:readCodexSession', (event, p) => codexSessions.readCodexSession(p && p.id));
 
 // ---------- سرد ملفات المشروع لمنصّة @ (قراءة فقط) ----------
 

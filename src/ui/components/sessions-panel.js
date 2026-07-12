@@ -90,8 +90,11 @@ class SatrSessionsPanel extends HTMLElement {
       el.tabIndex = 0;
       const t = document.createElement('div'); t.className = 't'; t.textContent = s.title;
       const m = document.createElement('div'); m.className = 'm';
-      // محادثة محوّل: اسم المزوّد بدل المجلد (محادثات REST غير مرتبطة بمجلد)
-      m.textContent = (s.kind === 'chat' ? this._label(s.provider) : (s.cwd || s.project)) + ' · ' + fmtAge(s.mtime);
+      // محادثة محوّل: اسم المزوّد بدل المجلد (محادثات REST غير مرتبطة بمجلد)؛
+      // جلسة Codex: وسم «Codex» + المجلد
+      m.textContent = (s.kind === 'chat' ? this._label(s.provider)
+        : s.kind === 'codex' ? ('Codex · ' + (s.cwd || ''))
+        : (s.cwd || s.project)) + ' · ' + fmtAge(s.mtime);
       el.appendChild(t); el.appendChild(m);
       const open = () => this.dispatchEvent(new CustomEvent('session-resume', { detail: s }));
       el.addEventListener('click', open);
@@ -104,13 +107,15 @@ class SatrSessionsPanel extends HTMLElement {
     this._providers = Array.isArray(providers) ? providers : [];
     this.setAttribute('open', '');
     this._list.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
-    // جلسات Claude Code + محادثات المحوّلات (الدفعة 4) معاً، الأحدث أولاً
-    const [claude, chats] = await Promise.all([
+    // جلسات Claude Code + محادثات المحوّلات (الدفعة 4) + جلسات Codex معاً، الأحدث أولاً
+    const [claude, chats, codex] = await Promise.all([
       window.satr.listSessions().catch(() => []),
       window.satr.listChats().catch(() => []),
+      (window.satr.listCodexSessions ? window.satr.listCodexSessions() : Promise.resolve([])).catch(() => []),
     ]);
     const merged = (Array.isArray(claude) ? claude : [])
-      .concat((Array.isArray(chats) ? chats : []).map((c) => ({ ...c, kind: 'chat' })));
+      .concat((Array.isArray(chats) ? chats : []).map((c) => ({ ...c, kind: 'chat' })))
+      .concat((Array.isArray(codex) ? codex : []).map((c) => ({ ...c, kind: 'codex' })));
     merged.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
     this._data = merged;
     this._render();
