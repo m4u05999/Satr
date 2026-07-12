@@ -52,13 +52,19 @@ async function main() {
 
     const first = checkpoints.begin({ runId: 'run-1', engine: 'sdk', sessionId: 'session-1', cwd: project }, { root: store });
     assert(first && first.state === 'open');
-    checkpoints.addEdit('run-1', { id: 'edit-1', rel: 'src/a.js', added: 2, removed: 1 });
+    checkpoints.addEdit('run-1', { id: 'edit-1', rel: 'src/a.js', added: 2, removed: 1 }, { id: 'task-1', title: 'تنفيذ الوحدة' });
     checkpoints.addEdit('run-1', { id: 'edit-2', rel: 'src/b.js', added: 3, removed: 0 });
-    checkpoints.recordVerification('run-1', { passed: false, summary: 'فشل test', checks: [] });
+    checkpoints.recordVerification('run-1', {
+      passed: false, summary: 'فشل test',
+      checks: [{ id: 'test', label: 'الاختبارات', passed: false, exit_code: 1, duration_ms: 25, output: 'lint output' }],
+    });
     const finished = checkpoints.finish('run-1');
     assert.strictEqual(finished.state, 'failed');
     assert.strictEqual(finished.edit_count, 2);
+    assert.strictEqual(finished.task_title, 'تنفيذ الوحدة');
     assert.strictEqual(checkpoints.latest('sdk', 'session-1', { root: store }).restorable, true);
+    const persisted = JSON.stringify(await fsp.readFile(path.join(store, 'sdk', 'session-1.json'), 'utf8'));
+    assert(!persisted.includes('lint output'));
 
     const undoOrder = [];
     const restored = await checkpoints.restore({
@@ -77,6 +83,15 @@ async function main() {
       engine: 'sdk', sessionId: 'session-1', checkpointId: second.id, cwd: temp, options: { root: store },
     }, async () => ({ ok: true }));
     assert.strictEqual(wrongCwd.error, 'wrong_cwd');
+
+    const deferred = checkpoints.begin({ runId: 'run-3', engine: 'sdk', sessionId: null, cwd: project }, { root: store });
+    checkpoints.bindSession('run-3', 'session-2');
+    assert.strictEqual(checkpoints.latest('sdk', 'session-2', { root: store }), null);
+    checkpoints.addEdit('run-3', { id: 'edit-4', rel: 'src/c.js', added: 1, removed: 0 });
+    const deferredFinished = checkpoints.finish('run-3');
+    const reverified = checkpoints.recordVerificationForCheckpoint(deferred.id, { passed: true, summary: 'نجح', checks: [] });
+    assert.strictEqual(deferredFinished.state, 'ready');
+    assert.strictEqual(reverified.state, 'passed');
 
     console.log('✓ explicit verification config boundaries');
     console.log('✓ verification runner result contract');

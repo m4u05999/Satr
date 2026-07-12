@@ -71,6 +71,22 @@ function writeCollection(engine, sessionId, checkpoints, options) {
 }
 
 function storedShape(checkpoint) {
+  const verification = checkpoint.verification ? {
+    passed: !!checkpoint.verification.passed,
+    summary: String(checkpoint.verification.summary || '').slice(0, 300),
+    checks: Array.isArray(checkpoint.verification.checks) ? checkpoint.verification.checks.slice(0, 6).map((check) => {
+      const output = String(check.output || '');
+      return {
+        id: String(check.id || '').slice(0, 64),
+        label: String(check.label || '').slice(0, 120),
+        passed: !!check.passed,
+        exit_code: Number.isInteger(check.exit_code) ? check.exit_code : null,
+        duration_ms: Number.isFinite(check.duration_ms) ? Math.max(0, Math.floor(check.duration_ms)) : 0,
+        output_sha256: crypto.createHash('sha256').update(output).digest('hex'),
+        output_bytes: Buffer.byteLength(output, 'utf8'),
+      };
+    }) : [],
+  } : null;
   return {
     id: checkpoint.id,
     engine: checkpoint.engine,
@@ -82,7 +98,9 @@ function storedShape(checkpoint) {
     updated_at: checkpoint.updated_at,
     edit_ids: checkpoint.edit_ids.slice(0, MAX_EDITS),
     files: checkpoint.files.slice(0, MAX_FILES).map((file) => ({ ...file })),
-    verification: checkpoint.verification ? JSON.parse(JSON.stringify(checkpoint.verification)) : null,
+    verification,
+    task_id: checkpoint.task_id || '',
+    task_title: checkpoint.task_title || '',
     cwd_hash: checkpoint.cwd_hash,
   };
 }
@@ -103,6 +121,8 @@ function publicShape(checkpoint) {
     edit_count: checkpoint.edit_ids.length,
     files: checkpoint.files.map((file) => ({ ...file })),
     verification: checkpoint.verification ? JSON.parse(JSON.stringify(checkpoint.verification)) : null,
+    task_id: checkpoint.task_id || '',
+    task_title: checkpoint.task_title || '',
     restorable: !!live && checkpoint.state !== 'open' && checkpoint.state !== 'restored' && checkpoint.state !== 'partial',
   };
 }
@@ -133,6 +153,8 @@ function begin(info, options) {
     edit_ids: [],
     files: [],
     verification: null,
+    task_id: '',
+    task_title: '',
     cwd_hash: hashCwd(info.cwd),
     _cwd: path.resolve(info.cwd),
     _options: options,
@@ -146,8 +168,11 @@ function bindSession(runId, sessionId) {
   const checkpoint = activeRuns.get(runId);
   if (!checkpoint || !SAFE_SESSION.test(sessionId || '')) return null;
   checkpoint.session_id = sessionId;
+  if (!checkpoint.previous_id) {
+    const previous = readCollection(checkpoint.engine, sessionId, checkpoint._options).slice(-1)[0];
+    checkpoint.previous_id = previous ? previous.id : null;
+  }
   checkpoint.updated_at = Date.now();
-  persist(checkpoint, checkpoint._options);
   return publicShape(checkpoint);
 }
 
@@ -157,7 +182,7 @@ function safeRelative(value) {
   return parts.includes('..') || parts.includes('') ? '' : parts.join('/').slice(0, 512);
 }
 
-function addEdit(runId, event) {
+function addEdit(runId, event, taskRef) {
   const checkpoint = activeRuns.get(runId);
   if (!checkpoint || !event || !SAFE_ID.test(event.id || '') || checkpoint.edit_ids.length >= MAX_EDITS) return null;
   if (!checkpoint.edit_ids.includes(event.id)) checkpoint.edit_ids.push(event.id);
@@ -172,6 +197,10 @@ function addEdit(runId, event) {
     if (existing) Object.assign(existing, data);
     else if (checkpoint.files.length < MAX_FILES) checkpoint.files.push(data);
   }
+  if (taskRef && typeof taskRef === 'object') {
+    if (SAFE_ID.test(taskRef.id || '')) checkpoint.task_id = taskRef.id;
+    if (typeof taskRef.title === 'string' && taskRef.title.trim()) checkpoint.task_title = taskRef.title.trim().slice(0, 300);
+  }
   if (checkpoint.verification) checkpoint.verification = null;
   checkpoint.state = 'open';
   checkpoint.updated_at = Date.now();
@@ -181,6 +210,16 @@ function addEdit(runId, event) {
 
 function recordVerification(runId, verification) {
   const checkpoint = activeRuns.get(runId);
+  if (!checkpoint || !checkpoint.edit_ids.length || !verification) return null;
+  checkpoint.verification = JSON.parse(JSON.stringify(verification));
+  checkpoint.state = verification.passed ? 'passed' : 'failed';
+  checkpoint.updated_at = Date.now();
+  persist(checkpoint, checkpoint._options);
+  return publicShape(checkpoint);
+}
+
+function recordVerificationForCheckpoint(checkpointId, verification) {
+  const checkpoint = liveCheckpoints.get(checkpointId);
   if (!checkpoint || !checkpoint.edit_ids.length || !verification) return null;
   checkpoint.verification = JSON.parse(JSON.stringify(verification));
   checkpoint.state = verification.passed ? 'passed' : 'failed';
@@ -239,6 +278,7 @@ module.exports = {
   bindSession,
   addEdit,
   recordVerification,
+  recordVerificationForCheckpoint,
   finish,
   latest,
   restore,
