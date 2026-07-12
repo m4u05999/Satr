@@ -474,6 +474,9 @@ class SatrPreviewPanel extends HTMLElement {
           ' — تأكد أن خادم التطوير يعمل (اطلب من الوكيل «شغّل المشروع») ثم اضغط ⟳.');
       } else if (ev.type === 'devtools') {
         devtoolsBtn.classList.toggle('on', !!ev.open); // البند أ: عكس فتح/إغلاق DevTools
+      } else if (ev.type === 'agent_activity') {
+        // نشاط محرك Codex على المتصفح (أدواته على خادم HTTP منفصل — لا تظهر كـ tool_use)
+        this.flashAgentActivity(ev.tool);
       } else if (ev.type === 'console' || ev.type === 'neterr' || ev.type === 'netreq' || ev.type === 'console_clear') {
         this._pcConsole(ev); // لوحة Console/الشبكة للمستخدم (الخيار 2 + البند ب)
       }

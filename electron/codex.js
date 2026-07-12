@@ -180,6 +180,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
         mcpPerms.set(permId, { resolve, tool: toolName });
         emit({ type: 'permission_request', id: permId, tool: toolName, input: input || {} });
       }),
+      // مؤشّر نشاط: عند كل نداء أداة يومض «🤖 الوكيل …» على لوحة المعاينة (عبر preview.js
+      // → previewSender → preview-panel). أدوات Codex تُنفَّذ على خادم HTTP منفصل فلا تظهر
+      // كـ tool_use في دوره، فهذا المسار البديل لإظهار نشاطه على المتصفح (نظير app.js لـ SDK).
+      onActivity: (method, tool) => { if (method === 'tools/call' && tool) { try { preview.emitAgentActivity(tool); } catch (e) {} } },
     });
   } catch (e) { mcpHost = null; }
   const appServerArgs = ['app-server'];

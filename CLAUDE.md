@@ -144,7 +144,14 @@ electron/preview.js  ← لوحة المعاينة المدمجة (م-1 — ال
                        partition دائمة مستقلة + **بلا preload** (الصفحة لا ترى window.satr)
                        + http/https حصراً + رفض كل أذونات الويب + المنبثقات لنفس العرض.
                        الواجهة ترسم الإطار وتبلّغ مستطيل العرض (satr:previewBounds)
-                       والعرض الأصلي يطفو فوقه؛ أحداثه عبر قناة satr:preview
+                       والعرض الأصلي يطفو فوقه؛ أحداثه عبر قناة satr:preview.
+                       يبثّ أيضاً agent_activity (نشاط Codex على المتصفح) عبر previewSender
+electron/codexmcp.js ← خادم MCP‏ streamable-HTTP داخل العملية يعطي محرك Codex رؤية الويب
+                       (الخيار 1): يفوّض أدوات المعاينة (open_preview/read_page/snapshot/
+                       console/network/screenshot + أفعال بالإذن) مباشرةً إلى preview.js.
+                       http المدمجة صفر اعتماديات، 127.0.0.1، Bearer بزمن ثابت. codex.js
+                       يبدأه قبل spawn ويحقنه عبر -c mcp_servers.satr_preview (انظر قسم
+                       «رؤية الويب لـ Codex»). الأفعال تمرّ بمربع الإذن العربي عبر requestPermission
 src/index.html       ← هيكل الواجهة: HTML فقط — وسوم المكوّنات + ترميز light DOM لمن يحتاجه
                        (topbar/composer) + وسوم تحميل الوحدات (التفكيك اكتمل — docs/COMPONENTS-PLAN.md)
 src/styles/base.css  ← الورقة الأساس: Design Tokens في :root (تعبر حدود Shadow بالوراثة) +

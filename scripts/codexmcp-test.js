@@ -95,11 +95,13 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 7, method: 'foo/bar' });
   ok(JSON.parse(r.body).error.code === -32601, 'طريقة مجهولة ⇒ error -32601');
 
-  // onActivity يُستدعى (خطّاف المراقبة الذي يستهلكه main.js لعرض النشاط)
-  let seen = null;
-  const srv2 = await codexmcp.start({ preview, onActivity: (m) => { seen = m; } });
+  // onActivity يُستدعى (خطّاف المراقبة الذي يستهلكه codex.js لعرض نشاط المتصفح)
+  const acts = [];
+  const srv2 = await codexmcp.start({ preview, onActivity: (m, t) => acts.push([m, t]) });
   await post(srv2.url, srv2.token, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
-  ok(seen === 'tools/list', 'onActivity يُستدعى بطريقة الطلب');
+  await post(srv2.url, srv2.token, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'read_page', arguments: {} } });
+  ok(acts.some(([m]) => m === 'tools/list'), 'onActivity يُستدعى بطريقة الطلب');
+  ok(acts.some(([m, t]) => m === 'tools/call' && t === 'read_page'), 'onActivity يمرّر اسم الأداة على tools/call (مسار مؤشّر النشاط)');
 
   // بوابة الإذن: الأفعال تمرّ بـ requestPermission، والقراءة/الرؤية لا
   const asked = [];

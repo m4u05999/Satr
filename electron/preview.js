@@ -778,6 +778,16 @@ async function captureFrame() {
   } catch (e) { return { error: 'capture_failed' }; }
 }
 
+// بثّ نشاط الوكيل على المعاينة (لمحرك Codex): codexmcp.js يستدعيها عبر onActivity حين
+// ينفّذ Codex أداة متصفح، فتصل preview-panel.js كحدث agent_activity (عبر previewSender
+// القائم — بلا تعديل main.js) فيومض مؤشّر «🤖 الوكيل …». لمحرك SDK يتكفّل app.js بذلك من
+// tool_use؛ أما أدوات Codex فتُنفَّذ على خادم HTTP منفصل فلا تظهر كـ tool_use في دوره.
+function emitAgentActivity(tool) {
+  const t = String(tool || '');
+  if (t) emit({ type: 'agent_activity', tool: t });
+  return { ok: true };
+}
+
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
 function close() {
   if (!view) return { ok: true };
@@ -791,4 +801,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, emitAgentActivity, close, destroy, isHttpUrl };
