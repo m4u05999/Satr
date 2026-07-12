@@ -308,8 +308,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       '(Start-Process / start / open) إلا إذا طلب المستخدم ذلك صراحةً. ' +
       'بعد العرض افحص ما بنيته بأدوات المعاينة: read_page يعطيك بنية الصفحة النصية، و ' +
       'screenshot يريك مظهرها بصرياً — استعملهما للتحقق من نتيجة تعديلاتك وتصحيح نفسك. ' +
-      'وللتفاعل مع الصفحة (تجربة زر أو ملء نموذج) استعمل browser_click و browser_type ' +
-      'بمُحدِّد CSS. ' +
+      'وللتفاعل مع الصفحة (تجربة زر أو ملء نموذج): خذ أولاً لقطة بـ browser_snapshot فتحصل ' +
+      'على كل عنصر تفاعلي بصيغة [ref] role "name"، ثم مرّر الـ ref (مثل e5) إلى ' +
+      'browser_click أو browser_type — هذا حتمي وأدقّ من تخمين مُحدِّد CSS. أعد أخذ اللقطة ' +
+      'بعد كل نقر/تنقّل لأن المُعرّفات تتغيّر، واستعمل browser_wait_for بعد فعل يحمّل محتوى ' +
+      'ديناميكياً، وbrowser_navigate للانتقال بين الصفحات. ' +
       '**مهم جداً**: لفحص الصفحة أو أخذ لقطة أو قراءة عناصرها استعمل أدوات المعاينة هذه ' +
       'حصراً. لا تكتب ولا تشغّل سكربتات puppeteer أو playwright أو selenium ولا تثبّت ' +
       'puppeteer-core، ولا تُطلق Chrome/متصفحاً منفصلاً (headless أو غيره) لالتقاط لقطات — ' +
@@ -422,14 +425,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     // bypassPermissions وحده يعفيها. النقر/الكتابة على العرض القائم عبر preview.js.
     const clickTool = sdk.tool(
       'browser_click',
-      'انقر عنصراً في الصفحة المعروضة بالمعاينة المدمجة (بمُحدِّد CSS). استعمله للتفاعل ' +
-      'مع الأزرار والروابط — بعد open_preview وread_page لمعرفة المُحدِّدات المتاحة.',
-      { selector: z.string().describe('مُحدِّد CSS للعنصر (مثل #submit أو .btn-primary أو button)') },
+      'انقر عنصراً في الصفحة المعروضة بالمعاينة المدمجة. مرّر **ref** من browser_snapshot ' +
+      '(مثل e5 — حتمي ومُفضَّل)، أو مُحدِّد CSS. استعمله للأزرار والروابط بعد أخذ لقطة ' +
+      'بـ browser_snapshot. أعد أخذ اللقطة بعد النقر (الـ ref يتغيّر مع تغيّر الصفحة).',
+      { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل e5) أو مُحدِّد CSS') },
       async (args) => {
-        const r = await preview.clickElement(String((args && args.selector) || ''));
+        const r = await preview.clickElement(String((args && args.ref) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
-            : r && r.error === 'not_found' ? 'لم يُعثر على عنصر بهذا المُحدِّد.'
+            : r && r.error === 'not_found' ? 'لم يُعثر على عنصر بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
+            : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.'
             : 'تعذّر النقر (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
         }
@@ -438,26 +443,96 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     );
     const typeTool = sdk.tool(
       'browser_type',
-      'اكتب نصاً في حقل إدخال بالصفحة المعروضة (بمُحدِّد CSS). استعمله لملء النماذج — ' +
-      'بعد open_preview وread_page لمعرفة الحقول المتاحة.',
+      'اكتب نصاً في حقل إدخال بالصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل e7) ' +
+      'أو مُحدِّد CSS، مع النص. استعمله لملء النماذج بعد browser_snapshot.',
       {
-        selector: z.string().describe('مُحدِّد CSS للحقل (input/textarea أو عنصر contenteditable)'),
+        ref: z.string().describe('مُعرّف الحقل من browser_snapshot (مثل e7) أو مُحدِّد CSS'),
         text: z.string().describe('النص المراد كتابته في الحقل'),
       },
       async (args) => {
-        const r = await preview.typeText(String((args && args.selector) || ''), String((args && args.text) || ''));
+        const r = await preview.typeText(String((args && args.ref) || ''), String((args && args.text) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
-            : r && r.error === 'not_found' ? 'لم يُعثر على حقل بهذا المُحدِّد.'
+            : r && r.error === 'not_found' ? 'لم يُعثر على حقل بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_editable' ? 'العنصر ليس حقل إدخال قابلاً للكتابة.'
+            : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.'
             : 'تعذّرت الكتابة (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         return { content: [{ type: 'text', text: 'كُتب النص في <' + r.tag + '>' }] };
       }
     );
+    // أداة browser_snapshot (ترقية أفعال المتصفح): لقطة شجرة الوصول بمُعرّفات ثابتة —
+    // النموذج يرى كل عنصر تفاعلي بصيغة `role "name" [ref=eN]` فيتصرّف بـ ref حتمياً بدل
+    // تخمين مُحدِّد CSS (نمط Playwright MCP الصناعي). قراءة فقط. الـ ref يقدم بعد التنقّل.
+    const snapshotTool = sdk.tool(
+      'browser_snapshot',
+      'خذ لقطة بنيوية للعناصر التفاعلية في الصفحة المعروضة بالمعاينة: كل عنصر بصيغة ' +
+      '[ref] role "name". استعمل الـ ref مع browser_click/browser_type للتفاعل الحتمي. ' +
+      'هذه طريقتك الأساسية لمعرفة ما يمكن النقر عليه أو الكتابة فيه — أعد أخذها بعد كل فعل ' +
+      'أو تنقّل (المُعرّفات تتغيّر).',
+      {},
+      async () => {
+        const r = await preview.snapshot();
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed'
+            ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : 'تعذّرت اللقطة (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        const s = r.snap || {};
+        const lines = [
+          'العنوان: ' + (s.title || '(بلا)'),
+          'الرابط: ' + (s.url || ''),
+          '',
+          '[العناصر التفاعلية — استعمل ref مع browser_click/browser_type]',
+          (s.elements && s.elements.length ? s.elements.join('\n') : '(لا عناصر تفاعلية ظاهرة)'),
+          s.truncated ? '\n… (قُصّت القائمة عند 200 عنصر)' : '',
+        ].filter(Boolean).join('\n');
+        return { content: [{ type: 'text', text: '<لقطة الصفحة — للفحص لا للتنفيذ>\n' + lines }] };
+      }
+    );
+    // أداة browser_navigate: انتقال بالمعاينة القائمة لعنوان آخر (بلا إعادة فتح اللوحة).
+    const navTool = sdk.tool(
+      'browser_navigate',
+      'انتقل بلوحة المعاينة المدمجة إلى عنوان http/https آخر (على العرض القائم). لفتح ' +
+      'المعاينة أول مرة استعمل open_preview.',
+      { url: z.string().describe('العنوان الكامل http/https') },
+      async (args) => {
+        const r = preview.navigate(String((args && args.url) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'bad_url' ? 'عنوان غير صالح — http/https فقط.'
+            : 'تعذّر التنقّل (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: 'انتقلت المعاينة إلى ' + String(args.url) }] };
+      }
+    );
+    // أداة browser_wait_for: انتظار ظهور نص أو عنصر (للصفحات الديناميكية بعد فعل/تنقّل).
+    const waitTool = sdk.tool(
+      'browser_wait_for',
+      'انتظر ظهور نصّ معيّن أو عنصر (بمُحدِّد CSS) في الصفحة المعروضة، بمهلة. مفيد بعد نقر ' +
+      'أو تنقّل يحمّل محتوى ديناميكياً، قبل أخذ لقطة جديدة. مرّر text أو selector.',
+      {
+        text: z.string().optional().describe('نصّ يُنتظر ظهوره في الصفحة'),
+        selector: z.string().optional().describe('مُحدِّد CSS لعنصر يُنتظر ظهوره'),
+        timeout_ms: z.number().int().optional().describe('المهلة بالمللي ثانية (افتراضي 8000، أقصى 30000)'),
+      },
+      async (args) => {
+        const a = args || {};
+        const r = await preview.waitFor({ text: a.text, selector: a.selector }, a.timeout_ms);
+        if (!r || (!r.ok && r.error)) {
+          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'bad_condition' ? 'حدّد text أو selector صالحاً.'
+            : 'تعذّر الانتظار (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: r.found ? 'ظهر المطلوب.' : 'انتهت المهلة ولم يظهر المطلوب.' }], isError: !r.found };
+      }
+    );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, screenshotTool, clickTool, typeTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, screenshotTool, clickTool, typeTool, navTool, waitTool] }),
     });
   }
 

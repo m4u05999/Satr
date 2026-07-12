@@ -698,6 +698,19 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   مربع الإذن العربي كل مرة (لسن في alwaysAllowed)، bypassPermissions وحده يعفيها؛
   `toolDetail` يُظهر selector في الإذن. قائمة النطاقات لم تلزم (الإذن اليدوي لكل فعل
   أقوى). حدّ: النص المكتوب لا يظهر كاملاً في الإذن (selector فقط).
+- **ترقية أفعال المتصفح — لقطة + ref حتمي (2026-07-12)**: نمط Playwright MCP/browser-use
+  الصناعي (بحث موثّق): بدل تخمين النموذج مُحدِّد CSS من outerHTML (هشّ)، أداة جديدة
+  `browser_snapshot` تعطي لقطة مدمجة لكل عنصر تفاعلي `[ref] role "name"` (تسِم كلاً بسمة
+  `data-satr-ref="eN"` — كفاءة رموز عالية)، و`browser_click`/`browser_type` قبِلا **ref**
+  (مثل e5 ⇒ يُحلّ عبر `[data-satr-ref]` حتمياً) مع **إبقاء مُحدِّد CSS تراجعاً** (لا كسر
+  عقد م-4: resolve يميّز `^e\d+$` من المُحدِّد). **الـ ref يقدُم بعد أي تنقّل/تغيّر DOM**
+  (يُعاد أخذ اللقطة — قاعدة صناعية مثبّتة). أُضيفت `browser_navigate(url)` (تنقّل العرض
+  القائم) و`browser_wait_for({text|selector, timeout_ms})` (استقصاء دوري للصفحات
+  الديناميكية). كله في `preview.js` (snapshot/waitFor/resolve — بلا preload، صفر
+  اعتماديات) + كتلة أدوات المتصفح في `agent.js` + توجيه systemPrompt (حلقة
+  snapshot→act→snapshot). تحقّق حيّ (مسبار معزول 8/8، خادم HTTP فعلي): لقطة بأدوار/أسماء/
+  refs صحيحة · نقر/كتابة بـ ref يغيّران DOM ويُطلقان input · wait_for (ظهور/مهلة) ·
+  تراجع CSS · ref قديم بعد reload ⇒ not_found · مُحدِّد فاسد ⇒ bad_selector.
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
   رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`

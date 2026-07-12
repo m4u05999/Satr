@@ -255,6 +255,113 @@ async function readPage() {
   } catch (e) { return { error: 'read_failed' }; }
 }
 
+// ---------- لقطة شجرة الوصول بمُعرّفات ثابتة (ترقية أفعال المتصفح 2026-07-12) ----------
+// نمط Playwright MCP / browser-use المعتمد صناعياً: بدل أن يخمّن النموذج مُحدِّد CSS من
+// outerHTML (هشّ)، يأخذ **لقطة مدمجة** لكل عنصر تفاعلي فيها `role "name" [ref=eN]`، ثم
+// يتصرّف بـ ref حتمياً (browser_click/type يقبلان ref). نسِم كل عنصر بـ data-satr-ref="eN"
+// فيُحلّ الفعل عبر [data-satr-ref="eN"] بلا تخمين. **الـ ref يصير قديماً بعد أي تنقّل/تغيّر
+// DOM** (القاعدة الصناعية المثبّتة) — يُعاد أخذ اللقطة بعد كل فعل. كفاءة رموز: ~مئات مقابل
+// آلاف للـDOM الخام. صفر اعتماديات، بلا preload (يطابق عزل العرض) — كله executeJavaScript.
+const SNAPSHOT_SCRIPT = `(function(){
+  function vis(el){
+    if (!el || el.nodeType !== 1) return false;
+    var s; try { s = getComputedStyle(el); } catch(e){ return false; }
+    if (!s || s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
+    var r = el.getBoundingClientRect();
+    return r.width >= 1 && r.height >= 1;
+  }
+  function clean(s){ return String(s || '').replace(/\\s+/g, ' ').trim(); }
+  function esc(s){ try { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s); } catch(e){ return String(s); } }
+  function name(el){
+    var n = el.getAttribute && el.getAttribute('aria-label');
+    if (n && clean(n)) return clean(n);
+    var lb = el.getAttribute && el.getAttribute('aria-labelledby');
+    if (lb) { var t = ''; lb.split(/\\s+/).forEach(function(id){ var e = document.getElementById(id); if (e) t += ' ' + (e.textContent || ''); }); if (clean(t)) return clean(t); }
+    var tag = el.tagName.toLowerCase();
+    if (tag === 'input') {
+      var ph = el.getAttribute('placeholder'); if (ph) return clean(ph);
+      if (el.id) { var l; try { l = document.querySelector('label[for="' + esc(el.id) + '"]'); } catch(e){} if (l && clean(l.textContent)) return clean(l.textContent); }
+      var nm = el.getAttribute('name'); if (nm) return clean(nm);
+      if (el.value && (el.type || '') !== 'password') return clean(el.value).slice(0, 80);
+      return '';
+    }
+    if (tag === 'img') return clean(el.getAttribute('alt'));
+    if (tag === 'textarea') return clean(el.getAttribute('placeholder') || el.getAttribute('name'));
+    if (tag === 'select') return clean(el.getAttribute('name') || el.getAttribute('aria-label'));
+    return clean(el.textContent).slice(0, 120);
+  }
+  function role(el){
+    var r = el.getAttribute && el.getAttribute('role'); if (r) return clean(r);
+    var tag = el.tagName.toLowerCase();
+    if (tag === 'a' && el.hasAttribute('href')) return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'select') return 'combobox';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'input') {
+      var t = (el.getAttribute('type') || 'text').toLowerCase();
+      if (t === 'submit' || t === 'button' || t === 'reset') return 'button';
+      if (t === 'checkbox') return 'checkbox';
+      if (t === 'radio') return 'radio';
+      return 'textbox';
+    }
+    if (/^h[1-6]$/.test(tag)) return 'heading';
+    return tag;
+  }
+  var SEL = 'a[href],button,input:not([type=hidden]),textarea,select,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=switch],[role=combobox],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
+  try { Array.prototype.forEach.call(document.querySelectorAll('[data-satr-ref]'), function(e){ e.removeAttribute('data-satr-ref'); }); } catch(e){}
+  var els; try { els = Array.prototype.slice.call(document.querySelectorAll(SEL)); } catch(e){ els = []; }
+  var out = [], n = 0, CAP = 200;
+  for (var i = 0; i < els.length && out.length < CAP; i++) {
+    var el = els[i];
+    if (!vis(el)) continue;
+    var ref = 'e' + (++n);
+    try { el.setAttribute('data-satr-ref', ref); } catch(e){ continue; }
+    var nm = name(el);
+    var line = '[' + ref + '] ' + role(el) + (nm ? ' "' + nm.replace(/"/g, "'") + '"' : '');
+    if (el.disabled) line += ' (معطّل)';
+    out.push(line);
+  }
+  return { title: document.title, url: location.href, count: out.length, elements: out, truncated: out.length >= CAP };
+})()`;
+
+async function snapshot() {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const data = await wc.executeJavaScript(SNAPSHOT_SCRIPT, true);
+    return { ok: true, snap: data };
+  } catch (e) { return { error: 'snapshot_failed' }; }
+}
+
+// انتظار ظهور نص أو عنصر (selector) في الصفحة بمهلة — للصفحات الديناميكية (SPA/بعد فعل).
+// استقصاء دوري عبر executeJavaScript (بلا globals في الصفحة). يعيد {ok, found}.
+const WAIT_FN = `function(opt){
+  try {
+    if (opt.selector) return { found: !!document.querySelector(opt.selector) };
+    if (opt.text) return { found: ((document.body && document.body.innerText) || '').indexOf(opt.text) !== -1 };
+  } catch(e){ return { found: false, err: 1 }; }
+  return { found: false };
+}`;
+
+async function waitFor(cond, timeoutMs) {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  const c = cond || {};
+  if (!c.text && !c.selector) return { error: 'bad_condition' };
+  const deadline = Date.now() + Math.min(Math.max(Number(timeoutMs) || 8000, 500), 30000);
+  const arg = JSON.stringify({ text: c.text ? String(c.text).slice(0, 200) : '', selector: c.selector ? String(c.selector) : '' });
+  while (Date.now() < deadline) {
+    try {
+      const r = await wc.executeJavaScript('(' + WAIT_FN + ')(' + arg + ')', true);
+      if (r && r.err) return { error: 'bad_condition' };
+      if (r && r.found) return { ok: true, found: true };
+    } catch (e) {}
+    await new Promise((res) => setTimeout(res, 250));
+  }
+  return { ok: true, found: false };
+}
+
 async function screenshot() {
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
@@ -267,21 +374,25 @@ async function screenshot() {
   } catch (e) { return { error: 'shot_failed' }; }
 }
 
-// ---------- أدوات الفعل في المعاينة (م-4 — خلف إذن إلزامي) ----------
-// نقر/كتابة عبر executeJavaScript (selector يُهرَّب بـ JSON.stringify — لا حقن).
+// ---------- أدوات الفعل في المعاينة (م-4 + ترقية ref 2026-07-12 — خلف إذن إلزامي) ----------
+// الهدف (loc) إمّا **ref حتمي** من browser_snapshot (مثل e5 ⇒ [data-satr-ref="e5"]) أو
+// مُحدِّد CSS (تراجع للتوافق مع م-4). يُهرَّب بـ JSON.stringify — لا حقن.
 // **الأمان (حرج)**: أدوات agent.js تمرّ بـ canUseTool مثل Bash — مربع الإذن العربي كل
 // مرة، bypassPermissions وحده يعفيها (لا acceptEdits). الإذن اليدوي لكل فعل أقوى من
 // قائمة نطاقات (يعفي فعلاً لا نطاقاً) فلم تلزم. الكتابة عبر native value setter
 // ليلتقطها React/Vue (input/change events)، والنقر el.click() بعد scrollIntoView.
-const CLICK_FN = `function(sel){
-  var el; try { el = document.querySelector(sel); } catch(e){ return {ok:false, reason:'bad_selector'}; }
+// resolve: ref (^e\\d+$) ⇒ سمة data-satr-ref؛ غيره ⇒ querySelector (قد يرمي ⇒ bad_selector).
+const CLICK_FN = `function(loc){
+  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
   if (!el) return {ok:false, reason:'not_found'};
   try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
   try { el.click(); } catch(e){ return {ok:false, reason:'click_error'}; }
   return {ok:true, tag: el.tagName.toLowerCase(), text: (el.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80)};
 }`;
-const TYPE_FN = `function(sel, text){
-  var el; try { el = document.querySelector(sel); } catch(e){ return {ok:false, reason:'bad_selector'}; }
+const TYPE_FN = `function(loc, text){
+  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
   if (!el) return {ok:false, reason:'not_found'};
   try {
     el.focus();
@@ -300,23 +411,23 @@ const TYPE_FN = `function(sel, text){
   return {ok:true, tag: el.tagName.toLowerCase()};
 }`;
 
-async function clickElement(selector) {
+async function clickElement(locator) {
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
   try {
-    const r = await wc.executeJavaScript('(' + CLICK_FN + ')(' + JSON.stringify(String(selector)) + ')', true);
+    const r = await wc.executeJavaScript('(' + CLICK_FN + ')(' + JSON.stringify(String(locator)) + ')', true);
     return r && r.ok ? { ok: true, tag: r.tag, text: r.text } : { error: (r && r.reason) || 'click_failed' };
   } catch (e) { return { error: 'click_failed' }; }
 }
 
-async function typeText(selector, text) {
+async function typeText(locator, text) {
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
   try {
     const r = await wc.executeJavaScript(
-      '(' + TYPE_FN + ')(' + JSON.stringify(String(selector)) + ',' + JSON.stringify(String(text)) + ')', true);
+      '(' + TYPE_FN + ')(' + JSON.stringify(String(locator)) + ',' + JSON.stringify(String(text)) + ')', true);
     return r && r.ok ? { ok: true, tag: r.tag } : { error: (r && r.reason) || 'type_failed' };
   } catch (e) { return { error: 'type_failed' }; }
 }
@@ -349,4 +460,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, screenshot, clickElement, typeText, captureFrame, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, screenshot, clickElement, typeText, captureFrame, close, destroy, isHttpUrl };
