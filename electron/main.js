@@ -691,6 +691,9 @@ ipcMain.handle('satr:contextUsage', (event, p) => {
 // النواة تعمل كاملة إن غاب enterprise/. لا يُسقط الإقلاع إن فشل.
 try { features.init(); } catch (e) { /* عزل: فشل Enterprise لا يمنع إقلاع النواة */ }
 
+// ترحيل مفاتيح المزوّدين إلى التخزين المشفّر (safeStorage) بعد جهوزية التطبيق —
+// التشفير غير متاح قبلها. أفضل جهد: لا يمنع الإقلاع إن فشل.
+app.whenReady().then(() => { try { keys.migrate(); } catch (e) { /* أفضل جهد */ } });
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {
   stopAll();
