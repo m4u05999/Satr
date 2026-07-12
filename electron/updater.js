@@ -9,8 +9,10 @@
  *    وelectron-updater يرمي بلا dev-app-update.yml — فنتخطّاه صامتاً في npm start.
  *  - **بلا توقيع رقمي**: تحقق حيّ من التوثيق — ويندوز NSIS يحدّث بلا شهادة (بعكس ماك).
  *    مثبّتنا per-user (oneClick:false, perMachine:false) فلا حاجة صلاحيات مدير.
- *  - **تنزيل تلقائي في الخلفية ثم إشعار عربي لإعادة التشغيل** (لا يقاطع العمل):
- *    autoDownload=true، والتثبيت يؤجَّل حتى يضغط المستخدم «أعد التشغيل الآن».
+ *  - **موافقة صريحة في كل خطوة** (قرار المالك 2026-07-12): لا تنزيل ولا تثبيت تلقائيان.
+ *    autoDownload=false ⇒ نُشعر «تتوفّر نسخة» وننتظر «نزّل الآن» (downloadUpdate).
+ *    autoInstallOnAppQuit=false ⇒ إغلاق التطبيق لا يثبّت شيئاً؛ التثبيت حصراً بزرّ
+ *    «أعد التشغيل الآن» (quitAndInstall). المستخدم يملك كل خطوة.
  *  - الأحداث تُبثّ للواجهة عبر نفس نمط emit (قناة satr:event) بنوع `update`.
  */
 
@@ -27,9 +29,10 @@ function initUpdater(app, emit) {
     return; // الحزمة غائبة لسببٍ ما — لا نُسقط الإقلاع
   }
 
-  autoUpdater.autoDownload = true;          // نزّل في الخلفية فور اكتشاف تحديث
-  autoUpdater.autoInstallOnAppQuit = true;  // ثبّت عند الإغلاق إن لم يُعد التشغيل يدوياً
+  autoUpdater.autoDownload = false;          // لا تنزيل قبل موافقة المستخدم («نزّل الآن»)
+  autoUpdater.autoInstallOnAppQuit = false;  // الإغلاق لا يثبّت؛ التثبيت بزرّ «أعد التشغيل» فقط
   autoUpdater.on('update-available', (info) => {
+    // متوفّر بانتظار الموافقة على التنزيل (لا يبدأ تلقائياً — autoDownload=false)
     emit({ type: 'update', phase: 'available', version: info && info.version });
   });
   autoUpdater.on('download-progress', (p) => {
@@ -48,9 +51,14 @@ function initUpdater(app, emit) {
   setTimeout(() => { autoUpdater.checkForUpdates().catch(() => {}); }, 8000);
 }
 
+// يستدعيه معالج IPC عند ضغط المستخدم «نزّل الآن» — يبدأ التنزيل بعد الموافقة الصريحة
+function downloadUpdate() {
+  if (autoUpdater) { try { autoUpdater.downloadUpdate().catch(() => {}); } catch (e) {} }
+}
+
 // يستدعيه معالج IPC عند ضغط المستخدم «أعد التشغيل الآن»
 function quitAndInstall() {
   if (autoUpdater) { try { autoUpdater.quitAndInstall(); } catch (e) {} }
 }
 
-module.exports = { initUpdater, quitAndInstall };
+module.exports = { initUpdater, downloadUpdate, quitAndInstall };

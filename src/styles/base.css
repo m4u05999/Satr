@@ -478,7 +478,8 @@
   #updateToast .upd-ico { color: var(--gold); flex: none; }
   #updateToast #updateText { flex: 1; unicode-bidi: plaintext; }
   #updateToast button { font-size: 12px; padding: 3px 10px; }
-  #updateToast #updateRestart { background: var(--green); color: #10250D; border: none; font-weight: 600; }
+  #updateToast #updateDownload { background: var(--gold); color: #241A05; border: none; font-weight: 600; cursor: pointer; }
+  #updateToast #updateRestart { background: var(--green); color: #10250D; border: none; font-weight: 600; cursor: pointer; }
   #updateToast #updateDismiss { background: none; border: none; color: var(--text-dim); cursor: pointer; }
 
   /* مربع الأذونات انتقل لمكوّن satr-perm-dialog (تفكيك ت-8) */

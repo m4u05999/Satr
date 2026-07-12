@@ -490,6 +490,7 @@ ipcMain.handle('satr:undoEdit', (event, id) => {
 });
 
 // ---------- التحديث التلقائي (المرحلة 17) — رد الواجهة على «أعد التشغيل الآن» ----------
+ipcMain.handle('satr:downloadUpdate', () => { updater.downloadUpdate(); return { ok: true }; });
 ipcMain.handle('satr:restartUpdate', () => { updater.quitAndInstall(); return { ok: true }; });
 
 // ---------- متصفح الجلسات (قراءة فقط — التحقق من المدخلات داخل sessions.js) ----------

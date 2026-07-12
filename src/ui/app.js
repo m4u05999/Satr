@@ -199,23 +199,30 @@
     return true;
   }
 
-  // ---------- التحديث التلقائي (المرحلة 17) ----------
-  // إشعار لا يقاطع: «متوفر» ⇐ يُنزَّل خلفياً ⇐ «جاهز» ⇐ زرّ «أعد التشغيل الآن».
+  // ---------- التحديث التلقائي (المرحلة 17 + موافقة صريحة 2026-07-12) ----------
+  // إشعار لا يقاطع بموافقة في كل خطوة: «متوفّر» ⇐ زرّ «نزّل الآن» ⇐ تقدّم ⇐ «جاهز»
+  // ⇐ زرّ «أعد التشغيل الآن». لا تنزيل ولا تثبيت تلقائيان (المستخدم يملك كل خطوة).
   function handleUpdateEvent(ev) {
-    const toast = $('updateToast'), txt = $('updateText'), restart = $('updateRestart');
+    const toast = $('updateToast'), txt = $('updateText');
+    const download = $('updateDownload'), restart = $('updateRestart');
     if (ev.phase === 'available') {
-      txt.textContent = 'يتوفّر تحديث' + (ev.version ? ' (' + ev.version + ')' : '') + ' — يجري تنزيله…';
-      restart.hidden = true; toast.hidden = false;
+      txt.textContent = 'تتوفّر نسخة جديدة' + (ev.version ? ' (' + ev.version + ')' : '') + '.';
+      download.hidden = false; restart.hidden = true; toast.hidden = false;
     } else if (ev.phase === 'progress') {
       txt.textContent = 'تنزيل التحديث… ' + (ev.percent || 0) + '٪';
-      restart.hidden = true; toast.hidden = false;
+      download.hidden = true; restart.hidden = true; toast.hidden = false;
     } else if (ev.phase === 'ready') {
-      txt.textContent = 'التحديث' + (ev.version ? ' (' + ev.version + ')' : '') + ' جاهز.';
-      restart.hidden = false; toast.hidden = false;
+      txt.textContent = 'التحديث' + (ev.version ? ' (' + ev.version + ')' : '') + ' جاهز للتثبيت.';
+      download.hidden = true; restart.hidden = false; toast.hidden = false;
     } else if (ev.phase === 'error') {
       toast.hidden = true; // فشل صامت — لا نزعج المستخدم (يبقى التثبيت اليدوي متاحاً)
     }
   }
+  $('updateDownload').addEventListener('click', () => {
+    $('updateText').textContent = 'جارٍ بدء التنزيل…';
+    $('updateDownload').hidden = true;
+    window.satr.downloadUpdate();
+  });
   $('updateRestart').addEventListener('click', () => window.satr.restartUpdate());
   $('updateDismiss').addEventListener('click', () => { $('updateToast').hidden = true; });
 
