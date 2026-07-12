@@ -17,6 +17,7 @@
     "test:context": "node scripts/context-test.js",
     "test:orchestrator": "node scripts/orchestrator-test.js",
     "test:worktrees": "node scripts/worktrees-test.js",
+    "test:executionteam": "node scripts/executionteam-test.js",
     "test:codexmcp": "node scripts/codexmcp-test.js",
     "prestart": "node scripts/update-csp.js",
     "start": "electron .",

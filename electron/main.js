@@ -24,6 +24,7 @@ const agentsList = require('./agents');
 const agent = require('./agent');
 const orchestrator = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
 const executor = require('./executor'); // عامل SDK واحد داخل worktree معزول — الخطوة 2
+const executionTeam = require('./executionteam'); // 1–3 عوامل بملكية ملفات — الخطوة 3
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const adapters = require('./adapters');
@@ -771,6 +772,46 @@ ipcMain.handle('satr:executionLatest', (event, payload) => {
   return { ok: true, run: executor.latest(cwd) };
 });
 
+// ---------- فريق عوامل منفّذة بملكية ملفات معلنة (الأولوية 6 — الخطوة 3) ----------
+function sanitizeOwnership(value) {
+  if (!Array.isArray(value) || !value.length || value.length > 16) return null;
+  const patterns = value.map((item) => cleanMemoryText(item, 256).replace(/\\/g, '/'));
+  if (patterns.some((pattern) => {
+    if (!pattern || pattern.startsWith('/') || /^[A-Za-z]:/.test(pattern)) return true;
+    const parts = pattern.split('/');
+    return parts.some((part) => !part || part === '.' || part === '..' || part.toLowerCase() === '.git' || !/^[\p{L}\p{N}._@+()*? -]+$/u.test(part));
+  })) return null;
+  return [...new Set(patterns)];
+}
+
+ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
+  const p = payload || {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  if (!cwd || p.confirmed !== true || !Array.isArray(p.agents) || p.agents.length < 1 || p.agents.length > 3) {
+    return { ok: false, error: 'bad_input' };
+  }
+  const agents = [];
+  for (const raw of p.agents) {
+    const task = cleanMemoryText(raw && raw.task, 4000);
+    const ownership = sanitizeOwnership(raw && raw.ownership);
+    if (!task || !ownership) return { ok: false, error: 'bad_input' };
+    agents.push({ task, ownership });
+  }
+  return executionTeam.start({ agents }, cwd, emitToWindow);
+});
+
+ipcMain.handle('satr:executionTeamStop', async (event, payload) => {
+  const p = payload || {};
+  if (!executionTeam.SAFE_RUN_ID.test(p.runId || '')) return { ok: false, error: 'bad_input' };
+  return executionTeam.stop(p.runId);
+});
+
+ipcMain.handle('satr:executionTeamLatest', (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  return { ok: true, team: executionTeam.latest(cwd) };
+});
+
 ipcMain.handle('satr:taskLedger', (event, payload) => {
   const p = payload || {};
   if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')) return null;
@@ -1033,12 +1074,13 @@ app.on('window-all-closed', () => {
   stopAll();
   orchestrator.stopAll();
   executor.stopAll();
+  executionTeam.stopAll();
   // إنهاء عمليات الخلفية المتتبَّعة كي لا تبقى خوادم تطوير بلا واجهة تديرها بعد الإغلاق
   bgprocs.killAll();
   term.killAll(); // صدفة الطرفية المدمجة تموت مع «سطر» (المرحلة 8)
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => { orchestrator.stopAll(); executor.stopAll(); bgprocs.killAll(); term.killAll(); });
+app.on('before-quit', () => { orchestrator.stopAll(); executor.stopAll(); executionTeam.stopAll(); bgprocs.killAll(); term.killAll(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });

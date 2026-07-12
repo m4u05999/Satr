@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('satr', {
   executionStart: (cwd, task, confirmed) => ipcRenderer.invoke('satr:executionStart', { cwd, task, confirmed }),
   executionStop: (runId) => ipcRenderer.invoke('satr:executionStop', { runId }),
   executionLatest: (cwd) => ipcRenderer.invoke('satr:executionLatest', { cwd }),
+  executionTeamStart: (cwd, agents, confirmed) => ipcRenderer.invoke('satr:executionTeamStart', { cwd, agents, confirmed }),
+  executionTeamStop: (runId) => ipcRenderer.invoke('satr:executionTeamStop', { runId }),
+  executionTeamLatest: (cwd) => ipcRenderer.invoke('satr:executionTeamLatest', { cwd }),
   // قنوات Enterprise (الدفعة 3) — تفشل بهدوء في البناء المجتمعي (لا معالج مسجَّل)
   eeUsage: () => ipcRenderer.invoke('satr:ee:usage'),
   eeAudit: () => ipcRenderer.invoke('satr:ee:audit'),

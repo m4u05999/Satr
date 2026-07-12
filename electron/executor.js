@@ -16,6 +16,8 @@ const MAX_SUMMARY_CHARS = 12000;
 const DEFAULT_TIMEOUT_MS = 180000;
 const MAX_TIMEOUT_MS = 300000;
 const MAX_WRITE_PERMISSIONS = 30;
+const MAX_OWNERSHIP_PATTERNS = 16;
+const MAX_PATTERN_CHARS = 256;
 const READ_TOOLS = new Set(['read', 'grep', 'glob']);
 const EDIT_TOOLS = new Set(['edit', 'write', 'multiedit']);
 const TERMINAL_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
@@ -26,6 +28,63 @@ function cleanText(value, max) {
   return typeof value === 'string'
     ? value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, max)
     : '';
+}
+
+function normalizePattern(value) {
+  const raw = cleanText(value, MAX_PATTERN_CHARS).replace(/\\/g, '/');
+  if (!raw || raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) return '';
+  const parts = raw.split('/');
+  if (parts.some((part) => !part || part === '.' || part === '..' || part.toLowerCase() === '.git' || !/^[\p{L}\p{N}._@+()*? -]+$/u.test(part))) return '';
+  return parts.join('/');
+}
+
+function normalizeOwnership(value) {
+  if (!Array.isArray(value) || !value.length || value.length > MAX_OWNERSHIP_PATTERNS) return null;
+  const patterns = value.map(normalizePattern);
+  if (patterns.some((pattern) => !pattern)) return null;
+  return [...new Set(patterns)];
+}
+
+function globRegex(pattern) {
+  let source = '^';
+  for (let index = 0; index < pattern.length; index++) {
+    const char = pattern[index];
+    if (char === '*' && pattern[index + 1] === '*') { source += '.*'; index++; }
+    else if (char === '*') source += '[^/]*';
+    else if (char === '?') source += '[^/]';
+    else source += char.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+  }
+  return new RegExp(source + '$', 'u');
+}
+
+function ownedBy(patterns, relative) {
+  const normalized = normalizePattern(relative);
+  if (!normalized || normalized.toLowerCase() === '.git' || normalized.toLowerCase().startsWith('.git/')) return false;
+  return patterns.some((pattern) => globRegex(pattern).test(normalized));
+}
+
+function staticDirectory(pattern) {
+  const wildcard = pattern.search(/[?*]/);
+  const fixed = wildcard < 0 ? pattern : pattern.slice(0, wildcard);
+  const slash = fixed.lastIndexOf('/');
+  return slash < 0 ? '' : fixed.slice(0, slash + 1);
+}
+
+function patternsOverlap(left, right) {
+  const leftWild = /[?*]/.test(left);
+  const rightWild = /[?*]/.test(right);
+  if (!leftWild && !rightWild) return left === right;
+  if (!leftWild) return globRegex(right).test(left);
+  if (!rightWild) return globRegex(left).test(right);
+  const leftDir = staticDirectory(left);
+  const rightDir = staticDirectory(right);
+  return !leftDir || !rightDir || leftDir.startsWith(rightDir) || rightDir.startsWith(leftDir);
+}
+
+function ownershipsOverlap(left, right) {
+  const a = normalizeOwnership(left);
+  const b = normalizeOwnership(right);
+  return !!a && !!b && a.some((one) => b.some((two) => patternsOverlap(one, two)));
 }
 
 function defaultRunner() { return require('./agent'); }
@@ -63,6 +122,7 @@ function publicRun(run) {
     cost: { ...run.cost },
     permissions: { ...run.permissions },
     edits_seen: run.edits_seen,
+    ownership: run.ownership.slice(),
     changes: { ...run.changes, files: run.changes.files.map((file) => ({ ...file })) },
     worktree: run.worktree ? { ...run.worktree } : null,
     merged: false,
@@ -93,19 +153,25 @@ function create(options) {
 
   function allowedTool(run, name, input) {
     const normalized = String(name || '').toLowerCase();
-    if (normalized === 'glob') return { ok: true, tier: 'read' };
     if (!READ_TOOLS.has(normalized) && !EDIT_TOOLS.has(normalized)) return { ok: false, error: 'forbidden_tool' };
     const wanted = candidatePath(run, input);
-    if (normalized === 'grep' && !wanted) return { ok: true, tier: 'read', path: run._worktreePath };
-    if (!wanted || !manager.contains(run._worktreeId, wanted)) return { ok: false, error: 'outside' };
-    return { ok: true, tier: EDIT_TOOLS.has(normalized) ? 'write' : 'read', path: wanted };
+    if ((normalized === 'grep' || normalized === 'glob') && !wanted) return { ok: true, tier: 'read', path: run._worktreePath };
+    const insideWorktree = wanted && (path.resolve(wanted) === path.resolve(run._worktreePath) || manager.contains(run._worktreeId, wanted));
+    if (!insideWorktree) return { ok: false, error: 'outside' };
+    const tier = EDIT_TOOLS.has(normalized) ? 'write' : 'read';
+    const relative = path.relative(run._worktreePath, wanted).replace(/\\/g, '/');
+    if (tier === 'write' && !ownedBy(run.ownership, relative)) {
+      return { ok: false, error: 'outside_ownership' };
+    }
+    return { ok: true, tier, path: wanted };
   }
 
-  function promptFor(task) {
+  function promptFor(task, ownership) {
     return [
       '[عامل منفّذ معزول داخل git worktree مؤقت]',
       'نفّذ المهمة التالية بتعديل الملفات داخل مجلد العمل الحالي فقط. لا تستخدم Bash أو الطرفية أو Git أو المتصفح أو أي وكيل فرعي.',
       'الأدوات المسموحة: Read وGrep وGlob وEdit وWrite وMultiEdit. لا تكتب مساراً مطلقاً ولا مساراً يحوي ..',
+      'ملكية الكتابة المعلنة لك فقط: ' + ownership.join('، ') + '. اقرأ ما تحتاجه، لكن لا تعدّل ملفاً لا يطابقها.',
       'لا تلتزم ولا تدمج التغييرات؛ سطر سيجمع git diff ثم يحذف worktree. اختم بملخص موجز لما عدّلته.',
       '',
       'المهمة: ' + task,
@@ -121,7 +187,14 @@ function create(options) {
       publish(run);
       let diff = { ok: false, error: 'diff_failed' };
       try { diff = await manager.diff(run._worktreeId); } catch { /* أفضل جهد */ }
-      if (diff && diff.ok) run.changes = publicChanges(diff);
+      if (diff && diff.ok) {
+        run.changes = publicChanges(diff);
+        const outside = run.changes.files.find((file) => !ownedBy(run.ownership, file.rel));
+        if (outside) {
+          desiredState = 'failed';
+          error = 'رُصد فرق خارج الملكية المعلنة: ' + outside.rel;
+        }
+      }
       let removed = { ok: false, error: 'remove_failed' };
       try { removed = await manager.remove(run._worktreeId); } catch { /* أفضل جهد */ }
       run.duration_ms = Math.max(0, now() - run.created_at);
@@ -159,7 +232,8 @@ function create(options) {
 
   async function start(input, cwd, emit) {
     const task = cleanText(input && input.task, MAX_TASK_CHARS);
-    if (!task || typeof cwd !== 'string' || !cwd.trim()) return { ok: false, error: 'bad_input' };
+    const ownership = normalizeOwnership((input && input.ownership) || ['**']);
+    if (!task || !ownership || typeof cwd !== 'string' || !cwd.trim()) return { ok: false, error: 'bad_input' };
     if (activeRunId) return { ok: false, error: 'busy' };
     if (!runner || typeof runner.start !== 'function') return { ok: false, error: 'engine_unavailable' };
 
@@ -170,6 +244,7 @@ function create(options) {
       id: 'execution-' + createdAt.toString(36) + '-' + (++sequence).toString(36),
       state: 'running',
       task,
+      ownership,
       created_at: createdAt,
       updated_at: createdAt,
       duration_ms: 0,
@@ -229,6 +304,10 @@ function create(options) {
           stopThenFinish(run, 'failed', 'رُصد تعديل خارج worktree');
           return;
         }
+        if (!ownedBy(run.ownership, relative)) {
+          stopThenFinish(run, 'failed', 'رُصد تعديل خارج الملكية المعلنة: ' + relative);
+          return;
+        }
         run.edits_seen++;
         publish(run);
       } else if (event.type === 'model_term' || event.type === 'verification_result' || event.type === 'preview_open') {
@@ -256,7 +335,7 @@ function create(options) {
     }, timeoutMs);
 
     Promise.resolve().then(() => runner.start({
-      prompt: promptFor(task),
+      prompt: promptFor(task, ownership),
       images: [],
       sessionId: null,
       model: null,
@@ -312,5 +391,9 @@ module.exports = {
   latest: singleton.latest,
   SAFE_RUN_ID,
   MAX_WRITE_PERMISSIONS,
+  MAX_OWNERSHIP_PATTERNS,
   DEFAULT_TIMEOUT_MS,
+  normalizeOwnership,
+  ownedBy,
+  ownershipsOverlap,
 };

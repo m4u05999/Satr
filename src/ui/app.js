@@ -356,6 +356,10 @@
       executionEl.handleEvent(ev);
       return;
     }
+    if (ev.type === 'execution_team_update') {
+      executionEl.handleEvent(ev);
+      return;
+    }
     const block = currentBlock;
     if (!block || block.done) return;
     if (ev.type === 'stream_text') {
@@ -583,7 +587,7 @@
     { cmd: '/جلسات',   en: '/sessions', desc: 'تصفح الجلسات المحفوظة واستئنافها',     run: () => openSessions() },
     { cmd: '/ذاكرة',   en: '/memory', desc: 'مراجعة ذاكرة المشروع الشخصية والبحث والتعديل والحذف', run: () => openMemory() },
     { cmd: '/بحث',     en: '/research', desc: 'تشغيل 1–3 باحثين للقراءة فقط وإعادة خلاصة ومصادر', sdkOnly: true, run: () => openResearch() },
-    { cmd: '/تنفيذ-معزول', en: '/execute-isolated', desc: 'تنفيذ تعديل داخل git worktree مؤقت بلا دمج', sdkOnly: true, run: () => openExecution() },
+    { cmd: '/تنفيذ-معزول', en: '/execute-isolated', desc: 'تشغيل 1–3 عوامل في worktrees بملكية ملفات وبلا دمج', sdkOnly: true, run: () => openExecution() },
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
     { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
     { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', sdkOnly: true, run: () => openMcp() },
