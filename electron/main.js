@@ -19,6 +19,7 @@ const skills = require('./skills');
 const tasks = require('./tasks');
 const verify = require('./verify');
 const checkpoints = require('./checkpoints');
+const memory = require('./memory');
 const agentsList = require('./agents');
 const agent = require('./agent');
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
@@ -363,6 +364,24 @@ ipcMain.handle('satr:send', async (event, payload) => {
       if (ledger) emitToWindow(ledger);
       return;
     }
+    if (obj.type === 'memory_candidate') {
+      const raw = obj.candidate && typeof obj.candidate === 'object' ? obj.candidate : {};
+      const proposed = memory.propose({
+        kind: raw.kind,
+        content: raw.content,
+        confidence: raw.confidence,
+        scope: raw.scope,
+        source: {
+          type: 'agent',
+          engine: runEngine,
+          detail: raw.source && typeof raw.source.detail === 'string' ? raw.source.detail : '',
+        },
+        shareable: raw.shareable === true,
+      }, { type: 'agent', engine: runEngine });
+      if (proposed.ok) emitToWindow({ type: 'memory_candidate', schema_version: 1, candidate: proposed.candidate });
+      else emitToWindow({ type: 'memory_rejected', reason: proposed.error === 'secret' ? 'secret' : 'invalid' });
+      return;
+    }
     if (obj.type === 'file_edit') {
       const checkpoint = checkpoints.addEdit(runId, obj, activeSessionId ? activeTaskRef(runEngine, activeSessionId) : null);
       emitToWindow(obj);
@@ -617,6 +636,88 @@ const SAFE_ENGINE = /^[a-z0-9_-]{1,32}$/;
 // قراءة snapshot أو تغيير حالة ledger فقط. لا تحرير مهام خفيّ من الواجهة؛ الوكيل
 // يحدّثها عبر task_update، والمستخدم يملك إيقافاً/استئنافاً صريحين ظاهرين.
 const TASK_ACTIONS = new Set(['pause', 'resume']);
+
+// ---------- ذاكرة المشروع الشخصية (الأولوية 4) ----------
+// كل IPC يعيد بناء حمولة صغيرة من قائمة بيضاء هنا قبل وصولها إلى memory.js. المسار
+// يجب أن يكون مجلد مشروع موجوداً، والنطاق المساري نسبي بلا ..؛ core يعيد فحص الأسرار.
+const MEMORY_KINDS = new Set(['fact', 'decision', 'command', 'failure']);
+const MEMORY_CONFIDENCE = new Set(['low', 'medium', 'high']);
+const MEMORY_SCOPE = new Set(['project', 'path']);
+const MEMORY_SOURCE = new Set(['agent', 'user', 'imported']);
+
+function sanitizeMemoryCwd(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const resolved = path.resolve(value.trim());
+    return fs.statSync(resolved).isDirectory() ? resolved : null;
+  } catch { return null; }
+}
+
+function cleanMemoryText(value, max) {
+  return typeof value === 'string'
+    ? value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, max)
+    : '';
+}
+
+function sanitizeMemoryScope(value) {
+  const raw = value && typeof value === 'object' ? value : {};
+  if (!MEMORY_SCOPE.has(raw.type)) return null;
+  if (raw.type === 'project') return { type: 'project', path: '' };
+  const relative = cleanMemoryText(raw.path, 512).replace(/\\/g, '/');
+  if (!relative || path.isAbsolute(relative)) return null;
+  const parts = relative.split('/');
+  if (parts.includes('..') || parts.includes('')) return null;
+  return { type: 'path', path: parts.join('/') };
+}
+
+function sanitizeMemoryForm(value, includeSource) {
+  if (!value || typeof value !== 'object' || !MEMORY_KINDS.has(value.kind)
+      || !MEMORY_CONFIDENCE.has(value.confidence)) return null;
+  const content = cleanMemoryText(value.content, 2000);
+  const scope = sanitizeMemoryScope(value.scope);
+  if (!content || !scope) return null;
+  const output = { kind: value.kind, content, confidence: value.confidence, scope, shareable: value.shareable === true };
+  if (includeSource) {
+    const raw = value.source && typeof value.source === 'object' ? value.source : {};
+    output.source = {
+      type: MEMORY_SOURCE.has(raw.type) ? raw.type : 'user',
+      engine: SAFE_ENGINE.test(raw.engine || '') ? raw.engine : '',
+      detail: cleanMemoryText(raw.detail, 240),
+    };
+  }
+  return output;
+}
+
+ipcMain.handle('satr:memoryList', (event, payload) => {
+  const p = payload || {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  if (!cwd || (p.query != null && typeof p.query !== 'string')) return { ok: false, error: 'bad_input' };
+  const query = cleanMemoryText(p.query || '', 200);
+  return memory.search(cwd, query);
+});
+
+ipcMain.handle('satr:memorySave', (event, payload) => {
+  const p = payload || {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  const candidate = sanitizeMemoryForm(p.candidate, true);
+  if (!cwd || !candidate) return { ok: false, error: 'bad_input' };
+  return memory.save(cwd, candidate);
+});
+
+ipcMain.handle('satr:memoryUpdate', (event, payload) => {
+  const p = payload || {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  const patch = sanitizeMemoryForm(p.patch, false);
+  if (!cwd || !memory.SAFE_ID.test(p.id || '') || !patch) return { ok: false, error: 'bad_input' };
+  return memory.update(cwd, p.id, patch);
+});
+
+ipcMain.handle('satr:memoryDelete', (event, payload) => {
+  const p = payload || {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  if (!cwd || !memory.SAFE_ID.test(p.id || '')) return { ok: false, error: 'bad_input' };
+  return memory.remove(cwd, p.id);
+});
 
 ipcMain.handle('satr:taskLedger', (event, payload) => {
   const p = payload || {};

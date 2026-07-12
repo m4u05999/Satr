@@ -176,6 +176,7 @@
   // busy/currentBlock — يستدعي methods كتلة newAssistantBlock بعقدها الحرفي)،
   // deadSessionRecovery (تلمس حالة القشرة والمحرّر)، وengineLabel (تقرأ providersCache).
   const chatEl = document.querySelector('satr-chat');
+  const memoryEl = document.querySelector('satr-memory-panel');
   function addNotice(text) { chatEl.addNotice(text); }
 
   async function loadTaskLedger(engine, sid) {
@@ -334,6 +335,15 @@
     }
     if (ev.type === 'verification_result') {
       chatEl.showVerification(ev);
+      return;
+    }
+    if (ev.type === 'memory_candidate' && ev.candidate) {
+      memoryEl.open($('cwd').value.trim(), ev.candidate);
+      addNotice('🧠 اقترح النموذج ذاكرة جديدة — لن تُحفظ حتى توافق من اللوحة.');
+      return;
+    }
+    if (ev.type === 'memory_rejected') {
+      addNotice('🔒 رُفض اقتراح ذاكرة لأنه قد يحتوي سراً أو قيمة غير آمنة؛ لم يُحفظ ولم يُعرض.');
       return;
     }
     const block = currentBlock;
@@ -561,6 +571,7 @@
   const COMMANDS = [
     { cmd: '/جديدة',   en: '/new',    desc: 'بدء جلسة جديدة (مسح المحادثة الحالية)', run: () => newSession() },
     { cmd: '/جلسات',   en: '/sessions', desc: 'تصفح الجلسات المحفوظة واستئنافها',     run: () => openSessions() },
+    { cmd: '/ذاكرة',   en: '/memory', desc: 'مراجعة ذاكرة المشروع الشخصية والبحث والتعديل والحذف', run: () => openMemory() },
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
     { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
     { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', sdkOnly: true, run: () => openMcp() },
@@ -761,7 +772,7 @@
   // — قرار خطة التفكيك). لوحة الوكلاء خارج القائمة: لم يكن لها معالج أصلاً (تطابق حرفي).
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    for (const tag of ['satr-skills-panel', 'satr-mcp-panel', 'satr-context-panel', 'satr-sessions-panel']) {
+    for (const tag of ['satr-skills-panel', 'satr-mcp-panel', 'satr-context-panel', 'satr-sessions-panel', 'satr-memory-panel']) {
       const el = document.querySelector(tag);
       if (el && el.close) el.close();
     }
@@ -850,6 +861,10 @@
   // فتح لوحة المهارات — المنطق كله داخل المكوّن (تفكيك ت-2)
   function openSkills() {
     document.querySelector('satr-skills-panel').open($('cwd').value.trim());
+  }
+
+  function openMemory() {
+    memoryEl.open($('cwd').value.trim());
   }
 
   // ---------- لوحتا الموصّلات والسياق: انتقلتا لمكوّنين (تفكيك ت-3) ----------

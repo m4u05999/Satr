@@ -63,6 +63,9 @@ electron/verify.js   ← قارئ/مشغّل .satr/verify.json الصريح: ≤
                        ولا تشغيل تلقائي؛ التنفيذ في طرفية النموذج بعد إذن exec والخرج مسقوف
 electron/checkpoints.js ← checkpoint لكل دور يجمع file_edit IDs وmetadata تحت ~/.satr/checkpoints؛
                        استعادة عكسية لآخر checkpoint الحي عبر undo القائمة، بلا Git history
+electron/memory.js  ← ذاكرة مشروع شخصية منفصلة عن transcript تحت ~/.satr/memory/<cwd_sha256>.json:
+                       facts/decisions/commands/failures بمصدر/تاريخ/ثقة/نطاق؛ رفض أسرار،
+                       فهرس كلمات/مسارات، واسترجاع مقتصد. الاقتراح لا يكتب دون موافقة صريحة
 electron/diff.js     ← حساب فرق الأسطر (قصّ بادئة/لاحقة + LCS محدود + طيّ السياق)
                        دالة نقية بلا اعتماديات — المرحلة 3
 electron/inject.js   ← حقن @الملفات للمحوّلات (الدفعة 1.1 من ROADMAP): يقرأ الملفات المُشار
@@ -215,6 +218,9 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
    - `verification_result` (schema v1): `{engine,session_id,checkpoint_id,task_title,
      linked_task,passed,summary,checks[]}`. الخرج مقصوص في الحدث/tool_result؛ التخزين الدائم
      داخل checkpoint يحتفظ `SHA-256` والحجم والحالة فقط، لا الخرج الكامل.
+   - `memory_candidate` (schema v1): مرشّحة منقّاة `{kind,content,source,confidence,scope,
+     shareable}` للعرض فقط. `main.js` يعيد بناء المصدر ويرفض أنماط الأسرار قبل renderer؛ لا
+     كتابة حتى `satr:memorySave` من زر المستخدم. `memory_rejected` لا يحمل المحتوى المرفوض.
    - `effort` (⚙ — المرحلة 14.4): مستوى جهد التفكير `low|medium|high|xhigh|max` أو فارغ
      (الافتراضي). يُنقّى بـ `EFFORT_LEVELS` في main.js ويُمرَّر كخيار `effort` — الـ SDK
      يخفّضه صامتاً إن لم يدعمه النموذج. محرك **sdk** فقط.
@@ -446,6 +452,24 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   يتحقق من engine/session/checkpoint/cwd في `main.js` ثم يستخدم undo الموحّدة.
 - **التحقق**: `npm run test:verify` يغطي schema/رفض الأسطر المتعددة/runner/حدود الخرج/
   persistence/reverse restore/cwd/عودة النتيجة مرة واحدة. `npm run eval:agent` يبقى 12/12.
+
+### ذاكرة المشروع المحلية الصريحة (الأولوية 4)
+
+- **الفصل والتخزين**: `electron/memory.js` يحفظ JSON صغيراً لكل مشروع تحت
+  `~/.satr/memory/<cwd_sha256>.json`، منفصلاً كلياً عن transcript و`AGENTS.md`. كل مدخل نوعه
+  `fact|decision|command|failure` وله المصدر وتاريخا الإنشاء/التحديث والثقة والنطاق
+  (`project` أو مسار نسبي داخل المشروع). السقف 200 مدخل و512KiB للملف، وكتابة ذرية أفضل جهد.
+- **الموافقة والأسرار**: `propose_memory` في SDK وحلقة `tools.js` تبث `memory_candidate` فقط؛
+  لا تكتب. الحفظ يحدث من زر «حفظ في الذاكرة» عبر IPC منقّى في `main.js`. مفاتيح API وJWT
+  وPrivate Keys وBearer والقيم المسندة إلى password/secret تُرفض قبل القرص وقبل عرض المرشّحة.
+- **الاسترجاع**: فهرس كلمات/مسارات بلا dependency أو vector DB؛ الاستعلام أقصاه 8 كلمات،
+  والحقن أقصاه 8 مداخل/6000 محرف. يُحقن كسياق غير تنفيذي في دور SDK وClaude CLI وGemini
+  والمحوّلات المتوافقة مع OpenAI. تكامل `electron/codex.js` مؤجّل عمداً لجولة منسّقة لاحقة.
+- **الواجهة**: `/ذاكرة` يفتح `satr-memory-panel` للبحث والتعديل والحذف. وصول مرشّحة يفتح
+  مربع مراجعة قابل للتحرير مع حفظ/رفض صريحين. `shareable` يعرض اقتراح النقل إلى `AGENTS.md`
+  أو Skill؛ لا نقل تلقائياً ولا كتابة في ملفات المشروع.
+- **التحقق**: `npm run test:memory` يغطي عدم الكتابة بلا موافقة، رفض الأسرار، حدود الفهرس
+  وميزانية الاسترجاع، التعديل والحذف. `npm run eval:agent` يبقى 12/12.
 
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 
