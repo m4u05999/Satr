@@ -347,25 +347,31 @@
   // زرّ بجوار الإرسال يمنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح
   // الثماني فقط — لا الطرفية ولا الملفّات). معطّل افتراضياً، حالته ظاهرة، تُحفظ محلياً.
   let browserControlOn = false;
+  let paintBrowserControl = () => {};
+  // مصدر واحد لتغيير الحالة (زرّ + إطفاء تلقائي عند جلسة جديدة). notify=إشعار في المحادثة.
+  function setBrowserControl(on, notify) {
+    const was = browserControlOn;
+    browserControlOn = !!on;
+    try { localStorage.setItem('satr_browser_control', browserControlOn ? '1' : '0'); } catch (e) {}
+    paintBrowserControl();
+    if (notify && was !== browserControlOn && chatEl.addActionNotice) {
+      chatEl.addActionNotice(browserControlOn
+        ? '🖱️ وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة بلا إذن لكل فعل (أفعال المتصفح فقط).'
+        : 'أُوقف وضع تحكّم المتصفح — عاد الإذن اليدوي لكل فعل متصفح.');
+    }
+  }
   (function initBrowserControl() {
     const btn = $('browserCtl');
     if (!btn) return;
     try { browserControlOn = localStorage.getItem('satr_browser_control') === '1'; } catch (e) {}
-    const paint = () => {
+    paintBrowserControl = () => {
       btn.classList.toggle('active', browserControlOn);
       btn.setAttribute('aria-pressed', browserControlOn ? 'true' : 'false');
+      // مؤشّر دائم أوضح: نقطة حالة إلى جانب التسمية حين يكون الوضع مفعّلاً
+      btn.textContent = browserControlOn ? '🖱️ متصفح ●' : '🖱️ متصفح';
     };
-    paint();
-    btn.addEventListener('click', () => {
-      browserControlOn = !browserControlOn;
-      try { localStorage.setItem('satr_browser_control', browserControlOn ? '1' : '0'); } catch (e) {}
-      paint();
-      if (chatEl.addActionNotice) {
-        chatEl.addActionNotice(browserControlOn
-          ? '🖱️ وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة بلا إذن لكل فعل (أفعال المتصفح فقط).'
-          : 'أُوقف وضع تحكّم المتصفح — عاد الإذن اليدوي لكل فعل متصفح.');
-      }
-    });
+    paintBrowserControl();
+    btn.addEventListener('click', () => setBrowserControl(!browserControlOn, true));
   })();
 
   // ---------- الإرسال ----------
@@ -543,6 +549,8 @@
     if (composerEl.clearImages) composerEl.clearImages();
     $('sessionInfo').textContent = 'لا جلسة';
     chatEl.reset(); // حالة الفراغ + تصفير الكلفة التراكمية وشريطها (داخل المكوّن منذ ت-12)
+    // إطفاء تلقائي لوضع تحكّم المتصفح: لا نحمل صلاحية قيادة تلقائية لمهمة جديدة صامتاً
+    if (browserControlOn) { setBrowserControl(false, false); addNotice('🖱️ أُوقف وضع تحكّم المتصفح تلقائياً مع الجلسة الجديدة.'); }
   }
   $('newSession').addEventListener('click', newSession);
 
