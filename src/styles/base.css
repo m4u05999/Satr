@@ -351,6 +351,38 @@
   .task-evidence ul { margin-top: 3px; padding-inline-start: 18px; }
   .task-evidence li { unicode-bidi: plaintext; }
 
+  /* Checkpoint الدور والتحقق: metadata خفيفة مرتبطة بالتعديلات لا بـGit history. */
+  .checkpoint-card {
+    padding: 12px 15px; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface); animation: rise var(--dur) var(--ease);
+  }
+  .checkpoint-card.state-passed { border-color: var(--green-border); }
+  .checkpoint-card.state-failed, .checkpoint-card.state-partial { border-color: var(--red-border); }
+  .checkpoint-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .checkpoint-head strong { color: var(--gold); font-size: 13px; }
+  .checkpoint-state { color: var(--text-dim); font-size: 11.5px; }
+  .state-passed .checkpoint-state { color: var(--green); }
+  .state-failed .checkpoint-state, .state-partial .checkpoint-state { color: var(--red); }
+  .checkpoint-meta { color: var(--text-faint); font: 10.5px var(--mono); }
+  .checkpoint-actions { display: flex; gap: 6px; margin-inline-start: auto; }
+  .checkpoint-actions button { padding: 3px 9px; font-size: 11px; }
+  .checkpoint-actions .checkpoint-restore { color: var(--red); }
+  .checkpoint-files { margin-top: 8px; display: grid; gap: 2px; }
+  .checkpoint-file { color: var(--text-dim); font: 11px/1.6 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .checkpoint-expired { margin-top: 7px; color: var(--text-faint); font-size: 11px; }
+  .verification-result { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-dim); }
+  .verification-head { font-size: 12px; font-weight: 700; }
+  .verification-result.passed .verification-head { color: var(--green); }
+  .verification-result.failed .verification-head { color: var(--red); }
+  .verification-check { margin-top: 4px; color: var(--text-dim); font-size: 11.5px; }
+  .verification-check summary { cursor: pointer; unicode-bidi: plaintext; }
+  .verification-check pre {
+    max-height: 180px; margin-top: 5px; padding: 8px 10px; overflow: auto;
+    border: 1px solid var(--border); border-radius: 7px; background: var(--bg);
+    color: var(--text-dim); font: 10.5px/1.55 var(--mono); white-space: pre-wrap;
+  }
+  .verification-digest { margin-top: 4px; color: var(--text-faint); font: 10.5px var(--mono); }
+
   @media (max-width: 700px) {
     main { padding: 20px 12px 12px; }
     .thread { gap: 24px; }

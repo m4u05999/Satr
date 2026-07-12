@@ -33,6 +33,9 @@ contextBridge.exposeInMainWorld('satr', {
   readChat: (provider, id) => ipcRenderer.invoke('satr:readChat', { provider, id }),
   taskLedger: (engine, sessionId) => ipcRenderer.invoke('satr:taskLedger', { engine, sessionId }),
   taskAction: (engine, sessionId, action) => ipcRenderer.invoke('satr:taskAction', { engine, sessionId, action }),
+  checkpointLatest: (engine, sessionId) => ipcRenderer.invoke('satr:checkpointLatest', { engine, sessionId }),
+  checkpointRestore: (engine, sessionId, checkpointId, cwd) => ipcRenderer.invoke('satr:checkpointRestore', { engine, sessionId, checkpointId, cwd }),
+  verifyCheckpoint: (engine, sessionId, checkpointId, cwd, checks) => ipcRenderer.invoke('satr:verifyCheckpoint', { engine, sessionId, checkpointId, cwd, checks }),
   // قنوات Enterprise (الدفعة 3) — تفشل بهدوء في البناء المجتمعي (لا معالج مسجَّل)
   eeUsage: () => ipcRenderer.invoke('satr:ee:usage'),
   eeAudit: () => ipcRenderer.invoke('satr:ee:audit'),

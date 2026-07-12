@@ -8,6 +8,7 @@
 //   addUserMsg(text, images) · addNotice(text) · addNoticeBefore(text, beforeEl)
 //   addStandaloneDiff(ev) · addHistoryAssistant(msg, label) · newAssistantBlock(label)
 //   showTaskLedger(ledger) · clearTaskLedger()
+//   showCheckpoint(checkpoint) · showVerification(result) · clearCheckpoint()
 //   reset() «جلسة جديدة» · clearThread() «استئناف محوّل» · scrollToEnd(force)
 //   notifyTurnDone(isError) · toolDetail(input)
 //
@@ -321,6 +322,115 @@ class SatrChat extends HTMLElement {
     scrollDown();
   }
 
+  let checkpointEl = null;
+  let checkpointSession = null;
+
+  function clearCheckpoint() {
+    if (checkpointEl && checkpointEl.parentNode) checkpointEl.remove();
+    checkpointEl = null;
+    checkpointSession = null;
+  }
+
+  function checkpointStateText(state) {
+    if (state === 'open') return 'يجمع التعديلات';
+    if (state === 'passed') return 'تحقق ناجح';
+    if (state === 'failed') return 'تحقق فاشل';
+    if (state === 'restored') return 'استُعيد';
+    if (state === 'partial') return 'استعادة جزئية';
+    return 'جاهز';
+  }
+
+  function renderVerification(container, verification) {
+    if (!verification || !Array.isArray(verification.checks)) return;
+    const old = container.querySelector('.verification-result');
+    if (old) old.remove();
+    const wrap = document.createElement('section');
+    wrap.className = 'verification-result ' + (verification.passed ? 'passed' : 'failed');
+    const head = document.createElement('div'); head.className = 'verification-head';
+    head.textContent = verification.passed ? '✓ نجح التحقق' : '✗ فشل التحقق';
+    wrap.appendChild(head);
+    for (const check of verification.checks) {
+      const details = document.createElement('details'); details.className = 'verification-check';
+      const summary = document.createElement('summary');
+      summary.textContent = (check.passed ? '✓ ' : '✗ ') + (check.label || check.id || 'تحقق')
+        + ' · exit ' + (check.exit_code == null ? '—' : check.exit_code);
+      details.appendChild(summary);
+      if (check.output) {
+        const output = document.createElement('pre'); output.dir = 'ltr'; output.textContent = check.output;
+        details.appendChild(output);
+      } else if (check.output_sha256) {
+        const digest = document.createElement('div'); digest.className = 'verification-digest'; digest.dir = 'ltr';
+        digest.textContent = 'SHA-256 ' + check.output_sha256.slice(0, 12) + ' · ' + (check.output_bytes || 0) + ' bytes';
+        details.appendChild(digest);
+      }
+      wrap.appendChild(details);
+    }
+    container.appendChild(wrap);
+  }
+
+  function showCheckpoint(checkpoint) {
+    if (!checkpoint || !checkpoint.id) { clearCheckpoint(); return; }
+    hideEmpty();
+    const sessionKey = checkpoint.engine + ':' + checkpoint.session_id;
+    if (!checkpointEl || checkpointSession !== sessionKey) {
+      clearCheckpoint();
+      checkpointEl = document.createElement('section'); checkpointEl.className = 'checkpoint-card';
+      checkpointSession = sessionKey;
+      if (taskLedgerEl && taskLedgerEl.parentNode === thread) taskLedgerEl.after(checkpointEl);
+      else thread.prepend(checkpointEl);
+    }
+    checkpointEl.className = 'checkpoint-card state-' + checkpoint.state;
+    checkpointEl.innerHTML = '';
+
+    const head = document.createElement('div'); head.className = 'checkpoint-head';
+    const title = document.createElement('strong'); title.textContent = 'Checkpoint الدور';
+    const state = document.createElement('span'); state.className = 'checkpoint-state'; state.textContent = checkpointStateText(checkpoint.state);
+    const meta = document.createElement('span'); meta.className = 'checkpoint-meta'; meta.dir = 'ltr';
+    meta.textContent = (checkpoint.edit_count || 0) + ' edits' + (checkpoint.previous_id ? ' · prev ' + checkpoint.previous_id : '');
+    head.appendChild(title); head.appendChild(state); head.appendChild(meta);
+
+    const actions = document.createElement('div'); actions.className = 'checkpoint-actions';
+    if (checkpoint.restorable) {
+      const verifyButton = document.createElement('button'); verifyButton.type = 'button'; verifyButton.textContent = '✓ تشغيل التحقق';
+      verifyButton.addEventListener('click', () => this.dispatchEvent(new CustomEvent('checkpoint-verify', {
+        bubbles: true, detail: { engine: checkpoint.engine, sessionId: checkpoint.session_id, checkpointId: checkpoint.id },
+      })));
+      const restoreButton = document.createElement('button'); restoreButton.type = 'button'; restoreButton.className = 'checkpoint-restore';
+      restoreButton.textContent = '↶ استعادة';
+      restoreButton.addEventListener('click', () => this.dispatchEvent(new CustomEvent('checkpoint-restore', {
+        bubbles: true, detail: { engine: checkpoint.engine, sessionId: checkpoint.session_id, checkpointId: checkpoint.id },
+      })));
+      actions.appendChild(verifyButton); actions.appendChild(restoreButton);
+    }
+    head.appendChild(actions); checkpointEl.appendChild(head);
+
+    if (Array.isArray(checkpoint.files) && checkpoint.files.length) {
+      const files = document.createElement('div'); files.className = 'checkpoint-files';
+      for (const file of checkpoint.files.slice(0, 10)) {
+        const row = document.createElement('div'); row.className = 'checkpoint-file'; row.dir = 'ltr';
+        row.textContent = file.rel + '  +' + (file.added || 0) + ' −' + (file.removed || 0);
+        files.appendChild(row);
+      }
+      checkpointEl.appendChild(files);
+    }
+    if (!checkpoint.restorable && checkpoint.state !== 'open' && checkpoint.state !== 'restored') {
+      const expired = document.createElement('div'); expired.className = 'checkpoint-expired';
+      expired.textContent = 'metadata محفوظة للمقارنة؛ لقطة الاستعادة الذاكرية غير متاحة بعد إعادة التشغيل.';
+      checkpointEl.appendChild(expired);
+    }
+    renderVerification(checkpointEl, checkpoint.verification);
+    scrollDown();
+  }
+
+  function showVerification(result) {
+    if (checkpointEl && (!result.checkpoint_id || checkpointEl.querySelector('.checkpoint-head'))) {
+      renderVerification(checkpointEl, result);
+      scrollDown();
+      return;
+    }
+    addNotice((result.passed ? '✓ ' : '✗ ') + (result.summary || 'اكتمل التحقق'));
+  }
+
   // تنبيه يُدرج قبل عنصر معيّن في الخيط (تنبيهات حقن @ فوق بطاقة الرد لا في الذيل —
   // الدفعة 1.1)؛ beforeEl غير الموجود/المنزوع ⇐ إلحاق عادي بالذيل
   function addNoticeBefore(text, beforeEl) {
@@ -345,6 +455,10 @@ class SatrChat extends HTMLElement {
 
   function toolDetail(inp) {
     if (!inp) return '';
+    if (Array.isArray(inp.checks)) {
+      return inp.checks.slice(0, 6).map((check) => typeof check === 'string'
+        ? check : ((check && check.id ? check.id + ': ' : '') + ((check && check.command) || ''))).join(' · ');
+    }
     // م-4: أدوات المعاينة (نقر/كتابة) — يُظهر مربع الإذن العنصر المستهدف
     return inp.file_path || inp.path || inp.command || inp.pattern || inp.query || inp.url ||
       inp.selector || '';
@@ -722,6 +836,8 @@ class SatrChat extends HTMLElement {
   function reset() {
     taskLedgerEl = null;
     taskLedgerSession = null;
+    checkpointEl = null;
+    checkpointSession = null;
     totalCost = 0;
     $('costInfo').textContent = '';
     thread.innerHTML = '<div class="empty" id="empty"><div class="big">سطر</div><p>جلسة جديدة — اكتب طلبك الأول.</p></div>';
@@ -730,6 +846,8 @@ class SatrChat extends HTMLElement {
   function clearThread() {
     taskLedgerEl = null;
     taskLedgerSession = null;
+    checkpointEl = null;
+    checkpointSession = null;
     totalCost = 0;
     $('costInfo').textContent = '';
     thread.innerHTML = '';
@@ -744,6 +862,9 @@ class SatrChat extends HTMLElement {
     this.addHistoryAssistant = addHistoryAssistant;
     this.showTaskLedger = showTaskLedger;
     this.clearTaskLedger = clearTaskLedger;
+    this.showCheckpoint = showCheckpoint;
+    this.showVerification = showVerification;
+    this.clearCheckpoint = clearCheckpoint;
     this.newAssistantBlock = newAssistantBlock;
     this.reset = reset;
     this.clearThread = clearThread;

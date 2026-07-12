@@ -97,6 +97,7 @@
       sessionId = sid;
       $('sessionInfo').textContent = 'جلسة: ' + sid.slice(0, 8) + ' (مستأنفة)';
       loadTaskLedger(e, sid);
+      loadCheckpoint(e, sid);
     }
   }
   function modelsForEngine(engine) {
@@ -152,6 +153,7 @@
         ? ('جلسة: ' + sessionId.slice(0, 8) + ' (مستأنفة)')
         : 'لا جلسة';
       if (!sessionId) chatEl.clearTaskLedger();
+      if (!sessionId) chatEl.clearCheckpoint();
     }
     lastEngine = e;
   });
@@ -185,6 +187,15 @@
     } catch (e) { /* أفضل جهد: فشل ledger لا يمنع استئناف المحادثة */ }
   }
 
+  async function loadCheckpoint(engine, sid) {
+    if (!engine || !sid) { chatEl.clearCheckpoint(); return; }
+    try {
+      const checkpoint = await window.satr.checkpointLatest(engine, sid);
+      if (checkpoint && checkpoint.session_id === sid) chatEl.showCheckpoint(checkpoint);
+      else chatEl.clearCheckpoint();
+    } catch (e) { /* metadata checkpoint أفضل جهد ولا تمنع استئناف المحادثة */ }
+  }
+
   chatEl.addEventListener('task-action', async (event) => {
     const detail = event.detail || {};
     if (detail.action === 'pause' && busy) {
@@ -200,6 +211,31 @@
         ? '⏸ أُوقفت الخطة والدور الجاري — حالتها محفوظة'
         : '▶ استؤنفت الخطة — أرسل طلباً للمتابعة');
     } catch (e) { addNotice('تعذّر تغيير حالة سجل المهام'); }
+  });
+
+  chatEl.addEventListener('checkpoint-verify', async (event) => {
+    const detail = event.detail || {};
+    try {
+      const result = await window.satr.verifyCheckpoint(
+        detail.engine, detail.sessionId, detail.checkpointId, $('cwd').value.trim(), []);
+      if (!result || !result.ok) {
+        if (result && result.error === 'denied') addNotice('أُلغي تشغيل التحقق');
+        else if (result && result.error === 'notfound') addNotice('لا يوجد ملف .satr/verify.json في المشروع');
+        else addNotice('تعذّر تشغيل التحقق: ' + ((result && result.error) || 'خطأ غير معروف'));
+      }
+    } catch (e) { addNotice('تعذّر تشغيل التحقق'); }
+  });
+
+  chatEl.addEventListener('checkpoint-restore', async (event) => {
+    const detail = event.detail || {};
+    if (!confirm('استعادة هذا checkpoint ستعكس تعديلات الدور بالترتيب العكسي. هل تريد المتابعة؟')) return;
+    try {
+      const result = await window.satr.checkpointRestore(
+        detail.engine, detail.sessionId, detail.checkpointId, $('cwd').value.trim());
+      if (result && result.checkpoint) chatEl.showCheckpoint(result.checkpoint);
+      if (result && result.ok) addNotice('✓ استُعيد checkpoint بنجاح (' + result.restored.length + ' تعديلات)');
+      else addNotice('⚠ تعذّرت الاستعادة الكاملة: ' + ((result && result.error) || 'خطأ غير معروف'));
+    } catch (e) { addNotice('⚠ تعذّرت استعادة checkpoint'); }
   });
 
   // اسم المحرك المعروض في رأس الرد — يتبع المحرك المختار (لا يُنسب DeepSeek لـ Claude)
@@ -288,6 +324,14 @@
     }
     if (ev.type === 'task_update') {
       chatEl.showTaskLedger(ev);
+      return;
+    }
+    if (ev.type === 'checkpoint_update') {
+      chatEl.showCheckpoint(ev);
+      return;
+    }
+    if (ev.type === 'verification_result') {
+      chatEl.showVerification(ev);
       return;
     }
     const block = currentBlock;
@@ -639,6 +683,7 @@
     sessionCwd = $('cwd').value.trim();
     $('sessionInfo').textContent = 'جلسة: ' + c.id.slice(0, 8) + ' (مستأنفة)';
     loadTaskLedger(c.provider, c.id);
+    loadCheckpoint(c.provider, c.id);
     addNotice('📂 استؤنفت محادثة ' + label + ' — أرسل رسالتك للمتابعة');
     chatEl.scrollToEnd(true);
   }
@@ -655,6 +700,7 @@
     if (data.cwd) { $('cwd').value = data.cwd; localStorage.setItem('satr_cwd', data.cwd); }
     sessionCwd = $('cwd').value.trim(); // الجلسة المستأنفة مرتبطة بمجلدها هذا
     loadTaskLedger($('engine').value, s.id);
+    loadCheckpoint($('engine').value, s.id);
     if (data.total > data.messages.length)
       addNotice('عرض آخر ' + data.messages.length + ' من أصل ' + data.total + ' رسالة');
     for (const msg of data.messages) {
@@ -696,6 +742,7 @@
     sessionId = s.id; // الرسالة القادمة تُرسل بـ sessionId فيستأنفها thread/resume
     $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8) + ' (Codex مستأنفة)';
     loadTaskLedger('codex', s.id);
+    loadCheckpoint('codex', s.id);
     addNotice('📂 استؤنفت جلسة Codex — أرسل رسالتك للمتابعة');
     chatEl.scrollToEnd(true);
     input.focus();
