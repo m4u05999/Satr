@@ -23,6 +23,7 @@ const memory = require('./memory');
 const agentsList = require('./agents');
 const agent = require('./agent');
 const orchestrator = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
+const executor = require('./executor'); // عامل SDK واحد داخل worktree معزول — الخطوة 2
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const adapters = require('./adapters');
@@ -749,6 +750,27 @@ ipcMain.handle('satr:researchLatest', (event, payload) => {
   return { ok: true, run: orchestrator.latest(cwd) };
 });
 
+// ---------- عامل منفّذ واحد داخل worktree معزول (الأولوية 6 — الخطوة 2) ----------
+ipcMain.handle('satr:executionStart', async (event, payload) => {
+  const p = payload || {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  const task = cleanMemoryText(p.task, 4000);
+  if (!cwd || !task || p.confirmed !== true) return { ok: false, error: 'bad_input' };
+  return executor.start({ task }, cwd, emitToWindow);
+});
+
+ipcMain.handle('satr:executionStop', async (event, payload) => {
+  const p = payload || {};
+  if (!executor.SAFE_RUN_ID.test(p.runId || '')) return { ok: false, error: 'bad_input' };
+  return executor.stop(p.runId);
+});
+
+ipcMain.handle('satr:executionLatest', (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  return { ok: true, run: executor.latest(cwd) };
+});
+
 ipcMain.handle('satr:taskLedger', (event, payload) => {
   const p = payload || {};
   if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')) return null;
@@ -1010,12 +1032,13 @@ app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {
   stopAll();
   orchestrator.stopAll();
+  executor.stopAll();
   // إنهاء عمليات الخلفية المتتبَّعة كي لا تبقى خوادم تطوير بلا واجهة تديرها بعد الإغلاق
   bgprocs.killAll();
   term.killAll(); // صدفة الطرفية المدمجة تموت مع «سطر» (المرحلة 8)
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => { orchestrator.stopAll(); bgprocs.killAll(); term.killAll(); });
+app.on('before-quit', () => { orchestrator.stopAll(); executor.stopAll(); bgprocs.killAll(); term.killAll(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });

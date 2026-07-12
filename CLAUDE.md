@@ -44,6 +44,10 @@ electron/context.js  ← سياق المزوّدات العمياء: يحقن خ
                        رموز محلياً (heuristic) موسوماً estimate؛ usage الحقيقي يظلّ مقدّماً
 electron/orchestrator.js ← منسّق باحثين قراءة فقط (الأولوية 6/الخطوة 1): 1–3 أدوار SDK
                        متوازية بوضع plan، مهلة/إيقاف جماعي، خلاصات ومصادر وكلفة حية
+electron/worktrees.js ← دورة حياة git worktree مؤقت ومعزول من HEAD، بمسار منقّى
+                       تحت ~/.satr/worktrees وأوامر git بمصفوفة وسائط بلا shell
+electron/executor.js ← عامل SDK منفّذ واحد داخل worktree فقط، يجمع git diff ويحذف
+                       النسخة المؤقتة بلا commit أو merge
 electron/gitdiff.js  ← فروقات git للوحة «تغييرات المشروع» ± (الدفعة 4.7 — قراءة فقط):
                        git بمصفوفة وسائط بلا shell، status --porcelain -z (أسماء عربية
                        خام)، المعدَّل عبر تحليل git diff الموحّد (دقيق لأي حجم — سقف LCS
@@ -543,6 +547,28 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   الفريق. النقر على مصدر يفتح عارض الملف عند السطر إن وُجد.
 - **التحقق**: `npm run test:orchestrator` يغطي باحثاً واحداً، التوازي 3، فرض plan ورفض
   الإذن، المهلة، الإيقاف الجماعي، fail-closed لأحداث الكتابة ومنع الأدوات غير المقروءة.
+
+### عامل SDK منفّذ في worktree معزول (الأولوية 6 — الخطوة 2)
+
+- **دورة الحياة**: `electron/worktrees.js` يتحقق أن `cwd` مستودع Git ذو `HEAD`، ثم
+  ينشئ detached worktree من نفس الرأس تحت `~/.satr/worktrees`. كل أوامر Git عبر
+  `execFile` ومصفوفة وسائط بلا shell، والمسار يجب أن يبقى داخل جذر التخزين وخارج
+  المستودع الأصلي. تُرفض symlinks وsubmodules المتعقّبة قبل التنفيذ. `--force` محصور
+  في حذف worktree المؤقت المولّد داخلياً بعد التقاط الفرق؛ لا force على فرع المستخدم.
+- **التنفيذ المحصور**: `electron/executor.js` يستدعي `agent.start` صندوقاً أسود بوضع
+  `permissionMode:'acceptEdits'` و`cwd` مسار worktree. القائمة البيضاء `Read|Grep|Glob|Edit|Write|MultiEdit`
+  فقط؛ أي أداة تنفيذ/Git/متصفح/وكيل فرعي أو مسار خارجي يوقف الدور fail-closed. ميزانية
+  إذن الكتابة 30 وطلباً كحد أقصى، والمهلة 180ث (300ث سقفاً)، ويتوفر interrupt واحد.
+- **النتيجة بلا دمج**: بعد النهاية/المهلة/المقاطعة يقرأ المنفّذ `gitdiff.changes`، يحتفظ
+  بملخص الملفات/الأسطر وبيانات `file_edit` كنقطة مراجعة، ثم يحذف worktree. لا API للدمج
+  أو commit في هذه الخطوة، والنتيجة تصرّح دائماً `merged:false` و`merge_supported:false`. لم نشغّل
+  أوامر verify داخل العامل لأن هذه النسخة الصغرى تمنع exec كلياً.
+- **IPC والواجهة**: بدء `satr:executionStart {cwd,task,confirmed:true}` يتطلب تأكيداً صريحاً
+  وينقّي `cwd/task` في `main.js`؛ الإيقاف وآخر نتيجة عبر `satr:executionStop`/
+  `satr:executionLatest`. الحدث `execution_update` (schema v1) يغذّي لوحة `/تنفيذ-معزول`، وتعرض الحالة/
+  الكلفة/ميزانية الكتابة/الملخص/الفرق، ولا تقدّم زر دمج.
+- **التحقق**: `npm run test:worktrees` يغطي دورة الإنشاء/الفرق/الإزالة، عزل الكتابة
+  عن المستودع الأصلي، المهلة/المقاطعة، رفض المسار الخارجي، وغياب الدمج التلقائي.
 
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 
