@@ -430,6 +430,36 @@ async function screenshot() {
   } catch (e) { return { error: 'shot_failed' }; }
 }
 
+// لقطة عنصر واحد بـ ref/selector (البند 4): فحص بصري مركّز أرخص رموزاً من الصفحة كاملة.
+// يمرّر العنصر لنافذة العرض ثم يعيد مستطيله (إحداثيات viewport = DIP عند zoom=1) لـ capturePage.
+const RECT_FN = `function(loc){
+  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  var el; try { el = resolve(loc); } catch(e){ return {err:'bad_selector'}; }
+  if (!el) return {err:'not_found'};
+  try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
+  var r = el.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return {err:'not_visible'};
+  return {x: Math.max(0, Math.floor(r.left)), y: Math.max(0, Math.floor(r.top)), width: Math.ceil(r.width), height: Math.ceil(r.height)};
+}`;
+
+async function screenshotElement(locator) {
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const rect = await wc.executeJavaScript('(' + RECT_FN + ')(' + JSON.stringify(String(locator)) + ')', true);
+    if (!rect || rect.err) return { error: (rect && rect.err) || 'rect_failed' };
+    await new Promise((res) => setTimeout(res, 150)); // مهلة كي يكتمل التمرير قبل الالتقاط
+    const img = await wc.capturePage({
+      x: rect.x, y: rect.y,
+      width: Math.min(rect.width, 4000), height: Math.min(rect.height, 4000),
+    });
+    const png = img.toPNG();
+    if (!png || !png.length) return { error: 'empty' };
+    return { ok: true, base64: png.toString('base64') };
+  } catch (e) { return { error: 'shot_failed' }; }
+}
+
 // ---------- أدوات الفعل في المعاينة (م-4 + ترقية ref 2026-07-12 — خلف إذن إلزامي) ----------
 // الهدف (loc) إمّا **ref حتمي** من browser_snapshot (مثل e5 ⇒ [data-satr-ref="e5"]) أو
 // مُحدِّد CSS (تراجع للتوافق مع م-4). يُهرَّب بـ JSON.stringify — لا حقن.
@@ -612,4 +642,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, screenshot, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, screenshot, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, close, destroy, isHttpUrl };

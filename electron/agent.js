@@ -121,6 +121,7 @@ const BROWSER_AUTO_TOOLS = new Set([
   'mcp__satr-terminal__read_page',
   'mcp__satr-terminal__browser_console',
   'mcp__satr-terminal__screenshot',
+  'mcp__satr-terminal__browser_screenshot_element',
   'mcp__satr-terminal__browser_snapshot',
   'mcp__satr-terminal__browser_click',
   'mcp__satr-terminal__browser_type',
@@ -522,6 +523,25 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         return { content: [{ type: 'image', data: r.base64, mimeType: 'image/png' }] };
       }
     );
+    // أداة browser_screenshot_element (البند 4): لقطة بصرية لعنصر واحد بـ ref/selector —
+    // فحص مركّز أرخص رموزاً من لقطة الصفحة كاملة. قراءة فقط (رؤية — محرك SDK).
+    const shotElementTool = sdk.tool(
+      'browser_screenshot_element',
+      'التقط لقطة بصرية لعنصر واحد في الصفحة المعروضة (بـ ref من browser_snapshot أو ' +
+      'مُحدِّد CSS) لتفحص مظهره عن قرب — أوفر من لقطة الصفحة كاملة.',
+      { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل e6) أو مُحدِّد CSS') },
+      async (args) => {
+        const r = await preview.screenshotElement(String((args && args.ref) || ''));
+        if (!r || !r.ok) {
+          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.'
+            : r && r.error === 'not_visible' ? 'العنصر غير ظاهر (بلا أبعاد).'
+            : 'تعذّر التقاط اللقطة (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'image', data: r.base64, mimeType: 'image/png' }] };
+      }
+    );
     // أدوات الفعل (م-4 — خلف إذن إلزامي): browser_click + browser_type تمرّان بـ
     // canUseTool مثل Bash (مربع الإذن العربي كل مرة؛ لا تُضاف لـ alwaysAllowed)،
     // bypassPermissions وحده يعفيها. النقر/الكتابة على العرض القائم عبر preview.js.
@@ -706,7 +726,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, screenshotTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }
