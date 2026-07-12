@@ -105,8 +105,10 @@ jobs:
           $exe = Get-ChildItem dist -Filter *.exe -File | Select-Object -First 1
           if (-not $exe) { throw 'لم يُعثر على مثبّت exe في dist' }
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
+          # GitHub يستبدل الفراغات بشرطات في اسم الأصل المرفوع — نطابقه في الملاحظات.
+          $assetName = $exe.Name -replace ' ', '-'
           $lines = @(
-            "**المثبّت:** ``$($exe.Name)`` — حمّله من قسم **Assets** (بكلمة Setup، لا «Source code»).",
+            "**المثبّت:** ``$assetName`` — حمّله من قسم **Assets** (بكلمة Setup، لا «Source code»).",
             "",
             "**بصمة SHA-256** (للتحقق الاختياري من سلامة الملف):",
             "",
