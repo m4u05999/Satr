@@ -229,6 +229,8 @@ class SatrChat extends HTMLElement {
 
   let taskLedgerEl = null;
   let taskLedgerSession = null;
+  let taskLedgerCollapsed = true;
+  try { taskLedgerCollapsed = localStorage.getItem('satr_ledger_collapsed') !== '0'; } catch (e) {}
 
   function taskStateText(state) {
     if (state === 'paused') return 'متوقفة';
@@ -250,7 +252,7 @@ class SatrChat extends HTMLElement {
   }
 
   function showTaskLedger(ledger) {
-    if (!ledger || !Array.isArray(ledger.tasks) || !ledger.tasks.length) {
+    if (!ledger || !Array.isArray(ledger.tasks) || ledger.tasks.length < 3) {
       clearTaskLedger();
       return;
     }
@@ -263,14 +265,16 @@ class SatrChat extends HTMLElement {
       thread.prepend(taskLedgerEl);
     }
     taskLedgerEl.className = 'task-ledger state-' + ledger.state;
+    taskLedgerEl.classList.toggle('collapsed', taskLedgerCollapsed);
     taskLedgerEl.innerHTML = '';
 
     const completed = ledger.tasks.filter((task) => task.status === 'completed').length;
     const head = document.createElement('div'); head.className = 'task-ledger-head';
     const title = document.createElement('div'); title.className = 'task-ledger-title'; title.textContent = 'سجل المهام';
-    const progressText = document.createElement('span'); progressText.className = 'task-ledger-progress-text';
-    progressText.textContent = completed + ' من ' + ledger.tasks.length + ' · ' + taskStateText(ledger.state);
-    head.appendChild(title); head.appendChild(progressText);
+    const progressText = document.createElement('span'); progressText.className = 'task-ledger-progress-text'; progressText.dir = 'ltr';
+    progressText.textContent = completed + '/' + ledger.tasks.length;
+    const stateText = document.createElement('span'); stateText.className = 'task-ledger-state'; stateText.textContent = taskStateText(ledger.state);
+    head.appendChild(title); head.appendChild(progressText); head.appendChild(stateText);
 
     const actions = document.createElement('div'); actions.className = 'task-ledger-actions';
     if (ledger.state !== 'completed') {
@@ -283,6 +287,22 @@ class SatrChat extends HTMLElement {
       actions.appendChild(action);
     }
     head.appendChild(actions);
+
+    const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'task-ledger-toggle';
+    const syncToggle = () => {
+      toggle.textContent = taskLedgerCollapsed ? '▸' : '▾';
+      toggle.title = taskLedgerCollapsed ? 'توسيع سجل المهام' : 'طي سجل المهام';
+      toggle.setAttribute('aria-label', toggle.title);
+      toggle.setAttribute('aria-expanded', String(!taskLedgerCollapsed));
+    };
+    syncToggle();
+    toggle.addEventListener('click', () => {
+      taskLedgerCollapsed = !taskLedgerCollapsed;
+      taskLedgerEl.classList.toggle('collapsed', taskLedgerCollapsed);
+      syncToggle();
+      try { localStorage.setItem('satr_ledger_collapsed', taskLedgerCollapsed ? '1' : '0'); } catch (e) {}
+    });
+    head.appendChild(toggle);
 
     const track = document.createElement('div'); track.className = 'task-progress-track';
     const fill = document.createElement('div'); fill.className = 'task-progress-fill';
