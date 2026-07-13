@@ -23,24 +23,77 @@ const memory = require('./memory');
 const opsroom = require('./opsroom');
 const agentsList = require('./agents');
 const agent = require('./agent');
-const orchestrator = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
+const orchestratorModule = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
 const executorModule = require('./executor'); // نواة عامل محايدة عن المحرك داخل worktree — الخطوة 2
 const executionTeamModule = require('./executionteam'); // 1–3 عوامل بملكية ملفات — الخطوة 3
-const reviewer = require('./reviewer'); // مراجع فرق قراءة فقط — الخطوة 4
+const reviewerModule = require('./reviewer'); // مراجع فرق قراءة فقط — الخطوة 4
 const integration = require('./integration'); // تحقق تكاملي داخل worktree مستقل — المرحلة 5
 const merger = require('./merger'); // تطبيق patch بعد المراجعة والتحقق والموافقة — المرحلة 5
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const adapters = require('./adapters');
+const SAFE_MODEL = /^[A-Za-z0-9.-]{1,64}$/;
+
+// سياسة نماذج غرفة العمليات تُحل في الطبقة العليا فقط، منفصلة عن اختيار الدردشة.
+// لا تصل قيم البيئة إلى renderer ولا تقرؤها النوى المحايدة عن المحرك.
+function resolveOpsRoomModel(engine, env = process.env, codexDefaultModel = codex.DEFAULT_MODEL) {
+  const config = engine === 'sdk'
+    ? { defaultModel: 'claude-opus-4-8', envName: 'SATR_OPSROOM_CLAUDE_MODEL', label: 'Claude' }
+    : engine === 'codex'
+      ? { defaultModel: codexDefaultModel, envName: 'SATR_OPSROOM_CODEX_MODEL', label: 'Codex' }
+      : null;
+  if (!config) return { ok: false, error: 'ops_model_invalid', engine, envName: '' };
+  const override = env && typeof env[config.envName] === 'string' ? env[config.envName] : '';
+  const model = override || config.defaultModel;
+  if (!SAFE_MODEL.test(model)) {
+    return { ok: false, error: 'ops_model_invalid', engine, envName: config.envName, label: config.label };
+  }
+  return { ok: true, engine, model, source: override ? 'env' : 'default', envName: config.envName };
+}
+
+function preflightOpsRoomModels(engines, env = process.env, codexDefaultModel = codex.DEFAULT_MODEL) {
+  const models = {};
+  for (const engine of [...new Set(Array.isArray(engines) ? engines : [])]) {
+    const resolved = resolveOpsRoomModel(engine, env, codexDefaultModel);
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        error: 'ops_model_invalid',
+        message: 'نموذج غرفة العمليات لمحرك ' + (resolved.label || engine || 'غير معروف')
+          + ' غير صالح. صحّح ' + (resolved.envName || 'إعداد النموذج') + ' ثم أعد تشغيل «سطر».',
+      };
+    }
+    models[engine] = resolved.model;
+  }
+  return { ok: true, models };
+}
+
+function resolveOpsRoomRunner(engine) {
+  const resolved = resolveOpsRoomModel(engine);
+  if (!resolved.ok) return null;
+  if (engine === 'sdk') {
+    return { engine, model: resolved.model, start: (input, cwd, emit) => agent.start(input, cwd, emit) };
+  }
+  if (engine === 'codex') {
+    return { engine, model: resolved.model, start: (input, cwd, emit) => codex.start(input, cwd, emit) };
+  }
+  return null;
+}
 
 // المرحلة 2 من غرفة العمليات: المحرك الحالي يُحقن صراحةً في النواة المحايدة.
 // إدخال Codex للمنفّذ مؤجل حتى ينجح probe العزل في المرحلة 3A.
 const sdkExecutionRunner = Object.freeze({
   engine: 'sdk',
+  get model() {
+    const resolved = resolveOpsRoomModel('sdk');
+    return resolved.ok ? resolved.model : null;
+  },
   start: (input, cwd, emit) => agent.start(input, cwd, emit),
 });
 const executor = executorModule.create({ runner: sdkExecutionRunner });
 const executionTeam = executionTeamModule.create({ runner: sdkExecutionRunner });
+const orchestrator = orchestratorModule.create({ resolveEngine: resolveOpsRoomRunner });
+const reviewer = reviewerModule.create({ resolveEngine: resolveOpsRoomRunner });
 const inject = require('./inject');
 const chats = require('./chats');
 const agentTools = require('./tools'); // أدوات المحوّلات (2.1/2.2) — للتراجع عن تعديلاتها
@@ -69,7 +122,7 @@ function reviewEngineAvailable(engine) {
 }
 
 function unavailableReviewEngines(producerEngines) {
-  const required = reviewer.requiredReviewEngines(producerEngines);
+  const required = reviewerModule.requiredReviewEngines(producerEngines);
   const engines = required ? [...new Set([...producerEngines, ...required])] : ['invalid'];
   return engines.filter((engine) => !reviewEngineAvailable(engine));
 }
@@ -263,7 +316,6 @@ ipcMain.handle('satr:pickFolder', async () => {
 // ---------- إرسال طلب إلى Claude Code ----------
 
 const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
-const SAFE_MODEL = /^[A-Za-z0-9.-]{1,64}$/;
 const SAFE_SKILL = /^[A-Za-z0-9_:.-]{1,64}$/; // اسم مهارة أو plugin:skill
 // وضع الأذونات + بوابة auto (الموجة 4) — المنطق النقي في autogate.js (قابل للاختبار
 // مستقلاً). PERMISSION_MODES يشمل 'auto'؛ nonSdkPerm يُسقط auto لـ default لغير SDK.
@@ -862,12 +914,14 @@ ipcMain.handle('satr:researchStart', (event, payload) => {
   if (!cwd || !question || !Number.isInteger(p.count) || p.count < 1 || p.count > 3) {
     return { ok: false, error: 'bad_input' };
   }
+  const modelCheck = preflightOpsRoomModels(['sdk']);
+  if (!modelCheck.ok) return modelCheck;
   return orchestrator.start({ question, count: p.count, engine: 'sdk' }, cwd, emitToWindow);
 });
 
 ipcMain.handle('satr:researchStop', (event, payload) => {
   const p = payload || {};
-  if (!orchestrator.SAFE_RUN_ID.test(p.runId || '')) return { ok: false, error: 'bad_input' };
+  if (!orchestratorModule.SAFE_RUN_ID.test(p.runId || '')) return { ok: false, error: 'bad_input' };
   return orchestrator.stop(p.runId);
 });
 
@@ -883,6 +937,8 @@ ipcMain.handle('satr:executionStart', async (event, payload) => {
   const cwd = sanitizeMemoryCwd(p.cwd);
   const task = cleanMemoryText(p.task, 4000);
   if (!cwd || !task || p.confirmed !== true) return { ok: false, error: 'bad_input' };
+  const modelCheck = preflightOpsRoomModels(['sdk']);
+  if (!modelCheck.ok) return modelCheck;
   return executor.start({ task }, cwd, emitToWindow);
 });
 
@@ -925,6 +981,8 @@ ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
     if (!task || !ownership) return { ok: false, error: 'bad_input' };
     agents.push({ task, ownership });
   }
+  const modelCheck = preflightOpsRoomModels(mode === 'mergeable' ? ['sdk', 'codex'] : ['sdk']);
+  if (!modelCheck.ok) return modelCheck;
   if (mode === 'mergeable') {
     const configured = await integration.preflight(cwd);
     if (!configured.ok) return configured;
@@ -965,6 +1023,8 @@ ipcMain.handle('satr:executionReviewStart', (event, payload) => {
   if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '')) return { ok: false, error: 'bad_input' };
   const artifact = executionTeam.artifact(p.teamId);
   if (!artifact || !opsroom.SAFE_ROOM_ID.test(artifact.room_id || '')) return { ok: false, error: 'not_available' };
+  const modelCheck = preflightOpsRoomModels(reviewerModule.requiredReviewEngines(artifact.producer_engines));
+  if (!modelCheck.ok) return modelCheck;
   return reviewer.start({
     teamId: p.teamId,
     artifactId: artifact.artifact_id,
@@ -976,7 +1036,7 @@ ipcMain.handle('satr:executionReviewStart', (event, payload) => {
 
 ipcMain.handle('satr:executionReviewStop', async (event, payload) => {
   const p = payload || {};
-  if (!reviewer.SAFE_REVIEW_ID.test(p.reviewId || '')) return { ok: false, error: 'bad_input' };
+  if (!reviewerModule.SAFE_REVIEW_ID.test(p.reviewId || '')) return { ok: false, error: 'bad_input' };
   return reviewer.stop(p.reviewId);
 });
 
@@ -988,12 +1048,12 @@ ipcMain.handle('satr:executionReviewLatest', (event, payload) => {
 
 ipcMain.handle('satr:executionVerificationPrepare', async (event, payload) => {
   const p = payload || {};
-  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewer.SAFE_REVIEW_ID.test(p.reviewId || '')) {
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewerModule.SAFE_REVIEW_ID.test(p.reviewId || '')) {
     return { ok: false, error: 'bad_input' };
   }
   const review = reviewer.latest(p.teamId);
   const artifact = executionTeam.artifact(p.teamId);
-  const reviewed = reviewer.mergeGate(review, artifact, p.reviewId);
+  const reviewed = reviewerModule.mergeGate(review, artifact, p.reviewId);
   if (!reviewed.ok) return reviewed;
   const prepared = await integration.prepare(artifact);
   if (prepared.verification) {
@@ -1007,13 +1067,13 @@ ipcMain.handle('satr:executionVerificationPrepare', async (event, payload) => {
 
 ipcMain.handle('satr:executionVerificationRun', async (event, payload) => {
   const p = payload || {};
-  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewer.SAFE_REVIEW_ID.test(p.reviewId || '')
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewerModule.SAFE_REVIEW_ID.test(p.reviewId || '')
     || !integration.SAFE_ARTIFACT_ID.test(p.artifactId || '') || p.confirmed !== true) {
     return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
   }
   const review = reviewer.latest(p.teamId);
   const artifact = executionTeam.artifact(p.teamId);
-  const reviewed = reviewer.mergeGate(review, artifact, p.reviewId);
+  const reviewed = reviewerModule.mergeGate(review, artifact, p.reviewId);
   if (!reviewed.ok) return reviewed;
   if (!artifact || artifact.artifact_id !== p.artifactId) return { ok: false, error: 'verification_artifact_mismatch' };
   const result = await integration.run(artifact, true, (obj) => emitOpsVerification(artifact.room_id, p.teamId, obj));
@@ -1036,12 +1096,12 @@ ipcMain.handle('satr:executionVerificationLatest', (event, payload) => {
 
 ipcMain.handle('satr:executionMerge', async (event, payload) => {
   const p = payload || {};
-  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewer.SAFE_REVIEW_ID.test(p.reviewId || '') || p.confirmed !== true) {
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewerModule.SAFE_REVIEW_ID.test(p.reviewId || '') || p.confirmed !== true) {
     return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
   }
   const review = reviewer.latest(p.teamId);
   const artifact = executionTeam.artifact(p.teamId);
-  const gate = reviewer.mergeGate(review, artifact, p.reviewId);
+  const gate = reviewerModule.mergeGate(review, artifact, p.reviewId);
   if (!gate.ok) return gate;
   const verification = artifact ? integration.latest(artifact.artifact_id) : null;
   const verified = integration.gate(artifact, verification);

@@ -249,7 +249,7 @@ function create(options) {
         prompt: researchPrompt(run.question, worker._lens, worker._index, run.workers.length),
         images: [],
         sessionId: null,
-        model: null,
+        model: cleanText(runner && runner.model, 64) || null,
         permissionMode: 'plan',
         skills: [],
         effort: 'low',

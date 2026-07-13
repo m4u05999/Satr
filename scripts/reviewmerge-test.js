@@ -57,6 +57,7 @@ function reviewRunner(engine, stats, options) {
   const settings = options || {};
   return {
     engine,
+    model: settings.model || engine + '-review-model',
     start(input, cwd, emit) {
       stats.calls.push({ input, cwd, parentEntries: fs.readdirSync(path.dirname(cwd)) });
       let stopped = false;
@@ -183,6 +184,7 @@ async function main() {
       for (const engine of matrix.required) {
         const call = stats[engine].calls[0];
         assert.strictEqual(call.input.permissionMode, 'plan');
+        assert.strictEqual(call.input.model, engine + '-review-model');
         assert.strictEqual(call.input.browserControl, false);
         assert.deepStrictEqual(call.input.images, []);
         assert.deepStrictEqual(call.input.skills, []);
@@ -335,7 +337,7 @@ async function main() {
     assert(mainSource.includes("const unavailable = unavailableReviewEngines(['sdk'])"));
     assert(mainSource.includes('artifactId: artifact.artifact_id'));
     assert(mainSource.includes('producerEngines: artifact.producer_engines'));
-    assert(mainSource.includes('reviewer.mergeGate(review, artifact, p.reviewId)'));
+    assert(mainSource.includes('reviewerModule.mergeGate(review, artifact, p.reviewId)'));
     assert(mainSource.includes('integration.gate(artifact, verification)'));
     assert(codexSource.includes('if (browserControl !== false) try'));
     assert(codexSource.includes("const DEFAULT_MODEL = 'gpt-5.6-sol'"));

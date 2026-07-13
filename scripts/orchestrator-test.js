@@ -5,6 +5,7 @@ const assert = require('assert');
 const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 
 const orchestrator = require('../electron/orchestrator');
 
@@ -26,6 +27,7 @@ function makeRunner(options) {
   const stats = { inputs: [], decisions: [], active: 0, maxActive: 0, stops: 0 };
   return {
     stats,
+    model: settings.model || null,
     start(input, cwd, emit) {
       stats.inputs.push(input);
       stats.active++;
@@ -78,7 +80,36 @@ async function main() {
   const project = path.join(temp, 'project');
   await fsp.mkdir(path.join(project, 'src'), { recursive: true });
   try {
-    const singleRunner = makeRunner();
+    const mainSource = await fsp.readFile(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+    const policyStart = mainSource.indexOf('function resolveOpsRoomModel(');
+    const policyEnd = mainSource.indexOf('\nfunction resolveOpsRoomRunner(', policyStart);
+    assert(policyStart > 0 && policyEnd > policyStart, 'تعذّر العثور على سياسة نماذج غرفة العمليات في main.js');
+    const policy = vm.runInNewContext(
+      '(() => {' + mainSource.slice(policyStart, policyEnd) + '; return { resolveOpsRoomModel, preflightOpsRoomModels }; })()',
+      { SAFE_MODEL: /^[A-Za-z0-9.-]{1,64}$/, process: { env: {} }, codex: { DEFAULT_MODEL: 'gpt-5.6-sol' } },
+    );
+    assert.strictEqual(policy.resolveOpsRoomModel('sdk', {}, 'codex-default').model, 'claude-opus-4-8');
+    assert.strictEqual(policy.resolveOpsRoomModel('codex', {}, 'codex-default').model, 'codex-default');
+    const overridden = policy.preflightOpsRoomModels(['sdk', 'codex'], {
+      SATR_OPSROOM_CLAUDE_MODEL: 'claude-override', SATR_OPSROOM_CODEX_MODEL: 'codex-override',
+    }, 'codex-default');
+    assert.strictEqual(overridden.ok, true);
+    assert.strictEqual(overridden.models.sdk, 'claude-override');
+    assert.strictEqual(overridden.models.codex, 'codex-override');
+    const invalid = policy.preflightOpsRoomModels(['sdk'], { SATR_OPSROOM_CLAUDE_MODEL: '../bad model' }, 'codex-default');
+    assert.strictEqual(invalid.ok, false);
+    assert.strictEqual(invalid.error, 'ops_model_invalid');
+    assert(invalid.message.includes('SATR_OPSROOM_CLAUDE_MODEL'));
+    assert(!invalid.message.includes('../bad model'));
+    assert(mainSource.includes("preflightOpsRoomModels(mode === 'mergeable' ? ['sdk', 'codex'] : ['sdk'])"));
+    assert(mainSource.includes('preflightOpsRoomModels(reviewerModule.requiredReviewEngines(artifact.producer_engines))'));
+    const rendererSources = await Promise.all([
+      fsp.readFile(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8'),
+      fsp.readFile(path.join(__dirname, '..', 'src', 'ui', 'components', 'ops-room.js'), 'utf8'),
+    ]);
+    assert(rendererSources.every((source) => !source.includes('SATR_OPSROOM_CLAUDE_MODEL') && !source.includes('SATR_OPSROOM_CODEX_MODEL')));
+
+    const singleRunner = makeRunner({ model: 'sdk-research-model' });
     const singleEvents = [];
     const single = orchestrator.create({ resolveEngine: () => singleRunner, timeoutMs: 500 });
     const startedSingle = single.start({ question: 'أين منطق الدليل؟', count: 1, engine: 'sdk' }, project,
@@ -97,6 +128,7 @@ async function main() {
     assert.strictEqual(singleDone.cost.estimate, true);
     assert(singleEvents.some((event) => event.type === 'research_update'));
     assert(singleRunner.stats.inputs.every((input) => input.permissionMode === 'plan'));
+    assert(singleRunner.stats.inputs.every((input) => input.model === 'sdk-research-model'));
     assert(singleRunner.stats.inputs.every((input) => input.browserControl === false && input.skills.length === 0));
     assert(singleRunner.stats.decisions.length > 0 && singleRunner.stats.decisions.every((item) => item.allow === false));
     assert.strictEqual(single.latest(path.join(temp, 'other-project')), null);
@@ -162,6 +194,7 @@ async function main() {
     console.log('✓ collective stop interrupts every researcher');
     console.log('✓ unexpected write events fail closed');
     console.log('✓ non-read tools and nested agents fail closed');
+    console.log('✓ per-engine ops models use isolated defaults/overrides and invalid values fail before launch');
   } finally {
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }

@@ -310,7 +310,7 @@ function create(options) {
 
       const handle = await runner.start({
         prompt,
-        images: [], sessionId: null, model: null,
+        images: [], sessionId: null, model: cleanText(runner && runner.model, 64) || null,
         permissionMode: 'plan', skills: [], effort: 'medium', extraDirs: [], browserControl: false,
       }, cwd, onEvent);
       review._handle = handle;

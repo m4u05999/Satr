@@ -395,7 +395,7 @@ function create(options) {
       prompt: promptFor(task, ownership),
       images: [],
       sessionId: null,
-      model: null,
+      model: cleanText(runner && runner.model, 64) || null,
       permissionMode: 'acceptEdits',
       skills: [],
       effort: 'medium',

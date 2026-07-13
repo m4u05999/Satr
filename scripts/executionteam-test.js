@@ -48,6 +48,7 @@ async function makeRepo(root) {
 function parallelRunner(stats) {
   return {
     engine: 'sdk-test',
+    model: 'claude-executor-model',
     start(input, cwd, emit) {
       const index = stats.calls.length;
       const owned = String(input.prompt || '').match(/src\/([abc]\.js)/);
@@ -163,6 +164,7 @@ async function main() {
       return snapshot && snapshot.state === 'completed' ? snapshot : null;
     }, 8000, 'parallel completion');
     assert.strictEqual(stats.calls.length, 3);
+    assert(stats.calls.every((call) => call.input.model === 'claude-executor-model'));
     assert.strictEqual(stats.maxActive, 3);
     assert.strictEqual(new Set(stats.calls.map((call) => call.cwd)).size, 3);
     assert.strictEqual(completed.agents.length, 3);
