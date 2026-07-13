@@ -22,6 +22,7 @@
     "test:integration": "node scripts/integration-test.js",
     "test:opsroom": "node scripts/opsroom-test.js",
     "test:opsroom-ui": "node scripts/opsroom-ui-test.js",
+    "test:xterm-csp": "electron scripts/xterm-csp-test.js",
     "test:codex-executor-probe": "node scripts/codex-executor-probe.js",
     "test:codexmcp": "node scripts/codexmcp-test.js",
     "test:autogate": "node scripts/autogate.test.js",
