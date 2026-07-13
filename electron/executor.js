@@ -16,6 +16,7 @@ const MAX_SUMMARY_CHARS = 12000;
 const DEFAULT_TIMEOUT_MS = 180000;
 const MAX_TIMEOUT_MS = 300000;
 const MAX_WRITE_PERMISSIONS = 30;
+const MAX_MALFORMED_TOOLS = 3; // سقف محاولات أداة مسموحة بمدخل JSON معطوب قبل الفشل (منع loop)
 const MAX_OWNERSHIP_PATTERNS = 16;
 const MAX_PATTERN_CHARS = 256;
 const SAFE_ENGINE_LABEL = /^[a-z][a-z0-9-]{0,31}$/;
@@ -153,10 +154,31 @@ function create(options) {
     return path.isAbsolute(value) ? path.resolve(value) : path.resolve(run._worktreePath, value);
   }
 
+  // وسم SDK الصريح لمدخل فشل تحليله: input بمفتاح وحيد __unparsedToolInput قيمته
+  // {raw:string, len:number}. الحصر بـsdk والبنية الدقيقة يمنعان محركاً آخر، أو مدخلاً يجمع
+  // الوسم مع حقل قابل للتنفيذ (file_path)، من التسلل بوصفه «معطوباً» متجاوزاً فحص المسار.
+  function isSdkUnparsedMarker(run, input) {
+    if (run.engine !== 'sdk') return false;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+    const keys = Object.keys(input);
+    if (keys.length !== 1 || keys[0] !== '__unparsedToolInput') return false;
+    const marker = input.__unparsedToolInput;
+    if (!marker || typeof marker !== 'object') return false;
+    const mk = Object.keys(marker);
+    return mk.length === 2 && typeof marker.raw === 'string' && typeof marker.len === 'number';
+  }
+
   function allowedTool(run, name, input) {
     const normalized = String(name || '').toLowerCase();
     if (!READ_TOOLS.has(normalized) && !EDIT_TOOLS.has(normalized)) return { ok: false, error: 'forbidden_tool' };
     const wanted = candidatePath(run, input);
+    // مدخل لم يحلّله SDK (علامة __unparsedToolInput الصريحة ⇒ InputValidationError، الأداة لن
+    // تُنفَّذ): ليس خرق عزل، لكن نُبقيه ok:false (fail-closed بنيوياً) مع علامة malformed؛
+    // onAssistant وحده يتسامح معه ضمن ميزانية متتالية ليعيد النموذج التصحيح. غياب المسار وحده لا
+    // يكفي علامةً — قد ينفّذه محرك بحقلٍ لا يعرفه executor، فيبقى fail-closed أدناه.
+    if (isSdkUnparsedMarker(run, input)) {
+      return { ok: false, malformed: true, error: 'malformed_input' };
+    }
     if ((normalized === 'grep' || normalized === 'glob') && !wanted) return { ok: true, tier: 'read', path: run._worktreePath };
     const insideWorktree = wanted && (path.resolve(wanted) === path.resolve(run._worktreePath) || manager.contains(run._worktreeId, wanted));
     if (!insideWorktree) return { ok: false, error: 'outside' };
@@ -239,7 +261,15 @@ function create(options) {
         if (text) run._texts.push(text);
       } else if (block.type === 'tool_use') {
         const allowed = allowedTool(run, block.name, block.input);
+        if (allowed.malformed) {
+          run._malformed = (run._malformed || 0) + 1;
+          if (run._malformed > MAX_MALFORMED_TOOLS) {
+            return { ok: false, error: 'malformed_tool_budget: ' + String(block.name || 'unknown') };
+          }
+          continue;
+        }
         if (!allowed.ok) return { ok: false, error: allowed.error + ': ' + String(block.name || 'unknown') };
+        if (block.id) (run._okIds || (run._okIds = new Set())).add(block.id); // تُصفّر الميزانية عند نجاح تنفيذها الفعلي
       }
     }
     return { ok: true };
@@ -315,6 +345,14 @@ function create(options) {
         const checked = onAssistant(run, event);
         if (!checked.ok) {
           stopThenFinish(run, 'failed', 'أوقف المنفّذ أداة أو مساراً غير مسموح: ' + checked.error);
+        }
+      } else if (event.type === 'user') {
+        const rblocks = event.message && Array.isArray(event.message.content) ? event.message.content : [];
+        for (const rb of rblocks) {
+          if (rb && rb.type === 'tool_result' && rb.is_error !== true && run._okIds && run._okIds.has(rb.tool_use_id)) {
+            run._malformed = 0; // تصفير الميزانية فقط عند نجاح تنفيذ أداة مسموحة فعلياً (لا مجرد قبول مسارها)
+            run._okIds.delete(rb.tool_use_id); // استهلاك المعرّف مرة واحدة (منع تراكمه وإعادة استخدامه)
+          }
         }
       } else if (event.type === 'file_edit') {
         const relative = cleanText(event.rel, 512).replace(/\\/g, '/');

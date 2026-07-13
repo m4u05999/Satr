@@ -86,6 +86,59 @@ function hangingRunner(stats) {
   };
 }
 
+// علامة المدخل المعطوب الصريحة كما يصدرها Claude Code: مفتاح وحيد __unparsedToolInput قيمته
+// {raw:string, len:number}.
+const UNPARSED = { __unparsedToolInput: { raw: '{"file_path": "x", "offset": 1,, "limit": 5}', len: 44 } };
+
+// runner مبرمَج (محرك sdk ليُفعَّل وسم SDK). أنواع الكتل:
+//  { name, input }                 ⇒ tool_use فقط
+//  { name, input, error }          ⇒ tool_use ثم tool_result is_error:true (نُفّذ وفشل)
+//  { readFail: rel }               ⇒ Read بمسار داخلي صالح + tool_result is_error:true
+//  { write: rel }                  ⇒ Edit صالح + file_edit + tool_result is_error:false
+//  { permission, name, input, id } ⇒ permission_request
+function scriptedRunner(stats, blocks) {
+  return {
+    engine: 'sdk',
+    start(input, cwd, emit) {
+      stats.inputs.push({ input, cwd });
+      let stopped = false;
+      let seq = 0;
+      const handle = {
+        resolvePermission(id, allow) { stats.permissions.push({ id, allow }); return true; },
+        stop() { if (!stopped) { stopped = true; stats.stops++; } return Promise.resolve(); },
+      };
+      const toolResult = (id, isError) => emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError }] } });
+      setTimeout(() => {
+        for (const b of blocks) {
+          if (stopped) return;
+          if (b.permission) {
+            emit({ type: 'permission_request', id: b.id || 'perm-1', tool: b.name, input: b.input });
+          } else if (b.write) {
+            const id = 'tu-' + (seq++);
+            const target = path.join(cwd, b.write);
+            emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Edit', input: { file_path: target } }] } });
+            fs.writeFileSync(target, 'export const value = 3;\n', 'utf8');
+            emit({ type: 'file_edit', id: 'edit-' + id, rel: b.write, added: 1, removed: 1 });
+            toolResult(id, false);
+          } else if (b.readFail) {
+            const id = 'tu-' + (seq++);
+            emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: path.join(cwd, b.readFail) } }] } });
+            toolResult(id, true);
+          } else {
+            const id = 'tu-' + (seq++);
+            emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: b.name, input: b.input }] } });
+            if (b.error) toolResult(id, true);
+          }
+        }
+        if (stopped) return;
+        emit({ type: 'result', total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 4 } });
+        emit({ type: 'proc_done', code: 0 });
+      }, 20);
+      return handle;
+    },
+  };
+}
+
 async function main() {
   const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'satr-worktrees-test-'));
   const project = await makeRepo(temp);
@@ -224,6 +277,68 @@ async function main() {
     assert.strictEqual(outsideStats.stops, 1);
     assert.strictEqual(await fsp.readFile(path.join(project, 'src', 'app.js'), 'utf8'), 'export const value = 1;\n');
 
+    // إصلاح صفر (بعد مراجعة cross-engine): تحمّل مدخل أداة معطوب بعلامة SDK الصريحة فقط،
+    // مع إبقاء كل ما عداه fail-closed.
+    let malSeq = 0;
+    const runScript = async (label, blocks) => {
+      const stats = { inputs: [], permissions: [], stops: 0 };
+      const mgr = worktrees.createManager({ root: path.join(temp, 'store-mal-' + (malSeq++)) });
+      managers.push(mgr);
+      const ex = executorModule.create({ worktrees: mgr, runner: scriptedRunner(stats, blocks), timeoutMs: 1000 });
+      await ex.start({ task: label }, project, () => {});
+      return { ex, stats };
+    };
+    const waitState = (ex, state) => waitFor(() => { const r = ex.latest(project); return r && r.state === state ? r : null; }, 3000);
+
+    // (أ) علامة معطوبة صريحة ×3 ثم أداة صالحة ⇒ العامل يكمل، والمصدر الأصلي محفوظ (عزل)
+    const mA = await runScript('علامة معطوبة ثم صالحة', [
+      { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { write: 'src/app.js' },
+    ]);
+    assert(await waitState(mA.ex, 'completed'), 'المدخل المعطوب الصريح ضمن الميزانية يجب ألا يوقف العامل');
+    assert.strictEqual(await fsp.readFile(path.join(project, 'src', 'app.js'), 'utf8'), 'export const value = 1;\n');
+
+    // (ب) الحد الدقيق: الرابعة المتتالية تفشل مغلقاً (منع loop)
+    const mB = await runScript('معطوب متكرر', [
+      { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED },
+    ]);
+    assert((await waitState(mB.ex, 'failed')).error.includes('malformed_tool_budget'), 'الرابعة المتتالية يجب أن تفشل مغلقاً');
+
+    // (ج) مدخل بلا علامة صريحة (schema مجهولة/بلا مسار) يبقى fail-closed لا malformed
+    const mC = await runScript('بلا علامة', [{ name: 'Read', input: {} }]);
+    assert((await waitState(mC.ex, 'failed')).error.includes('غير مسموح'), 'المدخل بلا علامة صريحة يبقى fail-closed');
+
+    // (د) أداة محظورة بعلامة معطوبة تبقى forbidden (fail-closed)
+    const mD = await runScript('محظور بعلامة', [{ name: 'Bash', input: UNPARSED }]);
+    assert((await waitState(mD.ex, 'failed')).error.includes('forbidden_tool'), 'المحظور بعلامة يبقى fail-closed');
+
+    // (هـ) العدّاد متتالي: أداة صالحة تصفّره فلا يتراكم المعطوب المتباعد
+    const mE = await runScript('معطوب متباعد بصالح', [
+      { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { write: 'src/app.js' },
+      { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { write: 'src/app.js' },
+    ]);
+    assert(await waitState(mE.ex, 'completed'), 'أداة صالحة تصفّر عدّاد المعطوب المتتالي');
+
+    // (و) permission_request بعلامة معطوبة يُرفض بلا استهلاك ميزانية كتابة
+    const mF = await runScript('إذن بعلامة معطوبة', [{ permission: true, name: 'Edit', input: UNPARSED, id: 'perm-mal' }]);
+    const mFDone = await waitState(mF.ex, 'completed');
+    const permReply = mF.stats.permissions.find((p) => p.id === 'perm-mal');
+    assert(permReply && permReply.allow === false, 'الإذن المعطوب يُرفض');
+    assert.strictEqual(mFDone.permissions.write_used, 0, 'الإذن المعطوب لا يستهلك ميزانية كتابة');
+
+    // (ز) أداة مسارها صالح لكن تنفيذها يفشل (is_error) لا تصفّر العدّاد ⇒ الرابع يبلغ الحد
+    const mG = await runScript('صالح مساراً يفشل تنفيذاً', [
+      { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED },
+      { readFail: 'src/app.js' },
+      { name: 'Read', input: UNPARSED },
+    ]);
+    assert((await waitState(mG.ex, 'failed')).error.includes('malformed_tool_budget'), 'أداة فاشلة التنفيذ يجب ألا تصفّر عدّاد المعطوب');
+
+    // (ح) وسم مقترن بحقل file_path قابل للتنفيذ ⇒ ليس وسماً نقياً ⇒ fail-closed (مسار خارجي)
+    const mH = await runScript('وسم مع مسار خارجي', [
+      { name: 'Read', input: { __unparsedToolInput: { raw: 'x', len: 1 }, file_path: path.join(temp, 'outside.txt') } },
+    ]);
+    assert((await waitState(mH.ex, 'failed')).error.includes('غير مسموح'), 'الوسم المقترن بمسار قابل للتنفيذ يبقى fail-closed');
+
     console.log('✓ detached worktree lifecycle and bounded diff');
     console.log('✓ executor writes only inside the isolated worktree');
     console.log('✓ two explicitly labelled runners share the same isolation policy');
@@ -231,6 +346,7 @@ async function main() {
     console.log('✓ completed execution returns diff without automatic merge');
     console.log('✓ timeout and interrupt stop the handle and remove worktrees');
     console.log('✓ outside write paths fail closed');
+    console.log('✓ sdk-only malformed marker tolerated; reset needs real success; unmarked/forbidden/marker+path/failed-exec stay fail-closed');
   } finally {
     for (const manager of managers) await manager.removeAll().catch(() => {});
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
