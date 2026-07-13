@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "commands": [
+    { "id": "reviewmerge", "label": "اختبار المراجعة والدمج", "command": "npm run test:reviewmerge", "timeout_seconds": 180 },
+    { "id": "executionteam", "label": "اختبار فرق التنفيذ المعزولة", "command": "npm run test:executionteam", "timeout_seconds": 180 },
+    { "id": "orchestrator", "label": "اختبار منسّق الباحثين", "command": "npm run test:orchestrator", "timeout_seconds": 120 }
+  ]
+}
