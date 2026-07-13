@@ -1,5 +1,5 @@
 /**
- * عامل SDK منفّذ واحد داخل git worktree معزول — الأولوية 6/الخطوة 2.
+ * عامل منفّذ محايد عن المحرك داخل git worktree معزول — الأولوية 6/الخطوة 2.
  *
  * لا merge ولا commit ولا Bash. يسمح بأدوات القراءة وتحرير الملفات داخل worktree
  * فقط، يجمع gitdiff بعد الدور، ثم يزيل النسخة المؤقتة. أي مسار خارجها يفشل مغلقاً.
@@ -18,6 +18,7 @@ const MAX_TIMEOUT_MS = 300000;
 const MAX_WRITE_PERMISSIONS = 30;
 const MAX_OWNERSHIP_PATTERNS = 16;
 const MAX_PATTERN_CHARS = 256;
+const SAFE_ENGINE_LABEL = /^[a-z][a-z0-9-]{0,31}$/;
 const READ_TOOLS = new Set(['read', 'grep', 'glob']);
 const EDIT_TOOLS = new Set(['edit', 'write', 'multiedit']);
 const TERMINAL_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
@@ -87,8 +88,6 @@ function ownershipsOverlap(left, right) {
   return !!a && !!b && a.some((one) => b.some((two) => patternsOverlap(one, two)));
 }
 
-function defaultRunner() { return require('./agent'); }
-
 function publicChanges(diff) {
   const files = diff && Array.isArray(diff.files) ? diff.files.map((file) => ({
     rel: file.rel,
@@ -113,7 +112,7 @@ function publicRun(run) {
     schema_version: 1,
     state: run.state,
     task: run.task,
-    engine: 'sdk',
+    engine: run.engine,
     created_at: run.created_at,
     updated_at: run.updated_at,
     duration_ms: run.duration_ms,
@@ -135,7 +134,8 @@ function publicRun(run) {
 function create(options) {
   const settings = options || {};
   const manager = settings.worktrees || worktrees;
-  const runner = settings.runner || defaultRunner();
+  const runner = settings.runner;
+  const engine = cleanText(runner && runner.engine, 32);
   const now = typeof settings.now === 'function' ? settings.now : Date.now;
   const timeoutMs = Math.max(20, Math.min(Number(settings.timeoutMs) || DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS));
   const runs = new Map();
@@ -250,7 +250,9 @@ function create(options) {
     const ownership = normalizeOwnership((input && input.ownership) || ['**']);
     if (!task || !ownership || typeof cwd !== 'string' || !cwd.trim()) return { ok: false, error: 'bad_input' };
     if (activeRunId) return { ok: false, error: 'busy' };
-    if (!runner || typeof runner.start !== 'function') return { ok: false, error: 'engine_unavailable' };
+    if (!runner || typeof runner.start !== 'function' || !SAFE_ENGINE_LABEL.test(engine)) {
+      return { ok: false, error: 'engine_unavailable' };
+    }
 
     const made = await manager.create(cwd);
     if (!made || !made.ok || !made.worktree) return made || { ok: false, error: 'worktree_failed' };
@@ -259,6 +261,7 @@ function create(options) {
       id: 'execution-' + createdAt.toString(36) + '-' + (++sequence).toString(36),
       state: 'running',
       task,
+      engine,
       ownership,
       created_at: createdAt,
       updated_at: createdAt,
@@ -417,6 +420,7 @@ module.exports = {
   MAX_WRITE_PERMISSIONS,
   MAX_OWNERSHIP_PATTERNS,
   DEFAULT_TIMEOUT_MS,
+  SAFE_ENGINE_LABEL,
   normalizeOwnership,
   ownedBy,
   ownershipsOverlap,

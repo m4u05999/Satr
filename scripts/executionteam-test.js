@@ -47,6 +47,7 @@ async function makeRepo(root) {
 
 function parallelRunner(stats) {
   return {
+    engine: 'sdk-test',
     start(input, cwd, emit) {
       const index = stats.calls.length;
       const owned = String(input.prompt || '').match(/src\/([abc]\.js)/);
@@ -84,6 +85,7 @@ function parallelRunner(stats) {
 
 function outsideOwnershipRunner(stats) {
   return {
+    engine: 'sdk-test',
     start(input, cwd, emit) {
       stats.calls.push({ input, cwd });
       let stopped = false;
@@ -102,6 +104,7 @@ function outsideOwnershipRunner(stats) {
 
 function hangingRunner(stats) {
   return {
+    engine: 'sdk-test',
     start(input, cwd) {
       stats.calls.push({ input, cwd });
       let stopped = false;
@@ -231,11 +234,34 @@ async function main() {
     assert(stopped.team.agents.every((agent) => agent.state === 'stopped'));
     assert(stopStats.calls.every((call) => !fs.existsSync(call.cwd)));
 
+    const draftStats = { calls: [], permissions: [], stops: 0, active: 0, maxActive: 0 };
+    const draftManager = worktrees.createManager({ root: path.join(temp, 'draft-store') });
+    managers.push(draftManager);
+    const draftTeam = executionTeamModule.create({ worktrees: draftManager, runner: parallelRunner(draftStats), timeoutMs: 1000 });
+    const draftStarted = await draftTeam.start({
+      mode: 'draft', agents: [{ task: 'مسودة أ', ownership: ['src/a.js'] }],
+    }, project, () => {});
+    assert.strictEqual(draftStarted.ok, true);
+    const draftDone = await waitFor(() => {
+      const snapshot = draftTeam.latest(project);
+      return snapshot && snapshot.state === 'completed' ? snapshot : null;
+    }, 5000, 'draft completion');
+    assert.strictEqual(draftDone.mode, 'draft');
+    assert.strictEqual(draftDone.merge_supported, false);
+    assert.strictEqual(draftTeam.artifact(draftDone.id), null);
+    const invalidDraft = await executionTeamModule.create({ runner: hangingRunner({ calls: [], stops: 0 }) }).start({
+      mode: 'draft', agents: [
+        { task: 'أ', ownership: ['src/a.js'] }, { task: 'ب', ownership: ['src/b.js'] },
+      ],
+    }, project, () => {});
+    assert.strictEqual(invalidDraft.error, 'draft_single_engine_only');
+
     console.log('✓ three isolated executors run concurrently with declared ownership');
     console.log('✓ overlapping ownership is rejected before worktree creation');
     console.log('✓ edits outside ownership fail closed and preserve the source repo');
     console.log('✓ touching the same file is reported as a team conflict');
     console.log('✓ collective interrupt stops all executors and removes worktrees');
+    console.log('✓ single-engine draft remains permanently non-mergeable and cannot expose an artifact');
   } finally {
     for (const manager of managers) await manager.removeAll().catch(() => {});
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });

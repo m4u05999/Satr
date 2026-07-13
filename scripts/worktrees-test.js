@@ -43,8 +43,9 @@ async function makeRepo(root) {
   return project;
 }
 
-function editingRunner(stats, outsidePath) {
+function editingRunner(stats, outsidePath, engine) {
   return {
+    engine: engine || 'fixture-a',
     start(input, cwd, emit) {
       stats.inputs.push({ input, cwd });
       let stopped = false;
@@ -73,6 +74,7 @@ function editingRunner(stats, outsidePath) {
 
 function hangingRunner(stats) {
   return {
+    engine: 'fixture-hanging',
     start(input, cwd) {
       stats.inputs.push({ input, cwd });
       let stopped = false;
@@ -123,6 +125,7 @@ async function main() {
     }, 3000);
     assert.strictEqual(completed.merged, false);
     assert.strictEqual(completed.merge_supported, false);
+    assert.strictEqual(completed.engine, 'fixture-a');
     assert(completed.changes.files.some((file) => file.rel === 'src/app.js'));
     assert(completed.changes.files.some((file) => file.rel === 'src/new.js'));
     assert.strictEqual(completed.edits_seen, 2);
@@ -133,6 +136,53 @@ async function main() {
     assert.strictEqual(await fsp.readFile(path.join(project, 'src', 'app.js'), 'utf8'), 'export const value = 1;\n');
     assert.strictEqual(fs.existsSync(path.join(project, 'src', 'new.js')), false);
     assert.strictEqual(executionManager.get(completed.worktree.id), null);
+
+    const secondStats = { inputs: [], permissions: [], stops: 0 };
+    const secondManager = worktrees.createManager({ root: path.join(temp, 'store-execution-second') });
+    managers.push(secondManager);
+    const secondExecutor = executorModule.create({
+      worktrees: secondManager,
+      runner: editingRunner(secondStats, null, 'fixture-b'),
+      timeoutMs: 1000,
+    });
+    const secondStarted = await secondExecutor.start({ task: 'نفّذ السياسة نفسها بمحرك آخر' }, project, () => {});
+    assert.strictEqual(secondStarted.ok, true);
+    const secondCompleted = await waitFor(() => {
+      const run = secondExecutor.latest(project);
+      return run && run.state === 'completed' ? run : null;
+    }, 3000);
+    assert.strictEqual(secondCompleted.engine, 'fixture-b');
+    assert.deepStrictEqual(
+      secondCompleted.changes.files.map((file) => file.rel).sort(),
+      completed.changes.files.map((file) => file.rel).sort(),
+    );
+    assert.strictEqual(secondCompleted.permissions.write_used, completed.permissions.write_used);
+    assert.strictEqual(await fsp.readFile(path.join(project, 'src', 'app.js'), 'utf8'), 'export const value = 1;\n');
+
+    const forbiddenManager = {
+      create() { throw new Error('worktree creation must not run'); },
+    };
+    const missingRunner = executorModule.create({ worktrees: forbiddenManager });
+    assert.deepStrictEqual(
+      await missingRunner.start({ task: 'لا تنشئ worktree' }, project, () => {}),
+      { ok: false, error: 'engine_unavailable' },
+    );
+    const malformedRunner = executorModule.create({
+      worktrees: forbiddenManager,
+      runner: { engine: 'fixture-invalid' },
+    });
+    assert.deepStrictEqual(
+      await malformedRunner.start({ task: 'لا تنشئ worktree أيضاً' }, project, () => {}),
+      { ok: false, error: 'engine_unavailable' },
+    );
+    const unlabeledRunner = executorModule.create({
+      worktrees: forbiddenManager,
+      runner: { start() { throw new Error('runner must not start'); } },
+    });
+    assert.deepStrictEqual(
+      await unlabeledRunner.start({ task: 'لا تشغّل runner بلا هوية' }, project, () => {}),
+      { ok: false, error: 'engine_unavailable' },
+    );
 
     const timeoutStats = { inputs: [], stops: 0 };
     const timeoutManager = worktrees.createManager({ root: path.join(temp, 'store-timeout') });
@@ -176,6 +226,8 @@ async function main() {
 
     console.log('✓ detached worktree lifecycle and bounded diff');
     console.log('✓ executor writes only inside the isolated worktree');
+    console.log('✓ two explicitly labelled runners share the same isolation policy');
+    console.log('✓ missing, unlabeled, or malformed runners fail before worktree creation');
     console.log('✓ completed execution returns diff without automatic merge');
     console.log('✓ timeout and interrupt stop the handle and remove worktrees');
     console.log('✓ outside write paths fail closed');

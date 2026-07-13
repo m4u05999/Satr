@@ -7,6 +7,7 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const path = require('path');
 const executorModule = require('./executor');
 const worktrees = require('./worktrees');
@@ -14,6 +15,7 @@ const worktrees = require('./worktrees');
 const MAX_AGENTS = 3;
 const MAX_RUNS = 10;
 const SAFE_RUN_ID = /^execution-team-[a-z0-9-]{6,80}$/;
+const SAFE_ROOM_ID = /^ops-room-[a-z0-9-]{6,80}$/;
 const TERMINAL_AGENT_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
 const TERMINAL_TEAM_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'conflict', 'cleanup_failed']);
 
@@ -37,12 +39,17 @@ function ownershipConflicts(agents) {
   return conflicts;
 }
 
+function artifactId(head, patch) {
+  return crypto.createHash('sha256').update(String(head || '') + '\0' + String(patch || '')).digest('hex');
+}
+
 function agentPublic(worker) {
   const snapshot = worker.snapshot || {};
   return {
     id: worker.id,
     label: worker.label,
     task: worker.task,
+    engine: snapshot.engine || worker.engine || '',
     ownership: worker.ownership.slice(),
     state: snapshot.state || worker.state,
     summary: snapshot.summary || '',
@@ -65,6 +72,7 @@ function agentPublic(worker) {
 function teamPublic(team) {
   const agents = team.agents.map(agentPublic);
   const artifactReady = team.state === 'completed' && agents.length > 0 && agents.every((agent) => agent.artifact_ready === true);
+  const artifact = artifactReady ? buildArtifact(team) : null;
   const cost = agents.reduce((total, agent) => ({
     usd: total.usd + (Number(agent.cost.usd) || 0),
     input_tokens: total.input_tokens + (Number(agent.cost.input_tokens) || 0),
@@ -73,6 +81,7 @@ function teamPublic(team) {
   }), { usd: 0, input_tokens: 0, output_tokens: 0, estimate: false });
   return {
     id: team.id,
+    room_id: team._roomId,
     type: 'execution_team_update',
     schema_version: 1,
     state: team.state,
@@ -82,8 +91,56 @@ function teamPublic(team) {
     cost,
     conflicts: team.conflicts.map((conflict) => ({ ...conflict })),
     agents,
+    artifact_id: artifact ? artifact.artifact_id : '',
+    producer_engines: artifact ? artifact.producer_engines.slice() : [],
+    mode: team._mode,
+    verification: team._verification ? {
+      artifact_id: team._verification.artifact_id,
+      state: team._verification.state,
+      checks: (team._verification.checks || []).map((check) => ({ ...check })),
+    } : null,
     merged: team._merged === true,
-    merge_supported: artifactReady && team._merged !== true,
+    merge_supported: team._mode === 'mergeable' && !!artifact && team._merged !== true,
+  };
+}
+
+function buildArtifact(team) {
+  const artifacts = team.agents.map((worker) => {
+    if (!worker.executor || !worker.snapshot || typeof worker.executor.artifact !== 'function') return null;
+    return worker.executor.artifact(worker.snapshot.id);
+  });
+  if (artifacts.some((item) => !item || !item.patch)) return null;
+  const head = artifacts[0].head;
+  const sourceRoot = artifacts[0].sourceRoot;
+  if (artifacts.some((item) => item.head !== head || path.resolve(item.sourceRoot) !== path.resolve(sourceRoot))) return null;
+  const patch = artifacts.map((item) => item.patch.trimEnd()).filter(Boolean).join('\n') + '\n';
+  const producerEngines = ['sdk', 'codex'].filter((engine) => team.agents.some((worker) => {
+    const workerEngine = cleanText(worker.snapshot && worker.snapshot.engine, 32) || cleanText(worker.engine, 32);
+    return workerEngine === engine || workerEngine.startsWith(engine + '-');
+  }));
+  if (!producerEngines.length) return null;
+  const identity = artifactId(head, patch);
+  return {
+    schema_version: 1,
+    artifact_id: identity,
+    room_id: team._roomId,
+    team_id: team.id,
+    teamId: team.id,
+    cwd: team._cwd,
+    source_root: sourceRoot,
+    sourceRoot,
+    head,
+    patch,
+    bytes: Buffer.byteLength(patch, 'utf8'),
+    producer_engines: producerEngines,
+    ownership: team.agents.map((worker) => worker.ownership.slice()),
+    files: team.agents.flatMap((worker) => ((worker.snapshot && worker.snapshot.changes && worker.snapshot.changes.files) || [])
+      .map((file) => ({
+        ...file,
+        agent: worker.label,
+        agent_id: worker.id,
+        engine: cleanText(worker.snapshot && worker.snapshot.engine, 32) || cleanText(worker.engine, 32),
+      }))),
   };
 }
 
@@ -162,9 +219,13 @@ function create(options) {
 
   async function start(input, cwd, emit) {
     const specs = input && Array.isArray(input.agents) ? input.agents : [];
+    const mode = input && input.mode === 'draft' ? 'draft' : 'mergeable';
+    const roomId = cleanText(input && (input.roomId || input.room_id), 96);
     if (specs.length < 1 || specs.length > MAX_AGENTS || typeof cwd !== 'string' || !cwd.trim()) {
       return { ok: false, error: 'bad_input' };
     }
+    if (roomId && !SAFE_ROOM_ID.test(roomId)) return { ok: false, error: 'bad_input' };
+    if (mode === 'draft' && specs.length !== 1) return { ok: false, error: 'draft_single_engine_only' };
     if (activeRunId) return { ok: false, error: 'busy' };
     const agents = [];
     for (const spec of specs) {
@@ -188,6 +249,7 @@ function create(options) {
         id: 'executor-' + (index + 1),
         label: 'عامل ' + (index + 1),
         task: spec.task,
+        engine: cleanText(runner && runner.engine, 32),
         ownership: spec.ownership,
         state: 'queued',
         error: '',
@@ -198,6 +260,9 @@ function create(options) {
       _emit: emit,
       _stopRequested: false,
       _conflictStopping: false,
+      _mode: mode,
+      _roomId: roomId,
+      _verification: null,
       _merged: false,
     };
     runs.set(team.id, team);
@@ -265,26 +330,38 @@ function create(options) {
   function artifact(runId) {
     if (!SAFE_RUN_ID.test(runId || '')) return null;
     const team = runs.get(runId);
-    if (!team || team.state !== 'completed' || team._merged) return null;
-    const artifacts = team.agents.map((worker) => {
-      if (!worker.executor || !worker.snapshot || typeof worker.executor.artifact !== 'function') return null;
-      return worker.executor.artifact(worker.snapshot.id);
-    });
-    if (artifacts.some((item) => !item || !item.patch)) return null;
-    const head = artifacts[0].head;
-    const sourceRoot = artifacts[0].sourceRoot;
-    if (artifacts.some((item) => item.head !== head || path.resolve(item.sourceRoot) !== path.resolve(sourceRoot))) return null;
+    if (!team || team.state !== 'completed' || team._merged || team._mode !== 'mergeable') return null;
+    return buildArtifact(team);
+  }
+
+  function references(runId) {
+    if (!SAFE_RUN_ID.test(runId || '')) return null;
+    const team = runs.get(runId);
+    if (!team || !SAFE_ROOM_ID.test(team._roomId || '')) return null;
+    const built = team.state === 'completed' ? buildArtifact(team) : null;
     return {
-      teamId: team.id,
-      cwd: team._cwd,
-      sourceRoot,
-      head,
-      patch: artifacts.map((item) => item.patch.trimEnd()).filter(Boolean).join('\n') + '\n',
-      bytes: artifacts.reduce((sum, item) => sum + item.bytes, 0),
-      ownership: team.agents.map((worker) => worker.ownership.slice()),
-      files: team.agents.flatMap((worker) => ((worker.snapshot && worker.snapshot.changes && worker.snapshot.changes.files) || [])
-        .map((file) => ({ ...file, agent: worker.label }))),
+      room_id: team._roomId,
+      team_id: team.id,
+      artifact_id: built ? built.artifact_id : '',
     };
+  }
+
+  function setVerification(runId, verification) {
+    if (!SAFE_RUN_ID.test(runId || '')) return { ok: false, error: 'bad_input' };
+    const team = runs.get(runId);
+    const artifact = team && team._mode === 'mergeable' ? buildArtifact(team) : null;
+    if (!team || team.state !== 'completed' || !artifact || !verification
+      || verification.artifact_id !== artifact.artifact_id
+      || !['pending_confirmation', 'running', 'passed', 'failed'].includes(verification.state)) {
+      return { ok: false, error: 'verification_artifact_mismatch' };
+    }
+    team._verification = {
+      artifact_id: verification.artifact_id,
+      state: verification.state,
+      checks: Array.isArray(verification.checks) ? verification.checks.map((check) => ({ ...check })) : [],
+    };
+    publish(team);
+    return { ok: true, team: teamPublic(team) };
   }
 
   function markMerged(runId) {
@@ -296,7 +373,7 @@ function create(options) {
     return { ok: true, team: teamPublic(team) };
   }
 
-  return { start, stop, stopAll, latest, artifact, markMerged };
+  return { start, stop, stopAll, latest, artifact, references, setVerification, markMerged };
 }
 
 const singleton = create();
@@ -308,8 +385,12 @@ module.exports = {
   stopAll: singleton.stopAll,
   latest: singleton.latest,
   artifact: singleton.artifact,
+  references: singleton.references,
+  setVerification: singleton.setVerification,
   markMerged: singleton.markMerged,
   ownershipConflicts,
+  artifactId,
   SAFE_RUN_ID,
+  SAFE_ROOM_ID,
   MAX_AGENTS,
 };
