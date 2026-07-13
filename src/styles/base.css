@@ -38,6 +38,29 @@
     --shadow-pop: 0 10px 30px rgba(0, 0, 0, .45);
     --shadow-panel: -10px 0 34px rgba(0, 0, 0, .5);
     --shadow-modal: 0 18px 60px rgba(0, 0, 0, .6);
+    /* سلالم نظام التصميم: قيم محافظة لا تغيّر المظهر القائم بذاتها. */
+    --z-base: 0;
+    --z-local: 10;
+    --z-sticky: 30;
+    --z-popover: 60;
+    --z-panel: 80;
+    --z-toast: 90;
+    --z-modal: 100;
+    --z-system: 1000;
+    --space-0: 0;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+    --radius-pill: 999px;
     color-scheme: dark; /* يُطابق تمريرات النظام (شريط تمرير/عناصر أصلية) — يُقلب في الوضع الفاتح */
   }
 
@@ -142,6 +165,7 @@
   #banner { padding: 8px 18px; font-size: 13px; display: none; border-bottom: 1px solid var(--border); }
   #banner.warn { display: block; background: var(--red-soft); color: var(--red); }
   #banner.ok   { display: block; background: var(--green-soft); color: var(--green); }
+  #banner.note { display: block; background: var(--gold-soft); color: var(--gold); }
 
   /* ===== بوابة أول التشغيل: انتقلت لمكوّن satr-gate (تفكيك ت-8) ===== */
 
@@ -157,7 +181,7 @@
     position: sticky; bottom: 6px; display: block; margin: 10px auto 0;
     background: var(--surface-2); border: 1px solid var(--gold); color: var(--gold);
     border-radius: 20px; padding: 5px 16px; font-size: 12.5px;
-    box-shadow: var(--shadow-pop); z-index: 30; animation: pop var(--dur) var(--ease);
+    box-shadow: var(--shadow-pop); z-index: var(--z-sticky); animation: pop var(--dur) var(--ease);
   }
   #jumpDown[hidden] { display: none; }
   #jumpDown:hover { background: var(--gold-soft); }
@@ -440,7 +464,7 @@
   /* لوحة الإعدادات المنبثقة (النموذج/المحرك/الصلاحيات) — تُطوى خلف ⚙ لتخفيف الشريط العلوي */
   .settings-wrap { position: relative; }
   #settingsPop {
-    position: absolute; top: calc(100% + 8px); left: 0; z-index: 60;
+    position: absolute; top: calc(100% + 8px); left: 0; z-index: var(--z-popover);
     background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
     padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 300px;
     box-shadow: var(--shadow-pop); animation: pop var(--dur) var(--ease);
@@ -548,7 +572,7 @@
   /* ===== مربع حوار الأذونات ===== */
   /* إشعار التحديث التلقائي (المرحلة 17) — شريط لطيف أسفل يسار، لا يقاطع */
   #updateToast {
-    position: fixed; bottom: 16px; left: 16px; z-index: 90; max-width: 380px;
+    position: fixed; bottom: 16px; left: 16px; z-index: var(--z-toast); max-width: 380px;
     display: flex; align-items: center; gap: 10px; padding: 10px 14px;
     background: var(--surface-2); border: 1px solid var(--gold); border-radius: 12px;
     box-shadow: var(--shadow-pop); font-size: 13px; color: var(--text);
@@ -600,6 +624,7 @@
   /* ===== لوحة الملفات + بحث المحتوى: انتقلتا لمكوّن satr-files-panel (تفكيك ت-6) ===== */
   /* توهج زر 📄 في الشريط العلوي — خارج المكوّن (light DOM) فيبقى هنا */
   #filesToggle.active { border-color: var(--gold); background: var(--gold-soft); }
+  #opsRoomToggle.active { border-color: var(--gold); background: var(--gold-soft); }
   /* ===== لوحة تغييرات git (الدفعة 4.7) ===== */
   #gitToggle.active { border-color: var(--gold); background: var(--gold-soft); }
   /* صفوف لوحة git انتقلت إلى مكوّن satr-git-panel (تفكيك ت-5) */
