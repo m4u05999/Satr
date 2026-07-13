@@ -44,6 +44,15 @@
     if (saved !== null) el.value = saved;
     el.addEventListener('change', () => localStorage.setItem('satr_' + id, el.value));
   });
+  // الموجة 4: تنبيه أمني عند تفعيل «تلقائي ذكي» (auto). محتوى الويب غير الموثوق قد يحقن
+  // أوامر؛ فالأدوات القرائية تُوافَق تلقائياً لكن التنفيذ/الكتابة تبقى خلف مربع الإذن العربي.
+  $('perm').addEventListener('change', () => {
+    if ($('perm').value !== 'auto') return;
+    const b = $('banner');
+    b.className = 'warn';
+    b.textContent = '⚠️ وضع «تلقائي ذكي»: يُوافَق على القراءة تلقائياً، والتنفيذ والكتابة تبقى تسألك. احذر محتوى الويب غير الموثوق (حقن أوامر). محرك SDK فقط.';
+    setTimeout(() => { b.style.display = 'none'; }, 12000);
+  });
 
   // ---------- بوابة أول التشغيل: انتقلت لمكوّن <satr-gate> (تفكيك ت-8) ----------
   // المكوّن يفحص ويرسم ويعيد الفحص ذاتياً (يبدأ عند اتصاله)؛ عند الجهوز يخفي نفسه
@@ -51,9 +60,17 @@
   // (banner عنصر مشترك ملكها). المستمع يُربط قبل ترقية المكوّن فلا سباق.
   document.querySelector('satr-gate').addEventListener('gate-ready', (e) => {
     gated = false;
-    const b = $('banner');
-    b.className = 'ok'; b.textContent = '✓ Claude Code جاهز — ' + ((e.detail && e.detail.version) || '');
-    setTimeout(() => { b.style.display = 'none'; }, 4000);
+    const b = $('banner'); const d = e.detail || {};
+    if (d.outdated) {
+      // الموجة 3: إصدار Claude Code أقدم من الموصى به — إرشاد غير حاجب (لا تحديث تلقائي؛
+      // «سطر» يعتمد المثبّت العالمي عمداً). يبقى ظاهراً أطول ليلحظه المستخدم.
+      b.className = 'note';
+      b.textContent = '⚠️ Claude Code ' + (d.version || '') + ' — للنماذج الأحدث (Sonnet 5 فأعلى) حدّث: npm i -g @anthropic-ai/claude-code';
+      setTimeout(() => { b.style.display = 'none'; }, 12000);
+    } else {
+      b.className = 'ok'; b.textContent = '✓ Claude Code جاهز — ' + (d.version || '');
+      setTimeout(() => { b.style.display = 'none'; }, 4000);
+    }
   });
 
   // بناء قائمة «المحرك» ديناميكياً من طبقة المزوّد (satr:providers): sdk (خاص) + المحوّلات.
@@ -178,8 +195,109 @@
   const chatEl = document.querySelector('satr-chat');
   const memoryEl = document.querySelector('satr-memory-panel');
   const researchEl = document.querySelector('satr-research-panel');
-  const executionEl = document.querySelector('satr-execution-panel');
+  const opsRoomEl = document.querySelector('satr-ops-room');
+  const opsDialogEl = document.querySelector('satr-ops-dialog');
   function addNotice(text) { chatEl.addNotice(text); }
+
+  // منسّق الأسطح الواحد: لوحة رئيسية واحدة، سجل active/held/hidden، واستعادة تركيز
+  // وقياس المعاينة الأصلية من موضعها الفعلي بعد كل انتقال.
+  const surfaceCoordinator = (() => {
+    const registry = new Map();
+    let activePanel = '';
+    let activeDialog = '';
+    let dialogEpoch = 0;
+
+    function previewSurface() { return document.querySelector('satr-preview-panel'); }
+    function remeasurePreview() {
+      const preview = previewSurface();
+      if (preview && preview.holdForDialog) preview.holdForDialog(false);
+    }
+    function register(name, element, category) {
+      if (!element) return;
+      const record = { name, element, category, state: 'hidden', source: null, restore: true };
+      registry.set(name, record);
+      if (category === 'panel') {
+        new MutationObserver(() => {
+          const open = element.hasAttribute('open');
+          if (open) { record.state = activeDialog ? 'held' : 'active'; activePanel = name; return; }
+          const shouldRestore = record.state !== 'hidden' && record.restore;
+          record.state = 'hidden';
+          if (activePanel === name) activePanel = '';
+          if (shouldRestore && record.source && record.source.isConnected && record.source.focus) record.source.focus();
+          record.restore = true; requestAnimationFrame(remeasurePreview);
+        }).observe(element, { attributes: true, attributeFilter: ['open'] });
+      }
+    }
+    function closeRecord(record, restore) {
+      if (!record || !record.element.hasAttribute('open')) return;
+      record.restore = restore !== false;
+      if (record.element.close) record.element.close(); else record.element.removeAttribute('open');
+    }
+    function openPanel(name, source, opener) {
+      const target = registry.get(name);
+      if (!target || target.category !== 'panel') return;
+      const alreadyOpen = target.element.hasAttribute('open');
+      for (const record of registry.values()) {
+        if (record.category === 'panel' && record !== target) closeRecord(record, false);
+      }
+      if (!alreadyOpen) target.source = source && source.focus ? source : document.activeElement;
+      target.restore = true; target.state = activeDialog ? 'held' : 'active'; activePanel = name;
+      opener(target.element);
+      requestAnimationFrame(() => {
+        remeasurePreview();
+        if (target.element.focusInitial) target.element.focusInitial();
+      });
+    }
+    function closeActivePanel() {
+      if (activeDialog || !activePanel) return false;
+      const record = registry.get(activePanel); closeRecord(record, true); return !!record;
+    }
+    function setDialog(name, visible, source) {
+      if (visible) {
+        dialogEpoch++;
+        activeDialog = name;
+        const preview = previewSurface();
+        if (preview && preview.holdForDialog) preview.holdForDialog(true);
+        for (const record of registry.values()) if (record.state === 'active') record.state = 'held';
+        const dialog = registry.get(name);
+        if (dialog) { dialog.state = 'active'; dialog.source = source && source.focus ? source : document.activeElement; }
+        return;
+      }
+      const dialog = registry.get(name);
+      const focusTarget = dialog && dialog.source;
+      const closedEpoch = ++dialogEpoch;
+      if (dialog) dialog.state = 'hidden';
+      activeDialog = '';
+      for (const record of registry.values()) if (record.state === 'held') record.state = 'active';
+      const preview = previewSurface();
+      if (preview && preview.holdForDialog) preview.holdForDialog(false);
+      requestAnimationFrame(() => {
+        remeasurePreview();
+        if (closedEpoch === dialogEpoch && !activeDialog
+          && focusTarget && focusTarget.isConnected && focusTarget.focus) focusTarget.focus();
+      });
+    }
+    async function confirm(options) {
+      setDialog('ops-dialog', true, options && options.source);
+      try { return await opsDialogEl.openDialog(options); }
+      finally { setDialog('ops-dialog', false); }
+    }
+    function snapshot() {
+      return [...registry.values()].map((record) => ({
+        name: record.name, category: record.category, state: record.state,
+      }));
+    }
+    return { register, openPanel, closeActivePanel, setDialog, confirm, snapshot };
+  })();
+
+  for (const [name, selector] of [
+    ['sessions', 'satr-sessions-panel'], ['files', 'satr-files-panel'], ['git', 'satr-git-panel'],
+    ['skills', 'satr-skills-panel'], ['agents', 'satr-agents-panel'], ['mcp', 'satr-mcp-panel'],
+    ['context', 'satr-context-panel'], ['memory', 'satr-memory-panel'], ['research', 'satr-research-panel'],
+    ['ops-room', 'satr-ops-room'],
+  ]) surfaceCoordinator.register(name, document.querySelector(selector), 'panel');
+  surfaceCoordinator.register('ops-dialog', opsDialogEl, 'dialog');
+  surfaceCoordinator.register('permission-dialog', document.querySelector('satr-perm-dialog'), 'dialog');
 
   async function loadTaskLedger(engine, sid) {
     if (!engine || !sid) { chatEl.clearTaskLedger(); return; }
@@ -271,9 +389,18 @@
   // ---------- التحديث التلقائي (المرحلة 17 + موافقة صريحة 2026-07-12) ----------
   // إشعار لا يقاطع بموافقة في كل خطوة: «متوفّر» ⇐ زرّ «نزّل الآن» ⇐ تقدّم ⇐ «جاهز»
   // ⇐ زرّ «أعد التشغيل الآن». لا تنزيل ولا تثبيت تلقائيان (المستخدم يملك كل خطوة).
+  let transientToastTimer = 0;
+  function showTransientNotice(message) {
+    const toast = $('updateToast');
+    clearTimeout(transientToastTimer);
+    $('updateText').textContent = message;
+    $('updateDownload').hidden = true; $('updateRestart').hidden = true; toast.hidden = false;
+    transientToastTimer = setTimeout(() => { toast.hidden = true; }, 4500);
+  }
   function handleUpdateEvent(ev) {
     const toast = $('updateToast'), txt = $('updateText');
     const download = $('updateDownload'), restart = $('updateRestart');
+    clearTimeout(transientToastTimer);
     if (ev.phase === 'available') {
       txt.textContent = 'تتوفّر نسخة جديدة' + (ev.version ? ' (' + ev.version + ')' : '') + '.';
       download.hidden = false; restart.hidden = true; toast.hidden = false;
@@ -293,7 +420,9 @@
     window.satr.downloadUpdate();
   });
   $('updateRestart').addEventListener('click', () => window.satr.restartUpdate());
-  $('updateDismiss').addEventListener('click', () => { $('updateToast').hidden = true; });
+  $('updateDismiss').addEventListener('click', () => {
+    clearTimeout(transientToastTimer); $('updateToast').hidden = true;
+  });
 
   // إشعار اكتمال الدور: انتقل لمكوّن <satr-chat> (ت-12) — chatEl.notifyTurnDone(isError)
 
@@ -340,7 +469,8 @@
       return;
     }
     if (ev.type === 'memory_candidate' && ev.candidate) {
-      memoryEl.open($('cwd').value.trim(), ev.candidate);
+      surfaceCoordinator.openPanel('memory', document.activeElement,
+        () => memoryEl.open($('cwd').value.trim(), ev.candidate));
       addNotice('🧠 اقترح النموذج ذاكرة جديدة — لن تُحفظ حتى توافق من اللوحة.');
       return;
     }
@@ -352,16 +482,21 @@
       researchEl.handleEvent(ev);
       return;
     }
-    if (ev.type === 'execution_update') {
-      executionEl.handleEvent(ev);
-      return;
-    }
     if (ev.type === 'execution_team_update') {
-      executionEl.handleEvent(ev);
+      opsRoomEl.handleEvent(ev);
       return;
     }
     if (ev.type === 'execution_review_update') {
-      executionEl.handleEvent(ev);
+      opsRoomEl.handleEvent(ev);
+      return;
+    }
+    if (ev.type === 'execution_verification_update') {
+      opsRoomEl.handleEvent(ev);
+      return;
+    }
+    if (ev.type === 'ops_room_update') {
+      opsRoomEl.handleEvent(ev);
+      if (chatEl.showOpsEvent) chatEl.showOpsEvent(ev.entry);
       return;
     }
     const block = currentBlock;
@@ -444,7 +579,7 @@
   permEl.addEventListener('notice', (e) => addNotice(e.detail));
   // إصلاح احتجاب المربع خلف المعاينة (لقطة مالك): تنزوي المعاينة أثناء ظهوره ثم تعود
   permEl.addEventListener('perm-visible', (e) => {
-    if (previewEl && previewEl.holdForDialog) previewEl.holdForDialog(e.detail);
+    surfaceCoordinator.setDialog('permission-dialog', !!e.detail);
   });
   function permDetailText(inp) {
     const d = chatEl.toolDetail(inp);
@@ -591,7 +726,7 @@
     { cmd: '/جلسات',   en: '/sessions', desc: 'تصفح الجلسات المحفوظة واستئنافها',     run: () => openSessions() },
     { cmd: '/ذاكرة',   en: '/memory', desc: 'مراجعة ذاكرة المشروع الشخصية والبحث والتعديل والحذف', run: () => openMemory() },
     { cmd: '/بحث',     en: '/research', desc: 'تشغيل 1–3 باحثين للقراءة فقط وإعادة خلاصة ومصادر', sdkOnly: true, run: () => openResearch() },
-    { cmd: '/تنفيذ-معزول', en: '/execute-isolated', desc: 'عوامل معزولة بملكية، مراجعة ثانية، ودمج صريح', sdkOnly: true, run: () => openExecution() },
+    { cmd: '/غرفة-العمليات', en: '/ops-room', desc: 'تنفيذ معزول ومراجعة وتحقق ودمج صريح', sdkOnly: true, run: () => openOpsRoom() },
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
     { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
     { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', sdkOnly: true, run: () => openMcp() },
@@ -671,7 +806,9 @@
   // المكوّن يملك الجلب والدمج والبحث والعرض؛ الاستئناف (حالة عميقة: محرك/خيط/sessionId)
   // يبقى هنا — يصل حدث session-resume بحمولة عنصر الجلسة المنقور.
   const sessionsEl = document.querySelector('satr-sessions-panel');
-  function openSessions() { sessionsEl.open(providersCache); }
+  function openSessions() {
+    surfaceCoordinator.openPanel('sessions', document.activeElement, () => sessionsEl.open(providersCache));
+  }
   sessionsEl.addEventListener('session-resume', (e) => {
     const s = e.detail;
     if (s.kind === 'chat') resumeChat(s);
@@ -788,20 +925,17 @@
     const el = document.querySelector('satr-skills-panel');
     return el && el.getSkillsPayload ? el.getSkillsPayload($('cwd').value.trim()) : 'all';
   }
-  // Escape يغلق اللوحات المفكّكة التي كانت تملك معالجه (توجيه Escape يبقى في القشرة
-  // — قرار خطة التفكيك). لوحة الوكلاء خارج القائمة: لم يكن لها معالج أصلاً (تطابق حرفي).
+  // Escape يغلق اللوحة الرئيسية الحالية عبر المنسّق؛ الحوار الحاجب لا يُلغى بنقرة عارضة.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    for (const tag of ['satr-skills-panel', 'satr-mcp-panel', 'satr-context-panel', 'satr-sessions-panel', 'satr-memory-panel', 'satr-research-panel', 'satr-execution-panel']) {
-      const el = document.querySelector(tag);
-      if (el && el.close) el.close();
-    }
+    surfaceCoordinator.closeActivePanel();
   });
 
   // ---------- لوحة /وكلاء: انتقلت إلى مكوّن <satr-agents-panel> (تفكيك ت-1) ----------
   // القشرة تكتفي بالفتح بمجلد المشروع الحالي — الإغلاق والتحديث داخل المكوّن
   function openAgents() {
-    document.querySelector('satr-agents-panel').open($('cwd').value.trim());
+    const element = document.querySelector('satr-agents-panel');
+    surfaceCoordinator.openPanel('agents', document.activeElement, () => element.open($('cwd').value.trim()));
   }
 
   // ---------- لوحة الملفات + البحث: انتقلتا لمكوّن <satr-files-panel> (تفكيك ت-6) ----------
@@ -811,7 +945,7 @@
 
   function openFilesPanel() {
     $('filesToggle').classList.add('active');
-    filesEl.open($('cwd').value.trim());
+    surfaceCoordinator.openPanel('files', $('filesToggle'), () => filesEl.open($('cwd').value.trim()));
   }
   function closeFilesPanel() { filesEl.close(); } // المكوّن يبث panel-close فيطفأ الزر
   filesEl.addEventListener('panel-close', () => $('filesToggle').classList.remove('active'));
@@ -827,7 +961,7 @@
   const gitEl = document.querySelector('satr-git-panel');
   function openGitPanel() {
     $('gitToggle').classList.add('active');
-    gitEl.open($('cwd').value.trim());
+    surfaceCoordinator.openPanel('git', $('gitToggle'), () => gitEl.open($('cwd').value.trim()));
   }
   function closeGitPanel() { gitEl.close(); } // المكوّن يبث panel-close فيطفأ الزر
   gitEl.addEventListener('panel-close', () => $('gitToggle').classList.remove('active'));
@@ -880,20 +1014,36 @@
 
   // فتح لوحة المهارات — المنطق كله داخل المكوّن (تفكيك ت-2)
   function openSkills() {
-    document.querySelector('satr-skills-panel').open($('cwd').value.trim());
+    const element = document.querySelector('satr-skills-panel');
+    surfaceCoordinator.openPanel('skills', document.activeElement, () => element.open($('cwd').value.trim()));
   }
 
   function openMemory() {
-    memoryEl.open($('cwd').value.trim());
+    surfaceCoordinator.openPanel('memory', document.activeElement, () => memoryEl.open($('cwd').value.trim()));
   }
 
   function openResearch() {
-    researchEl.open($('cwd').value.trim());
+    surfaceCoordinator.openPanel('research', document.activeElement, () => researchEl.open($('cwd').value.trim()));
   }
 
-  function openExecution() {
-    executionEl.open($('cwd').value.trim());
+  function openOpsRoom(source) {
+    $('opsRoomToggle').classList.add('active');
+    surfaceCoordinator.openPanel('ops-room', source || document.activeElement,
+      () => opsRoomEl.open($('cwd').value.trim()));
   }
+
+  $('opsRoomToggle').addEventListener('click', () => {
+    if (opsRoomEl.hasAttribute('open')) opsRoomEl.close(); else openOpsRoom($('opsRoomToggle'));
+  });
+  opsRoomEl.addEventListener('panel-close', () => $('opsRoomToggle').classList.remove('active'));
+  opsRoomEl.addEventListener('ops-notice', (event) => showTransientNotice(event.detail));
+  opsRoomEl.addEventListener('ops-confirm-request', (event) => {
+    const detail = event.detail || {};
+    surfaceCoordinator.confirm(detail).then((confirmed) => {
+      if (typeof detail.resolve === 'function') detail.resolve(confirmed);
+    });
+  });
+  document.addEventListener('ops-room-open', (event) => openOpsRoom(event.target));
 
   researchEl.addEventListener('research-source', (event) => {
     const detail = event.detail || {};
@@ -906,8 +1056,13 @@
   // وإشعارات إجراءات MCP تصل عبر حدث notice فتُعرض في خيط المحادثة.
   const mcpEl = document.querySelector('satr-mcp-panel');
   const contextEl = document.querySelector('satr-context-panel');
-  function openMcp() { mcpEl.open($('cwd').value.trim()); }
-  function openContext() { contextEl.open($('cwd').value.trim(), sessionId, busy); }
+  function openMcp() {
+    surfaceCoordinator.openPanel('mcp', document.activeElement, () => mcpEl.open($('cwd').value.trim()));
+  }
+  function openContext() {
+    surfaceCoordinator.openPanel('context', document.activeElement,
+      () => contextEl.open($('cwd').value.trim(), sessionId, busy));
+  }
   mcpEl.addEventListener('panel-refresh', openMcp);
   contextEl.addEventListener('panel-refresh', openContext);
   mcpEl.addEventListener('notice', (e) => addNotice(e.detail));

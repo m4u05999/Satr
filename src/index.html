@@ -30,6 +30,7 @@
     <button id="previewToggle" title="المعاينة المدمجة — متصفح لمشروعك (م-1)">🌐</button>
     <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄</button>
     <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">±</button>
+    <button id="opsRoomToggle" title="غرفة العمليات">غرفة العمليات</button>
     <button id="exportChat" title="تصدير المحادثة الحالية (Markdown)">📤</button>
     <button id="themeToggle" title="تبديل الوضع الفاتح/الداكن">🌙</button>
     <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
@@ -146,8 +147,11 @@
 <!-- لوحة /بحث: منسّق 1–3 باحثين للقراءة فقط مع خلاصات ومصادر -->
 <satr-research-panel aria-label="فريق البحث"></satr-research-panel>
 
-<!-- لوحة التنفيذ المعزول: عوامل بملكية، مراجع قراءة فقط، ودمج بعد موافقة صريحة -->
-<satr-execution-panel aria-label="التنفيذ المعزول"></satr-execution-panel>
+<!-- غرفة العمليات: لوحة العمل الوحيدة للتنفيذ والمراجعة والتحقق والدمج -->
+<satr-ops-room aria-label="غرفة العمليات"></satr-ops-room>
+
+<!-- حوار قرار غرفة العمليات: تشغيل الاختبارات والدمج لا يمران عبر toast أو confirm أصلي -->
+<satr-ops-dialog role="dialog" aria-modal="true" aria-label="تأكيد قرار غرفة العمليات"></satr-ops-dialog>
 
 <!-- المؤلّف: مكوّن light DOM (تفكيك ت-10) — الترميز يبقى هنا لأن القشرة تربط عناصره
      عند الإقلاع قبل ترقية المكوّنات؛ المكوّن يلفّه ويملك ميكانيكاه (مرفقات/قوائم/مسودة/شريط
@@ -175,6 +179,7 @@
       <option value="acceptEdits">قبول التعديلات تلقائياً</option>
       <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
       <option value="default">افتراضي</option>
+      <option value="auto">تلقائي ذكي (يسأل عن التنفيذ والكتابة)</option>
       <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
     </select>
     <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (محرك SDK)">📎 إرفاق</button>
@@ -205,6 +210,7 @@
 <script type="module" src="ui/components/context-panel.js"></script>
 <script type="module" src="ui/components/memory-panel.js"></script>
 <script type="module" src="ui/components/research-panel.js"></script>
+<script type="module" src="ui/components/ops-room.js"></script>
 <script type="module" src="ui/components/execution-panel.js"></script>
 <script type="module" src="ui/components/sessions-panel.js"></script>
 <script type="module" src="ui/components/git-panel.js"></script>

@@ -11,7 +11,7 @@ const INSTALL_CMD = 'npm install -g @anthropic-ai/claude-code';
 
 const ownSheet = sheet(`
   :host {
-    position: fixed; inset: 0; z-index: 1000;
+    position: fixed; inset: 0; z-index: var(--z-system);
     background: var(--bg);
     display: flex; align-items: center; justify-content: center;
     padding: 28px; overflow-y: auto;
@@ -113,9 +113,13 @@ class SatrGate extends HTMLElement {
   }
 
   // جاهز: إخفاء البوابة وإعلام القشرة (ترفع الحجب وتعرض شريط النجاح)
-  _ready(version) {
+  _ready(version, claude) {
     this.hidden = true;
-    this.dispatchEvent(new CustomEvent('gate-ready', { detail: { version: version || '' } }));
+    this.dispatchEvent(new CustomEvent('gate-ready', { detail: {
+      version: version || '',
+      outdated: !!(claude && claude.outdated),
+      recommended: (claude && claude.recommended) || '',
+    } }));
   }
 
   // رسم الخطوات من نتيجة الفحص حين يكون claude غير متوفّر
@@ -159,7 +163,7 @@ class SatrGate extends HTMLElement {
     let r = null;
     try { r = await window.satr.preflight(); } catch (e) { r = null; }
     this._btn.disabled = false; this._btn.textContent = 'أعد الفحص';
-    if (r && r.claude && r.claude.ok) this._ready(r.claude.version);
+    if (r && r.claude && r.claude.ok) this._ready(r.claude.version, r.claude);
     else this._render(r);
   }
 }

@@ -22,13 +22,43 @@
 // (engineLabel تبقى في القشرة — تقرأ providersCache ومنتقي المحرك).
 import { buildDiff } from '../lib/diff.js';
 import { diffSheet } from '../lib/diff.css.js';
+import { cardSheet } from '../lib/card.css.js';
 
 // حسم ازدواج أنماط بطاقة الفرق (الموثّق منذ ت-5): نسخة base.css حُذفت مع هذه الدفعة،
 // وdiffSheet تُعتمد هنا على **المستند** نفسه (adoptedStyleSheets على المستند — تحقق §1
 // من الخطة) فتخدم بطاقات light DOM في هذا الخيط، وبطاقات Shadow DOM في لوحة git
 // وعارض الملفات، من مصدر واحد. أوراق المستند المعتمدة تُطبَّق بعد أوراق <link>
 // فالترتيب التعاقبي كما كان (قسم الفرق كان آخر أقسام base.css المؤثرة هنا).
-document.adoptedStyleSheets = [...document.adoptedStyleSheets, diffSheet];
+document.adoptedStyleSheets = [...document.adoptedStyleSheets, diffSheet, cardSheet];
+
+// الموجة 1 (خارطة المنصّات): تفصيل استهلاك الرموز من رسالة result للـ SDK.
+// الأسماء من التوثيق الرسمي (cost-tracking): usage بـ snake_case، modelUsage بـ camelCase.
+// دفاعي: يعرض ما وُجد ويتجاهل ما غاب، فلا يكسر إن اختلفت بنية المحرّك (Codex/محوّل).
+const fmtNum = (n) => Number(n || 0).toLocaleString('en-US');
+function formatUsage(u) {
+  if (!u || typeof u !== 'object') return '';
+  // يوحّد مصدرين: العقد الموحّد للمحوّلات (input/output/cached/reasoning) وأسماء SDK
+  // الخام (input_tokens/output_tokens/cache_read_input_tokens) — أيّهما وُجد.
+  const input = u.input != null ? u.input : u.input_tokens;
+  const output = u.output != null ? u.output : u.output_tokens;
+  const cached = u.cached != null ? u.cached : u.cache_read_input_tokens;
+  const reasoning = u.reasoning; // SDK لا يفصل رموز التفكير؛ المحوّلات تفصلها
+  const parts = [];
+  if (input) parts.push('إدخال ' + fmtNum(input));
+  if (output) parts.push('إخراج ' + fmtNum(output));
+  if (cached) parts.push('من المخبّأ ' + fmtNum(cached));
+  if (reasoning) parts.push('تفكير ' + fmtNum(reasoning));
+  return parts.join(' · ');
+}
+function formatModelUsage(mu) {
+  if (!mu || typeof mu !== 'object') return '';
+  const names = Object.keys(mu);
+  if (names.length < 2) return ''; // نموذج واحد: التراكمي يكفي، التفصيل زائد
+  return names.map((name) => {
+    const u = mu[name] || {};
+    return name + ': ' + fmtNum(u.inputTokens) + '↑ ' + fmtNum(u.outputTokens) + '↓';
+  }).join('   ');
+}
 
 const MARKUP = `
 <main id="main">
@@ -225,6 +255,48 @@ class SatrChat extends HTMLElement {
     const n = document.createElement('div');
     n.className = 'notice'; n.textContent = text;
     thread.appendChild(n); scrollDown();
+  }
+
+  const opsEntryIds = new Set();
+  function showOpsEvent(entry) {
+    if (!entry || typeof entry.id !== 'string' || opsEntryIds.has(entry.id)) return;
+    opsEntryIds.add(entry.id); hideEmpty();
+    const card = document.createElement('article'); card.className = 'work-card ops-event-card';
+    card.dataset.state = entry.type || '';
+    const head = document.createElement('div'); head.className = 'work-card-head';
+    const title = document.createElement('div'); title.className = 'work-card-title';
+    const labels = {
+      decision: 'قرار في غرفة العمليات', phase_gate: 'انتقال مرحلي', review: 'تحديث مراجعة',
+      verification: 'تحديث تحقق', proposal: 'مقترح محدود', note: 'ملاحظة تشغيلية',
+    };
+    title.textContent = labels[entry.type] || 'حدث غرفة العمليات';
+    const state = document.createElement('div'); state.className = 'work-card-state'; state.textContent = entry.type || 'حدث';
+    const toggle = document.createElement('button'); toggle.className = 'work-card-toggle'; toggle.type = 'button';
+    toggle.textContent = 'التفاصيل'; toggle.setAttribute('aria-expanded', 'false');
+    head.appendChild(title); head.appendChild(state); head.appendChild(toggle); card.appendChild(head);
+    const summary = document.createElement('div'); summary.className = 'work-card-summary'; summary.dir = 'auto';
+    const fullText = typeof entry.text === 'string' ? entry.text : '';
+    summary.textContent = fullText.length > 180 ? fullText.slice(0, 180) + '…' : fullText;
+    card.appendChild(summary);
+    const body = document.createElement('div'); body.className = 'work-card-body'; body.hidden = true; body.dir = 'auto';
+    body.textContent = fullText; card.appendChild(body);
+    toggle.addEventListener('click', () => {
+      body.hidden = !body.hidden; toggle.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
+    });
+    const foot = document.createElement('div'); foot.className = 'work-card-foot';
+    const values = [
+      ['الفاعل', entry.actor || 'system', false],
+      ['المحرك', entry.actor === 'sdk' ? 'Claude SDK' : entry.actor === 'codex' ? 'Codex' : 'غير محدد', false],
+      ['الأثر', entry.artifact_id || 'غير متاح', true],
+      ['الوقت', Number(entry.created_at) > 0 ? new Date(entry.created_at).toLocaleString('ar-SA') : 'غير متاح', false],
+    ];
+    for (const [label, value, technical] of values) {
+      const item = document.createElement('span'); item.textContent = label + ': ';
+      const content = document.createElement('bdi'); content.textContent = value;
+      if (technical) content.className = 'work-card-tech';
+      item.appendChild(content); foot.appendChild(item);
+    }
+    card.appendChild(foot); thread.appendChild(card); scrollDown();
   }
 
   let taskLedgerEl = null;
@@ -754,9 +826,24 @@ class SatrChat extends HTMLElement {
           const dur = resultObj.duration_ms ? (resultObj.duration_ms / 1000).toFixed(1) + 's' : '';
           const m = document.createElement('div');
           m.className = 'meta';
-          m.textContent = [dur, cost ? '$' + cost.toFixed(4) : ''].filter(Boolean).join(' · ');
+          // التكلفة تقديرية (يحسبها عميل SDK محلياً من جدول أسعار، ليست فوترة) — لذا «~»
+          m.textContent = [dur, cost ? '~$' + cost.toFixed(4) : ''].filter(Boolean).join(' · ');
           if (m.textContent) w.appendChild(m);
-          $('costInfo').textContent = totalCost ? 'الكلفة: $' + totalCost.toFixed(4) : '';
+          // الموجة 1: تفصيل الرموز التراكمي من رسالة result (سطر عربي مستقل الاتجاه)
+          const usageStr = formatUsage(resultObj.usage);
+          if (usageStr) {
+            const mu = document.createElement('div');
+            mu.className = 'meta'; mu.textContent = usageStr;
+            w.appendChild(mu);
+          }
+          // تفصيل حسب النموذج عند تعدّده (نموذج رئيسي + نموذج وكيل فرعي) — تقني LTR
+          const modelsStr = formatModelUsage(resultObj.modelUsage);
+          if (modelsStr) {
+            const mm = document.createElement('div');
+            mm.className = 'meta'; mm.dir = 'ltr'; mm.textContent = modelsStr;
+            w.appendChild(mm);
+          }
+          $('costInfo').textContent = totalCost ? 'الكلفة التقديرية: ~$' + totalCost.toFixed(4) : '';
         }
       },
       error(text) {
@@ -859,6 +946,7 @@ class SatrChat extends HTMLElement {
     checkpointEl = null;
     checkpointSession = null;
     totalCost = 0;
+    opsEntryIds.clear();
     $('costInfo').textContent = '';
     thread.innerHTML = '<div class="empty" id="empty"><div class="big">سطر</div><p>جلسة جديدة — اكتب طلبك الأول.</p></div>';
   }
@@ -869,6 +957,7 @@ class SatrChat extends HTMLElement {
     checkpointEl = null;
     checkpointSession = null;
     totalCost = 0;
+    opsEntryIds.clear();
     $('costInfo').textContent = '';
     thread.innerHTML = '';
   }
@@ -880,6 +969,7 @@ class SatrChat extends HTMLElement {
     this.addActionNotice = addActionNotice;
     this.addStandaloneDiff = addStandaloneDiff;
     this.addHistoryAssistant = addHistoryAssistant;
+    this.showOpsEvent = showOpsEvent;
     this.showTaskLedger = showTaskLedger;
     this.clearTaskLedger = clearTaskLedger;
     this.showCheckpoint = showCheckpoint;

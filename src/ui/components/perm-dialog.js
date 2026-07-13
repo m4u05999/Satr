@@ -9,7 +9,7 @@ import { controlsSheet } from '../lib/panel.css.js';
 
 const ownSheet = sheet(`
   :host {
-    position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 100;
+    position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: var(--z-modal);
     display: none; align-items: center; justify-content: center;
   }
   :host([open]) { display: flex; }
@@ -59,9 +59,11 @@ class SatrPermDialog extends HTMLElement {
     this._detail = r.querySelector('.perm-detail');
     this._queue = [];
     this._current = null;
+    this._buttons = [...r.querySelectorAll('button')];
     r.querySelector('.allow').addEventListener('click', () => this._answer(true, false));
     r.querySelector('.always').addEventListener('click', () => this._answer(true, true));
     r.querySelector('.deny').addEventListener('click', () => this._answer(false, false));
+    r.addEventListener('keydown', (event) => this._trapFocus(event));
   }
 
   // طلب جديد من مجرى الأحداث: {id, tool, detail} — detail نص عرض جاهز من القشرة
@@ -75,6 +77,16 @@ class SatrPermDialog extends HTMLElement {
   _setOpen(on) {
     if (on) this.setAttribute('open', ''); else this.removeAttribute('open');
     this.dispatchEvent(new CustomEvent('perm-visible', { bubbles: true, detail: this.hasAttribute('open') }));
+    if (on) queueMicrotask(() => this._buttons[0].focus());
+  }
+
+  _trapFocus(event) {
+    if (event.key !== 'Tab') return;
+    const current = this._buttons.indexOf(this.shadowRoot.activeElement);
+    const next = event.shiftKey
+      ? this._buttons[(current <= 0 ? this._buttons.length : current) - 1]
+      : this._buttons[(current + 1) % this._buttons.length];
+    event.preventDefault(); next.focus();
   }
 
   // انتهاء/إيقاف الدور: تفريغ الطابور وإخفاء المربع
