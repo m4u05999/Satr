@@ -20,16 +20,27 @@ const tasks = require('./tasks');
 const verify = require('./verify');
 const checkpoints = require('./checkpoints');
 const memory = require('./memory');
+const opsroom = require('./opsroom');
 const agentsList = require('./agents');
 const agent = require('./agent');
 const orchestrator = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
-const executor = require('./executor'); // عامل SDK واحد داخل worktree معزول — الخطوة 2
-const executionTeam = require('./executionteam'); // 1–3 عوامل بملكية ملفات — الخطوة 3
+const executorModule = require('./executor'); // نواة عامل محايدة عن المحرك داخل worktree — الخطوة 2
+const executionTeamModule = require('./executionteam'); // 1–3 عوامل بملكية ملفات — الخطوة 3
 const reviewer = require('./reviewer'); // مراجع فرق قراءة فقط — الخطوة 4
-const merger = require('./merger'); // تطبيق patch بموافقة صريحة — الخطوة 4
+const integration = require('./integration'); // تحقق تكاملي داخل worktree مستقل — المرحلة 5
+const merger = require('./merger'); // تطبيق patch بعد المراجعة والتحقق والموافقة — المرحلة 5
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const adapters = require('./adapters');
+
+// المرحلة 2 من غرفة العمليات: المحرك الحالي يُحقن صراحةً في النواة المحايدة.
+// إدخال Codex للمنفّذ مؤجل حتى ينجح probe العزل في المرحلة 3A.
+const sdkExecutionRunner = Object.freeze({
+  engine: 'sdk',
+  start: (input, cwd, emit) => agent.start(input, cwd, emit),
+});
+const executor = executorModule.create({ runner: sdkExecutionRunner });
+const executionTeam = executionTeamModule.create({ runner: sdkExecutionRunner });
 const inject = require('./inject');
 const chats = require('./chats');
 const agentTools = require('./tools'); // أدوات المحوّلات (2.1/2.2) — للتراجع عن تعديلاتها
@@ -39,6 +50,29 @@ const bgprocs = require('./bgprocs');
 const term = require('./term');
 const updater = require('./updater');
 const preview = require('./preview'); // لوحة المعاينة المدمجة (م-1 — الدفعة 5)
+
+function sdkReviewEngineAvailable() {
+  if (!agent.resolveClaudeBin()) return false;
+  if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) return true;
+  try {
+    const credentials = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8'));
+    return !!(credentials && credentials.claudeAiOauth
+      && (credentials.claudeAiOauth.accessToken || credentials.claudeAiOauth.refreshToken));
+  } catch { return false; }
+}
+
+function reviewEngineAvailable(engine) {
+  if (engine === 'sdk') return sdkReviewEngineAvailable();
+  if (engine === 'codex') return !!codex.resolveCodexBin()
+    && (codex.authStatus().ok || !!process.env.CODEX_API_KEY);
+  return false;
+}
+
+function unavailableReviewEngines(producerEngines) {
+  const required = reviewer.requiredReviewEngines(producerEngines);
+  const engines = required ? [...new Set([...producerEngines, ...required])] : ['invalid'];
+  return engines.filter((engine) => !reviewEngineAvailable(engine));
+}
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
@@ -134,6 +168,15 @@ function probeVersion(cmd, args) {
   });
 }
 
+// مقارنة semver ثلاثية [major, minor, patch] — تُرجع سالباً/صفراً/موجباً
+function cmpVer(a, b) {
+  for (let i = 0; i < 3; i++) { const d = (a[i] || 0) - (b[i] || 0); if (d) return d; }
+  return 0;
+}
+// حدّ الميزات الحديثة الموصى به لـ Claude Code (Sonnet 5 وما بعده يحتاج 2.1.197+).
+// يُراجَع يدوياً مع الإصدارات؛ لا يحجب التشغيل — إرشاد فقط (لا تحديث تلقائي).
+const CLAUDE_MIN_RECOMMENDED = [2, 1, 197];
+
 // لقطة القدرات للواجهة (قراءة فقط): تُظهر/تُخفي قدرات Enterprise. المجتمعية ⇒ {enterprise:false}
 ipcMain.handle('satr:features', () => features.snapshot());
 
@@ -193,6 +236,17 @@ ipcMain.handle('satr:preflight', async () => {
     const v = await probeVersion(CLAUDE_BIN, ['--version']);
     claude = { ok: v.ok, version: v.version, path: v.ok ? CLAUDE_BIN : null };
   }
+  // الموجة 3 (خارطة المنصّات): توافق الإصدار. نستخرج semver من نص --version ونقارنه
+  // بحدّ الميزات الحديثة؛ إن كان أقدم نضع outdated + الإصدار الموصى به لترشد الواجهة
+  // المستخدم للتحديث (لا تحديث تلقائي — «سطر» يعتمد المثبّت العالمي عمداً).
+  if (claude.ok && claude.version) {
+    const m = String(claude.version).match(/(\d+)\.(\d+)\.(\d+)/);
+    if (m) {
+      const cur = [Number(m[1]), Number(m[2]), Number(m[3])];
+      claude.outdated = cmpVer(cur, CLAUDE_MIN_RECOMMENDED) < 0;
+      if (claude.outdated) claude.recommended = CLAUDE_MIN_RECOMMENDED.join('.');
+    }
+  }
   return { claude, node, npm };
 });
 
@@ -211,7 +265,9 @@ ipcMain.handle('satr:pickFolder', async () => {
 const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_MODEL = /^[A-Za-z0-9.-]{1,64}$/;
 const SAFE_SKILL = /^[A-Za-z0-9_:.-]{1,64}$/; // اسم مهارة أو plugin:skill
-const PERMISSION_MODES = new Set(['default', 'acceptEdits', 'plan', 'bypassPermissions']);
+// وضع الأذونات + بوابة auto (الموجة 4) — المنطق النقي في autogate.js (قابل للاختبار
+// مستقلاً). PERMISSION_MODES يشمل 'auto'؛ nonSdkPerm يُسقط auto لـ default لغير SDK.
+const { PERMISSION_MODES, nonSdkPerm } = require('./autogate');
 // اسم خادم MCP قد يحوي مسافات ونقاطاً («claude.ai Google Drive») وأحرفاً غير لاتينية.
 // لا يدخل وسائط spawn (يُمرَّر لدالة تحكّم في SDK) لكن نتحقق منه احترازاً.
 const SAFE_MCP_NAME = /^[\p{L}\p{N} ._:\/-]{1,128}$/u;
@@ -280,6 +336,67 @@ function emitToWindow(obj) {
   // مجرى المراقبة (§4.7 — الدفعة 3): التدقيق/الاستهلاك في Enterprise يلتقطان الأحداث.
   // رخيص عند غياب المشتركين (بناء مجتمعي = لا شيء)
   try { features.notify(obj, { engine: lastEngine }); } catch (e) { /* عزل */ }
+}
+
+const opsRoomTransitions = new Set();
+
+function publishOpsEntry(result) {
+  if (!result || !result.ok || !result.entry) return result;
+  emitToWindow({
+    type: 'ops_room_update',
+    schema_version: opsroom.SCHEMA_VERSION,
+    room_id: result.room.room_id,
+    entry: { ...result.entry },
+  });
+  return result;
+}
+
+function recordOpsSystem(roomId, type, text, teamId, artifactId, transitionKey) {
+  if (!opsroom.SAFE_ROOM_ID.test(roomId || '') || !opsroom.SAFE_TEAM_ID.test(teamId || '')) {
+    return { ok: false, error: 'bad_input' };
+  }
+  if (artifactId && !opsroom.SAFE_ARTIFACT_ID.test(artifactId)) return { ok: false, error: 'bad_input' };
+  const key = roomId + ':' + transitionKey;
+  if (opsRoomTransitions.has(key)) return { ok: true, duplicate: true };
+  if (typeof text !== 'string' || text.length > opsroom.MAX_INPUT_TEXT || memory.hasSecret(text)) {
+    return { ok: false, error: memory.hasSecret(text) ? 'secret_detected' : 'text_too_large' };
+  }
+  const result = opsroom.appendSystem(roomId, type, {
+    text: cleanMemoryText(text, opsroom.MAX_INPUT_TEXT),
+    team_id: teamId,
+    ...(artifactId ? { artifact_id: artifactId } : {}),
+  });
+  if (result.ok) opsRoomTransitions.add(key);
+  return publishOpsEntry(result);
+}
+
+function emitOpsTeam(roomId, obj) {
+  const team = obj && obj.type === 'execution_team_update' ? obj.team : null;
+  if (team && team.artifact_id) {
+    recordOpsSystem(roomId, 'note', 'أصبح أثر فريق التنفيذ جاهزاً للمراجعة.', team.id,
+      team.artifact_id, 'artifact:' + team.artifact_id);
+  }
+  emitToWindow(obj);
+}
+
+function emitOpsReview(roomId, obj) {
+  const review = obj && obj.type === 'execution_review_update' ? obj.review : null;
+  if (review && opsroom.SAFE_ARTIFACT_ID.test(review.artifact_id || '')) {
+    const verdict = review.verdict && ['approve', 'changes_required', 'reject'].includes(review.verdict.decision)
+      ? ' والحكم ' + review.verdict.decision : '';
+    recordOpsSystem(roomId, 'review', 'انتقلت المراجعة إلى الحالة ' + review.state + verdict + '.',
+      review.team_id, review.artifact_id, 'review:' + review.id + ':' + review.state);
+  }
+  emitToWindow(obj);
+}
+
+function emitOpsVerification(roomId, teamId, obj) {
+  const verification = obj && obj.type === 'execution_verification_update' ? obj.verification : null;
+  if (verification && opsroom.SAFE_ARTIFACT_ID.test(verification.artifact_id || '')) {
+    recordOpsSystem(roomId, 'verification', 'انتقل التحقق إلى الحالة ' + verification.state + '.',
+      teamId, verification.artifact_id, 'verification:' + verification.artifact_id + ':' + verification.state);
+  }
+  emitToWindow(obj);
 }
 
 // آخر محرك أُرسل به طلب — وصفٌ لمجرى المراقبة (لا يغيّر سلوك النواة)
@@ -426,8 +543,10 @@ ipcMain.handle('satr:send', async (event, payload) => {
         images, // مُنقّاة بـ sanitizeImages (نفس محرك SDK) — نماذج Codex تقبل الصور
         sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
         model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
-        permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
+        permissionMode: nonSdkPerm(payload.permissionMode), // auto→default (Codex لا يفهمه)
         skills: sanitizeSkills(payload.skills),
+        // الموجة 2: جهد التفكير — نفس تنقية SDK (EFFORT_LEVELS)؛ codex.js يطبّع max→xhigh
+        effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
       }, cwd, emit);
       return { started: true, engine: 'codex' };
     } catch (e) {
@@ -446,19 +565,24 @@ ipcMain.handle('satr:send', async (event, payload) => {
     const isBlind = !meta || meta.family !== 'claude';
     const inj = isBlind ? inject.injectFiles(enginePrompt, cwd) : { prompt: enginePrompt, attached: [], skipped: [] };
 
-    // مسار نصّي عبر stdin — لا يدعم الصور (محرك SDK يدعمها)
+    // vision + effort للمحوّلات (الجولة المنسّقة): نمرّر الصور المُنقّاة للمزوّد المعلن
+    // vision فقط (يستهلكها openai-compatible/responses، وإلا تُتجاهل)، وeffort لمحوّل Responses.
+    // capabilities تأتي من meta في adapters.list() (يوسّعها مسار المحوّلات).
+    const supportsVision = !!(meta && meta.capabilities && meta.capabilities.vision);
     const input = {
       prompt: inj.prompt,
       sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
       model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
-      permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
+      permissionMode: nonSdkPerm(payload.permissionMode), // auto→default (المحوّلات لا تفهمه)
       skills: sanitizeSkills(payload.skills),
       extraDirs: sanitizeExtraDirs(payload.extraDirs), // متاحة للمحوّلات؛ cli/gemini الحاليان لا يستخدمانها
+      images: supportsVision ? images : [], // base64 مُنقّاة (sanitizeImages) — للمعلن vision فقط
+      effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null, // openai-responses: reasoning.effort
     };
     try {
       currentCliRun = adapter.start(input, cwd, emit);
       return {
-        started: true, engine: payload.engine, imagesIgnored: images.length > 0,
+        started: true, engine: payload.engine, imagesIgnored: images.length > 0 && !supportsVision,
         // معلومات الحقن للواجهة (تنبيهات شفافية): ما أُرفق وما تُخطّي ولماذا
         injectedFiles: inj.attached, skippedFiles: inj.skipped,
       };
@@ -789,9 +913,11 @@ function sanitizeOwnership(value) {
 ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
   const p = payload || {};
   const cwd = sanitizeMemoryCwd(p.cwd);
+  const mode = p.mode === 'draft' ? 'draft' : p.mode === 'mergeable' || p.mode == null ? 'mergeable' : '';
   if (!cwd || p.confirmed !== true || !Array.isArray(p.agents) || p.agents.length < 1 || p.agents.length > 3) {
     return { ok: false, error: 'bad_input' };
   }
+  if (!mode || (mode === 'draft' && p.agents.length !== 1)) return { ok: false, error: 'bad_input' };
   const agents = [];
   for (const raw of p.agents) {
     const task = cleanMemoryText(raw && raw.task, 4000);
@@ -799,12 +925,31 @@ ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
     if (!task || !ownership) return { ok: false, error: 'bad_input' };
     agents.push({ task, ownership });
   }
-  return executionTeam.start({ agents }, cwd, emitToWindow);
+  if (mode === 'mergeable') {
+    const configured = await integration.preflight(cwd);
+    if (!configured.ok) return configured;
+    const unavailable = unavailableReviewEngines(['sdk']);
+    if (unavailable.length) return { ok: false, error: 'review_engine_unavailable', engines: unavailable };
+  }
+  const created = opsroom.createRoom();
+  if (!created.ok) return { ok: false, error: 'ops_room_unavailable' };
+  const roomId = created.room.room_id;
+  const result = await executionTeam.start({ agents, mode, roomId }, cwd, (obj) => emitOpsTeam(roomId, obj));
+  if (!result || !result.ok || !result.team) return result;
+  for (let index = 0; index < agents.length; index++) {
+    const taskText = 'مهمة العامل ' + (index + 1) + ': ' + agents[index].task;
+    const recorded = recordOpsSystem(roomId, 'note', taskText, result.team.id, '', 'task:' + (index + 1));
+    if (!recorded.ok) {
+      recordOpsSystem(roomId, 'note', 'حُجب نص مهمة العامل ' + (index + 1) + ' وفق سياسة المحتوى الحساس.',
+        result.team.id, '', 'task-redacted:' + (index + 1));
+    }
+  }
+  return result;
 });
 
 ipcMain.handle('satr:executionTeamStop', async (event, payload) => {
   const p = payload || {};
-  if (!executionTeam.SAFE_RUN_ID.test(p.runId || '')) return { ok: false, error: 'bad_input' };
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.runId || '')) return { ok: false, error: 'bad_input' };
   return executionTeam.stop(p.runId);
 });
 
@@ -817,15 +962,16 @@ ipcMain.handle('satr:executionTeamLatest', (event, payload) => {
 // ---------- مراجعة ثانية ودمج صريح لفرق الفريق (الأولوية 6 — الخطوة 4) ----------
 ipcMain.handle('satr:executionReviewStart', (event, payload) => {
   const p = payload || {};
-  if (!executionTeam.SAFE_RUN_ID.test(p.teamId || '')) return { ok: false, error: 'bad_input' };
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '')) return { ok: false, error: 'bad_input' };
   const artifact = executionTeam.artifact(p.teamId);
-  if (!artifact) return { ok: false, error: 'not_available' };
+  if (!artifact || !opsroom.SAFE_ROOM_ID.test(artifact.room_id || '')) return { ok: false, error: 'not_available' };
   return reviewer.start({
     teamId: p.teamId,
+    artifactId: artifact.artifact_id,
     patch: artifact.patch,
     files: artifact.files,
-    engine: 'sdk',
-  }, artifact.sourceRoot, emitToWindow);
+    producerEngines: artifact.producer_engines,
+  }, (obj) => emitOpsReview(artifact.room_id, obj));
 });
 
 ipcMain.handle('satr:executionReviewStop', async (event, payload) => {
@@ -836,24 +982,108 @@ ipcMain.handle('satr:executionReviewStop', async (event, payload) => {
 
 ipcMain.handle('satr:executionReviewLatest', (event, payload) => {
   const p = payload || {};
-  if (!executionTeam.SAFE_RUN_ID.test(p.teamId || '')) return { ok: false, error: 'bad_input' };
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '')) return { ok: false, error: 'bad_input' };
   return { ok: true, review: reviewer.latest(p.teamId) };
 });
 
-ipcMain.handle('satr:executionMerge', async (event, payload) => {
+ipcMain.handle('satr:executionVerificationPrepare', async (event, payload) => {
   const p = payload || {};
-  if (!executionTeam.SAFE_RUN_ID.test(p.teamId || '') || !reviewer.SAFE_REVIEW_ID.test(p.reviewId || '') || p.confirmed !== true) {
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewer.SAFE_REVIEW_ID.test(p.reviewId || '')) {
+    return { ok: false, error: 'bad_input' };
+  }
+  const review = reviewer.latest(p.teamId);
+  const artifact = executionTeam.artifact(p.teamId);
+  const reviewed = reviewer.mergeGate(review, artifact, p.reviewId);
+  if (!reviewed.ok) return reviewed;
+  const prepared = await integration.prepare(artifact);
+  if (prepared.verification) {
+    executionTeam.setVerification(p.teamId, prepared.verification);
+    emitOpsVerification(artifact.room_id, p.teamId, {
+      type: 'execution_verification_update', verification: prepared.verification,
+    });
+  }
+  return prepared;
+});
+
+ipcMain.handle('satr:executionVerificationRun', async (event, payload) => {
+  const p = payload || {};
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewer.SAFE_REVIEW_ID.test(p.reviewId || '')
+    || !integration.SAFE_ARTIFACT_ID.test(p.artifactId || '') || p.confirmed !== true) {
     return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
   }
   const review = reviewer.latest(p.teamId);
   const artifact = executionTeam.artifact(p.teamId);
-  if (!review || review.id !== p.reviewId || review.state !== 'completed' || !artifact) {
-    return { ok: false, error: 'review_required' };
+  const reviewed = reviewer.mergeGate(review, artifact, p.reviewId);
+  if (!reviewed.ok) return reviewed;
+  if (!artifact || artifact.artifact_id !== p.artifactId) return { ok: false, error: 'verification_artifact_mismatch' };
+  const result = await integration.run(artifact, true, (obj) => emitOpsVerification(artifact.room_id, p.teamId, obj));
+  if (result.verification) executionTeam.setVerification(p.teamId, result.verification);
+  return result;
+});
+
+ipcMain.handle('satr:executionVerificationStop', async (event, payload) => {
+  const artifactId = payload && payload.artifactId;
+  if (!integration.SAFE_ARTIFACT_ID.test(artifactId || '')) return { ok: false, error: 'bad_input' };
+  return integration.stop(artifactId);
+});
+
+ipcMain.handle('satr:executionVerificationLatest', (event, payload) => {
+  const teamId = payload && payload.teamId;
+  if (!executionTeamModule.SAFE_RUN_ID.test(teamId || '')) return { ok: false, error: 'bad_input' };
+  const artifact = executionTeam.artifact(teamId);
+  return { ok: true, verification: artifact ? integration.latest(artifact.artifact_id) : null };
+});
+
+ipcMain.handle('satr:executionMerge', async (event, payload) => {
+  const p = payload || {};
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewer.SAFE_REVIEW_ID.test(p.reviewId || '') || p.confirmed !== true) {
+    return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
   }
-  const result = await merger.apply({ ...artifact, confirmed: true });
+  const review = reviewer.latest(p.teamId);
+  const artifact = executionTeam.artifact(p.teamId);
+  const gate = reviewer.mergeGate(review, artifact, p.reviewId);
+  if (!gate.ok) return gate;
+  const verification = artifact ? integration.latest(artifact.artifact_id) : null;
+  const verified = integration.gate(artifact, verification);
+  if (!verified.ok) return verified;
+  const result = await merger.apply({ ...artifact, review_gate: gate, verification, confirmed: true });
   if (!result.ok) return result;
   const marked = executionTeam.markMerged(p.teamId);
+  recordOpsSystem(artifact.room_id, 'phase_gate', 'اكتمل انتقال الدمج للأثر المعتمد.',
+    p.teamId, artifact.artifact_id, 'merge:completed');
   return { ...result, team: marked && marked.team ? marked.team : null };
+});
+
+// ---------- سجل غرفة العمليات الدائم (المرحلة 6) ----------
+ipcMain.handle('satr:opsRoomLoad', (event, payload) => {
+  const roomId = payload && payload.roomId;
+  if (!opsroom.SAFE_ROOM_ID.test(roomId || '')) return { ok: false, error: 'bad_input' };
+  const room = opsroom.load(roomId);
+  return room ? { ok: true, room } : { ok: false, error: 'not_found' };
+});
+
+ipcMain.handle('satr:opsRoomDecision', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  if (!opsroom.SAFE_ROOM_ID.test(p.roomId || '') || !opsroom.SAFE_TEAM_ID.test(p.teamId || '')
+    || p.artifactId && !opsroom.SAFE_ARTIFACT_ID.test(p.artifactId)
+    || p.confirmed !== true || p.id != null || p.type != null || p.actor != null) {
+    return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
+  }
+  if (typeof p.text !== 'string' || p.text.length > opsroom.MAX_INPUT_TEXT || memory.hasSecret(p.text)) {
+    return { ok: false, error: memory.hasSecret(p.text) ? 'secret_detected' : 'text_too_large' };
+  }
+  const references = executionTeam.references(p.teamId);
+  if (!references || references.room_id !== p.roomId
+    || p.artifactId && references.artifact_id !== p.artifactId) {
+    return { ok: false, error: 'reference_mismatch' };
+  }
+  const text = cleanMemoryText(p.text, opsroom.MAX_INPUT_TEXT);
+  if (!text) return { ok: false, error: 'bad_input' };
+  return publishOpsEntry(opsroom.appendUserDecision(p.roomId, {
+    text,
+    team_id: p.teamId,
+    ...(p.artifactId ? { artifact_id: p.artifactId } : {}),
+  }, true));
 });
 
 ipcMain.handle('satr:taskLedger', (event, payload) => {
@@ -1120,12 +1350,13 @@ app.on('window-all-closed', () => {
   executor.stopAll();
   executionTeam.stopAll();
   reviewer.stopAll();
+  integration.stopAll();
   // إنهاء عمليات الخلفية المتتبَّعة كي لا تبقى خوادم تطوير بلا واجهة تديرها بعد الإغلاق
   bgprocs.killAll();
   term.killAll(); // صدفة الطرفية المدمجة تموت مع «سطر» (المرحلة 8)
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => { orchestrator.stopAll(); executor.stopAll(); executionTeam.stopAll(); reviewer.stopAll(); bgprocs.killAll(); term.killAll(); });
+app.on('before-quit', () => { orchestrator.stopAll(); executor.stopAll(); executionTeam.stopAll(); reviewer.stopAll(); integration.stopAll(); bgprocs.killAll(); term.killAll(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
