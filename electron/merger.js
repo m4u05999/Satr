@@ -51,6 +51,17 @@ function create(options) {
       || !/^[0-9a-f]{40,64}$/i.test(data.head || '')) {
       return { ok: false, error: data.confirmed === true ? 'bad_input' : 'confirmation_required' };
     }
+    if (!data.review_gate || data.review_gate.ok !== true || data.review_gate.verdict !== 'approve') {
+      return { ok: false, error: 'review_required' };
+    }
+    if (!data.verification || data.verification.state !== 'passed') {
+      return { ok: false, error: 'verification_required' };
+    }
+    if (!/^[0-9a-f]{64}$/.test(data.artifact_id || '')
+      || data.artifact_id !== crypto.createHash('sha256').update(data.head + '\0' + data.patch).digest('hex')
+      || data.verification.artifact_id !== data.artifact_id) {
+      return { ok: false, error: 'verification_artifact_mismatch' };
+    }
     const bytes = Buffer.byteLength(data.patch, 'utf8');
     if (bytes > MAX_PATCH_BYTES) return { ok: false, error: 'patch_too_large' };
 

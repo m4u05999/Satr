@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 const term = require('./term');
 
 const CONFIG_VERSION = 1;
@@ -19,6 +20,7 @@ const MAX_CHECKS = 6;
 const MAX_COMMAND = 1000;
 const MAX_LABEL = 120;
 const MAX_OUTPUT = 6000;
+const MAX_EXEC_OUTPUT = 64 * 1024;
 const MAX_MODEL_RESULT = 32 * 1024;
 
 function realInside(root, target) {
@@ -29,6 +31,38 @@ function realInside(root, target) {
     return realTarget.startsWith(prefix) ? realTarget : null;
   } catch {
     return null;
+  }
+}
+
+function parseConfig(source) {
+  try {
+    if (typeof source !== 'string' || Buffer.byteLength(source, 'utf8') > MAX_CONFIG_BYTES) {
+      return { ok: false, error: 'bad_config' };
+    }
+    const parsed = JSON.parse(source);
+    if (!parsed || parsed.version !== CONFIG_VERSION || !Array.isArray(parsed.commands)) {
+      return { ok: false, error: 'bad_schema' };
+    }
+    if (parsed.commands.length > MAX_CHECKS) return { ok: false, error: 'too_many_commands' };
+    const checks = [];
+    const seen = new Set();
+    for (const value of parsed.commands) {
+      const id = value && typeof value.id === 'string' ? value.id.trim() : '';
+      const command = value && typeof value.command === 'string' ? value.command.trim() : '';
+      const label = value && typeof value.label === 'string'
+        ? value.label.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, MAX_LABEL) : id;
+      if (!SAFE_CHECK_ID.test(id) || seen.has(id) || !command || command.length > MAX_COMMAND || /[\r\n\0]/.test(command)) {
+        return { ok: false, error: 'bad_command' };
+      }
+      const timeout = Number.isFinite(value.timeout_seconds)
+        ? Math.max(1, Math.min(600, Math.floor(value.timeout_seconds))) : 120;
+      seen.add(id);
+      checks.push({ id, label: label || id, command, timeout_seconds: timeout });
+    }
+    if (!checks.length) return { ok: false, error: 'empty' };
+    return { ok: true, version: CONFIG_VERSION, checks };
+  } catch {
+    return { ok: false, error: 'bad_config' };
   }
 }
 
@@ -43,26 +77,7 @@ function loadConfig(cwd) {
     }
     const file = realInside(root, candidate);
     if (!file) return { ok: false, error: 'outside' };
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!parsed || parsed.version !== CONFIG_VERSION || !Array.isArray(parsed.commands)) {
-      return { ok: false, error: 'bad_schema' };
-    }
-    const checks = [];
-    const seen = new Set();
-    for (const value of parsed.commands.slice(0, MAX_CHECKS)) {
-      const id = value && typeof value.id === 'string' ? value.id.trim() : '';
-      const command = value && typeof value.command === 'string' ? value.command.trim() : '';
-      const label = value && typeof value.label === 'string' ? value.label.trim().slice(0, MAX_LABEL) : id;
-      if (!SAFE_CHECK_ID.test(id) || seen.has(id) || !command || command.length > MAX_COMMAND || /[\r\n\0]/.test(command)) {
-        return { ok: false, error: 'bad_command' };
-      }
-      const timeout = Number.isFinite(value.timeout_seconds)
-        ? Math.max(1, Math.min(600, Math.floor(value.timeout_seconds))) : 120;
-      seen.add(id);
-      checks.push({ id, label: label || id, command, timeout_seconds: timeout });
-    }
-    if (!checks.length) return { ok: false, error: 'empty' };
-    return { ok: true, version: CONFIG_VERSION, checks };
+    return parseConfig(fs.readFileSync(file, 'utf8'));
   } catch (error) {
     if (error && error.code === 'ENOENT') return { ok: false, error: 'notfound' };
     return { ok: false, error: 'read_failed' };
@@ -96,11 +111,74 @@ async function visibleExecutor(cwd, check, ctx) {
   };
 }
 
+function stopChild(child) {
+  if (!child || !child.pid) return;
+  if (process.platform === 'win32') {
+    try {
+      const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
+        windowsHide: true, stdio: 'ignore', shell: false,
+      });
+      killer.unref();
+    } catch { try { child.kill(); } catch { /* أفضل جهد */ } }
+    return;
+  }
+  try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* أفضل جهد */ } }
+}
+
+function boundedExecutor(cwd, check, ctx, options) {
+  const settings = options || {};
+  const timeoutMs = Math.max(1000, Math.min(600000, Number(check.timeout_seconds) * 1000 || 120000));
+  const maxOutput = Math.max(1024, Math.min(MAX_EXEC_OUTPUT, Number(settings.maxOutput) || MAX_EXEC_OUTPUT));
+  const signal = ctx && ctx.signal;
+  return new Promise((resolve) => {
+    if (signal && signal.aborted) return resolve({ ok: false, exitCode: null, timedOut: false, output: '', aborted: true });
+    const executable = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh';
+    const args = process.platform === 'win32' ? ['/d', '/s', '/c', check.command] : ['-c', check.command];
+    let child;
+    try {
+      child = spawn(executable, args, {
+        cwd, env: process.env, windowsHide: true, shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32',
+      });
+    } catch (error) {
+      resolve({ ok: false, exitCode: null, timedOut: false, output: '', error: String(error && error.message || error) });
+      return;
+    }
+    let output = '';
+    let outputBytes = 0;
+    let timedOut = false;
+    let aborted = false;
+    let settled = false;
+    const append = (chunk) => {
+      if (outputBytes >= maxOutput) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      const remaining = maxOutput - outputBytes;
+      output += buffer.subarray(0, remaining).toString('utf8');
+      outputBytes += Math.min(buffer.length, remaining);
+    };
+    child.stdout.on('data', append);
+    child.stderr.on('data', append);
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve(value);
+    };
+    const onAbort = () => { aborted = true; stopChild(child); };
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => { timedOut = true; stopChild(child); }, timeoutMs);
+    child.on('error', (error) => finish({ ok: false, exitCode: null, timedOut, output, error: String(error && error.message || error), aborted }));
+    child.on('close', (code) => finish({ ok: !timedOut && !aborted && code === 0, exitCode: Number.isInteger(code) ? code : null, timedOut, output, aborted }));
+  });
+}
+
 async function runChecks(cwd, checks, ctx, options) {
   if (!Array.isArray(checks) || !checks.length) return { ok: false, error: 'empty', passed: false, checks: [] };
   const execute = options && typeof options.execute === 'function' ? options.execute : visibleExecutor;
   const results = [];
   for (const check of checks.slice(0, MAX_CHECKS)) {
+    if (ctx && ctx.signal && ctx.signal.aborted) break;
     const started = Date.now();
     let outcome;
     try { outcome = await execute(cwd, check, ctx); }
@@ -159,10 +237,15 @@ function formatResult(result) {
 
 module.exports = {
   CONFIG_VERSION,
+  CONFIG_REL,
+  MAX_CONFIG_BYTES,
+  MAX_CHECKS,
   loadConfig,
+  parseConfig,
   selectChecks,
   run,
   runChecks,
+  boundedExecutor,
   formatConfig,
   formatResult,
   SAFE_CHECK_ID,

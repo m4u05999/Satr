@@ -33,6 +33,10 @@ async function main() {
     assert.deepStrictEqual(config.checks.map((check) => check.id), ['lint', 'test']);
     assert.strictEqual(verify.selectChecks(config, ['test']).checks.length, 1);
     assert.strictEqual(verify.selectChecks(config, ['missing']).ok, false);
+    assert.strictEqual(verify.parseConfig(JSON.stringify({
+      version: 1,
+      commands: Array.from({ length: 7 }, (_, index) => ({ id: 'check-' + index, command: 'node --version' })),
+    })).error, 'too_many_commands');
 
     const executed = [];
     const result = await verify.run(project, ['lint', 'test'], null, {
