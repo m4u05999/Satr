@@ -46,12 +46,16 @@ electron/orchestrator.js ← منسّق باحثين قراءة فقط (الأو
                        متوازية بوضع plan، مهلة/إيقاف جماعي، خلاصات ومصادر وكلفة حية
 electron/worktrees.js ← دورة حياة git worktree مؤقت ومعزول من HEAD، بمسار منقّى
                        تحت ~/.satr/worktrees وأوامر git بمصفوفة وسائط بلا shell
-electron/executor.js ← عامل SDK منفّذ واحد داخل worktree فقط، يجمع git diff ويحذف
-                       النسخة المؤقتة بلا commit أو merge
+electron/executor.js ← نواة عامل منفّذ محايدة عن المحرك داخل worktree فقط؛ لا تعمل إلا
+                       بـrunner محقون يحمل engine label صريحاً، وتجمع git diff وتحذف النسخة
+                       المؤقتة بلا commit أو merge
 electron/executionteam.js ← منسّق 1–3 عوامل منفّذة متوازية؛ worktree وملكية كتابة لكل عامل،
                        كشف تعارض وإيقاف جماعي، ويحفظ patch داخلياً للمراجعة
 electron/reviewer.js ← مراجع ثانٍ SDK/محوّل بوضع plan بلا أدوات؛ مخاطر وملاحظات وتوصية عربية
-electron/merger.js ← بوابة تطبيق patch بعد مراجعة وموافقة صريحة؛ git apply بلا shell أو force
+electron/integration.js ← بوابة تحقق تكاملي: أوامر HEAD المثبتة + worktree مستقل + نتيجة بلا خرج خام
+electron/merger.js ← بوابة تطبيق patch بعد مراجعة وتحقق وموافقة؛ git apply بلا shell أو force
+electron/opsroom.js ← سجل غرفة العمليات الدائم append-only؛ فصل سلطة المحرك/المستخدم/النظام
+                       وحجب الأسرار والـpatch، بلا أي قدرة تشغيل أو دمج
 electron/gitdiff.js  ← فروقات git للوحة «تغييرات المشروع» ± (الدفعة 4.7 — قراءة فقط):
                        git بمصفوفة وسائط بلا shell، status --porcelain -z (أسماء عربية
                        خام)، المعدَّل عبر تحليل git diff الموحّد (دقيق لأي حجم — سقف LCS
@@ -95,8 +99,16 @@ electron/adapters/   ← طبقة المحوّلات/المزوّدين (الم�
                        index.js (register/get/list) + claude-cli.js (مسار claude -p المنقول) +
                        gemini.js (REST مباشر + حلقة وكيل بصيغته — 2.4) + openai-compatible.js
                        (مصنع لأي endpoint متوافق OpenAI: DeepSeek/Qwen/GLM… + حلقة وكيل
-                       2.1–2.3 بالأذونات العربية). محرك SDK يبقى خاصاً في
-                       agent.js (لا يُلفّ). انظر «طبقة المحوّلات والمزوّدين» أدناه + docs/ARCHITECTURE.md
+                       2.1–2.3 بالأذونات العربية) + openai-responses.js (خارطة المنصّات: محوّل
+                       OpenAI عبر Responses API — api.openai.com ثابت، store:false، allowlist
+                       نماذج، SSE typed، strict schemas + Structured Outputs) + usage.js (عقد
+                       usage موحّد {input,output,cached,reasoning,source} لـ Chat وResponses).
+                       محرك SDK يبقى خاصاً في agent.js (لا يُلفّ).
+                       انظر «طبقة المحوّلات والمزوّدين» أدناه + docs/ARCHITECTURE.md
+electron/autogate.js ← بوابة وضع «تلقائي ذكي» (auto — خارطة المنصّات الموجة 4): موديول نقي
+                       بلا تبعيات (نمط diff.js) يستهلكه agent.js وmain.js. AUTO_SAFE_TOOLS
+                       (whitelist للآمن fail-safe) + autoNeedsPrompt + decideAutoApproval (سياسة
+                       canUseTool المستخرجة المُختبَرة) + nonSdkPerm. اختبار scripts/autogate.test.js
 electron/keys.js     ← مخزن أسرار «سطر» (~/.satr/keys.json): get/names/set/remove — بذرة إدارة
                        مفاتيح المزوّدين (نقطة الربط §4.3). القيم لا تُعاد للواجهة أبداً
 electron/tools.js    ← أدوات الوكيل للمحوّلات العمياء (الدفعتان 2.1/2.2): defs() تعريفات
@@ -190,6 +202,8 @@ scripts/vendor-fonts.js ← يضمّن خط IBM Plex Sans Arabic (OFL) من devD
                        من CSS الحزمة (unicode-range يبقى متزامناً) — يُشغَّل يدوياً عند الترقية
 docs/PHASE8-DESIGN.md ← تصميم الطرفية العربية: المقاربات الثلاث، القرارات المثبّتة (الصدى،
                        حدود الإدخال، الأداء، محرك واحد بعارضين)، المراحل الفرعية 8.1–8.4
+docs/DESIGN-SYSTEM.md ← نظام التصميم الحاكم: التصنيف السداسي، منسّق الأسطح، سلالم الـ tokens،
+                       والحوكمة الملزِمة لأي عنصر UI جديد
 scripts/update-csp.js ← يحدّث هاشات CSP لكتل style/script المضمّنة — يعمل تلقائياً قبل start و dist
 scripts/make-icon.js  ← يولّد build/icon.ico من علامة «سطر» (بلا اعتماديات: zlib يبني PNG ثم
                        يُحزَم ICO) — يُشغَّل يدوياً عند تغيير العلامة، والملف الناتج مُلتزَم
@@ -249,7 +263,9 @@ docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها
      وعدد الأذونات المرفوضة. لا transcript ولا محتوى ملفات في الحدث.
    - `effort` (⚙ — المرحلة 14.4): مستوى جهد التفكير `low|medium|high|xhigh|max` أو فارغ
      (الافتراضي). يُنقّى بـ `EFFORT_LEVELS` في main.js ويُمرَّر كخيار `effort` — الـ SDK
-     يخفّضه صامتاً إن لم يدعمه النموذج. محرك **sdk** فقط.
+     يخفّضه صامتاً إن لم يدعمه النموذج. محرك **sdk** و**codex** (خارطة المنصّات الموجة 2):
+     codex.js يطبّعه إلى مفتاح `model_reasoning_effort` الرسمي (`max→xhigh` غير مقبول)
+     ويحقنه عبر `-c` عند spawn. المحوّلات لا تدعمه بعد.
    - `extraDirs` (⚙ «مجلدات إضافية» — المرحلة 14.4): مصفوفة مسارات يصل إليها النموذج
      بجانب cwd. تُنقّى في main.js (`sanitizeExtraDirs`: مجلد موجود فعلاً، سقف 10)
      وتُمرَّر `additionalDirectories`. تُحفظ في localStorage (`satr_extra_dirs`). sdk فقط.
@@ -552,17 +568,19 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **التحقق**: `npm run test:orchestrator` يغطي باحثاً واحداً، التوازي 3، فرض plan ورفض
   الإذن، المهلة، الإيقاف الجماعي، fail-closed لأحداث الكتابة ومنع الأدوات غير المقروءة.
 
-### عامل SDK منفّذ في worktree معزول (الأولوية 6 — الخطوة 2)
+### عامل منفّذ محايد عن المحرك في worktree معزول (الأولوية 6 — الخطوة 2)
 
 - **دورة الحياة**: `electron/worktrees.js` يتحقق أن `cwd` مستودع Git ذو `HEAD`، ثم
   ينشئ detached worktree من نفس الرأس تحت `~/.satr/worktrees`. كل أوامر Git عبر
   `execFile` ومصفوفة وسائط بلا shell، والمسار يجب أن يبقى داخل جذر التخزين وخارج
   المستودع الأصلي. تُرفض symlinks وsubmodules المتعقّبة قبل التنفيذ. `--force` محصور
   في حذف worktree المؤقت المولّد داخلياً بعد التقاط الفرق؛ لا force على فرع المستخدم.
-- **التنفيذ المحصور**: `electron/executor.js` يستدعي `agent.start` صندوقاً أسود بوضع
+- **التنفيذ المحصور**: `electron/executor.js` يستدعي runner محقوناً بعقد `start` صندوقاً أسود بوضع
   `permissionMode:'acceptEdits'` و`cwd` مسار worktree. القائمة البيضاء `Read|Grep|Glob|Edit|Write|MultiEdit`
   فقط؛ أي أداة تنفيذ/Git/متصفح/وكيل فرعي أو مسار خارجي يوقف الدور fail-closed. ميزانية
-  إذن الكتابة 30 وطلباً كحد أقصى، والمهلة 180ث (300ث سقفاً)، ويتوفر interrupt واحد.
+  إذن الكتابة 30 وطلباً كحد أقصى، والمهلة 180ث (300ث سقفاً)، ويتوفر interrupt واحد. يجب أن يحمل
+  runner اسم محرك صريحاً مطابقاً لـ`SAFE_ENGINE_LABEL`؛ غيابه أو غياب `start` يعيد
+  `engine_unavailable` قبل إنشاء worktree. يحقن `main.js` محرك SDK الحالي صراحةً، ولا يدخل Codex هنا بعد.
 - **النتيجة بلا دمج**: بعد النهاية/المهلة/المقاطعة يقرأ المنفّذ `gitdiff.changes`، يحتفظ
   بملخص الملفات/الأسطر وبيانات `file_edit` كنقطة مراجعة، ثم يحذف worktree. لا API للدمج
   أو commit في هذه الخطوة، والنتيجة تصرّح دائماً `merged:false` و`merge_supported:false`. لم نشغّل
@@ -572,7 +590,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `satr:executionLatest`. الحدث `execution_update` (schema v1) يغذّي لوحة `/تنفيذ-معزول`، وتعرض الحالة/
   الكلفة/ميزانية الكتابة/الملخص/الفرق، ولا تقدّم زر دمج.
 - **التحقق**: `npm run test:worktrees` يغطي دورة الإنشاء/الفرق/الإزالة، عزل الكتابة
-  عن المستودع الأصلي، المهلة/المقاطعة، رفض المسار الخارجي، وغياب الدمج التلقائي.
+  عن المستودع الأصلي، runnerين مزيفين موسومين يمران بالسياسة نفسها، رفض runner مفقود أو بلا هوية أو مشوّه
+  قبل إنشاء worktree، المهلة/المقاطعة، رفض المسار الخارجي، وغياب الدمج التلقائي.
 
 ### عوامل منفّذة متوازية بملكية ملفات (الأولوية 6 — الخطوة 3)
 
@@ -600,26 +619,116 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **أثر قابل للمراجعة**: قبل حذف كل worktree يستدعي `electron/worktrees.js` ‏`git add -N`
   داخل النسخة المؤقتة فقط ثم يلتقط `git diff --binary --full-index HEAD` بسقف 4MiB لكل عامل.
   يحتفظ `executor/executionteam` بالـpatch في ذاكرة العملية فقط ولا يرسله في أحداث IPC؛ الواجهة
-  ترى الملفات والإحصاءات والحجم فقط. ملفات العوامل غير المتداخلة تُجمع في patch واحد للمراجعة.
-- **المراجع القراءة-فقط**: `electron/reviewer.js` يستدعي عقد `start` الصندوق الأسود لمحرك SDK
-  أو محوّل مسجّل، لكن IPC الحالي يفرض SDK ولا يسمح Codex. يمرّر `permissionMode:'plan'` ويفرض
-  `browserControl:false` وSkills فارغة؛ كل طلب إذن يُرفض، وأي tool_use أو file_edit أو حدث تنفيذ
-  يوقف المراجعة fail-closed. الـdiff موسوم بيانات غير موثوقة لمقاومة prompt injection، والسقف
-  400k محرف، ويُرفض قبل الإرسال إن طابق حارس الأسرار المشترك في `memory.js`. الناتج عربي:
-  مخاطر، ملاحظات، وتوصية `accept|modify|reject` مع كلفة ومدة.
+  ترى الملفات والإحصاءات والحجم فقط. ملفات العوامل غير المتداخلة تُجمع في patch واحد، وتُشتق هويته
+  بـ`sha256(head + '\0' + patch)` مع `producer_engines` مرتبة؛ أي تغير في الرأس أو الفرق يبطل المراجعات.
+- **المراجعون العميان cross-engine**: `electron/reviewer.js` يختار السياسة الثابتة
+  `[sdk]→[codex]` و`[codex]→[sdk]` و`[sdk,codex]→[sdk,codex]`. كل مراجع يعمل مستقلاً في cwd
+  مؤقت فارغ لا يحوي جذر المشروع، ويستقبل قائمة الملفات والـpatch فقط بلا محادثة العامل أو هويته أو
+  verdict مراجع آخر. يمرّر `permissionMode:'plan'` وصوراً وSkills وextra dirs فارغة و
+  `browserControl:false`؛ و`codex.js` لا ينشئ MCP المعاينة عند هذه القيمة. وعند غياب نموذج صريح يثبّت
+  `gpt-5.6-sol` بدلاً من وراثة default قديم غير مدعوم من إعداد Codex المحلي. كل طلب إذن يُرفض ثم يفشل
+  الدور، وأي tool_use أو tool_result أو file_edit أو طرفية أو preview يوقف المراجعة fail-closed.
+  الـdiff موسوم بيانات غير موثوقة لمقاومة prompt injection، سقفه 400k محرف، ويُرفض قبل الإرسال إن
+  طابق حارس الأسرار المشترك في `memory.js`. كل verdict يحمل `artifact_id` نفسه، وغياب السطر الآلي أو
+  فساده ينتج `changes_required` بمصدر `fallback`; يبقى `recommendation` alias عرض مؤقتاً.
+- **preflight المحركات**: قبل `executionTeam.start` يتحقق `main.js` محلياً من وجود Claude SDK وCodex
+  وتسجيل الدخول إليهما (أو مفتاح البيئة الموافق). أي غياب يعيد `review_engine_unavailable` قبل إنشاء
+  worktree أو استهلاك دور؛ لا fallback إلى عائلة المنتج. Codex ما زال محظوراً من executor وفق نتيجة 3A.
 - **بوابة الدمج**: `electron/merger.js` لا يعمل إلا بـ`confirmed:true`، ويتحقق أن المستودع نفسه،
   و`HEAD` ما زال يساوي رأس إنشاء worktrees، وشجرة العمل/الفهرس نظيفان. يكتب patch مؤقتاً تحت
   `~/.satr/merge` ثم يشغّل `git apply --check` قبل `git apply` بمصفوفة وسائط بلا shell. لا force
   ولا rebase ولا commit ولا حذف تاريخ؛ التعارض أو تغيّر HEAD أو شجرة غير نظيفة يُرفض قبل الكتابة.
   النجاح يطبق الفرق على شجرة العمل فقط ليظل قابلاً للمراجعة والالتزام اليدوي.
 - **الموافقة والعقد**: القنوات المنفصلة `satr:executionReviewStart/Stop/Latest` و
-  `satr:executionMerge` منقّاة في `main.js`. الدمج يتطلب review مكتملة ومعرّفها مطابقاً للفريق،
+  `satr:executionMerge` منقّاة في `main.js`. الدمج يتطلب مجموعة مراجعات مكتملة ومعرّفها مطابقاً للفريق،
+  وكل المراجعات المطلوبة مرتبطة ببصمة artifact الحالية وأحكامها `approve`،
   ثم `confirmed:true` في `main.js` ومرة ثانية في `merger.js`. لوحة `/تنفيذ-معزول` تشغّل المراجع
-  بعد اكتمال الفريق، تعرض بطاقته وتوصيته، ولا تُظهر زر «دمج» قبل اكتمال المراجعة؛ الزر نفسه
-  يعرض confirm عربياً صريحاً. لا دمج تلقائي في أي مسار.
-- **التحقق**: `npm run test:reviewmerge` يغطي وضع plan ورفض أدوات المراجع، الملخص والتوصية،
+  بعد اكتمال الفريق، تعرض بطاقة مستقلة لكل محرك وحكمه، ولا تُظهر زر «دمج» إلا لحكم aggregate
+  `approve`. بوابة `reviewer.mergeGate` تعيد حساب المطلوب من `producer_engines` وتمنع
+  `changes_required` و`reject` وfallback والمراجعة الناقصة أو بصمة مختلفة؛ لا يجاوزها تأكيد المستخدم.
+  الزر نفسه يعرض confirm عربياً صريحاً. لا دمج تلقائي في أي مسار.
+- **التحقق**: `npm run test:reviewmerge` يغطي مصفوفات المنتجين الثلاث، استقلال البرومبتات، cwd فارغاً
+  ومحاولة قراءة Codex الصامتة، وضع plan وتعطيل المتصفح، وفشل SDK/Codex عند الإذن/الأداة/الكتابة/
+  الطرفية/preview/المهلة، وربط الأحكام بالبصمة، وaggregate approve فقط عند موافقة الجميع،
   رفض الدمج بلا تأكيد، تعارض `git apply --check` مع بقاء الشجرة نظيفة، ثم تطبيقاً صحيحاً يثبت
   بقاء `HEAD` والفرع والتاريخ بلا تغيير. اختبارات `worktrees/executionteam` تثبت عدم التراجع.
+
+### التحقق التكاملي قبل الدمج (غرفة العمليات — المرحلة 5)
+
+- **preflight أو مسودة نهائية**: المسار القابل للدمج يقرأ `.satr/verify.json` حصراً من blob ‏Git عند
+  `HEAD` قبل إنشاء عوامل أو استهلاك دور. غياب الملف أو فساده يعيد `verification_config_required` مع
+  إرشاد عربي، بلا اكتشاف تلقائي لـ`npm test` أو أي script. يمكن لعامل واحد العمل بوضع `draft` بلا
+  الإعداد أو محرك المراجعة الآخر، لكنه يعلن `merge_supported:false` منذ البداية ولا يقبل الترقية؛
+  الدمج يتطلب فريقاً جديداً قابلاً للدمج.
+- **تثبيت المصدر والتأكيد**: `electron/integration.js` يعيد الأوامر المنقّاة من
+  `artifact.head:.satr/verify.json` للعرض فقط، ثم يتطلب `confirmed:true` مستقلاً لتشغيل snapshot نفسه.
+  لا IPC يقبل command أو اختيار check من renderer أو نموذج. `electron/verify.js` يعيد استخدام parser
+  الواحد (≤64KiB، ≤6 أوامر، سطر واحد، مهلة ≤600 ثانية)، ويشغّل كل أمر بصدفة نظام محددة داخل cwd
+  التكاملي مع مهلة وذاكرة خرج مجمعة ≤64KiB.
+- **worktree تكاملي**: `electron/worktrees.js` ينشئ detached worktree من `artifact.head` المحدد،
+  ويفحص patch عبر `git apply --numstat -z` لمنع لمس `.satr/verify.json`، ثم ينفذ
+  `git apply --check` قبل `git apply`. كل أوامر Git بمصفوفة وسائط بلا shell، والـpatch مؤقت داخل مخزن
+  «سطر». النجاح والفشل والمهلة والمقاطعة تنظف worktree؛ فشل التنظيف يقلب النتيجة إلى `failed`.
+- **النتيجة والبوابة**: النتيجة العامة محصورة في
+  `{artifact_id,state,checks:[{id,label,passed,exit_code,timed_out,duration_ms}]}` بلا command أو خرج
+  خام أو أسرار. `merger.js` يرفض العمل إلا مع بوابة مراجعات `approve` ونتيجة `passed` للبصمة نفسها
+  وتأكيد الدمج، ثم يطبق حراس HEAD ونظافة الشجرة و`git apply --check` السابقة بلا commit أو push أو
+  rebase أو تغيير history.
+- **IPC والواجهة**: القنوات `satr:executionVerificationPrepare/Run/Stop/Latest` محددة في preload؛
+  لوحة التنفيذ تعرض الأوامر المثبتة أولاً وزر تشغيل مستقل، ولا تظهر «دمج» إلا بعد نجاح تحقق الأثر نفسه.
+- **الاختبار**: `npm run test:integration` يستخدم مستودع Git حقيقياً لنجاح/فشل/مهلة/مقاطعة، غياب
+  الإعداد، رفض بلا تأكيد، رفض تعديل الإعداد داخل patch، تبدل artifact، تنظيف كل worktree، منع تسريب
+  الخرج، وبقاء المصدر بلا لمس حتى الدمج الصريح. اختبارات `verify/worktrees/reviewmerge/executionteam`
+  و`eval:agent` عقود عدم تراجع إلزامية.
+
+### سجل القرارات والأدلة (غرفة العمليات — المرحلة 6)
+
+- **التخزين والعقد**: `electron/opsroom.js` يحفظ كل غرفة في
+  `~/.satr/opsroom/<room_id>.json` بـschema v1: `room_id` ومصفوفة `entries` فقط. الكتابة ذرية
+  `temp→rename`، والقراءة تعيد تنقية الملف كاملاً. السقف 200 إدخال و512KiB للملف و1000 محرف للنص؛
+  عند بلوغ السقف يُرفض الإدخال الجديد ولا يُحذف قديم، لذلك يبقى السجل append-only فعلياً عبر إعادة التشغيل.
+- **فصل السلطة fail-closed**: للمحرك مدخل `appendEngine` لا يقبل إلا `proposal|note` ويثبت actor إلى
+  `sdk|codex`. قرار المستخدم يمر حصراً عبر `appendUserDecision` ثم IPC
+  `satr:opsRoomDecision {roomId,text,teamId,artifactId?,confirmed:true}`؛ أي `id/type/actor` وارد من
+  renderer يُرفض، وكذلك غياب التأكيد. النظام وحده يسجل `review|verification|phase_gate|note` عبر
+  `appendSystem`. لا API حذف أو تعديل، ولا تحمل النواة runner أو merger أو أي قدرة تشغيلية.
+- **التنقية والحجب**: `room_id/entry.id/team_id/artifact_id` تخضع regex صارماً في `main.js` والنواة.
+  النص يزال منه محارف التحكم ويُقتطع، مع إعادة استخدام `memory.hasSecret` قبل الكتابة؛ patch markers
+  والحمولات الأطول من 64KiB تُرفض. أحداث `ops_room_update` العامة تحمل الإدخال المنقّى فقط، ولا تحمل
+  patch أو summaries أو commands أو output خاماً.
+- **الربط بالانتقالات**: `executionteam.js` ينشر `room_id` مع snapshot الفريق والأثر فقط، بلا منطق سجل.
+  `main.js` ينشئ الغرفة عند بدء الفريق ويسجل مهام العوامل المنقّاة، وجاهزية الأثر، وكل حالة فعلية مميزة
+  للمراجعة والتحقق، ثم `phase_gate` نظامية بعد نجاح الدمج الفعلي؛ كل entry ترتبط بـ`team_id` وبـ
+  `artifact_id` متى أصبح متاحاً. السجل سلبي ولا يبدأ مراجعة أو تحققاً أو دمجاً بذاته.
+- **IPC والاختبار**: القراءة عبر `satr:opsRoomLoad(roomId)` والقرار المؤكد عبر
+  `satr:opsRoomDecision(...)` في preload. `npm run test:opsroom` يستدعي النواة الفعلية وعقد
+  `executionteam` لإثبات persistence، append-only والسقوف، رفض انتحال قرار/مستخدم/بوابة مرحلة، حجب
+  الأسرار والـpatch والخرج الطويل، التنقية الصارمة، وربط room/team/artifact بلا تسريب الفرق.
+
+### واجهة غرفة العمليات (المرحلة 7)
+
+- **السطح والتصنيف**: `satr-ops-room` لوحة عمل جانبية واحدة لا تحجب الدردشة، بتمرير داخلي
+  ومسارات القرارات والمهام/الملكية والنقاش المحدود والأدلة/الاختبارات والفروقات والمراجعة/الدمج.
+  أحداث السجل الحية تدخل الخيط كبطاقات inline مطوية عبر `chat.showOpsEvent` و`cardSheet` المشتركة.
+  تأكيد بدء التنفيذ وتشغيل الاختبارات والدمج يمر عبر `satr-ops-dialog` الحاجب؛ التنبيهات غير
+  القرارية تبقى في `status`/الإشعارات ولا تحمل سير قرار.
+- **الحقيقة والبوابات**: `src/ui/lib/ops-room-state.js` reducer نقي هو مصدر اشتقاق حالات الأزرار.
+  لا يظهر الدمج إلا إذا اكتملت كل `required_review_engines` بحكم `approve` صريح لنفس
+  `artifact_id` ونجح التحقق للبصمة نفسها. أي verdict أو verification قديم يغلق البوابة. المكوّن
+  لا يبدأ المراجعة أو التحقق تلقائياً؛ كل انتقال من نقرة مستخدم ويستدعي IPC الخلفي الفعلي.
+- **منسّق الأسطح**: `surfaceCoordinator` في `app.js` يسجل `active|held|hidden`، ويستبدل اللوحة
+  الرئيسية الحالية، ويحفظ مصدر الفتح ويعيد التركيز. الحوارات تضع المعاينة الأصلية في `held`
+  عبر `preview.holdForDialog(true)` ثم تعيدها بقياس حي، ولا تحاول رفع DOM فوق WebContentsView.
+- **الأمان والعرض**: الواجهة تستهلك snapshots العامة والسجل المنقّى فقط؛ لا تستقبل patch ولا
+  `source_root` ولا خرج أوامر كاملاً. بطاقات الفروقات تعرض المسار والإضافات/الحذف فقط، وكل بطاقة
+  تعرض actor/engine/artifact/time مع عزل المعرّفات والمسارات LTR.
+- **الحوكمة والاختبار**: سلالم `--z-*` و`--space-*` و`--radius-*` في `base.css`، والأوراق
+  `panelSheet/cardSheet` عبر `adoptedStyleSheets`. `npm run test:opsroom-ui` يستورد reducer الفعلي
+  ويختبر ترتيب/إزالة تكرار الأحداث، حالات الأزرار، رفض البصمة القديمة، CSP، وحارس z-index/HTML/
+  Shadow DOM على الملفات المتغيرة. لم يتغير عقد IPC ولم تُضف اعتمادية.
+- **حد أمني ثابت**: التنفيذ الإنتاجي ما زال عبر Claude SDK فقط؛ فريق Codex أو فريق مختلط غير
+  متاح لأن حاجز 3A أثبت قراءة/كتابة خارج worktree وتجاوز ownership وأغلق 3B. Codex يبقى مراجعاً
+  قراءة فقط. لا تعرض الواجهة اختياراً يوحي بعزل غير مثبت، ولا يُفتح هذا الحد ضمن عمل UI.
 
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 
@@ -708,8 +817,12 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **بوابة أول التشغيل (مانع إطلاق)**: «سطر» يعتمد كلياً على Claude Code المثبّت عالمياً (محرك
   SDK يستدعيه عبر `pathToClaudeCodeExecutable`، والاحتياطي CLI كذلك)، فبدونه يفشل أول طلب
   صامتاً. لذا الواجهة تحجب المحادثة خلف بوابة عربية (`#gate` overlay في index.html) حتى يتوفّر.
-  - IPC `satr:preflight` (يستبدل `satr:check` القديم) → `{claude:{ok, version, path}, node:{ok,
-    version}, npm:{ok, version}}`. يفحص node و npm (تستخدمهما خطوات الإرشاد) وclaude. يستدعي
+  - IPC `satr:preflight` (يستبدل `satr:check` القديم) → `{claude:{ok, version, path, outdated?,
+    recommended?}, node:{ok, version}, npm:{ok, version}}`. يفحص node و npm (تستخدمهما خطوات
+    الإرشاد) وclaude. **توافق الإصدار (خارطة المنصّات الموجة 3)**: يستخرج semver من `--version`
+    ويقارنه بـ `CLAUDE_MIN_RECOMMENDED` (2.1.197 لـ Sonnet 5)؛ إن كان أقدم يضع `outdated`+
+    `recommended` فتعرض البوابة إرشاد تحديث غير حاجب (banner `note` ذهبي) — لا تحديث تلقائي
+    («سطر» يعتمد المثبّت العالمي عمداً). يستدعي
     `agent.resolveClaudeBin(true)` — **بالقوة** ليتجاوز التخزين، فزرّ «أعد الفحص» يلتقط تثبيتاً
     جرى بعد إقلاع «سطر». كل فحص بمهلة 8ث حتى لا تتعلّق البوابة.
   - الواجهة: متغيّر `gated` (يبدأ `true`) يمنع `send()`. البوابة تظهر فوراً بحالة «جارٍ التحقق»،
@@ -1115,13 +1228,15 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **حجب المعاينة أثناء مربع الإذن (إصلاح لقطة مالك)**: WebContentsView طبقة نظام فوق كل
   DOM — فمربع الإذن (perm-dialog) كان يختبئ خلف المعاينة، والوكيل يعلّق بانتظار ردّ لا
   يُرى (خاصة في acceptEdits حيث تمرّ Edit بلا إذن لكن Bash/أدوات المعاينة تطلبه). الحل:
-  perm-dialog يبثّ `perm-visible {visible}` عند كل ظهور/إخفاء، والقشرة تستدعي
-  `previewEl.holdForDialog(visible)` فتُخفي العرض الأصلي (previewBounds صفر) أثناء المربع
-  ثم تعيده بعد الرد — المربع يبرز فوق اللوحة. (`held` يمنع reportBounds من الإبلاغ أثناء الحجب.)
+  perm-dialog يبثّ `perm-visible {visible}` عند كل ظهور/إخفاء، ومنسّق الأسطح في القشرة ينقله
+  إلى `held` ويستدعي `previewEl.holdForDialog(visible)` فتُخفي العرض الأصلي (previewBounds صفر)
+  أثناء المربع ثم تعيده بقياس حي بعد الرد. الحوار يحبس التركيز ويعيده المنسّق إلى المصدر.
 
 ### نظام التصميم (الدفعة 4.1)
 
-- **Design Tokens في `:root`** (src/index.html): الرمادية الدافئة مقتبسة **قيماً** من مقياس
+> المرجع الحاكم في `docs/DESIGN-SYSTEM.md` — اقرأه قبل أي عمل على الواجهة أو إضافة عنصر UI جديد.
+
+- **Design Tokens في `:root`** (`src/styles/base.css`): الرمادية الدافئة مقتبسة **قيماً** من مقياس
   Sand الداكن في Radix Colors (نسخ قيم لا تثبيت حزم)، والدلاليات من Grass/Red الداكنين.
   الهوية الذهبية `--gold: #D9A441` ثابتة. **الأسماء القديمة باقية تعمل**
   (`--bg/--surface/--surface-2/--border/--text/--text-dim/--gold-soft/--green/--red`)
@@ -1130,6 +1245,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `--green-soft/-border`، `--red-soft/-border`، وظلال (`--shadow-pop/-panel/-modal`)
   وحركة موحّدة (`--ease`, `--dur`). **قاعدة حاكمة**: كل لون عبر متغيّر — لا تُدخل ألواناً
   صلبة جديدة في CSS (شرط عمل الوضعين معاً).
+- **السلالم الحاكمة**: `--z-base..--z-system` و`--space-0..7` و`--radius-xs..pill` بالقيم
+  المرجعية في `docs/DESIGN-SYSTEM.md`. الترحيل عند لمس المكوّن فقط؛ WebContentsView خارج سلم CSS.
 - **الوضع الفاتح/الداكن (دفعة «وضع فاتح»)**: كتلة `html[data-theme="light"]` في base.css
   تعيد تعريف tokens الواجهة فقط (لوحة Sand الفاتحة، والذهب/الأخضر/الأحمر مُغمَّقة للتباين
   على خلفية فاتحة). التبديل: زرّ 🌙/☀️ في الشريط العلوي (`#themeToggle`) + `localStorage`
@@ -1169,7 +1286,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 > عمل على الواجهة. صفر اعتماديات وبنّائين: Web Components أصلية + وحدات ES.
 
 - **المعمارية**: `src/ui/app.js` قشرة إقلاع وتوجيه (وحدة ES تعمل أولاً — ترتيب الوسوم)
-  تملك حالة التطبيق ومجرى `satr:event`؛ 14 مكوّناً ذاتي التسجيل في `src/ui/components/`؛
+  تملك حالة التطبيق ومجرى `satr:event` ومنسّق الأسطح؛ المكوّنات ذاتية التسجيل في
+  `src/ui/components/`؛
   المشتركات وحدات في `src/ui/lib/`. العقد: أحداث `CustomEvent` للخارج + methods عامة +
   الحالة تُمرَّر لحظة الفتح (المكوّنات لا تقرأ حالة القشرة).
 - **الأنماط**: Shadow DOM ⇒ `adoptedStyleSheets` حصراً (وسم `<style>` داخل Shadow
@@ -1237,7 +1355,13 @@ npm run dist:dir   # بناء مجلد بدون مثبّت (أسرع للتجر�
 - التوثيق: https://code.claude.com/docs/en/cli-reference و https://code.claude.com/docs/en/headless
 - الوضع غير التفاعلي: `claude -p` + `--output-format stream-json` (يتطلب `--verbose`)
 - `--include-partial-messages`: يضيف أحداث بث جزئية (حرفاً بحرف) — مخطط للمرحلة 3
-- أوضاع الصلاحيات: `default`, `acceptEdits`, `plan`, `bypassPermissions`
+- أوضاع الصلاحيات: `default`, `acceptEdits`, `plan`, `bypassPermissions`, `auto` (خارطة
+  المنصّات الموجة 4 — محرك SDK فقط): مصنّف Anthropic يوافق القرائية تلقائياً، والأدوات ذات
+  الأثر تُجبَر على مربع الإذن العربي عبر `preToolUse:'ask'`. المنطق النقي في `electron/autogate.js`
+  (`AUTO_SAFE_TOOLS`/`autoNeedsPrompt`/`decideAutoApproval`/`nonSdkPerm`)، يستهلكه agent.js
+  (canUseTool يستدعي `decideAutoApproval` المُختبَرة) وmain.js (`nonSdkPerm` يسقط auto لغير SDK).
+  **fail-safe**: whitelist للآمن لا blacklist للخطر (المجهول يُسأل)؛ «موافقة دائمة» سابقة لا
+  تعفي أداة غير آمنة في auto؛ `browserControl` استثناء صريح للمتصفح. اختبار `npm run test:autogate`.
 - جلسات Claude Code المحفوظة محلياً: `~/.claude/projects/<مسار-مرمّز>/*.jsonl` — تُستخدم في المرحلة 2 (متصفح الجلسات)
 - للترقية المستقبلية: Claude Agent SDK (TypeScript) يوفر تحكماً برمجياً كاملاً بما فيه
   اعتراض طلبات الأذونات — هذا أساس المرحلة 3. تحقق من توثيقه الرسمي قبل البدء.
