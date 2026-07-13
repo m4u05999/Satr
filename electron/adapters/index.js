@@ -11,6 +11,7 @@
 const claudeCli = require('./claude-cli');
 const gemini = require('./gemini');
 const openaiCompatible = require('./openai-compatible');
+const openaiResponses = require('./openai-responses');
 
 // name -> { adapter, meta:{ label, family } }
 const REGISTRY = new Map();
@@ -40,12 +41,29 @@ register('gemini', gemini, {
   ],
 });
 
+register('openai', openaiResponses, {
+  label: 'OpenAI (Responses)', family: 'openai', keyName: 'OPENAI_API_KEY',
+  // الجولة المنسّقة (vision): نماذج GPT-5.6 تقبل الصور؛ main.js يقرأ هذا من list()
+  // ليمرّر input.images، وopenai-responses.js يقرّر الاستهلاك لكل نموذج. (أكمله Claude
+  // لسدّ فجوة العقد إذ لم يصل البند لكودكس — يراجعه كودكس.)
+  capabilities: { vision: true },
+  models: [
+    { value: '', label: 'الافتراضي (Terra)' },
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+    { value: 'gpt-5.4-mini', label: 'GPT-5.4 mini' },
+    { value: 'gpt-5.4-nano', label: 'GPT-5.4 nano' },
+  ],
+});
+
 // عائلة المتوافقة مع OpenAI: نفس البروتوكول، مفتاح لكل مزوّد في ~/.satr/keys.json.
 // البروتوكول متحقَّق حيّاً (عبر نقطة Gemini المتوافقة)؛ المفاتيح يضيفها المستخدم.
 register('deepseek', openaiCompatible.make({
   id: 'deepseek', // معرّف مجلد الذاكرة على القرص (~/.satr/chats/deepseek/) — الدفعة 1.3
   host: 'api.deepseek.com', path: '/chat/completions',
-  keyName: 'DEEPSEEK_API_KEY', defaultModel: 'deepseek-chat', label: 'DeepSeek',
+  keyName: 'DEEPSEEK_API_KEY', defaultModel: 'deepseek-chat', label: 'DeepSeek', includeUsage: true,
+  capabilities: { strictTools: true },
 }), {
   label: 'DeepSeek', family: 'openai', keyName: 'DEEPSEEK_API_KEY',
   models: [
@@ -58,7 +76,7 @@ register('deepseek', openaiCompatible.make({
 register('qwen', openaiCompatible.make({
   id: 'qwen', // معرّف مجلد الذاكرة على القرص (~/.satr/chats/qwen/) — الدفعة 1.3
   host: 'dashscope-intl.aliyuncs.com', path: '/compatible-mode/v1/chat/completions',
-  keyName: 'QWEN_API_KEY', defaultModel: 'qwen-plus', label: 'Qwen (Alibaba)',
+  keyName: 'QWEN_API_KEY', defaultModel: 'qwen-plus', label: 'Qwen (Alibaba)', includeUsage: true,
 }), {
   label: 'Qwen (Alibaba)', family: 'openai', keyName: 'QWEN_API_KEY',
   models: [
@@ -74,7 +92,7 @@ register('qwen', openaiCompatible.make({
 register('minimax', openaiCompatible.make({
   id: 'minimax', // معرّف مجلد الذاكرة على القرص (~/.satr/chats/minimax/) — الدفعة 1.3
   host: 'api.minimax.io', path: '/v1/chat/completions',
-  keyName: 'MINIMAX_API_KEY', defaultModel: 'MiniMax-M3', label: 'MiniMax',
+  keyName: 'MINIMAX_API_KEY', defaultModel: 'MiniMax-M3', label: 'MiniMax', includeUsage: true,
 }), {
   label: 'MiniMax', family: 'openai', keyName: 'MINIMAX_API_KEY',
   models: [
@@ -99,6 +117,7 @@ function list() {
     out.push({
       name, label: meta.label || name, family: meta.family || '',
       keyName: meta.keyName || '', models: meta.models || [],
+      capabilities: meta.capabilities || {}, // الجولة المنسّقة: main.js يقرأ vision منها
     });
   }
   return out;

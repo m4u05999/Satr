@@ -288,7 +288,46 @@ const DEFS = [
   },
 ];
 
-function defs() { return DEFS; }
+function nullableSchema(schema) {
+  const out = { ...schema };
+  if (typeof out.type === 'string') out.type = [out.type, 'null'];
+  else if (Array.isArray(out.type) && !out.type.includes('null')) out.type = out.type.concat('null');
+  if (Array.isArray(out.enum) && !out.enum.includes(null)) out.enum = out.enum.concat(null);
+  return out;
+}
+
+// OpenAI strict tools تشترط منع الخصائص الزائدة واعتبار كل خاصية required؛
+// الاختياري الأصلي يبقى اختيارياً دلالياً عبر قبول null. لا نعدّل DEFS المشتركة.
+function strictSchema(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  const out = { ...schema };
+  if (schema.items) out.items = strictSchema(schema.items);
+  if (schema.properties && typeof schema.properties === 'object') {
+    const originallyRequired = new Set(Array.isArray(schema.required) ? schema.required : []);
+    const properties = {};
+    for (const [name, value] of Object.entries(schema.properties)) {
+      const strictValue = strictSchema(value);
+      properties[name] = originallyRequired.has(name) ? strictValue : nullableSchema(strictValue);
+    }
+    out.properties = properties;
+    out.required = Object.keys(properties);
+    out.additionalProperties = false;
+  }
+  return out;
+}
+
+const STRICT_DEFS = DEFS.map((definition) => ({
+  ...definition,
+  function: {
+    ...definition.function,
+    strict: true,
+    parameters: strictSchema(definition.function.parameters),
+  },
+}));
+
+function defs(options) {
+  return options && options.strictTools === true ? STRICT_DEFS : DEFS;
+}
 
 // ترجمة أخطاء readText لنص عربي يفهمه النموذج (ويشرحه للمستخدم عند الحاجة)
 const READ_ERRORS = {

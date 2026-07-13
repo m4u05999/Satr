@@ -30,6 +30,7 @@ const codexmcp = require('./codexmcp');  // خادم MCP‏ streamable-HTTP دا
 
 const IS_WIN = process.platform === 'win32';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة تراجع ولا نعرض فرقاً
+const DEFAULT_MODEL = 'gpt-5.6-sol';
 
 // ---------- لقطات التراجع (نظير agent.js) ----------
 // المفتاح call_id للتعديل، القيمة { file_path, before } (before=null ⇒ ملف جديد، التراجع=حذف).
@@ -152,7 +153,7 @@ function decodeBase64(s) { try { return Buffer.from(s, 'base64').toString('utf8'
 /**
  * يبدأ دوراً واحداً ويعيد مقبضاً فيه stop و resolvePermission (نفس عقد agent.start).
  */
-async function start({ prompt, images, sessionId, model, permissionMode, skills }, cwd, emit) {
+async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, browserControl }, cwd, emit) {
   const bin = resolveCodexBin();
   if (!bin) {
     emit({ type: 'spawn_error', text: 'لم يُعثر على Codex CLI. ثبّته: npm install -g @openai/codex' });
@@ -167,7 +168,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
   // codex اتصل، طلب tools/list، وأبلغ satr_preview=ready. أي فشل هنا لا يكسر الدور —
   // Codex يعمل بلا رؤية ويب (تدهور رشيق). open_preview يبثّ preview_open للواجهة لتفتح اللوحة.
   let mcpHost = null;
-  try {
+  if (browserControl !== false) try {
     mcpHost = await codexmcp.start({
       preview,
       openPreview: (url) => emit({ type: 'preview_open', url }),
@@ -202,6 +203,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
     );
     spawnEnv.SATR_MCP_TOKEN = mcpHost.token;
   }
+  // الموجة 2 (خارطة المنصّات): جهد التفكير. codex يقبل مفتاح config الرسمي
+  // model_reasoning_effort بقيم minimal|low|medium|high|xhigh («max» غير مقبول فنطبّعه
+  // إلى xhigh). نحقنه عبر -c عند spawn مثل بقية الإعدادات؛ لا --strict-config في الإطلاق
+  // فقيمة غير معروفة تُتجاهَل بلا كسر. spawn لكل دور فيعكس اختيار الواجهة اللحظي.
+  const CODEX_EFFORT = { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'xhigh' };
+  const eff = CODEX_EFFORT[effort];
+  if (eff) appServerArgs.push('-c', 'model_reasoning_effort="' + eff + '"');
   const proc = spawn(bin, appServerArgs, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: spawnEnv });
   const startedAt = Date.now();
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
@@ -540,7 +548,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
   (async () => {
     try {
       await request('initialize', { clientInfo: { name: 'satr', title: 'Satr', version: '1.0.0' } });
-      const { approvalPolicy, sandbox } = mapMode(permissionMode);
+  const { approvalPolicy, sandbox } = mapMode(permissionMode);
+  const resolvedModel = model || DEFAULT_MODEL;
       // تعريف الوكيل ببيئته والنموذج المختار (نظير systemPrompt في agent.js). النماذج لا
       // تعرف اسمها الرمزي (بيانات التدريب تسبق الإصدار) فتُعرّف نفسها عموماً بـ GPT-5؛
       // حقن الاسم هنا يجعلها تجيب بدقّة. developerInstructions إضافي (لا يستبدل تعليمات Codex).
@@ -564,7 +573,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
         + '(models_explore)، وضع النص المطلوب بين "علامتَي اقتباس" وسمِّ نمط الخط (ديواني/كوفي) '
         + 'لجودة أعلى؛ أو ضع النص العربي كطبقة HTML فوق الصورة. لا تمنعه منعاً مطلقاً. '
         + 'لا تستخدم من Agent Skills إلا المهارات المرفقة صراحةً بمدخلات هذا الدور.'
-        + (model ? ' النموذج المختار حالياً في واجهة «سطر» هو «' + model + '» (من OpenAI Codex).' : '');
+        + ' النموذج المختار حالياً في واجهة «سطر» هو «' + resolvedModel + '» (من OpenAI Codex).';
       const startParams = { cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, experimentalRawEvents: false, persistExtendedHistory: false };
       if (sessionId) {
         // استئناف خيط قائم من القرص (~/.codex/sessions) بمعرّفه. الحقول cwd/السياسة/
@@ -596,8 +605,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
         }
       }
       if (!inputItems.length) inputItems.push({ type: 'text', text: prompt || '', text_elements: [] });
-      const turnParams = { threadId, input: inputItems };
-      if (model) turnParams.model = model;
+      const turnParams = { threadId, input: inputItems, model: resolvedModel };
       await request('turn/start', turnParams);
       // الأحداث تصل عبر notifications؛ الدور ينتهي بـ turn/completed
     } catch (e) {
@@ -642,4 +650,4 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills 
   };
 }
 
-module.exports = { start, undoEdit, resolveCodexBin, authStatus };
+module.exports = { start, undoEdit, resolveCodexBin, authStatus, DEFAULT_MODEL };

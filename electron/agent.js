@@ -138,6 +138,9 @@ const BROWSER_AUTO_TOOLS = new Set([
   'mcp__satr-terminal__browser_navigate',
   'mcp__satr-terminal__browser_wait_for',
 ]);
+// وضع auto (الموجة 4): المنطق النقي وقائمة الأدوات الآمنة في autogate.js (قابل للاختبار
+// مستقلاً عن electron/SDK — نمط diff.js/inject.js). autoNeedsPrompt يقرّر إجبار المربع.
+const { autoNeedsPrompt, decideAutoApproval } = require('./autogate');
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
 
 // تطبيع أدوات Todo/Task ورسائل Agent الفعلية في SDK إلى عقد task_update الموحّد.
@@ -347,6 +350,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         await bgprocs.markBefore(input.tool_use_id);
       }
     } catch { /* تتبّع العمليات تحسين، لا يجوز أن يكسر الأداة */ }
+    // الموجة 4 (auto): إجبار الأدوات غير القرائية على مربع الإذن العربي. Hooks (خطوة 1)
+    // تسبق permission-mode (خطوة 4)، فإرجاع 'ask' يتخطّى مصنّف auto ويوجّه الأداة إلى
+    // canUseTool. القرائية (READ_ONLY_AUTO) تمرّ لـ auto كالمعتاد. غير auto: لا تغيير.
+    if (input && input.tool_name && autoNeedsPrompt(input.tool_name, permissionMode)) {
+      return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask',
+        permissionDecisionReason: 'أداة غير قرائية في وضع auto — تتطلب إذن المستخدم عبر «سطر»' } };
+    }
     return { continue: true };
   }
 
@@ -403,15 +413,19 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     settingSources: ['user', 'project', 'local'],
     stderr: (data) => emit({ type: 'stderr', text: String(data) }),
     canUseTool: async (toolName, input, { signal, toolUseID }) => {
-      if (alwaysAllowed.has(toolName)) return { behavior: 'allow', updatedInput: input };
-      // تحميل مهارة اختارها المستخدم ومورد نصي محصور داخلها قراءة فقط — بلا مربع إذن.
-      if (PORTABLE_SKILL_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
-      // قراءة إعداد التحقق فقط؛ verify_project نفسه يبقى خلف مربع إذن canUseTool.
-      if (READ_ONLY_VERIFY_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
-      // الاقتراح لا يكتب شيئاً؛ الحفظ يحتاج زرّ موافقة صريح في لوحة الذاكرة.
-      if (MEMORY_PROPOSAL_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
-      // وضع تحكّم المتصفح: يوافق على أدوات المتصفح فقط (لا run_in_terminal ولا الملفّات)
-      if (browserControl && BROWSER_AUTO_TOOLS.has(toolName)) return { behavior: 'allow', updatedInput: input };
+      // الموجة 4 (مراجعة كودكس): في auto، الأداة غير القرائية تُسأل **دائماً** — لا تعفيها
+      // «موافقة دائمة» مُنحت في وضع سابق (وإلا التفّت على حماية auto). browserControl يبقى
+      // استثناءً صريحاً أدناه (تفويض متصفح فعّله المستخدم بزرّ، لا موافقة عابرة قديمة).
+      // قرار الموافقة التلقائية في autogate.decideAutoApproval (نقي ومُختبَر — يستهدف أصل
+      // الثغرة). readOnly = القرائية المعفاة دائماً (مهارة/إعداد تحقق/اقتراح ذاكرة)؛
+      // browserTool = ضمن أدوات المتصفح (تُعفى فقط بـ browserControl الصريح). في auto لا
+      // تعفي «موافقة دائمة» سابقة أداةً غير آمنة (داخل decideAutoApproval).
+      const decision = decideAutoApproval(toolName, {
+        permissionMode, alwaysAllowed, browserControl,
+        readOnly: PORTABLE_SKILL_TOOLS.has(toolName) || READ_ONLY_VERIFY_TOOLS.has(toolName) || MEMORY_PROPOSAL_TOOLS.has(toolName),
+        browserTool: BROWSER_AUTO_TOOLS.has(toolName),
+      });
+      if (decision === 'allow') return { behavior: 'allow', updatedInput: input };
       const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
       emit({ type: 'permission_request', id, tool: toolName, input });
       return new Promise((resolve) => {

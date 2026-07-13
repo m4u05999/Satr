@@ -7,7 +7,7 @@
  * بإعطائه إعداده — إضافة مزوّد جديد = سطر تسجيل واحد (docs/ARCHITECTURE.md §4.2).
  *
  * make(config) → { start(input, cwd, emit) → { stop() } }  (نفس عقد المحوّلات).
- * config: { id, host, path, keyName, defaultModel, label } — id هو معرّف مجلد الذاكرة
+ * config: { id, host, path, keyName, defaultModel, label, includeUsage, capabilities } — id هو معرّف مجلد الذاكرة
  * على القرص (~/.satr/chats/<id>/)؛ بدونه تبقى الذاكرة حيّة فقط (تُمسح بإعادة التشغيل).
  * خيارات إضافية (الدفعة 3 — مزوّدون محليون مثل Ollama عبر نقطة الربط §4.2):
  *   protocol: 'https' (افتراضي) أو 'http' (خوادم محلية) · port: منفذ مخصّص ·
@@ -22,7 +22,8 @@
  *
  * أمان: المفتاح في ترويسة Authorization (لا spawn/صدفة)، البرومبت في جسم JSON (لا حقن)،
  * والأدوات تنفّذ عبر مسارات files.js المؤمَّنة (داخل cwd حصراً).
- * حدود: لا صور؛ أدوات القراءة فقط (الكتابة/التنفيذ في 2.2/2.3)؛ الذاكرة كاش حيّ + قرص (1.3).
+ * الصور اختيارية فقط عند capabilities.vision؛ effort غير منطبق هنا لأن Chat Completions لا يملك
+ * reasoning.effort القياسي، فلا نختلق reasoning_effort للمزوّدين المتوافقين.
  */
 
 const https = require('https');
@@ -34,6 +35,7 @@ const tools = require('../tools'); // أدوات الوكيل (2.1): read_file /
 const skillCatalog = require('../skills'); // metadata فقط أولاً؛ المحتوى عبر load_skill عند الطلب
 const memory = require('../memory'); // ذاكرة مشروع شخصية مُقَرّة ضمن ميزانية
 const contextBudget = require('../context'); // خلاصة repo map + usage تقديري موسوم estimate
+const usage = require('./usage'); // عقد input/output/cached/reasoning موحّد للمحوّلات
 
 const MAX_TURNS = 40;       // آخر 40 رسالة لكل جلسة (سقف الرموز)
 const MAX_SESSIONS = 50;    // سقف الجلسات في الكاش الحيّ لكل مزوّد
@@ -66,6 +68,9 @@ function make(config) {
   const transport = config.protocol === 'http' ? http : https;
   const port = config.port || undefined;
   const connectHint = config.connectHint || ''; // إرشاد عربي عند فشل الاتصال (خادم محلي غائب)
+  const includeUsage = config.includeUsage === true; // يُفعّل فقط لنقطة موثّقة كي لا نكسر مزوّداً محلياً
+  const strictTools = !!(config.capabilities && config.capabilities.strictTools === true);
+  const supportsVision = !!(config.capabilities && config.capabilities.vision === true);
   const histories = new Map(); // session_id -> رسائل بصيغة OpenAI (كاش حيّ فوق القرص)
 
   // المفتاح: بيئة النظام أولاً ثم مخزن «سطر» (~/.satr/keys.json) — موثوق بلا وراثة بيئة
@@ -108,7 +113,7 @@ function make(config) {
     let currentReq = null;
     let toolsOk = true; // يُعطَّل بعد رفض المزوّد للأدوات (نموذج لا يدعم tool-calling)
     // استهلاك الرموز عبر جولات الدور (3.3): يُجمَع من إطارات usage إن وفّرها المزوّد
-    const usageTotal = { input_tokens: 0, output_tokens: 0 };
+    const usageTotal = usage.emptyActual();
     const estimatedUsage = { input_tokens: 0, output_tokens: 0 };
     let contextEstimate = null;
 
@@ -139,20 +144,19 @@ function make(config) {
           ? [{ role: 'system', content: contextPrompt }].concat(messages)
           : messages;
         const bodyObj = { model: useModel, messages: requestMessages, stream: true };
-        if (withTools) bodyObj.tools = tools.defs();
+        if (includeUsage) bodyObj.stream_options = { include_usage: true };
+        if (withTools) bodyObj.tools = tools.defs({ strictTools });
         estimatedUsage.input_tokens += contextBudget.estimateTokens(bodyObj);
         const body = JSON.stringify(bodyObj);
 
+        let requestUsage = null; // الإطار الأخير يحمل إجمالي الطلب؛ لا نجمعه أكثر من مرة
         // إطار SSE: data: {choices[0].delta{content|tool_calls}} أو data: [DONE]
         const handleFrame = (jsonStr) => {
           if (!jsonStr || jsonStr === '[DONE]') return;
           let obj;
           try { obj = JSON.parse(jsonStr); } catch (e) { return; }
-          // usage يصل في إطار أخير (DeepSeek يرسله دائماً؛ آخرون حسب الإعداد) — نجمعه للدور
-          if (obj && obj.usage) {
-            usageTotal.input_tokens += obj.usage.prompt_tokens || 0;
-            usageTotal.output_tokens += obj.usage.completion_tokens || 0;
-          }
+          // مع include_usage يصل إطار أخير choices=[]؛ نحتفظ بآخر إجمالي موثّق للطلب.
+          if (obj && obj.usage) requestUsage = usage.parseChat(obj.usage) || requestUsage;
           const choice = obj && obj.choices && obj.choices[0];
           if (!choice) return;
           const delta = choice.delta || {};
@@ -200,10 +204,17 @@ function make(config) {
               if (line.startsWith('data:')) handleFrame(line.slice(5).trim());
             }
           });
-          res.on('end', () => done({
-            text: textBuf,
-            calls: [...calls.values()].filter((c) => c.id && c.name),
-          }));
+          res.on('end', () => {
+            const tail = sseBuf.trim();
+            if (tail.startsWith('data:')) handleFrame(tail.slice(5).trim());
+            if (requestUsage) {
+              usage.add(usageTotal, requestUsage);
+            }
+            done({
+              text: textBuf,
+              calls: [...calls.values()].filter((c) => c.id && c.name),
+            });
+          });
         });
 
         req.on('error', (e) => {
@@ -233,12 +244,19 @@ function make(config) {
         prompt,
         systemParts: [skillPrompt, memoryPrompt],
         history,
-        toolDefinitions: tools.defs(),
+        toolDefinitions: tools.defs({ strictTools }),
       });
       if (aborted) return;
       contextPrompt = builtContext.systemPrompt;
       contextEstimate = builtContext.estimate;
-      const messages = history.concat([{ role: 'user', content: prompt }]);
+      // الصور لا تأتي إلا من sanitizeImages في main.js؛ لا نقبل URL أو مساراً من النموذج.
+      const userContent = supportsVision && Array.isArray(input.images) && input.images.length
+        ? [{ type: 'text', text: prompt }].concat(input.images.map((image) => ({
+          type: 'image_url',
+          image_url: { url: 'data:' + image.media_type + ';base64,' + image.data },
+        })))
+        : prompt;
+      const messages = history.concat([{ role: 'user', content: userContent }]);
       let rounds = 0;
       while (true) {
         const r = await requestOnce(messages, toolsOk);
@@ -306,7 +324,7 @@ function make(config) {
           type: 'result', session_id: sid, is_error: false,
           duration_ms: Date.now() - startedAt, num_turns: rounds + 1,
           // استهلاك الدور (3.3) — إن وفّره المزوّد؛ مجرى المراقبة (§4.7) يلتقطه للوحة الاستهلاك
-          usage: contextBudget.resolveUsage(usageTotal, estimatedUsage),
+          usage: usage.normalize(usageTotal, estimatedUsage),
           context_estimate: contextEstimate,
           provider: providerId || undefined,
         });
