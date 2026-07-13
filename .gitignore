@@ -16,6 +16,9 @@ _bidi_test/
 _killtest/
 *.tmp.js
 
+# ملاحظات handoff مؤقتة (re-fresh) — شخصية، لا تُلتزم
+/re-fresh-*.md
+
 # ملفات نظام التشغيل
 .DS_Store
 Thumbs.db
