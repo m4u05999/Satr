@@ -941,18 +941,19 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   الأسطر — العرض وحده يقصّ `\r`). لا تحرير للمقصوص (truncated أو >5000 سطر — الحفظ حينها
   يُتلف بقية الملف؛ الزرّ معطّل مع تلميح). مؤشر «●» غير محفوظ + Ctrl+S يحفظ + Esc/إغلاق
   مع تغيير غير محفوظ يسأل (`confirm`) — Esc في التحرير يعود للقراءة لا يغلق العارض.
-  - **IPC**: `satr:writeFile {cwd, rel, content}` → `{ok, card}` أو `{ok:false, error:
-    bad_input|bad_cwd|too_big|outside|notfound|error(+message)}`. التنقية في main.js
-    (القاعدة 2: cwd مجلد قائم، rel ≤ 512، content نص) والتنفيذ عبر
+  - **IPC**: `satr:readFile` يعيد `version` (SHA-256 للمحتوى الكامل)، ثم
+    `satr:writeFile {cwd, rel, content, version}` → `{ok, card}` أو `{ok:false, error:
+    bad_input|bad_cwd|bad_version|conflict|too_big|outside|notfound|error(+message)}`. التنقية في main.js
+    (القاعدة 2: cwd مجلد قائم، rel ≤ 512، content نص، version بصمة hex صارمة) والتنفيذ عبر
     `tools.saveFromViewer` — **إعادة استخدام** المسار المؤمَّن نفسه: `resolveExisting`
     (تسامح NFC/NFD) + `readBefore` (رفض الثنائي/الضخم) + `commitWrite` (سقف 1م.ب +
     لقطة `editSnapshots` فالتراجع القائم يعمل). كتابة **ملف قائم فقط** (العارض لا ينشئ).
-    preload يكشفه `writeFile(cwd, rel, content)`.
+    preload يكشفه `writeFile(cwd, rel, content, version)`.
   - **بطاقة diff خارج الدور (درس مثبّت)**: بيانات `file_edit` تعود في **الردّ** (`card`)
     لا حدثاً عبر `satr:event` — حدث خارج دور يسقط على حارس الكتلة (`currentBlock`).
     الواجهة تبنيها بـ `buildDiff` وتضيفها للمحادثة مستقلة (`addStandaloneDiff`) — طيّ
-    وتراجع يعملان كأي بطاقة. **حدّ موثّق**: لا كشف تعارض إن تغيّر الملف على القرص بين
-    الفتح والحفظ (آخر كاتب يفوز، والتراجع متاح).
+    وتراجع يعملان كأي بطاقة. قبل الكتابة يقارن `saveFromViewer` بصمة نسخة الفتح بالمحتوى
+    الحالي؛ عند تغيّر الملف يعيد `conflict` ولا يكتب شيئاً، وتبقى تعديلات المستخدم في textarea.
 - **بحث محتوى الملفات (الدفعة 4.6)**: حقل 🔍 أعلى الشجرة — Enter يبحث (مسح فعلي لكل
   الملفات، ليس ترشيحاً فورياً كبحث الجلسات) عبر IPC قراءة فقط `satr:searchFiles
   {cwd, query}` → `{ok, hits:[{rel, line, text}], partial}` (تنقية main.js: query ≤ 256؛
@@ -1139,13 +1140,14 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   (waitReady ينتظر التحميل؛ preview.js موديول مشترك بين main وagent مثل term.js).
   systemPrompt يوجّه الوكيل لاستعمالهما للتحقق من تعديلاته. قراءة فقط — الأفعال (م-4)
   خلف بوابة قرار. تحقق حيّ: دور SDK حقيقي استدعى الأداتين والرؤية قبِلت اللقطة.
-- **أدوات الفعل بالإذن (م-4)**: `browser_click(selector)` + `browser_type(selector, text)`
+- **أدوات الفعل بالإذن (م-4)**: `browser_click(ref)` + `browser_type(ref, text)`
   في خادم satr-terminal، على العرض القائم عبر `preview.clickElement/typeText`
   (executeJavaScript؛ selector يُهرَّب بـ JSON.stringify؛ الكتابة عبر native value setter
   + input/change لتوافق React). **الأمان (حرج)**: تمرّان بـ `canUseTool` مثل Bash —
-  مربع الإذن العربي كل مرة (لسن في alwaysAllowed)، bypassPermissions وحده يعفيها؛
-  `toolDetail` يُظهر selector في الإذن. قائمة النطاقات لم تلزم (الإذن اليدوي لكل فعل
-  أقوى). حدّ: النص المكتوب لا يظهر كاملاً في الإذن (selector فقط).
+  مربع الإذن العربي كل مرة (لسن في alwaysAllowed)، bypassPermissions وحده يعفيها.
+  `formatPermissionDetail` يعرض العنصر والنص المراد كتابته صراحةً داخل مربع الإذن فقط
+  (مقصوصاً عند 600 محرف؛ لا يضاف إلى بطاقة الأداة). قائمة النطاقات لم تلزم لأن الإذن
+  اليدوي لكل فعل أقوى.
 - **ترقية أفعال المتصفح — لقطة + ref حتمي (2026-07-12)**: نمط Playwright MCP/browser-use
   الصناعي (بحث موثّق): بدل تخمين النموذج مُحدِّد CSS من outerHTML (هشّ)، أداة جديدة
   `browser_snapshot` تعطي لقطة مدمجة لكل عنصر تفاعلي `[ref] role "name"` (تسِم كلاً بسمة

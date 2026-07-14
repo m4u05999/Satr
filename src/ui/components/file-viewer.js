@@ -86,6 +86,7 @@ class SatrFileViewer extends HTMLElement {
     this._cwd = '';
     this._rel = '';
     this._raw = null;        // المحتوى الخام كما قُرئ من القرص (أساس كشف «غير محفوظ»)
+    this._version = null;    // بصمة نسخة الفتح — تمنع الكتابة فوق تغيير خارجي صامت
     this._editable = false;  // قابل للتحرير (قُرئ كاملاً بلا قصّ)
     this._dirty = false;
     this._dirMode = 'auto';  // تلقائي ← RTL ← LTR (يعود تلقائياً كل فتح)
@@ -155,11 +156,13 @@ class SatrFileViewer extends HTMLElement {
     if (!this._dirty) { this._exitEdit(); return; }
     const content = this._ta.value;
     this._btnSave.disabled = true;
-    const r = await window.satr.writeFile(this._cwd, this._rel, content);
+    const r = await window.satr.writeFile(this._cwd, this._rel, content, this._version);
     if (!r || !r.ok) {
       const why = {
         too_big: 'المحتوى أكبر من سقف الكتابة (1م.ب)', outside: 'المسار خارج مجلد المشروع',
         notfound: 'الملف غير موجود على القرص', bad_cwd: 'مجلد المشروع غير موجود', bad_input: 'مدخل غير صالح',
+        bad_version: 'نسخة الملف المفتوحة غير صالحة — أعد فتح الملف',
+        conflict: 'تغيّر الملف على القرص بعد فتحه — لم يُكتب شيء. احتفظ بنصك ثم أعد فتح الملف',
       };
       this._note.textContent = '⚠️ تعذّر الحفظ: ' + (why[(r && r.error) || ''] || (r && r.message) || 'خطأ غير معروف');
       this._note.hidden = false;
@@ -173,6 +176,7 @@ class SatrFileViewer extends HTMLElement {
   }
   close() {
     this._raw = null;
+    this._version = null;
     this._exitEdit();
     this.removeAttribute('open');
     this._pre.textContent = '';
@@ -196,7 +200,7 @@ class SatrFileViewer extends HTMLElement {
   async open(cwd, rel, line) {
     this._cwd = cwd || '';
     this._dirMode = 'auto'; // «تعديل مؤقت» — كل فتح يبدأ تلقائياً
-    this._raw = null; this._rel = rel; this._editable = false;
+    this._raw = null; this._version = null; this._rel = rel; this._editable = false;
     this._exitEdit(); // فتح جديد = وضع قراءة نظيف (زرّ التحرير يظهر بعد قراءة ناجحة)
     this._btnDir.textContent = 'الاتجاه: تلقائي';
     this._name.textContent = rel;
@@ -220,7 +224,8 @@ class SatrFileViewer extends HTMLElement {
     if (clipped) lines = lines.slice(0, MAX_VIEW_LINES);
     // تحرير خفيف: المحتوى الخام محفوظ للتحرير — المقصوص لا يُحرَّر (حفظه يُتلف بقية الملف)
     this._raw = r.content;
-    this._editable = !r.truncated && !clipped;
+    this._version = typeof r.version === 'string' ? r.version : null;
+    this._editable = /^[a-f0-9]{64}$/.test(this._version || '') && !r.truncated && !clipped;
     this._btnEdit.hidden = false;
     this._btnEdit.disabled = !this._editable;
     this._btnEdit.title = this._editable ? 'تحرير الملف'

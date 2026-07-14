@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('satr', {
   readCodexSession: (id) => ipcRenderer.invoke('satr:readCodexSession', { id }),
   listFiles: (cwd) => ipcRenderer.invoke('satr:listFiles', cwd),
   readFile: (cwd, rel) => ipcRenderer.invoke('satr:readFile', { cwd, rel }), // عارض القراءة (1.2)
-  writeFile: (cwd, rel, content) => ipcRenderer.invoke('satr:writeFile', { cwd, rel, content }), // تحرير خفيف في العارض (الدفعة 4)
+  writeFile: (cwd, rel, content, version) => ipcRenderer.invoke('satr:writeFile', { cwd, rel, content, version }), // تحرير خفيف في العارض (الدفعة 4)
   searchFiles: (cwd, query) => ipcRenderer.invoke('satr:searchFiles', { cwd, query }), // بحث محتوى المشروع (الدفعة 4.6)
   gitChanges: (cwd) => ipcRenderer.invoke('satr:gitChanges', { cwd }), // لوحة تغييرات git (الدفعة 4.7)
   gitAction: (cwd, op, rel, message) => ipcRenderer.invoke('satr:gitAction', { cwd, op, rel, message }), // أفعال git (stage/unstage/discard/commit)

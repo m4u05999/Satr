@@ -390,13 +390,17 @@ function commitWrite(ctx, cwd, toolName, rel, abs, before, after) {
  * (العارض يفتح الموجود فقط). بطاقة file_edit تُعاد في الردّ نفسه (card) بدل بثّها
  * حدثاً: حدث خارج دور يسقط على حارس الكتلة في الواجهة — الردّ المتزامن أسلم ترتيباً.
  */
-function saveFromViewer(cwd, rel, content) {
+function saveFromViewer(cwd, rel, content, expectedVersion) {
   try {
     if (typeof content !== 'string' || content.length > MAX_WRITE) return { ok: false, error: 'too_big' };
+    if (typeof expectedVersion !== 'string' || !/^[a-f0-9]{64}$/.test(expectedVersion)) {
+      return { ok: false, error: 'bad_version' };
+    }
     const abs = resolveExisting(cwd, rel);
     if (!abs) return { ok: false, error: 'outside' };
     const before = readBefore(abs); // يرمي للثنائي/الضخم — يلتقطه catch أدناه
     if (before == null) return { ok: false, error: 'notfound' }; // العارض لا ينشئ ملفات
+    if (files.contentVersion(before) !== expectedVersion) return { ok: false, error: 'conflict' };
     const id = 'view_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
     let card = null;
     commitWrite({ emit: (ev) => { card = ev; }, id }, cwd, 'viewer_edit', rel.replace(/\\/g, '/'), abs, before, content);

@@ -10,6 +10,7 @@
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
+const crypto = require('crypto');
 const inject = require('./inject'); // إعادة استخدام resolveInside/looksBinary/readCapped (أمان موحّد)
 
 // مجلدات لا قيمة لذكرها في @ وتُبطئ المشي — نتجاهلها كلياً
@@ -63,10 +64,14 @@ async function listFiles(cwd) {
 
 const MAX_VIEW = 256 * 1024; // سقف المعروض في عارض القراءة (بايت)
 
+function contentVersion(content) {
+  return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
 /**
  * قراءة ملف نصّي للعرض فقط — التحقق موحّد مع inject.js:
  * المسار داخل cwd حصراً، رفض الثنائي، قراءة بسقف (لا تحميل ملفات عملاقة).
- * @returns {{ok:true, content:string, truncated:boolean, bytes:number} |
+ * @returns {{ok:true, content:string, truncated:boolean, bytes:number, version:string|null} |
  *           {ok:false, error:'outside'|'notfound'|'binary'|'error'}}
  */
 function readText(cwd, rel) {
@@ -80,9 +85,10 @@ function readText(cwd, rel) {
   if (inject.looksBinary(buf)) return { ok: false, error: 'binary' };
   const truncated = buf.length > MAX_VIEW;
   if (truncated) buf = buf.subarray(0, MAX_VIEW);
-  // إزالة محرف بديل مبتور محتمل عند قطع UTF-8 في منتصف حرف
-  const content = buf.toString('utf8').replace(/�+$/, '');
-  return { ok: true, content, truncated, bytes: st.size };
+  // إزالة محرف بديل مبتور محتمل عند قطع UTF-8 في منتصف حرف — عند القص فقط.
+  let content = buf.toString('utf8');
+  if (truncated) content = content.replace(/�+$/, '');
+  return { ok: true, content, truncated, bytes: st.size, version: truncated ? null : contentVersion(content) };
 }
 
-module.exports = { listFiles, readText };
+module.exports = { listFiles, readText, contentVersion };

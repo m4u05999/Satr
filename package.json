@@ -32,6 +32,7 @@
     "test:terminal-tabs": "electron scripts/terminal-tabs-test.js",
     "test:codex-executor-probe": "node scripts/codex-executor-probe.js",
     "test:codexmcp": "node scripts/codexmcp-test.js",
+    "test:viewer-security": "node scripts/viewer-security-test.js",
     "test:autogate": "node scripts/autogate.test.js",
     "test:adapters": "node scripts/adapters-test.js",
     "prestart": "node scripts/update-csp.js",

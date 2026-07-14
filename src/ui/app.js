@@ -1,3 +1,5 @@
+import { formatPermissionDetail } from './lib/permission-detail.js';
+
 // قشرة الإقلاع والتوجيه (Orchestration) — وحدة ES منذ التنظيف النهائي ت-13
 // (كانت IIFE كلاسيكية طوال التفكيك — قرار ت-0 لتفادي مفاجآت strict mode).
 // نطاق الوحدة معزول وstrict أصلاً فلا لفّ ولا 'use strict'. تعمل قبل وحدات
@@ -487,7 +489,7 @@
   window.satr.onEvent((ev) => {
     // طلبات الأذونات تُعالج دائماً ولو كانت الكتلة منتهية
     if (ev.type === 'permission_request') {
-      permEl.request({ id: ev.id, tool: ev.tool, detail: permDetailText(ev.input) });
+      permEl.request({ id: ev.id, tool: ev.tool, detail: permDetailText(ev.tool, ev.input) });
       return;
     }
     // عمليات الخلفية مستقلة عن الدور: تصل حتى بعد انتهاء التشغيل، فتُعالَج قبل حارس الكتلة
@@ -642,7 +644,9 @@
   permEl.addEventListener('perm-visible', (e) => {
     surfaceCoordinator.setDialog('permission-dialog', !!e.detail);
   });
-  function permDetailText(inp) {
+  function permDetailText(tool, inp) {
+    const browserDetail = formatPermissionDetail(tool, inp);
+    if (browserDetail) return browserDetail;
     const d = chatEl.toolDetail(inp);
     if (d) return d;
     try { return JSON.stringify(inp || {}, null, 1).slice(0, 1000); } catch { return ''; }

@@ -1481,13 +1481,15 @@ ipcMain.handle('satr:writeFile', (event, payload) => {
   const p = payload || {};
   const cwd = typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd.trim() : '';
   const rel = typeof p.rel === 'string' ? p.rel.trim() : '';
+  const version = typeof p.version === 'string' ? p.version : '';
   if (!cwd || !rel || rel.length > 512 || typeof p.content !== 'string') return { ok: false, error: 'bad_input' };
+  if (!/^[a-f0-9]{64}$/.test(version)) return { ok: false, error: 'bad_version' };
   try {
     if (!fs.statSync(cwd).isDirectory()) throw new Error();
   } catch {
     return { ok: false, error: 'bad_cwd' };
   }
-  return agentTools.saveFromViewer(cwd, rel, p.content);
+  return agentTools.saveFromViewer(cwd, rel, p.content, version);
 });
 
 // ---------- بحث محتوى المشروع (الدفعة 4.6): قراءة فقط ----------
