@@ -35,11 +35,12 @@ export const panelSheet = sheet(controlsText + `
   :host {
     position: fixed; top: 0; bottom: 0; right: 0; width: 420px; max-width: 92vw;
     background: var(--surface); border-inline-start: 1px solid var(--border);
-    box-shadow: var(--shadow-panel); z-index: 80;
+    z-index: var(--z-panel);
     transform: translateX(100%); transition: transform var(--dur) var(--ease);
     display: flex; flex-direction: column;
   }
-  :host([open]) { transform: translateX(0); }
+  /* الظلّ عند الفتح فقط: لوحة مغلقة منزلقة خارج الشاشة كانت تُبقي شريط ظلّها الدائم يمين الحافة */
+  :host([open]) { transform: translateX(0); box-shadow: var(--shadow-panel); }
   .panel-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 16px; border-bottom: 1px solid var(--border);
