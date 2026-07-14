@@ -52,7 +52,10 @@ function fixture(artifactId) {
 
 async function testReducer() {
   const stateModule = await loadStateModule();
-  const { createOpsRoomState, opsRoomReducer, deriveOpsRoomState, isCurrentArtifact } = stateModule;
+  const {
+    createOpsRoomState, deriveAgentActivity, opsRoomReducer, deriveOpsRoomState, isCurrentArtifact,
+    OBSERVABLE_ACTIVITY_QUIET_MS,
+  } = stateModule;
   const artifact = 'a'.repeat(64);
   const staleArtifact = 'b'.repeat(64);
   const current = fixture(artifact);
@@ -65,6 +68,36 @@ async function testReducer() {
   assert.strictEqual(deriveOpsRoomState(state).canStop, true, 'running team must be stoppable');
   assert.strictEqual(deriveOpsRoomState(state).nextAction.key, 'team_running', 'running team needs a truthful wait instruction');
   assert.strictEqual(deriveOpsRoomState(state).canReview, false, 'review cannot start before artifact completion');
+
+  const activityNow = 1_000_000;
+  assert.deepStrictEqual(deriveAgentActivity({ state: 'running', last_activity_at: activityNow - 5_000 }, activityNow), {
+    kind: 'waiting', observed: false, lastActivityAt: activityNow - 5_000, elapsedMs: 5_000,
+  }, 'a timestamp without a tool or file is not observable worker activity');
+  assert.strictEqual(deriveAgentActivity({
+    state: 'running', last_tool: 'read', last_activity_at: activityNow - OBSERVABLE_ACTIVITY_QUIET_MS + 1,
+  }, activityNow).kind, 'recent', 'recent observable tool activity stays truthful');
+  assert.strictEqual(deriveAgentActivity({
+    state: 'running', last_file: 'src/app.js', last_activity_at: activityNow - OBSERVABLE_ACTIVITY_QUIET_MS,
+  }, activityNow).kind, 'quiet', 'the documented threshold describes silence without claiming a stall');
+  assert.strictEqual(deriveAgentActivity({
+    state: 'timed_out', last_tool: 'read', last_activity_at: activityNow - 1,
+  }, activityNow).kind, 'terminal', 'terminal agent state overrides activity recency');
+
+  for (const [teamState, key, phrase] of [
+    ['failed', 'retry_failed', 'راجع السبب'],
+    ['timed_out', 'retry_timeout', 'ضيّق المهمة'],
+    ['conflict', 'retry_conflict', 'افصل الملكيات'],
+    ['cleanup_failed', 'retry_cleanup', 'نظّفها يدوياً'],
+    ['stopped', 'retry_stopped', 'بطلب المستخدم'],
+  ]) {
+    const terminal = opsRoomReducer(createOpsRoomState(), { type: 'hydrate', team: {
+      ...current.team, state: teamState, artifact_id: '', merge_supported: false,
+    } });
+    const derived = deriveOpsRoomState(terminal);
+    assert.strictEqual(derived.nextAction.key, key, teamState + ' needs a specific recovery action');
+    assert(derived.nextAction.label.includes(phrase), teamState + ' recovery must explain the next step');
+    assert.strictEqual(derived.nextAction.action, 'start', teamState + ' retry remains an explicit user action');
+  }
 
   state = opsRoomReducer(state, { type: 'hydrate', room: {
     room_id: current.team.room_id,
@@ -183,6 +216,17 @@ function testDesignGuard() {
   assert(layoutRunner.includes("extractBlock(index, '<satr-composer>', '</satr-composer>')")
     && layoutRunner.includes("result.cases.map((item) => item.width), [806, 504, 381]"),
   'layout runner must guard fixture parity and all three approved column widths');
+  assert.strictEqual(packageJson.scripts['test:opsroom-ui-live'],
+    'electron scripts/opsroom-ui-live-test.js',
+    'live ops-room UI test must remain available through package scripts');
+  const opsLiveFixture = read('scripts/fixtures/opsroom-ui-live.html');
+  assert(opsLiveFixture.includes('../../src/styles/base.css')
+    && opsLiveFixture.includes('../../src/ui/components/ops-room.js'),
+  'ops-room live fixture must exercise the production stylesheet and component');
+  const stateSource = read('src/ui/lib/ops-room-state.js');
+  assert(stateSource.includes('export function deriveAgentActivity(agent, currentTime)')
+    && stateSource.includes("key: 'retry_timeout'") && stateSource.includes("key: 'retry_cleanup'"),
+  'ops-room state must derive observable activity and terminal recovery guidance purely');
   const component = read('src/ui/components/ops-room.js');
   assert(component.includes('adoptedStyleSheets'), 'ops room must use constructable stylesheets');
   assert(!component.includes('innerHTML') && !component.includes('insertAdjacentHTML'),
@@ -213,6 +257,10 @@ function testDesignGuard() {
     'compact ops room must reclaim width through spacing tokens');
   assert(component.includes("makeElement('div', 'status-row')") && component.includes("makeElement('div', 'timeout-row')"),
     'stop and timeout extension must remain visible in their live context');
+  assert(component.includes("observable.className = 'observable-activity'")
+    && component.includes('syncActivityElement(observable, agent, Date.now())')
+    && component.includes('لم يصل نشاط أداة أو ملف قابل للرصد منذ'),
+  'worker cards must expose truthful observable activity without inventing progress');
   const setupCard = component.slice(component.indexOf('  _setupCard(template) {'), component.indexOf('\n  _syncSetupActions() {'));
   const workerInputs = setupCard.indexOf('setup.appendChild(worker); inputs.push(worker);');
   const secondarySetup = setupCard.indexOf('setup.appendChild(note); setup.appendChild(planRow);');

@@ -3,7 +3,9 @@
 import { sheet } from '../lib/sheet.js';
 import { panelSheet, controlsSheet } from '../lib/panel.css.js';
 import { cardSheet } from '../lib/card.css.js';
-import { createOpsRoomState, deriveOpsRoomState, opsRoomReducer } from '../lib/ops-room-state.js';
+import {
+  createOpsRoomState, deriveAgentActivity, deriveOpsRoomState, opsRoomReducer,
+} from '../lib/ops-room-state.js';
 
 const roomSheet = sheet(`
   :host {
@@ -199,6 +201,8 @@ const roomSheet = sheet(`
     display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
     padding: 0 var(--space-3) var(--space-3); color: var(--text-dim); font-size: .75rem;
   }
+  .observable-activity { unicode-bidi: plaintext; }
+  .observable-activity[data-activity="quiet"] { color: var(--gold); }
   .warning { color: var(--red); }
   .gate-summary {
     padding: var(--space-3); border: 1px solid var(--gold-border);
@@ -381,6 +385,36 @@ function remainingLabel(deadline) {
   const seconds = Math.max(0, Math.ceil((Number(deadline) - Date.now()) / 1000));
   const minutes = Math.floor(seconds / 60);
   return minutes + ':' + String(seconds % 60).padStart(2, '0');
+}
+
+function durationLabel(milliseconds) {
+  const seconds = Math.max(0, Math.floor((Number(milliseconds) || 0) / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return hours > 0
+    ? hours + ':' + String(minutes).padStart(2, '0') + ':' + String(remainder).padStart(2, '0')
+    : minutes + ':' + String(remainder).padStart(2, '0');
+}
+
+function activityLabel(activity) {
+  if (!activity || activity.kind === 'waiting') return 'بانتظار أول نشاط أداة أو ملف قابل للرصد…';
+  if (activity.kind === 'quiet') {
+    return 'لم يصل نشاط أداة أو ملف قابل للرصد منذ ' + durationLabel(activity.elapsedMs) + '.';
+  }
+  if (activity.kind === 'recent') {
+    return activity.elapsedMs < 5_000
+      ? 'آخر نشاط أداة أو ملف قابل للرصد: الآن.'
+      : 'آخر نشاط أداة أو ملف قابل للرصد منذ ' + durationLabel(activity.elapsedMs) + '.';
+  }
+  return '';
+}
+
+function syncActivityElement(element, agent, now) {
+  const activity = deriveAgentActivity(agent, now);
+  element.dataset.activity = activity.kind;
+  element.textContent = activityLabel(activity);
+  element.title = activity.lastActivityAt > 0 ? 'وقت آخر نشاط قابل للرصد: ' + timeLabel(activity.lastActivityAt) : '';
 }
 
 class SatrOpsDialog extends HTMLElement {
@@ -958,6 +992,13 @@ class SatrOpsRoom extends HTMLElement {
           const remaining = document.createElement('span'); remaining.className = 'counts';
           remaining.dataset.deadline = String(agent.deadline_at); activity.appendChild(remaining);
         }
+        const observable = document.createElement('span'); observable.className = 'observable-activity';
+        observable.dataset.agentActivity = 'true';
+        observable._opsAgent = agent; syncActivityElement(observable, agent, Date.now()); activity.appendChild(observable);
+        const elapsed = document.createElement('span'); elapsed.className = 'observable-activity elapsed';
+        elapsed.dataset.startedAt = String(Number(team.created_at) || Date.now());
+        elapsed.textContent = 'المدة ' + durationLabel(Date.now() - Number(elapsed.dataset.startedAt));
+        activity.appendChild(elapsed);
         const budget = document.createElement('span'); budget.className = 'counts';
         budget.textContent = 'كتابة ' + ((agent.permissions && agent.permissions.write_used) || 0) + '/'
           + ((agent.permissions && agent.permissions.write_limit) || 0);
@@ -1576,8 +1617,15 @@ class SatrOpsRoom extends HTMLElement {
   }
 
   _refreshCountdowns() {
+    const now = Date.now();
     for (const element of this._root.querySelectorAll('[data-deadline]')) {
       element.textContent = 'متبقٍ ' + remainingLabel(element.dataset.deadline);
+    }
+    for (const element of this._root.querySelectorAll('.observable-activity[data-agent-activity]')) {
+      syncActivityElement(element, element._opsAgent, now);
+    }
+    for (const element of this._root.querySelectorAll('[data-started-at]')) {
+      element.textContent = 'المدة ' + durationLabel(now - Number(element.dataset.startedAt));
     }
     const team = this._state.team;
     const deadlines = ((team && team.agents) || []).filter((agent) => !TERMINAL_AGENT_STATES.has(agent.state))

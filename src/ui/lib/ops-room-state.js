@@ -2,6 +2,22 @@ const TERMINAL_TEAM_STATES = new Set([
   'completed', 'failed', 'timed_out', 'stopped', 'conflict', 'cleanup_failed',
 ]);
 const TERMINAL_REVIEW_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped']);
+const TERMINAL_AGENT_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
+
+export const OBSERVABLE_ACTIVITY_QUIET_MS = 60 * 1000;
+
+export function deriveAgentActivity(agent, currentTime) {
+  const value = agent && typeof agent === 'object' ? agent : {};
+  const suppliedTime = Number(currentTime);
+  const now = currentTime != null && Number.isFinite(suppliedTime) ? suppliedTime : Date.now();
+  const lastActivityAt = Math.max(0, Number(value.last_activity_at) || 0);
+  const observed = lastActivityAt > 0 && Boolean(value.last_tool || value.last_file);
+  const elapsedMs = lastActivityAt > 0 ? Math.max(0, now - lastActivityAt) : 0;
+  let kind = 'waiting';
+  if (TERMINAL_AGENT_STATES.has(value.state)) kind = 'terminal';
+  else if (observed) kind = elapsedMs >= OBSERVABLE_ACTIVITY_QUIET_MS ? 'quiet' : 'recent';
+  return { kind, observed, lastActivityAt, elapsedMs };
+}
 
 export function createOpsRoomState() {
   return {
@@ -129,6 +145,26 @@ export function deriveOpsRoomState(state) {
   else if (canPrepareVerification) nextAction = { key: 'prepare', action: 'prepare', label: 'وافقت المراجعات؛ الخطوة التالية تثبيت تحقق الأثر الحالي.' };
   else if (canReview) nextAction = { key: 'review', action: 'review', label: 'اكتمل التنفيذ؛ الخطوة التالية بدء المراجعات المستقلة.' };
   else if (team && team.merged) nextAction = { key: 'merged', action: '', label: 'طُبّق الأثر على شجرة العمل بلا commit.' };
+  else if (canStart && team && team.state === 'timed_out') nextAction = {
+    key: 'retry_timeout', action: 'start',
+    label: 'انتهت المهلة؛ ضيّق المهمة أو اختر مهلة أطول، ثم ابدأ فريقاً جديداً صراحةً.',
+  };
+  else if (canStart && team && team.state === 'conflict') nextAction = {
+    key: 'retry_conflict', action: 'start',
+    label: 'تعارضت ملكيات الملفات؛ افصل الملكيات، ثم ابدأ فريقاً جديداً صراحةً.',
+  };
+  else if (canStart && team && team.state === 'cleanup_failed') nextAction = {
+    key: 'retry_cleanup', action: 'start',
+    label: 'فشل تنظيف نسخة عمل معزولة؛ نظّفها يدوياً قبل بدء فريق جديد.',
+  };
+  else if (canStart && team && team.state === 'failed') nextAction = {
+    key: 'retry_failed', action: 'start',
+    label: 'فشل التنفيذ؛ راجع السبب وإرشاد التعافي، ثم ابدأ فريقاً جديداً صراحةً.',
+  };
+  else if (canStart && team && team.state === 'stopped') nextAction = {
+    key: 'retry_stopped', action: 'start',
+    label: 'توقف الفريق بطلب المستخدم؛ راجع النتيجة ثم ابدأ فريقاً جديداً عند الحاجة.',
+  };
   else if (canStart) nextAction = team
     ? { key: 'start', action: 'start', label: 'انتهى الفريق الحالي؛ راجع النتيجة ثم أنشئ فريقاً جديداً عند الحاجة.' }
     : { key: 'start', action: 'start', label: 'حدّد مهام العوامل وملكياتها، ثم ابدأ التنفيذ صراحةً.' };
