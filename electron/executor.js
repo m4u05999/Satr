@@ -13,8 +13,9 @@ const worktrees = require('./worktrees');
 const SAFE_RUN_ID = /^execution-[a-z0-9-]{6,80}$/;
 const MAX_TASK_CHARS = 4000;
 const MAX_SUMMARY_CHARS = 12000;
-const DEFAULT_TIMEOUT_MS = 180000;
-const MAX_TIMEOUT_MS = 300000;
+const DEFAULT_TIMEOUT_MS = 300000;
+const MAX_TIMEOUT_MS = 600000;
+const TIMEOUT_PRESETS_MS = Object.freeze([180000, 300000, 600000]);
 const MAX_WRITE_PERMISSIONS = 30;
 const MAX_MALFORMED_TOOLS = 3; // سقف محاولات أداة مسموحة بمدخل JSON معطوب قبل الفشل (منع loop)
 const MAX_OWNERSHIP_PATTERNS = 16;
@@ -23,6 +24,16 @@ const SAFE_ENGINE_LABEL = /^[a-z][a-z0-9-]{0,31}$/;
 const READ_TOOLS = new Set(['read', 'grep', 'glob']);
 const EDIT_TOOLS = new Set(['edit', 'write', 'multiedit']);
 const TERMINAL_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
+const PUBLIC_FAILURE_MESSAGES = Object.freeze({
+  timeout: 'انتهت مهلة العامل.',
+  user_stopped: 'أوقف المستخدم العامل.',
+  engine_failed: 'فشل محرك العامل.',
+  policy_violation: 'أوقف العامل خرقٌ لسياسة الأدوات أو المسارات.',
+  worktree_violation: 'رُصد مسار خارج نسخة العمل المعزولة.',
+  ownership_violation: 'رُصد تعديل خارج الملكية المعلنة.',
+  artifact_capture_failed: 'تعذّر التقاط أثر العامل.',
+  cleanup_failed: 'تعذّر تنظيف نسخة العمل المعزولة.',
+});
 
 let sequence = 0;
 
@@ -118,13 +129,22 @@ function publicRun(run) {
     updated_at: run.updated_at,
     duration_ms: run.duration_ms,
     summary: run.summary,
-    error: run.error,
+    error: run.failure_code ? (PUBLIC_FAILURE_MESSAGES[run.failure_code] || 'فشل العامل بسبب غير مصنّف.') : '',
+    failure_code: run.failure_code,
     cost: { ...run.cost },
     permissions: { ...run.permissions },
     edits_seen: run.edits_seen,
     ownership: run.ownership.slice(),
     changes: { ...run.changes, files: run.changes.files.map((file) => ({ ...file })) },
     worktree: run.worktree ? { ...run.worktree } : null,
+    last_tool: run.last_tool,
+    last_file: run.last_file,
+    last_activity_at: run.last_activity_at,
+    timeout_ms: run.timeout_ms,
+    deadline_at: run.deadline_at,
+    extended: run._extended === true,
+    can_extend: run.state === 'running' && run._extended !== true
+      && TIMEOUT_PRESETS_MS.some((value) => value > run.timeout_ms),
     artifact_ready: !!(run._artifact && run._artifact.patch),
     patch_bytes: Math.max(0, Number(run._artifact && run._artifact.bytes) || 0),
     merged: false,
@@ -141,6 +161,15 @@ function create(options) {
   const timeoutMs = Math.max(20, Math.min(Number(settings.timeoutMs) || DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS));
   const runs = new Map();
   let activeRunId = null;
+
+  function armTimeout(run) {
+    clearTimeout(run._timer);
+    const remaining = Math.max(1, run.deadline_at - now());
+    run._timer = setTimeout(() => {
+      run._stopping = true;
+      stopThenFinish(run, 'timed_out', 'انتهت مهلة العامل المنفّذ', 'timeout');
+    }, remaining);
+  }
 
   function publish(run) {
     run.updated_at = now();
@@ -187,7 +216,7 @@ function create(options) {
     if (tier === 'write' && !ownedBy(run.ownership, relative)) {
       return { ok: false, error: 'outside_ownership' };
     }
-    return { ok: true, tier, path: wanted };
+    return { ok: true, tier, path: wanted, relative };
   }
 
   function promptFor(task, ownership) {
@@ -202,7 +231,7 @@ function create(options) {
     ].join('\n');
   }
 
-  async function finish(run, desiredState, error) {
+  async function finish(run, desiredState, error, failureCode) {
     if (run._finishing) return run._finishPromise;
     run._finishing = true;
     run._finishPromise = (async () => {
@@ -217,6 +246,7 @@ function create(options) {
         if (outside) {
           desiredState = 'failed';
           error = 'رُصد فرق خارج الملكية المعلنة: ' + outside.rel;
+          failureCode = 'ownership_violation';
         }
       }
       let artifact = { ok: false, error: 'patch_failed' };
@@ -231,13 +261,18 @@ function create(options) {
       } else if (desiredState === 'completed') {
         desiredState = 'failed';
         error = (artifact && artifact.error) || 'patch_failed';
+        failureCode = 'artifact_capture_failed';
       }
       let removed = { ok: false, error: 'remove_failed' };
       try { removed = await manager.remove(run._worktreeId); } catch { /* أفضل جهد */ }
       run.duration_ms = Math.max(0, now() - run.created_at);
       run.error = cleanText(error, 600);
       run.state = removed && removed.ok ? desiredState : 'cleanup_failed';
-      if (run.state === 'cleanup_failed' && !run.error) run.error = 'تعذّر حذف worktree المؤقت';
+      run.failure_code = run.state === 'completed' ? '' : cleanText(failureCode, 64);
+      if (run.state === 'cleanup_failed') {
+        run.failure_code = 'cleanup_failed';
+        if (!run.error) run.error = 'تعذّر حذف worktree المؤقت';
+      }
       run._handle = null;
       activeRunId = activeRunId === run.id ? null : activeRunId;
       publish(run);
@@ -246,10 +281,10 @@ function create(options) {
     return run._finishPromise;
   }
 
-  async function stopThenFinish(run, desiredState, error) {
+  async function stopThenFinish(run, desiredState, error, failureCode) {
     run._stopping = true;
     if (run._handle && run._handle.stop) await Promise.resolve(run._handle.stop()).catch(() => {});
-    return finish(run, desiredState, error);
+    return finish(run, desiredState, error, failureCode);
   }
 
   function onAssistant(run, event) {
@@ -269,6 +304,9 @@ function create(options) {
           continue;
         }
         if (!allowed.ok) return { ok: false, error: allowed.error + ': ' + String(block.name || 'unknown') };
+        run.last_tool = String(block.name || '').toLowerCase();
+        run.last_file = cleanText(allowed.relative, 512);
+        run.last_activity_at = now();
         if (block.id) (run._okIds || (run._okIds = new Set())).add(block.id); // تُصفّر الميزانية عند نجاح تنفيذها الفعلي
       }
     }
@@ -298,6 +336,7 @@ function create(options) {
       duration_ms: 0,
       summary: '',
       error: '',
+      failure_code: '',
       cost: { usd: 0, input_tokens: 0, output_tokens: 0, estimate: false },
       permissions: { write_limit: MAX_WRITE_PERMISSIONS, write_used: 0, denied: 0 },
       edits_seen: 0,
@@ -308,6 +347,11 @@ function create(options) {
         head: made.worktree.head,
         isolated: true,
       },
+      last_tool: '',
+      last_file: '',
+      last_activity_at: createdAt,
+      timeout_ms: timeoutMs,
+      deadline_at: createdAt + timeoutMs,
       _sourceCwd: path.resolve(cwd),
       _worktreeId: made.worktree.id,
       _worktreePath: made.worktree.path,
@@ -320,6 +364,7 @@ function create(options) {
       _finishing: false,
       _finishPromise: null,
       _timer: null,
+      _extended: false,
       _artifact: null,
     };
     runs.set(run.id, run);
@@ -333,6 +378,11 @@ function create(options) {
         const canWrite = allowed.ok && allowed.tier === 'write' && run.permissions.write_used < run.permissions.write_limit;
         const canRead = allowed.ok && allowed.tier === 'read';
         const allow = canWrite || canRead;
+        if (allowed.ok) {
+          run.last_tool = String(event.tool || '').toLowerCase();
+          run.last_file = cleanText(allowed.relative, 512);
+          run.last_activity_at = now();
+        }
         if (canWrite) run.permissions.write_used++;
         if (!allow) run.permissions.denied++;
         if (run._handle && typeof run._handle.resolvePermission === 'function') {
@@ -344,8 +394,8 @@ function create(options) {
       if (event.type === 'assistant') {
         const checked = onAssistant(run, event);
         if (!checked.ok) {
-          stopThenFinish(run, 'failed', 'أوقف المنفّذ أداة أو مساراً غير مسموح: ' + checked.error);
-        }
+          stopThenFinish(run, 'failed', 'أوقف المنفّذ أداة أو مساراً غير مسموح: ' + checked.error, 'policy_violation');
+        } else publish(run);
       } else if (event.type === 'user') {
         const rblocks = event.message && Array.isArray(event.message.content) ? event.message.content : [];
         for (const rb of rblocks) {
@@ -358,17 +408,20 @@ function create(options) {
         const relative = cleanText(event.rel, 512).replace(/\\/g, '/');
         const absolute = relative && !path.isAbsolute(relative) ? path.resolve(run._worktreePath, relative) : '';
         if (!absolute || relative.split('/').includes('..') || !manager.contains(run._worktreeId, absolute)) {
-          stopThenFinish(run, 'failed', 'رُصد تعديل خارج worktree');
+          stopThenFinish(run, 'failed', 'رُصد تعديل خارج worktree', 'worktree_violation');
           return;
         }
         if (!ownedBy(run.ownership, relative)) {
-          stopThenFinish(run, 'failed', 'رُصد تعديل خارج الملكية المعلنة: ' + relative);
+          stopThenFinish(run, 'failed', 'رُصد تعديل خارج الملكية المعلنة: ' + relative, 'ownership_violation');
           return;
         }
+        run.last_tool = run.last_tool || 'edit';
+        run.last_file = relative;
+        run.last_activity_at = now();
         run.edits_seen++;
         publish(run);
       } else if (event.type === 'model_term' || event.type === 'verification_result' || event.type === 'preview_open') {
-        stopThenFinish(run, 'failed', 'أوقف المنفّذ حدث تنفيذ غير مسموح');
+        stopThenFinish(run, 'failed', 'أوقف المنفّذ حدث تنفيذ غير مسموح', 'policy_violation');
       } else if (event.type === 'result') {
         const usage = event.usage && typeof event.usage === 'object' ? event.usage : {};
         run.cost = {
@@ -382,14 +435,12 @@ function create(options) {
         run._diagnostics.push(cleanText(event.text, 500));
       } else if (event.type === 'proc_done') {
         const desired = run._stopping ? 'stopped' : event.code === 0 ? 'completed' : 'failed';
-        finish(run, desired, event.code === 0 ? '' : run._diagnostics.join(' | ') || 'فشل العامل المنفّذ');
+        finish(run, desired, event.code === 0 ? '' : run._diagnostics.join(' | ') || 'فشل العامل المنفّذ',
+          event.code === 0 ? '' : 'engine_failed');
       }
     };
 
-    run._timer = setTimeout(() => {
-      run._stopping = true;
-      stopThenFinish(run, 'timed_out', 'انتهت مهلة العامل المنفّذ');
-    }, timeoutMs);
+    armTimeout(run);
 
     Promise.resolve().then(() => runner.start({
       prompt: promptFor(task, ownership),
@@ -407,7 +458,7 @@ function create(options) {
         if (handle && typeof handle.resolvePermission === 'function') handle.resolvePermission(pending.id, pending.allow, false);
       }
       if (run._finishing && handle && handle.stop) Promise.resolve(handle.stop()).catch(() => {});
-    }).catch((error) => finish(run, 'failed', String((error && error.message) || error)));
+    }).catch((error) => finish(run, 'failed', String((error && error.message) || error), 'engine_failed'));
 
     return { ok: true, run: publicRun(run) };
   }
@@ -419,8 +470,24 @@ function create(options) {
     if (TERMINAL_STATES.has(run.state)) return { ok: true, run: publicRun(run) };
     run._stopping = true;
     if (run._handle && run._handle.stop) await Promise.resolve(run._handle.stop()).catch(() => {});
-    const snapshot = await finish(run, 'stopped', 'أوقف المستخدم العامل المنفّذ');
+    const snapshot = await finish(run, 'stopped', 'أوقف المستخدم العامل المنفّذ', 'user_stopped');
     return { ok: true, run: snapshot };
+  }
+
+  function extend(runId) {
+    if (!SAFE_RUN_ID.test(runId || '')) return { ok: false, error: 'bad_input' };
+    const run = runs.get(runId);
+    if (!run || run.state !== 'running' || run._stopping || run._finishing || run._extended) {
+      return { ok: false, error: 'not_available' };
+    }
+    const nextTimeout = TIMEOUT_PRESETS_MS.find((value) => value > run.timeout_ms);
+    if (!nextTimeout) return { ok: false, error: 'timeout_cap' };
+    run.deadline_at += nextTimeout - run.timeout_ms;
+    run.timeout_ms = nextTimeout;
+    run._extended = true;
+    armTimeout(run);
+    publish(run);
+    return { ok: true, run: publicRun(run) };
   }
 
   async function stopAll() {
@@ -442,7 +509,7 @@ function create(options) {
     return { ...run._artifact, ownership: run.ownership.slice(), changes: publicChanges(run.changes) };
   }
 
-  return { start, stop, stopAll, latest, artifact };
+  return { start, stop, extend, stopAll, latest, artifact };
 }
 
 const singleton = create();
@@ -451,6 +518,7 @@ module.exports = {
   create,
   start: singleton.start,
   stop: singleton.stop,
+  extend: singleton.extend,
   stopAll: singleton.stopAll,
   latest: singleton.latest,
   artifact: singleton.artifact,
@@ -458,6 +526,8 @@ module.exports = {
   MAX_WRITE_PERMISSIONS,
   MAX_OWNERSHIP_PATTERNS,
   DEFAULT_TIMEOUT_MS,
+  MAX_TIMEOUT_MS,
+  TIMEOUT_PRESETS_MS,
   SAFE_ENGINE_LABEL,
   normalizeOwnership,
   ownedBy,

@@ -46,8 +46,11 @@ contextBridge.exposeInMainWorld('satr', {
   executionStart: (cwd, task, confirmed) => ipcRenderer.invoke('satr:executionStart', { cwd, task, confirmed }),
   executionStop: (runId) => ipcRenderer.invoke('satr:executionStop', { runId }),
   executionLatest: (cwd) => ipcRenderer.invoke('satr:executionLatest', { cwd }),
-  executionTeamStart: (cwd, agents, confirmed, mode) => ipcRenderer.invoke('satr:executionTeamStart', { cwd, agents, confirmed, mode }),
+  executionTeamStart: (cwd, agents, confirmed, mode, timeoutSeconds) => ipcRenderer.invoke('satr:executionTeamStart', {
+    cwd, agents, confirmed, mode, timeoutSeconds,
+  }),
   executionTeamStop: (runId) => ipcRenderer.invoke('satr:executionTeamStop', { runId }),
+  executionTeamExtend: (runId) => ipcRenderer.invoke('satr:executionTeamExtend', { runId }),
   executionTeamLatest: (cwd) => ipcRenderer.invoke('satr:executionTeamLatest', { cwd }),
   executionReviewStart: (teamId) => ipcRenderer.invoke('satr:executionReviewStart', { teamId }),
   executionReviewStop: (reviewId) => ipcRenderer.invoke('satr:executionReviewStop', { reviewId }),
@@ -58,6 +61,19 @@ contextBridge.exposeInMainWorld('satr', {
   executionVerificationLatest: (teamId) => ipcRenderer.invoke('satr:executionVerificationLatest', { teamId }),
   executionMerge: (teamId, reviewId, confirmed) => ipcRenderer.invoke('satr:executionMerge', { teamId, reviewId, confirmed }),
   opsRoomLoad: (roomId) => ipcRenderer.invoke('satr:opsRoomLoad', { roomId }),
+  opsRoomHistory: (cwd) => ipcRenderer.invoke('satr:opsRoomHistory', { cwd }),
+  opsRoomRestore: (cwd, roomId, artifactId, confirmed) => ipcRenderer.invoke('satr:opsRoomRestore', {
+    cwd, roomId, artifactId, confirmed,
+  }),
+  opsRoomArtifactDelete: (cwd, roomId, artifactId, confirmed) => ipcRenderer.invoke('satr:opsRoomArtifactDelete', {
+    cwd, roomId, artifactId, confirmed,
+  }),
+  opsBrainstormStart: (cwd, brief, teamId) => ipcRenderer.invoke('satr:opsBrainstormStart', { cwd, brief, teamId }),
+  opsBrainstormStop: (runId) => ipcRenderer.invoke('satr:opsBrainstormStop', { runId }),
+  opsBrainstormLatest: (cwd) => ipcRenderer.invoke('satr:opsBrainstormLatest', { cwd }),
+  opsPlanStart: (cwd, task) => ipcRenderer.invoke('satr:opsPlanStart', { cwd, task }),
+  opsPlanStop: (runId) => ipcRenderer.invoke('satr:opsPlanStop', { runId }),
+  opsPlanLatest: (cwd) => ipcRenderer.invoke('satr:opsPlanLatest', { cwd }),
   opsRoomDecision: (roomId, text, teamId, artifactId, confirmed) => ipcRenderer.invoke('satr:opsRoomDecision', { roomId, text, teamId, artifactId, confirmed }),
   // قنوات Enterprise (الدفعة 3) — تفشل بهدوء في البناء المجتمعي (لا معالج مسجَّل)
   eeUsage: () => ipcRenderer.invoke('satr:ee:usage'),

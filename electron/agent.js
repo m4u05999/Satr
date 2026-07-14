@@ -286,10 +286,12 @@ function phaseEventFromStreamEvent(ev) {
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
  */
-async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs, browserControl }, cwd, emit) {
+async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs, browserControl }, cwd, emit, internalPolicy) {
+  const policyMode = internalPolicy && internalPolicy.mode;
+  const isolatedPolicy = policyMode === 'text-only' || policyMode === 'read-only-planner';
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
   const portableSkillPrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true });
-  const memoryPrompt = memory.retrieve(cwd, prompt).text;
+  const memoryPrompt = isolatedPolicy ? '' : memory.retrieve(cwd, prompt).text;
   const { query } = await loadSdk();
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
@@ -410,7 +412,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     // بدون هذا لا يحمّل SDK إعدادات الملفات (تغيّر جذري بعد إعادة تسمية الحزمة):
     // خوادم MCP المحلية (.mcp.json) وحالة موصّلات claude.ai وأذوناتها ومهارات
     // المستخدم/المشروع. ضبطه على الثلاثة يجعل المحرك يطابق Claude Code التفاعلي.
-    settingSources: ['user', 'project', 'local'],
+    settingSources: isolatedPolicy ? [] : ['user', 'project', 'local'],
     stderr: (data) => emit({ type: 'stderr', text: String(data) }),
     canUseTool: async (toolName, input, { signal, toolUseID }) => {
       // الموجة 4 (مراجعة كودكس): في auto، الأداة غير القرائية تُسأل **دائماً** — لا تعفيها
@@ -444,6 +446,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   if (sessionId) options.resume = sessionId;
   if (model) options.model = model;
   if (permissionMode && permissionMode !== 'default') options.permissionMode = permissionMode;
+  if (policyMode === 'text-only') {
+    options.tools = [];
+    options.persistSession = false;
+  } else if (policyMode === 'read-only-planner') {
+    options.tools = ['Read', 'Grep', 'Glob'];
+    options.persistSession = false;
+  }
   // المهارات (Skills): 'all' لتفعيل كل المكتشفة، أو مصفوفة أسماء مختارة من لوحة /مهارات.
   // نضبطه صراحةً دائماً — تركه محذوفاً يجعل التحميل يعتمد على افتراضيات الـ CLI وغير
   // مضمون (انظر توثيق خيار skills في الـ SDK). مصفوفة فارغة = لا مهارات مفعّلة.
@@ -503,6 +512,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'ثم ضع النص العربي كطبقة HTML/CSS فوقه في الموقع. لا تمنع النص العربي منعاً مطلقاً — بل اختر الأداة المناسبة له.' +
       (portableSkillPrompt ? '\n\n' + portableSkillPrompt : ''),
   };
+  if (policyMode === 'text-only') {
+    options.systemPrompt = 'أنت مستشار نصي عربي مستقل. أجب من الموجز فقط، بلا أدوات أو ملفات أو متصفح أو طرفية.';
+  }
   // ذاكرة المشروع خارج توجيه/أدوات المتصفح: سياق شخصي وافق عليه المستخدم، ضمن ميزانية ثابتة.
   if (memoryPrompt) options.systemPrompt.append += '\n\n' + memoryPrompt;
   // جهد التفكير (المرحلة 14.4): منقّى في main.js — الـ SDK يخفّضه صامتاً إن لم يدعمه النموذج

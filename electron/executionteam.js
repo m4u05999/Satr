@@ -54,6 +54,7 @@ function agentPublic(worker) {
     state: snapshot.state || worker.state,
     summary: snapshot.summary || '',
     error: snapshot.error || worker.error || '',
+    failure_code: snapshot.failure_code || worker.failure_code || '',
     duration_ms: Math.max(0, Number(snapshot.duration_ms) || 0),
     cost: { ...(snapshot.cost || { usd: 0, input_tokens: 0, output_tokens: 0, estimate: false }) },
     permissions: { ...(snapshot.permissions || { write_limit: executorModule.MAX_WRITE_PERMISSIONS, write_used: 0, denied: 0 }) },
@@ -62,6 +63,13 @@ function agentPublic(worker) {
       ? { ...snapshot.changes, files: snapshot.changes.files.map((file) => ({ ...file })) }
       : { files: [], more: 0, partial: false, added: 0, removed: 0 },
     worktree: snapshot.worktree ? { ...snapshot.worktree } : null,
+    last_tool: snapshot.last_tool || '',
+    last_file: snapshot.last_file || '',
+    last_activity_at: Math.max(0, Number(snapshot.last_activity_at) || 0),
+    timeout_ms: Math.max(0, Number(snapshot.timeout_ms) || 0),
+    deadline_at: Math.max(0, Number(snapshot.deadline_at) || 0),
+    extended: snapshot.extended === true,
+    can_extend: snapshot.can_extend === true,
     artifact_ready: snapshot.artifact_ready === true,
     patch_bytes: Math.max(0, Number(snapshot.patch_bytes) || 0),
     merged: false,
@@ -94,6 +102,10 @@ function teamPublic(team) {
     artifact_id: artifact ? artifact.artifact_id : '',
     producer_engines: artifact ? artifact.producer_engines.slice() : [],
     mode: team._mode,
+    timeout_ms: team._timeoutMs,
+    extended: team._extended === true,
+    can_extend: team.state === 'running' && team._extended !== true
+      && executorModule.TIMEOUT_PRESETS_MS.some((value) => value > team._timeoutMs),
     verification: team._verification ? {
       artifact_id: team._verification.artifact_id,
       state: team._verification.state,
@@ -105,6 +117,14 @@ function teamPublic(team) {
 }
 
 function buildArtifact(team) {
+  if (team._restoredArtifact) {
+    return {
+      ...team._restoredArtifact,
+      producer_engines: team._restoredArtifact.producer_engines.slice(),
+      ownership: team._restoredArtifact.ownership.map((patterns) => patterns.slice()),
+      files: team._restoredArtifact.files.map((file) => ({ ...file })),
+    };
+  }
   const artifacts = team.agents.map((worker) => {
     if (!worker.executor || !worker.snapshot || typeof worker.executor.artifact !== 'function') return null;
     return worker.executor.artifact(worker.snapshot.id);
@@ -220,11 +240,15 @@ function create(options) {
   async function start(input, cwd, emit) {
     const specs = input && Array.isArray(input.agents) ? input.agents : [];
     const mode = input && input.mode === 'draft' ? 'draft' : 'mergeable';
+    const requestedTimeoutMs = input && input.timeoutMs;
     const roomId = cleanText(input && (input.roomId || input.room_id), 96);
     if (specs.length < 1 || specs.length > MAX_AGENTS || typeof cwd !== 'string' || !cwd.trim()) {
       return { ok: false, error: 'bad_input' };
     }
     if (roomId && !SAFE_ROOM_ID.test(roomId)) return { ok: false, error: 'bad_input' };
+    if (requestedTimeoutMs != null && !executorModule.TIMEOUT_PRESETS_MS.includes(requestedTimeoutMs)) {
+      return { ok: false, error: 'bad_input' };
+    }
     if (mode === 'draft' && specs.length !== 1) return { ok: false, error: 'draft_single_engine_only' };
     if (activeRunId) return { ok: false, error: 'busy' };
     const agents = [];
@@ -253,6 +277,7 @@ function create(options) {
         ownership: spec.ownership,
         state: 'queued',
         error: '',
+        failure_code: '',
         snapshot: null,
         executor: null,
       })),
@@ -261,6 +286,8 @@ function create(options) {
       _stopRequested: false,
       _conflictStopping: false,
       _mode: mode,
+      _timeoutMs: requestedTimeoutMs || settings.timeoutMs || executorModule.DEFAULT_TIMEOUT_MS,
+      _extended: false,
       _roomId: roomId,
       _verification: null,
       _merged: false,
@@ -271,12 +298,13 @@ function create(options) {
     publish(team);
 
     const results = await Promise.all(team.agents.map(async (worker) => {
-      worker.executor = makeExecutor({ worktrees: manager, runner, timeoutMs: settings.timeoutMs });
+      worker.executor = makeExecutor({ worktrees: manager, runner, timeoutMs: team._timeoutMs });
       const result = await worker.executor.start({ task: worker.task, ownership: worker.ownership }, cwd,
         (event) => onAgentEvent(team, worker, event));
       if (!result || !result.ok) {
         worker.state = 'failed';
         worker.error = cleanText((result && result.error) || 'start_failed', 500);
+        worker.failure_code = 'start_failed';
       } else {
         worker.snapshot = result.run;
         worker.state = result.run.state;
@@ -319,6 +347,66 @@ function create(options) {
 
   async function stopAll() {
     return activeRunId ? stop(activeRunId) : { ok: true, team: null };
+  }
+
+  async function extend(runId) {
+    if (!SAFE_RUN_ID.test(runId || '')) return { ok: false, error: 'bad_input' };
+    const team = runs.get(runId);
+    if (!team || team.state !== 'running' || team._extended) return { ok: false, error: 'not_available' };
+    const nextTimeout = executorModule.TIMEOUT_PRESETS_MS.find((value) => value > team._timeoutMs);
+    if (!nextTimeout) return { ok: false, error: 'timeout_cap' };
+    const active = team.agents.filter((worker) => worker.executor && worker.snapshot
+      && !TERMINAL_AGENT_STATES.has(worker.snapshot.state) && typeof worker.executor.extend === 'function');
+    if (!active.length) return { ok: false, error: 'not_available' };
+    const results = await Promise.all(active.map((worker) => Promise.resolve(worker.executor.extend(worker.snapshot.id))));
+    if (!results.some((result) => result && result.ok)) return { ok: false, error: 'not_available' };
+    team._timeoutMs = nextTimeout;
+    team._extended = true;
+    publish(team);
+    return { ok: true, team: teamPublic(team), partial: results.some((result) => !result || !result.ok) };
+  }
+
+  function restore(bundle, cwd, emit) {
+    const artifact = bundle && bundle.artifact;
+    const snapshot = bundle && bundle.team;
+    if (activeRunId) return { ok: false, error: 'busy' };
+    if (!artifact || !snapshot || snapshot.state !== 'completed'
+      || !SAFE_RUN_ID.test(snapshot.id || '') || !SAFE_ROOM_ID.test(snapshot.room_id || '')
+      || artifact.team_id !== snapshot.id || artifact.room_id !== snapshot.room_id
+      || artifact.artifact_id !== artifactId(artifact.head, artifact.patch)
+      || typeof cwd !== 'string' || path.resolve(cwd) !== path.resolve(artifact.sourceRoot || artifact.source_root || '')) {
+      return { ok: false, error: 'bad_input' };
+    }
+    const agents = [];
+    for (const item of Array.isArray(snapshot.agents) ? snapshot.agents : []) {
+      const task = cleanText(item && item.task, 4000);
+      const ownership = executorModule.normalizeOwnership(item && item.ownership);
+      if (!task || !ownership) return { ok: false, error: 'bad_input' };
+      agents.push({
+        id: cleanText(item.id, 80), label: cleanText(item.label, 80), task,
+        engine: cleanText(item.engine, 32), ownership, state: 'completed', error: '', failure_code: '',
+        snapshot: { ...item, state: 'completed', worktree: null }, executor: null,
+      });
+    }
+    if (!agents.length || agents.length > MAX_AGENTS) return { ok: false, error: 'bad_input' };
+    const team = {
+      id: snapshot.id, state: 'completed', created_at: Math.max(0, Number(snapshot.created_at) || now()),
+      updated_at: now(), duration_ms: Math.max(0, Number(snapshot.duration_ms) || 0), conflicts: [], agents,
+      _cwd: path.resolve(cwd), _emit: emit, _stopRequested: false, _conflictStopping: false,
+      _mode: 'mergeable', _timeoutMs: Math.max(0, Number(snapshot.timeout_ms) || executorModule.DEFAULT_TIMEOUT_MS),
+      _extended: true,
+      _roomId: snapshot.room_id, _verification: null, _merged: false,
+      _restoredArtifact: {
+        ...artifact,
+        sourceRoot: path.resolve(artifact.sourceRoot || artifact.source_root),
+        source_root: path.resolve(artifact.sourceRoot || artifact.source_root),
+        cwd: path.resolve(cwd),
+      },
+    };
+    runs.set(team.id, team);
+    while (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value);
+    publish(team);
+    return { ok: true, team: teamPublic(team) };
   }
 
   function latest(cwd) {
@@ -373,7 +461,7 @@ function create(options) {
     return { ok: true, team: teamPublic(team) };
   }
 
-  return { start, stop, stopAll, latest, artifact, references, setVerification, markMerged };
+  return { start, stop, extend, stopAll, restore, latest, artifact, references, setVerification, markMerged };
 }
 
 const singleton = create();
@@ -382,7 +470,9 @@ module.exports = {
   create,
   start: singleton.start,
   stop: singleton.stop,
+  extend: singleton.extend,
   stopAll: singleton.stopAll,
+  restore: singleton.restore,
   latest: singleton.latest,
   artifact: singleton.artifact,
   references: singleton.references,

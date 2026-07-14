@@ -21,6 +21,10 @@ const verify = require('./verify');
 const checkpoints = require('./checkpoints');
 const memory = require('./memory');
 const opsroom = require('./opsroom');
+const opsroomindex = require('./opsroomindex');
+const opsartifacts = require('./opsartifacts');
+const opsBrainstormModule = require('./opsbrainstorm');
+const opsPlannerModule = require('./opsplanner');
 const agentsList = require('./agents');
 const agent = require('./agent');
 const orchestratorModule = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
@@ -90,10 +94,25 @@ const sdkExecutionRunner = Object.freeze({
   },
   start: (input, cwd, emit) => agent.start(input, cwd, emit),
 });
+const sdkPlannerRunner = Object.freeze({
+  engine: 'sdk',
+  get model() { return sdkExecutionRunner.model; },
+  start: (input, cwd, emit) => agent.start(input, cwd, emit, { mode: 'read-only-planner' }),
+});
+function resolveOpsBrainstormRunner(engine) {
+  const runner = resolveOpsRoomRunner(engine);
+  if (!runner) return null;
+  if (engine === 'sdk') {
+    return { ...runner, start: (input, cwd, emit) => agent.start(input, cwd, emit, { mode: 'text-only' }) };
+  }
+  return runner;
+}
 const executor = executorModule.create({ runner: sdkExecutionRunner });
 const executionTeam = executionTeamModule.create({ runner: sdkExecutionRunner });
 const orchestrator = orchestratorModule.create({ resolveEngine: resolveOpsRoomRunner });
 const reviewer = reviewerModule.create({ resolveEngine: resolveOpsRoomRunner });
+const opsBrainstorm = opsBrainstormModule.create({ resolveEngine: resolveOpsBrainstormRunner });
+const opsPlanner = opsPlannerModule.create({ runner: sdkPlannerRunner });
 const inject = require('./inject');
 const chats = require('./chats');
 const agentTools = require('./tools'); // أدوات المحوّلات (2.1/2.2) — للتراجع عن تعديلاتها
@@ -422,12 +441,67 @@ function recordOpsSystem(roomId, type, text, teamId, artifactId, transitionKey) 
   return publishOpsEntry(result);
 }
 
-function emitOpsTeam(roomId, obj) {
+const savedOpsArtifacts = new Set();
+const opsRoomIndexSignatures = new Map();
+
+function updateOpsRoomIndex(cwd, team, restorable) {
+  if (!team || !opsroom.SAFE_ROOM_ID.test(team.room_id || '') || !opsroom.SAFE_TEAM_ID.test(team.id || '')) return;
+  const signature = [team.state, team.artifact_id || '', team.merged === true, restorable === true].join(':');
+  if (opsRoomIndexSignatures.get(team.room_id) === signature) return;
+  const result = opsroomindex.upsert(cwd, {
+    room_id: team.room_id, team_id: team.id, state: team.state, updated_at: team.updated_at,
+    artifact_id: team.artifact_id || '', restorable: restorable === true, merged: team.merged === true,
+  });
+  if (result.ok) opsRoomIndexSignatures.set(team.room_id, signature);
+}
+
+function savedOpsArtifactKey(cwd, artifactId) {
+  return opsroomindex.projectKey(cwd) + ':' + artifactId;
+}
+
+function emitOpsTeam(roomId, cwd, obj) {
   const team = obj && obj.type === 'execution_team_update' ? obj.team : null;
+  const terminalLabels = {
+    completed: 'اكتمل تنفيذ الفريق.',
+    failed: 'فشل تنفيذ الفريق.',
+    timed_out: 'انتهت مهلة تنفيذ الفريق.',
+    stopped: 'أوقف المستخدم تنفيذ الفريق.',
+    conflict: 'توقف تنفيذ الفريق بسبب تعارض ملكية.',
+    cleanup_failed: 'فشل تنظيف نسخة عمل معزولة؛ عُدّ التنفيذ فاشلاً.',
+  };
+  const failureLabels = {
+    timeout: 'انتهت المهلة', user_stopped: 'أوقفه المستخدم', start_failed: 'تعذّر بدء العامل',
+    engine_failed: 'فشل المحرك', policy_violation: 'رُصد خرق لسياسة الأدوات',
+    worktree_violation: 'رُصد مسار خارج نسخة العمل', ownership_violation: 'رُصد تعديل خارج الملكية',
+    artifact_capture_failed: 'تعذّر التقاط الأثر', cleanup_failed: 'تعذّر تنظيف نسخة العمل',
+  };
+  if (team && terminalLabels[team.state]) {
+    const failures = (team.agents || []).filter((item) => item && item.failure_code).map((item) => {
+      const label = failureLabels[item.failure_code] || 'فشل غير مصنّف';
+      return (item.label || 'عامل') + ': ' + label;
+    });
+    const details = failures.length ? ' الأسباب: ' + failures.join('؛ ') + '.' : '';
+    recordOpsSystem(roomId, 'note', terminalLabels[team.state] + details, team.id,
+      team.artifact_id || '', 'team-terminal:' + team.id + ':' + team.state);
+  }
+  const savedKey = team && team.artifact_id ? savedOpsArtifactKey(cwd, team.artifact_id) : '';
+  let restorable = !!(savedKey && savedOpsArtifacts.has(savedKey));
   if (team && team.artifact_id) {
+    if (!savedOpsArtifacts.has(savedKey)) {
+      const artifact = executionTeam.artifact(team.id);
+      const persisted = artifact ? opsartifacts.save(artifact, team) : { ok: false, error: 'not_available' };
+      if (persisted.ok) {
+        savedOpsArtifacts.add(savedKey);
+        restorable = true;
+      } else {
+        recordOpsSystem(roomId, 'note', 'تعذّر حفظ الأثر مشفّراً؛ يبقى متاحاً حتى إغلاق «سطر» فقط.',
+          team.id, team.artifact_id, 'artifact-persistence:' + team.artifact_id + ':failed');
+      }
+    }
     recordOpsSystem(roomId, 'note', 'أصبح أثر فريق التنفيذ جاهزاً للمراجعة.', team.id,
       team.artifact_id, 'artifact:' + team.artifact_id);
   }
+  if (team) updateOpsRoomIndex(cwd, team, restorable && team.merged !== true);
   emitToWindow(obj);
 }
 
@@ -954,7 +1028,78 @@ ipcMain.handle('satr:executionLatest', (event, payload) => {
   return { ok: true, run: executor.latest(cwd) };
 });
 
+// ---------- عصف مستقل ومخطط قراءة فقط لغرفة العمليات ----------
+function emitOpsBrainstorm(obj, references) {
+  const run = obj && obj.type === 'ops_brainstorm_update' ? obj.run : null;
+  if (run && ['completed', 'partial'].includes(run.state) && references) {
+    for (const worker of run.workers || []) {
+      if (!worker || worker.state !== 'completed' || !worker.summary) continue;
+      const key = references.room_id + ':brainstorm:' + run.id + ':' + worker.engine;
+      if (opsRoomTransitions.has(key)) continue;
+      const recorded = opsroom.appendEngine(references.room_id, worker.engine, {
+        type: 'proposal', text: worker.summary, team_id: references.team_id,
+        ...(references.artifact_id ? { artifact_id: references.artifact_id } : {}),
+      });
+      if (recorded.ok) opsRoomTransitions.add(key);
+      publishOpsEntry(recorded);
+    }
+  }
+  emitToWindow(obj);
+}
+
+ipcMain.handle('satr:opsBrainstormStart', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  const brief = cleanMemoryText(p.brief, opsBrainstormModule.MAX_BRIEF_CHARS);
+  if (!cwd || !brief || memory.hasSecret(brief)) return { ok: false, error: 'bad_input' };
+  const modelCheck = preflightOpsRoomModels(['sdk', 'codex']);
+  if (!modelCheck.ok) return modelCheck;
+  let references = null;
+  if (p.teamId) {
+    if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId)) return { ok: false, error: 'bad_input' };
+    references = executionTeam.references(p.teamId);
+    if (!references) return { ok: false, error: 'not_available' };
+  }
+  return opsBrainstorm.start({ brief }, cwd, (obj) => emitOpsBrainstorm(obj, references));
+});
+
+ipcMain.handle('satr:opsBrainstormStop', (event, payload) => {
+  const runId = payload && payload.runId;
+  if (!opsBrainstormModule.SAFE_RUN_ID.test(runId || '')) return { ok: false, error: 'bad_input' };
+  return opsBrainstorm.stop(runId);
+});
+
+ipcMain.handle('satr:opsBrainstormLatest', (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  return { ok: true, run: opsBrainstorm.latest(cwd) };
+});
+
+ipcMain.handle('satr:opsPlanStart', async (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  const task = cleanMemoryText(p.task, opsPlannerModule.MAX_TASK_CHARS);
+  if (!cwd || !task || memory.hasSecret(task)) return { ok: false, error: 'bad_input' };
+  const modelCheck = preflightOpsRoomModels(['sdk']);
+  if (!modelCheck.ok) return modelCheck;
+  return opsPlanner.start({ task }, cwd, emitToWindow);
+});
+
+ipcMain.handle('satr:opsPlanStop', (event, payload) => {
+  const runId = payload && payload.runId;
+  if (!opsPlannerModule.SAFE_RUN_ID.test(runId || '')) return { ok: false, error: 'bad_input' };
+  return opsPlanner.stop(runId);
+});
+
+ipcMain.handle('satr:opsPlanLatest', (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  return { ok: true, run: opsPlanner.latest(cwd) };
+});
+
 // ---------- فريق عوامل منفّذة بملكية ملفات معلنة (الأولوية 6 — الخطوة 3) ----------
+const OPS_TIMEOUT_SECONDS = new Set([180, 300, 600]);
+
 function sanitizeOwnership(value) {
   if (!Array.isArray(value) || !value.length || value.length > 16) return null;
   const patterns = value.map((item) => cleanMemoryText(item, 256).replace(/\\/g, '/'));
@@ -970,7 +1115,11 @@ ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
   const p = payload || {};
   const cwd = sanitizeMemoryCwd(p.cwd);
   const mode = p.mode === 'draft' ? 'draft' : p.mode === 'mergeable' || p.mode == null ? 'mergeable' : '';
+  const timeoutSeconds = p.timeoutSeconds == null ? 300 : p.timeoutSeconds;
   if (!cwd || p.confirmed !== true || !Array.isArray(p.agents) || p.agents.length < 1 || p.agents.length > 3) {
+    return { ok: false, error: 'bad_input' };
+  }
+  if (!Number.isInteger(timeoutSeconds) || !OPS_TIMEOUT_SECONDS.has(timeoutSeconds)) {
     return { ok: false, error: 'bad_input' };
   }
   if (!mode || (mode === 'draft' && p.agents.length !== 1)) return { ok: false, error: 'bad_input' };
@@ -992,7 +1141,8 @@ ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
   const created = opsroom.createRoom();
   if (!created.ok) return { ok: false, error: 'ops_room_unavailable' };
   const roomId = created.room.room_id;
-  const result = await executionTeam.start({ agents, mode, roomId }, cwd, (obj) => emitOpsTeam(roomId, obj));
+  const result = await executionTeam.start({ agents, mode, roomId, timeoutMs: timeoutSeconds * 1000 }, cwd,
+    (obj) => emitOpsTeam(roomId, cwd, obj));
   if (!result || !result.ok || !result.team) return result;
   for (let index = 0; index < agents.length; index++) {
     const taskText = 'مهمة العامل ' + (index + 1) + ': ' + agents[index].task;
@@ -1009,6 +1159,12 @@ ipcMain.handle('satr:executionTeamStop', async (event, payload) => {
   const p = payload || {};
   if (!executionTeamModule.SAFE_RUN_ID.test(p.runId || '')) return { ok: false, error: 'bad_input' };
   return executionTeam.stop(p.runId);
+});
+
+ipcMain.handle('satr:executionTeamExtend', async (event, payload) => {
+  const p = payload || {};
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.runId || '')) return { ok: false, error: 'bad_input' };
+  return executionTeam.extend(p.runId);
 });
 
 ipcMain.handle('satr:executionTeamLatest', (event, payload) => {
@@ -1109,6 +1265,9 @@ ipcMain.handle('satr:executionMerge', async (event, payload) => {
   const result = await merger.apply({ ...artifact, review_gate: gate, verification, confirmed: true });
   if (!result.ok) return result;
   const marked = executionTeam.markMerged(p.teamId);
+  opsartifacts.remove(artifact.artifact_id, { projectRoot: artifact.sourceRoot });
+  savedOpsArtifacts.delete(savedOpsArtifactKey(artifact.sourceRoot, artifact.artifact_id));
+  if (marked && marked.team) updateOpsRoomIndex(artifact.sourceRoot, marked.team, false);
   recordOpsSystem(artifact.room_id, 'phase_gate', 'اكتمل انتقال الدمج للأثر المعتمد.',
     p.teamId, artifact.artifact_id, 'merge:completed');
   return { ...result, team: marked && marked.team ? marked.team : null };
@@ -1120,6 +1279,56 @@ ipcMain.handle('satr:opsRoomLoad', (event, payload) => {
   if (!opsroom.SAFE_ROOM_ID.test(roomId || '')) return { ok: false, error: 'bad_input' };
   const room = opsroom.load(roomId);
   return room ? { ok: true, room } : { ok: false, error: 'not_found' };
+});
+
+ipcMain.handle('satr:opsRoomHistory', (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  return { ok: true, rooms: opsroomindex.list(cwd) };
+});
+
+ipcMain.handle('satr:opsRoomRestore', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  if (!cwd || !opsroom.SAFE_ROOM_ID.test(p.roomId || '')
+    || !opsroom.SAFE_ARTIFACT_ID.test(p.artifactId || '') || p.confirmed !== true) {
+    return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
+  }
+  const indexed = opsroomindex.find(cwd, p.roomId);
+  if (!indexed || indexed.artifact_id !== p.artifactId || !indexed.restorable || indexed.merged) {
+    return { ok: false, error: 'not_available' };
+  }
+  const loaded = opsartifacts.load(p.artifactId, { projectRoot: cwd });
+  if (!loaded.ok || loaded.artifact.room_id !== p.roomId
+    || path.resolve(loaded.artifact.sourceRoot) !== path.resolve(cwd)) {
+    return { ok: false, error: loaded.error || 'artifact_mismatch' };
+  }
+  savedOpsArtifacts.add(savedOpsArtifactKey(cwd, p.artifactId));
+  const restored = executionTeam.restore(loaded, cwd, (obj) => emitOpsTeam(p.roomId, cwd, obj));
+  if (restored.ok) {
+    recordOpsSystem(p.roomId, 'note', 'استُعيد الأثر المشفّر بعد إعادة التشغيل؛ يلزم إعادة المراجعة والتحقق.',
+      restored.team.id, p.artifactId, 'artifact-restored:' + p.artifactId);
+  }
+  return restored;
+});
+
+ipcMain.handle('satr:opsRoomArtifactDelete', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  if (!cwd || !opsroom.SAFE_ROOM_ID.test(p.roomId || '')
+    || !opsroom.SAFE_ARTIFACT_ID.test(p.artifactId || '') || p.confirmed !== true) {
+    return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
+  }
+  const indexed = opsroomindex.find(cwd, p.roomId);
+  if (!indexed || indexed.artifact_id !== p.artifactId) return { ok: false, error: 'not_available' };
+  const removed = opsartifacts.remove(p.artifactId, { projectRoot: cwd });
+  if (!removed.ok) return removed;
+  savedOpsArtifacts.delete(savedOpsArtifactKey(cwd, p.artifactId));
+  opsroomindex.markArtifactsUnavailable([{
+    artifact_id: p.artifactId,
+    project_key: opsroomindex.projectKey(cwd),
+  }]);
+  return { ok: true };
 });
 
 ipcMain.handle('satr:opsRoomDecision', (event, payload) => {
@@ -1402,11 +1611,20 @@ try { features.init(); } catch (e) { /* عزل: فشل Enterprise لا يمنع 
 
 // ترحيل مفاتيح المزوّدين إلى التخزين المشفّر (safeStorage) بعد جهوزية التطبيق —
 // التشفير غير متاح قبلها. أفضل جهد: لا يمنع الإقلاع إن فشل.
-app.whenReady().then(() => { try { keys.migrate(); } catch (e) { /* أفضل جهد */ } });
+app.whenReady().then(() => {
+  try { keys.migrate(); } catch (e) { /* أفضل جهد */ }
+  try { opsroomindex.interruptStale(); } catch (e) { /* أفضل جهد */ }
+  try {
+    const pruned = opsartifacts.prune();
+    if (pruned.ok && pruned.removed.length) opsroomindex.markArtifactsUnavailable(pruned.removed);
+  } catch (e) { /* أفضل جهد */ }
+});
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {
   stopAll();
   orchestrator.stopAll();
+  opsBrainstorm.stopAll();
+  opsPlanner.stopAll();
   executor.stopAll();
   executionTeam.stopAll();
   reviewer.stopAll();
@@ -1416,7 +1634,7 @@ app.on('window-all-closed', () => {
   term.killAll(); // صدفة الطرفية المدمجة تموت مع «سطر» (المرحلة 8)
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => { orchestrator.stopAll(); executor.stopAll(); executionTeam.stopAll(); reviewer.stopAll(); integration.stopAll(); bgprocs.killAll(); term.killAll(); });
+app.on('before-quit', () => { orchestrator.stopAll(); opsBrainstorm.stopAll(); opsPlanner.stopAll(); executor.stopAll(); executionTeam.stopAll(); reviewer.stopAll(); integration.stopAll(); bgprocs.killAll(); term.killAll(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
