@@ -178,6 +178,7 @@
   #chatColumn {
     display: flex; flex-direction: column; flex: 1;
     min-width: 0; min-height: 0;
+    container: chat-column / inline-size;
   }
   /* منذ ت-12: <main> داخل مكوّن satr-chat (بلا Shadow — غلاف شفاف للتخطيط) */
   satr-chat { display: contents; }
@@ -461,6 +462,35 @@
   /* شريط الحالة عربي RTL — المعرّفات والأرقام اللاتينية تنعزل LTR تلقائياً بخوارزمية BiDi */
   .statusline { max-width: 880px; margin: 8px auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
   .statusline span { unicode-bidi: plaintext; }
+
+  /* استجابة المؤلّف تتبع عرض عمود الدردشة لا عرض النافذة؛ قد تضيق الدردشة داخل نافذة واسعة. */
+  @container chat-column (max-width: 48rem) {
+    footer { padding: var(--space-3); }
+    .composer-tools .ct-label { display: none; }
+    .composer-tools select { flex: 1 1 13rem; min-width: 0; max-width: 100%; }
+    .composer-tools button { flex: 0 1 auto; min-width: 0; }
+    .composer { gap: var(--space-2); }
+    textarea { min-width: 0; }
+    #send { padding-inline: var(--space-4); }
+    #browserCtl { padding-inline: var(--space-3); }
+    .statusline { gap: var(--space-2); flex-wrap: wrap; }
+    #slashMenu, #fileMenu { min-width: 0; width: 100%; max-width: 100%; }
+  }
+
+  @container chat-column (max-width: 28rem) {
+    footer { padding: var(--space-2) var(--space-3) var(--space-3); }
+    .composer-tools {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .composer-tools select, .composer-tools button { width: 100%; }
+    #perm, #attachBtn { grid-column: 1 / -1; }
+    .composer {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .composer textarea { grid-column: 1 / -1; width: 100%; }
+    #browserCtl, #send { width: 100%; }
+    .statusline { font-size: 10.5px; }
+  }
 
   /* أشرطة تمرير موحّدة على الثيم الداكن (بدل افتراضي Chromium الفاتح) */
   ::-webkit-scrollbar { width: 10px; height: 10px; }

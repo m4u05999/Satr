@@ -161,10 +161,16 @@ function testDesignGuard() {
     assert(base.includes(token), 'missing design token ' + token);
   }
   assert(base.includes('#chatColumn {') && base.includes('display: flex; flex-direction: column; flex: 1;')
-    && base.includes('min-width: 0; min-height: 0;'),
+    && base.includes('min-width: 0; min-height: 0;')
+    && base.includes('container: chat-column / inline-size;'),
   'chat column must be the shrink-safe flexible middle-row surface');
   assert(base.includes('satr-chat { display: contents; }') && base.includes('satr-composer { display: contents; }'),
     'chat and composer light-DOM wrappers must stay display:contents');
+  assert(base.includes('@container chat-column (max-width: 48rem)')
+    && base.includes('@container chat-column (max-width: 28rem)')
+    && base.includes('.composer textarea { grid-column: 1 / -1; width: 100%; }')
+    && base.includes('#perm, #attachBtn { grid-column: 1 / -1; }'),
+  'composer responsiveness must follow chat-column width and preserve usable controls');
   const component = read('src/ui/components/ops-room.js');
   assert(component.includes('adoptedStyleSheets'), 'ops room must use constructable stylesheets');
   assert(!component.includes('innerHTML') && !component.includes('insertAdjacentHTML'),
