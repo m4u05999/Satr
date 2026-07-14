@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>اختبار تبويبات الطرفية</title>
+  <link rel="stylesheet" href="../../src/vendor/fonts.css">
+  <link rel="stylesheet" href="../../src/vendor/xterm.css">
+  <link rel="stylesheet" href="../../src/styles/base.css">
+</head>
+<body>
+  <header>
+    <input id="cwd" type="text" value="D:\project" aria-label="مجلد المشروع">
+    <button id="termToggle" type="button">الطرفية</button>
+  </header>
+  <satr-terminal-panel></satr-terminal-panel>
+  <script src="../../src/vendor/xterm.js"></script>
+  <script src="../../src/vendor/addon-fit.js"></script>
+  <script type="module" src="../../src/ui/components/terminal-panel.js"></script>
+  <script src="terminal-tabs-page.js"></script>
+</body>
+</html>

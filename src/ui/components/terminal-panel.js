@@ -57,6 +57,49 @@ class SatrTerminalPanel extends HTMLElement {
   const tabs = [];       // كل التبويبات الحيّة (بترتيب العرض)
   let active = null;     // التبويب النشط
   let tabSeq = 0;
+  const TAB_TITLE_MAX = 40;
+  const TAB_TITLE_THROTTLE_MS = 120;
+  const TAB_TITLE_CONTROLS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+  function sanitizeTabTitle(value) {
+    const clean = String(value || '').replace(TAB_TITLE_CONTROLS, '').trim();
+    return Array.from(clean).slice(0, TAB_TITLE_MAX).join('');
+  }
+
+  function shellTabName(shell) {
+    let executable = String(shell || '').trim().replace(/\\/g, '/').split('/').pop() || '';
+    executable = executable.replace(/\s+.*$/, '').replace(/\.(?:exe|cmd|bat)$/i, '');
+    const known = { pwsh: 'pwsh', powershell: 'PowerShell', cmd: 'cmd', bash: 'bash' };
+    return known[executable.toLowerCase()] || sanitizeTabTitle(executable) || 'طرفية';
+  }
+
+  function tabDisplayName(tab) {
+    if (tab.isModel) return '🤖 النموذج';
+    return tab.manualName || tab.oscTitle || shellTabName(tab.shell);
+  }
+
+  function updateTabLabel(tab) {
+    const name = tabDisplayName(tab);
+    if (tab.labelEl) tab.labelEl.textContent = name;
+    if (tab.renameButton) tab.renameButton.setAttribute('aria-label', 'إعادة تسمية ' + name);
+    if (tab.tabEl) tab.tabEl.setAttribute('aria-label', name);
+  }
+
+  function queueTabTitle(tab, value) {
+    if (tab.isModel || tab.manualName) return;
+    const title = sanitizeTabTitle(value);
+    if (!title) return;
+    tab.pendingTitle = title;
+    if (tab.titleTimer) return;
+    tab.titleTimer = setTimeout(() => {
+      tab.titleTimer = 0;
+      const next = tab.pendingTitle;
+      tab.pendingTitle = '';
+      if (!next || tab.isModel || tab.manualName || next === tab.oscTitle) return;
+      tab.oscTitle = next;
+      updateTabLabel(tab);
+    }, TAB_TITLE_THROTTLE_MS);
+  }
 
   // إنشاء تبويب: نسخة xterm + عرضه (طبقتا شبكة وBiDi) + ربط قنواته. بلا pty بعد.
   function makeTab() {
@@ -80,12 +123,14 @@ class SatrTerminalPanel extends HTMLElement {
       tabId: 'tab_' + (++tabSeq), id: null, term, fit, view, grid, bidi, spacer,
       shell: '', exited: false,
       bidiEls: new Map(), pinned: true, mode: true, userView: true, cellObj: null,
-      tabEl: null,
+      manualName: '', oscTitle: '', pendingTitle: '', titleTimer: 0,
+      tabEl: null, labelEl: null, renameButton: null, renameInput: null,
     };
 
     // كل كتابة مُحلَّلة ⇐ مزامنة عرض BiDi للتبويب النشط فقط (الخلفية تحدّث buffer صامتاً)
     term.onWriteParsed(() => { if (tab === active) scheduleBidiSync(); });
     term.onResize(() => { if (tab === active) scheduleBidiSync(); });
+    term.onTitleChange((title) => queueTabTitle(tab, title));
     // التبديل التلقائي (8.4): الشاشة البديلة ⇐ شبكي، والعودة تسترجع اختيار المستخدم
     term.buffer.onBufferChange((buf) => {
       setTabView(tab, buf.type === 'alternate' ? false : tab.userView, true);
@@ -134,6 +179,7 @@ class SatrTerminalPanel extends HTMLElement {
 
   function closeTab(tab) {
     if (tab.id) window.satr.termKill(tab.id);
+    if (tab.titleTimer) clearTimeout(tab.titleTimer);
     try { tab.term.dispose(); } catch (e) {}
     tab.view.remove();
     const idx = tabs.indexOf(tab);
@@ -164,20 +210,75 @@ class SatrTerminalPanel extends HTMLElement {
     activateTab(tab);
   }
 
+  function beginTabRename(tab) {
+    if (!tab || tab.isModel || !tab.labelEl || tab.renameInput) return;
+    const label = tab.labelEl;
+    const input = document.createElement('input');
+    input.className = 'term-tab-name-input';
+    input.type = 'text';
+    input.maxLength = TAB_TITLE_MAX;
+    input.value = tabDisplayName(tab);
+    input.setAttribute('aria-label', 'اسم تبويب الطرفية');
+    tab.renameInput = input;
+    label.replaceWith(input);
+
+    let finished = false;
+    const finish = (commit) => {
+      if (finished) return;
+      finished = true;
+      const name = sanitizeTabTitle(input.value);
+      if (commit && name) tab.manualName = name;
+      tab.renameInput = null;
+      const replacement = document.createElement('span');
+      replacement.className = 'term-tab-label';
+      replacement.textContent = tabDisplayName(tab);
+      input.replaceWith(replacement);
+      tab.labelEl = replacement;
+      updateTabLabel(tab);
+      if (tab.tabEl) tab.tabEl.focus();
+    };
+    input.addEventListener('click', (event) => event.stopPropagation());
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+      else if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+    input.focus();
+    input.select();
+  }
+
   // رسم شريط التبويبات
   function renderTabs() {
     const bar = $('termTabs');
     bar.textContent = '';
-    tabs.forEach((t, i) => {
+    tabs.forEach((t) => {
       const el = document.createElement('div');
       el.className = 'term-tab' + (t === active ? ' active' : '') + (t.exited ? ' dead' : '');
+      el.tabIndex = 0;
+      el.setAttribute('role', 'tab');
+      el.setAttribute('aria-selected', String(t === active));
       const dot = document.createElement('span'); dot.className = 'tdot'; dot.setAttribute('aria-hidden', 'true');
-      const lbl = document.createElement('span'); lbl.textContent = t.isModel ? '🤖 النموذج' : 'طرفية ' + (i + 1);
+      const lbl = document.createElement('span'); lbl.className = 'term-tab-label'; lbl.textContent = tabDisplayName(t);
+      let rename = null;
+      if (!t.isModel) {
+        rename = document.createElement('button'); rename.className = 'trename'; rename.type = 'button'; rename.textContent = '✎'; rename.title = 'إعادة تسمية';
+        rename.addEventListener('click', (event) => { event.stopPropagation(); beginTabRename(t); });
+      }
       const x = document.createElement('button'); x.className = 'tx'; x.type = 'button'; x.textContent = '✕'; x.title = 'إغلاق';
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t); });
-      el.appendChild(dot); el.appendChild(lbl); el.appendChild(x);
+      el.appendChild(dot); el.appendChild(lbl); if (rename) el.appendChild(rename); el.appendChild(x);
       el.addEventListener('click', () => { if (t !== active) activateTab(t); });
-      t.tabEl = el;
+      el.addEventListener('keydown', (event) => {
+        if (event.target !== el) return;
+        if (event.key === 'F2' && !t.isModel) { event.preventDefault(); beginTabRename(t); }
+        else if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          if (t !== active) activateTab(t);
+        }
+      });
+      t.tabEl = el; t.labelEl = lbl; t.renameButton = rename;
+      updateTabLabel(t);
       bar.appendChild(el);
     });
   }

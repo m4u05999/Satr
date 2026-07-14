@@ -693,10 +693,14 @@
   #termTabs { display: flex; gap: 4px; overflow-x: auto; max-width: 55%; }
   .term-tab { display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; border: 1px solid var(--border); border-radius: 7px 7px 0 0; background: var(--bg); color: var(--text-dim); cursor: pointer; white-space: nowrap; font-size: 12px; }
   .term-tab.active { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  .term-tab:focus-visible { border-color: var(--gold); background: var(--gold-soft); }
+  .term-tab .term-tab-label { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; }
   .term-tab .tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex: none; }
   .term-tab.dead .tdot { background: var(--red); }
-  .term-tab .tx { border: none; background: none; color: var(--text-dim); cursor: pointer; padding: 0 2px; font-size: 12px; line-height: 1; }
+  .term-tab .tx, .term-tab .trename { border: none; background: none; color: var(--text-dim); cursor: pointer; padding: 0 var(--space-1); font-size: 12px; line-height: 1; }
   .term-tab .tx:hover { color: var(--red); }
+  .term-tab .trename:hover { color: var(--gold); }
+  .term-tab .term-tab-name-input { width: 16rem; min-width: 0; border: 1px solid var(--gold); border-radius: var(--radius-xs); padding: 0 var(--space-1); background: var(--bg); color: var(--text); font: inherit; unicode-bidi: plaintext; outline: none; }
   #termNew { font-size: 15px; padding: 1px 9px; line-height: 1; flex: none; }
   /* منطقة العرض: عرض (‎.term-view) لكل تبويب، النشط وحده ظاهر. داخل كل عرض عارضان
      لنفس محرك xterm.js (docs/PHASE8-DESIGN.md): tv-grid شبكة قياسية، tv-bidi إسقاط RTL.

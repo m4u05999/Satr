@@ -796,6 +796,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `panelSheet/cardSheet` عبر `adoptedStyleSheets`. `npm run test:opsroom-ui` يستورد reducer الفعلي
   ويختبر ترتيب/إزالة تكرار الأحداث، حالات الأزرار، رفض البصمة القديمة، CSP، وحارس z-index/HTML/
   Shadow DOM على الملفات المتغيرة. لم يتغير عقد IPC ولم تُضف اعتمادية.
+  يشغّل `npm run test:opsroom-all` طقم غرفة العمليات القطعي بالتسلسل، وتبقى اختبارات Electron الأبطأ منفصلة في `npm run test:opsroom-all-live`.
 - **حد أمني ثابت**: التنفيذ الإنتاجي ما زال عبر Claude SDK فقط؛ فريق Codex أو فريق مختلط غير
   متاح لأن حاجز 3A أثبت قراءة/كتابة خارج worktree وتجاوز ownership وأغلق 3B. Codex يبقى مراجعاً
   قراءة فقط. لا تعرض الواجهة اختياراً يوحي بعزل غير مثبت، ولا يُفتح هذا الحد ضمن عمل UI.
@@ -1069,6 +1070,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   مستقل في الواجهة (نسخة xterm + عارضاه + إسقاط BiDi + حالة عرض)، والنشط وحده ظاهر
   (`.term-view.active`)؛ الرأس وسطر الإدخال والتنبيه تعمل على النشط. موجّه `satr:term`
   يوزّع الأحداث بالمعرّف على تبويبها (الخلفية متعددة عبر Map في term.js منذ 15.1).
+- **أسماء التبويبات (المرحلة 15.4)**: الاسم مشتق من الصدفة ثم OSC منقّى بسقف 40 محرفاً وthrottle، وF2 يثبت اسماً يدوياً لعمر التبويب؛ يحرسها `npm run test:terminal-tabs`.
 - **العقد (IPC)** — كله في `electron/term.js` مع تنقية في main.js:
   - `satr:termStart {cwd, cols, rows}` → `{ok, id, shell}` — ينشئ pty **جديداً** كل مرة
     (سجلّ Map بسقف MAX_TERMS=8؛ الصدفة `COMSPEC`/PowerShell، cwd مجلد موجود، cols/rows 2..500).
