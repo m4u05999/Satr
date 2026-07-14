@@ -141,12 +141,30 @@ function testDesignGuard() {
   }
   const index = read('src/index.html');
   assert(!index.includes("'unsafe-inline'"), 'CSP must remain strict');
-  const midRow = index.slice(index.indexOf('<div id="midRow">'), index.indexOf('</div>', index.indexOf('<div id="midRow">')));
-  assert(midRow.includes('<satr-ops-room') && index.indexOf('<satr-ops-room') < index.indexOf('</div>', index.indexOf('<div id="midRow">')),
-    'ops room must stay inside the middle content row');
+  const midRowStart = index.indexOf('<div id="midRow">');
+  const terminalIndex = index.indexOf('<satr-terminal-panel>');
+  const midRowClose = index.lastIndexOf('</div>', terminalIndex);
+  const midRow = index.slice(midRowStart, terminalIndex);
+  const chatColumn = midRow.slice(midRow.indexOf('<div id="chatColumn">'), midRow.indexOf('<satr-ops-room'));
+  assert(chatColumn.includes('<satr-chat>') && chatColumn.includes('<satr-composer>'),
+    'chat column must contain both chat and composer');
+  assert(midRow.includes('<satr-ops-room') && midRow.includes('<satr-preview-panel'),
+    'ops room and preview must remain siblings of the chat column inside the middle row');
+  assert((index.match(/<satr-composer>/g) || []).length === 1
+    && index.indexOf('<satr-composer>') < index.indexOf('<satr-ops-room'),
+  'composer must exist once inside the chat column, before side surfaces');
+  assert(midRowClose > index.indexOf('<satr-preview-panel') && terminalIndex > midRowClose,
+    'terminal must remain outside and below the middle row');
   const base = read('src/styles/base.css');
   for (const token of ['--z-base: 0', '--z-system: 1000', '--space-0: 0', '--space-7: 48px',
-    '--radius-xs: 4px', '--radius-pill: 999px']) assert(base.includes(token), 'missing design token ' + token);
+    '--radius-xs: 4px', '--radius-pill: 999px', '--side-surfaces-wide: 120rem']) {
+    assert(base.includes(token), 'missing design token ' + token);
+  }
+  assert(base.includes('#chatColumn {') && base.includes('display: flex; flex-direction: column; flex: 1;')
+    && base.includes('min-width: 0; min-height: 0;'),
+  'chat column must be the shrink-safe flexible middle-row surface');
+  assert(base.includes('satr-chat { display: contents; }') && base.includes('satr-composer { display: contents; }'),
+    'chat and composer light-DOM wrappers must stay display:contents');
   const component = read('src/ui/components/ops-room.js');
   assert(component.includes('adoptedStyleSheets'), 'ops room must use constructable stylesheets');
   assert(!component.includes('innerHTML') && !component.includes('insertAdjacentHTML'),
@@ -215,6 +233,23 @@ function testDesignGuard() {
   assert(app.includes("state: 'hidden'") && app.includes("record.state = 'held'") && app.includes("record.state = 'active'"),
     'surface coordinator states missing');
   assert(app.includes("surfaceCoordinator.confirm(detail)"), 'ops dialog must pass through coordinator');
+  assert(app.includes("const MULTI_SURFACE_MEDIA = '(min-width: 120rem)'")
+    && app.includes("enforceSingleSideSurface('ops-room')")
+    && app.includes("enforceSingleSideSurface('preview')")
+    && app.includes("surfaceCoordinator.closePanel('ops-room', false)"),
+  'responsive side-surface policy must share the explicit wide threshold');
+  assert(app.includes("midRow.addEventListener('transitionend'")
+    && app.includes('remeasurePreviewAfterLayout()') && app.includes('preview.remeasure()'),
+  'preview position must be remeasured explicitly after layout transitions');
+  assert(app.includes('chatColumnEl.inert = active') && app.includes('previewEl.holdForDrawer(active)')
+    && app.includes('requestAnimationFrame(() => {') && app.includes('record.source.focus()'),
+  'drawer must inert the whole chat column and restore focus after release');
+  const preview = read('src/ui/components/preview-panel.js');
+  assert(preview.includes('this.remeasure = reportBounds') && preview.includes("this.holdForDrawer = (hold)"),
+    'preview must expose explicit remeasure and drawer hold contracts');
+  assert(preview.includes(':host([drawer-held]) { display: none; }')
+    && preview.includes("window.satr.previewBounds(0, 0, 0, 0)"),
+  'drawer hold must hide both preview frame and native bounds');
   const mainProcess = read('electron/main.js');
   assert(!mainProcess.includes('executionTeam.SAFE_RUN_ID.test('),
     'IPC handlers must validate team ids through the module export, not the runtime instance');

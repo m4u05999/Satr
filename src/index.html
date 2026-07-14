@@ -84,14 +84,59 @@
 
 <div id="banner"></div>
 
-<!-- الصف الأوسط (م-1): المحادثة + لوحة المعاينة جنباً إلى جنب (flex أفقي RTL —
-     المحادثة يميناً والمعاينة يساراً). display:contents في satr-chat يُبقي <main>
-     ابناً مباشراً للصف فيرث flex:1 -->
+<!-- الصف الأوسط (م-1): عمود الدردشة + الأسطح الجانبية جنباً إلى جنب (flex أفقي RTL).
+     عمود الدردشة يجمع الخيط والمؤلّف، بينما يبقى غلافا المكوّنين display:contents -->
 <div id="midRow">
+<div id="chatColumn">
 <!-- خيط المحادثة: مكوّن light DOM (تفكيك ت-12 — بلا Shadow: البث يعيد بناء innerHTML
      وأنماط المنطقة في base.css؛ الغلاف display:contents يبني <main> بداخله).
      مجرى أحداث satr:event يبقى orchestration في القشرة ويستدعي methods المكوّن -->
 <satr-chat></satr-chat>
+<!-- المؤلّف: مكوّن light DOM (تفكيك ت-10) — المكوّن يملك ميكانيكا
+     المرفقات/القوائم/المسودة/شريط الخلفية ويبث composer-send -->
+<satr-composer>
+<footer>
+  <div id="bgBar" aria-label="عمليات قيد التشغيل">
+    <span class="bg-label"><span class="bg-dot" aria-hidden="true"></span>عمليات قيد التشغيل</span>
+    <span id="bgChips" class="bg-chips"></span>
+    <button id="bgKillAll" type="button">إيقاف الكل</button>
+  </div>
+  <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
+  <!-- شريط المؤلّف (§5-د): محرك/نموذج/صلاحيات + إرفاق، بجوار الإرسال (نمط Cursor) -->
+  <div class="composer-tools">
+    <span class="ct-label">المحرك</span>
+    <select id="engine" title="المحرك/المزوّد">
+      <option value="sdk">SDK — بث وأذونات حية</option>
+      <option value="codex">Codex — OpenAI (بث وأذونات)</option>
+      <option value="cli">CLI — احتياطي</option>
+      <option value="gemini">Gemini (REST)</option>
+    </select>
+    <span class="ct-label">النموذج</span>
+    <select id="model" title="النموذج"><option value="">الافتراضي</option></select>
+    <select id="perm" title="وضع الصلاحيات">
+      <option value="acceptEdits">قبول التعديلات تلقائياً</option>
+      <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
+      <option value="default">افتراضي</option>
+      <option value="auto">تلقائي ذكي (يسأل عن التنفيذ والكتابة)</option>
+      <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
+    </select>
+    <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (محرك SDK)">📎 إرفاق</button>
+    <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+  </div>
+  <div class="composer">
+    <div id="slashMenu" role="listbox"></div>
+    <div id="fileMenu" role="listbox"></div>
+    <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1"></textarea>
+    <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح: امنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح فقط — محرك SDK)">🖱️ متصفح</button>
+    <button id="send">إرسال</button>
+  </div>
+  <div class="statusline">
+    <span id="sessionInfo">لا جلسة</span>
+    <span id="costInfo"></span>
+  </div>
+</footer>
+</satr-composer>
+</div>
 <!-- غرفة العمليات: سطح عمل مرن داخل الصف الأوسط كي يبقى محصوراً بين الهيدر والمؤلّف -->
 <satr-ops-room aria-label="غرفة العمليات"></satr-ops-room>
 <!-- لوحة المعاينة المدمجة (م-1 — الدفعة 5): إطار الرأس والمساحة فقط — الصفحة ترسمها
@@ -151,52 +196,6 @@
 
 <!-- حوار قرار غرفة العمليات: تشغيل الاختبارات والدمج لا يمران عبر toast أو confirm أصلي -->
 <satr-ops-dialog role="dialog" aria-modal="true" aria-label="تأكيد قرار غرفة العمليات"></satr-ops-dialog>
-
-<!-- المؤلّف: مكوّن light DOM (تفكيك ت-10) — الترميز يبقى هنا لأن القشرة تربط عناصره
-     عند الإقلاع قبل ترقية المكوّنات؛ المكوّن يلفّه ويملك ميكانيكاه (مرفقات/قوائم/مسودة/شريط
-     الخلفية) ويبث composer-send — الإرسال orchestration يبقى في القشرة -->
-<satr-composer>
-<footer>
-  <div id="bgBar" aria-label="عمليات قيد التشغيل">
-    <span class="bg-label"><span class="bg-dot" aria-hidden="true"></span>عمليات قيد التشغيل</span>
-    <span id="bgChips" class="bg-chips"></span>
-    <button id="bgKillAll" type="button">إيقاف الكل</button>
-  </div>
-  <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
-  <!-- شريط المؤلّف (§5-د): محرك/نموذج/صلاحيات + إرفاق، بجوار الإرسال (نمط Cursor) -->
-  <div class="composer-tools">
-    <span class="ct-label">المحرك</span>
-    <select id="engine" title="المحرك/المزوّد">
-      <option value="sdk">SDK — بث وأذونات حية</option>
-      <option value="codex">Codex — OpenAI (بث وأذونات)</option>
-      <option value="cli">CLI — احتياطي</option>
-      <option value="gemini">Gemini (REST)</option>
-    </select>
-    <span class="ct-label">النموذج</span>
-    <select id="model" title="النموذج"><option value="">الافتراضي</option></select>
-    <select id="perm" title="وضع الصلاحيات">
-      <option value="acceptEdits">قبول التعديلات تلقائياً</option>
-      <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
-      <option value="default">افتراضي</option>
-      <option value="auto">تلقائي ذكي (يسأل عن التنفيذ والكتابة)</option>
-      <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
-    </select>
-    <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (محرك SDK)">📎 إرفاق</button>
-    <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
-  </div>
-  <div class="composer">
-    <div id="slashMenu" role="listbox"></div>
-    <div id="fileMenu" role="listbox"></div>
-    <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1"></textarea>
-    <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح: امنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح فقط — محرك SDK)">🖱️ متصفح</button>
-    <button id="send">إرسال</button>
-  </div>
-  <div class="statusline">
-    <span id="sessionInfo">لا جلسة</span>
-    <span id="costInfo"></span>
-  </div>
-</footer>
-</satr-composer>
 
 <script src="vendor/xterm.js"></script>
 <script src="vendor/addon-fit.js"></script>

@@ -2,7 +2,8 @@
 // المكوّن يرسم «إطار» اللوحة فقط (رأس بأزرار وعنوان + مساحة عرض فارغة) — الصفحة
 // نفسها ترسمها WebContentsView أصلية في العملية الرئيسية **تطفو فوق** مساحة العرض:
 // المكوّن يقيس مستطيل المساحة (getBoundingClientRect) ويبلّغه عبر satr:previewBounds
-// (ResizeObserver + resize النافذة)، والأحداث تصله عبر onPreview (nav/title/loading/failed).
+// (ResizeObserver + resize النافذة + remeasure صريح لتغيّر الموضع بعد انتقال التخطيط)،
+// والأحداث تصله عبر onPreview (nav/title/loading/failed).
 // **حدّ معماري موثّق**: العرض الأصلي فوق كل محتوى المتصفح — منبثقات الواجهة المركزية
 // (مربع الأذونات مثلاً) قد تختفي جزئياً خلفه على الشاشات الضيقة (تُقيَّم معالجة لاحقاً).
 // زر 🌐 في الشريط العلوي يربطه المكوّن بنفسه (نمط زر 🖥️ في الطرفية — ت-9).
@@ -17,6 +18,7 @@ const previewSheet = sheet(`
     width: var(--pv-w, 44%); min-width: 280px; max-width: 78vw; flex: none;
     border-inline-start: 1px solid var(--border); background: var(--bg-deep);
   }
+  :host([drawer-held]) { display: none; }
   .pv-head {
     display: flex; align-items: center; gap: 6px; padding: 7px 10px;
     background: var(--surface); border-bottom: 1px solid var(--border);
@@ -42,14 +44,14 @@ const previewSheet = sheet(`
      لأنه يطفو فوق pvBox فقط) + خيط علوي نابض. يظهران أثناء تنفيذ الوكيل فعلَ متصفح. */
   #pvAgentTag {
     position: absolute; top: 5px; inset-inline: 0; margin-inline: auto; width: max-content;
-    max-width: 70%; z-index: 8; display: none; align-items: center; gap: 5px;
+    max-width: 70%; z-index: var(--z-local); display: none; align-items: center; gap: 5px;
     background: var(--gold); color: #1A1408; border-radius: 999px; padding: 3px 12px;
     font-size: 11.5px; font-weight: 600; box-shadow: var(--shadow-pop);
     pointer-events: none; unicode-bidi: plaintext; white-space: nowrap;
   }
   #pvAgentTag.show { display: flex; animation: pop var(--dur) var(--ease); }
   #pvAgentLine {
-    position: absolute; top: 0; inset-inline: 0; height: 3px; z-index: 7;
+    position: absolute; top: 0; inset-inline: 0; height: 3px; z-index: var(--z-local);
     background: var(--gold); display: none; pointer-events: none;
   }
   #pvAgentLine.show { display: block; animation: pvAgentPulse 1.2s var(--ease) infinite; }
@@ -137,7 +139,7 @@ const previewSheet = sheet(`
   /* مقبض تغيير العرض على الحافة الملاصقة للمحادثة (inline-start = يمين في RTL) */
   #pvResizer {
     position: absolute; top: 0; bottom: 0; inset-inline-start: -3px; width: 7px;
-    cursor: ew-resize; z-index: 5;
+    cursor: ew-resize; z-index: var(--z-local);
   }
   #pvResizer:hover { background: var(--gold-soft); }
 `);
@@ -230,7 +232,8 @@ class SatrPreviewPanel extends HTMLElement {
     // WebContentsView تُرسم فوق pvBox — أي تغيير تخطيط (فتح الطرفية/تغيير حجم/سحب
     // المقبض) يغيّر المستطيل، وResizeObserver يلتقطه كله. إحداثيات CSS px = DIP.
     let boundsRaf = 0;
-    let held = false; // محجوب مؤقتاً أثناء مربع إذن (يبرز فوق العرض) — لا نبلّغ مستطيلاً
+    const holdReasons = new Set(); // حجب مستقل للحوار وdrawer كي لا يفك أحدهما حجب الآخر
+    let held = false;
     // معاينة متجاوبة: 0 = كامل عرض pvBox؛ رقم = عرض جهاز يُعرَض موسّطاً (تتفاعل media queries).
     const DEVICES = [
       { icon: '🖥️', label: 'كامل', w: 0 },
@@ -253,6 +256,7 @@ class SatrPreviewPanel extends HTMLElement {
     };
     new ResizeObserver(reportBounds).observe(box);
     window.addEventListener('resize', reportBounds);
+    this.remeasure = reportBounds;
 
     // زرّ محاكاة الأجهزة: يدوّر كامل→موبايل→لوحي، يحدّث الأيقونة/الحالة ويعيد قياس العرض.
     const deviceBtn = $('pvDevice');
@@ -417,6 +421,7 @@ class SatrPreviewPanel extends HTMLElement {
       if (this.hasAttribute('open')) closePanel(); else openPanel();
     });
     $('pvClose').addEventListener('click', closePanel);
+    this.close = closePanel;
 
     // ---------- التنقل ----------
     // تطبيع العنوان: بلا مخطط ⇐ http:// (خوادم التطوير المحلية)؛ غير http/https يُرفض
@@ -666,11 +671,17 @@ class SatrPreviewPanel extends HTMLElement {
     };
     // إصلاح احتجاب مربع الإذن خلف المعاينة (لقطة مالك): القشرة تستدعيها عند ظهور/إخفاء
     // مربع إذن — نُخفي العرض الأصلي (bounds صفر) فيبرز المربع فوق اللوحة، ثم نعيده.
-    this.holdForDialog = (hold) => {
-      held = !!hold;
+    const setHeld = (reason, hold) => {
+      if (hold) holdReasons.add(reason); else holdReasons.delete(reason);
+      held = holdReasons.size > 0;
       if (!started) return;
       if (held) window.satr.previewBounds(0, 0, 0, 0); // العرض بحجم صفر ⇒ مخفي، المربع يظهر
       else reportBounds(); // استعادة الموضع الفعلي بعد الرد
+    };
+    this.holdForDialog = (hold) => setHeld('dialog', hold);
+    this.holdForDrawer = (hold) => {
+      this.toggleAttribute('drawer-held', !!hold);
+      setHeld('drawer', hold);
     };
 
     // ---------- مؤشّر «الوكيل يقود المتصفح» (الخيار 2) ----------

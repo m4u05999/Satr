@@ -197,6 +197,7 @@
   const researchEl = document.querySelector('satr-research-panel');
   const opsRoomEl = document.querySelector('satr-ops-room');
   const opsDialogEl = document.querySelector('satr-ops-dialog');
+  const previewEl = document.querySelector('satr-preview-panel');
   function addNotice(text) { chatEl.addNotice(text); }
 
   // منسّق الأسطح الواحد: لوحة رئيسية واحدة، سجل active/held/hidden، واستعادة تركيز
@@ -206,12 +207,30 @@
     let activePanel = '';
     let activeDialog = '';
     let dialogEpoch = 0;
+    let layoutRemeasureTimer = 0;
 
-    function previewSurface() { return document.querySelector('satr-preview-panel'); }
+    const midRow = document.getElementById('midRow');
+    const layoutProperties = new Set(['width', 'min-width', 'max-width', 'flex-basis']);
+    function previewSurface() { return previewEl; }
     function remeasurePreview() {
       const preview = previewSurface();
-      if (preview && preview.holdForDialog) preview.holdForDialog(false);
+      if (preview && preview.remeasure) preview.remeasure();
     }
+    function layoutSettleDelay() {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue('--dur').trim();
+      const value = parseFloat(raw);
+      const duration = Number.isFinite(value) ? value * (raw.endsWith('ms') ? 1 : 1000) : 180;
+      return Math.max(32, Math.ceil(duration) + 32);
+    }
+    function remeasurePreviewAfterLayout() {
+      clearTimeout(layoutRemeasureTimer);
+      layoutRemeasureTimer = setTimeout(remeasurePreview, layoutSettleDelay());
+    }
+    midRow.addEventListener('transitionend', (event) => {
+      if (!layoutProperties.has(event.propertyName)) return;
+      clearTimeout(layoutRemeasureTimer);
+      remeasurePreview();
+    }, true);
     function register(name, element, category) {
       if (!element) return;
       const record = { name, element, category, state: 'hidden', source: null, restore: true };
@@ -223,8 +242,12 @@
           const shouldRestore = record.state !== 'hidden' && record.restore;
           record.state = 'hidden';
           if (activePanel === name) activePanel = '';
-          if (shouldRestore && record.source && record.source.isConnected && record.source.focus) record.source.focus();
-          record.restore = true; requestAnimationFrame(remeasurePreview);
+          if (shouldRestore && record.source && record.source.isConnected && record.source.focus) {
+            requestAnimationFrame(() => {
+              if (record.source && record.source.isConnected && record.source.focus) record.source.focus();
+            });
+          }
+          record.restore = true; remeasurePreviewAfterLayout();
         }).observe(element, { attributes: true, attributeFilter: ['open'] });
       }
     }
@@ -243,14 +266,19 @@
       if (!alreadyOpen) target.source = source && source.focus ? source : document.activeElement;
       target.restore = true; target.state = activeDialog ? 'held' : 'active'; activePanel = name;
       opener(target.element);
+      remeasurePreviewAfterLayout();
       requestAnimationFrame(() => {
-        remeasurePreview();
         if (target.element.focusInitial) target.element.focusInitial();
       });
     }
     function closeActivePanel() {
       if (activeDialog || !activePanel) return false;
       const record = registry.get(activePanel); closeRecord(record, true); return !!record;
+    }
+    function closePanel(name, restore) {
+      const record = registry.get(name);
+      if (!record || record.category !== 'panel') return false;
+      closeRecord(record, restore); return true;
     }
     function setDialog(name, visible, source) {
       if (visible) {
@@ -287,7 +315,7 @@
         name: record.name, category: record.category, state: record.state,
       }));
     }
-    return { register, openPanel, closeActivePanel, setDialog, confirm, snapshot };
+    return { register, openPanel, closePanel, closeActivePanel, setDialog, confirm, snapshot };
   })();
 
   for (const [name, selector] of [
@@ -298,6 +326,35 @@
   ]) surfaceCoordinator.register(name, document.querySelector(selector), 'panel');
   surfaceCoordinator.register('ops-dialog', opsDialogEl, 'dialog');
   surfaceCoordinator.register('permission-dialog', document.querySelector('satr-perm-dialog'), 'dialog');
+
+  // تحت العتبة الواسعة يبقى سطح جانبي واحد فقط؛ 120rem تبقي للدردشة عرضاً عملياً.
+  const MULTI_SURFACE_MEDIA = '(min-width: 120rem)';
+  const multiSurfaceQuery = window.matchMedia(MULTI_SURFACE_MEDIA);
+  const chatColumnEl = document.getElementById('chatColumn');
+  let drawerModalActive = false;
+  function syncOpsDrawerModal() {
+    const active = opsRoomEl.hasAttribute('open') && opsRoomEl.hasAttribute('drawer');
+    if (active === drawerModalActive) return;
+    drawerModalActive = active;
+    chatColumnEl.inert = active;
+    if (previewEl.holdForDrawer) previewEl.holdForDrawer(active);
+  }
+  function enforceSingleSideSurface(opening) {
+    if (multiSurfaceQuery.matches || !opsRoomEl.hasAttribute('open') || !previewEl.hasAttribute('open')) return;
+    if (opening === 'ops-room' && opsRoomEl.hasAttribute('drawer')) return;
+    if (opening === 'preview') surfaceCoordinator.closePanel('ops-room', false);
+    else if (previewEl.close) previewEl.close();
+  }
+  new MutationObserver(() => {
+    syncOpsDrawerModal();
+    if (opsRoomEl.hasAttribute('open')) enforceSingleSideSurface('ops-room');
+  }).observe(opsRoomEl, { attributes: true, attributeFilter: ['open', 'drawer'] });
+  new MutationObserver(() => {
+    if (previewEl.hasAttribute('open')) enforceSingleSideSurface('preview');
+  }).observe(previewEl, { attributes: true, attributeFilter: ['open'] });
+  multiSurfaceQuery.addEventListener('change', (event) => {
+    if (!event.matches) enforceSingleSideSurface('ops-room');
+  });
 
   async function loadTaskLedger(engine, sid) {
     if (!engine || !sid) { chatEl.clearTaskLedger(); return; }
@@ -1082,7 +1139,6 @@
   // المكوّن يملك اللوحة كاملة (زر 🌐 يربطه بنفسه — نمط الطرفية)؛ القشرة توصّل فقط
   // اقتراح localhost: الطرفية ترصد عناوين خوادم التطوير في خرجها وتبثّ «localhost-url»
   // فتعرض القشرة إشعاراً بزرّ «افتح المعاينة» (مرة لكل عنوان في عمر الجلسة).
-  const previewEl = document.querySelector('satr-preview-panel');
   let previewDirty = false; // م-1-ج: عُدّل ملف في الدور الجاري ⇒ حدّث المعاينة عند انتهائه
   // تحديث المعاينة بعد التراجع من بطاقة diff (طلب مالك): الحدث يصعد من buildDiff.
   // حدّ: مشاريع ذات خطوة بناء تحتاج إعادة توليد أيضاً — reload وحده لا يعكس المصدر.
