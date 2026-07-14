@@ -112,6 +112,29 @@ export function deriveOpsRoomState(state) {
   const reviewApproved = approvedReviewForArtifact(current.review, team, artifactId);
   const verificationPassed = verificationCurrent && current.verification.state === 'passed';
   const busy = !!current.pending;
+  const canStart = !busy && (!team || teamTerminal) && !reviewActive && !verificationActive;
+  const canStop = !busy && (!!(team && !teamTerminal) || reviewActive || verificationActive);
+  const canReview = !busy && !!(team && team.state === 'completed' && team.merge_supported
+    && artifactId && !current.review);
+  const canPrepareVerification = !busy && !!(team && team.merge_supported && reviewApproved
+    && !verificationCurrent);
+  const canRunVerification = !busy && verificationCurrent
+    && current.verification.state === 'pending_confirmation';
+  const canMerge = !busy && !!(team && team.merge_supported && !team.merged
+    && reviewApproved && verificationPassed);
+  let nextAction = { key: 'wait', action: '', label: 'لا يوجد انتقال مطلوب حالياً.' };
+  if (busy) nextAction = { key: 'pending', action: '', label: 'جارٍ تنفيذ الانتقال المطلوب…' };
+  else if (canMerge) nextAction = { key: 'merge', action: 'merge', label: 'نجح التحقق ووافقت المراجعات؛ الخطوة التالية دمج الأثر بتأكيد صريح.' };
+  else if (canRunVerification) nextAction = { key: 'verify', action: 'verify', label: 'ثُبّتت الاختبارات؛ الخطوة التالية تشغيلها بتأكيد صريح.' };
+  else if (canPrepareVerification) nextAction = { key: 'prepare', action: 'prepare', label: 'وافقت المراجعات؛ الخطوة التالية تثبيت تحقق الأثر الحالي.' };
+  else if (canReview) nextAction = { key: 'review', action: 'review', label: 'اكتمل التنفيذ؛ الخطوة التالية بدء المراجعات المستقلة.' };
+  else if (team && team.merged) nextAction = { key: 'merged', action: '', label: 'طُبّق الأثر على شجرة العمل بلا commit.' };
+  else if (canStart) nextAction = team
+    ? { key: 'start', action: 'start', label: 'انتهى الفريق الحالي؛ راجع النتيجة ثم أنشئ فريقاً جديداً عند الحاجة.' }
+    : { key: 'start', action: 'start', label: 'حدّد مهام العوامل وملكياتها، ثم ابدأ التنفيذ صراحةً.' };
+  else if (verificationActive) nextAction = { key: 'verification_running', action: '', label: 'التحقق التكاملي يعمل الآن؛ انتظر النتيجة أو أوقف المرحلة.' };
+  else if (reviewActive) nextAction = { key: 'review_running', action: '', label: 'المراجعات المستقلة تعمل الآن؛ انتظر الأحكام أو أوقف المرحلة.' };
+  else if (team && !teamTerminal) nextAction = { key: 'team_running', action: '', label: 'العوامل تنفّذ داخل النسخ المعزولة؛ راقب النشاط أو أوقف المرحلة.' };
   return {
     artifactId,
     teamActive: !!(team && !teamTerminal),
@@ -119,16 +142,13 @@ export function deriveOpsRoomState(state) {
     verificationActive,
     reviewApproved,
     verificationPassed,
-    canStart: !busy && (!team || teamTerminal) && !reviewActive && !verificationActive,
-    canStop: !busy && (!!(team && !teamTerminal) || reviewActive || verificationActive),
-    canReview: !busy && !!(team && team.state === 'completed' && team.merge_supported
-      && artifactId && !current.review),
-    canPrepareVerification: !busy && !!(team && team.merge_supported && reviewApproved
-      && !verificationCurrent),
-    canRunVerification: !busy && verificationCurrent
-      && current.verification.state === 'pending_confirmation',
-    canMerge: !busy && !!(team && team.merge_supported && !team.merged
-      && reviewApproved && verificationPassed),
+    canStart,
+    canStop,
+    canReview,
+    canPrepareVerification,
+    canRunVerification,
+    canMerge,
+    nextAction,
   };
 }
 

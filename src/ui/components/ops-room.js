@@ -6,13 +6,19 @@ import { cardSheet } from '../lib/card.css.js';
 import { createOpsRoomState, deriveOpsRoomState, opsRoomReducer } from '../lib/ops-room-state.js';
 
 const roomSheet = sheet(`
-  :host { width: min(42rem, 94vw); z-index: var(--z-panel); }
+  :host {
+    width: min(42rem, 94vw); min-width: min(22rem, 94vw); max-width: 94vw;
+    z-index: var(--z-panel); resize: horizontal; overflow: hidden;
+  }
+  :host([compact]) { width: min(24rem, 94vw); resize: none; }
+  :host([compact]) .room-nav, :host([compact]) .panel-list { display: none; }
   .panel-head { gap: var(--space-3); }
   .panel-head-actions, .room-actions, .room-nav, .setup-actions {
     display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   }
   .room-actions { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
   .room-actions button { font-size: .75rem; }
+  .room-actions button.recommended { color: var(--gold); border-color: var(--gold); background: var(--surface-3); }
   .room-actions .stop { color: var(--red); }
   .room-actions .merge { color: var(--green); border-color: var(--green-border); }
   .room-actions .verify, .room-actions .review { color: var(--gold); border-color: var(--gold-border); }
@@ -27,6 +33,12 @@ const roomSheet = sheet(`
     color: var(--text-dim); font-size: .78rem; border-bottom: 1px solid var(--border);
     unicode-bidi: plaintext;
   }
+  .timeout-warning { color: var(--gold); font-size: .78rem; padding: 0 var(--space-3); }
+  .next-step {
+    padding: var(--space-3); color: var(--text); font-size: .82rem; line-height: 1.8;
+    border-bottom: 1px solid var(--border); background: var(--surface-2); unicode-bidi: plaintext;
+  }
+  .next-step::before { content: 'الخطوة التالية: '; color: var(--gold); font-weight: 600; }
   .panel-list { padding: var(--space-3); overflow-y: auto; overscroll-behavior: contain; }
   .view { display: grid; gap: var(--space-3); }
   .view[hidden] { display: none; }
@@ -39,6 +51,12 @@ const roomSheet = sheet(`
     border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-2);
   }
   .setup-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .setup-fields {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3); align-self: stretch;
+  }
+  .setup-field { display: grid; gap: var(--space-1); min-width: 0; }
+  .setup-field > span { color: var(--text-dim); font-size: .75rem; }
   .setup-note { color: var(--text-dim); font-size: .75rem; line-height: 1.7; }
   .worker-input {
     display: grid; gap: var(--space-2); padding: var(--space-3);
@@ -68,6 +86,10 @@ const roomSheet = sheet(`
   .path, .command { flex: 1; min-width: 0; }
   .counts { direction: ltr; font-family: var(--mono); color: var(--text-dim); white-space: nowrap; }
   .summary { white-space: pre-wrap; unicode-bidi: plaintext; }
+  .live-activity {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+    padding: 0 var(--space-3) var(--space-3); color: var(--text-dim); font-size: .75rem;
+  }
   .warning { color: var(--red); }
   .gate-summary {
     padding: var(--space-3); border: 1px solid var(--gold-border);
@@ -112,6 +134,8 @@ const dialogSheet = sheet(`
 `);
 
 const VIEWS = [
+  ['history', 'السجل'],
+  ['brainstorm', 'العصف'],
   ['decisions', 'القرارات'],
   ['tasks', 'المهام والملكية'],
   ['discussion', 'النقاش المحدود'],
@@ -125,23 +149,93 @@ const TEAM_STATES = {
   capturing: 'يجمع وصف الفروقات…', stopping: 'يوقف الفريق…', completed: 'اكتمل التنفيذ',
   failed: 'فشل التنفيذ', timed_out: 'انتهت المهلة', stopped: 'توقف',
   cleanup_failed: 'فشل التنظيف', conflict: 'تعارض ملكية',
+  interrupted: 'انقطع بإغلاق سابق',
+};
+
+const TERMINAL_AGENT_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
+const TOOL_LABELS = {
+  read: 'قراءة', grep: 'بحث نصي', glob: 'بحث ملفات', edit: 'تحرير', write: 'كتابة', multiedit: 'تحرير متعدد',
+};
+const FAILURE_GUIDANCE = {
+  timeout: 'ضيّق المهمة أو اختر مهلة أطول ثم أعد المحاولة من HEAD.',
+  user_stopped: 'يمكنك مراجعة الإحصاءات ثم إعادة المحاولة بفريق جديد.',
+  start_failed: 'تحقق من المحرك والمستودع ثم أعد المحاولة.',
+  engine_failed: 'تحقق من توفر Claude وتسجيل الدخول، ثم أعد المحاولة.',
+  policy_violation: 'راجع المهمة والملكية؛ لا توسّع السياسة لتجاوز الحارس.',
+  worktree_violation: 'صحّح أي مسار مطلق أو خارج نسخة العمل ثم أعد المحاولة.',
+  ownership_violation: 'وسّع الملكية صراحةً أو قسّم المهمة؛ لا تدمج الفرق المخالف.',
+  artifact_capture_failed: 'تحقق من Git وحجم الفرق ثم أعد التنفيذ.',
+  cleanup_failed: 'نظّف worktree المؤقت يدوياً قبل تشغيل فريق جديد.',
 };
 
 const ERROR_LABELS = {
-  no_repo: 'المجلد ليس مستودع Git.', no_head: 'المستودع بلا HEAD.',
-  unsafe_links: 'المستودع يحوي رابطاً رمزياً أو submodule غير آمن.',
-  busy: 'يوجد فريق يعمل بالفعل.', ownership_overlap: 'تتداخل ملكيات عاملين.',
-  bad_input: 'تحقق من المهام وأنماط الملكية.',
-  review_engine_unavailable: 'محرك المراجعة المستقل غير متاح؛ بقيت البوابة مغلقة.',
-  verification_config_required: 'يلزم ملف .satr/verify.json صالح ومعتمد في HEAD.',
+  no_repo: 'المجلد ليس مستودع Git — افتح مستودعاً صالحاً ثم أعد المحاولة.',
+  no_head: 'المستودع بلا HEAD — أنشئ أول commit ثم أعد المحاولة.',
+  unsafe_links: 'المستودع يحوي رابطاً رمزياً أو submodule غير آمن — أزله أو افتح مشروعاً آمناً ثم أعد المحاولة.',
+  busy: 'يوجد انتقال يعمل بالفعل — انتظر اكتماله أو أوقفه قبل بدء انتقال جديد.',
+  ownership_overlap: 'تتداخل ملكيات عاملين — افصل أنماط الملفات بين العاملين ثم أعد المحاولة.',
+  review_engine_unavailable: 'محرك المراجعة المستقل غير متاح — تحقق من توفر المحركات وتسجيل الدخول ثم أعد المراجعة؛ بقيت البوابة مغلقة.',
+  verification_config_required: 'يلزم ملف .satr/verify.json صالح ومعتمد في HEAD — أضفه في مهمة مستقلة ثم أعد التحقق.',
   verification_config_changed: 'يمس الأثر سياسة التحقق؛ يلزم اعتمادها في مهمة مستقلة.',
-  confirmation_required: 'يلزم تأكيد صريح.', verification_prepare_required: 'يلزم تثبيت تحقق جديد للأثر الحالي.',
-  review_not_approved: 'لم توافق كل المراجعات؛ لا يمكن تجاوز الحكم.',
-  review_artifact_mismatch: 'المراجعة تخص أثراً قديماً.', verification_artifact_mismatch: 'التحقق يخص أثراً قديماً.',
-  verification_required: 'يلزم نجاح التحقق للأثر الحالي.', dirty_worktree: 'شجرة المشروع غير نظيفة.',
-  head_changed: 'تغيّر HEAD منذ التنفيذ.', conflict: 'يتعارض الأثر مع شجرة المشروع.',
-  apply_failed: 'تعذّر تطبيق الأثر بلا تغيير جزئي.', cleanup_failed: 'تعذّر تنظيف worktree؛ عُدّ المسار فاشلاً.',
+  confirmation_required: 'يلزم تأكيد صريح — أعد المحاولة ووافق في نافذة التأكيد.',
+  verification_prepare_required: 'يلزم تثبيت تحقق جديد للأثر الحالي — اختر «ثبّت التحقق» ثم شغّل الاختبارات.',
+  review_not_approved: 'لم توافق كل المراجعات — عالج الملاحظات ثم أعد التنفيذ والمراجعة؛ لا يمكن تجاوز الحكم.',
+  review_required: 'يلزم اكتمال المراجعات المستقلة وموافقتها — ابدأ المراجعة وعالج نتائجها أولاً.',
+  review_artifact_mismatch: 'المراجعة تخص أثراً قديماً — أعد المراجعة للأثر الحالي.',
+  verification_artifact_mismatch: 'التحقق يخص أثراً قديماً — ثبّت التحقق وشغّل الاختبارات للأثر الحالي.',
+  verification_required: 'يلزم نجاح التحقق للأثر الحالي — شغّل الاختبارات المعتمدة وعالج أي فشل قبل الدمج.',
+  dirty_worktree: 'شجرة المشروع غير نظيفة — احفظ (commit) أو تراجع عن تعديلاتك غير الملتزمة قبل الدمج.',
+  head_changed: 'تغيّر HEAD منذ التنفيذ — أعد التنفيذ والمراجعة والتحقق على HEAD الحالي قبل الدمج.',
+  conflict: 'يتعارض الأثر مع شجرة المشروع — أعد التنفيذ من HEAD الحالي ثم كرر المراجعة والتحقق.',
+  apply_failed: 'تعذّر تطبيق الأثر بأمان ولم تُجرَ تغييرات جزئية — أعد التنفيذ من HEAD الحالي ثم كرر المراجعة والتحقق.',
+  cleanup_failed: 'تعذّر تنظيف worktree — نظّفه يدوياً قبل بدء انتقال جديد؛ عُدّ المسار فاشلاً.',
+  encryption_unavailable: 'التخزين المشفّر غير متاح على هذا النظام؛ لا يمكن استعادة الأثر بعد الإغلاق.',
+  artifact_unavailable: 'تعذّر فتح الأثر المشفّر — أعد التنفيذ لإنشاء أثر جديد.',
+  artifact_invalid: 'فشلت سلامة الأثر المحفوظ — احذف الأثر التالف وأعد التنفيذ.',
+  artifact_mismatch: 'الأثر المحفوظ لا يخص هذه الغرفة أو هذا المشروع — افتح المشروع الأصلي ثم أعد الاستعادة.',
+  not_available: 'هذا الانتقال غير متاح للحالة الحالية — أكمل الخطوة المقترحة في الغرفة أولاً.',
+  not_found: 'لم يعد السجل أو الانتقال موجوداً — حدّث الغرفة ثم أعد المحاولة.',
+  timeout_cap: 'بلغت المهلة سقف 10 دقائق ولا يمكن تمديدها — ضيّق المهمة ثم أعد التنفيذ.',
+  brainstorm_engine_unavailable: 'محركا العصف المستقلان غير متاحين — تحقق من توفر Claude وCodex وتسجيل الدخول ثم أعد المحاولة.',
+  planner_engine_unavailable: 'مخطط المهام عبر Claude غير متاح — تحقق من توفر Claude وتسجيل الدخول ثم أعد المحاولة.',
+  invalid_plan: 'لم يعد المخطط اقتراحاً بنيوياً صالحاً — وضّح المهمة وملكياتها ثم اطلب التقسيم من جديد.',
+  secret_detected: 'حُجب الناتج لأنه قد يحتوي سراً — أزل الأسرار أو القيم الحساسة ثم أعد المحاولة.',
+  forbidden_tool: 'أوقف المخطط طلب أداة غير مسموحة — أعد صياغة المهمة لتبقى قراءةً فقط ثم أعد المحاولة.',
+  wrong_repo: 'الأثر يخص مستودعاً آخر — افتح المشروع الأصلي وأعد الانتقال هناك.',
+  bad_artifact: 'بيانات الأثر غير صالحة — أعد التنفيذ لإنشاء أثر جديد.',
+  status_failed: 'تعذّر فحص حالة Git — تحقق من عمل Git وصلاحيات المجلد ثم أعد الدمج.',
+  storage_failed: 'تعذّر إنشاء ملف الأثر المؤقت — تحقق من مساحة القرص وصلاحيات مجلد التطبيق ثم أعد الدمج.',
+  unsafe_path: 'حُجب مسار تخزين غير آمن — أعد تشغيل التطبيق ثم أعد المحاولة.',
+  patch_too_large: 'حجم الأثر أكبر من حد الدمج — قسّم المهمة إلى آثار أصغر ثم أعد التنفيذ.',
+  diff_too_large: 'حجم الفرق أكبر من حد المراجعة — قسّم المهمة إلى آثار أصغر ثم أعد التنفيذ.',
+  worktree_failed: 'تعذّر إنشاء worktree للمخطط — تحقق من Git ونظافة المستودع ثم أعد المحاولة.',
+  agent_start_failed: 'تعذّر بدء أحد العوامل — تحقق من توفر Claude ثم أعد المحاولة بفريق جديد.',
+  text_too_large: 'النص أطول من الحد المسموح — اختصره ثم أعد المحاولة.',
+  reference_mismatch: 'لم يعد القرار يخص الفريق أو الأثر الحالي — حدّث الغرفة ثم سجّل القرار من جديد.',
+  file_limit: 'ملف الأثر المشفّر أكبر من الحد — قسّم المهمة إلى أثر أصغر ثم أعد التنفيذ.',
+  persistence_failed: 'تعذّر حفظ الأثر المشفّر — تحقق من مساحة القرص وصلاحيات مجلد التطبيق ثم أعد التنفيذ.',
+  remove_failed: 'تعذّر حذف الأثر المحفوظ — أغلق أي برنامج يستخدم الملف ثم أعد المحاولة.',
+  not_running: 'لم يعد الانتقال جارياً — حدّث الغرفة قبل محاولة الإيقاف مجدداً.',
 };
+
+const BAD_INPUT_LABELS = {
+  execution: 'تعذّر بدء التنفيذ — افتح مجلد مشروع صالحاً، واكتب مهمة وملكية ملفات لكل عامل.',
+  review: 'تعذّر بدء المراجعة لأن بيانات الفريق أو الأثر لم تعد صالحة — حدّث الغرفة ثم أعد التنفيذ إن استمر الخطأ.',
+  verification: 'تعذّر بدء التحقق لأن بيانات الفريق أو الأثر لم تعد صالحة — حدّث الغرفة ثم ثبّت التحقق من جديد.',
+  merge: 'تعذّر الدمج لأن بيانات الفريق أو المراجعة لم تعد صالحة — حدّث الغرفة ثم أعد المراجعة والتحقق.',
+  decision: 'تعذّر تسجيل القرار — اكتب قراراً موجزاً للغرفة والأثر الحاليين ثم أعد المحاولة.',
+  brainstorm: 'تعذّر بدء العصف — افتح مجلد مشروع أولاً، ثم اكتب الموجز.',
+  planner: 'تعذّر بدء التخطيط — افتح مجلد مشروع أولاً، ثم اكتب المهمة الكبيرة في حقل العامل الأول.',
+  restore: 'تعذّرت استعادة الأثر — افتح مجلد المشروع الذي أُنشئ فيه الأثر ثم أعد المحاولة.',
+  history: 'تعذّر تعديل الأثر المحفوظ — افتح مجلد المشروع الأصلي ثم أعد المحاولة.',
+  timeout: 'تعذّر تمديد المهلة لأن بيانات الفريق لم تعد صالحة — حدّث الغرفة ثم أعد المحاولة.',
+};
+
+function errorLabel(result, context, fallback) {
+  const error = typeof result === 'string' ? result : result && result.error;
+  if (error === 'bad_input') return BAD_INPUT_LABELS[context] || fallback;
+  return ERROR_LABELS[error] || fallback;
+}
 
 function text(value) {
   return typeof value === 'string' ? value : '';
@@ -158,6 +252,12 @@ function engineLabel(value) {
   if (value === 'system') return 'النظام';
   if (value === 'user') return 'المستخدم';
   return value || 'غير محدد';
+}
+
+function remainingLabel(deadline) {
+  const seconds = Math.max(0, Math.ceil((Number(deadline) - Date.now()) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes + ':' + String(seconds % 60).padStart(2, '0');
 }
 
 class SatrOpsDialog extends HTMLElement {
@@ -223,32 +323,50 @@ class SatrOpsRoom extends HTMLElement {
     const root = this.attachShadow({ mode: 'open' });
     root.adoptedStyleSheets = [panelSheet, cardSheet, roomSheet];
     root.innerHTML = '<div class="panel-head"><span>غرفة العمليات</span>'
-      + '<div class="panel-head-actions"><button class="close" type="button" aria-label="إغلاق غرفة العمليات">✕</button></div></div>'
+      + '<div class="panel-head-actions"><button class="compact" type="button" aria-pressed="false">تصغير</button>'
+      + '<button class="close" type="button" aria-label="إغلاق غرفة العمليات">✕</button></div></div>'
       + '<div class="room-actions">'
       + '<button class="start" type="button">تنفيذ</button><button class="review" type="button" hidden>ابدأ المراجعة</button>'
       + '<button class="prepare" type="button" hidden>ثبّت التحقق</button><button class="verify" type="button" hidden>شغّل الاختبارات</button>'
-      + '<button class="merge" type="button" hidden>دمج</button><button class="stop" type="button" hidden>إيقاف المرحلة</button></div>'
+      + '<button class="merge" type="button" hidden>دمج</button><button class="extend" type="button" hidden>مدّد المهلة مرة</button>'
+      + '<button class="stop" type="button" hidden>إيقاف المرحلة</button></div>'
       + '<nav class="room-nav" role="tablist" aria-label="مسارات غرفة العمليات"></nav>'
-      + '<div class="status" aria-live="polite"></div><div class="panel-list"></div>';
+      + '<div class="status" aria-live="polite"></div><div class="timeout-warning" aria-live="polite"></div>'
+      + '<div class="next-step" aria-live="polite"></div>'
+      + '<div class="panel-list"></div>';
     this._root = root;
     this._nav = root.querySelector('.room-nav');
     this._list = root.querySelector('.panel-list');
     this._status = root.querySelector('.status');
+    this._timeoutWarning = root.querySelector('.timeout-warning');
+    this._nextStep = root.querySelector('.next-step');
     this._buttons = {
       start: root.querySelector('.start'), review: root.querySelector('.review'),
       prepare: root.querySelector('.prepare'), verify: root.querySelector('.verify'),
-      merge: root.querySelector('.merge'), stop: root.querySelector('.stop'),
+      merge: root.querySelector('.merge'), extend: root.querySelector('.extend'), stop: root.querySelector('.stop'),
     };
     this._state = createOpsRoomState();
     this._cwd = '';
     this._view = 'tasks';
+    this._history = [];
+    this._brainstorm = null;
+    this._brainstormDraft = '';
+    this._plan = null;
+    this._planDraft = '';
+    this._appliedPlanId = '';
+    this._notified = new Set();
+    this._clock = null;
     this._buildViews();
     root.querySelector('.close').addEventListener('click', () => this.close());
+    this._compactButton = root.querySelector('.compact');
+    this._compactButton.addEventListener('click', () => this._toggleCompact());
+    try { if (localStorage.getItem('satr_ops_compact') === '1') this._setCompact(true); } catch {}
     this._buttons.start.addEventListener('click', () => this._startExecution());
     this._buttons.review.addEventListener('click', () => this._startReview());
     this._buttons.prepare.addEventListener('click', () => this._prepareVerification());
     this._buttons.verify.addEventListener('click', () => this._runVerification());
     this._buttons.merge.addEventListener('click', () => this._merge());
+    this._buttons.extend.addEventListener('click', () => this._extendTimeout());
     this._buttons.stop.addEventListener('click', () => this._stop());
   }
 
@@ -329,34 +447,106 @@ class SatrOpsRoom extends HTMLElement {
     return card;
   }
 
-  _setupCard() {
+  _setupCard(template) {
+    const previous = template && Array.isArray(template.agents) ? template.agents : [];
     const setup = document.createElement('section'); setup.className = 'setup';
     const head = document.createElement('div'); head.className = 'setup-head';
-    const title = document.createElement('strong'); title.textContent = 'فريق تنفيذ جديد';
-    const countWrap = document.createElement('label'); countWrap.textContent = 'عدد العوامل ';
+    const title = document.createElement('strong'); title.textContent = previous.length ? 'إعادة المحاولة بفريق جديد' : 'فريق تنفيذ جديد';
+    const countWrap = document.createElement('label'); countWrap.className = 'setup-field';
+    const countLabel = document.createElement('span'); countLabel.textContent = 'عدد العوامل';
     const count = document.createElement('select'); count.setAttribute('aria-label', 'عدد عوامل التنفيذ');
     for (let value = 1; value <= 3; value++) {
       const option = document.createElement('option'); option.value = String(value); option.textContent = String(value);
-      if (value === 2) option.selected = true; count.appendChild(option);
+      if (value === (previous.length || 2)) option.selected = true; count.appendChild(option);
     }
-    countWrap.appendChild(count); head.appendChild(title); head.appendChild(countWrap); setup.appendChild(head);
+    countWrap.appendChild(countLabel); countWrap.appendChild(count);
+    const timeoutWrap = document.createElement('label'); timeoutWrap.className = 'setup-field';
+    const timeoutLabel = document.createElement('span'); timeoutLabel.textContent = 'مهلة كل عامل';
+    const timeout = document.createElement('select'); timeout.setAttribute('aria-label', 'مهلة كل عامل');
+    for (const [seconds, label] of [[180, '3 دقائق'], [300, '5 دقائق'], [600, '10 دقائق']]) {
+      const option = document.createElement('option'); option.value = String(seconds); option.textContent = label;
+      if (seconds === Math.round((Number(template && template.timeout_ms) || 300000) / 1000)) option.selected = true;
+      timeout.appendChild(option);
+    }
+    timeoutWrap.appendChild(timeoutLabel); timeoutWrap.appendChild(timeout);
+    const fields = document.createElement('div'); fields.className = 'setup-fields';
+    fields.appendChild(countWrap); fields.appendChild(timeoutWrap);
+    head.appendChild(title); head.appendChild(fields); setup.appendChild(head);
     const note = document.createElement('div'); note.className = 'setup-note';
-    note.textContent = 'التنفيذ متاح حالياً عبر Claude SDK فقط؛ Codex مراجع قراءة فقط بعد إغلاق حاجز العزل 3A.';
+    note.textContent = 'التنفيذ عبر Claude SDK فقط. المهلة محدودة مسبقاً وبسقف عشر دقائق لكل عامل؛ لا تمديد تلقائياً.';
     setup.appendChild(note);
+    const planRow = document.createElement('div'); planRow.className = 'setup-actions';
+    const planButton = document.createElement('button'); planButton.type = 'button';
+    const planRunning = this._plan && this._plan.state === 'running';
+    planButton.textContent = planRunning ? 'أوقف التخطيط' : 'اقترح تقسيم المهمة';
+    planButton.addEventListener('click', () => planRunning ? this._stopPlan() : this._startPlan());
+    planRow.appendChild(planButton);
+    const planHint = document.createElement('span'); planHint.className = 'setup-note'; planRow.appendChild(planHint);
+    if (this._plan) {
+      const planStatus = document.createElement('span'); planStatus.className = 'setup-note';
+      planStatus.textContent = this._plan.state === 'completed' ? 'اقتراح منقّى جاهز للمراجعة قبل التنفيذ.'
+        : this._plan.state === 'running' ? 'يفحص Claude بنية المشروع قراءةً فقط…'
+          : errorLabel(this._plan.error, 'planner', 'لم يكتمل اقتراح التقسيم — وضّح المهمة ثم أعد المحاولة.');
+      planRow.appendChild(planStatus);
+    }
+    setup.appendChild(planRow);
     const inputs = [];
     for (let index = 1; index <= 3; index++) {
-      const worker = document.createElement('section'); worker.className = 'worker-input'; worker.hidden = index > 2;
+      const worker = document.createElement('section'); worker.className = 'worker-input'; worker.hidden = index > (previous.length || 2);
       const workerTitle = document.createElement('div'); workerTitle.className = 'worker-title'; workerTitle.textContent = 'عامل ' + index;
+      const taskWrap = document.createElement('label'); taskWrap.className = 'setup-field';
+      const taskLabel = document.createElement('span'); taskLabel.textContent = 'المهمة';
       const task = document.createElement('textarea'); task.className = 'task'; task.maxLength = 4000;
       task.placeholder = 'مهمة العامل ' + index + '…'; task.setAttribute('aria-label', 'مهمة العامل ' + index);
+      taskWrap.appendChild(taskLabel); taskWrap.appendChild(task);
+      const ownershipWrap = document.createElement('label'); ownershipWrap.className = 'setup-field';
+      const ownershipLabel = document.createElement('span'); ownershipLabel.textContent = 'ملكية الملفات';
       const ownership = document.createElement('textarea'); ownership.className = 'ownership'; ownership.maxLength = 2048;
       ownership.placeholder = 'src/area/**, tests/area/**'; ownership.setAttribute('aria-label', 'ملكية العامل ' + index);
-      worker.appendChild(workerTitle); worker.appendChild(task); worker.appendChild(ownership);
+      ownershipWrap.appendChild(ownershipLabel); ownershipWrap.appendChild(ownership);
+      if (previous[index - 1]) {
+        task.value = text(previous[index - 1].task);
+        ownership.value = Array.isArray(previous[index - 1].ownership) ? previous[index - 1].ownership.join(', ') : '';
+      } else if (index === 1 && this._planDraft) {
+        task.value = this._planDraft;
+      }
+      task.addEventListener('input', () => {
+        if (index === 1) this._planDraft = task.value;
+        this._syncSetupActions();
+      });
+      ownership.addEventListener('input', () => this._syncSetupActions());
+      worker.appendChild(workerTitle); worker.appendChild(taskWrap); worker.appendChild(ownershipWrap);
       setup.appendChild(worker); inputs.push(worker);
     }
-    count.addEventListener('change', () => inputs.forEach((worker, index) => { worker.hidden = index >= Number(count.value); }));
-    this._setup = { count, inputs };
+    count.addEventListener('change', () => {
+      inputs.forEach((worker, index) => { worker.hidden = index >= Number(count.value); });
+      this._syncSetupActions();
+    });
+    this._setup = { count, timeout, inputs, planButton, planHint };
+    this._syncSetupActions();
     return setup;
+  }
+
+  _syncSetupActions() {
+    const derived = deriveOpsRoomState(this._state);
+    const count = this._setup ? Number(this._setup.count.value) || 1 : 0;
+    const incomplete = this._setup ? this._setup.inputs.slice(0, count).some((worker) => {
+      const task = worker.querySelector('.task').value.trim();
+      const ownership = worker.querySelector('.ownership').value.split(/[,\r\n]+/).some((item) => item.trim());
+      return !task || !ownership;
+    }) : true;
+    this._buttons.start.disabled = !derived.canStart || !this._cwd || incomplete;
+    this._buttons.start.title = !this._cwd ? 'افتح مجلد مشروع أولاً.'
+      : incomplete ? 'اكتب مهمة وملكية ملفات لكل عامل.' : '';
+    if (!this._setup) return;
+    const planRunning = this._plan && this._plan.state === 'running';
+    const missingTask = !this._setup.inputs[0].querySelector('.task').value.trim();
+    const planHint = !this._cwd ? 'افتح مجلد مشروع لتشغيل المخطط.'
+      : missingTask ? 'اكتب المهمة الكبيرة في حقل العامل الأول.' : '';
+    this._setup.planButton.disabled = !planRunning && Boolean(planHint);
+    this._setup.planButton.title = planHint;
+    this._setup.planHint.textContent = planRunning ? '' : planHint;
+    this._setup.planHint.hidden = planRunning || !planHint;
   }
 
   _renderDecisions() {
@@ -366,6 +556,11 @@ class SatrOpsRoom extends HTMLElement {
       const input = document.createElement('textarea'); input.maxLength = 1000;
       input.placeholder = 'قرار موجز يخص المهمة أو الأثر الحالي…'; input.setAttribute('aria-label', 'نص القرار');
       const action = document.createElement('button'); action.type = 'button'; action.textContent = 'سجّل القرار';
+      const syncAction = () => {
+        action.disabled = !input.value.trim();
+        action.title = action.disabled ? 'اكتب قراراً موجزاً أولاً.' : '';
+      };
+      input.addEventListener('input', syncAction); syncAction();
       action.addEventListener('click', () => this._recordDecision(input));
       box.appendChild(input); box.appendChild(action); view.appendChild(box);
     }
@@ -376,14 +571,18 @@ class SatrOpsRoom extends HTMLElement {
 
   _renderTasks() {
     const view = this._views.tasks; view.textContent = '';
+    this._setup = null;
     const derived = deriveOpsRoomState(this._state);
-    if (derived.canStart) view.appendChild(this._setupCard());
+    if (derived.canStart) view.appendChild(this._setupCard(this._state.team));
+    else this._syncSetupActions();
     const team = this._state.team;
     if (!team) { if (!derived.canStart) this._empty(view, 'لا يوجد فريق تنفيذ.'); return; }
     for (const agent of team.agents || []) {
-      view.appendChild(this._card({
+      const card = this._card({
         title: agent.label || 'عامل', state: agent.state, stateLabel: TEAM_STATES[agent.state] || agent.state,
-        summary: agent.summary || agent.error || 'ينفّذ داخل worktree معزول.', actor: agent.label || agent.id,
+        summary: agent.error || agent.summary || (agent.last_tool
+          ? 'آخر نشاط آمن: ' + (TOOL_LABELS[agent.last_tool] || agent.last_tool) : 'ينفّذ داخل worktree معزول.'),
+        actor: agent.label || agent.id,
         engine: agent.engine || 'sdk', artifact: team.artifact_id, time: team.updated_at,
         body: (body) => {
           const ownership = document.createElement('div'); ownership.className = 'agent-meta';
@@ -394,8 +593,35 @@ class SatrOpsRoom extends HTMLElement {
           worktree.textContent = agent.worktree ? 'نسخة العمل معزولة ونشطة وفق حالة العامل.' : 'لا توجد نسخة عمل نشطة.';
           body.appendChild(worktree);
         },
-      }));
+      });
+      if (agent.failure_code && FAILURE_GUIDANCE[agent.failure_code]) {
+        const recovery = document.createElement('div'); recovery.className = 'live-activity';
+        recovery.textContent = 'التعافي المقترح: ' + FAILURE_GUIDANCE[agent.failure_code];
+        card.querySelector('.work-card-summary').after(recovery);
+      }
+      if (!TERMINAL_AGENT_STATES.has(agent.state)) {
+        const activity = document.createElement('div'); activity.className = 'live-activity';
+        const tool = document.createElement('span');
+        tool.textContent = agent.last_tool ? 'الأداة: ' + (TOOL_LABELS[agent.last_tool] || agent.last_tool) : 'بانتظار أول نشاط آمن…';
+        activity.appendChild(tool);
+        if (agent.last_file) {
+          const file = document.createElement('span'); file.textContent = 'الملف: ';
+          const path = document.createElement('bdi'); path.className = 'path'; path.textContent = agent.last_file;
+          file.appendChild(path); activity.appendChild(file);
+        }
+        if (agent.deadline_at) {
+          const remaining = document.createElement('span'); remaining.className = 'counts';
+          remaining.dataset.deadline = String(agent.deadline_at); activity.appendChild(remaining);
+        }
+        const budget = document.createElement('span'); budget.className = 'counts';
+        budget.textContent = 'كتابة ' + ((agent.permissions && agent.permissions.write_used) || 0) + '/'
+          + ((agent.permissions && agent.permissions.write_limit) || 0);
+        activity.appendChild(budget);
+        card.querySelector('.work-card-summary').after(activity);
+      }
+      view.appendChild(card);
     }
+    this._refreshCountdowns();
   }
 
   _renderDiscussion() {
@@ -494,17 +720,25 @@ class SatrOpsRoom extends HTMLElement {
 
   _render() {
     const derived = deriveOpsRoomState(this._state);
-    this._buttons.start.disabled = !derived.canStart;
+    this._buttons.start.disabled = !derived.canStart || !this._cwd;
+    this._buttons.start.title = !this._cwd ? 'افتح مجلد مشروع أولاً.' : '';
     this._buttons.start.hidden = !derived.canStart;
     this._buttons.review.hidden = !derived.canReview;
     this._buttons.prepare.hidden = !derived.canPrepareVerification;
     this._buttons.verify.hidden = !derived.canRunVerification;
     this._buttons.merge.hidden = !derived.canMerge;
+    this._buttons.extend.hidden = true;
     this._buttons.stop.hidden = !derived.canStop;
+    this._buttons.start.textContent = this._state.team && derived.canStart ? 'إعادة المحاولة' : 'تنفيذ';
+    for (const button of Object.values(this._buttons)) button.classList.remove('recommended');
+    if (derived.nextAction.action && this._buttons[derived.nextAction.action]) {
+      this._buttons[derived.nextAction.action].classList.add('recommended');
+    }
+    this._nextStep.textContent = derived.nextAction.label;
     this._status.textContent = this._state.status || (this._state.pending ? 'جارٍ تنفيذ الانتقال المطلوب…'
       : this._state.team ? (TEAM_STATES[this._state.team.state] || this._state.team.state)
         : 'حدّد المهام والملكية، ثم ابدأ انتقال التنفيذ صراحةً.');
-    this._renderDecisions(); this._renderTasks(); this._renderDiscussion();
+    this._renderHistory(); this._renderBrainstorm(); this._renderDecisions(); this._renderTasks(); this._renderDiscussion();
     this._renderEvidence(); this._renderDiffs(); this._renderReview();
   }
 
@@ -518,7 +752,9 @@ class SatrOpsRoom extends HTMLElement {
 
   async _startExecution() {
     if (!this._setup) { this._selectView('tasks'); return; }
+    if (!this._cwd) { this._dispatch({ type: 'status', status: BAD_INPUT_LABELS.execution }); return; }
     const count = Number(this._setup.count.value) || 1;
+    const timeoutSeconds = Number(this._setup.timeout.value) || 300;
     const agents = this._setup.inputs.slice(0, count).map((worker) => ({
       task: worker.querySelector('.task').value.trim(),
       ownership: worker.querySelector('.ownership').value.split(/[,\r\n]+/).map((item) => item.trim()).filter(Boolean),
@@ -528,14 +764,18 @@ class SatrOpsRoom extends HTMLElement {
     }
     const confirmed = await this._confirm({
       kind: 'start', title: 'تأكيد بدء التنفيذ المعزول', confirmLabel: 'ابدأ التنفيذ',
-      description: 'سينشئ «سطر» worktree مستقلاً لكل عامل وينفّذ داخل الملكيات المعلنة فقط. لن يدمج شيئاً تلقائياً.',
+      description: 'سينشئ «سطر» worktree مستقلاً لكل عامل بمهلة ' + (timeoutSeconds / 60)
+        + ' دقائق، وينفّذ داخل الملكيات المعلنة فقط. لن يدمج شيئاً تلقائياً.',
     });
     if (!confirmed) return;
     this._dispatch({ type: 'pending', action: 'start' });
     let result = null;
-    try { result = await window.satr.executionTeamStart(this._cwd, agents, true, 'mergeable'); } catch {}
+    try { result = await window.satr.executionTeamStart(this._cwd, agents, true, 'mergeable', timeoutSeconds); } catch {}
     if (!result || !result.ok) {
-      this._dispatch({ type: 'settled', status: ERROR_LABELS[result && result.error] || 'تعذّر بدء فريق التنفيذ.' }); return;
+      this._dispatch({ type: 'settled', ...(result && result.team ? { team: result.team } : {}),
+        status: errorLabel(result, 'execution', 'تعذّر بدء فريق التنفيذ — تحقق من المجلد والمهام والملكيات ثم أعد المحاولة.') });
+      if (result && result.team && result.team.room_id) await this._loadRoom(result.team.room_id);
+      return;
     }
     this._dispatch({ type: 'settled', team: result.team, status: 'بدأ التنفيذ داخل النسخ المعزولة.' });
     await this._loadRoom(result.team && result.team.room_id);
@@ -548,7 +788,8 @@ class SatrOpsRoom extends HTMLElement {
     let result = null;
     try { result = await window.satr.executionReviewStart(this._state.team.id); } catch {}
     this._dispatch({ type: 'settled', ...(result && result.review ? { review: result.review } : {}),
-      status: result && result.ok ? 'بدأت المراجعات المستقلة.' : (ERROR_LABELS[result && result.error] || 'تعذّر بدء المراجعة.') });
+      status: result && result.ok ? 'بدأت المراجعات المستقلة.'
+        : errorLabel(result, 'review', 'تعذّر بدء المراجعة — حدّث الغرفة وتحقق من اكتمال الأثر ثم أعد المحاولة.') });
   }
 
   async _prepareVerification() {
@@ -559,7 +800,7 @@ class SatrOpsRoom extends HTMLElement {
     try { result = await window.satr.executionVerificationPrepare(this._state.team.id, this._state.review.id); } catch {}
     this._dispatch({ type: 'settled', ...(result && result.verification ? { verification: result.verification } : {}),
       status: result && result.ok ? 'ثُبّتت اختبارات الأثر وتنتظر تأكيد التشغيل.'
-        : (ERROR_LABELS[result && result.error] || 'تعذّر تثبيت التحقق.') });
+        : errorLabel(result, 'verification', 'تعذّر تثبيت التحقق — راجع المراجعات وملف .satr/verify.json ثم أعد المحاولة.') });
   }
 
   async _runVerification() {
@@ -580,7 +821,7 @@ class SatrOpsRoom extends HTMLElement {
     } catch {}
     this._dispatch({ type: 'settled', ...(result && result.verification ? { verification: result.verification } : {}),
       status: result && result.ok ? 'اكتمل تشغيل التحقق.'
-        : (ERROR_LABELS[result && result.error] || 'تعذّر تشغيل التحقق التكاملي.') });
+        : errorLabel(result, 'verification', 'تعذّر تشغيل التحقق التكاملي — ثبّت التحقق للأثر الحالي ثم أعد المحاولة.') });
   }
 
   async _merge() {
@@ -597,7 +838,7 @@ class SatrOpsRoom extends HTMLElement {
     try { result = await window.satr.executionMerge(this._state.team.id, this._state.review.id, true); } catch {}
     this._dispatch({ type: 'settled', ...(result && result.team ? { team: result.team } : {}),
       status: result && result.ok ? 'طُبّق الأثر بلا commit.'
-        : (ERROR_LABELS[result && result.error] || 'تعذّر الدمج بأمان.') });
+        : errorLabel(result, 'merge', 'تعذّر الدمج بأمان — راجع حالة Git ثم أعد المحاولة.') });
   }
 
   async _stop() {
@@ -613,7 +854,8 @@ class SatrOpsRoom extends HTMLElement {
     this._dispatch({ type: 'settled', ...(result && result.team ? { team: result.team } : {}),
       ...(result && result.review ? { review: result.review } : {}),
       ...(result && result.verification ? { verification: result.verification } : {}),
-      status: result && result.ok ? 'أُوقف الانتقال الجاري.' : 'تعذّر إيقاف الانتقال الجاري.' });
+      status: result && result.ok ? 'أُوقف الانتقال الجاري.'
+        : errorLabel(result, 'verification', 'تعذّر إيقاف الانتقال الجاري — انتظر تحديث حالته ثم أعد المحاولة.') });
   }
 
   async _recordDecision(input) {
@@ -625,7 +867,7 @@ class SatrOpsRoom extends HTMLElement {
     try { result = await window.satr.opsRoomDecision(room.room_id, value, team.id, team.artifact_id || '', true); } catch {}
     input.value = '';
     this._dispatch({ type: 'settled', status: result && result.ok ? 'سُجّل القرار في السجل الدائم.'
-      : (ERROR_LABELS[result && result.error] || 'تعذّر تسجيل القرار.') });
+      : errorLabel(result, 'decision', 'تعذّر تسجيل القرار — حدّث الغرفة ثم أعد المحاولة.') });
   }
 
   async _loadRoom(roomId) {
@@ -642,12 +884,178 @@ class SatrOpsRoom extends HTMLElement {
     } catch {}
   }
 
+  async _extendTimeout() {
+    const team = this._state.team;
+    if (!team || team.can_extend !== true) return;
+    let result = null;
+    try { result = await window.satr.executionTeamExtend(team.id); } catch {}
+    this._dispatch({ type: 'settled', ...(result && result.team ? { team: result.team } : {}),
+      status: result && result.ok ? 'مُدّدت مهلة الفريق مرة واحدة ضمن سقف 10 دقائق.'
+        : errorLabel(result, 'timeout', 'تعذّر تمديد المهلة — ضيّق المهمة ثم أعد التنفيذ إن انتهت المهلة.') });
+  }
+
+  async _startBrainstorm() {
+    const brief = this._brainstormDraft.trim();
+    if (!this._cwd) { this._dispatch({ type: 'status', status: BAD_INPUT_LABELS.brainstorm }); return; }
+    if (!brief) { this._dispatch({ type: 'status', status: 'اكتب موجز العصف أولاً.' }); return; }
+    let result = null;
+    try { result = await window.satr.opsBrainstormStart(this._cwd, brief, this._state.team && this._state.team.id); } catch {}
+    if (!result || !result.ok) {
+      this._dispatch({ type: 'status', status: errorLabel(result, 'brainstorm',
+        'تعذّر بدء العصف المستقل — تحقق من توفر المحركين ثم أعد المحاولة.') }); return;
+    }
+    this._brainstorm = result.run; this._renderBrainstorm();
+  }
+
+  async _stopBrainstorm() {
+    if (!this._brainstorm) return;
+    let result = null;
+    try { result = await window.satr.opsBrainstormStop(this._brainstorm.id); } catch {}
+    if (!result || !result.ok) {
+      this._dispatch({ type: 'status', status: errorLabel(result, 'brainstorm',
+        'تعذّر إيقاف العصف — انتظر تحديث حالته ثم أعد المحاولة.') }); return;
+    }
+    if (result.run) this._brainstorm = result.run;
+    this._renderBrainstorm();
+  }
+
+  async _startPlan() {
+    if (!this._setup) return;
+    if (!this._cwd) { this._dispatch({ type: 'status', status: BAD_INPUT_LABELS.planner }); return; }
+    const task = this._setup.inputs[0].querySelector('.task').value.trim();
+    if (!task) { this._dispatch({ type: 'status', status: 'اكتب المهمة الكبيرة في حقل العامل الأول ثم اطلب التقسيم.' }); return; }
+    this._planDraft = task;
+    let result = null;
+    try { result = await window.satr.opsPlanStart(this._cwd, task); } catch {}
+    if (!result || !result.ok) {
+      this._dispatch({ type: 'status', status: errorLabel(result, 'planner',
+        'تعذّر بدء مخطط المهام — تحقق من توفر Claude ثم أعد المحاولة.') }); return;
+    }
+    this._plan = result.run; this._renderTasks();
+  }
+
+  async _stopPlan() {
+    if (!this._plan) return;
+    let result = null;
+    try { result = await window.satr.opsPlanStop(this._plan.id); } catch {}
+    if (!result || !result.ok) {
+      this._dispatch({ type: 'status', status: errorLabel(result, 'planner',
+        'تعذّر إيقاف المخطط — انتظر تحديث حالته ثم أعد المحاولة.') }); return;
+    }
+    if (result.run) this._plan = result.run;
+    this._renderTasks();
+  }
+
+  _applyPlan() {
+    const tasks = this._plan && this._plan.plan && this._plan.plan.tasks;
+    if (!this._setup || !Array.isArray(tasks) || !tasks.length || this._appliedPlanId === this._plan.id) return;
+    this._appliedPlanId = this._plan.id;
+    this._setup.count.value = String(tasks.length);
+    this._setup.inputs.forEach((worker, index) => {
+      worker.hidden = index >= tasks.length;
+      worker.querySelector('.task').value = tasks[index] ? tasks[index].task : '';
+      worker.querySelector('.ownership').value = tasks[index] ? tasks[index].ownership.join(', ') : '';
+    });
+    this._planDraft = tasks[0].task;
+  }
+
+  _renderBrainstorm() {
+    const view = this._views.brainstorm; view.textContent = '';
+    const setup = document.createElement('section'); setup.className = 'setup';
+    const title = document.createElement('strong'); title.textContent = 'عصف مستقل مع Claude وCodex';
+    const note = document.createElement('div'); note.className = 'setup-note';
+    note.textContent = 'يستقبل المحركان الموجز فقط داخل مجلدين فارغين، بلا أدوات أو مشروع أو متصفح، ولا يتخاطبان تلقائياً.';
+    const input = document.createElement('textarea'); input.maxLength = 12000;
+    input.placeholder = 'اكتب الموجز أو القرار الذي تريد رأيين مستقلين حوله…'; input.setAttribute('aria-label', 'موجز العصف');
+    input.value = this._brainstormDraft;
+    const actions = document.createElement('div'); actions.className = 'setup-actions';
+    const active = this._brainstorm && this._brainstorm.state === 'running';
+    const action = document.createElement('button'); action.type = 'button'; action.textContent = active ? 'أوقف العصف' : 'ابدأ رأيين مستقلين';
+    const actionHint = document.createElement('span'); actionHint.className = 'setup-note';
+    const syncAction = () => {
+      const hint = !this._cwd ? 'افتح مجلد مشروع أولاً لحفظ العصف ضمن سياقه.'
+        : !input.value.trim() ? 'اكتب موجز العصف أولاً.' : '';
+      action.disabled = !active && Boolean(hint);
+      action.title = active ? '' : hint;
+      actionHint.textContent = active ? '' : hint;
+      actionHint.hidden = active || !hint;
+    };
+    input.addEventListener('input', () => { this._brainstormDraft = input.value; syncAction(); });
+    action.addEventListener('click', () => active ? this._stopBrainstorm() : this._startBrainstorm());
+    actions.appendChild(action); actions.appendChild(actionHint); syncAction();
+    setup.appendChild(title); setup.appendChild(note); setup.appendChild(input); setup.appendChild(actions); view.appendChild(setup);
+    for (const worker of (this._brainstorm && this._brainstorm.workers) || []) {
+      view.appendChild(this._card({
+        title: 'رأي ' + engineLabel(worker.engine), state: worker.state,
+        stateLabel: worker.state === 'completed' ? 'اكتمل' : worker.state === 'running' ? 'يفكّر…' : worker.state,
+        summary: worker.summary || worker.error || 'ينتظر الرأي النصي المستقل.',
+        actor: 'advisor', engine: worker.engine, artifact: '', time: worker.updated_at,
+      }));
+    }
+  }
+
+  async _loadHistory() {
+    try {
+      const result = await window.satr.opsRoomHistory(this._cwd);
+      this._history = result && Array.isArray(result.rooms) ? result.rooms : [];
+      this._renderHistory();
+    } catch { this._history = []; }
+  }
+
+  async _openHistory(item) {
+    try {
+      const loaded = await window.satr.opsRoomLoad(item.room_id);
+      if (!loaded || !loaded.room) return;
+      const sameTeam = this._state.team && this._state.team.room_id === item.room_id ? this._state.team : null;
+      this._state = opsRoomReducer(this._state, { type: 'hydrate', room: loaded.room, team: sameTeam });
+      this._selectView('decisions'); this._render();
+    } catch {}
+  }
+
+  async _restoreHistory(item) {
+    const confirmed = await this._confirm({
+      kind: 'start', title: 'تأكيد استعادة الأثر المشفّر', confirmLabel: 'استعد الأثر',
+      description: 'سيُعاد الأثر إلى ذاكرة غرفة العمليات فقط. لن يُطبّق على المشروع، ويلزم تشغيل المراجعة والتحقق من جديد.',
+      items: [item.artifact_id],
+    });
+    if (!confirmed) return;
+    this._dispatch({ type: 'pending', action: 'restore' });
+    let result = null;
+    try { result = await window.satr.opsRoomRestore(this._cwd, item.room_id, item.artifact_id, true); } catch {}
+    if (!result || !result.ok || !result.team) {
+      this._dispatch({ type: 'settled', status: errorLabel(result, 'restore',
+        'تعذّرت استعادة الأثر — افتح المشروع الأصلي ثم أعد المحاولة.') }); return;
+    }
+    this._dispatch({ type: 'hydrate', team: result.team, room: null, review: null, verification: null });
+    await this._loadRoom(item.room_id); this._selectView('tasks'); await this._loadHistory();
+  }
+
+  async _deleteHistoryArtifact(item) {
+    const confirmed = await this._confirm({
+      kind: 'start', title: 'تأكيد حذف الأثر المحفوظ', confirmLabel: 'احذف الأثر',
+      description: 'سيُحذف patch المشفّر نهائياً من خزنة «سطر». يبقى السجل المنقّى، ولن تتاح الاستعادة بعد ذلك.',
+      items: [item.artifact_id],
+    });
+    if (!confirmed) return;
+    let result = null;
+    try { result = await window.satr.opsRoomArtifactDelete(this._cwd, item.room_id, item.artifact_id, true); } catch {}
+    this._dispatch({ type: 'status', status: result && result.ok ? 'حُذف الأثر المشفّر وبقي السجل المنقّى.'
+      : errorLabel(result, 'history', 'تعذّر حذف الأثر المحفوظ — حدّث السجل ثم أعد المحاولة.') });
+    await this._loadHistory();
+  }
+
   async open(cwd) {
     this._cwd = typeof cwd === 'string' ? cwd : '';
     this.setAttribute('open', '');
+    clearInterval(this._clock);
+    this._clock = setInterval(() => this._refreshCountdowns(), 1000);
     this._state = createOpsRoomState(); this._render();
     let team = null; let review = null; let verification = null; let room = null;
     try {
+      const brainstormed = await window.satr.opsBrainstormLatest(this._cwd);
+      this._brainstorm = brainstormed && brainstormed.run;
+      const planned = await window.satr.opsPlanLatest(this._cwd);
+      this._plan = planned && planned.run;
       const latest = await window.satr.executionTeamLatest(this._cwd);
       team = latest && latest.team;
       if (team) {
@@ -662,9 +1070,12 @@ class SatrOpsRoom extends HTMLElement {
       }
     } catch {}
     this._dispatch({ type: 'hydrate', room, team, review, verification });
+    if (this._plan && this._plan.state === 'completed') this._applyPlan();
+    await this._loadHistory();
   }
 
   close() {
+    clearInterval(this._clock); this._clock = null;
     this.removeAttribute('open');
     this.dispatchEvent(new CustomEvent('panel-close', { bubbles: true }));
   }
@@ -673,9 +1084,88 @@ class SatrOpsRoom extends HTMLElement {
     const close = this._root.querySelector('.close'); if (close) close.focus();
   }
 
+  _renderHistory() {
+    const view = this._views.history; view.textContent = '';
+    for (const item of this._history) {
+      view.appendChild(this._card({
+        title: item.room_id, state: item.state, stateLabel: TEAM_STATES[item.state] || item.state,
+        summary: item.merged ? 'دُمج أثر هذه الغرفة سابقاً.'
+          : item.restorable ? 'يتوفر أثر مشفّر يمكن استعادته للمراجعة والتحقق من جديد.' : 'يتوفر السجل المنقّى فقط.',
+        actor: 'system', engine: 'system', artifact: item.artifact_id, time: item.updated_at,
+        body: (body) => {
+          const actions = document.createElement('div'); actions.className = 'setup-actions';
+          const open = document.createElement('button'); open.type = 'button'; open.textContent = 'فتح السجل';
+          open.addEventListener('click', () => this._openHistory(item)); actions.appendChild(open);
+          if (item.restorable && !item.merged) {
+            const restore = document.createElement('button'); restore.type = 'button'; restore.textContent = 'استعادة الأثر';
+            restore.addEventListener('click', () => this._restoreHistory(item)); actions.appendChild(restore);
+            const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'حذف الأثر المحفوظ';
+            remove.addEventListener('click', () => this._deleteHistoryArtifact(item)); actions.appendChild(remove);
+          }
+          body.appendChild(actions);
+        },
+      }));
+    }
+    if (!this._history.length) this._empty(view, 'لا توجد غرف سابقة لهذا المشروع بعد.');
+  }
+
+  _refreshCountdowns() {
+    for (const element of this._root.querySelectorAll('[data-deadline]')) {
+      element.textContent = 'متبقٍ ' + remainingLabel(element.dataset.deadline);
+    }
+    const team = this._state.team;
+    const deadlines = ((team && team.agents) || []).filter((agent) => !TERMINAL_AGENT_STATES.has(agent.state))
+      .map((agent) => Number(agent.deadline_at) || 0).filter(Boolean);
+    const remaining = deadlines.length ? Math.min(...deadlines) - Date.now() : Infinity;
+    const warn = team && team.state === 'running' && team.can_extend === true && remaining > 0 && remaining <= 60000;
+    this._buttons.extend.hidden = !warn;
+    this._timeoutWarning.textContent = warn
+      ? 'بقي أقل من دقيقة. يمكنك تمديد المهلة مرة واحدة إلى الـpreset التالي، وبحد أقصى 10 دقائق.' : '';
+  }
+
+  _setCompact(compact) {
+    this.toggleAttribute('compact', compact === true);
+    this._compactButton.setAttribute('aria-pressed', compact === true ? 'true' : 'false');
+    this._compactButton.textContent = compact === true ? 'توسيع' : 'تصغير';
+  }
+
+  _toggleCompact() {
+    const compact = !this.hasAttribute('compact'); this._setCompact(compact);
+    try { localStorage.setItem('satr_ops_compact', compact ? '1' : '0'); } catch {}
+  }
+
+  _notifyRuntime(key, message) {
+    if (this._notified.has(key)) return;
+    this._notified.add(key);
+    this.dispatchEvent(new CustomEvent('ops-notice', { bubbles: true, detail: message }));
+  }
+
   handleEvent(event) {
     if (!event) return;
+    if (event.type === 'ops_brainstorm_update' && event.run) {
+      this._brainstorm = event.run; this._renderBrainstorm(); return;
+    }
+    if (event.type === 'ops_plan_update' && event.run) {
+      this._plan = event.run; this._renderTasks();
+      if (event.run.state === 'completed') this._applyPlan();
+      return;
+    }
     this._dispatch({ type: 'event', event });
+    if (event.type === 'execution_team_update' && event.team
+      && ['completed', 'failed', 'timed_out', 'stopped', 'conflict', 'cleanup_failed'].includes(event.team.state)) {
+      this._notifyRuntime('team:' + event.team.id + ':' + event.team.state,
+        event.team.state === 'completed' ? 'اكتمل فريق غرفة العمليات؛ راجع الخطوة التالية.' : 'انتهى فريق غرفة العمليات بحالة تحتاج مراجعة.');
+      this._loadHistory();
+    }
+    if (event.type === 'execution_review_update' && event.review
+      && ['completed', 'failed', 'timed_out', 'stopped'].includes(event.review.state)) {
+      this._notifyRuntime('review:' + event.review.id + ':' + event.review.state, 'اكتملت مرحلة المراجعة أو توقفت؛ راجع أحكامها.');
+    }
+    if (event.type === 'execution_verification_update' && event.verification
+      && ['passed', 'failed'].includes(event.verification.state)) {
+      this._notifyRuntime('verification:' + event.verification.artifact_id + ':' + event.verification.state,
+        event.verification.state === 'passed' ? 'نجح التحقق التكاملي للأثر الحالي.' : 'فشل التحقق التكاملي؛ راجع الأدلة.');
+    }
   }
 }
 

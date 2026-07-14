@@ -494,6 +494,10 @@
       opsRoomEl.handleEvent(ev);
       return;
     }
+    if (ev.type === 'ops_brainstorm_update' || ev.type === 'ops_plan_update') {
+      opsRoomEl.handleEvent(ev);
+      return;
+    }
     if (ev.type === 'ops_room_update') {
       opsRoomEl.handleEvent(ev);
       if (chatEl.showOpsEvent) chatEl.showOpsEvent(ev.entry);
