@@ -141,11 +141,72 @@ function testDesignGuard() {
   }
   const index = read('src/index.html');
   assert(!index.includes("'unsafe-inline'"), 'CSP must remain strict');
+  const midRow = index.slice(index.indexOf('<div id="midRow">'), index.indexOf('</div>', index.indexOf('<div id="midRow">')));
+  assert(midRow.includes('<satr-ops-room') && index.indexOf('<satr-ops-room') < index.indexOf('</div>', index.indexOf('<div id="midRow">')),
+    'ops room must stay inside the middle content row');
   const base = read('src/styles/base.css');
   for (const token of ['--z-base: 0', '--z-system: 1000', '--space-0: 0', '--space-7: 48px',
     '--radius-xs: 4px', '--radius-pill: 999px']) assert(base.includes(token), 'missing design token ' + token);
   const component = read('src/ui/components/ops-room.js');
   assert(component.includes('adoptedStyleSheets'), 'ops room must use constructable stylesheets');
+  assert(!component.includes('innerHTML') && !component.includes('insertAdjacentHTML'),
+    'ops room must construct UI with safe DOM methods only');
+  for (const group of ["id: 'work', label: 'العمل'", "id: 'results', label: 'النتائج'", "id: 'log', label: 'السجل'"]) {
+    assert(component.includes(group), 'missing calm ops-room group ' + group);
+  }
+  assert(component.includes("const STAGES = ['الإعداد', 'التنفيذ', 'التحقق', 'الاعتماد']"),
+    'presentational ops-room stages missing');
+  assert(component.includes('.stage-indicator li::before')
+    && component.includes('.stage-indicator li:not(:last-child)::after')
+    && component.includes('padding: var(--space-1) var(--space-3)'),
+  'ops-room stages must remain a compact descriptive progress rail');
+  assert(component.includes('const action = derived.nextAction && derived.nextAction.action'),
+    'primary action must come directly from derived nextAction');
+  assert(component.includes("const actionBar = makeElement('div', 'action-bar')")
+    && component.includes('actionBar.appendChild(nextStep); actionBar.appendChild(primaryReason); actionBar.appendChild(primaryButton);')
+    && component.includes('[head, stageIndicator, nav, statusRow, timeoutRow, list, actionBar, resizeHandle]')
+    && !component.includes('room-actions'),
+  'primary nextAction must live in the bottom action bar after scrollable content');
+  assert(component.includes("const primaryReason = makeElement('span', 'primary-reason')")
+    && component.includes("this._primaryReason.textContent = reason")
+    && component.includes("this._actionBar.toggleAttribute('data-attention', Boolean(reason))"),
+  'disabled primary action must expose its reason beside the button');
+  assert(component.includes("source: this._primaryAction === options.kind ? this._primaryButton : this"),
+    'confirmation focus source must follow the single primary action');
+  assert(component.includes(':host([compact]) {') && component.includes('width: var(--space-7); min-width: var(--space-7)'),
+    'compact ops room must reclaim width through spacing tokens');
+  assert(component.includes("makeElement('div', 'status-row')") && component.includes("makeElement('div', 'timeout-row')"),
+    'stop and timeout extension must remain visible in their live context');
+  const setupCard = component.slice(component.indexOf('  _setupCard(template) {'), component.indexOf('\n  _syncSetupActions() {'));
+  const workerInputs = setupCard.indexOf('setup.appendChild(worker); inputs.push(worker);');
+  const secondarySetup = setupCard.indexOf('setup.appendChild(note); setup.appendChild(planRow);');
+  assert(workerInputs !== -1 && secondarySetup !== -1 && workerInputs < secondarySetup,
+    'worker task and ownership inputs must precede secondary setup guidance and planning actions');
+  assert(component.includes('.task, .ownership { flex: 1 1 auto; }')
+    && component.includes('.task { min-height: calc(var(--space-7) + var(--space-6)); }')
+    && component.includes('min-height: calc(var(--space-7) + var(--space-3));'),
+  'task and ownership fields must grow with token-based usable heights');
+  assert(component.includes('color: var(--text-dim); background: transparent; border-color: transparent;')
+    && component.includes('.subnav button[aria-selected="true"]'),
+  'local subnavigation must stay visually secondary');
+  assert(component.includes("resizeHandle.setAttribute('role', 'separator')")
+    && component.includes("resizeHandle.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight Home End')"),
+  'custom ops-room resize handle must expose separator keyboard semantics');
+  assert(component.includes("if (event.key === 'ArrowLeft') next = current + step")
+    && component.includes("else if (event.key === 'ArrowRight') next = current - step"),
+  'RTL docked panel must expand leftward and shrink rightward from the keyboard');
+  assert(component.includes("const DRAWER_MEDIA = '(max-width: 44rem)'" )
+    && component.includes("this.setAttribute('aria-modal', 'true')"),
+  'narrow ops-room mode must become an accessible drawer');
+  assert(component.includes("const LAYOUT_STORAGE_PREFIX = 'satr_ops_layout:'")
+    && component.includes('views: { ...this._groupViews }'),
+  'ops-room width and section preferences must be scoped per project');
+  assert(component.includes("this._layoutSheet.replaceSync(':host { --ops-room-width: '")
+    && !component.includes('.style.'),
+  'user resize width must use a validated constructable stylesheet, not inline style');
+  assert(component.includes('position: relative; inset: auto; display: none; align-self: stretch;')
+    && component.includes('box-shadow: var(--shadow-dock)') && base.includes('--shadow-dock:'),
+  'ops room must be an in-row flex surface with a theme-aware token shadow');
   assert(!/\bconfirm\s*\(/.test(component), 'native confirm must not own ops decisions');
   const handleEventBody = component.slice(component.indexOf('  handleEvent(event) {'), component.indexOf('\n  }\n}', component.indexOf('  handleEvent(event) {')));
   assert(!handleEventBody.includes('._startReview(') && !handleEventBody.includes('._prepareVerification('),

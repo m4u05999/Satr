@@ -7,39 +7,142 @@ import { createOpsRoomState, deriveOpsRoomState, opsRoomReducer } from '../lib/o
 
 const roomSheet = sheet(`
   :host {
-    width: min(42rem, 94vw); min-width: min(22rem, 94vw); max-width: 94vw;
-    z-index: var(--z-panel); resize: horizontal; overflow: hidden;
+    position: relative; inset: auto; display: none; align-self: stretch;
+    width: clamp(min(22rem, 94vw), var(--ops-room-width, 42rem), min(60rem, 94vw));
+    min-width: min(22rem, 94vw); max-width: min(60rem, 94vw);
+    height: 100%; min-height: var(--space-0); flex: 0 0 auto;
+    z-index: var(--z-panel); resize: none; overflow: visible; box-shadow: var(--shadow-dock);
+    transform: none; transition: width var(--dur) var(--ease),
+      min-width var(--dur) var(--ease), max-width var(--dur) var(--ease);
   }
-  :host([compact]) { width: min(24rem, 94vw); resize: none; }
-  :host([compact]) .room-nav, :host([compact]) .panel-list { display: none; }
+  :host([open]) { display: flex; transform: none; }
+  :host([compact]) {
+    width: var(--space-7); min-width: var(--space-7); max-width: var(--space-7);
+    flex: 0 0 var(--space-7); resize: none;
+  }
+  :host([compact]) .action-bar, :host([compact]) .stage-indicator,
+  :host([compact]) .room-nav, :host([compact]) .status-row,
+  :host([compact]) .timeout-row, :host([compact]) .next-step,
+  :host([compact]) .panel-list { display: none; }
+  :host([compact]) .panel-head {
+    flex: 1; flex-direction: column; justify-content: flex-start;
+    padding: var(--space-2); gap: var(--space-3);
+  }
+  :host([compact]) .panel-title { writing-mode: vertical-rl; text-orientation: mixed; }
+  :host([compact]) .panel-head-actions { flex-direction: column; }
+  :host([compact]) .panel-head button { width: 100%; padding: var(--space-1); }
+  :host([compact]) .compact-state { display: inline-flex; }
+  :host([compact]) .resize-handle, :host([drawer]) .resize-handle { display: none; }
+  :host([drawer]), :host([drawer][compact]) {
+    width: 100vw; min-width: 100vw; max-width: 100vw; flex: 0 0 100vw;
+    resize: none;
+  }
+  :host([drawer]) .compact { display: none; }
+  .resize-handle {
+    position: absolute; top: var(--space-0); bottom: var(--space-0);
+    left: var(--space-0); width: var(--space-3); transform: translateX(-50%);
+    z-index: var(--z-sticky); cursor: ew-resize; touch-action: none;
+  }
+  .resize-handle::before {
+    content: ''; position: absolute; top: var(--space-2); bottom: var(--space-2); left: 50%;
+    width: 1px; background: var(--border); transition: background var(--dur) var(--ease);
+  }
+  .resize-handle:hover::before, .resize-handle:focus-visible::before,
+  .resize-handle[data-active="true"]::before { background: var(--gold); }
+  .resize-handle:focus-visible { outline: 2px solid var(--gold); outline-offset: var(--space-1); }
   .panel-head { gap: var(--space-3); }
-  .panel-head-actions, .room-actions, .room-nav, .setup-actions {
+  .panel-head-actions, .action-bar, .room-nav, .setup-actions {
     display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   }
-  .room-actions { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
-  .room-actions button { font-size: .75rem; }
-  .room-actions button.recommended { color: var(--gold); border-color: var(--gold); background: var(--surface-3); }
-  .room-actions .stop { color: var(--red); }
-  .room-actions .merge { color: var(--green); border-color: var(--green-border); }
-  .room-actions .verify, .room-actions .review { color: var(--gold); border-color: var(--gold-border); }
+  .compact-state {
+    display: none; align-items: center; justify-content: center;
+    min-width: var(--space-5); min-height: var(--space-5);
+    border: 1px solid var(--border); border-radius: var(--radius-pill);
+    color: var(--gold); font-weight: 700;
+  }
+  .compact-state[data-alert="true"] { color: var(--red); border-color: var(--red); }
+  .action-bar {
+    position: sticky; bottom: var(--space-0); flex: 0 0 auto;
+    padding: var(--space-2) var(--space-3); border-top: 1px solid var(--border);
+    background: var(--surface); z-index: var(--z-local);
+  }
+  .action-bar[hidden] { display: none; }
+  .action-bar[data-attention] { background: var(--gold-soft); }
+  .action-bar button { flex: 0 0 auto; font-size: .75rem; }
+  .primary-action { color: var(--gold); border-color: var(--gold-border); background: var(--surface-3); }
+  .primary-action[data-action="merge"] { color: var(--green); border-color: var(--green-border); }
+  .primary-reason { color: var(--red); font-size: .72rem; unicode-bidi: plaintext; }
+  .primary-reason[hidden] { display: none; }
+  .status-row, .timeout-row {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding-inline-end: var(--space-3); border-bottom: 1px solid var(--border);
+  }
+  .status-row .stop { color: var(--red); white-space: nowrap; }
+  .timeout-row[hidden] { display: none; }
+  .timeout-row .extend { color: var(--gold); border-color: var(--gold-border); white-space: nowrap; }
   .room-nav {
     flex-wrap: nowrap; overflow-x: auto; padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--border); background: var(--surface-2);
   }
-  .room-nav button { white-space: nowrap; padding: var(--space-1) var(--space-2); }
+  .room-nav button {
+    flex: 1; display: inline-flex; align-items: center; justify-content: center;
+    gap: var(--space-1); white-space: nowrap; padding: var(--space-1) var(--space-2);
+  }
   .room-nav button[aria-selected="true"] { color: var(--gold); border-color: var(--gold); }
+  .group-badge {
+    padding-inline: var(--space-1); border: 1px solid var(--gold-border);
+    border-radius: var(--radius-pill); color: var(--gold); font-size: .68rem;
+  }
+  .group-badge[data-alert="true"] { color: var(--red); border-color: var(--red); }
+  .stage-indicator {
+    position: relative; list-style: none; display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-0);
+    padding: var(--space-1) var(--space-3); border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .stage-indicator li {
+    position: relative; display: flex; align-items: center; justify-content: center;
+    gap: var(--space-1); padding-block: var(--space-1); color: var(--text-dim);
+    text-align: center; font-size: .66rem;
+  }
+  .stage-indicator li::before {
+    content: ''; width: var(--space-2); height: var(--space-2); flex: none;
+    border-radius: var(--radius-pill); background: var(--border-strong);
+    z-index: var(--z-local);
+  }
+  .stage-indicator li:not(:last-child)::after {
+    content: ''; position: absolute; top: 50%; inset-inline-start: calc(50% + var(--space-3));
+    width: calc(100% - var(--space-5)); border-block-start: 1px solid var(--border);
+  }
+  .stage-indicator li[data-state="completed"] { color: var(--green); }
+  .stage-indicator li[data-state="completed"]::before { background: var(--green); }
+  .stage-indicator li[data-state="current"] { color: var(--gold); font-weight: 600; }
+  .stage-indicator li[data-state="current"]::before { background: var(--gold); }
+  .stage-indicator li[data-alert="true"] { color: var(--red); }
+  .stage-indicator li[data-alert="true"]::before { background: var(--red); }
   .status {
-    min-height: var(--space-6); padding: var(--space-2) var(--space-3);
-    color: var(--text-dim); font-size: .78rem; border-bottom: 1px solid var(--border);
+    flex: 1; min-width: 0; min-height: var(--space-6); padding: var(--space-2) var(--space-3);
+    color: var(--text-dim); font-size: .78rem;
     unicode-bidi: plaintext;
   }
-  .timeout-warning { color: var(--gold); font-size: .78rem; padding: 0 var(--space-3); }
+  .timeout-warning { flex: 1; color: var(--gold); font-size: .78rem; padding: var(--space-2) var(--space-3); }
   .next-step {
-    padding: var(--space-3); color: var(--text); font-size: .82rem; line-height: 1.8;
-    border-bottom: 1px solid var(--border); background: var(--surface-2); unicode-bidi: plaintext;
+    flex: 1 1 var(--space-7); min-width: 0; color: var(--text-dim);
+    font-size: .75rem; line-height: 1.6; unicode-bidi: plaintext;
   }
-  .next-step::before { content: 'الخطوة التالية: '; color: var(--gold); font-weight: 600; }
-  .panel-list { padding: var(--space-3); overflow-y: auto; overscroll-behavior: contain; }
+  .action-bar[data-attention] .next-step { color: var(--text); }
+  .next-step::before { content: 'التالي: '; color: var(--gold); font-weight: 600; }
+  .panel-list { min-height: 0; padding: var(--space-3); overflow-y: auto; overscroll-behavior: contain; }
+  .group-view { display: grid; gap: var(--space-3); }
+  .group-view[hidden] { display: none; }
+  .subnav { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+  .subnav button {
+    flex: 1; white-space: nowrap; padding: var(--space-1) var(--space-2);
+    color: var(--text-dim); background: transparent; border-color: transparent; font-size: .72rem;
+  }
+  .subnav button[aria-selected="true"] {
+    color: var(--gold); border-color: var(--border); background: var(--surface-2);
+  }
   .view { display: grid; gap: var(--space-3); }
   .view[hidden] { display: none; }
   .empty {
@@ -47,7 +150,7 @@ const roomSheet = sheet(`
     border: 1px dashed var(--border); border-radius: var(--radius-lg); line-height: 1.8;
   }
   .setup {
-    display: grid; gap: var(--space-3); padding: var(--space-3);
+    display: grid; gap: var(--space-2); padding: var(--space-3);
     border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-2);
   }
   .setup-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
@@ -70,8 +173,14 @@ const roomSheet = sheet(`
     outline: none; unicode-bidi: plaintext;
   }
   select:focus, textarea:focus { border-color: var(--gold); }
-  textarea { resize: vertical; min-height: 4.5rem; }
-  .ownership { direction: ltr; text-align: left; font-family: var(--mono); min-height: 3rem; }
+  textarea { resize: vertical; min-height: calc(var(--space-7) + var(--space-5)); }
+  .worker-input .setup-field { display: flex; flex-direction: column; }
+  .task, .ownership { flex: 1 1 auto; }
+  .task { min-height: calc(var(--space-7) + var(--space-6)); }
+  .ownership {
+    direction: ltr; text-align: left; font-family: var(--mono);
+    min-height: calc(var(--space-7) + var(--space-3));
+  }
   .decision-box { display: grid; gap: var(--space-2); }
   .decision-box textarea { min-height: 5rem; }
   .agent-meta, .file-row, .check-row {
@@ -98,7 +207,8 @@ const roomSheet = sheet(`
   @media (max-width: 44rem) {
     :host { width: 100vw; max-width: 100vw; }
     .panel-head { align-items: flex-start; }
-    .room-actions { max-height: 24vh; overflow-y: auto; }
+    .action-bar { align-items: stretch; }
+    .action-bar button { flex: 1 1 auto; }
     .setup-head { align-items: flex-start; flex-direction: column; }
   }
 `);
@@ -133,16 +243,22 @@ const dialogSheet = sheet(`
   }
 `);
 
-const VIEWS = [
-  ['history', 'السجل'],
-  ['brainstorm', 'العصف'],
-  ['decisions', 'القرارات'],
-  ['tasks', 'المهام والملكية'],
-  ['discussion', 'النقاش المحدود'],
-  ['evidence', 'الأدلة والاختبارات'],
-  ['diffs', 'الفروقات'],
-  ['review', 'المراجعة والدمج'],
+const GROUPS = [
+  { id: 'work', label: 'العمل', views: [['brainstorm', 'العصف'], ['tasks', 'المهام والنشاط']] },
+  { id: 'results', label: 'النتائج', views: [['diffs', 'الفروقات'], ['evidence', 'الأدلة'], ['review', 'المراجعة']] },
+  { id: 'log', label: 'السجل', views: [['decisions', 'القرارات'], ['discussion', 'النقاش'], ['history', 'التاريخ']] },
 ];
+
+const STAGES = ['الإعداد', 'التنفيذ', 'التحقق', 'الاعتماد'];
+const DRAWER_MEDIA = '(max-width: 44rem)';
+const LAYOUT_STORAGE_PREFIX = 'satr_ops_layout:';
+const PRIMARY_ACTIONS = {
+  start: { label: 'ابدأ التنفيذ', can: 'canStart', method: '_startExecution' },
+  review: { label: 'ابدأ المراجعة', can: 'canReview', method: '_startReview' },
+  prepare: { label: 'ثبّت التحقق', can: 'canPrepareVerification', method: '_prepareVerification' },
+  verify: { label: 'شغّل الاختبارات', can: 'canRunVerification', method: '_runVerification' },
+  merge: { label: 'ادمج الأثر', can: 'canMerge', method: '_merge' },
+};
 
 const TEAM_STATES = {
   preparing: 'يجهّز النسخ المعزولة…', queued: 'في الانتظار', running: 'ينفّذ…',
@@ -241,6 +357,13 @@ function text(value) {
   return typeof value === 'string' ? value : '';
 }
 
+function makeElement(tagName, className, label) {
+  const element = document.createElement(tagName);
+  if (className) element.className = className;
+  if (label) element.textContent = label;
+  return element;
+}
+
 function timeLabel(value) {
   const timestamp = Number(value);
   return timestamp > 0 ? new Date(timestamp).toLocaleString('ar-SA') : 'وقت غير متاح';
@@ -265,15 +388,16 @@ class SatrOpsDialog extends HTMLElement {
     super();
     const root = this.attachShadow({ mode: 'open' });
     root.adoptedStyleSheets = [controlsSheet, dialogSheet];
-    root.innerHTML = '<div class="dialog-box" role="document">'
-      + '<h2></h2><div class="description" dir="auto"></div><div class="items"></div>'
-      + '<div class="dialog-actions"><button class="cancel" type="button">إلغاء</button>'
-      + '<button class="confirm" type="button">تأكيد</button></div></div>';
-    this._title = root.querySelector('h2');
-    this._description = root.querySelector('.description');
-    this._items = root.querySelector('.items');
-    this._confirm = root.querySelector('.confirm');
-    this._cancel = root.querySelector('.cancel');
+    const box = makeElement('div', 'dialog-box'); box.setAttribute('role', 'document');
+    this._title = makeElement('h2');
+    this._description = makeElement('div', 'description'); this._description.dir = 'auto';
+    this._items = makeElement('div', 'items');
+    const actions = makeElement('div', 'dialog-actions');
+    this._cancel = makeElement('button', 'cancel', 'إلغاء'); this._cancel.type = 'button';
+    this._confirm = makeElement('button', 'confirm', 'تأكيد'); this._confirm.type = 'button';
+    actions.appendChild(this._cancel); actions.appendChild(this._confirm);
+    box.appendChild(this._title); box.appendChild(this._description); box.appendChild(this._items);
+    box.appendChild(actions); root.appendChild(box);
     this._resolver = null;
     this._confirm.addEventListener('click', () => this._answer(true));
     this._cancel.addEventListener('click', () => this._answer(false));
@@ -321,33 +445,72 @@ class SatrOpsRoom extends HTMLElement {
   constructor() {
     super();
     const root = this.attachShadow({ mode: 'open' });
-    root.adoptedStyleSheets = [panelSheet, cardSheet, roomSheet];
-    root.innerHTML = '<div class="panel-head"><span>غرفة العمليات</span>'
-      + '<div class="panel-head-actions"><button class="compact" type="button" aria-pressed="false">تصغير</button>'
-      + '<button class="close" type="button" aria-label="إغلاق غرفة العمليات">✕</button></div></div>'
-      + '<div class="room-actions">'
-      + '<button class="start" type="button">تنفيذ</button><button class="review" type="button" hidden>ابدأ المراجعة</button>'
-      + '<button class="prepare" type="button" hidden>ثبّت التحقق</button><button class="verify" type="button" hidden>شغّل الاختبارات</button>'
-      + '<button class="merge" type="button" hidden>دمج</button><button class="extend" type="button" hidden>مدّد المهلة مرة</button>'
-      + '<button class="stop" type="button" hidden>إيقاف المرحلة</button></div>'
-      + '<nav class="room-nav" role="tablist" aria-label="مسارات غرفة العمليات"></nav>'
-      + '<div class="status" aria-live="polite"></div><div class="timeout-warning" aria-live="polite"></div>'
-      + '<div class="next-step" aria-live="polite"></div>'
-      + '<div class="panel-list"></div>';
+    this._layoutSheet = sheet(':host {}');
+    root.adoptedStyleSheets = [panelSheet, cardSheet, roomSheet, this._layoutSheet];
+    const head = makeElement('div', 'panel-head');
+    const title = makeElement('span', 'panel-title', 'غرفة العمليات');
+    const compactState = makeElement('span', 'compact-state'); compactState.setAttribute('aria-live', 'polite');
+    const headActions = makeElement('div', 'panel-head-actions');
+    const compactButton = makeElement('button', 'compact', 'طيّ'); compactButton.type = 'button';
+    compactButton.setAttribute('aria-pressed', 'false');
+    const closeButton = makeElement('button', 'close', '✕'); closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', 'إغلاق غرفة العمليات');
+    headActions.appendChild(compactButton); headActions.appendChild(closeButton);
+    head.appendChild(title); head.appendChild(compactState); head.appendChild(headActions);
+
+    const actionBar = makeElement('div', 'action-bar');
+    const nextStep = makeElement('div', 'next-step'); nextStep.setAttribute('aria-live', 'polite');
+    const primaryButton = makeElement('button', 'primary-action'); primaryButton.type = 'button'; primaryButton.hidden = true;
+    const primaryReason = makeElement('span', 'primary-reason'); primaryReason.hidden = true;
+    primaryReason.setAttribute('aria-live', 'polite');
+    actionBar.appendChild(nextStep); actionBar.appendChild(primaryReason); actionBar.appendChild(primaryButton);
+    const stageIndicator = makeElement('ol', 'stage-indicator'); stageIndicator.setAttribute('aria-label', 'مراحل غرفة العمليات');
+    const nav = makeElement('nav', 'room-nav'); nav.setAttribute('role', 'tablist');
+    nav.setAttribute('aria-label', 'أقسام غرفة العمليات');
+    const statusRow = makeElement('div', 'status-row');
+    const status = makeElement('div', 'status'); status.setAttribute('aria-live', 'polite');
+    const stopButton = makeElement('button', 'stop', 'إيقاف المرحلة'); stopButton.type = 'button'; stopButton.hidden = true;
+    statusRow.appendChild(status); statusRow.appendChild(stopButton);
+    const timeoutRow = makeElement('div', 'timeout-row'); timeoutRow.hidden = true;
+    const timeoutWarning = makeElement('div', 'timeout-warning'); timeoutWarning.setAttribute('aria-live', 'polite');
+    const extendButton = makeElement('button', 'extend', 'مدّد المهلة مرة'); extendButton.type = 'button';
+    timeoutRow.appendChild(timeoutWarning); timeoutRow.appendChild(extendButton);
+    const list = makeElement('div', 'panel-list');
+    const resizeHandle = makeElement('div', 'resize-handle'); resizeHandle.tabIndex = 0;
+    resizeHandle.setAttribute('role', 'separator'); resizeHandle.setAttribute('aria-orientation', 'vertical');
+    resizeHandle.setAttribute('aria-label', 'تغيير عرض غرفة العمليات؛ السهم الأيسر يوسّع والأيمن يضيّق');
+    resizeHandle.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight Home End');
+    for (const element of [head, stageIndicator, nav, statusRow, timeoutRow, list, actionBar, resizeHandle]) {
+      root.appendChild(element);
+    }
     this._root = root;
-    this._nav = root.querySelector('.room-nav');
-    this._list = root.querySelector('.panel-list');
-    this._status = root.querySelector('.status');
-    this._timeoutWarning = root.querySelector('.timeout-warning');
-    this._nextStep = root.querySelector('.next-step');
+    this._nav = nav;
+    this._list = list;
+    this._status = status;
+    this._statusRow = statusRow;
+    this._timeoutRow = timeoutRow;
+    this._timeoutWarning = timeoutWarning;
+    this._nextStep = nextStep;
+    this._actionBar = actionBar;
+    this._primaryButton = primaryButton;
+    this._primaryReason = primaryReason;
+    this._compactState = compactState;
+    this._stageIndicator = stageIndicator;
+    this._resizeHandle = resizeHandle;
+    this._closeButton = closeButton;
     this._buttons = {
-      start: root.querySelector('.start'), review: root.querySelector('.review'),
-      prepare: root.querySelector('.prepare'), verify: root.querySelector('.verify'),
-      merge: root.querySelector('.merge'), extend: root.querySelector('.extend'), stop: root.querySelector('.stop'),
+      primary: this._primaryButton, extend: extendButton, stop: stopButton,
     };
     this._state = createOpsRoomState();
     this._cwd = '';
+    this._group = 'work';
     this._view = 'tasks';
+    this._groupViews = { work: 'tasks', results: 'diffs', log: 'decisions' };
+    this._groupSeen = { work: '', results: '', log: '' };
+    this._primaryAction = '';
+    this._preferredCompact = false;
+    this._preferredWidth = 0;
+    this._resizeSession = null;
     this._history = [];
     this._brainstorm = null;
     this._brainstormDraft = '';
@@ -356,41 +519,218 @@ class SatrOpsRoom extends HTMLElement {
     this._appliedPlanId = '';
     this._notified = new Set();
     this._clock = null;
+    this._buildStages();
     this._buildViews();
-    root.querySelector('.close').addEventListener('click', () => this.close());
-    this._compactButton = root.querySelector('.compact');
+    closeButton.addEventListener('click', () => this.close());
+    this._compactButton = compactButton;
     this._compactButton.addEventListener('click', () => this._toggleCompact());
-    try { if (localStorage.getItem('satr_ops_compact') === '1') this._setCompact(true); } catch {}
-    this._buttons.start.addEventListener('click', () => this._startExecution());
-    this._buttons.review.addEventListener('click', () => this._startReview());
-    this._buttons.prepare.addEventListener('click', () => this._prepareVerification());
-    this._buttons.verify.addEventListener('click', () => this._runVerification());
-    this._buttons.merge.addEventListener('click', () => this._merge());
+    this._primaryButton.addEventListener('click', () => this._runPrimaryAction());
     this._buttons.extend.addEventListener('click', () => this._extendTimeout());
     this._buttons.stop.addEventListener('click', () => this._stop());
+    resizeHandle.addEventListener('pointerdown', (event) => this._beginResize(event));
+    resizeHandle.addEventListener('pointermove', (event) => this._moveResize(event));
+    resizeHandle.addEventListener('pointerup', (event) => this._endResize(event));
+    resizeHandle.addEventListener('pointercancel', (event) => this._endResize(event));
+    resizeHandle.addEventListener('keydown', (event) => this._resizeWithKeyboard(event));
+    this._drawerQuery = window.matchMedia(DRAWER_MEDIA);
+    this._drawerQuery.addEventListener('change', () => this._syncResponsiveMode());
+    window.addEventListener('resize', () => this._updateResizeAccessibility());
+    this._syncResponsiveMode();
+  }
+
+  _buildStages() {
+    this._stageItems = STAGES.map((label) => {
+      const item = document.createElement('li'); item.textContent = label;
+      this._stageIndicator.appendChild(item); return item;
+    });
   }
 
   _buildViews() {
     this._views = {};
-    for (const [id, label] of VIEWS) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.role = 'tab'; button.textContent = label;
-      button.setAttribute('aria-selected', id === this._view ? 'true' : 'false');
-      button.addEventListener('click', () => this._selectView(id));
-      this._nav.appendChild(button);
-      const view = document.createElement('section');
-      view.className = 'view'; view.dataset.view = id; view.hidden = id !== this._view;
-      this._list.appendChild(view); this._views[id] = view;
+    this._groups = {};
+    this._groupButtons = {};
+    this._groupBadges = {};
+    this._subnavButtons = {};
+    for (const group of GROUPS) {
+      const button = document.createElement('button'); button.type = 'button'; button.role = 'tab';
+      const label = document.createElement('span'); label.textContent = group.label; button.appendChild(label);
+      const badge = document.createElement('span'); badge.className = 'group-badge'; badge.hidden = true;
+      button.appendChild(badge); button.addEventListener('click', () => this._selectGroup(group.id));
+      this._nav.appendChild(button); this._groupButtons[group.id] = button; this._groupBadges[group.id] = badge;
+
+      const groupView = document.createElement('section'); groupView.className = 'group-view'; groupView.dataset.group = group.id;
+      const subnav = document.createElement('nav'); subnav.className = 'subnav'; subnav.role = 'tablist';
+      subnav.setAttribute('aria-label', 'تفاصيل قسم ' + group.label); groupView.appendChild(subnav);
+      this._groups[group.id] = groupView; this._subnavButtons[group.id] = {};
+      for (const [id, viewLabel] of group.views) {
+        const subButton = document.createElement('button'); subButton.type = 'button'; subButton.role = 'tab';
+        subButton.textContent = viewLabel; subButton.addEventListener('click', () => this._selectView(id));
+        subnav.appendChild(subButton); this._subnavButtons[group.id][id] = subButton;
+        const view = document.createElement('section'); view.className = 'view'; view.dataset.view = id;
+        groupView.appendChild(view); this._views[id] = view;
+      }
+      this._list.appendChild(groupView);
     }
+    this._updateNavigation();
+  }
+
+  _groupForView(id) {
+    return GROUPS.find((group) => group.views.some(([viewId]) => viewId === id));
+  }
+
+  _selectGroup(id) {
+    if (!this._groups[id]) return;
+    this._group = id; this._view = this._groupViews[id];
+    this._updateNavigation(); this._markGroupSeen(id); this._renderGroupBadges(); this._saveLayoutPreferences();
   }
 
   _selectView(id) {
-    if (!this._views[id]) return;
-    this._view = id;
-    for (const [index, [viewId]] of VIEWS.entries()) {
-      this._views[viewId].hidden = viewId !== id;
-      this._nav.children[index].setAttribute('aria-selected', viewId === id ? 'true' : 'false');
+    const group = this._groupForView(id);
+    if (!group || !this._views[id]) return;
+    this._group = group.id; this._view = id; this._groupViews[group.id] = id;
+    this._updateNavigation(); this._markGroupSeen(group.id); this._renderGroupBadges(); this._saveLayoutPreferences();
+  }
+
+  _updateNavigation() {
+    for (const group of GROUPS) {
+      const activeGroup = group.id === this._group;
+      this._groups[group.id].hidden = !activeGroup;
+      this._groupButtons[group.id].setAttribute('aria-selected', activeGroup ? 'true' : 'false');
+      const selectedView = this._groupViews[group.id];
+      for (const [viewId] of group.views) {
+        const activeView = viewId === selectedView;
+        this._views[viewId].hidden = !activeView;
+        this._subnavButtons[group.id][viewId].setAttribute('aria-selected', activeView ? 'true' : 'false');
+      }
     }
+  }
+
+  _layoutStorageKey() {
+    const project = this._cwd.trim().replace(/\//g, '\\').toLowerCase();
+    return project ? LAYOUT_STORAGE_PREFIX + encodeURIComponent(project) : '';
+  }
+
+  _loadLayoutPreferences() {
+    this._group = 'work'; this._view = 'tasks';
+    this._groupViews = { work: 'tasks', results: 'diffs', log: 'decisions' };
+    this._preferredCompact = false; this._preferredWidth = 0;
+    this._layoutSheet.replaceSync(':host {}');
+    let saved = null;
+    const key = this._layoutStorageKey();
+    try { if (key) saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
+    if (saved && typeof saved === 'object') {
+      if (this._groups[saved.group]) this._group = saved.group;
+      for (const group of GROUPS) {
+        const selected = saved.views && saved.views[group.id];
+        if (group.views.some(([viewId]) => viewId === selected)) this._groupViews[group.id] = selected;
+      }
+      this._view = this._groupViews[this._group];
+      this._preferredCompact = saved.compact === true;
+      if (Number.isFinite(saved.width) && saved.width > 0) {
+        const rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        const width = Math.round(Math.min(rootFont * 60, Math.max(rootFont * 22, saved.width)));
+        this._preferredWidth = width;
+        this._layoutSheet.replaceSync(':host { --ops-room-width: ' + width + 'px; }');
+      }
+    } else {
+      try { this._preferredCompact = localStorage.getItem('satr_ops_compact') === '1'; } catch {}
+    }
+    this._updateNavigation(); this._syncResponsiveMode();
+  }
+
+  _saveLayoutPreferences() {
+    const key = this._layoutStorageKey();
+    if (!key) return;
+    const payload = {
+      compact: this._preferredCompact === true,
+      width: this._preferredWidth || 0,
+      group: this._group,
+      views: { ...this._groupViews },
+    };
+    try { localStorage.setItem(key, JSON.stringify(payload)); } catch {}
+  }
+
+  _syncResponsiveMode() {
+    const drawer = !!(this._drawerQuery && this._drawerQuery.matches);
+    this.toggleAttribute('drawer', drawer);
+    if (drawer) {
+      this.setAttribute('role', 'dialog'); this.setAttribute('aria-modal', 'true');
+    } else {
+      this.removeAttribute('role'); this.removeAttribute('aria-modal');
+    }
+    this._applyCompactState(!drawer && this._preferredCompact);
+    if (drawer && this._root.activeElement === this._compactButton) queueMicrotask(() => this._closeButton.focus());
+    this._updateResizeAccessibility();
+  }
+
+  _resizeBounds() {
+    const rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const viewportLimit = window.innerWidth * 0.94;
+    const minimum = Math.min(rootFont * 22, viewportLimit);
+    const maximum = Math.max(minimum, Math.min(rootFont * 60, viewportLimit));
+    return { minimum, maximum };
+  }
+
+  _updateResizeAccessibility() {
+    if (!this._resizeHandle) return;
+    const bounds = this._resizeBounds();
+    const current = Math.min(bounds.maximum, Math.max(bounds.minimum, this.getBoundingClientRect().width || bounds.minimum));
+    const unavailable = this.hasAttribute('compact') || this.hasAttribute('drawer');
+    this._resizeHandle.tabIndex = unavailable ? -1 : 0;
+    this._resizeHandle.setAttribute('aria-valuemin', String(Math.round(bounds.minimum)));
+    this._resizeHandle.setAttribute('aria-valuemax', String(Math.round(bounds.maximum)));
+    this._resizeHandle.setAttribute('aria-valuenow', String(Math.round(current)));
+    this._resizeHandle.setAttribute('aria-valuetext', 'عرض اللوحة ' + Math.round(current) + ' بكسل');
+  }
+
+  _setRoomWidth(value, persist) {
+    const width = Number(value);
+    if (!Number.isFinite(width)) return;
+    const bounds = this._resizeBounds();
+    const clamped = Math.round(Math.min(bounds.maximum, Math.max(bounds.minimum, width)));
+    this._preferredWidth = clamped;
+    this._layoutSheet.replaceSync(':host { --ops-room-width: ' + clamped + 'px; }');
+    this._updateResizeAccessibility();
+    if (persist !== false) this._saveLayoutPreferences();
+  }
+
+  _beginResize(event) {
+    if (event.button !== 0 || this.hasAttribute('compact') || this.hasAttribute('drawer')) return;
+    event.preventDefault();
+    this._resizeSession = {
+      pointerId: event.pointerId, startX: event.clientX, startWidth: this.getBoundingClientRect().width,
+    };
+    this._resizeHandle.setPointerCapture(event.pointerId);
+    this._resizeHandle.setAttribute('data-active', 'true');
+  }
+
+  _moveResize(event) {
+    const session = this._resizeSession;
+    if (!session || event.pointerId !== session.pointerId) return;
+    event.preventDefault();
+    this._setRoomWidth(session.startWidth + session.startX - event.clientX, false);
+  }
+
+  _endResize(event) {
+    const session = this._resizeSession;
+    if (!session || event.pointerId !== session.pointerId) return;
+    this._resizeSession = null; this._resizeHandle.removeAttribute('data-active');
+    if (this._resizeHandle.hasPointerCapture(event.pointerId)) this._resizeHandle.releasePointerCapture(event.pointerId);
+    this._saveLayoutPreferences(); this._updateResizeAccessibility();
+  }
+
+  _resizeWithKeyboard(event) {
+    if (this.hasAttribute('compact') || this.hasAttribute('drawer')) return;
+    const bounds = this._resizeBounds();
+    const current = this.getBoundingClientRect().width;
+    const step = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--space-6')) || 1;
+    let next = null;
+    if (event.key === 'ArrowLeft') next = current + step;
+    else if (event.key === 'ArrowRight') next = current - step;
+    else if (event.key === 'Home') next = bounds.minimum;
+    else if (event.key === 'End') next = bounds.maximum;
+    if (next == null) return;
+    event.preventDefault(); this._setRoomWidth(next, true);
   }
 
   _dispatch(action) {
@@ -474,7 +814,6 @@ class SatrOpsRoom extends HTMLElement {
     head.appendChild(title); head.appendChild(fields); setup.appendChild(head);
     const note = document.createElement('div'); note.className = 'setup-note';
     note.textContent = 'التنفيذ عبر Claude SDK فقط. المهلة محدودة مسبقاً وبسقف عشر دقائق لكل عامل؛ لا تمديد تلقائياً.';
-    setup.appendChild(note);
     const planRow = document.createElement('div'); planRow.className = 'setup-actions';
     const planButton = document.createElement('button'); planButton.type = 'button';
     const planRunning = this._plan && this._plan.state === 'running';
@@ -489,7 +828,6 @@ class SatrOpsRoom extends HTMLElement {
           : errorLabel(this._plan.error, 'planner', 'لم يكتمل اقتراح التقسيم — وضّح المهمة ثم أعد المحاولة.');
       planRow.appendChild(planStatus);
     }
-    setup.appendChild(planRow);
     const inputs = [];
     for (let index = 1; index <= 3; index++) {
       const worker = document.createElement('section'); worker.className = 'worker-input'; worker.hidden = index > (previous.length || 2);
@@ -518,6 +856,7 @@ class SatrOpsRoom extends HTMLElement {
       worker.appendChild(workerTitle); worker.appendChild(taskWrap); worker.appendChild(ownershipWrap);
       setup.appendChild(worker); inputs.push(worker);
     }
+    setup.appendChild(note); setup.appendChild(planRow);
     count.addEventListener('change', () => {
       inputs.forEach((worker, index) => { worker.hidden = index >= Number(count.value); });
       this._syncSetupActions();
@@ -535,9 +874,15 @@ class SatrOpsRoom extends HTMLElement {
       const ownership = worker.querySelector('.ownership').value.split(/[,\r\n]+/).some((item) => item.trim());
       return !task || !ownership;
     }) : true;
-    this._buttons.start.disabled = !derived.canStart || !this._cwd || incomplete;
-    this._buttons.start.title = !this._cwd ? 'افتح مجلد مشروع أولاً.'
-      : incomplete ? 'اكتب مهمة وملكية ملفات لكل عامل.' : '';
+    if (this._primaryAction === 'start') {
+      this._primaryButton.disabled = !derived.canStart || !this._cwd || incomplete;
+      const reason = !this._cwd ? 'افتح مجلد مشروع أولاً.'
+        : incomplete ? 'اكتب مهمة وملكية ملفات لكل عامل.' : '';
+      this._primaryButton.title = reason;
+      this._primaryReason.textContent = reason;
+      this._primaryReason.hidden = !reason;
+      this._actionBar.toggleAttribute('data-attention', Boolean(reason));
+    }
     if (!this._setup) return;
     const planRunning = this._plan && this._plan.state === 'running';
     const missingTask = !this._setup.inputs[0].querySelector('.task').value.trim();
@@ -718,34 +1063,147 @@ class SatrOpsRoom extends HTMLElement {
     });
   }
 
+  _runPrimaryAction() {
+    const derived = deriveOpsRoomState(this._state);
+    const action = derived.nextAction && derived.nextAction.action;
+    const config = PRIMARY_ACTIONS[action];
+    if (!config || action !== this._primaryAction || derived[config.can] !== true || this._primaryButton.disabled) return;
+    if (typeof this[config.method] === 'function') this[config.method]();
+  }
+
+  _renderPrimaryAction(derived) {
+    const action = derived.nextAction && derived.nextAction.action;
+    const key = derived.nextAction && derived.nextAction.key;
+    const config = PRIMARY_ACTIONS[action];
+    const available = !!(config && derived[config.can] === true);
+    this._primaryAction = available ? action : '';
+    this._actionBar.hidden = !text(derived.nextAction && derived.nextAction.label);
+    this._nextStep.textContent = text(derived.nextAction && derived.nextAction.label);
+    this._actionBar.toggleAttribute('data-attention', !available && !['wait', 'merged'].includes(key));
+    this._primaryButton.hidden = !available;
+    this._primaryButton.disabled = !available;
+    this._primaryButton.dataset.action = available ? action : '';
+    this._primaryButton.textContent = action === 'start' && this._state.team ? 'ابدأ فريقاً جديداً'
+      : available ? config.label : '';
+    this._primaryButton.title = '';
+    this._primaryReason.textContent = '';
+    this._primaryReason.hidden = true;
+    if (available && action !== 'start') this._primaryButton.disabled = false;
+  }
+
+  _stagePresentation(derived) {
+    const team = this._state.team;
+    const failedTeam = !!(team && ['failed', 'timed_out', 'conflict', 'cleanup_failed'].includes(team.state));
+    const reviewItems = (this._state.review && this._state.review.reviews) || [];
+    const failedReview = !!(this._state.review && ['failed', 'timed_out'].includes(this._state.review.state))
+      || reviewItems.some((item) => item && item.verdict && item.verdict.decision !== 'approve');
+    const failedVerification = !!(this._state.verification && this._state.verification.state === 'failed');
+    let current = 0;
+    if (team && !failedTeam && !['stopped', 'interrupted'].includes(team.state)) current = 1;
+    if (derived.canReview || this._state.review || this._state.verification) current = 2;
+    if (derived.canMerge || team && team.merged) current = 3;
+    return { current, alerts: new Set([
+      ...(failedTeam ? [1] : []),
+      ...(failedReview || failedVerification ? [2] : []),
+    ]) };
+  }
+
+  _renderStages(derived) {
+    const presentation = this._stagePresentation(derived);
+    this._stageItems.forEach((item, index) => {
+      const state = index < presentation.current ? 'completed' : index === presentation.current ? 'current' : 'pending';
+      const alert = presentation.alerts.has(index);
+      item.dataset.state = state; item.toggleAttribute('data-alert', alert);
+      item.setAttribute('aria-label', STAGES[index] + ' — ' + (alert ? 'تحتاج الانتباه'
+        : state === 'completed' ? 'مكتملة' : state === 'current' ? 'المرحلة الحالية' : 'لاحقة'));
+    });
+  }
+
+  _groupSignature(groupId) {
+    const team = this._state.team;
+    if (groupId === 'work') {
+      if (!team && !this._plan && !this._brainstorm) return '';
+      return [team && team.id, team && team.state, team && team.updated_at,
+        this._plan && this._plan.id, this._plan && this._plan.state,
+        this._brainstorm && this._brainstorm.id, this._brainstorm && this._brainstorm.state].join(':');
+    }
+    if (groupId === 'results') {
+      const fileCount = ((team && team.agents) || []).reduce((total, agent) =>
+        total + ((agent.changes && agent.changes.files && agent.changes.files.length) || 0), 0);
+      if (!fileCount && !this._state.review && !this._state.verification) return '';
+      return [team && team.artifact_id, fileCount, this._state.review && this._state.review.id,
+        this._state.review && this._state.review.state, this._state.review && this._state.review.updated_at,
+        this._state.verification && this._state.verification.artifact_id,
+        this._state.verification && this._state.verification.state].join(':');
+    }
+    const lastEntry = this._state.entries[this._state.entries.length - 1];
+    const lastHistory = this._history[this._history.length - 1];
+    return lastEntry || lastHistory ? [lastEntry && lastEntry.id, lastEntry && lastEntry.created_at,
+      lastHistory && lastHistory.room_id, lastHistory && lastHistory.updated_at].join(':') : '';
+  }
+
+  _groupAlerts() {
+    const team = this._state.team;
+    const work = !!(team && ['failed', 'timed_out', 'conflict', 'cleanup_failed'].includes(team.state))
+      || ((team && team.agents) || []).some((agent) => agent && ['failed', 'timed_out', 'cleanup_failed'].includes(agent.state))
+      || !!(this._plan && this._plan.state === 'failed')
+      || ((this._brainstorm && this._brainstorm.workers) || []).some((worker) => worker && worker.state === 'failed');
+    const reviewItems = (this._state.review && this._state.review.reviews) || [];
+    const results = !!(this._state.verification && this._state.verification.state === 'failed')
+      || !!(this._state.review && ['failed', 'timed_out'].includes(this._state.review.state))
+      || reviewItems.some((item) => item && item.verdict && item.verdict.decision !== 'approve');
+    return { work, results, log: false };
+  }
+
+  _markGroupSeen(groupId) {
+    if (this._groupSeen && this._groupSeen[groupId] != null) this._groupSeen[groupId] = this._groupSignature(groupId);
+  }
+
+  _renderGroupBadges() {
+    this._markGroupSeen(this._group);
+    const alerts = this._groupAlerts();
+    for (const group of GROUPS) {
+      const signature = this._groupSignature(group.id);
+      const unseen = !!(signature && signature !== this._groupSeen[group.id]);
+      const badge = this._groupBadges[group.id];
+      const value = alerts[group.id] ? 'تنبيه' : unseen ? 'جديد' : '';
+      badge.textContent = value; badge.hidden = !value;
+      badge.toggleAttribute('data-alert', alerts[group.id] === true);
+      this._groupButtons[group.id].setAttribute('aria-label', group.label + (value ? ' — ' + value : ''));
+    }
+  }
+
+  _renderCompactState(derived) {
+    const alerts = this._groupAlerts();
+    const hasAlert = alerts.work || alerts.results;
+    const running = derived.teamActive || derived.reviewActive || derived.verificationActive;
+    const merged = !!(this._state.team && this._state.team.merged);
+    this._compactState.textContent = hasAlert ? '!' : this._primaryAction ? '←' : running ? '…' : merged ? '✓' : '•';
+    this._compactState.toggleAttribute('data-alert', hasAlert);
+    this._compactState.setAttribute('aria-label', hasAlert ? 'توجد حالة تحتاج الانتباه'
+      : this._primaryAction ? 'توجد خطوة تالية متاحة' : running ? 'يوجد انتقال جارٍ'
+        : merged ? 'اكتمل الدمج' : 'غرفة العمليات جاهزة');
+  }
+
   _render() {
     const derived = deriveOpsRoomState(this._state);
-    this._buttons.start.disabled = !derived.canStart || !this._cwd;
-    this._buttons.start.title = !this._cwd ? 'افتح مجلد مشروع أولاً.' : '';
-    this._buttons.start.hidden = !derived.canStart;
-    this._buttons.review.hidden = !derived.canReview;
-    this._buttons.prepare.hidden = !derived.canPrepareVerification;
-    this._buttons.verify.hidden = !derived.canRunVerification;
-    this._buttons.merge.hidden = !derived.canMerge;
-    this._buttons.extend.hidden = true;
+    this._renderPrimaryAction(derived);
+    this._timeoutRow.hidden = true;
     this._buttons.stop.hidden = !derived.canStop;
-    this._buttons.start.textContent = this._state.team && derived.canStart ? 'إعادة المحاولة' : 'تنفيذ';
-    for (const button of Object.values(this._buttons)) button.classList.remove('recommended');
-    if (derived.nextAction.action && this._buttons[derived.nextAction.action]) {
-      this._buttons[derived.nextAction.action].classList.add('recommended');
-    }
-    this._nextStep.textContent = derived.nextAction.label;
     this._status.textContent = this._state.status || (this._state.pending ? 'جارٍ تنفيذ الانتقال المطلوب…'
       : this._state.team ? (TEAM_STATES[this._state.team.state] || this._state.team.state)
         : 'حدّد المهام والملكية، ثم ابدأ انتقال التنفيذ صراحةً.');
     this._renderHistory(); this._renderBrainstorm(); this._renderDecisions(); this._renderTasks(); this._renderDiscussion();
     this._renderEvidence(); this._renderDiffs(); this._renderReview();
+    this._renderStages(derived); this._renderGroupBadges(); this._renderCompactState(derived);
   }
 
   _confirm(options) {
     return new Promise((resolve) => {
       this.dispatchEvent(new CustomEvent('ops-confirm-request', {
-        bubbles: true, detail: { ...options, source: this._buttons[options.kind] || this, resolve },
+        bubbles: true, detail: {
+          ...options, source: this._primaryAction === options.kind ? this._primaryButton : this, resolve,
+        },
       }));
     });
   }
@@ -957,6 +1415,7 @@ class SatrOpsRoom extends HTMLElement {
       worker.querySelector('.ownership').value = tasks[index] ? tasks[index].ownership.join(', ') : '';
     });
     this._planDraft = tasks[0].task;
+    this._syncSetupActions();
   }
 
   _renderBrainstorm() {
@@ -998,8 +1457,10 @@ class SatrOpsRoom extends HTMLElement {
     try {
       const result = await window.satr.opsRoomHistory(this._cwd);
       this._history = result && Array.isArray(result.rooms) ? result.rooms : [];
-      this._renderHistory();
-    } catch { this._history = []; }
+      this._renderHistory(); this._renderGroupBadges();
+    } catch {
+      this._history = []; this._renderHistory(); this._renderGroupBadges();
+    }
   }
 
   async _openHistory(item) {
@@ -1046,9 +1507,12 @@ class SatrOpsRoom extends HTMLElement {
 
   async open(cwd) {
     this._cwd = typeof cwd === 'string' ? cwd : '';
+    this._loadLayoutPreferences();
     this.setAttribute('open', '');
     clearInterval(this._clock);
     this._clock = setInterval(() => this._refreshCountdowns(), 1000);
+    this._history = []; this._brainstorm = null; this._plan = null;
+    this._groupSeen = { work: '', results: '', log: '' };
     this._state = createOpsRoomState(); this._render();
     let team = null; let review = null; let verification = null; let room = null;
     try {
@@ -1075,13 +1539,15 @@ class SatrOpsRoom extends HTMLElement {
   }
 
   close() {
+    this._saveLayoutPreferences();
     clearInterval(this._clock); this._clock = null;
     this.removeAttribute('open');
     this.dispatchEvent(new CustomEvent('panel-close', { bubbles: true }));
   }
 
   focusInitial() {
-    const close = this._root.querySelector('.close'); if (close) close.focus();
+    const target = this.hasAttribute('compact') ? this._compactButton : this._root.querySelector('.close');
+    if (target) target.focus();
   }
 
   _renderHistory() {
@@ -1118,20 +1584,29 @@ class SatrOpsRoom extends HTMLElement {
       .map((agent) => Number(agent.deadline_at) || 0).filter(Boolean);
     const remaining = deadlines.length ? Math.min(...deadlines) - Date.now() : Infinity;
     const warn = team && team.state === 'running' && team.can_extend === true && remaining > 0 && remaining <= 60000;
-    this._buttons.extend.hidden = !warn;
+    this._timeoutRow.hidden = !warn;
     this._timeoutWarning.textContent = warn
       ? 'بقي أقل من دقيقة. يمكنك تمديد المهلة مرة واحدة إلى الـpreset التالي، وبحد أقصى 10 دقائق.' : '';
   }
 
-  _setCompact(compact) {
+  _applyCompactState(compact) {
+    const moveFocus = compact === true && this._root.activeElement && this._root.activeElement !== this._compactButton;
     this.toggleAttribute('compact', compact === true);
     this._compactButton.setAttribute('aria-pressed', compact === true ? 'true' : 'false');
-    this._compactButton.textContent = compact === true ? 'توسيع' : 'تصغير';
+    this._compactButton.setAttribute('aria-label', compact === true ? 'توسيع غرفة العمليات' : 'طي غرفة العمليات');
+    this._compactButton.textContent = compact === true ? 'فتح' : 'طيّ';
+    if (moveFocus) queueMicrotask(() => this._compactButton.focus());
+    this._updateResizeAccessibility();
+  }
+
+  _setCompact(compact, persist) {
+    this._preferredCompact = compact === true;
+    this._applyCompactState(!this.hasAttribute('drawer') && this._preferredCompact);
+    if (persist !== false) this._saveLayoutPreferences();
   }
 
   _toggleCompact() {
-    const compact = !this.hasAttribute('compact'); this._setCompact(compact);
-    try { localStorage.setItem('satr_ops_compact', compact ? '1' : '0'); } catch {}
+    this._setCompact(!this._preferredCompact, true);
   }
 
   _notifyRuntime(key, message) {
@@ -1143,11 +1618,13 @@ class SatrOpsRoom extends HTMLElement {
   handleEvent(event) {
     if (!event) return;
     if (event.type === 'ops_brainstorm_update' && event.run) {
-      this._brainstorm = event.run; this._renderBrainstorm(); return;
+      this._brainstorm = event.run; this._renderBrainstorm(); this._renderGroupBadges();
+      this._renderCompactState(deriveOpsRoomState(this._state)); return;
     }
     if (event.type === 'ops_plan_update' && event.run) {
       this._plan = event.run; this._renderTasks();
       if (event.run.state === 'completed') this._applyPlan();
+      this._renderGroupBadges(); this._renderCompactState(deriveOpsRoomState(this._state));
       return;
     }
     this._dispatch({ type: 'event', event });

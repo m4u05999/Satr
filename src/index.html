@@ -92,6 +92,8 @@
      وأنماط المنطقة في base.css؛ الغلاف display:contents يبني <main> بداخله).
      مجرى أحداث satr:event يبقى orchestration في القشرة ويستدعي methods المكوّن -->
 <satr-chat></satr-chat>
+<!-- غرفة العمليات: سطح عمل مرن داخل الصف الأوسط كي يبقى محصوراً بين الهيدر والمؤلّف -->
+<satr-ops-room aria-label="غرفة العمليات"></satr-ops-room>
 <!-- لوحة المعاينة المدمجة (م-1 — الدفعة 5): إطار الرأس والمساحة فقط — الصفحة ترسمها
      WebContentsView أصلية معزولة تطفو فوق المساحة (satr:previewBounds يحدد مكانها) -->
 <satr-preview-panel aria-label="المعاينة المدمجة"></satr-preview-panel>
@@ -146,9 +148,6 @@
 
 <!-- لوحة /بحث: منسّق 1–3 باحثين للقراءة فقط مع خلاصات ومصادر -->
 <satr-research-panel aria-label="فريق البحث"></satr-research-panel>
-
-<!-- غرفة العمليات: لوحة العمل الوحيدة للتنفيذ والمراجعة والتحقق والدمج -->
-<satr-ops-room aria-label="غرفة العمليات"></satr-ops-room>
 
 <!-- حوار قرار غرفة العمليات: تشغيل الاختبارات والدمج لا يمران عبر toast أو confirm أصلي -->
 <satr-ops-dialog role="dialog" aria-modal="true" aria-label="تأكيد قرار غرفة العمليات"></satr-ops-dialog>

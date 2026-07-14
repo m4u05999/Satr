@@ -37,6 +37,7 @@
     --dur: .18s;
     --shadow-pop: 0 10px 30px rgba(0, 0, 0, .45);
     --shadow-panel: -10px 0 34px rgba(0, 0, 0, .5);
+    --shadow-dock: 6px 0 18px rgba(0, 0, 0, .18);
     --shadow-modal: 0 18px 60px rgba(0, 0, 0, .6);
     /* سلالم نظام التصميم: قيم محافظة لا تغيّر المظهر القائم بذاتها. */
     --z-base: 0;
@@ -100,6 +101,7 @@
     /* ظلال أخف على خلفية فاتحة */
     --shadow-pop: 0 10px 30px rgba(0, 0, 0, .15);
     --shadow-panel: -10px 0 34px rgba(0, 0, 0, .14);
+    --shadow-dock: 4px 0 14px rgba(0, 0, 0, .06);
     --shadow-modal: 0 18px 60px rgba(0, 0, 0, .2);
   }
   /* سطحا الكود يبقيان داكنين في الوضع الفاتح: الطرفية (#termPanel) والعارض
