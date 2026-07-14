@@ -149,9 +149,15 @@ async function exerciseLayout(spec) {
     `${spec.name}: خرجت الأزرار أو الحالة عمودياً من المؤلّف.`);
 
   const slashMenu = await openSlash(input);
+  const slashRow = slashMenu.querySelector('.slash-row');
+  assert(slashRow && slashRow.querySelector('.cmd') && slashRow.querySelector('.desc'),
+    `${spec.name}: بنية صف / الآمنة غير مكتملة.`);
   assertContained(slashMenu, chatColumn, `${spec.name}/slashMenu`);
   const slashWidth = rect(slashMenu).width;
   const fileMenu = await openFiles(input);
+  const fileRow = fileMenu.querySelector('.file-item');
+  assert(fileRow && fileRow.querySelector('.fname') && fileRow.querySelector('.fpath'),
+    `${spec.name}: بنية صف @ الآمنة غير مكتملة.`);
   assertContained(fileMenu, chatColumn, `${spec.name}/fileMenu`);
 
   const toolsDisplay = getComputedStyle(tools).display;
@@ -201,7 +207,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       { name: 'layout-381', className: 'layout-381', width: 381, toolsDisplay: 'grid', composerDisplay: 'grid', hideLabels: true },
     ]) await exerciseLayout(spec);
     assert(violations.length === 0, 'رُصد securitypolicyviolation أثناء اختبار التخطيط.');
-    checks.push('composer-states', 'menus-contained', 'terminal-full-width', 'zero-csp-violations');
+    checks.push('composer-states', 'menus-contained', 'safe-menu-dom', 'terminal-full-width', 'zero-csp-violations');
     window.__chatcolumnLayoutProgress = 'complete';
     window.__chatcolumnLayoutResult = { pass: true, checks, cases, violations };
   } catch (error) {

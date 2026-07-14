@@ -37,7 +37,7 @@ class SatrComposer extends HTMLElement {
   const ALLOWED_PASTE = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
   function renderAttachments() {
-    attachmentsBar.innerHTML = '';
+    attachmentsBar.replaceChildren();
     if (!pendingImages.length) { attachmentsBar.classList.remove('open'); return; }
     attachmentsBar.classList.add('open');
     for (const img of pendingImages) {
@@ -244,7 +244,7 @@ class SatrComposer extends HTMLElement {
     );
     if (!slashFiltered.length) return closeSlash();
     slashIndex = Math.min(slashIndex, slashFiltered.length - 1);
-    slashMenu.innerHTML = '';
+    slashMenu.replaceChildren();
     let hasCli = false;
     slashFiltered.forEach((c, i) => {
       const expanded = c.cli && (slashExpandAll || slashExpandedCmd === c.cmd);
@@ -253,7 +253,12 @@ class SatrComposer extends HTMLElement {
       el.setAttribute('role', 'option');
       const row = document.createElement('div');
       row.className = 'slash-row';
-      row.innerHTML = '<span class="cmd"></span><span class="desc"></span>';
+      const command = document.createElement('span');
+      command.className = 'cmd';
+      const description = document.createElement('span');
+      description.className = 'desc';
+      row.appendChild(command);
+      row.appendChild(description);
       row.querySelector('.cmd').textContent = c.cmd + (c.en ? ' · ' + c.en : '');
       row.querySelector('.desc').textContent = c.desc;
       el.appendChild(row);
@@ -350,13 +355,18 @@ class SatrComposer extends HTMLElement {
   }
 
   function renderFileMenu() {
-    fileMenu.innerHTML = '';
+    fileMenu.replaceChildren();
     fileFiltered.forEach((f, i) => {
       const slash = f.lastIndexOf('/');
       const el = document.createElement('div');
       el.className = 'file-item' + (i === fileIndex ? ' active' : '');
       el.setAttribute('role', 'option');
-      el.innerHTML = '<span class="fname"></span><span class="fpath"></span>';
+      const filename = document.createElement('span');
+      filename.className = 'fname';
+      const filepath = document.createElement('span');
+      filepath.className = 'fpath';
+      el.appendChild(filename);
+      el.appendChild(filepath);
       el.querySelector('.fname').textContent = slash < 0 ? f : f.slice(slash + 1);
       el.querySelector('.fpath').textContent = slash < 0 ? '' : f.slice(0, slash + 1);
       el.addEventListener('mousedown', (e) => { e.preventDefault(); pickFile(i); });

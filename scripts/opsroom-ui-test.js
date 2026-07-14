@@ -189,6 +189,18 @@ function testDesignGuard() {
   assert(midRowClose > index.indexOf('<satr-preview-panel') && terminalIndex > midRowClose,
     'terminal must remain outside and below the middle row');
   const base = read('src/styles/base.css');
+  const composer = read('src/ui/components/composer.js');
+  const composerStylesStart = base.indexOf('/* ===== الإدخال + قائمة الأوامر ===== */');
+  const composerStylesEnd = base.indexOf('/* ===== لوحة الجلسات:', composerStylesStart);
+  assert(composerStylesStart !== -1 && composerStylesEnd !== -1,
+    'composer style block markers must remain available for scoped guards');
+  const composerStyles = base.slice(composerStylesStart, composerStylesEnd);
+  assert(!/\b(?:innerHTML|insertAdjacentHTML)\b/.test(composer),
+    'composer must construct UI with safe DOM methods only');
+  assert(!/#[0-9a-fA-F]{3,8}(?![0-9a-fA-F])/.test(composerStyles),
+    'composer styles must use semantic color tokens only');
+  assert(!/z-index\s*:\s*-?\d+(?:\.\d+)?\b/i.test(composerStyles),
+    'composer styles must use z-index tokens only');
   for (const token of ['--z-base: 0', '--z-system: 1000', '--space-0: 0', '--space-7: 48px',
     '--radius-xs: 4px', '--radius-pill: 999px', '--side-surfaces-wide: 120rem']) {
     assert(base.includes(token), 'missing design token ' + token);

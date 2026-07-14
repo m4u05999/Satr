@@ -96,7 +96,7 @@ async function main() {
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console أثناء اختبار التخطيط.');
     for (const check of [
       'layout-806', 'layout-504', 'layout-381', 'composer-states',
-      'menus-contained', 'terminal-full-width', 'zero-csp-violations',
+      'menus-contained', 'safe-menu-dom', 'terminal-full-width', 'zero-csp-violations',
     ]) assert(result.checks.includes(check), 'غاب فحص التخطيط: ' + check);
     assert.deepStrictEqual(result.cases.map((item) => item.width), [806, 504, 381],
       'لم تُختبر عروض عمود الدردشة المعتمدة.');

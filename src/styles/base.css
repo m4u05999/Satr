@@ -17,6 +17,7 @@
     /* الهوية الذهبية — ثابتة */
     --gold: #D9A441;
     --gold-strong: #E5B655;    /* تحويم/توهج */
+    --on-gold: #1A1408;
     --gold-soft: rgba(217, 164, 65, 0.12);
     --gold-border: rgba(217, 164, 65, 0.35);
     --chat-user-surface: rgba(217, 164, 65, 0.09);
@@ -26,6 +27,7 @@
     --green-soft: rgba(113, 208, 131, 0.12);
     --green-border: rgba(113, 208, 131, 0.4);
     --red: #ec5d5e;            /* red10 */
+    --on-danger: #fff;
     --red-soft: rgba(236, 93, 94, 0.1);
     --red-border: rgba(236, 93, 94, 0.4);
     --blue: #8FB8E8;           /* أزرق ANSI الساطع من لوحة الطرفية — أرقام الكود في العارض */
@@ -439,28 +441,28 @@
   /* ===== الإدخال + قائمة الأوامر ===== */
   /* منذ ت-10: footer داخل مكوّن satr-composer (بلا Shadow — غلاف شفاف للتخطيط) */
   satr-composer { display: contents; }
-  footer { border-top: 1px solid var(--border); background: var(--surface); padding: 12px 18px 13px; position: relative; }
+  footer { border-top: 1px solid var(--border); background: var(--surface); padding: var(--space-3) 18px 13px; position: relative; } /* خارج السلّم عمداً — التقريب يغيّر البصر المحروس */
   .composer { max-width: 880px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; position: relative; }
   textarea {
     flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 12px; padding: 12px 14px; font-family: var(--sans); font-size: 16px; line-height: 1.7;
+    border-radius: var(--radius-lg); padding: var(--space-3) 14px; font-family: var(--sans); font-size: 16px; line-height: 1.7;
     resize: none; min-height: 52px; max-height: 220px; outline: none; unicode-bidi: plaintext;
     transition: border-color var(--dur) var(--ease);
   }
-  #send { background: var(--gold); color: #1A1408; border: none; font-weight: 600; padding: 12px 22px; border-radius: 12px; }
-  #send.stop { background: var(--red); color: #fff; }
+  #send { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600; padding: var(--space-3) 22px; border-radius: var(--radius-lg); }
+  #send.stop { background: var(--red); color: var(--on-danger); }
   /* وضع تحكّم المتصفح (نمط Comet): محايد افتراضياً، ذهبي بارز حين يكون مفعّلاً */
-  #browserCtl { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; font-family: var(--sans); transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  #browserCtl { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3) 14px; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; font-family: var(--sans); transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
   #browserCtl:hover { border-color: var(--gold); color: var(--text); }
   #browserCtl.active { background: var(--gold-soft); color: var(--gold-strong); border-color: var(--gold-border); }
   /* شريط المؤلّف (§5-د-1): محرك/نموذج بجوار الإرسال */
-  .composer-tools { max-width: 880px; margin: 0 auto 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .composer-tools { max-width: 880px; margin: 0 auto var(--space-2); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   .composer-tools .ct-label { font-size: 11.5px; color: var(--text-dim); }
   .composer-tools select, .composer-tools button { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 6px 10px; font-size: 12.5px; font-family: var(--sans); outline: none; cursor: pointer; }
   .composer-tools select:hover, .composer-tools button:hover { border-color: var(--gold); }
   .ct-hint { font-size: 11.5px; color: var(--text-dim); }
   /* شريط الحالة عربي RTL — المعرّفات والأرقام اللاتينية تنعزل LTR تلقائياً بخوارزمية BiDi */
-  .statusline { max-width: 880px; margin: 8px auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
+  .statusline { max-width: 880px; margin: var(--space-2) auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
   .statusline span { unicode-bidi: plaintext; }
 
   /* استجابة المؤلّف تتبع عرض عمود الدردشة لا عرض النافذة؛ قد تضيق الدردشة داخل نافذة واسعة. */
@@ -529,14 +531,14 @@
 
   /* قائمة / المنبثقة (و @ تشاركها التموضع) */
   #slashMenu, #fileMenu {
-    position: absolute; bottom: calc(100% + 8px); right: 0; left: auto;
+    position: absolute; bottom: calc(100% + var(--space-2)); right: 0; left: auto;
     min-width: 340px; max-width: 480px; max-height: 300px; overflow-y: auto;
-    background: var(--surface-2); border: 1px solid var(--gold); border-radius: 12px;
-    box-shadow: var(--shadow-pop); display: none; z-index: 50;
+    background: var(--surface-2); border: 1px solid var(--gold); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-pop); display: none; z-index: var(--z-popover);
   }
   #slashMenu.open, #fileMenu.open { display: block; animation: pop var(--dur) var(--ease); }
   .slash-item { cursor: pointer; }
-  .slash-row { padding: 9px 14px; display: flex; gap: 12px; align-items: baseline; }
+  .slash-row { padding: 9px 14px; display: flex; gap: var(--space-3); align-items: baseline; }
   .slash-item .cmd { font-family: var(--mono); color: var(--gold); font-size: 13px; direction: ltr; min-width: 90px; flex: none; }
   /* سطر واحد مقصوص لكل الأوامر — الوصف الكامل بالتوسيع (قرار قبول 14.1) */
   .slash-item .desc { font-size: 12.5px; color: var(--text-dim); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; text-align: start; }
@@ -545,7 +547,7 @@
   /* أوامر CLI المتزامنة (مهارات مضمّنة + مهاراتك): لون مميز */
   .slash-item.cli .cmd { color: var(--green); }
   /* سهم التوسيع + الوصف الكامل (درس مصغّر): أكورديون، ⇄ توسّع المحدد */
-  .slash-expand { flex: none; color: var(--text-dim); font-size: 11px; padding: 0 4px; transition: transform var(--dur) var(--ease); }
+  .slash-expand { flex: none; color: var(--text-dim); font-size: 11px; padding: 0 var(--space-1); transition: transform var(--dur) var(--ease); }
   .slash-item.expanded .slash-expand { transform: rotate(180deg); color: var(--gold); }
   .slash-desc-full {
     display: block; padding: 0 14px 10px; margin-top: -3px;
@@ -553,37 +555,37 @@
     white-space: pre-wrap; unicode-bidi: plaintext; text-align: start;
   }
   .slash-item.expanded .desc { visibility: hidden; } /* الكامل يحلّ محله — بلا قفزة تخطيط */
-  .slash-foot { display: flex; gap: 12px; padding: 7px 14px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--gold); cursor: pointer; position: sticky; bottom: 0; background: var(--surface-2); }
+  .slash-foot { display: flex; gap: var(--space-3); padding: 7px 14px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--gold); cursor: pointer; position: sticky; bottom: 0; background: var(--surface-2); }
   .slash-foot .foot-hint { color: var(--text-dim); cursor: default; margin-inline-start: auto; }
 
   /* عناصر منصّة @ — اسم الملف ذهبي ومساره مخفّت، كلاهما LTR أحادي المسافة */
-  .file-item { padding: 8px 14px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; direction: ltr; }
+  .file-item { padding: var(--space-2) 14px; cursor: pointer; display: flex; gap: var(--space-2); align-items: baseline; direction: ltr; }
   .file-item .fname { font-family: var(--mono); color: var(--gold); font-size: 13px; white-space: nowrap; }
   .file-item .fpath { font-family: var(--mono); color: var(--text-dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file-item.active, .file-item:hover { background: var(--gold-soft); }
 
   /* شريط الصور المرفقة فوق محرّر الإدخال */
-  .attachments { max-width: 880px; margin: 0 auto 8px; display: none; gap: 8px; flex-wrap: wrap; }
+  .attachments { max-width: 880px; margin: 0 auto var(--space-2); display: none; gap: var(--space-2); flex-wrap: wrap; }
   .attachments.open { display: flex; }
-  .attach-chip { position: relative; border: 1px solid var(--border); border-radius: 8px; padding: 3px; background: var(--surface-2); }
+  .attach-chip { position: relative; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 3px; background: var(--surface-2); }
   .attach-chip img { height: 46px; width: auto; max-width: 110px; border-radius: 5px; display: block; object-fit: cover; }
   .attach-chip .rm {
     position: absolute; top: -7px; inset-inline-end: -7px; width: 18px; height: 18px;
-    padding: 0; border: none; border-radius: 50%; background: var(--red); color: #fff;
+    padding: 0; border: none; border-radius: 50%; background: var(--red); color: var(--on-danger);
     font-size: 11px; line-height: 18px; text-align: center; cursor: pointer;
   }
   .attach-chip .rm:hover { border: none; }
   /* ===== شريط عمليات الخلفية قيد التشغيل (فوق المحرّر) ===== */
-  #bgBar { max-width: 880px; margin: 0 auto 8px; display: none; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #bgBar { max-width: 880px; margin: 0 auto var(--space-2); display: none; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   #bgBar.open { display: flex; }
   .bg-chips { display: contents; }
   .bg-label { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-  .bg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(113,208,131,.6); animation: bgpulse 1.8s infinite; }
+  .bg-dot { width: var(--space-2); height: var(--space-2); border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(113,208,131,.6); animation: bgpulse 1.8s infinite; }
   @keyframes bgpulse { 70% { box-shadow: 0 0 0 6px rgba(113,208,131,0); } 100% { box-shadow: 0 0 0 0 rgba(113,208,131,0); } }
-  .bg-chip { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; background: var(--surface-2); max-width: 100%; }
+  .bg-chip { display: flex; align-items: center; gap: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); background: var(--surface-2); max-width: 100%; }
   .bg-chip .cmd { font-family: var(--mono); font-size: 12px; color: var(--text); direction: ltr; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
   .bg-chip .age { font-family: var(--mono); font-size: 11px; color: var(--text-dim); direction: ltr; }
-  .bg-chip .kill { width: 18px; height: 18px; padding: 0; border: none; border-radius: 50%; background: var(--red); color: #fff; font-size: 11px; line-height: 18px; text-align: center; cursor: pointer; }
+  .bg-chip .kill { width: 18px; height: 18px; padding: 0; border: none; border-radius: 50%; background: var(--red); color: var(--on-danger); font-size: 11px; line-height: 18px; text-align: center; cursor: pointer; }
   .bg-chip .kill:hover { border: none; }
   #bgKillAll { font-size: 12px; padding: 3px 9px; }
   /* مصغّرات الصور داخل فقاعة رسالة المستخدم */
