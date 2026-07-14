@@ -184,6 +184,12 @@ async function main() {
     assert.strictEqual(completed.edits_seen, 2);
     assert.strictEqual(completed.permissions.write_used, 1);
     assert.strictEqual(completed.cost.usd, 0.02);
+    assert.strictEqual(completed.last_tool, 'edit');
+    assert.strictEqual(completed.last_file, 'src/new.js');
+    assert(!path.isAbsolute(completed.last_file));
+    assert(completed.last_activity_at >= completed.created_at);
+    assert.strictEqual(completed.timeout_ms, 1000);
+    assert.strictEqual(completed.deadline_at, completed.created_at + completed.timeout_ms);
     assert.strictEqual(stats.inputs[0].input.permissionMode, 'acceptEdits');
     assert.notStrictEqual(path.resolve(stats.inputs[0].cwd), path.resolve(project));
     assert.strictEqual(await fsp.readFile(path.join(project, 'src', 'app.js'), 'utf8'), 'export const value = 1;\n');
@@ -247,6 +253,7 @@ async function main() {
       return run && run.state === 'timed_out' ? run : null;
     }, 3000);
     assert.strictEqual(timeoutStats.stops, 1);
+    assert.strictEqual(timedDone.failure_code, 'timeout');
     assert.strictEqual(timeoutManager.get(timedDone.worktree.id), null);
 
     const stopStats = { inputs: [], stops: 0 };
@@ -254,6 +261,13 @@ async function main() {
     managers.push(stopManager);
     const stopped = executorModule.create({ worktrees: stopManager, runner: hangingRunner(stopStats), timeoutMs: 1000 });
     const running = await stopped.start({ task: 'مهمة ستتوقف' }, project, () => {});
+    assert.strictEqual(running.run.can_extend, true);
+    const extended = stopped.extend(running.run.id);
+    assert.strictEqual(extended.ok, true);
+    assert.strictEqual(extended.run.timeout_ms, 180000);
+    assert.strictEqual(extended.run.extended, true);
+    assert.strictEqual(extended.run.can_extend, false);
+    assert.strictEqual(stopped.extend(running.run.id).ok, false);
     const stoppedResult = await stopped.stop(running.run.id);
     assert.strictEqual(stoppedResult.ok, true);
     assert.strictEqual(stoppedResult.run.state, 'stopped');
@@ -273,7 +287,8 @@ async function main() {
       const run = outside.latest(project);
       return run && run.state === 'failed' ? run : null;
     }, 3000);
-    assert(outsideDone.error.includes('غير مسموح'));
+    assert(outsideDone.error.includes('سياسة الأدوات'));
+    assert.strictEqual(outsideDone.failure_code, 'policy_violation');
     assert.strictEqual(outsideStats.stops, 1);
     assert.strictEqual(await fsp.readFile(path.join(project, 'src', 'app.js'), 'utf8'), 'export const value = 1;\n');
 
@@ -301,15 +316,15 @@ async function main() {
     const mB = await runScript('معطوب متكرر', [
       { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED },
     ]);
-    assert((await waitState(mB.ex, 'failed')).error.includes('malformed_tool_budget'), 'الرابعة المتتالية يجب أن تفشل مغلقاً');
+    assert.strictEqual((await waitState(mB.ex, 'failed')).failure_code, 'policy_violation', 'الرابعة المتتالية يجب أن تفشل مغلقاً');
 
     // (ج) مدخل بلا علامة صريحة (schema مجهولة/بلا مسار) يبقى fail-closed لا malformed
     const mC = await runScript('بلا علامة', [{ name: 'Read', input: {} }]);
-    assert((await waitState(mC.ex, 'failed')).error.includes('غير مسموح'), 'المدخل بلا علامة صريحة يبقى fail-closed');
+    assert.strictEqual((await waitState(mC.ex, 'failed')).failure_code, 'policy_violation', 'المدخل بلا علامة صريحة يبقى fail-closed');
 
     // (د) أداة محظورة بعلامة معطوبة تبقى forbidden (fail-closed)
     const mD = await runScript('محظور بعلامة', [{ name: 'Bash', input: UNPARSED }]);
-    assert((await waitState(mD.ex, 'failed')).error.includes('forbidden_tool'), 'المحظور بعلامة يبقى fail-closed');
+    assert.strictEqual((await waitState(mD.ex, 'failed')).failure_code, 'policy_violation', 'المحظور بعلامة يبقى fail-closed');
 
     // (هـ) العدّاد متتالي: أداة صالحة تصفّره فلا يتراكم المعطوب المتباعد
     const mE = await runScript('معطوب متباعد بصالح', [
@@ -331,20 +346,20 @@ async function main() {
       { readFail: 'src/app.js' },
       { name: 'Read', input: UNPARSED },
     ]);
-    assert((await waitState(mG.ex, 'failed')).error.includes('malformed_tool_budget'), 'أداة فاشلة التنفيذ يجب ألا تصفّر عدّاد المعطوب');
+    assert.strictEqual((await waitState(mG.ex, 'failed')).failure_code, 'policy_violation', 'أداة فاشلة التنفيذ يجب ألا تصفّر عدّاد المعطوب');
 
     // (ح) وسم مقترن بحقل file_path قابل للتنفيذ ⇒ ليس وسماً نقياً ⇒ fail-closed (مسار خارجي)
     const mH = await runScript('وسم مع مسار خارجي', [
       { name: 'Read', input: { __unparsedToolInput: { raw: 'x', len: 1 }, file_path: path.join(temp, 'outside.txt') } },
     ]);
-    assert((await waitState(mH.ex, 'failed')).error.includes('غير مسموح'), 'الوسم المقترن بمسار قابل للتنفيذ يبقى fail-closed');
+    assert.strictEqual((await waitState(mH.ex, 'failed')).failure_code, 'policy_violation', 'الوسم المقترن بمسار قابل للتنفيذ يبقى fail-closed');
 
     console.log('✓ detached worktree lifecycle and bounded diff');
     console.log('✓ executor writes only inside the isolated worktree');
     console.log('✓ two explicitly labelled runners share the same isolation policy');
     console.log('✓ missing, unlabeled, or malformed runners fail before worktree creation');
     console.log('✓ completed execution returns diff without automatic merge');
-    console.log('✓ timeout and interrupt stop the handle and remove worktrees');
+    console.log('✓ timeout, one-shot capped extension, and interrupt clean worktrees');
     console.log('✓ outside write paths fail closed');
     console.log('✓ sdk-only malformed marker tolerated; reset needs real success; unmarked/forbidden/marker+path/failed-exec stay fail-closed');
   } finally {

@@ -178,6 +178,9 @@ async function main() {
     assert(mainSource.includes("recordOpsSystem(artifact.room_id, 'phase_gate'"));
     assert(mainSource.includes("emitOpsReview(artifact.room_id"));
     assert(mainSource.includes("emitOpsVerification(artifact.room_id"));
+    assert(mainSource.includes("'team-terminal:' + team.id + ':' + team.state"));
+    assert(mainSource.includes("ipcMain.handle('satr:opsRoomRestore'"));
+    assert(mainSource.includes('opsartifacts.remove(artifact.artifact_id, { projectRoot: artifact.sourceRoot })'));
 
     console.log('✓ persistence rebuilds the same bounded timeline after a module restart');
     console.log('✓ append-only preserves earlier entries and rejects overflow without deletion');

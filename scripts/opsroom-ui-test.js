@@ -63,6 +63,7 @@ async function testReducer() {
     type: 'execution_team_update', team: { ...current.team, state: 'running', artifact_id: '' },
   } });
   assert.strictEqual(deriveOpsRoomState(state).canStop, true, 'running team must be stoppable');
+  assert.strictEqual(deriveOpsRoomState(state).nextAction.key, 'team_running', 'running team needs a truthful wait instruction');
   assert.strictEqual(deriveOpsRoomState(state).canReview, false, 'review cannot start before artifact completion');
 
   state = opsRoomReducer(state, { type: 'hydrate', room: {
@@ -83,13 +84,17 @@ async function testReducer() {
   } });
   assert.deepStrictEqual(state.entries.map((entry) => entry.id), ['ops-entry-a', 'ops-entry-b', 'ops-entry-c'], 'stable dedupe ordering');
   assert.strictEqual(deriveOpsRoomState(state).canReview, true, 'completed artifact must expose explicit review action');
+  assert.strictEqual(deriveOpsRoomState(state).nextAction.action, 'review', 'completed artifact recommends review without starting it');
 
   state = opsRoomReducer(state, { type: 'settled', review: current.review });
   assert.strictEqual(deriveOpsRoomState(state).canPrepareVerification, true, 'all actual verdicts unlock prepare only');
+  assert.strictEqual(deriveOpsRoomState(state).nextAction.action, 'prepare');
   state = opsRoomReducer(state, { type: 'settled', verification: { ...current.verification, state: 'pending_confirmation' } });
   assert.strictEqual(deriveOpsRoomState(state).canRunVerification, true, 'pending verification needs explicit confirmation');
+  assert.strictEqual(deriveOpsRoomState(state).nextAction.action, 'verify');
   state = opsRoomReducer(state, { type: 'settled', verification: current.verification });
   assert.strictEqual(deriveOpsRoomState(state).canMerge, true, 'same-artifact approvals and verification unlock merge');
+  assert.strictEqual(deriveOpsRoomState(state).nextAction.action, 'merge');
   assert.strictEqual(isCurrentArtifact(current.verification, state), true, 'artifact helper accepts current fingerprint');
 
   const staleReview = fixture(staleArtifact).review;
@@ -154,6 +159,20 @@ function testDesignGuard() {
     'IPC handlers must validate team ids through the module export, not the runtime instance');
   assert(mainProcess.includes('executionTeamModule.SAFE_RUN_ID.test('),
     'IPC handlers must retain the execution-team id guard');
+  assert(mainProcess.includes('OPS_TIMEOUT_SECONDS.has(timeoutSeconds)'), 'timeout presets must be validated in main');
+  assert(mainProcess.includes("ipcMain.handle('satr:executionTeamExtend'"), 'one-shot timeout extension IPC missing');
+  assert(mainProcess.includes("'team-terminal:' + team.id + ':' + team.state"), 'terminal team outcomes must enter the durable ledger');
+  assert(mainProcess.includes("ipcMain.handle('satr:opsRoomRestore'"), 'artifact restore IPC missing');
+  assert(mainProcess.includes("ipcMain.handle('satr:opsRoomArtifactDelete'"), 'artifact deletion IPC missing');
+  assert(mainProcess.includes("ipcMain.handle('satr:opsBrainstormStart'"), 'brainstorm IPC missing');
+  assert(mainProcess.includes('opsBrainstorm.latest(cwd)'), 'brainstorm history must be scoped to the active project');
+  assert(mainProcess.includes("ipcMain.handle('satr:opsPlanStart'"), 'planner IPC missing');
+  const preload = read('electron/preload.js');
+  assert(preload.includes('timeoutSeconds'), 'timeout preset must cross the narrow preload bridge explicitly');
+  assert(preload.includes('executionTeamExtend'), 'timeout extension must cross a narrow preload method');
+  for (const method of ['opsRoomHistory', 'opsRoomRestore', 'opsRoomArtifactDelete', 'opsBrainstormStart', 'opsPlanStart']) {
+    assert(preload.includes(method), 'missing narrow preload method ' + method);
+  }
 }
 
 async function main() {

@@ -72,7 +72,7 @@ function parallelRunner(stats) {
         emit({ type: 'result', total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 4 } });
         finishActive();
         emit({ type: 'proc_done', code: 0 });
-      }, 80);
+      }, 200);
       return {
         resolvePermission(id, allow) { stats.permissions.push({ id, allow }); return true; },
         stop() {
@@ -171,6 +171,9 @@ async function main() {
     assert.deepStrictEqual(completed.agents.map((agent) => agent.ownership[0]), ['src/a.js', 'src/b.js', 'src/c.js']);
     assert(completed.agents.every((agent) => agent.changes.files.length === 1));
     assert.strictEqual(completed.cost.usd, 0.03);
+    assert.strictEqual(completed.timeout_ms, 1000);
+    assert(completed.agents.every((agent) => agent.last_tool === 'edit'));
+    assert.deepStrictEqual(completed.agents.map((agent) => agent.last_file).sort(), ['src/a.js', 'src/b.js', 'src/c.js']);
     assert.strictEqual(completed.merged, false);
     assert.strictEqual(completed.merge_supported, true);
     assert.strictEqual(Object.prototype.hasOwnProperty.call(completed, 'patch'), false);
@@ -193,6 +196,10 @@ async function main() {
     assert.strictEqual(overlapResult.ok, false);
     assert.strictEqual(overlapResult.error, 'ownership_overlap');
     assert.strictEqual(overlapStats.calls.length, 0);
+    const badTimeout = await executionTeamModule.create({ runner: hangingRunner({ calls: [], stops: 0 }) }).start({
+      timeoutMs: 301000, agents: [{ task: 'مهلة غير معتمدة', ownership: ['src/a.js'] }],
+    }, project, () => {});
+    assert.strictEqual(badTimeout.error, 'bad_input');
 
     const outsideStats = { calls: [], stops: 0 };
     const outsideManager = worktrees.createManager({ root: path.join(temp, 'outside-store') });
@@ -204,6 +211,7 @@ async function main() {
       return snapshot && snapshot.state === 'failed' ? snapshot : null;
     }, 5000, 'outside ownership');
     assert(outsideDone.agents[0].error.includes('الملكية'));
+    assert.strictEqual(outsideDone.agents[0].failure_code, 'ownership_violation');
     assert(outsideDone.agents[0].changes.files.some((file) => file.rel === 'src/b.js'));
     assert.strictEqual(outsideStats.stops, 1);
     assert.strictEqual(await fsp.readFile(path.join(project, 'src', 'b.js'), 'utf8'), 'export const value = 1;\n');
@@ -229,6 +237,14 @@ async function main() {
       { task: 'انتظر ج', ownership: ['src/c.js'] },
     ] }, project, () => {});
     await waitFor(() => stopStats.calls.length === 3, 5000, 'collective start');
+    assert.strictEqual(running.team.can_extend, true);
+    const extended = await stoppable.extend(running.team.id);
+    assert.strictEqual(extended.ok, true);
+    assert.strictEqual(extended.team.timeout_ms, 180000);
+    assert.strictEqual(extended.team.extended, true);
+    assert.strictEqual(extended.team.can_extend, false);
+    assert(extended.team.agents.every((agent) => agent.extended === true && agent.can_extend === false));
+    assert.strictEqual((await stoppable.extend(running.team.id)).ok, false);
     const stopped = await stoppable.stop(running.team.id);
     assert.strictEqual(stopped.ok, true);
     assert.strictEqual(stopped.team.state, 'stopped');
