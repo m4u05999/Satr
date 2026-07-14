@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('satr', {
   downloadUpdate: () => ipcRenderer.invoke('satr:downloadUpdate'),
   restartUpdate: () => ipcRenderer.invoke('satr:restartUpdate'),
   permission: (id, allow, always) => ipcRenderer.invoke('satr:permission', { id, allow, always }),
+  answerQuestion: (id, selections) => ipcRenderer.invoke('satr:answerQuestion', { id, selections }), // AskUserQuestion (SDK)
   undoEdit: (id) => ipcRenderer.invoke('satr:undoEdit', id),
   listBgProcs: () => ipcRenderer.invoke('satr:listBgProcs'),
   killBgProc: (id) => ipcRenderer.invoke('satr:killBgProc', id),

@@ -20,8 +20,18 @@ electron/agent.js    ← محرك Claude Agent SDK: بث جزئي + اعتراض
                         بدل حزم ثنائي ثانٍ ~234م.ب — لذا المثبّت يبقى ~79م.ب. resolveClaudeBin
                         يحدد المسار، والبناء يستثني claude-agent-sdk-win32-x64 من الحزمة.
                         يمرّر أيضاً خيار skills للـ SDK: 'all' أو مصفوفة الأسماء المختارة من لوحة /مهارات.
-                        ويمنع AskUserQuestion عبر disallowedTools: أداة اختيار تفاعلية لا يوفّر «سطر»
-                        واجهتها (canUseTool سماح/رفض فقط) فكانت تعلّق — منعها يجعل النموذج يسأل نصّاً.
+                        ويدعم AskUserQuestion بأسئلة اختيار عربية (بعد أن كان محجوباً): أُثبت حيّاً
+                        (scripts/ask-user-question-probe.js) أن SDK يقبل إرجاع {behavior:'allow',
+                        updatedInput:{...input, answers:{[question]:label}}} من canUseTool فيستعمله
+                        النموذج في الدور التالي. فمسار خاص في canUseTool يبثّ question_request منقّى
+                        (sanitizeQuestions) لمكوّن <satr-question-dialog>، والردّ **مؤشرات فقط**
+                        (satr:answerQuestion) تبني updatedInput من input الأصلي (buildQuestionAnswer —
+                        لا نص حر، أمان). التنقية fail-closed صارمة: sanitizeQuestions يرفض التجاوز
+                        (لا قصّ فيتطابق المعروض والمُعاد) وتكرار نص السؤال/label؛ buildQuestionAnswer
+                        يرفض كلياً أي جزئية (سؤال ناقص/أحادي بعدة خيارات/مؤشر خارج النطاق). زر «إلغاء»
+                        يرسل إجابة فارغة ⇒ deny (والواجهة تنتظر ok وتُبقي الحوار عند الفشل). الإدخال
+                        الحر (Other) خارج النطاق — يطرحه النموذج نصّاً. السياقات المعزولة ترفضه fail-closed.
+                        الاختبار: test:askquestion (نقي، خصومي) + test:question-dialog (الحيّ) + probe الحيّ.
                         كما يوفّر withControlQuery: تشغيل عابر لاستدعاء «دوال التحكّم» في SDK
                         (mcpServerStatus/reconnectMcpServer/toggleMcpServer/getContextUsage) للوحتي
                         /موصلات و /سياق — مولّد إدخال ينتظر فقط ليُبقي العملية حيّة، ثم close+q.close())

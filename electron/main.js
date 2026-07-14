@@ -848,6 +848,23 @@ ipcMain.handle('satr:permission', (event, p) => {
   return { ok };
 });
 
+// رد أسئلة AskUserQuestion (SDK فقط) — selections مؤشرات صحيحة محدودة حصراً (لا نص حر):
+// agent.js يبني updatedInput من input الأصلي المحفوظ، فالتنقية هنا طبقة أولى ثم فحص ثانٍ هناك.
+ipcMain.handle('satr:answerQuestion', (event, p) => {
+  // selections فارغة = إلغاء صريح (⇒ deny في agent.js). >4 أسئلة يخالف العقد ⇒ رفض الحمولة.
+  if (!p || typeof p.id !== 'string' || !Array.isArray(p.selections) || p.selections.length > 4) return { ok: false };
+  // تطبيع نوع فقط بلا إسقاط عناصر (لا filter صامت): أي مؤشر مخالف يصبح -1 فيرفضه agent.js
+  // fail-closed كطبقة ثانية (رفض كامل، لا إجابة جزئية). العقد يسمح حتى 4 خيارات للسؤال.
+  const selections = p.selections.map((s) => ({
+    questionIndex: Number.isInteger(s && s.questionIndex) ? s.questionIndex : -1,
+    optionIndexes: Array.isArray(s && s.optionIndexes) && s.optionIndexes.length <= 4
+      ? s.optionIndexes.map((i) => (Number.isInteger(i) ? i : -1)) : [-1],
+  }));
+  let ok = false;
+  if (currentRun && typeof currentRun.resolveQuestion === 'function') ok = currentRun.resolveQuestion(p.id, selections);
+  return { ok };
+});
+
 // ---------- التراجع عن تعديل ملف (المرحلة 3) ----------
 // المعرّف هو tool_use_id الذي أصدره المحرك؛ نتحقق من شكله قبل تمريره.
 // المسار نفسه مخزَّن في لقطة agent.js (ليس مدخلاً من الواجهة) فلا حقن مسارات.

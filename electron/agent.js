@@ -282,6 +282,93 @@ function phaseEventFromStreamEvent(ev) {
   return null;
 }
 
+// ---------- AskUserQuestion: تنقية للعرض + بناء الإجابة (دوال نقية قابلة للاختبار) ----------
+// عقد SDK (sdk-tools.d.ts): input فيه questions[1..4]، كل سؤال {question, header,
+// options[2..4]:{label, description, preview?}, multiSelect}. تُمرَّر الإجابة داخل
+// updatedInput.answers[questionText] = label (أو labels مفصولة بفواصل لـ multiSelect).
+const AUQ_LIMITS = { questions: 4, options: 4, q: 2000, header: 200, label: 400, desc: 2000, preview: 4000 };
+// يرفض النص المتجاوز للسقف بدل قصّه — فيتطابق ما يُعرض للمستخدم مع ما يُعاد للنموذج (P1-b).
+// يعيد النص إن صالحاً، وnull للنوع المخالف أو التجاوز (⇒ رفض السؤال).
+function fitText(v, max) {
+  if (typeof v !== 'string') return null;
+  return Array.from(v).length > max ? null : v;
+}
+// نسخة منقّاة للعرض في الواجهة، أو null إن خالف input عقد الأداة (fail-closed صارم):
+// يرفض التجاوز، وتكرار نص سؤال (لا يُمثَّل في answers map)، وتكرار label في سؤال واحد.
+function sanitizeQuestions(input) {
+  const qs = input && Array.isArray(input.questions) ? input.questions : null;
+  if (!qs || qs.length < 1 || qs.length > AUQ_LIMITS.questions) return null;
+  const seenQuestions = new Set();
+  const out = [];
+  for (const q of qs) {
+    if (!q || typeof q !== 'object') return null;
+    const question = fitText(q.question, AUQ_LIMITS.q);
+    if (!question) return null;                       // فارغ أو متجاوز
+    if (seenQuestions.has(question)) return null;     // نص سؤال مكرر
+    seenQuestions.add(question);
+    const header = fitText(q.header, AUQ_LIMITS.header);
+    if (header === null) return null;                 // header مخالف النوع أو متجاوز
+    if (typeof q.multiSelect !== 'boolean') return null;
+    const opts = Array.isArray(q.options) ? q.options : null;
+    if (!opts || opts.length < 2 || opts.length > AUQ_LIMITS.options) return null;
+    const options = [];
+    const seenLabels = new Set();
+    for (const o of opts) {
+      if (!o || typeof o !== 'object') return null;
+      const label = fitText(o.label, AUQ_LIMITS.label);
+      if (!label) return null;                        // فارغ أو متجاوز
+      if (seenLabels.has(label)) return null;         // label مكرر يلبس الاختيار
+      seenLabels.add(label);
+      const description = fitText(o.description, AUQ_LIMITS.desc);
+      if (description === null) return null;          // description مخالف النوع أو متجاوز
+      const option = { label, description };
+      if (o.preview != null) {
+        const preview = fitText(o.preview, AUQ_LIMITS.preview);
+        if (preview === null) return null;            // preview متجاوز
+        if (preview) option.preview = preview;
+      }
+      options.push(option);
+    }
+    out.push({ question, header, options, multiSelect: q.multiSelect });
+  }
+  return out;
+}
+// يبني updatedInput fail-closed من input الأصلي + selections (مؤشرات فقط، لا نص حر ⇒ لا حقن).
+// أي مخالفة ⇒ null (رفض كامل، لا إجابة جزئية): يجب إجابة كل الأسئلة (0..n-1 مرة واحدة)، اختيار
+// واحد للأحادي، خيارات فريدة صالحة، ولا تصادم مفاتيح (نص سؤال مكرر). عقد SDK: answers[q]=label.
+function buildQuestionAnswer(originalInput, selections) {
+  const qs = sanitizeQuestions(originalInput);
+  if (!qs) return null;
+  const sels = Array.isArray(selections) ? selections : null;
+  if (!sels || sels.length !== qs.length) return null; // كل الأسئلة تُجاب بالضبط
+  const answers = {};
+  const answeredIndexes = new Set();
+  for (const sel of sels) {
+    if (!sel || !Number.isInteger(sel.questionIndex)) return null;
+    const qi = sel.questionIndex;
+    if (qi < 0 || qi >= qs.length || answeredIndexes.has(qi)) return null; // خارج النطاق أو مكرر
+    answeredIndexes.add(qi);
+    const q = qs[qi];
+    if (!q || typeof q.question !== 'string' || !q.question) return null;
+    const opts = Array.isArray(q.options) ? q.options : [];
+    const idxs = Array.isArray(sel.optionIndexes) ? sel.optionIndexes : null;
+    if (!idxs || !idxs.length) return null;              // كل سؤال يحتاج اختياراً
+    if (!q.multiSelect && idxs.length !== 1) return null; // الأحادي: اختيار واحد فقط
+    const seenOpt = new Set();
+    const labels = [];
+    for (const i of idxs) {
+      if (!Number.isInteger(i) || i < 0 || i >= opts.length || seenOpt.has(i)) return null; // خارج النطاق أو مكرر
+      seenOpt.add(i);
+      const label = opts[i] && opts[i].label;
+      if (typeof label !== 'string' || !label) return null;
+      labels.push(label);
+    }
+    answers[q.question] = labels.join(', ');
+  }
+  if (Object.keys(answers).length !== qs.length) return null; // تصادم مفاتيح = نص سؤال مكرر
+  return { ...originalInput, questions: qs, answers };
+}
+
 /**
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
@@ -295,6 +382,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   const { query } = await loadSdk();
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
+  const pendingQuestions = new Map(); // id → { resolve, input } لأسئلة AskUserQuestion المعلّقة
   const taskTitles = new Map(); // task_id → عنوان؛ يربط رسائل Claude الجزئية بلا افتراضات
   const taskStatuses = new Map(); // task_id → حالة؛ تحديث owner وحده لا يعيدها pending
   const pendingTaskCreates = new Map(); // tool_use_id لـTaskCreate → input حتى تصل نتيجته ذات id
@@ -422,6 +510,26 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // الثغرة). readOnly = القرائية المعفاة دائماً (مهارة/إعداد تحقق/اقتراح ذاكرة)؛
       // browserTool = ضمن أدوات المتصفح (تُعفى فقط بـ browserControl الصريح). في auto لا
       // تعفي «موافقة دائمة» سابقة أداةً غير آمنة (داخل decideAutoApproval).
+      // AskUserQuestion: اختيار تفاعلي — مسار خاص لا يمرّ بالسماح/الرفض ولا alwaysAllowed.
+      // نبثّ الأسئلة منقّاة للواجهة (question_request)، والردّ مؤشرات تبني updatedInput من
+      // input الأصلي المحفوظ (لا نص حر). صيغة تخالف العقد ⇒ رفض (fail-closed).
+      if (toolName === 'AskUserQuestion') {
+        // defence-in-depth: السياقات المعزولة (باحث/مراجع/عصف) بلا واجهة أسئلة — رفض بدل تعليق.
+        // (tools محصورة أصلاً هناك فلا تصلها الأداة، لكن الحارس يمنع أي تعليق إن تسرّبت.)
+        if (isolatedPolicy) return { behavior: 'deny', message: 'الأسئلة التفاعلية غير متاحة في هذا السياق المعزول' };
+        const id = String(toolUseID || 'q_' + Math.random().toString(36).slice(2));
+        const questions = sanitizeQuestions(input);
+        if (!questions) return { behavior: 'deny', message: 'صيغة أسئلة AskUserQuestion غير مدعومة' };
+        emit({ type: 'question_request', id, questions });
+        return new Promise((resolve) => {
+          pendingQuestions.set(id, { resolve, input });
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              if (pendingQuestions.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
+            }, { once: true });
+          }
+        });
+      }
       const decision = decideAutoApproval(toolName, {
         permissionMode, alwaysAllowed, browserControl,
         readOnly: PORTABLE_SKILL_TOOLS.has(toolName) || READ_ONLY_VERIFY_TOOLS.has(toolName) || MEMORY_PROPOSAL_TOOLS.has(toolName),
@@ -458,12 +566,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // مضمون (انظر توثيق خيار skills في الـ SDK). مصفوفة فارغة = لا مهارات مفعّلة.
   options.skills = skillContext.nativeClaude;
 
-  // AskUserQuestion أداة تفاعلية تعرض قائمة خيارات قابلة للنقر وتنتظر اختيار المستخدم —
-  // تتطلب واجهة اختيار حية لا يوفّرها «سطر» (canUseTool يعطي سماح/رفض فقط، لا يعيد نتيجة
-  // اختيار). فبدونها كان مربع الإذن يعرض JSON السؤال ويعلّق بلا وسيلة للرد. منعها من سياق
-  // النموذج يجعله يطرح أسئلته نصّاً في المحادثة، فيجيب المستخدم بالكتابة في المحرّر —
-  // وهو السلوك الطبيعي الذي يدعمه «سطر» أصلاً. (disallowedTools يزيل الأداة كلياً.)
-  options.disallowedTools = ['AskUserQuestion'];
+  // AskUserQuestion (أسئلة اختيار عربية): كانت محجوبة لأن canUseTool يعطي سماح/رفض فقط.
+  // أُثبت حيّاً (scripts/ask-user-question-probe.js) أن SDK يقبل إرجاع updatedInput يحمل
+  // الاختيار، فيستعمله النموذج في الدور التالي. فصار «سطر» يعرضها بمكوّن أسئلة عربي
+  // (question_request أعلاه) بدل حجبها. لا disallowedTools بعد الآن — في السياقات المعزولة
+  // القائمة البيضاء للأدوات تحجبها أصلاً، والمسار أعلاه يرفضها fail-closed كدفاع عميق.
   // تعريف الوكيل ببيئة «سطر» (م-1-ب — الدفعة 5): بدونه لا يعلم النموذج بالمعاينة
   // المدمجة فيفتح متصفحاً خارجياً بـ Start-Process (لقطة مالك من قبول م-1).
   // إلحاق على برومبت claude_code الأصلي لا استبدال له (preset + append).
@@ -1022,6 +1129,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         pending.delete(id);
         p.resolve({ behavior: 'deny', message: 'انتهى التشغيل' });
       }
+      for (const [id, p] of pendingQuestions) {
+        pendingQuestions.delete(id);
+        p.resolve({ behavior: 'deny', message: 'انتهى التشغيل' });
+      }
     }
   })();
 
@@ -1037,10 +1148,26 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         : { behavior: 'deny', message: 'رفض المستخدم استخدام هذه الأداة' });
       return true;
     },
-    // إيقاف حقيقي: مقاطعة النموذج + إنهاء الإدخال + رفض الأذونات المعلقة
+    // رد الواجهة على أسئلة AskUserQuestion: selections مؤشرات فقط، تبني updatedInput من
+    // input الأصلي المحفوظ (لا نص حر). لا «موافقة دائمة» — كل استدعاء يحتاج إجابة جديدة.
+    resolveQuestion(id, selections) {
+      const q = pendingQuestions.get(id);
+      if (!q) return false;
+      pendingQuestions.delete(id);
+      const updatedInput = buildQuestionAnswer(q.input, selections);
+      q.resolve(updatedInput
+        ? { behavior: 'allow', updatedInput }
+        : { behavior: 'deny', message: 'لم يُختَر جواب صالح' });
+      return true;
+    },
+    // إيقاف حقيقي: مقاطعة النموذج + إنهاء الإدخال + رفض الأذونات والأسئلة المعلقة
     async stop() {
       for (const [id, p] of pending) {
         pending.delete(id);
+        p.resolve({ behavior: 'deny', message: 'أوقف المستخدم الطلب' });
+      }
+      for (const [id, p] of pendingQuestions) {
+        pendingQuestions.delete(id);
         p.resolve({ behavior: 'deny', message: 'أوقف المستخدم الطلب' });
       }
       try { await q.interrupt(); } catch (e) { /* قد يكون التشغيل انتهى أصلاً */ }
@@ -1134,4 +1261,4 @@ async function listCommands(cwd) {
   }
 }
 
-module.exports = { start, undoEdit, mcpStatus, mcpAction, contextUsage, listCommands, resolveClaudeBin };
+module.exports = { start, undoEdit, mcpStatus, mcpAction, contextUsage, listCommands, resolveClaudeBin, sanitizeQuestions, buildQuestionAnswer };

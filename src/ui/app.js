@@ -328,6 +328,7 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
   ]) surfaceCoordinator.register(name, document.querySelector(selector), 'panel');
   surfaceCoordinator.register('ops-dialog', opsDialogEl, 'dialog');
   surfaceCoordinator.register('permission-dialog', document.querySelector('satr-perm-dialog'), 'dialog');
+  surfaceCoordinator.register('question-dialog', document.querySelector('satr-question-dialog'), 'dialog');
 
   // تحت العتبة الواسعة يبقى سطح جانبي واحد فقط؛ 120rem تبقي للدردشة عرضاً عملياً.
   const MULTI_SURFACE_MEDIA = '(min-width: 120rem)';
@@ -492,6 +493,11 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
       permEl.request({ id: ev.id, tool: ev.tool, detail: permDetailText(ev.tool, ev.input) });
       return;
     }
+    // أسئلة الاختيار (AskUserQuestion) — تُعالج دائماً أيضاً (تنتظر رد المستخدم أثناء الدور)
+    if (ev.type === 'question_request') {
+      questionEl.ask({ id: ev.id, questions: ev.questions });
+      return;
+    }
     // عمليات الخلفية مستقلة عن الدور: تصل حتى بعد انتهاء التشغيل، فتُعالَج قبل حارس الكتلة
     if (ev.type === 'bg_procs') {
       if (composerEl.setBgProcs) composerEl.setBgProcs(ev.procs);
@@ -630,6 +636,7 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
     sendBtn.textContent = 'إرسال';
     sendBtn.classList.remove('stop');
     closePermDialog();
+    closeQuestionDialog();
     input.focus();
   }
 
@@ -652,6 +659,15 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
     try { return JSON.stringify(inp || {}, null, 1).slice(0, 1000); } catch { return ''; }
   }
   function closePermDialog() { if (permEl.closeAll) permEl.closeAll(); }
+
+  // ---------- أسئلة الاختيار العربية: مكوّن <satr-question-dialog> (AskUserQuestion، SDK) ----------
+  // المكوّن يملك العرض والرد بمؤشرات (satr.answerQuestion مباشرة + حدث notice للخيط).
+  const questionEl = document.querySelector('satr-question-dialog');
+  questionEl.addEventListener('notice', (e) => addNotice(e.detail));
+  questionEl.addEventListener('perm-visible', (e) => {
+    surfaceCoordinator.setDialog('question-dialog', !!e.detail);
+  });
+  function closeQuestionDialog() { if (questionEl.closeAll) questionEl.closeAll(); }
 
   // ---------- وضع تحكّم المتصفح (نمط Comet) ----------
   // زرّ بجوار الإرسال يمنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح

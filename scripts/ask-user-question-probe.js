@@ -88,11 +88,13 @@ async function main() {
       if (!question || typeof question.question !== 'string' || !selected) {
         return { behavior: 'deny', message: 'AskUserQuestion input shape did not match the installed SDK contract.' };
       }
-      trace.updatedInput = {
-        ...input,
-        answers: { [question.question]: selected },
-        annotations: { [question.question]: { notes: nonce } },
-      };
+      // يبني updatedInput عبر buildQuestionAnswer الإنتاجي نفسه (يثبت شكله الفعلي — questions
+      // المنقّى — حيّاً، لا نسخة يدوية). nonce فوق مخرج الدالة لتتبّع وصول الإجابة للنموذج.
+      const { buildQuestionAnswer } = require('../electron/agent.js');
+      const selections = questions.map((_, qi) => ({ questionIndex: qi, optionIndexes: [1] }));
+      const built = buildQuestionAnswer(input, selections);
+      if (!built) return { behavior: 'deny', message: 'buildQuestionAnswer rejected the probe input.' };
+      trace.updatedInput = { ...built, annotations: { [question.question]: { notes: nonce } } };
       console.log('PROBE_CAN_USE_INPUT=' + compact(trace.input));
       console.log('PROBE_UPDATED_INPUT=' + compact(trace.updatedInput));
       return { behavior: 'allow', updatedInput: trace.updatedInput };
