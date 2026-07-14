@@ -21,8 +21,8 @@
   (function initTheme() {
     let saved = localStorage.getItem('satr_theme');
     if (saved !== 'light' && saved !== 'dark') {
-      // لا اختيار محفوظ: اتبع تفضيل النظام أول مرة
-      saved = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+      // لا اختيار محفوظ: الافتراضي الوضع الداكن دائماً (قرار المالك — لا يتبع تفضيل النظام)
+      saved = 'dark';
     }
     applyTheme(saved);
     const btn = $('themeToggle');
