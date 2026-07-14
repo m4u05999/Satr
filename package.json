@@ -25,6 +25,7 @@
     "test:opscontinuity": "node scripts/opscontinuity-test.js",
     "test:opsadvisor": "node scripts/opsadvisor-test.js",
     "test:xterm-csp": "electron scripts/xterm-csp-test.js",
+    "test:chatcolumn-layout": "electron scripts/chatcolumn-layout-test.js",
     "test:codex-executor-probe": "node scripts/codex-executor-probe.js",
     "test:codexmcp": "node scripts/codexmcp-test.js",
     "test:autogate": "node scripts/autogate.test.js",

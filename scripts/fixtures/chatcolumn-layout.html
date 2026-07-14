@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>chat column layout</title>
+  <link rel="stylesheet" href="../../src/vendor/fonts.css">
+  <link rel="stylesheet" href="../../src/styles/base.css">
+  <link rel="stylesheet" href="chatcolumn-layout.css">
+</head>
+<body class="layout-806">
+<input id="cwd" value="D:\sater\satr-2" aria-hidden="true">
+
+<div id="midRow">
+<div id="chatColumn">
+<satr-chat>
+<main><div class="thread"><div class="empty"><p>محتوى اختبار التخطيط</p></div></div></main>
+</satr-chat>
+<satr-composer>
+<footer>
+  <div id="bgBar" aria-label="عمليات قيد التشغيل">
+    <span class="bg-label"><span class="bg-dot" aria-hidden="true"></span>عمليات قيد التشغيل</span>
+    <span id="bgChips" class="bg-chips"></span>
+    <button id="bgKillAll" type="button">إيقاف الكل</button>
+  </div>
+  <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
+  <!-- شريط المؤلّف (§5-د): محرك/نموذج/صلاحيات + إرفاق، بجوار الإرسال (نمط Cursor) -->
+  <div class="composer-tools">
+    <span class="ct-label">المحرك</span>
+    <select id="engine" title="المحرك/المزوّد">
+      <option value="sdk">SDK — بث وأذونات حية</option>
+      <option value="codex">Codex — OpenAI (بث وأذونات)</option>
+      <option value="cli">CLI — احتياطي</option>
+      <option value="gemini">Gemini (REST)</option>
+    </select>
+    <span class="ct-label">النموذج</span>
+    <select id="model" title="النموذج"><option value="">الافتراضي</option></select>
+    <select id="perm" title="وضع الصلاحيات">
+      <option value="acceptEdits">قبول التعديلات تلقائياً</option>
+      <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
+      <option value="default">افتراضي</option>
+      <option value="auto">تلقائي ذكي (يسأل عن التنفيذ والكتابة)</option>
+      <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
+    </select>
+    <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (محرك SDK)">📎 إرفاق</button>
+    <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+  </div>
+  <div class="composer">
+    <div id="slashMenu" role="listbox"></div>
+    <div id="fileMenu" role="listbox"></div>
+    <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1"></textarea>
+    <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح: امنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح فقط — محرك SDK)">🖱️ متصفح</button>
+    <button id="send">إرسال</button>
+  </div>
+  <div class="statusline">
+    <span id="sessionInfo">لا جلسة</span>
+    <span id="costInfo"></span>
+  </div>
+</footer>
+</satr-composer>
+</div>
+<satr-ops-room aria-label="غرفة العمليات"></satr-ops-room>
+<satr-preview-panel aria-label="المعاينة المدمجة"></satr-preview-panel>
+</div>
+
+<satr-terminal-panel>
+  <section id="termPanel" aria-label="الطرفية المدمجة"></section>
+</satr-terminal-panel>
+
+<script src="chatcolumn-layout-page.js"></script>
+<script type="module" src="../../src/ui/components/composer.js"></script>
+</body>
+</html>

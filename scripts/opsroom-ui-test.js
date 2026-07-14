@@ -171,6 +171,18 @@ function testDesignGuard() {
     && base.includes('.composer textarea { grid-column: 1 / -1; width: 100%; }')
     && base.includes('#perm, #attachBtn { grid-column: 1 / -1; }'),
   'composer responsiveness must follow chat-column width and preserve usable controls');
+  const packageJson = JSON.parse(read('package.json'));
+  assert.strictEqual(packageJson.scripts['test:chatcolumn-layout'],
+    'electron scripts/chatcolumn-layout-test.js',
+    'live chat-column layout test must remain available through package scripts');
+  const layoutFixture = read('scripts/fixtures/chatcolumn-layout.html');
+  assert(layoutFixture.includes('../../src/styles/base.css')
+    && layoutFixture.includes('../../src/ui/components/composer.js'),
+  'layout fixture must exercise the production stylesheet and composer component');
+  const layoutRunner = read('scripts/chatcolumn-layout-test.js');
+  assert(layoutRunner.includes("extractBlock(index, '<satr-composer>', '</satr-composer>')")
+    && layoutRunner.includes("result.cases.map((item) => item.width), [806, 504, 381]"),
+  'layout runner must guard fixture parity and all three approved column widths');
   const component = read('src/ui/components/ops-room.js');
   assert(component.includes('adoptedStyleSheets'), 'ops room must use constructable stylesheets');
   assert(!component.includes('innerHTML') && !component.includes('insertAdjacentHTML'),
