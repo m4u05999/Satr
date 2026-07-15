@@ -11,6 +11,7 @@ const path = require('path');
 const executionTeam = require('../electron/executionteam');
 const integrationModule = require('../electron/integration');
 const mergerModule = require('../electron/merger');
+const verify = require('../electron/verify');
 const worktreesModule = require('../electron/worktrees');
 
 function git(cwd, args) {
@@ -34,7 +35,12 @@ async function commitAll(project, message) {
 }
 
 async function setConfig(project, commands, message) {
-  await writeJson(path.join(project, '.satr', 'verify.json'), { version: 1, commands });
+  const created = verify.createConfig(project, commands.map((command) => ({
+    ...command,
+    label: typeof command.label === 'string' && command.label.trim() ? command.label : command.id,
+    timeout_seconds: Number.isInteger(command.timeout_seconds) ? command.timeout_seconds : 120,
+  })), { confirmed: true, overwrite: true });
+  assert.strictEqual(created.ok, true, 'فشل الكاتب الإنتاجي في إعداد fixture التكامل: ' + created.error);
   return commitAll(project, message);
 }
 

@@ -35,6 +35,8 @@ const MARKUP = `
   <div id="termInputRow">
     <input type="text" id="termInput" dir="auto" spellcheck="false"
            placeholder="اكتب أمراً… (Enter ينفّذ — Ctrl+C يقطع — ▲▼ التاريخ والحقل فارغ)">
+    <button id="termInputMask" type="button" aria-pressed="false"
+            aria-label="إخفاء إدخال الطرفية" title="إخفاء الإدخال بصرياً فقط">👁</button>
     <span id="termInputHint" aria-hidden="true">Tab لا يُكمل هنا</span>
   </div>
   <div id="termExited"><span>انتهت جلسة الطرفية.</span><button id="termRestart2" type="button">بدء جلسة جديدة</button></div>
@@ -124,6 +126,7 @@ class SatrTerminalPanel extends HTMLElement {
       shell: '', exited: false,
       bidiEls: new Map(), pinned: true, mode: true, userView: true, cellObj: null,
       manualName: '', oscTitle: '', pendingTitle: '', titleTimer: 0,
+      inputMasked: false, inputDraft: '',
       tabEl: null, labelEl: null, renameButton: null, renameInput: null,
     };
 
@@ -167,12 +170,15 @@ class SatrTerminalPanel extends HTMLElement {
   // تفعيل تبويب: إظهاره وإخفاء الباقي، ومزامنة الرأس وسطر الإدخال ووضع العرض
   function activateTab(tab) {
     if (!tab) return;
+    if (active) active.inputDraft = $('termInput').value;
     active = tab;
     for (const t of tabs) t.view.classList.toggle('active', t === tab);
     renderTabs();
     $('termShell').textContent = tab.shell;
     $('termDot').classList.toggle('dead', tab.exited);
+    $('termInput').value = tab.inputDraft;
     $('termInput').disabled = tab.exited;
+    applyInputMask(tab);
     termExited.classList.toggle('show', tab.exited);
     applyTabView(tab); // يضبط #termPanel + زر العرض + التركيز + المزامنة
   }
@@ -348,6 +354,7 @@ class SatrTerminalPanel extends HTMLElement {
       renderTabs();
       if (tab === active) {
         termExited.classList.add('show'); $('termDot').classList.add('dead'); $('termInput').disabled = true;
+        $('termInputMask').disabled = true;
       }
     }
   });
@@ -568,8 +575,28 @@ class SatrTerminalPanel extends HTMLElement {
 
   // ---------- سطر الإدخال (المرحلة 8.3) ----------
   // الحقل «عابر»: يُفرَّغ عند الإرسال، وصدى الصدفة هو النسخة المعروضة الوحيدة —
-  // لا ازدواج بالبناء (قرار الصدى المثبّت في وثيقة التصميم §8.2). عقد المفاتيح §8.3:
+  // لا ازدواج بالبناء (قرار الصدى المثبّت في وثيقة التصميم §8.2). زر العين يغيّر عرض
+  // الحقل محلياً لكل تبويب فقط؛ لا يكتشف echo ولا يحوّل line-mode إلى إدخال تفاعلي.
+  // عقد المفاتيح §8.3:
   const termInputEl = $('termInput');
+  const termInputMaskEl = $('termInputMask');
+
+  function applyInputMask(tab) {
+    const masked = !!(tab && tab.inputMasked);
+    termInputEl.type = masked ? 'password' : 'text';
+    termInputMaskEl.disabled = !tab || tab.exited;
+    termInputMaskEl.classList.toggle('active', masked);
+    termInputMaskEl.setAttribute('aria-pressed', String(masked));
+    termInputMaskEl.setAttribute('aria-label', masked ? 'إظهار إدخال الطرفية' : 'إخفاء إدخال الطرفية');
+    termInputMaskEl.title = masked ? 'إظهار الإدخال' : 'إخفاء الإدخال بصرياً فقط';
+  }
+
+  termInputMaskEl.addEventListener('click', () => {
+    if (!active || active.exited) return;
+    active.inputMasked = !active.inputMasked;
+    applyInputMask(active);
+    termInputEl.focus();
+  });
 
   function ptySend(data) {
     if (active && active.id) window.satr.termInput(active.id, data);

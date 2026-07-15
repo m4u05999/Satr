@@ -21,13 +21,58 @@ async function main() {
   const store = path.join(temp, 'store');
   await fsp.mkdir(project, { recursive: true });
   try {
-    await writeJson(project, '.satr/verify.json', {
-      version: 1,
-      commands: [
-        { id: 'lint', label: 'فحص التنسيق', command: 'npm run lint', timeout_seconds: 30 },
-        { id: 'test', label: 'الاختبارات', command: 'npm test' },
-      ],
-    });
+    const commands = [
+      { id: 'lint', label: 'فحص التنسيق', command: 'npm run lint', timeout_seconds: 30 },
+      { id: 'test', label: 'الاختبارات', command: 'npm test', timeout_seconds: 120 },
+    ];
+    assert.strictEqual(verify.createConfig(project, commands, { overwrite: false }).error, 'confirmation_required');
+    assert.strictEqual(await fsp.stat(path.join(project, '.satr')).then(() => true).catch(() => false), false,
+      'أنشأ الكاتب مجلداً قبل التأكيد الصريح.');
+    const created = verify.createConfig(project, commands, { confirmed: true, overwrite: false });
+    assert.strictEqual(created.ok, true);
+    assert.strictEqual(created.path, '.satr/verify.json');
+    assert.strictEqual(created.created, true);
+    const firstSource = await fsp.readFile(path.join(project, '.satr', 'verify.json'), 'utf8');
+    const refusedOverwrite = verify.createConfig(project, [
+      { id: 'other', label: 'آخر', command: 'node --version', timeout_seconds: 10 },
+    ], { confirmed: true, overwrite: false });
+    assert.strictEqual(refusedOverwrite.error, 'exists');
+    assert.strictEqual(await fsp.readFile(path.join(project, '.satr', 'verify.json'), 'utf8'), firstSource,
+      'غيّر الكاتب الملف القائم بلا overwrite صريح.');
+    const overwritten = verify.createConfig(project, commands, { confirmed: true, overwrite: true });
+    assert.strictEqual(overwritten.ok, true);
+    assert.strictEqual(overwritten.overwritten, true);
+    assert.deepStrictEqual((await fsp.readdir(path.join(project, '.satr'))).sort(), ['verify.json'],
+      'ترك الكاتب ملفاً مؤقتاً أو نسخة احتياطية.');
+
+    assert.strictEqual(verify.buildConfig(new Array(7).fill(commands[0])).error, 'too_many_commands');
+    assert.strictEqual(verify.buildConfig([{ ...commands[0], command: 'npm test\nwhoami' }]).error, 'bad_command');
+    assert.strictEqual(verify.buildConfig([{ ...commands[0], command: 'x'.repeat(1001) }]).error, 'bad_command');
+    assert.strictEqual(verify.buildConfig([{ ...commands[0], label: 'x'.repeat(121) }]).error, 'bad_label');
+    assert.strictEqual(verify.buildConfig([{ ...commands[0], timeout_seconds: 601 }]).error, 'bad_timeout');
+    assert.strictEqual(verify.buildConfig([{ ...commands[0], timeout_seconds: 0 }]).error, 'bad_timeout');
+    assert.strictEqual(verify.buildConfig([commands[0], { ...commands[0] }]).error, 'bad_command');
+
+    const outside = path.join(temp, 'outside');
+    const linkedProject = path.join(temp, 'linked-project');
+    await fsp.mkdir(outside, { recursive: true });
+    await fsp.mkdir(linkedProject, { recursive: true });
+    await fsp.symlink(outside, path.join(linkedProject, '.satr'), process.platform === 'win32' ? 'junction' : 'dir');
+    const escaped = verify.createConfig(linkedProject, commands, { confirmed: true, overwrite: false });
+    assert(['symlink', 'outside'].includes(escaped.error), 'لم يرفض الكاتب .satr المرتبط خارج cwd.');
+    assert.strictEqual(await fsp.stat(path.join(outside, 'verify.json')).then(() => true).catch(() => false), false,
+      'كتب الكاتب خارج cwd عبر symlink.');
+
+    const linkedTargetProject = path.join(temp, 'linked-target-project');
+    await fsp.mkdir(path.join(linkedTargetProject, '.satr'), { recursive: true });
+    await fsp.symlink(outside, path.join(linkedTargetProject, '.satr', 'verify.json'),
+      process.platform === 'win32' ? 'junction' : 'dir');
+    const escapedTarget = verify.createConfig(linkedTargetProject, commands, { confirmed: true, overwrite: true });
+    assert(['symlink', 'unsafe_target', 'outside'].includes(escapedTarget.error),
+      'لم يرفض الكاتب verify.json المرتبط خارج cwd.');
+    assert.strictEqual(await fsp.stat(path.join(outside, 'verify.json')).then(() => true).catch(() => false), false,
+      'كتب الكاتب عبر verify.json مرتبط خارج cwd.');
+
     const config = verify.loadConfig(project);
     assert.strictEqual(config.ok, true);
     assert.deepStrictEqual(config.checks.map((check) => check.id), ['lint', 'test']);
@@ -100,6 +145,7 @@ async function main() {
     assert.strictEqual(checkpoints.consumeVerification('sdk', 'session-2', { root: store }), '');
 
     console.log('✓ explicit verification config boundaries');
+    console.log('✓ verification config writer confirmation, overwrite, limits, and symlink escape guards');
     console.log('✓ verification runner result contract');
     console.log('✓ checkpoint persistence and reverse restore');
   } finally {

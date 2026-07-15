@@ -2,6 +2,7 @@ const violations = [];
 const checks = [];
 const starts = [];
 const killed = [];
+const inputs = [];
 const shells = [
   'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
   'C:\\Windows\\System32\\cmd.exe',
@@ -19,7 +20,7 @@ window.satr = {
     starts.push(result);
     return result;
   },
-  termInput: () => {},
+  termInput: (id, data) => { inputs.push({ id, data }); },
   termResize: () => {},
   termKill: async (id) => { killed.push(id); },
   onTerm: (listener) => { termListener = listener; },
@@ -81,9 +82,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       'التبويب غير قابل للوصول بلوحة المفاتيح.');
     checks.push('derived-shell-name', 'keyboard-tab');
 
+    const termInput = document.getElementById('termInput');
+    const termInputMask = document.getElementById('termInputMask');
+    assert(termInput.type === 'text' && termInputMask.getAttribute('aria-pressed') === 'false',
+      'بدأ حقل الطرفية مخفياً خلاف الافتراضي.');
+    termInput.value = 'masked-value';
+    termInputMask.click();
+    assert(termInput.type === 'password' && termInputMask.getAttribute('aria-pressed') === 'true',
+      'لم يخفِ زر العين إدخال التبويب الأول.');
+    checks.push('password-toggle');
+
     document.getElementById('termNew').click();
     await waitFor(() => starts.length === 2 && tabElements().length === 2, 'فتح تبويب cmd');
     await waitFor(() => tabLabels()[1] === 'cmd', 'اشتقاق اسم cmd');
+    assert(termInput.type === 'text' && termInput.value === '' && termInputMask.getAttribute('aria-pressed') === 'false',
+      'تسرّبت حالة الإخفاء أو مسودة التبويب الأول إلى الثاني.');
     const secondTabBeforeTitle = tabElements()[1];
     const unsafeTitle = `مشروع\u0001\u202e\u2066${'س'.repeat(60)}`;
     const expectedTitle = Array.from(unsafeTitle.replace(/[\u0001\u202e\u2066]/g, '')).slice(0, 40).join('');
@@ -122,6 +135,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     firstTab = tabElements()[0];
     assert(firstTab.classList.contains('active') && tabLabels()[0] === 'مشروعي',
       'لم يثبت الاسم اليدوي بعد التبديل بين التبويبات.');
+    assert(termInput.type === 'password' && termInput.value === 'masked-value',
+      'لم تُستعد حالة الإخفاء ومسودة التبويب الأول بعد التبديل.');
+    press(termInput, 'Enter');
+    assert(inputs.some((item) => item.id === starts[0].id && item.data === 'masked-value\r') && termInput.value === '',
+      'غيّر الإخفاء مسار line-mode أو لم يُفرغ الحقل بعد Enter.');
+    secondTab = tabElements()[1];
+    secondTab.focus(); press(secondTab, 'Enter');
+    assert(termInput.type === 'text' && termInputMask.getAttribute('aria-pressed') === 'false',
+      'تسرّبت حالة إخفاء التبويب الأول بعد الرجوع للثاني.');
+    checks.push('isolated-input-mask', 'line-mode-unchanged');
+    firstTab = tabElements()[0]; firstTab.focus(); press(firstTab, 'Enter');
 
     document.getElementById('termRestart').click();
     await waitFor(() => starts.length === 3, 'إعادة تشغيل الصدفة');

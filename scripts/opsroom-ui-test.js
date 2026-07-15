@@ -231,6 +231,9 @@ function testDesignGuard() {
   assert.strictEqual(packageJson.scripts['test:opsroom-ui-live'],
     'electron scripts/opsroom-ui-live-test.js',
     'live ops-room UI test must remain available through package scripts');
+  assert.strictEqual(packageJson.scripts['test:verify-config-dialog'],
+    'electron scripts/verify-config-dialog-live-test.js',
+    'verification config wizard live test must remain available through package scripts');
   const opsLiveFixture = read('scripts/fixtures/opsroom-ui-live.html');
   assert(opsLiveFixture.includes('../../src/styles/base.css')
     && opsLiveFixture.includes('../../src/ui/components/ops-room.js'),
@@ -241,6 +244,9 @@ function testDesignGuard() {
   'ops-room state must derive observable activity and terminal recovery guidance purely');
   const component = read('src/ui/components/ops-room.js');
   assert(component.includes('adoptedStyleSheets'), 'ops room must use constructable stylesheets');
+  assert(component.includes("makeElement('button', 'verify-config', 'إعداد التحقق')")
+    && component.includes("new CustomEvent('verify-config-open'"),
+  'ops room must expose the manual verification config wizard without a slash command');
   assert(!component.includes('innerHTML') && !component.includes('insertAdjacentHTML'),
     'ops room must construct UI with safe DOM methods only');
   for (const group of ["id: 'work', label: 'العمل'", "id: 'results', label: 'النتائج'", "id: 'log', label: 'السجل'"]) {
@@ -308,6 +314,19 @@ function testDesignGuard() {
   assert(!handleEventBody.includes('._startReview(') && !handleEventBody.includes('._prepareVerification('),
     'runtime events must not create an agent-to-agent loop');
   const app = read('src/ui/app.js');
+  const main = read('electron/main.js');
+  const verifyPreload = read('electron/preload.js');
+  const verifyDialog = read('src/ui/components/verify-config-dialog.js');
+  assert(app.includes("surfaceCoordinator.register('verify-config-dialog'")
+    && app.includes("opsRoomEl.addEventListener('verify-config-open'")
+    && verifyDialog.includes('window.satr.verifyConfigCreate')
+    && !verifyDialog.includes('innerHTML'),
+  'verification config wizard must use the surface coordinator, scoped preload method, and safe DOM');
+  assert(main.includes("ipcMain.handle('satr:verifyConfigCreate'")
+    && main.includes('!verify.SAFE_CHECK_ID.test(id)')
+    && main.includes('cwdStat.isSymbolicLink()')
+    && verifyPreload.includes("verifyConfigCreate: (cwd, commands, overwrite, confirmed)"),
+  'verification config IPC must stay narrowly exposed and independently sanitized in main');
   assert(app.includes("state: 'hidden'") && app.includes("record.state = 'held'") && app.includes("record.state = 'active'"),
     'surface coordinator states missing');
   assert(app.includes("surfaceCoordinator.confirm(detail)"), 'ops dialog must pass through coordinator');

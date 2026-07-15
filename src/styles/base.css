@@ -743,6 +743,15 @@
   }
   #termInput:focus { border-color: var(--gold); }
   #termInput:disabled { opacity: .5; }
+  #termInputMask {
+    flex: none; width: var(--space-7); padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--text-dim); cursor: pointer;
+    transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease), background var(--dur) var(--ease);
+  }
+  #termInputMask:hover, #termInputMask:focus-visible { border-color: var(--gold); color: var(--gold); }
+  #termInputMask.active { border-color: var(--gold); background: var(--gold-soft); color: var(--gold); }
+  #termInputMask:disabled { opacity: .5; cursor: default; }
   #termInputHint { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
   /* شريط تنبيه التبديل التلقائي (8.4) */
   #termNotice { display: none; align-items: center; gap: 8px; padding: 5px 12px; border-top: 1px solid var(--border); background: var(--gold-soft); color: var(--gold); font-size: 12px; }

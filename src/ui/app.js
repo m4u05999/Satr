@@ -199,6 +199,7 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
   const researchEl = document.querySelector('satr-research-panel');
   const opsRoomEl = document.querySelector('satr-ops-room');
   const opsDialogEl = document.querySelector('satr-ops-dialog');
+  const verifyConfigEl = document.querySelector('satr-verify-config-dialog');
   const previewEl = document.querySelector('satr-preview-panel');
   function addNotice(text) { chatEl.addNotice(text); }
 
@@ -329,6 +330,7 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
   surfaceCoordinator.register('ops-dialog', opsDialogEl, 'dialog');
   surfaceCoordinator.register('permission-dialog', document.querySelector('satr-perm-dialog'), 'dialog');
   surfaceCoordinator.register('question-dialog', document.querySelector('satr-question-dialog'), 'dialog');
+  surfaceCoordinator.register('verify-config-dialog', verifyConfigEl, 'dialog');
 
   // تحت العتبة الواسعة يبقى سطح جانبي واحد فقط؛ 120rem تبقي للدردشة عرضاً عملياً.
   const MULTI_SURFACE_MEDIA = '(min-width: 120rem)';
@@ -1118,6 +1120,14 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
   });
   opsRoomEl.addEventListener('panel-close', () => $('opsRoomToggle').classList.remove('active'));
   opsRoomEl.addEventListener('ops-notice', (event) => showTransientNotice(event.detail));
+  opsRoomEl.addEventListener('verify-config-open', (event) => {
+    const detail = event.detail || {};
+    verifyConfigEl.open(detail.cwd || $('cwd').value.trim());
+  });
+  verifyConfigEl.addEventListener('verify-dialog-visible', (event) => {
+    surfaceCoordinator.setDialog('verify-config-dialog', !!event.detail);
+  });
+  verifyConfigEl.addEventListener('notice', (event) => showTransientNotice(event.detail));
   opsRoomEl.addEventListener('ops-confirm-request', (event) => {
     const detail = event.detail || {};
     surfaceCoordinator.confirm(detail).then((confirmed) => {

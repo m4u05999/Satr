@@ -8,6 +8,7 @@
 'use strict';
 
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const { spawn } = require('child_process');
 const term = require('./term');
@@ -19,6 +20,7 @@ const MAX_CONFIG_BYTES = 64 * 1024;
 const MAX_CHECKS = 6;
 const MAX_COMMAND = 1000;
 const MAX_LABEL = 120;
+const MAX_TIMEOUT_SECONDS = 600;
 const MAX_OUTPUT = 6000;
 const MAX_EXEC_OUTPUT = 64 * 1024;
 const MAX_MODEL_RESULT = 32 * 1024;
@@ -27,10 +29,115 @@ function realInside(root, target) {
   try {
     const realRoot = fs.realpathSync(root);
     const realTarget = fs.realpathSync(target);
-    const prefix = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
-    return realTarget.startsWith(prefix) ? realTarget : null;
+    const relative = path.relative(realRoot, realTarget);
+    return relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)
+      ? realTarget : null;
   } catch {
     return null;
+  }
+}
+
+function buildConfig(commands) {
+  if (!Array.isArray(commands) || !commands.length) return { ok: false, error: 'empty' };
+  if (commands.length > MAX_CHECKS) return { ok: false, error: 'too_many_commands' };
+  const normalized = [];
+  const seen = new Set();
+  for (const value of commands) {
+    if (!value || typeof value !== 'object') return { ok: false, error: 'bad_command' };
+    const id = typeof value.id === 'string' ? value.id.trim() : '';
+    const label = typeof value.label === 'string' ? value.label.trim() : '';
+    const command = typeof value.command === 'string' ? value.command.trim() : '';
+    const timeout = value.timeout_seconds == null ? 120 : value.timeout_seconds;
+    if (!SAFE_CHECK_ID.test(id) || seen.has(id)) return { ok: false, error: 'bad_command' };
+    if (!label || label.length > MAX_LABEL || /[\u0000-\u001F\u007F]/.test(label)) {
+      return { ok: false, error: 'bad_label' };
+    }
+    if (!command || command.length > MAX_COMMAND || /[\r\n\0]/.test(command)) {
+      return { ok: false, error: 'bad_command' };
+    }
+    if (!Number.isInteger(timeout) || timeout < 1 || timeout > MAX_TIMEOUT_SECONDS) {
+      return { ok: false, error: 'bad_timeout' };
+    }
+    seen.add(id);
+    normalized.push({ id, label, command, timeout_seconds: timeout });
+  }
+  const config = { version: CONFIG_VERSION, commands: normalized };
+  const source = JSON.stringify(config, null, 2) + '\n';
+  if (Buffer.byteLength(source, 'utf8') > MAX_CONFIG_BYTES) return { ok: false, error: 'bad_config' };
+  const parsed = parseConfig(source);
+  return parsed.ok ? { ok: true, config, source, checks: parsed.checks } : parsed;
+}
+
+function inspectConfigTarget(root, target) {
+  try {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink()) return { ok: false, error: 'symlink' };
+    if (!stat.isFile()) return { ok: false, error: 'unsafe_target' };
+    if (!realInside(root, target)) return { ok: false, error: 'outside' };
+    return { ok: true, exists: true };
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return { ok: true, exists: false };
+    return { ok: false, error: 'write_failed' };
+  }
+}
+
+function createConfig(cwd, commands, options) {
+  const settings = options || {};
+  if (settings.confirmed !== true) return { ok: false, error: 'confirmation_required' };
+  const built = buildConfig(commands);
+  if (!built.ok) return built;
+  if (typeof cwd !== 'string' || !cwd.trim() || cwd.includes('\0')) return { ok: false, error: 'bad_cwd' };
+  const root = path.resolve(cwd.trim());
+  try {
+    const rootStat = fs.lstatSync(root);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return { ok: false, error: 'bad_cwd' };
+  } catch { return { ok: false, error: 'bad_cwd' }; }
+
+  const satrPath = path.join(root, '.satr');
+  try { fs.mkdirSync(satrPath, { mode: 0o700 }); }
+  catch (error) { if (!error || error.code !== 'EEXIST') return { ok: false, error: 'write_failed' }; }
+  let satrDir;
+  try {
+    const satrStat = fs.lstatSync(satrPath);
+    if (!satrStat.isDirectory() || satrStat.isSymbolicLink()) return { ok: false, error: 'symlink' };
+    satrDir = realInside(root, satrPath);
+    if (!satrDir) return { ok: false, error: 'outside' };
+  } catch { return { ok: false, error: 'write_failed' }; }
+
+  const target = path.join(satrDir, 'verify.json');
+  const before = inspectConfigTarget(root, target);
+  if (!before.ok) return before;
+  if (before.exists && settings.overwrite !== true) return { ok: false, error: 'exists' };
+
+  const nonce = process.pid + '-' + crypto.randomBytes(8).toString('hex');
+  const temporary = path.join(satrDir, '.verify-' + nonce + '.tmp');
+  const backup = path.join(satrDir, '.verify-' + nonce + '.bak');
+  let movedExisting = false;
+  try {
+    fs.writeFileSync(temporary, built.source, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    const current = inspectConfigTarget(root, target);
+    if (!current.ok) throw Object.assign(new Error(current.error), { satrCode: current.error });
+    if (current.exists && settings.overwrite !== true) {
+      throw Object.assign(new Error('exists'), { satrCode: 'exists' });
+    }
+    if (current.exists) {
+      fs.renameSync(target, backup);
+      movedExisting = true;
+    }
+    fs.renameSync(temporary, target);
+    if (movedExisting) { try { fs.rmSync(backup, { force: true }); } catch {} }
+    return {
+      ok: true, path: CONFIG_REL.replace(/\\/g, '/'), created: !current.exists,
+      overwritten: current.exists, config: built.config, checks: built.checks,
+    };
+  } catch (error) {
+    try { fs.rmSync(temporary, { force: true }); } catch {}
+    if (movedExisting) {
+      try {
+        if (!fs.existsSync(target)) fs.renameSync(backup, target);
+      } catch {}
+    }
+    return { ok: false, error: error && error.satrCode || 'write_failed' };
   }
 }
 
@@ -55,7 +162,7 @@ function parseConfig(source) {
         return { ok: false, error: 'bad_command' };
       }
       const timeout = Number.isFinite(value.timeout_seconds)
-        ? Math.max(1, Math.min(600, Math.floor(value.timeout_seconds))) : 120;
+        ? Math.max(1, Math.min(MAX_TIMEOUT_SECONDS, Math.floor(value.timeout_seconds))) : 120;
       seen.add(id);
       checks.push({ id, label: label || id, command, timeout_seconds: timeout });
     }
@@ -240,8 +347,13 @@ module.exports = {
   CONFIG_REL,
   MAX_CONFIG_BYTES,
   MAX_CHECKS,
+  MAX_COMMAND,
+  MAX_LABEL,
+  MAX_TIMEOUT_SECONDS,
   loadConfig,
   parseConfig,
+  buildConfig,
+  createConfig,
   selectChecks,
   run,
   runChecks,

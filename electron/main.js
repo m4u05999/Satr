@@ -1388,6 +1388,48 @@ ipcMain.handle('satr:taskAction', (event, payload) => {
 
 // ---------- تحقق المشروع وcheckpoints (الأولوية 3) ----------
 const SAFE_CHECKPOINT_ID = /^cp-[A-Za-z0-9-]{3,80}$/;
+const MAX_VERIFY_CWD = 4096;
+
+ipcMain.handle('satr:verifyConfigCreate', (event, payload) => {
+  const p = payload || {};
+  if (p.confirmed !== true || typeof p.overwrite !== 'boolean'
+      || typeof p.cwd !== 'string' || !p.cwd.trim() || p.cwd.length > MAX_VERIFY_CWD
+      || p.cwd.includes('\0') || !path.isAbsolute(p.cwd.trim())
+      || !Array.isArray(p.commands) || !p.commands.length || p.commands.length > verify.MAX_CHECKS) {
+    return { ok: false, error: 'bad_input' };
+  }
+  const cwd = p.cwd.trim();
+  try {
+    const cwdStat = fs.lstatSync(cwd);
+    if (!cwdStat.isDirectory() || cwdStat.isSymbolicLink()) throw new Error();
+  } catch { return { ok: false, error: 'bad_cwd' }; }
+  const commands = [];
+  const seenIds = new Set();
+  for (const value of p.commands) {
+    const id = value && typeof value.id === 'string' ? value.id.trim() : '';
+    const label = value && typeof value.label === 'string' ? value.label.trim() : '';
+    const command = value && typeof value.command === 'string' ? value.command.trim() : '';
+    if (!value || typeof value !== 'object'
+        || typeof value.id !== 'string' || value.id.length > 64
+        || typeof value.label !== 'string' || value.label.length > verify.MAX_LABEL
+        || typeof value.command !== 'string' || value.command.length > verify.MAX_COMMAND
+        || !verify.SAFE_CHECK_ID.test(id) || seenIds.has(id)
+        || !label || /[\u0000-\u001F\u007F]/.test(label)
+        || !command || /[\r\n\0]/.test(command)
+        || !Number.isInteger(value.timeout_seconds)
+        || value.timeout_seconds < 1 || value.timeout_seconds > verify.MAX_TIMEOUT_SECONDS) {
+      return { ok: false, error: 'bad_input' };
+    }
+    seenIds.add(id);
+    commands.push({
+      id, label, command, timeout_seconds: value.timeout_seconds,
+    });
+  }
+  if (Buffer.byteLength(JSON.stringify({ version: 1, commands }), 'utf8') > verify.MAX_CONFIG_BYTES) {
+    return { ok: false, error: 'bad_input' };
+  }
+  return verify.createConfig(cwd, commands, { confirmed: true, overwrite: p.overwrite });
+});
 
 ipcMain.handle('satr:checkpointLatest', (event, payload) => {
   const p = payload || {};

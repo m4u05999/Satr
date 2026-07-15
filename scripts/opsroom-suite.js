@@ -10,6 +10,7 @@ const deterministicSuite = [
   'test:worktrees',
   'test:executionteam',
   'test:reviewmerge',
+  'test:verify',
   'test:integration',
   'test:opsroom',
   'test:opsroom-ui',
@@ -18,6 +19,7 @@ const deterministicSuite = [
 ];
 const liveSuite = [
   'test:opsroom-ui-live',
+  'test:verify-config-dialog',
   'test:chatcolumn-layout',
   'test:xterm-csp',
 ];

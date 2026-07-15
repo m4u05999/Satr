@@ -33,6 +33,7 @@ const roomSheet = sheet(`
   :host([compact]) .panel-title { writing-mode: vertical-rl; text-orientation: mixed; }
   :host([compact]) .panel-head-actions { flex-direction: column; }
   :host([compact]) .panel-head button { width: 100%; padding: var(--space-1); }
+  :host([compact]) .verify-config { display: none; }
   :host([compact]) .compact-state { display: inline-flex; }
   :host([compact]) .resize-handle, :host([drawer]) .resize-handle { display: none; }
   :host([drawer]), :host([drawer][compact]) {
@@ -53,6 +54,7 @@ const roomSheet = sheet(`
   .resize-handle[data-active="true"]::before { background: var(--gold); }
   .resize-handle:focus-visible { outline: 2px solid var(--gold); outline-offset: var(--space-1); }
   .panel-head { gap: var(--space-3); }
+  .verify-config { color: var(--gold); border-color: var(--gold-border); }
   .panel-head-actions, .action-bar, .room-nav, .setup-actions {
     display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   }
@@ -485,11 +487,13 @@ class SatrOpsRoom extends HTMLElement {
     const title = makeElement('span', 'panel-title', 'غرفة العمليات');
     const compactState = makeElement('span', 'compact-state'); compactState.setAttribute('aria-live', 'polite');
     const headActions = makeElement('div', 'panel-head-actions');
+    const verifyConfigButton = makeElement('button', 'verify-config', 'إعداد التحقق'); verifyConfigButton.type = 'button';
+    verifyConfigButton.disabled = true;
     const compactButton = makeElement('button', 'compact', 'طيّ'); compactButton.type = 'button';
     compactButton.setAttribute('aria-pressed', 'false');
     const closeButton = makeElement('button', 'close', '✕'); closeButton.type = 'button';
     closeButton.setAttribute('aria-label', 'إغلاق غرفة العمليات');
-    headActions.appendChild(compactButton); headActions.appendChild(closeButton);
+    headActions.appendChild(verifyConfigButton); headActions.appendChild(compactButton); headActions.appendChild(closeButton);
     head.appendChild(title); head.appendChild(compactState); head.appendChild(headActions);
 
     const actionBar = makeElement('div', 'action-bar');
@@ -532,6 +536,7 @@ class SatrOpsRoom extends HTMLElement {
     this._stageIndicator = stageIndicator;
     this._resizeHandle = resizeHandle;
     this._closeButton = closeButton;
+    this._verifyConfigButton = verifyConfigButton;
     this._buttons = {
       primary: this._primaryButton, extend: extendButton, stop: stopButton,
     };
@@ -556,6 +561,10 @@ class SatrOpsRoom extends HTMLElement {
     this._buildStages();
     this._buildViews();
     closeButton.addEventListener('click', () => this.close());
+    verifyConfigButton.addEventListener('click', () => {
+      if (!this._cwd) return;
+      this.dispatchEvent(new CustomEvent('verify-config-open', { bubbles: true, detail: { cwd: this._cwd } }));
+    });
     this._compactButton = compactButton;
     this._compactButton.addEventListener('click', () => this._toggleCompact());
     this._primaryButton.addEventListener('click', () => this._runPrimaryAction());
@@ -1548,6 +1557,7 @@ class SatrOpsRoom extends HTMLElement {
 
   async open(cwd) {
     this._cwd = typeof cwd === 'string' ? cwd : '';
+    this._verifyConfigButton.disabled = !this._cwd;
     this._loadLayoutPreferences();
     this.setAttribute('open', '');
     clearInterval(this._clock);

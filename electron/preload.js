@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('satr', {
   checkpointLatest: (engine, sessionId) => ipcRenderer.invoke('satr:checkpointLatest', { engine, sessionId }),
   checkpointRestore: (engine, sessionId, checkpointId, cwd) => ipcRenderer.invoke('satr:checkpointRestore', { engine, sessionId, checkpointId, cwd }),
   verifyCheckpoint: (engine, sessionId, checkpointId, cwd, checks) => ipcRenderer.invoke('satr:verifyCheckpoint', { engine, sessionId, checkpointId, cwd, checks }),
+  verifyConfigCreate: (cwd, commands, overwrite, confirmed) => ipcRenderer.invoke('satr:verifyConfigCreate', {
+    cwd, commands, overwrite, confirmed,
+  }),
   memoryList: (cwd, query) => ipcRenderer.invoke('satr:memoryList', { cwd, query }),
   memorySave: (cwd, candidate) => ipcRenderer.invoke('satr:memorySave', { cwd, candidate }),
   memoryUpdate: (cwd, id, patch) => ipcRenderer.invoke('satr:memoryUpdate', { cwd, id, patch }),

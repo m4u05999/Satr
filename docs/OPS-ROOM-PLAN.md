@@ -242,8 +242,9 @@ producer_engines = [sdk,codex] ⇒ required_review_engines = [sdk,codex]
 - لا يكتشف النظام `npm test` أو `npm run lint` أو أي script تلقائياً؛ scripts نفسها أوامر
   قابلة للتغيير وغير موثوقة ما لم يصرّح بها الملف المعتمد.
 - يمكن لوضع `draft` العمل بلا الملف، لكنه يبقى `merge_supported:false` وغير قابل للترقية.
-- معالج إعداد ينشئ `.satr/verify.json` بموافقة المستخدم ميزة مستقلة لاحقة، وليس fallback
-  ضمن غرفة العمليات في المراحل السبع.
+- معالج إعداد مستقل مكتمل: زر داخل غرفة العمليات يطلب الأوامر يدوياً، يعرض JSON للمراجعة،
+  ثم ينشئ `.satr/verify.json` بتأكيد صريح؛ والاستبدال يحتاج تأكيداً ثانياً. ليس fallback
+  ولا يكتشف scripts أو يشغّلها، ولا يضيف الملف إلى Git. يبقى `HEAD` هو المصدر الوحيد للـpreflight.
 - ينشأ worktree تكاملي جديد من `artifact.head`.
 - يطبَّق artifact داخله أولاً بـ`git apply --check` ثم `git apply`، ولا يلمس المصدر.
 - أوامر الاختبار تأتي حصراً من نسخة `.satr/verify.json` الموجودة في `artifact.head` عبر

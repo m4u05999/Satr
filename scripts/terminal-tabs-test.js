@@ -53,9 +53,10 @@ async function main() {
     for (const check of [
       'derived-shell-name', 'keyboard-tab', 'osc-sanitized', 'osc-truncated', 'title-throttled',
       'keyboard-rename', 'manual-priority', 'isolated-names', 'stable-switch-restart-exit',
+      'password-toggle', 'isolated-input-mask', 'line-mode-unchanged',
       'model-tab-distinct', 'session-only', 'zero-csp-violations',
     ]) assert(result.checks.includes(check), 'غاب فحص تبويبات الطرفية: ' + check);
-    console.log('terminal-tabs: نجح — أسماء الصدف وOSC المنقّى وF2 والعزل والثبات وتبويب النموذج؛ صفر CSP.');
+    console.log('terminal-tabs: نجح — الأسماء والعزل وإخفاء الإدخال لكل تبويب وline-mode وتبويب النموذج؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }
