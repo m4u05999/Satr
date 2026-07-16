@@ -27,6 +27,9 @@ const { computeDiff } = require('./diff');
 const skillCatalog = require('./skills');
 const preview = require('./preview');   // وحدة المعاينة المشتركة (رؤية الويب لـ Codex — الخيار 1)
 const codexmcp = require('./codexmcp');  // خادم MCP‏ streamable-HTTP داخل العملية
+const keys = require('./keys');
+const testsprite = require('./testsprite');
+const testspriteHarness = require('./testspriteharness');
 
 const IS_WIN = process.platform === 'win32';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة تراجع ولا نعرض فرقاً
@@ -141,6 +144,19 @@ function mapMode(mode) {
   }
 }
 
+// متصفح «سطر» هو المسار الوحيد للمعاينة في أدوار الدردشة. نحجب إطلاق متصفح نظام خارجي
+// عندما تكون أدوات المعاينة متاحة؛ أوامر خوادم التطوير العادية (npm run dev ونحوها) لا تتأثر.
+function isExternalBrowserLaunchCommand(command) {
+  if (typeof command !== 'string' || !command.trim()) return false;
+  const text = command.trim();
+  const directBrowser = /(?:^|[;&|]\s*)(?:"[^"\r\n]*[\\/])?(?:chrome|msedge|firefox|brave)(?:\.exe)?(?:"|\s|$)/i;
+  const launcherWithBrowser = /\b(?:Start-Process|start)\b[^\r\n]*\b(?:chrome|msedge|firefox|brave)(?:\.exe)?\b/i;
+  if (directBrowser.test(text) || launcherWithBrowser.test(text)) return true;
+  if (!/(?:https?:\/\/|\blocalhost(?::\d+)?\b)/i.test(text)) return false;
+  return /\b(?:Start-Process|Invoke-Item|explorer(?:\.exe)?|xdg-open|sensible-browser)\b/i.test(text)
+    || /(?:^|[;&|]\s*)(?:start|open)\s+(?:""\s+)?/i.test(text);
+}
+
 // ---------- الأدوات الموافَق عليها «دائماً» (لعمر التطبيق — نظير agent.js) ----------
 const alwaysAllowed = new Set();
 
@@ -168,6 +184,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // codex اتصل، طلب tools/list، وأبلغ satr_preview=ready. أي فشل هنا لا يكسر الدور —
   // Codex يعمل بلا رؤية ويب (تدهور رشيق). open_preview يبثّ preview_open للواجهة لتفتح اللوحة.
   let mcpHost = null;
+  let testspriteHarnessHost = null;
+  let testspriteProgressWatcher = null;
+  let effectivePrompt = prompt;
   if (browserControl !== false) try {
     mcpHost = await codexmcp.start({
       preview,
@@ -176,7 +195,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // يبوّب نداءات MCP، فنبوّبها هنا (نفس قناة أذونات الأوامر: emit + resolvePermission).
       // bypassPermissions أو «موافقة دائمة» للأداة يعفيان. رفض ⇒ لا يُنفَّذ الفعل.
       requestPermission: (toolName, input) => new Promise((resolve) => {
-        if (permissionMode === 'bypassPermissions' || alwaysAllowed.has(toolName)) { resolve(true); return; }
+        if (browserControl === true || permissionMode === 'bypassPermissions' || alwaysAllowed.has(toolName)) { resolve(true); return; }
         const permId = 'cxmcp_' + (++mcpPermSeq) + '_' + Math.random().toString(36).slice(2, 6);
         mcpPerms.set(permId, { resolve, tool: toolName });
         emit({ type: 'permission_request', id: permId, tool: toolName, input: input || {} });
@@ -202,6 +221,49 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       '-c', 'mcp_servers.satr_preview.startup_timeout_sec=30',
     );
     spawnEnv.SATR_MCP_TOKEN = mcpHost.token;
+  }
+  // TestSprite لا يدخل المراجعين/العصف المعزول (`browserControl:false`). في دردشة المستخدم
+  // يُحقن فقط عند وجود مفتاح من خزنة «سطر»؛ المفتاح في بيئة app-server، وتطلب إعدادات
+  // Codex تمريره إلى خادم MCP الثابت دون ظهوره في argv أو config.toml.
+  const testspriteApiKey = keys.get(testsprite.KEY_NAME);
+  const testspriteRequested = browserControl !== false && testsprite.requested(prompt, {
+    available: testsprite.isValidApiKey(testspriteApiKey),
+  });
+  if (testspriteRequested) {
+    testsprite.scrubConfig(cwd);
+    const launch = testsprite.codexLaunch(testspriteApiKey);
+    if (launch) {
+      appServerArgs.push(...launch.args);
+      Object.assign(spawnEnv, launch.env);
+      if (testspriteHarness.supportsProject(cwd)) {
+        try {
+          testspriteHarnessHost = await testspriteHarness.start();
+          effectivePrompt = testsprite.chatPrompt(prompt, { url: testspriteHarnessHost.url, cwd });
+          testspriteProgressWatcher = testsprite.watchResults(cwd, {
+            testIds: testsprite.extractTestIds(prompt),
+            onUpdate: emit,
+          });
+          emit({ type: 'testsprite_progress', phase: 'preparing', total: testsprite.extractTestIds(prompt).length,
+            completed: 0, passed: 0, failed: 0, skipped: 0 });
+          emit({
+            type: 'assistant',
+            message: { role: 'assistant', content: [{
+              type: 'text',
+              text: '🧪 بدأ «سطر» سطح TestSprite المؤقت داخل هذا الدور؛ سيوقفه تلقائياً عند الانتهاء.',
+            }] },
+          });
+        } catch (error) {
+          const code = error && error.code === 'EADDRINUSE' ? 'المنفذ 4173 مستخدم' : String((error && error.message) || error);
+          emit({
+            type: 'assistant',
+            message: { role: 'assistant', content: [{
+              type: 'text',
+              text: '⚠️ تعذّر بدء سطح TestSprite التلقائي: ' + code + '. لم يبدأ اختبار الواجهة.',
+            }] },
+          });
+        }
+      }
+    } else emit({ type: 'stderr', text: testsprite.MISSING_KEY_MESSAGE });
   }
   // الموجة 2 (خارطة المنصّات): جهد التفكير. codex يقبل مفتاح config الرسمي
   // model_reasoning_effort بقيم minimal|low|medium|high|xhigh («max» غير مقبول فنطبّعه
@@ -262,6 +324,20 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   }
   function emitToolResult(id, output, isError) {
     emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output || '', is_error: !!isError }] } });
+  }
+  function mcpResultText(item) {
+    if (item && item.error && item.error.message) return String(item.error.message).slice(0, 20000);
+    const result = item && item.result;
+    const blocks = result && Array.isArray(result.content) ? result.content : [];
+    let text = blocks.map((block) => {
+      if (typeof block === 'string') return block;
+      if (block && typeof block.text === 'string') return block.text;
+      try { return JSON.stringify(block); } catch { return ''; }
+    }).filter(Boolean).join('\n');
+    if (!text && result && result.structuredContent != null) {
+      try { text = JSON.stringify(result.structuredContent); } catch { text = ''; }
+    }
+    return text.length > 20000 ? text.slice(0, 20000) + '…' : text;
   }
   // مسار احتياطي إن لم يرسل app-server حدث item/started لإصدار بعينه.
   function emitToolCard(id, name, input, output, isError) {
@@ -334,6 +410,12 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       const isFile = method.includes('fileChange') || method.includes('applyPatch');
       const p = m.params || {};
       const toolName = isFile ? 'apply_patch' : 'Shell';
+      const command = isFile ? '' : (Array.isArray(p.command) ? p.command.join(' ') : (p.command || ''));
+      if (!isFile && browserControl !== false && isExternalBrowserLaunchCommand(command)) {
+        respond(m.id, { decision: 'decline' });
+        emit({ type: 'stderr', text: 'حُجب فتح متصفح خارجي. استخدم أدوات معاينة «سطر» (open_preview وbrowser_*).' });
+        return;
+      }
       // قبول تلقائي بلا سؤال:
       //  - أداة موافَق عليها «دائماً» لهذه الجلسة.
       //  - وضع acceptEdits: التعديلات (apply_patch) تُقبل تلقائياً — الأوامر تبقى تسأل
@@ -350,7 +432,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         const files = meta.map((c) => relPath(cwd, c.path));
         input = { changes: files.length ? files : Object.keys(p.fileChanges || p.changes || {}).map((f) => relPath(cwd, f)) };
       } else {
-        input = { command: Array.isArray(p.command) ? p.command.join(' ') : (p.command || ''), cwd: p.cwd || cwd, reason: p.reason || undefined };
+        input = { command, cwd: p.cwd || cwd, reason: p.reason || undefined };
       }
       const permId = 'cx_' + m.id + '_' + Math.random().toString(36).slice(2, 8);
       perms.set(permId, { serverId: m.id, tool: toolName });
@@ -386,6 +468,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         if (it.type === 'commandExecution' && it.id) {
           const command = typeof it.command === 'string' ? it.command : (Array.isArray(it.command) ? it.command.join(' ') : '');
           emitToolStart(it.id, 'Shell', { command, cwd: it.cwd || cwd });
+          startedToolCards.add(it.id);
+        }
+        if (it.type === 'mcpToolCall' && it.id) {
+          emitToolStart(it.id, (it.server ? it.server + ':' : '') + (it.tool || 'MCP'), it.arguments || {});
           startedToolCards.add(it.id);
         }
         if (it.type === 'fileChange' && Array.isArray(it.changes)) {
@@ -470,6 +556,17 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         if (ch.path) emitFileChange(item.id, ch.path, ch.kind);
       }
       fileChangeMeta.delete(item.id);
+    } else if (t === 'mcpToolCall') {
+      const output = mcpResultText(item);
+      const isError = item.status === 'failed' || !!item.error;
+      if (startedToolCards.delete(item.id)) emitToolResult(item.id, output, isError);
+      else emitToolCard(
+        item.id,
+        (item.server ? item.server + ':' : '') + (item.tool || 'MCP'),
+        item.arguments || {},
+        output,
+        isError
+      );
     } else if (t === 'reasoning') {
       // ملخّص تفكير (نادر الظهور — «سطر» لا يعرض تفكير Claude أصلاً). نعرضه مقتضباً إن وُجد.
       // الحقل غير مضمون عبر الإصدارات فنجرّب text/summary/content دفاعياً.
@@ -514,6 +611,19 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     try { proc.stdin.end(); } catch {}
     setTimeout(() => { try { proc.kill(); } catch {} }, 500);
     if (mcpHost) { try { mcpHost.stop(); } catch {} mcpHost = null; } // أوقِف خادم رؤية الويب MCP
+    if (testspriteHarnessHost) {
+      const host = testspriteHarnessHost;
+      testspriteHarnessHost = null;
+      host.close().catch(() => {});
+    }
+    if (testspriteProgressWatcher) {
+      testspriteProgressWatcher.stop();
+      testspriteProgressWatcher = null;
+    }
+    if (testspriteRequested) {
+      testsprite.scrubConfig(cwd);
+      setTimeout(() => testsprite.scrubConfig(cwd), 750);
+    }
     if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
   }
   let emittedDone = false;
@@ -540,6 +650,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     cleanup(1);
   });
   proc.on('exit', (code) => {
+    if (testspriteRequested) testsprite.scrubConfig(cwd);
     if (!finished && !stopping) emit({ type: 'spawn_error', text: 'أُنهيت عملية Codex (كود ' + code + ')' });
     if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
   });
@@ -565,7 +676,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         + 'الحالة) — استعملها للتحقق من نتيجة تعديلاتك وتصحيح نفسك. '
         + 'وللتفاعل مع الصفحة: خذ لقطة بـ browser_snapshot (تعطيك كل عنصر بصيغة [ref] role "name")، '
         + 'ثم مرّر الـ ref إلى browser_click/browser_type/browser_select_option/browser_press_key '
-        + '(تطلب إذن المستخدم)، وأعد أخذ اللقطة بعد كل فعل لأن المُعرّفات تتغيّر. '
+        + '(تطلب إذن المستخدم)، وأعد أخذ اللقطة بعد كل فعل لأن المُعرّفات تتغيّر. إذا تعذّرت أدوات المعاينة فأبلغ المستخدم صراحةً؛ لا تفتح Chrome/Edge/Firefox ولا تستعمل Start-Process/start/open كبديل. '
         + 'عند توليد الصور/الفيديو (مثل Higgsfield) اكتب برومبتاً غنيّاً بالتفاصيل البصرية '
         + '(الإنجليزية أوثق تحكّماً، والنماذج الأحدث تفهم العربية أيضاً). النص داخل الصورة '
         + 'مشروط بالنموذج: النماذج الحديثة (GPT Image 2 الأدقّ بالعربية، وNano Banana Pro/2) '
@@ -596,7 +707,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // تُمرَّر كـ data-URL (لا حاجة لملف مؤقت — كلا الشكلين image/localImage يعمل).
       const inputItems = [];
       inputItems.push(...skillCatalog.codexInputs(skillContext));
-      if (prompt) inputItems.push({ type: 'text', text: prompt, text_elements: [] });
+      if (effectivePrompt) inputItems.push({ type: 'text', text: effectivePrompt, text_elements: [] });
       if (Array.isArray(images)) {
         for (const im of images) {
           if (im && im.media_type && im.data) {
@@ -604,7 +715,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           }
         }
       }
-      if (!inputItems.length) inputItems.push({ type: 'text', text: prompt || '', text_elements: [] });
+      if (!inputItems.length) inputItems.push({ type: 'text', text: effectivePrompt || '', text_elements: [] });
       const turnParams = { threadId, input: inputItems, model: resolvedModel };
       await request('turn/start', turnParams);
       // الأحداث تصل عبر notifications؛ الدور ينتهي بـ turn/completed
@@ -650,4 +761,4 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   };
 }
 
-module.exports = { start, undoEdit, resolveCodexBin, authStatus, DEFAULT_MODEL };
+module.exports = { start, undoEdit, resolveCodexBin, authStatus, DEFAULT_MODEL, isExternalBrowserLaunchCommand };

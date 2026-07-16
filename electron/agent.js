@@ -23,6 +23,9 @@ const preview = require('./preview'); // م-3: أدوات قراءة المعا�
 const skillCatalog = require('./skills'); // .agents قياسي + .claude توافق؛ تحميل تدريجي
 const verify = require('./verify'); // تحقق صريح مستقل عن أدوات المتصفح
 const memory = require('./memory'); // ذاكرة مشروع شخصية بموافقة صريحة
+const keys = require('./keys');
+const testsprite = require('./testsprite');
+const testspriteHarness = require('./testspriteharness');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -386,15 +389,18 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   const taskTitles = new Map(); // task_id → عنوان؛ يربط رسائل Claude الجزئية بلا افتراضات
   const taskStatuses = new Map(); // task_id → حالة؛ تحديث owner وحده لا يعيدها pending
   const pendingTaskCreates = new Map(); // tool_use_id لـTaskCreate → input حتى تصل نتيجته ذات id
+  let effectivePrompt = prompt;
+  let testspriteHarnessHost = null;
+  let testspriteProgressWatcher = null;
   let closeInput;
   const inputClosed = new Promise((resolve) => { closeInput = resolve; });
 
   // محتوى رسالة المستخدم: نص بسيط، أو مصفوفة كتل (نص + صور) عند وجود صور.
   // ترتيب الكتل: النص أولاً ثم الصور — والـ SDK يقبل source.type='base64'.
   function buildContent() {
-    if (!images || !images.length) return prompt;
+    if (!images || !images.length) return effectivePrompt;
     const blocks = [];
-    if (prompt) blocks.push({ type: 'text', text: prompt });
+    if (effectivePrompt) blocks.push({ type: 'text', text: effectivePrompt });
     for (const im of images) {
       blocks.push({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } });
     }
@@ -1099,6 +1105,40 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     });
   }
 
+  // TestSprite تكامل خارجي اختياري: يُحقن فقط في دردشة المستخدم عندما يكون مفتاحه
+  // مضبوطاً في خزنة «سطر». السر يصل إلى الخادم الرسمي عبر env، لا ملف مشروع أو وسيطة spawn.
+  const testspriteApiKey = keys.get(testsprite.KEY_NAME);
+  const testspriteRequested = !isolatedPolicy && testsprite.requested(prompt, {
+    available: testsprite.isValidApiKey(testspriteApiKey),
+  });
+  if (testspriteRequested) {
+    testsprite.scrubConfig(cwd);
+    const config = testsprite.claudeConfig(testspriteApiKey);
+    if (config) {
+      options.mcpServers = Object.assign({}, options.mcpServers);
+      options.mcpServers[testsprite.SERVER_NAME] = config;
+      if (testspriteHarness.supportsProject(cwd)) {
+        try {
+          testspriteHarnessHost = await testspriteHarness.start();
+          effectivePrompt = testsprite.chatPrompt(prompt, { url: testspriteHarnessHost.url, cwd });
+          const requestedIds = testsprite.extractTestIds(prompt);
+          testspriteProgressWatcher = testsprite.watchResults(cwd, { testIds: requestedIds, onUpdate: emit });
+          emit({ type: 'testsprite_progress', phase: 'preparing', total: requestedIds.length,
+            completed: 0, passed: 0, failed: 0, skipped: 0 });
+          emit({ type: 'assistant', message: { role: 'assistant', content: [{
+            type: 'text',
+            text: '🧪 بدأ «سطر» سطح TestSprite المؤقت داخل هذا الدور؛ سيوقفه تلقائياً عند الانتهاء.',
+          }] } });
+        } catch (error) {
+          const code = error && error.code === 'EADDRINUSE' ? 'المنفذ 4173 مستخدم' : String((error && error.message) || error);
+          emit({ type: 'assistant', message: { role: 'assistant', content: [{
+            type: 'text', text: '⚠️ تعذّر بدء سطح TestSprite التلقائي: ' + code + '. لم يبدأ اختبار الواجهة.',
+          }] } });
+        }
+      }
+    } else emit({ type: 'stderr', text: testsprite.MISSING_KEY_MESSAGE });
+  }
+
   const q = query({ prompt: promptStream(), options });
 
   // حلقة الاستهلاك تعمل في الخلفية؛ الأحداث تصل الواجهة تباعاً
@@ -1125,6 +1165,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       emit({ type: 'proc_done', code: 1 });
     } finally {
       closeInput();
+      if (testspriteProgressWatcher) { testspriteProgressWatcher.stop(); testspriteProgressWatcher = null; }
+      if (testspriteHarnessHost) {
+        const host = testspriteHarnessHost;
+        testspriteHarnessHost = null;
+        host.close().catch(() => {});
+      }
+      if (testspriteRequested) testsprite.scrubConfig(cwd);
       for (const [id, p] of pending) {
         pending.delete(id);
         p.resolve({ behavior: 'deny', message: 'انتهى التشغيل' });
@@ -1162,6 +1209,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     },
     // إيقاف حقيقي: مقاطعة النموذج + إنهاء الإدخال + رفض الأذونات والأسئلة المعلقة
     async stop() {
+      if (testspriteRequested) testsprite.scrubConfig(cwd);
+      if (testspriteProgressWatcher) { testspriteProgressWatcher.stop(); testspriteProgressWatcher = null; }
+      if (testspriteHarnessHost) {
+        const host = testspriteHarnessHost;
+        testspriteHarnessHost = null;
+        host.close().catch(() => {});
+      }
       for (const [id, p] of pending) {
         pending.delete(id);
         p.resolve({ behavior: 'deny', message: 'أوقف المستخدم الطلب' });

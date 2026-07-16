@@ -448,6 +448,14 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
     return true;
   }
 
+  function isClaudeAuthError(text) {
+    return /Failed to authenticate|OAuth session expired|could not be refreshed/i.test(String(text || ''));
+  }
+
+  function claudeAuthErrorMessage() {
+    return 'انتهت جلسة Claude Code وتعذّر تجديدها. شغّل `claude auth login` في الطرفية، أكمل تسجيل الدخول، ثم أعد تشغيل الطلب.';
+  }
+
   // ---------- التحديث التلقائي (المرحلة 17 + موافقة صريحة 2026-07-12) ----------
   // إشعار لا يقاطع بموافقة في كل خطوة: «متوفّر» ⇐ زرّ «نزّل الآن» ⇐ تقدّم ⇐ «جاهز»
   // ⇐ زرّ «أعد التشغيل الآن». لا تنزيل ولا تثبيت تلقائيان (المستخدم يملك كل خطوة).
@@ -495,9 +503,30 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
       permEl.request({ id: ev.id, tool: ev.tool, detail: permDetailText(ev.tool, ev.input) });
       return;
     }
+    if (ev.type === 'preview_recording_saved') {
+      addNotice('🎥 حُفظ تسجيل المعاينة في: ' + ev.path);
+      return;
+    }
+    if (ev.type === 'preview_recording_failed') {
+      addNotice('تعذّر حفظ تسجيل المعاينة' + (ev.filename ? ': ' + ev.filename : ''));
+      return;
+    }
     // أسئلة الاختيار (AskUserQuestion) — تُعالج دائماً أيضاً (تنتظر رد المستخدم أثناء الدور)
     if (ev.type === 'question_request') {
       questionEl.ask({ id: ev.id, questions: ev.questions });
+      return;
+    }
+    if (ev.type === 'testsprite_progress') {
+      const completed = Number.isInteger(ev.completed) && ev.completed >= 0 ? ev.completed : 0;
+      const total = Number.isInteger(ev.total) && ev.total >= 0 ? ev.total : 0;
+      const counts = `نجح ${Number(ev.passed) || 0} · فشل ${Number(ev.failed) || 0} · تخطّى ${Number(ev.skipped) || 0}`;
+      if (ev.phase === 'preparing') {
+        showTransientNotice('🧪 يجري تجهيز TestSprite والتحقق من الخطة…');
+      } else if (ev.phase === 'complete') {
+        addNotice(`🧪 اكتمل TestSprite من ملف النتائج: ${completed}/${total} — ${counts}`);
+      } else {
+        showTransientNotice(`🧪 TestSprite: اكتملت ${completed}/${total} — ${counts}`);
+      }
       return;
     }
     // عمليات الخلفية مستقلة عن الدور: تصل حتى بعد انتهاء التشغيل، فتُعالَج قبل حارس الكتلة
@@ -609,6 +638,7 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
       }
       if (ev.is_error && ev.result) {
         if (deadSessionRecovery(ev.result)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
+        else if (isClaudeAuthError(ev.result)) block.error(claudeAuthErrorMessage());
         else block.error(String(ev.result));
       }
       block.finish(ev);
@@ -617,6 +647,7 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
       chatEl.notifyTurnDone(!!ev.is_error);
     } else if (ev.type === 'spawn_error') {
       if (deadSessionRecovery(ev.text)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
+      else if (isClaudeAuthError(ev.text)) block.error(claudeAuthErrorMessage());
       else {
         const eng = $('engine').value;
         const name = eng === 'codex' ? 'Codex' : 'claude';
@@ -755,7 +786,7 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
       effort: $('effort').value,
       extraDirs: topbarEl.getExtraDirs ? topbarEl.getExtraDirs() : [],
       images: images.map((i) => ({ media_type: i.media_type, data: i.data })),
-      browserControl: browserControlOn, // وضع تحكّم المتصفح (محرك SDK فقط)
+      browserControl: browserControlOn, // تفويض صريح لأدوات المتصفح في محركي SDK وCodex
     });
     if (r && r.error) {
       currentBlock.error(r.message || r.error);

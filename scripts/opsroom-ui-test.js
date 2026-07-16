@@ -24,7 +24,12 @@ function changedFiles() {
   return [...new Set([
     ...gitLines(['diff', '--name-only', '--diff-filter=ACMRTUXB', 'HEAD', '--']),
     ...gitLines(['ls-files', '--others', '--exclude-standard']),
-  ])].filter((relative) => fs.existsSync(path.join(ROOT, relative)));
+  ])].filter((relative) => {
+    const normalized = relative.replace(/\\/g, '/');
+    // تقارير TestSprite صفحات خارجية مولّدة وليست أصول واجهة تُشحَن مع Electron.
+    if (normalized.startsWith('testsprite_tests/')) return false;
+    return fs.existsSync(path.join(ROOT, relative));
+  });
 }
 
 async function loadStateModule() {
@@ -348,6 +353,12 @@ function testDesignGuard() {
     && preview.includes("window.satr.previewBounds(0, 0, 0, 0)"),
   'drawer hold must hide both preview frame and native bounds');
   const mainProcess = read('electron/main.js');
+  const recordingBridge = read('electron/previewrecording.js');
+  assert(mainProcess.includes('previewrecording.attach(ownerWebContents.session')
+    && recordingBridge.includes("session.on('will-download'")
+    && recordingBridge.includes("type: 'preview_recording_saved'")
+    && app.includes("ev.type === 'preview_recording_saved'"),
+  'preview recording must use a sanitized Downloads path and report the completed path to the UI');
   assert(!mainProcess.includes('executionTeam.SAFE_RUN_ID.test('),
     'IPC handlers must validate team ids through the module export, not the runtime instance');
   assert(mainProcess.includes('executionTeamModule.SAFE_RUN_ID.test('),

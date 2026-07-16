@@ -35,6 +35,9 @@ const integration = require('./integration'); // تحقق تكاملي داخل 
 const merger = require('./merger'); // تطبيق patch بعد المراجعة والتحقق والموافقة — المرحلة 5
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
+const previewrecording = require('./previewrecording'); // تنزيل تسجيل المعاينة إلى Downloads + إشعار المسار
+const testsprite = require('./testsprite'); // تكامل TestSprite MCP — مفتاح مشفّر، لا يظهر كمحرّك
+const claudeauth = require('./claudeauth');
 const adapters = require('./adapters');
 const SAFE_MODEL = /^[A-Za-z0-9.-]{1,64}$/;
 
@@ -196,6 +199,13 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
 
+  // تسجيل المعاينة يُنزّل Blob من renderer. نثبّت مساره داخل Downloads باسم منقّى، ثم
+  // نبلغ الواجهة بالمسار الفعلي بعد اكتمال التنزيل؛ التنزيلات الأخرى لا يمسّها هذا الحارس.
+  const ownerWebContents = mainWindow.webContents;
+  const detachPreviewRecording = previewrecording.attach(ownerWebContents.session, ownerWebContents, {
+    downloadsPath: app.getPath('downloads'), emit: emitToWindow,
+  });
+
   // الروابط الخارجية تفتح في المتصفح وليس داخل التطبيق
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url);
@@ -203,6 +213,7 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => {
+    detachPreviewRecording();
     mainWindow = null;
     preview.destroy(); // عرض المعاينة ابن النافذة — تدمير صريح احتياطاً
     stopAll();
@@ -253,7 +264,7 @@ const CLAUDE_MIN_RECOMMENDED = [2, 1, 197];
 ipcMain.handle('satr:features', () => features.snapshot());
 
 // قائمة مزوّدي المحرّكات (طبقة المزوّد §4.2) — لبناء قائمة «المحرك» ديناميكياً في الواجهة
-ipcMain.handle('satr:providers', () => ({ providers: adapters.list() }));
+ipcMain.handle('satr:providers', () => ({ providers: adapters.list(), integrations: [testsprite.publicInfo()] }));
 
 // حالة توفّر Codex (المرحلة 4): مثبَّت؟ ومسجَّل الدخول؟ — لإرشاد مضمّن حين يُختار المحرك
 // codex وهو غير جاهز (لا يحجب الإطلاق — Claude يبقى بوابة الإطلاق الوحيدة). force=true
@@ -265,10 +276,11 @@ ipcMain.handle('satr:codexStatus', () => {
 
 // ---------- مركز مفاتيح المزوّدين (§4.3 — مخزن الأسرار) ----------
 // 🔒 أمان: الأسماء المقبولة محصورة بمفاتيح المزوّدين المسجّلين فقط، والقيم لا تُعاد
-// للواجهة أبداً (satr:keysList يعيد الأسماء المضبوطة فقط). الكتابة لملف لا spawn.
+// للواجهة أبداً (satr:keysList يعيد الأسماء المضبوطة فقط). التكاملات المسجّلة وحدها قد
+// تمرّر السر عبر env إلى عملية ثابتة؛ لا يدخل السر argv أو أمر صدفة مبنياً من المستخدم.
 const SAFE_KEY_NAME = /^[A-Z][A-Z0-9_]{1,64}$/;
 function knownKeyNames() {
-  return new Set(adapters.list().map((p) => p.keyName).filter(Boolean));
+  return new Set([...adapters.list().map((p) => p.keyName).filter(Boolean), testsprite.KEY_NAME]);
 }
 
 ipcMain.handle('satr:keysList', () => ({ names: keys.names() }));
@@ -278,6 +290,7 @@ ipcMain.handle('satr:keySet', (event, p) => {
   const value = p && typeof p.value === 'string' ? p.value.trim() : '';
   if (!SAFE_KEY_NAME.test(name) || !knownKeyNames().has(name)) return { ok: false, error: 'bad_name' };
   if (!value || value.length > 8192) return { ok: false, error: 'bad_value' };
+  if (name === testsprite.KEY_NAME && !testsprite.isValidApiKey(value)) return { ok: false, error: 'bad_value' };
   try { keys.set(name, value); return { ok: true }; } catch (e) { return { ok: false, error: 'write_failed' }; }
 });
 
@@ -318,6 +331,12 @@ ipcMain.handle('satr:preflight', async () => {
       claude.outdated = cmpVer(cur, CLAUDE_MIN_RECOMMENDED) < 0;
       if (claude.outdated) claude.recommended = CLAUDE_MIN_RECOMMENDED.join('.');
     }
+  }
+  if (claude.ok) {
+    const auth = await claudeauth.probe(claude.path || CLAUDE_BIN, { env: process.env });
+    claude.authChecked = auth.checked;
+    claude.loggedIn = auth.loggedIn;
+    claude.authMethod = auth.authMethod;
   }
   return { claude, node, npm };
 });
@@ -673,6 +692,9 @@ ipcMain.handle('satr:send', async (event, payload) => {
         skills: sanitizeSkills(payload.skills),
         // الموجة 2: جهد التفكير — نفس تنقية SDK (EFFORT_LEVELS)؛ codex.js يطبّع max→xhigh
         effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
+        // ثلاثي الحالة: true = تفويض كل أدوات المتصفح، null = الأدوات متاحة وتطلب إذناً،
+        // false محجوز للسياقات المعزولة (مراجع/عصف) كي لا تُنشأ أدوات المعاينة أصلاً.
+        browserControl: payload.browserControl === true ? true : null,
       }, cwd, emit);
       return { started: true, engine: 'codex' };
     } catch (e) {

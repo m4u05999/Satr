@@ -9,6 +9,7 @@
 const http = require('http');
 const assert = require('assert');
 const codexmcp = require('../electron/codexmcp');
+const codex = require('../electron/codex');
 
 // preview مزيّف يحاكي عقد electron/preview.js دون WebContentsView
 const preview = {
@@ -47,7 +48,14 @@ let passed = 0;
 function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + name); }
 
 (async () => {
-  const srv = await codexmcp.start({ preview });
+  ok(codex.isExternalBrowserLaunchCommand('Start-Process http://localhost:3000'), 'سياسة Codex تحجب إطلاق متصفح خارجي إلى localhost');
+  ok(codex.isExternalBrowserLaunchCommand('msedge.exe https://example.com'), 'سياسة Codex تحجب تشغيل متصفح صريح');
+  ok(!codex.isExternalBrowserLaunchCommand('npm run dev'), 'سياسة Codex لا تحجب خادم التطوير');
+  ok(!codex.isExternalBrowserLaunchCommand('rg chrome electron'), 'سياسة Codex لا تحجب بحثاً نصياً عن متصفح');
+  const cleaned = codexmcp._internals.permissionInput({ text: 'x'.repeat(5000), ref: 'e7', injected: 'no' });
+  ok(cleaned.text.length === 4000 && cleaned.ref === 'e7' && !Object.hasOwn(cleaned, 'injected'), 'تفاصيل إذن المتصفح منقّاة ومحدودة');
+  const allowAll = async () => true;
+  const srv = await codexmcp.start({ preview, requestPermission: allowAll });
 
   // المصادقة: بلا رمز أو رمز خاطئ ⇒ 401
   let r = await post(srv.url, null, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
@@ -97,13 +105,13 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
 
   // onActivity يُستدعى (خطّاف المراقبة الذي يستهلكه codex.js لعرض نشاط المتصفح)
   const acts = [];
-  const srv2 = await codexmcp.start({ preview, onActivity: (m, t) => acts.push([m, t]) });
+  const srv2 = await codexmcp.start({ preview, requestPermission: allowAll, onActivity: (m, t) => acts.push([m, t]) });
   await post(srv2.url, srv2.token, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
   await post(srv2.url, srv2.token, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'read_page', arguments: {} } });
   ok(acts.some(([m]) => m === 'tools/list'), 'onActivity يُستدعى بطريقة الطلب');
   ok(acts.some(([m, t]) => m === 'tools/call' && t === 'read_page'), 'onActivity يمرّر اسم الأداة على tools/call (مسار مؤشّر النشاط)');
 
-  // بوابة الإذن: الأفعال تمرّ بـ requestPermission، والقراءة/الرؤية لا
+  // بوابة الإذن: كل أدوات المعاينة تمرّ بـ requestPermission، وغيابها يرفض fail-closed.
   const asked = [];
   const gate = (decision) => async (tool, input) => { asked.push(tool); return decision; };
 
@@ -121,11 +129,17 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   jj = JSON.parse(rr.body);
   ok(asked.includes('browser_type') && !jj.result.isError && /كُتب النص/.test(jj.result.content[0].text), 'قبول الإذن ⇒ browser_type يُنفَّذ');
 
-  // (ج) القراءة/الرؤية لا تطلب إذناً (read_page لا تستدعي requestPermission)
+  // (ج) القراءة/الرؤية تطلب إذناً أيضاً — هذا هو عقد Codex المتسق مع Claude.
   asked.length = 0;
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'read_page', arguments: {} } });
-  ok(asked.length === 0, 'read_page لا تطلب إذناً (قراءة فقط)');
+  ok(asked.includes('read_page'), 'read_page تمرّ ببوابة إذن المتصفح');
   await srv3.stop();
+
+  const srv4 = await codexmcp.start({ preview });
+  rr = await post(srv4.url, srv4.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'open_preview', arguments: { url: 'http://localhost:3000' } } });
+  jj = JSON.parse(rr.body);
+  ok(jj.result.isError && /رُفض الإذن/.test(jj.result.content[0].text), 'غياب بوابة الإذن يرفض open_preview ولا يتصفح بصمت');
+  await srv4.stop();
 
   await srv.stop();
   await srv2.stop();

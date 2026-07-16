@@ -47,6 +47,19 @@ function whyClosed(err, extra) {
   return (extra || 'تعذّرت العملية') + ' (' + (err || 'خطأ') + ').';
 }
 
+const PERMISSION_KEYS = new Set(['url', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page']);
+function permissionInput(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (!PERMISSION_KEYS.has(key)) continue;
+    if (typeof item === 'string') out[key] = item.slice(0, 4000);
+    else if (typeof item === 'boolean') out[key] = item;
+    else if (typeof item === 'number' && Number.isFinite(item)) out[key] = item;
+  }
+  return out;
+}
+
 /**
  * تبني قائمة الأدوات المعروضة لـ Codex. تفوّض كلها إلى electron/preview.js مباشرةً
  * (نفس منطق أدوات المتصفح في agent.js). `deps.preview` وحدة المعاينة المشتركة،
@@ -56,20 +69,6 @@ function whyClosed(err, extra) {
 function buildTools(deps) {
   const preview = deps.preview;
   const openPreview = typeof deps.openPreview === 'function' ? deps.openPreview : null;
-  // بوابة الإذن لأفعال المتصفح (النقر/الكتابة/الاختيار/المفتاح): Codex **لا** يمرّر نداءات
-  // MCP عبر طبقة موافقته (execCommandApproval للأوامر/الملفات فقط)، فالأفعال ستُنفَّذ بلا
-  // سؤال — خطر مع صفحات ويب غير موثوقة (حقن برومبت). لذا نمرّرها عبر مربع الإذن العربي
-  // نفسه: codex.js يوفّر requestPermission(tool, input) الذي يبثّ permission_request
-  // وينتظر ردّ المستخدم (نفس قناة أذونات الأوامر). القراءة/الرؤية لا تُبوَّب (آمنة).
-  const requestPermission = typeof deps.requestPermission === 'function' ? deps.requestPermission : null;
-  const guard = async (toolName, input, fn) => {
-    if (requestPermission) {
-      let allowed = false;
-      try { allowed = await requestPermission(toolName, input); } catch (e) { allowed = false; }
-      if (!allowed) return textResult('رُفض الإذن — لم يُنفَّذ الفعل ' + toolName + '.', true);
-    }
-    return fn();
-  };
   return [
     {
       name: 'open_preview',
@@ -258,7 +257,7 @@ function buildTools(deps) {
       description: 'انقر عنصراً في الصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل e5 — '
         + 'حتمي ومُفضَّل) أو مُحدِّد CSS. أعد أخذ اللقطة بعد النقر (الـ ref يتغيّر).',
       inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'ref (مثل e5) أو مُحدِّد CSS' } }, required: ['ref'] },
-      handler: (args) => guard('browser_click', { ref: String((args && args.ref) || '') }, async () => {
+      handler: async (args) => {
         const r = await preview.clickElement(String((args && args.ref) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'not_found' ? 'لم يُعثر على عنصر بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
@@ -266,7 +265,7 @@ function buildTools(deps) {
           return textResult(why, true);
         }
         return textResult('نُقر على <' + r.tag + '>' + (r.text ? ' («' + r.text + '»)' : ''));
-      }),
+      },
     },
     {
       name: 'browser_type',
@@ -276,7 +275,7 @@ function buildTools(deps) {
         ref: { type: 'string', description: 'ref (مثل e7) أو مُحدِّد CSS' },
         text: { type: 'string', description: 'النص المراد كتابته' },
       }, required: ['ref', 'text'] },
-      handler: (args) => guard('browser_type', { ref: String((args && args.ref) || ''), text: String((args && args.text) || '') }, async () => {
+      handler: async (args) => {
         const r = await preview.typeText(String((args && args.ref) || ''), String((args && args.text) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'not_found' ? 'لم يُعثر على حقل بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
@@ -285,7 +284,7 @@ function buildTools(deps) {
           return textResult(why, true);
         }
         return textResult('كُتب النص في <' + r.tag + '>.');
-      }),
+      },
     },
     {
       name: 'browser_select_option',
@@ -295,7 +294,7 @@ function buildTools(deps) {
         ref: { type: 'string', description: 'ref (مثل e9) أو مُحدِّد CSS' },
         value: { type: 'string', description: 'قيمة الخيار أو نصّه الظاهر' },
       }, required: ['ref', 'value'] },
-      handler: (args) => guard('browser_select_option', { ref: String((args && args.ref) || ''), value: String((args && args.value) || '') }, async () => {
+      handler: async (args) => {
         const r = await preview.selectOption(String((args && args.ref) || ''), String((args && args.value) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'not_found' ? 'لم يُعثر على القائمة — أعد أخذ لقطة بـ browser_snapshot.'
@@ -304,21 +303,21 @@ function buildTools(deps) {
           return textResult(why, true);
         }
         return textResult('اختير «' + (r.label || '') + '».');
-      }),
+      },
     },
     {
       name: 'browser_press_key',
       description: 'اضغط مفتاحاً على العنصر المركّز في الصفحة (بعد browser_click لتركيزه). لإرسال '
         + 'نموذج بـ Enter أو التنقّل بـ Tab/الأسهم. للكتابة استعمل browser_type.',
       inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Enter/Tab/Escape/ArrowUp/ArrowDown/ArrowLeft/ArrowRight/Backspace/Delete/Home/End/PageUp/PageDown' } }, required: ['key'] },
-      handler: (args) => guard('browser_press_key', { key: String((args && args.key) || '') }, async () => {
+      handler: async (args) => {
         const r = preview.pressKey(String((args && args.key) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'bad_key' ? 'مفتاح غير مدعوم (استعمل الأسماء المذكورة في وصف الأداة).' : whyClosed(r && r.error, 'تعذّر الضغط');
           return textResult(why, true);
         }
         return textResult('ضُغط ' + r.key + '.');
-      }),
+      },
     },
   ];
 }
@@ -338,6 +337,10 @@ function rpcOk(id, result) {
 function start(deps) {
   const tools = buildTools(deps || {});
   const toolMap = new Map(tools.map((t) => [t.name, t]));
+  // Codex لا يمرّر MCP عبر بوابة موافقات app-server. لذلك **كل** أداة معاينة تمر هنا
+  // عبر مربع إذن «سطر» (أو التفويض الصريح browserControl في codex.js). غياب البوابة
+  // يُرفض fail-closed؛ فلا تتحول إضافة أداة مستقبلية إلى قدرة صامتة بالخطأ.
+  const requestPermission = typeof (deps && deps.requestPermission) === 'function' ? deps.requestPermission : null;
   const token = crypto.randomBytes(24).toString('hex');
   const sessionId = crypto.randomBytes(16).toString('hex');
   // خطّاف مراقبة اختياري (main.js يستهلكه لعرض نشاط Codex على المتصفح مثل flashAgentActivity)
@@ -366,7 +369,13 @@ function start(deps) {
         const name = params && params.name;
         const tool = toolMap.get(String(name));
         if (!tool) return isNotification ? null : rpcError(id, -32602, 'أداة غير معروفة: ' + name);
-        const result = await tool.handler((params && params.arguments) || {});
+        const input = (params && params.arguments) || {};
+        let allowed = false;
+        if (requestPermission) {
+          try { allowed = await requestPermission(tool.name, permissionInput(input)); } catch (e) { allowed = false; }
+        }
+        if (!allowed) return rpcOk(id, textResult('رُفض الإذن — لم تُنفَّذ أداة المتصفح ' + tool.name + '.', true));
+        const result = await tool.handler(input);
         return rpcOk(id, result);
       }
       // طرق أخرى (resources/prompts) غير مدعومة — نردّ فارغاً بلطف بدل خطأ يُسقط الاتصال
@@ -438,4 +447,4 @@ function start(deps) {
   });
 }
 
-module.exports = { start, buildTools, _internals: { safeEqual, PROTOCOL_VERSION } };
+module.exports = { start, buildTools, _internals: { safeEqual, permissionInput, PROTOCOL_VERSION } };

@@ -8,6 +8,7 @@ import { sheet } from '../lib/sheet.js';
 import { controlsSheet } from '../lib/panel.css.js';
 
 const INSTALL_CMD = 'npm install -g @anthropic-ai/claude-code';
+const LOGIN_CMD = 'claude auth login';
 
 const ownSheet = sheet(`
   :host {
@@ -125,8 +126,12 @@ class SatrGate extends HTMLElement {
   // رسم الخطوات من نتيجة الفحص حين يكون claude غير متوفّر
   _render(r) {
     this.hidden = false;
-    this._title.textContent = 'مطلوب: Claude Code';
-    this._sub.textContent = '«سطر» يحتاج Claude Code مثبّتاً على جهازك ليعمل. اتبع الخطوات ثم اضغط «أعد الفحص».';
+    const claudeOk = !!(r && r.claude && r.claude.ok);
+    const loggedOut = claudeOk && r.claude.authChecked && r.claude.loggedIn === false;
+    this._title.textContent = loggedOut ? 'مطلوب: تسجيل الدخول إلى Claude Code' : 'مطلوب: Claude Code';
+    this._sub.textContent = loggedOut
+      ? 'انتهت جلسة Claude Code أو سُجّل الخروج منها. سجّل الدخول ثم اضغط «أعد الفحص».'
+      : '«سطر» يحتاج Claude Code مثبّتاً على جهازك ليعمل. اتبع الخطوات ثم اضغط «أعد الفحص».';
     this._steps.innerHTML = '';
 
     // الخطوة 1: Node.js (يلزم npm لتثبيت Claude Code)
@@ -141,7 +146,6 @@ class SatrGate extends HTMLElement {
     }
 
     // الخطوة 2: تثبيت Claude Code عبر npm
-    const claudeOk = r && r.claude && r.claude.ok;
     this._steps.appendChild(this._step(
       claudeOk ? 'done' : 'todo',
       'ثبّت Claude Code',
@@ -149,12 +153,13 @@ class SatrGate extends HTMLElement {
       claudeOk ? null : INSTALL_CMD
     ));
 
-    // الخطوة 3: تسجيل الدخول (لا يمكن كشفه من --version، فهو إرشادي)
+    // الخطوة 3: تسجيل الدخول — preflight يفحص `claude auth status` بلا قراءة أي token.
+    const authReady = claudeOk && (!r.claude.authChecked || r.claude.loggedIn === true);
     this._steps.appendChild(this._step(
-      'todo',
-      'سجّل الدخول مرة واحدة',
-      'بعد التثبيت، شغّل الأمر التالي في الطرفية واتبع خطوات تسجيل الدخول:',
-      'claude'
+      authReady ? 'done' : 'todo',
+      authReady ? 'Claude Code مسجّل الدخول' : 'سجّل الدخول إلى Claude Code',
+      authReady ? 'المصادقة جاهزة.' : 'شغّل الأمر التالي في الطرفية واتبع خطوات تسجيل الدخول، ثم أعد الفحص:',
+      authReady ? null : LOGIN_CMD
     ));
   }
 
@@ -163,7 +168,9 @@ class SatrGate extends HTMLElement {
     let r = null;
     try { r = await window.satr.preflight(); } catch (e) { r = null; }
     this._btn.disabled = false; this._btn.textContent = 'أعد الفحص';
-    if (r && r.claude && r.claude.ok) this._ready(r.claude.version, r.claude);
+    const claudeReady = r && r.claude && r.claude.ok
+      && (!r.claude.authChecked || r.claude.loggedIn === true);
+    if (claudeReady) this._ready(r.claude.version, r.claude);
     else this._render(r);
   }
 }

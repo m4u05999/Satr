@@ -1,4 +1,4 @@
-// <satr-topbar> — الشريط العلوي وإعدادات ⚙ (تفكيك ت-11): مدير مفاتيح المزوّدين (§5-ب)
+// <satr-topbar> — الشريط العلوي وإعدادات ⚙ (تفكيك ت-11): مدير مفاتيح المزوّدين والتكاملات (§5-ب)
 // + زر اختيار مجلد المشروع + المجلدات الإضافية (14.4) + آلية المنبثق ⚙ + قسم
 // «سطر Enterprise» (الدفعة 3). **بلا Shadow DOM** والترميز يبقى في index.html داخل
 // الوسم — القشرة تربط #cwd وأزرار الشريط عند الإقلاع قبل ترقية المكوّنات (نمط ت-10).
@@ -13,12 +13,15 @@ class SatrTopbar extends HTMLElement {
 
 // ما يلي منقول حرفياً من القشرة — بلا تغيير سلوك
 
-  // مركز مفاتيح المزوّدين (§5-ب): إدخال مفاتيح API بصرياً. أمان: القيم لا تُقرأ للواجهة —
+  // مركز مفاتيح المزوّدين والتكاملات (§5-ب): إدخال مفاتيح API بصرياً. أمان: القيم لا تُقرأ للواجهة —
   // نعرض «مضبوط/غير مضبوط» فقط. الحفظ فوري (keys.js يُقرأ لحظة الطلب — بلا إعادة تشغيل).
   async function initKeysManager() {
     const provSel = $('keyProvider'), val = $('keyValue'), status = $('keyStatus');
     let keyed = [];
-    try { const r = await window.satr.providers(); keyed = ((r && r.providers) || []).filter((p) => p.keyName); } catch (e) {}
+    try {
+      const r = await window.satr.providers();
+      keyed = [...((r && r.providers) || []), ...((r && r.integrations) || [])].filter((p) => p.keyName);
+    } catch (e) {}
     if (!keyed.length) { $('keysMgr').style.display = 'none'; return; }
     provSel.innerHTML = '';
     for (const p of keyed) { const o = document.createElement('option'); o.value = p.keyName; o.textContent = p.label; provSel.appendChild(o); }
