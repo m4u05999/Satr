@@ -5,7 +5,6 @@
  * Enterprise بالنواة — عبر نقاط الربط الممرَّرة، لا require عكسي أبداً.
  *
  * التسلسل: تحقق الترخيص (license.js) ⇒ تفعيل الأعلام المرخّصة ⇒ تسجيل القدرات:
- *  - local_models: مزوّد Ollama المحلي في سجلّ المحوّلات (§4.2)
  *  - usage_panel : سجل الاستهلاك + IPC ‏satr:ee:usage (§4.5/§4.7)
  *  - audit_log   : سجل التدقيق + IPC ‏satr:ee:audit (§4.5/§4.7)
  *
@@ -15,7 +14,6 @@
 // ⚠️ الوحدة اسمها licensing.js لا license.js — على ويندوز (نظام ملفات غير حساس لحالة
 // الأحرف) require('./license') يلتقط ملف LICENSE النصي فينفجر التحميل (درس مثبّت)
 const license = require('./licensing');
-const ollama = require('./providers/ollama');
 const usage = require('./usage');
 const audit = require('./audit');
 
@@ -26,12 +24,6 @@ function register(seams) {
   if (!status.active) return; // بلا ترخيص: Enterprise حاضر لكنه خامل تماماً
 
   const has = (f) => status.features.includes(f);
-
-  // 3.1 — مزوّد Ollama المحلي (يرث حلقة الوكيل كاملة من مصنع النواة)
-  if (has('local_models')) {
-    seams.setFlag('local_models', true);
-    seams.registerProvider('ollama', ollama.build(seams.openaiCompatible), ollama.META);
-  }
 
   // 3.3 — سجل الاستهلاك (رموز/كلفة لكل مزوّد وجلسة)
   if (has('usage_panel')) {

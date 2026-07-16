@@ -12,6 +12,7 @@ const claudeCli = require('./claude-cli');
 const gemini = require('./gemini');
 const openaiCompatible = require('./openai-compatible');
 const openaiResponses = require('./openai-responses');
+const ollama = require('./ollama');
 
 // name -> { adapter, meta:{ label, family } }
 const REGISTRY = new Map();
@@ -56,6 +57,8 @@ register('openai', openaiResponses, {
     { value: 'gpt-5.4-nano', label: 'GPT-5.4 nano' },
   ],
 });
+
+register('ollama', ollama.build(), ollama.META);
 
 // عائلة المتوافقة مع OpenAI: نفس البروتوكول، مفتاح لكل مزوّد في ~/.satr/keys.json.
 // البروتوكول متحقَّق حيّاً (عبر نقطة Gemini المتوافقة)؛ المفاتيح يضيفها المستخدم.

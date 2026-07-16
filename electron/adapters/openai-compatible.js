@@ -9,7 +9,7 @@
  * make(config) → { start(input, cwd, emit) → { stop() } }  (نفس عقد المحوّلات).
  * config: { id, host, path, keyName, defaultModel, label, includeUsage, capabilities } — id هو معرّف مجلد الذاكرة
  * على القرص (~/.satr/chats/<id>/)؛ بدونه تبقى الذاكرة حيّة فقط (تُمسح بإعادة التشغيل).
- * خيارات إضافية (الدفعة 3 — مزوّدون محليون مثل Ollama عبر نقطة الربط §4.2):
+ * خيارات إضافية (الدفعة 3 — مزوّدون محليون مثل Ollama):
  *   protocol: 'https' (افتراضي) أو 'http' (خوادم محلية) · port: منفذ مخصّص ·
  *   requiresKey: false = بلا مفتاح API (محلي) · connectHint: نص عربي يُعرض عند فشل
  *   الاتصال (ECONNREFUSED) يرشد المستخدم لتشغيل/تثبيت الخادم المحلي.

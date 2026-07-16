@@ -31,6 +31,18 @@
       claude: { ok: true, version: 'TestSprite harness', outdated: false },
     }),
     features: async () => ({}),
+    activityList: async function activityList() {
+      remember('activityList', arguments);
+      return {
+        ok: true,
+        count: 1,
+        entries: [{ ts: Date.now(), kind: 'result', engine: 'sdk', is_error: false, duration_ms: 20 }],
+      };
+    },
+    activityClear: async function activityClear() {
+      remember('activityClear', arguments);
+      return { ok: false, error: 'disabled_in_harness' };
+    },
     providers: async () => ({
       providers: [],
       integrations: [{ name: 'testsprite', label: 'TestSprite', keyName: 'TESTSPRITE_API_KEY', kind: 'integration' }],

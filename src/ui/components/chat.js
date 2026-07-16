@@ -23,6 +23,7 @@
 import { buildDiff } from '../lib/diff.js';
 import { diffSheet } from '../lib/diff.css.js';
 import { cardSheet } from '../lib/card.css.js';
+import { addUsageResult, emptyUsageSummary, formatUsage, formatUsageSummary } from '../lib/usage-summary.js';
 
 // حسم ازدواج أنماط بطاقة الفرق (الموثّق منذ ت-5): نسخة base.css حُذفت مع هذه الدفعة،
 // وdiffSheet تُعتمد هنا على **المستند** نفسه (adoptedStyleSheets على المستند — تحقق §1
@@ -35,21 +36,6 @@ document.adoptedStyleSheets = [...document.adoptedStyleSheets, diffSheet, cardSh
 // الأسماء من التوثيق الرسمي (cost-tracking): usage بـ snake_case، modelUsage بـ camelCase.
 // دفاعي: يعرض ما وُجد ويتجاهل ما غاب، فلا يكسر إن اختلفت بنية المحرّك (Codex/محوّل).
 const fmtNum = (n) => Number(n || 0).toLocaleString('en-US');
-function formatUsage(u) {
-  if (!u || typeof u !== 'object') return '';
-  // يوحّد مصدرين: العقد الموحّد للمحوّلات (input/output/cached/reasoning) وأسماء SDK
-  // الخام (input_tokens/output_tokens/cache_read_input_tokens) — أيّهما وُجد.
-  const input = u.input != null ? u.input : u.input_tokens;
-  const output = u.output != null ? u.output : u.output_tokens;
-  const cached = u.cached != null ? u.cached : u.cache_read_input_tokens;
-  const reasoning = u.reasoning; // SDK لا يفصل رموز التفكير؛ المحوّلات تفصلها
-  const parts = [];
-  if (input) parts.push('إدخال ' + fmtNum(input));
-  if (output) parts.push('إخراج ' + fmtNum(output));
-  if (cached) parts.push('من المخبّأ ' + fmtNum(cached));
-  if (reasoning) parts.push('تفكير ' + fmtNum(reasoning));
-  return parts.join(' · ');
-}
 function formatModelUsage(mu) {
   if (!mu || typeof mu !== 'object') return '';
   const names = Object.keys(mu);
@@ -85,7 +71,22 @@ class SatrChat extends HTMLElement {
     this.innerHTML = MARKUP;
     const $ = (id) => document.getElementById(id);
     const main = $('main'), thread = $('thread');
-    let totalCost = 0; // الكلفة التراكمية للجلسة — يصفّرها reset/clearThread
+    let usageSummary = emptyUsageSummary(); // ملخص الجلسة في الذاكرة — بلا تخزين دائم
+    let seenUsageResults = new WeakSet();
+
+    function renderUsageSummary() {
+      const costInfo = $('costInfo');
+      if (!costInfo) return;
+      const text = formatUsageSummary(usageSummary);
+      costInfo.textContent = text;
+      costInfo.title = usageSummary.estimated ? 'يتضمن أرقاماً تقديرية' : '';
+    }
+
+    function resetUsageSummary() {
+      usageSummary = emptyUsageSummary();
+      seenUsageResults = new WeakSet();
+      renderUsageSummary();
+    }
 
 // ما يلي منقول حرفياً من القشرة (المراحل 2–4 + دفعة UX) — بلا أي تغيير سلوك
   // ---------- ماركداون مدمج آمن (بدون مكتبات خارجية) ----------
@@ -822,7 +823,6 @@ class SatrChat extends HTMLElement {
         if (answerText || commentaryText) addMsgCopy(who, () => answerText || commentaryText);
         if (resultObj) {
           const cost = typeof resultObj.total_cost_usd === 'number' ? resultObj.total_cost_usd : 0;
-          totalCost += cost;
           const dur = resultObj.duration_ms ? (resultObj.duration_ms / 1000).toFixed(1) + 's' : '';
           const m = document.createElement('div');
           m.className = 'meta';
@@ -843,7 +843,8 @@ class SatrChat extends HTMLElement {
             mm.className = 'meta'; mm.dir = 'ltr'; mm.textContent = modelsStr;
             w.appendChild(mm);
           }
-          $('costInfo').textContent = totalCost ? 'الكلفة التقديرية: ~$' + totalCost.toFixed(4) : '';
+          usageSummary = addUsageResult(usageSummary, resultObj, seenUsageResults);
+          renderUsageSummary();
         }
       },
       error(text) {
@@ -945,9 +946,8 @@ class SatrChat extends HTMLElement {
     taskLedgerSession = null;
     checkpointEl = null;
     checkpointSession = null;
-    totalCost = 0;
+    resetUsageSummary();
     opsEntryIds.clear();
-    $('costInfo').textContent = '';
     thread.innerHTML = '<div class="empty" id="empty"><div class="big">سطر</div><p>جلسة جديدة — اكتب طلبك الأول.</p></div>';
   }
   // تفريغ الخيط لاستئناف محادثة محوّل (نظير reset دون حالة الفراغ — التاريخ سيُبنى فوراً)
@@ -956,9 +956,8 @@ class SatrChat extends HTMLElement {
     taskLedgerSession = null;
     checkpointEl = null;
     checkpointSession = null;
-    totalCost = 0;
+    resetUsageSummary();
     opsEntryIds.clear();
-    $('costInfo').textContent = '';
     thread.innerHTML = '';
   }
 

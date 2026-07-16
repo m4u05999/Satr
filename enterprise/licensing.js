@@ -3,7 +3,7 @@
  *
  * MVP دون خدمة خارجية: ملف ترخيص محلي `~/.satr/license.json` بالشكل:
  *   { "key": "SATR-EE-XXXXXX-XXXXXX", "org": "اسم الجهة", "plan": "enterprise",
- *     "exp": "YYYY-MM-DD", "features": ["local_models", "usage_panel", "audit_log"] }
+ *     "exp": "YYYY-MM-DD", "features": ["usage_panel", "audit_log"] }
  *
  * التحقق الحالي: شكل المفتاح + تاريخ الانتهاء (تحقق «حسن نية» يكفي للنموذج الأولي —
  * وليس حماية تشفيرية). التوقيع الرقمي (مفتاح عام يوقّع محتوى الترخيص) يُضاف عند أول
@@ -19,7 +19,7 @@ const path = require('path');
 const LICENSE_PATH = path.join(os.homedir(), '.satr', 'license.json');
 const KEY_RE = /^SATR-EE-[A-Z0-9]{6}-[A-Z0-9]{6}$/;
 // القدرات الافتراضية لخطة enterprise إن لم يعدّدها الترخيص
-const DEFAULT_FEATURES = ['local_models', 'usage_panel', 'audit_log'];
+const DEFAULT_FEATURES = ['usage_panel', 'audit_log'];
 
 function check() {
   let raw;

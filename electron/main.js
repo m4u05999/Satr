@@ -120,6 +120,7 @@ const inject = require('./inject');
 const chats = require('./chats');
 const agentTools = require('./tools'); // أدوات المحوّلات (2.1/2.2) — للتراجع عن تعديلاتها
 const features = require('./features');
+const activity = require('./activity');
 const keys = require('./keys');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
@@ -262,6 +263,17 @@ const CLAUDE_MIN_RECOMMENDED = [2, 1, 197];
 
 // لقطة القدرات للواجهة (قراءة فقط): تُظهر/تُخفي قدرات Enterprise. المجتمعية ⇒ {enterprise:false}
 ipcMain.handle('satr:features', () => features.snapshot());
+
+// سجل Community المحلي: metadata محدودة للمشروع الحالي، بلا prompt/مدخلات/خرج أو مسارات مطلقة.
+ipcMain.handle('satr:activityList', (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  return cwd ? activity.list(cwd, 20) : { ok: false, error: 'bad_cwd', entries: [], count: 0 };
+});
+ipcMain.handle('satr:activityClear', (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  if (!cwd || !payload || payload.confirmed !== true) return { ok: false, error: 'confirmation_required' };
+  return activity.clear(cwd);
+});
 
 // قائمة مزوّدي المحرّكات (طبقة المزوّد §4.2) — لبناء قائمة «المحرك» ديناميكياً في الواجهة
 ipcMain.handle('satr:providers', () => ({ providers: adapters.list(), integrations: [testsprite.publicInfo()] }));
@@ -421,11 +433,15 @@ function stopAll() {
   }
 }
 
+function notifyObservers(obj, meta) {
+  try { activity.onEvent(obj, meta); } catch (e) { /* السجل المحلي أفضل جهد */ }
+  try { features.notify(obj, meta); } catch (e) { /* عزل Enterprise */ }
+}
+
 function emitToWindow(obj) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:event', obj);
-  // مجرى المراقبة (§4.7 — الدفعة 3): التدقيق/الاستهلاك في Enterprise يلتقطان الأحداث.
-  // رخيص عند غياب المشتركين (بناء مجتمعي = لا شيء)
-  try { features.notify(obj, { engine: lastEngine }); } catch (e) { /* عزل */ }
+  // Community يسجل metadata مختصرة، وEnterprise يلتقط التدقيق/الاستهلاك عبر مجراه.
+  notifyObservers(obj, { engine: lastEngine });
 }
 
 const opsRoomTransitions = new Set();
@@ -676,7 +692,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
   // مجرى المراقبة (§4.7): حدث وصفي ببداية الدور — للتدقيق (من طلب ماذا وأين)
   lastEngine = runEngine;
   try {
-    features.notify({ type: 'prompt', engine: lastEngine, cwd, prompt: prompt.slice(0, 2000) });
+    notifyObservers({ type: 'prompt', engine: lastEngine, cwd, prompt: prompt.slice(0, 2000) }, { engine: lastEngine });
   } catch (e) { /* عزل */ }
 
   // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk (له resolvePermission+stop، فيسكن
@@ -865,7 +881,7 @@ ipcMain.handle('satr:permission', (event, p) => {
   }
   // مجرى المراقبة (§4.7): قرار الإذن — عنصر أساسي في سجل التدقيق (3.4)
   try {
-    features.notify({ type: 'permission_reply', id: p.id, allow: !!p.allow, always: !!p.always, engine: lastEngine });
+    notifyObservers({ type: 'permission_reply', id: p.id, allow: !!p.allow, always: !!p.always, engine: lastEngine }, { engine: lastEngine });
   } catch (e) { /* عزل */ }
   return { ok };
 });

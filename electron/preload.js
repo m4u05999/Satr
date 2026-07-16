@@ -8,6 +8,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('satr', {
   preflight: () => ipcRenderer.invoke('satr:preflight'),
   features: () => ipcRenderer.invoke('satr:features'),
+  activityList: (cwd) => ipcRenderer.invoke('satr:activityList', { cwd }),
+  activityClear: (cwd, confirmed) => ipcRenderer.invoke('satr:activityClear', { cwd, confirmed }),
   providers: () => ipcRenderer.invoke('satr:providers'),
   codexStatus: () => ipcRenderer.invoke('satr:codexStatus'),
   keysList: () => ipcRenderer.invoke('satr:keysList'),

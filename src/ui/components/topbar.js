@@ -94,6 +94,51 @@ class SatrTopbar extends HTMLElement {
   document.addEventListener('click', () => { if (!settingsPop.hidden) setSettingsOpen(false); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !settingsPop.hidden) setSettingsOpen(false); });
 
+  // ---------- سجل نشاط Community المحلي ----------
+  const ACTIVITY_LABELS = {
+    prompt: () => 'بدأ طلب جديد',
+    tool: (entry) => 'استخدم الوكيل أداة ' + (entry.tool || 'غير معروفة'),
+    file_edit: (entry) => 'عُدّل ' + (entry.rel || 'ملف') + ' (+' + (entry.added || 0) + '/-' + (entry.removed || 0) + ')',
+    permission: (entry) => (entry.allow ? 'سُمح' : 'رُفض') + ' استخدام ' + (entry.tool || 'أداة'),
+    result: (entry) => (entry.is_error ? 'اكتمل الطلب بخطأ' : 'اكتمل الطلب بنجاح')
+      + (entry.duration_ms ? ' خلال ' + (entry.duration_ms / 1000).toFixed(1) + 'ث' : ''),
+  };
+  function renderActivity(result) {
+    const box = $('activityList');
+    box.textContent = '';
+    const entries = result && Array.isArray(result.entries) ? result.entries : [];
+    if (!entries.length) {
+      const empty = document.createElement('div');
+      empty.className = 'activity-empty';
+      empty.textContent = result && result.error === 'bad_cwd' ? 'اختر مجلد مشروع أولاً.' : 'لا يوجد نشاط مسجّل لهذا المشروع.';
+      box.appendChild(empty);
+      return;
+    }
+    for (const entry of entries) {
+      const row = document.createElement('div'); row.className = 'activity-item';
+      const time = document.createElement('span'); time.className = 'activity-time';
+      time.textContent = new Date(entry.ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const description = document.createElement('bdi'); description.className = 'activity-text'; description.dir = 'auto';
+      const formatter = ACTIVITY_LABELS[entry.kind];
+      description.textContent = (formatter ? formatter(entry) : 'نشاط') + ' · ' + (entry.engine || 'sdk');
+      row.appendChild(time); row.appendChild(description); box.appendChild(row);
+    }
+  }
+  async function refreshActivity() {
+    const cwd = $('cwd').value.trim();
+    if (!cwd || !window.satr.activityList) { renderActivity({ error: 'bad_cwd', entries: [] }); return; }
+    try { renderActivity(await window.satr.activityList(cwd)); }
+    catch { renderActivity({ entries: [] }); }
+  }
+  $('activityRefresh').addEventListener('click', refreshActivity);
+  $('activityClear').addEventListener('click', async () => {
+    const cwd = $('cwd').value.trim();
+    if (!cwd || !window.satr.activityClear) return;
+    if (!window.confirm('مسح سجل النشاط المحلي لهذا المشروع؟')) return;
+    await window.satr.activityClear(cwd, true);
+    await refreshActivity();
+  });
+
   // ---------- قسم «سطر Enterprise» في ⚙ (الدفعة 3) ----------
   // يظهر فقط إن حُمِّلت الطبقة (satr:features)؛ الترخيص والاستهلاك والتدقيق تُحدَّث عند فتح ⚙
   let eeLoaded = false;
@@ -130,7 +175,9 @@ class SatrTopbar extends HTMLElement {
       $('eeAuditBox').textContent = 'سجل التدقيق — ' + ((a && a.todayCount) || 0) + ' حدثاً اليوم، في: ' + ((a && a.path) || '');
     } catch (e) { $('eeAuditBox').textContent = ''; }
   }
-  settingsBtn.addEventListener('click', () => { if (!settingsPop.hidden) refreshEeStats(); });
+  settingsBtn.addEventListener('click', () => {
+    if (!settingsPop.hidden) { refreshActivity(); refreshEeStats(); }
+  });
   initEeSection();
 
     // الواجهة العامة للقشرة

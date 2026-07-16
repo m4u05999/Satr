@@ -150,24 +150,27 @@ electron/chats.js    ← ذاكرة المحوّلات على القرص (الد
 electron/features.js ← طبقة القدرات (feature-flags) + المُحمِّل الشرطي لـ enterprise/ (نقطة الربط
                        §4.1/§4.4): النواة تعمل كاملة إن غاب enterprise/. أساس نموذج Community+Enterprise.
                        منذ الدفعة 3 نقاط الربط الممرَّرة: setFlag (§4.4) + registerProvider
-                       (§4.2) + openaiCompatible (المصنع — Enterprise يبني عليه بلا تكرار) +
+                       (§4.2) + openaiCompatible (المصنع — Ollama والمزوّدون يبنون عليه بلا تكرار) +
                        registerIpc (قنوات satr:ee: حصراً — §4.5) + subscribe (§4.7 مجرى
                        مراقبة أحداث: main.js يبثّ عبر notify() كل أحداث الدور + prompt +
                        permission_reply — للتدقيق والاستهلاك). notify رخيص بلا مشتركين
+electron/activity.js ← سجل Community محلي مختصر ومحدود (200 حدث): يخزن نوع النشاط والمحرك
+                       واسم الأداة والمسار النسبي وقرار الإذن والنتيجة فقط، مفصولاً ببصمة
+                       المشروع. لا prompt أو tool input/output أو cwd/session/permission ids؛
+                       `satr:activityList/Clear` يعرضان ويمسحان المشروع الحالي فقط.
 enterprise/          ← طبقة Enterprise (الدفعة 3 — رخصة تجارية في enterprise/LICENSE،
                        ليست MIT): index.js (نقطة الدخول: ترخيص ⇒ أعلام ⇒ تسجيل قدرات) +
                        licensing.js (⚠️ ليس license.js — يتصادم مع ملف LICENSE على ويندوز
                        غير الحساس لحالة الأحرف؛ يقرأ ~/.satr/license.json: key بنمط
-                       SATR-EE-XXXXXX-XXXXXX + exp + features) + providers/ollama.js
-                       (3.1: نماذج محلية فوق مصنع openai-compatible — http://127.0.0.1:11434،
-                       بلا مفتاح، يرث حلقة الوكيل كاملة، وإرشاد عربي عند غيابه عبر
-                       connectHint) + usage.js (3.3: ~/.satr/usage/YYYY-MM.jsonl + تجميع
+                       SATR-EE-XXXXXX-XXXXXX + exp + features) + usage.js
+                       (3.3: ~/.satr/usage/YYYY-MM.jsonl + تجميع
                        satr:ee:usage) + audit.js (3.4: ~/.satr/audit/YYYY-MM-DD.jsonl —
                        prompt/tool_use/file_edit/أذونات + satr:ee:audit).
                        البناء المجتمعي يستثنيه (!enterprise/** + قائمة السماح)؛ بناء EE
                        عبر npm run dist:ee (scripts/ee-builder-config.js يوسّع إعداد
                        package.json). حذف المجلد كلياً = النواة تعمل كاملة (معيار §1 —
-                       متحقَّق آلياً). قسم «سطر Enterprise» في ⚙ يظهر عند تحميل الطبقة
+                       متحقَّق آلياً). قسم «سطر Enterprise» في ⚙ يظهر عند تحميل الطبقة؛
+                       Ollama الفردي موجود في electron/adapters/ollama.js ولا يتطلب الترخيص.
 electron/bgprocs.js  ← متتبّع عمليات الخلفية المعمّرة (خوادم التطوير): الـ SDK لا يكشف
                        للمضيف أي مقبض لعمليات تُشغّلها الأدوات، فنتعقّبها على مستوى النظام.
                        خطّافا Bash (run_in_background) في agent.js يلتقطان أحفاد عملية «سطر»
@@ -605,6 +608,16 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `context_estimate` لميزانية بداية الدور. لا تكلفة مالية مشتقة من هذا التقدير.
 - **التحقق**: `npm run test:context` يغطي سقف الخلاصة، وسم estimate، أولوية usage الحقيقي،
   fallback التقديري، ودورة HTTP فعلية تثبت وصول الخلاصة والميزانية لمحوّل OpenAI-compatible.
+- **ملخص استهلاك جلسة Community**: `src/ui/lib/usage-summary.js` يطبّع ويجمع usage لكل
+  نتيجة دور في الذاكرة فقط، ويدعم `input/output` و`input_tokens/output_tokens`، مع وسم
+  التقدير ومنع تكرار كائن النتيجة عبر `WeakSet` بلا الاحتفاظ به. تبقى رموز cache مستقلة
+  عن input لأن Claude قد يعيد cache أكبر من الإدخال غير المخبّأ. `src/ui/components/chat.js` يعرض الإجمالي في `#costInfo`
+  ويصفّره عند جلسة جديدة أو تفريغ الخيط؛ لا ينقل ذلك تجميع Enterprise اليومي/الشهري.
+- **سجل نشاط Community المحلي**: `electron/activity.js` يحفظ آخر 200 حدث metadata في
+  `~/.satr/activity.json` بكتابة ذرية أفضل جهد وبصمة داخلية للمشروع. لا يدوّن نص الطلب أو
+  مدخلات الأدوات أو المخرجات أو المسارات المطلقة أو معرّفات الجلسات/الأذونات. قسم «النشاط
+  المحلي» في ⚙ يعرض آخر 20 حدثاً للمشروع الحالي، ومسحه يتطلب تأكيداً صريحاً؛ سجل Enterprise
+  الكامل في `enterprise/audit.js` لم يتغير.
 
 ### منسّق باحثين للقراءة فقط (الأولوية 6 — الخطوة 1)
 

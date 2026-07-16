@@ -11,6 +11,7 @@ const path = require('path');
 
 const { make } = require('../electron/adapters/openai-compatible');
 const openaiResponses = require('../electron/adapters/openai-responses');
+const adapters = require('../electron/adapters');
 
 const IMAGE = { media_type: 'image/png', data: 'AA==' };
 
@@ -84,6 +85,11 @@ async function main() {
   let restoreResponses;
   const previousKey = process.env.OPENAI_API_KEY;
   try {
+    const ollama = adapters.list().find((provider) => provider.name === 'ollama');
+    assert.ok(ollama, 'Ollama is registered in the Community adapter registry');
+    assert.strictEqual(ollama.keyName, '');
+    assert.strictEqual(typeof adapters.get('ollama').start, 'function');
+
     server = await openChatServer(chatBodies);
     const commonConfig = {
       id: '', label: 'Fixture', protocol: 'http', host: '127.0.0.1',
@@ -134,6 +140,7 @@ async function main() {
     console.log('✓ Chat ignores images without vision and does not invent reasoning_effort');
     console.log('✓ Responses receives input_image and model-compatible reasoning.effort');
     console.log('✓ Supported Responses effort reaches the request unchanged');
+    console.log('✓ Ollama is registered as a keyless Community adapter');
   } finally {
     if (restoreResponses) restoreResponses();
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;

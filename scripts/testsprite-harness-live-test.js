@@ -67,8 +67,12 @@ async function main() {
     await waitFor(win,
       "document.body.innerText.includes('هذه استجابة محاكاة من بيئة TestSprite') && window.__SATR_TESTSPRITE_HARNESS__.calls.some((call) => call.name === 'send')",
       'دورة إرسال المحادثة المزيّفة');
+    await win.webContents.executeJavaScript("document.getElementById('settingsBtn').click()", true);
+    await waitFor(win,
+      "!document.getElementById('settingsPop').hidden && document.getElementById('activityList').innerText.includes('اكتمل الطلب بنجاح') && window.__SATR_TESTSPRITE_HARNESS__.calls.some((call) => call.name === 'activityList')",
+      'عرض سجل النشاط المحلي');
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console/CSP في harness: ' + consoleErrors.join(' | '));
-    console.log('testsprite-harness-live: نجح — إقلاع واجهة سطر وإرسال/استجابة مزيّفان، صفر CSP/console.');
+    console.log('testsprite-harness-live: نجح — إقلاع واجهة سطر وإرسال/استجابة مزيّفان وسجل النشاط المحلي، صفر CSP/console.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
     await new Promise((resolve) => server.close(resolve));

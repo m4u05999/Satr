@@ -57,6 +57,17 @@
           </div>
           <div id="dirChips"></div>
         </div>
+        <div class="settings-keys" id="activitySection">
+          <div class="dirs-head">
+            <span>النشاط المحلي</span>
+            <div class="activity-actions">
+              <button id="activityRefresh" type="button">تحديث</button>
+              <button id="activityClear" type="button">مسح</button>
+            </div>
+          </div>
+          <div class="ct-hint">آخر أحداث المشروع المختصرة؛ لا يُحفظ نص الطلب أو محتوى الأدوات أو المخرجات.</div>
+          <div id="activityList" class="activity-list" aria-live="polite"></div>
+        </div>
         <!-- قسم «سطر Enterprise» (الدفعة 3): يظهر فقط عند تحميل الطبقة (satr:features) -->
         <div class="settings-keys" id="eeSection" hidden>
           <div class="dirs-head"><span>سطر Enterprise</span><span id="eeLicense" class="key-status"></span></div>
