@@ -44,7 +44,7 @@ const ownSheet = sheet(`
   }
   .gate-cmd button { flex: 0 0 auto; font-size: 12px; padding: 6px 12px; }
   .gate-actions { display: flex; justify-content: center; }
-  .recheck { background: var(--gold); color: #1a1206; border-color: var(--gold); font-weight: 700; padding: 9px 26px; font-size: 14px; }
+  .recheck { background: var(--gold); color: var(--on-gold); border-color: var(--gold); font-weight: 700; padding: 9px 26px; font-size: 14px; }
   .recheck:hover { filter: brightness(1.07); }
   .recheck:disabled { opacity: .55; cursor: default; }
   .gate-foot { text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 20px; line-height: 1.7; }

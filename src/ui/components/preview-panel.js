@@ -38,14 +38,14 @@ const previewSheet = sheet(`
   #pvReload.loading { color: var(--gold); border-color: var(--gold-border); }
   #pvAuto.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   #pvPick.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
-  #pvRec.rec { color: #fff; border-color: var(--red); background: var(--red); animation: pvRecPulse 1.4s infinite; }
+  #pvRec.rec { color: var(--on-danger); border-color: var(--red); background: var(--red); animation: pvRecPulse 1.4s infinite; }
   @keyframes pvRecPulse { 50% { opacity: .55; } }
   /* مؤشّر «الوكيل يقود المتصفح» (الخيار 2): شارة عابرة فوق الرأس (لا يغطّيها العرض الأصلي
      لأنه يطفو فوق pvBox فقط) + خيط علوي نابض. يظهران أثناء تنفيذ الوكيل فعلَ متصفح. */
   #pvAgentTag {
     position: absolute; top: 5px; inset-inline: 0; margin-inline: auto; width: max-content;
     max-width: 70%; z-index: var(--z-local); display: none; align-items: center; gap: 5px;
-    background: var(--gold); color: #1A1408; border-radius: 999px; padding: 3px 12px;
+    background: var(--gold); color: var(--on-gold); border-radius: 999px; padding: 3px 12px;
     font-size: 11.5px; font-weight: 600; box-shadow: var(--shadow-pop);
     pointer-events: none; unicode-bidi: plaintext; white-space: nowrap;
   }
@@ -118,7 +118,7 @@ const previewSheet = sheet(`
     color: var(--text); border-radius: 8px; padding: 6px 10px; font-size: 13px; font-family: var(--sans);
     outline: none; unicode-bidi: plaintext; }
   #pvPickBar #pbInput:focus { border-color: var(--gold); }
-  #pvPickBar #pbSend { background: var(--gold); color: #1A1408; border: none; font-weight: 600;
+  #pvPickBar #pbSend { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600;
     border-radius: 8px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; }
   #pvPickBar #pbCancel { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
     border-radius: 8px; padding: 6px 10px; cursor: pointer; }

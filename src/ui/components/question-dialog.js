@@ -10,7 +10,7 @@ import { controlsSheet } from '../lib/panel.css.js';
 
 const ownSheet = sheet(`
   :host {
-    position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: var(--z-modal);
+    position: fixed; inset: 0; background: var(--scrim); z-index: var(--z-modal);
     display: none; align-items: center; justify-content: center;
   }
   :host([open]) { display: flex; }

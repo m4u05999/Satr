@@ -13,7 +13,8 @@ const MAX_VIEW_LINES = 5000; // سقف أسطر DOM (الملفات الأطول
 
 const ownSheet = sheet(`
   /* المضيف هو الغلاف المعتم (كان #viewerOverlay) */
-  :host { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 90; display: none; }
+  /* بين اللوحات (--z-panel) وحوارات القرار (--z-modal تعلوه) — القيمة تطابق 90 القديمة */
+  :host { position: fixed; inset: 0; background: var(--scrim); z-index: var(--z-toast); display: none; }
   :host([open]) { display: flex; }
   :host([open]) .viewer-box { animation: pop var(--dur) var(--ease); }
   @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.985); } }

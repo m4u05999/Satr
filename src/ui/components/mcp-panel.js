@@ -14,7 +14,9 @@ const ownSheet = sheet(`
   .mcp-badge { font-size: 11px; border-radius: 6px; padding: 1px 8px; white-space: nowrap; border: 1px solid var(--border); }
   .mcp-badge.connected { color: var(--green); border-color: var(--green-border); }
   .mcp-badge.pending   { color: var(--gold); border-color: var(--gold-border); }
-  .mcp-badge.needsauth { color: #E0A33E; border-color: rgba(224,163,62,.6); }
+  /* التمييز عن pending بالخلفية والحد الذهبيين؛ النص --text لتباين ≥4.5:1 على الخلفية
+     المدموجة في الوضعين (الذهب نفسه 3.89:1 فقط في الفاتح على gold-soft فوق surface) */
+  .mcp-badge.needsauth { color: var(--text); background: var(--gold-soft); border-color: var(--gold-border); }
   .mcp-badge.failed    { color: var(--red); border-color: var(--red-border); }
   .mcp-badge.disabled  { color: var(--text-dim); }
   .mcp-meta { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; direction: ltr; text-align: right; font-family: var(--mono); }
