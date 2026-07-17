@@ -123,6 +123,11 @@ Enterprise يسجّل معالجات IPC إضافية عبر `ee.registerIpc(ipc
 - **بناء Enterprise** (`npm run dist:ee`): يتطلب `SATR_ENTERPRISE_DIR` لمسار checkout خاص
   مطلق خارج Community. يتحقق `scripts/enterprise-source.js` من `contractVersion=1` ثم يضيفه
   `scripts/ee-builder-config.js` مباشرة إلى `enterprise/` داخل الحزمة بلا نسخ للمصدر العام.
+  قائمة `packageFiles` في العقد هي allowlist تشغيلية؛ لا تدخل ملفات CI أو الاختبارات أو README.
+- يحقن بناء Enterprise هوية مستقلة في metadata ويخرج إلى `dist/enterprise/`. الهوية لا تعتمد
+  على نجاح الترخيص: فشل الوحدة يظهر كتشخيص Enterprise مع قدرات معطلة، لا كـCommunity صامت.
+- ناشر Community مصفّر صراحةً ومحدث GitHub العام معطل دفاعياً في Enterprise. workflow الخاص يفحص
+  `app.asar` ويولد provenance ببصمات SHA-256 وSHA دقيق للمستودعين قبل رفع Artifact الخاص.
 - التحقق الدائم: بناء مجتمعي + حذف `enterprise/` ⇒ يعمل كاملاً (معيار §1).
 
 ---
@@ -164,6 +169,10 @@ Enterprise يسجّل معالجات IPC إضافية عبر `ee.registerIpc(ipc
     `features.notify`) + حدثين وصفيين `prompt` و`permission_reply` — أساس التدقيق والاستهلاك.
   - فصل البناء (§6) مُنجز: `!enterprise/**` في files + checkout خارجي موثّق بعقد
     `satr-enterprise.json` + `SATR_ENTERPRISE_DIR` عند `npm run dist:ee`.
+  - تصليب هوية الإصدار مُنجز: metadata صريحة + حالة runtime مستقلة عن الترخيص + مخرجات
+    معزولة + منع المحدث العام + فحص الحزمة وprovenance في CI الخاص.
+  - الترخيص التجاري يتحقق Offline بتوقيع Ed25519 ومفاتيح عامة قابلة للتدوير عبر `kid`؛
+    المفتاح الخاص لا يدخل المستودعين أو CI، وفشل التوقيع يعطل قدرات Enterprise فقط.
   - المعيار الذهبي §1 **متحقَّق آلياً**: غياب `enterprise/` من Community ⇒ النواة تعمل كاملة
     (features.init يعيد loaded:false والمزوّدون الأساسيون كلهم أحياء).
 

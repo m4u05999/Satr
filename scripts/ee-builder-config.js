@@ -10,18 +10,29 @@
 const base = require('../package.json').build;
 const { resolveEnterpriseSource } = require('./enterprise-source');
 
-const { source } = resolveEnterpriseSource(process.env.SATR_ENTERPRISE_DIR);
+const { source, manifest } = resolveEnterpriseSource(process.env.SATR_ENTERPRISE_DIR);
 const cfg = JSON.parse(JSON.stringify(base));
 
-// حزمة Enterprise خاصة وتُرفع كـ artifact فقط؛ لا ترث ناشر Community العام.
-delete cfg.publish;
+// حزمة Enterprise خاصة وتُرفع كـ artifact فقط؛ null صريح يتغلب على دمج electron-builder
+// مع build.publish في package.json. حذف المفتاح وحده لا يكفي لأنه يعيد وراثة إعداد Community.
+cfg.publish = null;
+
+// هوية الحزمة لا تعتمد على نجاح الترخيص أو تحميل الوحدة وقت التشغيل.
+cfg.extraMetadata = {
+  ...(cfg.extraMetadata || {}),
+  satrEdition: 'enterprise',
+  satrEnterpriseContract: manifest.contractVersion,
+};
+
+// عزل مخرجات الإصدارين يمنع بقايا app-update.yml العامة أو win-unpacked مجتمعي قديم.
+cfg.directories = { ...(cfg.directories || {}), output: 'dist/enterprise' };
 
 // إزالة الاستثناء العام ثم إضافة FileSet صريح من المستودع الخاص؛ لا تُنسخ الشفرة إلى Community.
 cfg.files = cfg.files.filter((f) => f !== '!enterprise/**');
 cfg.files.push({
   from: source,
   to: 'enterprise',
-  filter: ['**/*', '!.git{,/**/*}', '!test.js', '!README.md'],
+  filter: manifest.packageFiles,
 });
 
 // تمييز حزمة Enterprise عن المجتمعية بلاحقة في اسم الناتج (نفس appId — ترقية سلسة)

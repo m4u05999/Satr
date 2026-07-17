@@ -14,7 +14,7 @@ fs.mkdirSync(privateSource);
 fs.writeFileSync(path.join(privateSource, 'index.js'), 'module.exports = { register() {} };\n');
 fs.writeFileSync(path.join(privateSource, 'LICENSE'), 'Proprietary\n');
 fs.writeFileSync(path.join(privateSource, 'satr-enterprise.json'), JSON.stringify({
-  name: '@satr/enterprise', contractVersion: 1, main: 'index.js',
+  name: '@satr/enterprise', contractVersion: 1, main: 'index.js', packageFiles: ['index.js', 'LICENSE'],
 }));
 
 const sourceModule = require('./enterprise-source');
@@ -30,9 +30,13 @@ try {
   fs.writeFileSync(path.join(incompatible, 'index.js'), 'module.exports = {};\n');
   fs.writeFileSync(path.join(incompatible, 'LICENSE'), 'Proprietary\n');
   fs.writeFileSync(path.join(incompatible, 'satr-enterprise.json'), JSON.stringify({
-    name: '@satr/enterprise', contractVersion: 2, main: 'index.js',
+    name: '@satr/enterprise', contractVersion: 2, main: 'index.js', packageFiles: ['index.js', 'LICENSE'],
   }));
   assert.throws(() => sourceModule.resolveEnterpriseSource(incompatible), /غير متوافق/);
+  fs.writeFileSync(path.join(incompatible, 'satr-enterprise.json'), JSON.stringify({
+    name: '@satr/enterprise', contractVersion: 1, main: 'index.js', packageFiles: ['../index.js', 'LICENSE'],
+  }));
+  assert.throws(() => sourceModule.resolveEnterpriseSource(incompatible), /packageFiles/);
   console.log('✓ private Enterprise checkout requires an external compatible contract');
 
   const previous = process.env.SATR_ENTERPRISE_DIR;
@@ -44,7 +48,11 @@ try {
   assert(fileSet);
   assert.strictEqual(fileSet.from, fs.realpathSync.native(privateSource));
   assert(!config.files.includes('enterprise/**/*'));
-  assert.strictEqual(config.publish, undefined);
+  assert.strictEqual(config.publish, null);
+  assert.strictEqual(config.extraMetadata.satrEdition, 'enterprise');
+  assert.strictEqual(config.extraMetadata.satrEnterpriseContract, 1);
+  assert.strictEqual(config.directories.output, 'dist/enterprise');
+  assert.deepStrictEqual(fileSet.filter, ['index.js', 'LICENSE']);
   if (previous === undefined) delete process.env.SATR_ENTERPRISE_DIR;
   else process.env.SATR_ENTERPRISE_DIR = previous;
   delete require.cache[configPath];
@@ -70,11 +78,19 @@ try {
     assert.strictEqual(features.isEnterprise(), false);
     assert.strictEqual(features.enabled('usage_panel'), false);
     assert.strictEqual(features.enabled('audit_log'), false);
+    assert.strictEqual(features.edition(), 'community');
+    assert.deepStrictEqual(features.snapshot(), {
+      edition: 'community', runtimeStatus: 'community', enterprise: false, flags: {}, info: null,
+    });
     assert.strictEqual(typeof require('../electron/adapters').get('ollama').start, 'function');
   } finally {
     Module._load = originalLoad;
     delete require.cache[featuresPath];
   }
+  const updater = require('../electron/updater');
+  assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community' }), true);
+  assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'enterprise' }), false);
+  assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: false }, { edition: 'community' }), false);
   console.log('✓ Community contains no proprietary source and falls back cleanly');
 } finally {
   fs.rmSync(tempRoot, { recursive: true, force: true });

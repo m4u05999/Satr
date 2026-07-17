@@ -8,6 +8,8 @@
 يجب أن يحتوي جذر المستودع الخاص على:
 
 - `satr-enterprise.json` بالقيم `name: "@satr/enterprise"` و`contractVersion: 1` و`main: "index.js"`.
+- `packageFiles` قائمة سماح صريحة بملفات التشغيل التجارية التي تدخل الحزمة؛ لا تُقبل مسارات
+  مطلقة أو صاعدة، ويجب أن تضم نقطة الدخول و`LICENSE`.
 - `index.js` يصدّر `register(seams)`، ويمكنه تصدير `info()`.
 - `LICENSE` تجارية.
 
@@ -24,6 +26,15 @@ npm run dist:ee
 يضيف `scripts/ee-builder-config.js` checkout الخاص إلى المسار المنطقي `enterprise/` داخل
 الحزمة فقط. لا ينسخ المصدر إلى شجرة Community ولا يسجله Git. يظل `npm run dist` مجتمعياً
 ويستبعد `enterprise/**` صراحةً.
+
+يحقن البناء `satrEdition: "enterprise"` ونسخة العقد في `package.json` المحزومين، ويكتب
+المخرجات في `dist/enterprise/` منعاً لاختلاط `win-unpacked` أو بيانات التحديث العامة مع
+Community. تُصفّر `publish` صراحةً (لمنع دمج إعداد Community) ويُمرّر `--publish never`، كما يعطّل runtime المحدث العام عند
+هوية Enterprise حتى لو وُجد ملف تحديث قديم خطأً.
+
+يفحص workflow الخاص `app.asar` بعد البناء: الهوية، ملفات Enterprise المسموحة، غياب ملفات
+التطوير و`app-update.yml`. ثم يرفع مع المثبّت ملف provenance خاصاً يتضمن SHA للمستودعين
+وإصدارات العقد وبصمات SHA-256 للملفات، بلا شفرة أو أسرار.
 
 ## التطوير والتحقق
 

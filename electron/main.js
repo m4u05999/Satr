@@ -222,7 +222,7 @@ function createWindow() {
 
   // التحديث التلقائي (المرحلة 17): يُفحص بعد الإقلاع، ويبثّ أحداثه للواجهة عبر emit.
   // لا يعمل إلا في النسخة المحزومة (updater.js يحرس app.isPackaged) فلا يعكّر npm start.
-  updater.initUpdater(app, emitToWindow);
+  updater.initUpdater(app, emitToWindow, { edition: features.edition() });
 }
 
 // ملاحظة: منطق إيقاف مسار cli (detached + taskkill /T) انتقل إلى adapters/claude-cli.js

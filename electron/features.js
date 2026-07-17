@@ -21,12 +21,18 @@ let ipcMain = null;
 try { ({ ipcMain } = require('electron')); } catch (e) { ipcMain = null; }
 const adapters = require('./adapters');
 const openaiCompatible = require('./adapters/openai-compatible');
+const packageJson = require('../package.json');
+
+// هوية البناء مستقلة عن نجاح تحميل الوحدة أو صلاحية الترخيص. يحقنها بناء Enterprise
+// في package.json المحزوم؛ غيابها يعني Community دائماً.
+const buildEdition = packageJson.satrEdition === 'enterprise' ? 'enterprise' : 'community';
 
 // خريطة الأعلام: اسم القدرة → مُفعّلة؟ (غياب الاسم = معطّلة، فالمجتمعية تُخفي قدرات Enterprise)
 const flags = new Map();
 
 let enterprise = null;   // مرجع وحدة Enterprise إن حُمِّلت، وإلا null (بناء مجتمعي)
 let started = false;     // منع التهيئة المزدوجة
+let runtimeStatus = buildEdition === 'enterprise' ? 'not_initialized' : 'community';
 
 // مشتركو مجرى المراقبة (§4.7): يستقبلون أحداث «سطر» المطبَّعة + أحداث النواة الوصفية
 // (prompt/permission_reply). كل مشترك معزول — استثناؤه لا يكسر البث.
@@ -75,25 +81,31 @@ function buildSeams() {
 
 // تهيئة الطبقة عند إقلاع «سطر». تُستدعى مرة واحدة من main.js.
 function init() {
-  if (started) return { loaded: !!enterprise };
+  if (started) return { loaded: !!enterprise, edition: buildEdition, status: runtimeStatus };
   started = true;
   try {
     // يُحمَّل فقط إن وُجد المجلد؛ البناء المجتمعي يستثني enterprise/ فيفشل require بهدوء
     enterprise = require('../enterprise');
   } catch (e) {
     enterprise = null; // بناء مجتمعي: لا Enterprise — النواة تكمل وحدها
+    runtimeStatus = buildEdition === 'enterprise' ? 'module_unavailable' : 'community';
   }
   if (enterprise && typeof enterprise.register === 'function') {
     try {
       enterprise.register(buildSeams());
+      runtimeStatus = 'ready';
     } catch (e) {
       // تسجيل Enterprise فشل — نعزله ولا نُسقط النواة
       enterprise = null;
       flags.clear();
       subscribers.length = 0;
+      runtimeStatus = 'registration_failed';
     }
+  } else if (enterprise) {
+    enterprise = null;
+    runtimeStatus = buildEdition === 'enterprise' ? 'invalid_module' : 'community';
   }
-  return { loaded: !!enterprise };
+  return { loaded: !!enterprise, edition: buildEdition, status: runtimeStatus };
 }
 
 // هل القدرة مُفعّلة؟ (غير المعروفة = false — النواة آمنة افتراضياً)
@@ -106,6 +118,10 @@ function isEnterprise() {
   return !!enterprise;
 }
 
+function edition() {
+  return buildEdition;
+}
+
 // لقطة للواجهة عبر IPC: تُظهر/تُخفي قدرات Enterprise + معلومات عرض اختيارية
 // يوفّرها Enterprise نفسه (حالة الترخيص مثلاً) عبر info()
 function snapshot() {
@@ -115,7 +131,7 @@ function snapshot() {
   if (enterprise && typeof enterprise.info === 'function') {
     try { info = enterprise.info(); } catch (e) { info = null; }
   }
-  return { enterprise: !!enterprise, flags: out, info };
+  return { edition: buildEdition, runtimeStatus, enterprise: !!enterprise, flags: out, info };
 }
 
-module.exports = { init, enabled, isEnterprise, snapshot, notify };
+module.exports = { init, enabled, isEnterprise, edition, snapshot, notify };

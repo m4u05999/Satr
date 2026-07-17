@@ -19,9 +19,14 @@
 let autoUpdater = null;
 
 // يُهيّأ من main.js بدالة بثّ للواجهة (obj → satr:event) — نفس نمط بقية المحرّكات
-function initUpdater(app, emit) {
+function shouldEnableUpdates(app, options = {}) {
+  return !!(app && app.isPackaged) && options.edition !== 'enterprise';
+}
+
+function initUpdater(app, emit, options = {}) {
   // التطوير: لا تحديث (لا نسخة محزومة). التخطي صامت كي لا يعكّر npm start.
-  if (!app.isPackaged) return;
+  // Enterprise لا يرث قناة GitHub العامة؛ قناته الخاصة تُضاف بعقد مستقل لاحقاً.
+  if (!shouldEnableUpdates(app, options)) return;
 
   try {
     ({ autoUpdater } = require('electron-updater'));
@@ -61,4 +66,4 @@ function quitAndInstall() {
   if (autoUpdater) { try { autoUpdater.quitAndInstall(); } catch (e) {} }
 }
 
-module.exports = { initUpdater, downloadUpdate, quitAndInstall };
+module.exports = { shouldEnableUpdates, initUpdater, downloadUpdate, quitAndInstall };

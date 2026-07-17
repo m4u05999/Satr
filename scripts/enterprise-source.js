@@ -7,6 +7,7 @@ const path = require('path');
 const CONTRACT_VERSION = 1;
 const MANIFEST_NAME = 'satr-enterprise.json';
 const PROJECT_ROOT = path.resolve(__dirname, '..');
+const SAFE_PACKAGE_FILE = /^(?!\.)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
 
 function isInside(parent, candidate) {
   const relative = path.relative(parent, candidate);
@@ -39,14 +40,23 @@ function resolveEnterpriseSource(value, options = {}) {
     throw new Error(`عقد Enterprise غير متوافق؛ المطلوب contractVersion=${CONTRACT_VERSION}`);
   }
 
-  for (const required of [manifest.main, 'LICENSE']) {
+  if (!Array.isArray(manifest.packageFiles) || !manifest.packageFiles.length
+      || manifest.packageFiles.some((file) => typeof file !== 'string' || !SAFE_PACKAGE_FILE.test(file))) {
+    throw new Error('قائمة packageFiles في عقد Enterprise غير صالحة');
+  }
+  const packageFiles = [...new Set(manifest.packageFiles)];
+  if (!packageFiles.includes(manifest.main) || !packageFiles.includes('LICENSE')) {
+    throw new Error('يجب أن تضم packageFiles نقطة الدخول والرخصة التجارية');
+  }
+
+  for (const required of packageFiles) {
     const file = path.join(source, required);
     let stat;
     try { stat = fs.statSync(file); } catch { stat = null; }
     if (!stat || !stat.isFile()) throw new Error(`ملف Enterprise مطلوب ومفقود: ${required}`);
   }
 
-  return { source, manifest, manifestPath };
+  return { source, manifest: { ...manifest, packageFiles }, manifestPath };
 }
 
 module.exports = { CONTRACT_VERSION, MANIFEST_NAME, PROJECT_ROOT, resolveEnterpriseSource };

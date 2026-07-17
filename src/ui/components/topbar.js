@@ -140,15 +140,20 @@ class SatrTopbar extends HTMLElement {
   });
 
   // ---------- قسم «سطر Enterprise» في ⚙ (الدفعة 3) ----------
-  // يظهر فقط إن حُمِّلت الطبقة (satr:features)؛ الترخيص والاستهلاك والتدقيق تُحدَّث عند فتح ⚙
+  // يظهر لهوية بناء Enterprise حتى عند فشل الوحدة؛ الإحصاءات لا تُجلب إلا بترخيص نشط
   let eeLoaded = false;
   async function initEeSection() {
     try {
       const f = await window.satr.features();
-      if (!f || !f.enterprise) return; // بناء مجتمعي — القسم يبقى مخفياً
+      if (!f || f.edition !== 'enterprise') return; // بناء مجتمعي — القسم يبقى مخفياً
       $('eeSection').hidden = false;
-      const inf = f.info || {};
       const lic = $('eeLicense');
+      if (!f.enterprise || f.runtimeStatus !== 'ready') {
+        lic.textContent = 'إصدار Enterprise — تعذّر تحميل الوحدة التجارية، والقدرات معطّلة';
+        lic.style.color = 'var(--red)';
+        return;
+      }
+      const inf = f.info || {};
       if (inf.licensed) {
         lic.textContent = '✓ مرخّص' + (inf.org ? ' — ' + inf.org : '') + (inf.exp ? ' (حتى ' + inf.exp + ')' : '');
         lic.style.color = 'var(--green)';
