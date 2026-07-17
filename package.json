@@ -56,7 +56,7 @@
     "predist:dir": "node scripts/update-csp.js",
     "dist:dir": "electron-builder --win --dir",
     "predist:ee": "node scripts/update-csp.js",
-    "dist:ee": "electron-builder --win --config scripts/ee-builder-config.js"
+    "dist:ee": "electron-builder --win --config scripts/ee-builder-config.js --publish never"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",

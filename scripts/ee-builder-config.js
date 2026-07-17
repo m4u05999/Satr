@@ -13,6 +13,9 @@ const { resolveEnterpriseSource } = require('./enterprise-source');
 const { source } = resolveEnterpriseSource(process.env.SATR_ENTERPRISE_DIR);
 const cfg = JSON.parse(JSON.stringify(base));
 
+// حزمة Enterprise خاصة وتُرفع كـ artifact فقط؛ لا ترث ناشر Community العام.
+delete cfg.publish;
+
 // إزالة الاستثناء العام ثم إضافة FileSet صريح من المستودع الخاص؛ لا تُنسخ الشفرة إلى Community.
 cfg.files = cfg.files.filter((f) => f !== '!enterprise/**');
 cfg.files.push({

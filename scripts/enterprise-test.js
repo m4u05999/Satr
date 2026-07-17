@@ -44,13 +44,16 @@ try {
   assert(fileSet);
   assert.strictEqual(fileSet.from, fs.realpathSync.native(privateSource));
   assert(!config.files.includes('enterprise/**/*'));
+  assert.strictEqual(config.publish, undefined);
   if (previous === undefined) delete process.env.SATR_ENTERPRISE_DIR;
   else process.env.SATR_ENTERPRISE_DIR = previous;
   delete require.cache[configPath];
-  console.log('✓ Enterprise build injects the private checkout without copying it into Community');
+  console.log('✓ Enterprise build injects private source and disables publishing');
 
   assert.strictEqual(fs.existsSync(path.join(root, 'enterprise')), false);
   const packageJson = require('../package.json');
+  assert(Array.isArray(packageJson.build.publish) && packageJson.build.publish[0].provider === 'github');
+  assert.match(packageJson.scripts['dist:ee'], /--publish never(?:\s|$)/);
   assert(packageJson.build.files.includes('!enterprise/**'));
   assert(fs.readFileSync(path.join(root, '.gitignore'), 'utf8').includes('/enterprise/'));
 
