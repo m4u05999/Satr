@@ -1,8 +1,6 @@
 const violations = [];
 const checks = [];
 const cases = [];
-const layoutSheet = new CSSStyleSheet();
-document.adoptedStyleSheets = [...document.adoptedStyleSheets, layoutSheet];
 window.__chatcolumnLayoutProgress = 'loading';
 
 window.satr = {
@@ -102,11 +100,10 @@ async function openFiles(input) {
 async function exerciseLayout(spec) {
   window.__chatcolumnLayoutProgress = spec.name;
   document.body.className = spec.className;
-  layoutSheet.replaceSync(
-    `body #chatColumn { width: ${spec.width}px !important; flex: 0 0 ${spec.width}px !important; }`,
-  );
   const composer = document.querySelector('satr-composer');
   const chatColumn = document.getElementById('chatColumn');
+  chatColumn.style.setProperty('width', `${spec.width}px`, 'important');
+  chatColumn.style.setProperty('flex', `0 0 ${spec.width}px`, 'important');
   const footer = document.querySelector('footer');
   const tools = document.querySelector('.composer-tools');
   const composerRow = document.querySelector('.composer');
@@ -125,8 +122,12 @@ async function exerciseLayout(spec) {
   await attachImage(input, composer);
   await frames(3);
 
-  assert(Math.abs(rect(chatColumn).width - spec.width) <= 1,
-    `${spec.name}: عرض العمود ${rect(chatColumn).width} بدل ${spec.width}.`);
+  const chatBounds = rect(chatColumn);
+  const chatStyle = getComputedStyle(chatColumn);
+  assert(Math.abs(chatBounds.width - spec.width) <= 1,
+    `${spec.name}: عرض العمود ${chatBounds.width} بدل ${spec.width}; `
+    + `inline=${chatColumn.getAttribute('style') || 'none'}; `
+    + `computed=${chatStyle.width}/${chatStyle.flexBasis}.`);
   assert(getComputedStyle(document.querySelector('satr-chat')).display === 'contents',
     `${spec.name}: satr-chat لم يبق display:contents.`);
   assert(getComputedStyle(composer).display === 'contents',
