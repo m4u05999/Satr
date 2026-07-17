@@ -314,8 +314,13 @@ async function main() {
 
     const conflictingPatch = artifact.patch.replace('export const value = 1;', 'export const missing = 999;');
     const conflictingId = executionTeamModule.artifactId(artifact.head, conflictingPatch);
+    const caseVariantProject = process.platform === 'win32'
+      ? (project[0] === project[0].toUpperCase()
+        ? project[0].toLowerCase() + project.slice(1)
+        : project[0].toUpperCase() + project.slice(1))
+      : project;
     const conflict = await merger.apply({
-      ...mergeInput, patch: conflictingPatch, artifact_id: conflictingId,
+      ...mergeInput, sourceRoot: caseVariantProject, patch: conflictingPatch, artifact_id: conflictingId,
       verification: { artifact_id: conflictingId, state: 'passed', checks: [] }, confirmed: true,
     });
     assert.strictEqual(conflict.ok, false);

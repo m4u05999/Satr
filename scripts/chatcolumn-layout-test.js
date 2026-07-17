@@ -9,7 +9,10 @@ const { app, BrowserWindow } = require('electron');
 
 const ROOT = path.resolve(__dirname, '..');
 const FIXTURE = path.join(__dirname, 'fixtures', 'chatcolumn-layout.html');
+const FIXTURE_CONFIG = path.join(__dirname, 'fixtures', 'chatcolumn-layout-config.js');
+const FIXTURE_CSS = path.join(__dirname, 'fixtures', 'chatcolumn-layout.css');
 const TIMEOUT_MS = 30000;
+const LAYOUT_WIDTHS = [806, 504, 381];
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -33,6 +36,8 @@ function normalizeMarkup(source) {
 function assertFixtureContract() {
   const index = fs.readFileSync(path.join(ROOT, 'src', 'index.html'), 'utf8');
   const fixture = fs.readFileSync(FIXTURE, 'utf8');
+  const fixtureConfig = fs.readFileSync(FIXTURE_CONFIG, 'utf8');
+  const fixtureCss = fs.readFileSync(FIXTURE_CSS, 'utf8');
   const indexComposer = extractBlock(index, '<satr-composer>', '</satr-composer>');
   const fixtureComposer = extractBlock(fixture, '<satr-composer>', '</satr-composer>');
   assert.strictEqual(normalizeMarkup(fixtureComposer), normalizeMarkup(indexComposer),
@@ -52,6 +57,13 @@ function assertFixtureContract() {
     'ترتيب fixture لا يطابق #chatColumn ثم السطحين الجانبيين.');
   assert(terminalStart > fixture.indexOf('<satr-preview-panel'),
     'الطرفية في fixture ليست أسفل #midRow.');
+  assert(fixture.indexOf('chatcolumn-layout-config.js') < fixture.indexOf('chatcolumn-layout.css'),
+    'يجب تثبيت عرض الحالة قبل تحميل CSS الخاص بالـ fixture.');
+  for (const width of LAYOUT_WIDTHS) {
+    assert(fixtureConfig.includes(`'${width}'`)
+      && fixtureCss.includes(`html[data-layout-width="${width}"] #chatColumn`),
+    `غاب عرض التخطيط الثابت ${width}px من عقد fixture.`);
+  }
 }
 
 async function waitForResult(win) {
@@ -89,18 +101,24 @@ async function main() {
   });
 
   try {
-    await win.loadFile(FIXTURE);
-    const result = await waitForResult(win);
-    assert.strictEqual(result.pass, true, result.error || 'فشل اختبار التخطيط داخل الصفحة.');
-    assert.deepStrictEqual(result.violations, [], 'رُصد securitypolicyviolation أثناء اختبار التخطيط.');
+    const results = [];
+    for (const width of LAYOUT_WIDTHS) {
+      await win.loadFile(FIXTURE, { query: { width: String(width) } });
+      const result = await waitForResult(win);
+      assert.strictEqual(result.pass, true, result.error || `فشل اختبار التخطيط للعرض ${width}px داخل الصفحة.`);
+      assert.deepStrictEqual(result.violations, [], `رُصد securitypolicyviolation عند العرض ${width}px.`);
+      results.push(result);
+    }
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console أثناء اختبار التخطيط.');
+    const checks = new Set(results.flatMap((result) => result.checks));
+    const cases = results.flatMap((result) => result.cases);
     for (const check of [
       'layout-806', 'layout-504', 'layout-381', 'composer-states',
       'menus-contained', 'safe-menu-dom', 'terminal-full-width', 'zero-csp-violations',
-    ]) assert(result.checks.includes(check), 'غاب فحص التخطيط: ' + check);
-    assert.deepStrictEqual(result.cases.map((item) => item.width), [806, 504, 381],
+    ]) assert(checks.has(check), 'غاب فحص التخطيط: ' + check);
+    assert.deepStrictEqual(cases.map((item) => item.width), LAYOUT_WIDTHS,
       'لم تُختبر عروض عمود الدردشة المعتمدة.');
-    assert(result.cases.every((item) => item.slashWidth > 0 && item.fileWidth > 0),
+    assert(cases.every((item) => item.slashWidth > 0 && item.fileWidth > 0),
       'إحدى قوائم المؤلّف لم تُقَس وهي مفتوحة.');
     console.log('chatcolumn-layout: نجح — 806/504/381px، المؤلّف والقوائم والمرفقات والعمليات، والطرفية كاملة العرض؛ صفر overflow/CSP.');
   } finally {

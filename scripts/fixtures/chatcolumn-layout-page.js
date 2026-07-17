@@ -99,11 +99,8 @@ async function openFiles(input) {
 
 async function exerciseLayout(spec) {
   window.__chatcolumnLayoutProgress = spec.name;
-  document.body.className = spec.className;
   const composer = document.querySelector('satr-composer');
   const chatColumn = document.getElementById('chatColumn');
-  chatColumn.style.setProperty('width', `${spec.width}px`, 'important');
-  chatColumn.style.setProperty('flex', `0 0 ${spec.width}px`, 'important');
   const footer = document.querySelector('footer');
   const tools = document.querySelector('.composer-tools');
   const composerRow = document.querySelector('.composer');
@@ -207,11 +204,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     await customElements.whenDefined('satr-composer');
     await frames(3);
-    for (const spec of [
-      { name: 'layout-806', className: 'layout-806', width: 806, toolsDisplay: 'flex', composerDisplay: 'flex', hideLabels: false },
-      { name: 'layout-504', className: 'layout-504', width: 504, toolsDisplay: 'flex', composerDisplay: 'flex', hideLabels: true },
-      { name: 'layout-381', className: 'layout-381', width: 381, toolsDisplay: 'grid', composerDisplay: 'grid', hideLabels: true },
-    ]) await exerciseLayout(spec);
+    const layouts = [
+      { name: 'layout-806', width: 806, toolsDisplay: 'flex', composerDisplay: 'flex', hideLabels: false },
+      { name: 'layout-504', width: 504, toolsDisplay: 'flex', composerDisplay: 'flex', hideLabels: true },
+      { name: 'layout-381', width: 381, toolsDisplay: 'grid', composerDisplay: 'grid', hideLabels: true },
+    ];
+    const requestedWidth = Number(document.documentElement.dataset.layoutWidth);
+    const spec = layouts.find((item) => item.width === requestedWidth);
+    assert(spec, `عرض اختبار التخطيط غير معتمد: ${requestedWidth}.`);
+    await exerciseLayout(spec);
     assert(violations.length === 0, 'رُصد securitypolicyviolation أثناء اختبار التخطيط.');
     checks.push('composer-states', 'menus-contained', 'safe-menu-dom', 'terminal-full-width', 'zero-csp-violations');
     window.__chatcolumnLayoutProgress = 'complete';

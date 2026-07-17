@@ -227,11 +227,17 @@ function testDesignGuard() {
     'live chat-column layout test must remain available through package scripts');
   const layoutFixture = read('scripts/fixtures/chatcolumn-layout.html');
   assert(layoutFixture.includes('../../src/styles/base.css')
-    && layoutFixture.includes('../../src/ui/components/composer.js'),
+    && layoutFixture.includes('../../src/ui/components/composer.js')
+    && layoutFixture.indexOf('chatcolumn-layout-config.js') < layoutFixture.indexOf('chatcolumn-layout.css'),
   'layout fixture must exercise the production stylesheet and composer component');
+  const layoutConfig = read('scripts/fixtures/chatcolumn-layout-config.js');
+  const layoutCss = read('scripts/fixtures/chatcolumn-layout.css');
   const layoutRunner = read('scripts/chatcolumn-layout-test.js');
   assert(layoutRunner.includes("extractBlock(index, '<satr-composer>', '</satr-composer>')")
-    && layoutRunner.includes("result.cases.map((item) => item.width), [806, 504, 381]"),
+    && layoutRunner.includes('for (const width of LAYOUT_WIDTHS)')
+    && layoutRunner.includes("win.loadFile(FIXTURE, { query: { width: String(width) } })")
+    && layoutConfig.includes("new Set(['806', '504', '381'])")
+    && layoutCss.includes('html[data-layout-width="504"] #chatColumn'),
   'layout runner must guard fixture parity and all three approved column widths');
   assert.strictEqual(packageJson.scripts['test:opsroom-ui-live'],
     'electron scripts/opsroom-ui-live-test.js',

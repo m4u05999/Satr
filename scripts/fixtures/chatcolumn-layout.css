@@ -1,6 +1,8 @@
 #cwd { display: none; }
 
-#chatColumn { width: 806px; flex: 0 0 806px; }
+html[data-layout-width="806"] #chatColumn { width: 806px; flex: 0 0 806px; }
+html[data-layout-width="504"] #chatColumn { width: 504px; flex: 0 0 504px; }
+html[data-layout-width="381"] #chatColumn { width: 381px; flex: 0 0 381px; }
 
 satr-ops-room, satr-preview-panel {
   display: block; flex: 1 1 0; min-width: 0;
