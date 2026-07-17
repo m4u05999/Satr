@@ -4,73 +4,75 @@
 const assert = require('assert');
 const fs = require('fs');
 const Module = require('module');
+const os = require('os');
 const path = require('path');
 
-const licensingPath = require.resolve('../enterprise/licensing');
-const enterprisePath = require.resolve('../enterprise');
-const originalLicensing = require.cache[licensingPath];
+const root = path.resolve(__dirname, '..');
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-enterprise-boundary-'));
+const privateSource = path.join(tempRoot, 'private-checkout');
+fs.mkdirSync(privateSource);
+fs.writeFileSync(path.join(privateSource, 'index.js'), 'module.exports = { register() {} };\n');
+fs.writeFileSync(path.join(privateSource, 'LICENSE'), 'Proprietary\n');
+fs.writeFileSync(path.join(privateSource, 'satr-enterprise.json'), JSON.stringify({
+  name: '@satr/enterprise', contractVersion: 1, main: 'index.js',
+}));
 
-require.cache[licensingPath] = {
-  id: licensingPath,
-  filename: licensingPath,
-  loaded: true,
-  exports: {
-    check: () => ({
-      active: true,
-      features: ['usage_panel', 'audit_log'],
-    }),
-    LICENSE_PATH: 'test-license',
-  },
-};
-
-delete require.cache[enterprisePath];
+const sourceModule = require('./enterprise-source');
 
 try {
-  const enterprise = require('../enterprise');
-  const flags = [];
-  const providers = [];
-  const channels = [];
-  const subscribers = [];
+  const resolved = sourceModule.resolveEnterpriseSource(privateSource);
+  assert.strictEqual(resolved.source, fs.realpathSync.native(privateSource));
+  assert.throws(() => sourceModule.resolveEnterpriseSource('relative/path'), /مساراً مطلقاً/);
+  assert.throws(() => sourceModule.resolveEnterpriseSource(root), /خارج مستودع Community/);
 
-  enterprise.register({
-    setFlag: (name, enabled) => flags.push([name, enabled]),
-    registerProvider: (name) => providers.push(name),
-    registerIpc: (channel) => channels.push(channel),
-    subscribe: (handler) => subscribers.push(handler),
-  });
+  const incompatible = path.join(tempRoot, 'incompatible');
+  fs.mkdirSync(incompatible);
+  fs.writeFileSync(path.join(incompatible, 'index.js'), 'module.exports = {};\n');
+  fs.writeFileSync(path.join(incompatible, 'LICENSE'), 'Proprietary\n');
+  fs.writeFileSync(path.join(incompatible, 'satr-enterprise.json'), JSON.stringify({
+    name: '@satr/enterprise', contractVersion: 2, main: 'index.js',
+  }));
+  assert.throws(() => sourceModule.resolveEnterpriseSource(incompatible), /غير متوافق/);
+  console.log('✓ private Enterprise checkout requires an external compatible contract');
 
-  assert.deepStrictEqual(flags, [['usage_panel', true], ['audit_log', true]]);
-  assert.deepStrictEqual(providers, []);
-  assert.deepStrictEqual(channels, ['satr:ee:usage', 'satr:ee:audit']);
-  assert.strictEqual(subscribers.length, 2);
-  assert.strictEqual(fs.existsSync(path.join(__dirname, '..', 'enterprise', 'providers', 'ollama.js')), false);
+  const previous = process.env.SATR_ENTERPRISE_DIR;
+  process.env.SATR_ENTERPRISE_DIR = privateSource;
+  const configPath = require.resolve('./ee-builder-config');
+  delete require.cache[configPath];
+  const config = require('./ee-builder-config');
+  const fileSet = config.files.find((entry) => entry && typeof entry === 'object' && entry.to === 'enterprise');
+  assert(fileSet);
+  assert.strictEqual(fileSet.from, fs.realpathSync.native(privateSource));
+  assert(!config.files.includes('enterprise/**/*'));
+  if (previous === undefined) delete process.env.SATR_ENTERPRISE_DIR;
+  else process.env.SATR_ENTERPRISE_DIR = previous;
+  delete require.cache[configPath];
+  console.log('✓ Enterprise build injects the private checkout without copying it into Community');
 
-  console.log('✓ Enterprise retains usage and audit registration only');
-  console.log('✓ Enterprise does not register Ollama or local_models');
-} finally {
-  delete require.cache[enterprisePath];
-  if (originalLicensing) require.cache[licensingPath] = originalLicensing;
-  else delete require.cache[licensingPath];
-}
+  assert.strictEqual(fs.existsSync(path.join(root, 'enterprise')), false);
+  const packageJson = require('../package.json');
+  assert(packageJson.build.files.includes('!enterprise/**'));
+  assert(fs.readFileSync(path.join(root, '.gitignore'), 'utf8').includes('/enterprise/'));
 
-const featuresPath = require.resolve('../electron/features');
-const originalLoad = Module._load;
-delete require.cache[featuresPath];
-Module._load = function loadWithoutEnterprise(request) {
-  if (request === '../enterprise') throw new Error('enterprise intentionally absent');
-  return originalLoad.apply(this, arguments);
-};
-
-try {
-  const features = require('../electron/features');
-  const state = features.init();
-  assert.strictEqual(state.loaded, false);
-  assert.strictEqual(features.isEnterprise(), false);
-  assert.strictEqual(features.enabled('usage_panel'), false);
-  assert.strictEqual(features.enabled('audit_log'), false);
-  assert.strictEqual(typeof require('../electron/adapters').get('ollama').start, 'function');
-  console.log('✓ Community falls back cleanly without enterprise and keeps Ollama registered');
-} finally {
-  Module._load = originalLoad;
+  const featuresPath = require.resolve('../electron/features');
+  const originalLoad = Module._load;
   delete require.cache[featuresPath];
+  Module._load = function loadWithoutEnterprise(request) {
+    if (request === '../enterprise') throw new Error('enterprise intentionally absent');
+    return originalLoad.apply(this, arguments);
+  };
+  try {
+    const features = require('../electron/features');
+    assert.strictEqual(features.init().loaded, false);
+    assert.strictEqual(features.isEnterprise(), false);
+    assert.strictEqual(features.enabled('usage_panel'), false);
+    assert.strictEqual(features.enabled('audit_log'), false);
+    assert.strictEqual(typeof require('../electron/adapters').get('ollama').start, 'function');
+  } finally {
+    Module._load = originalLoad;
+    delete require.cache[featuresPath];
+  }
+  console.log('✓ Community contains no proprietary source and falls back cleanly');
+} finally {
+  fs.rmSync(tempRoot, { recursive: true, force: true });
 }

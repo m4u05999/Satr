@@ -158,18 +158,11 @@ electron/activity.js ← سجل Community محلي مختصر ومحدود (200 
                        واسم الأداة والمسار النسبي وقرار الإذن والنتيجة فقط، مفصولاً ببصمة
                        المشروع. لا prompt أو tool input/output أو cwd/session/permission ids؛
                        `satr:activityList/Clear` يعرضان ويمسحان المشروع الحالي فقط.
-enterprise/          ← طبقة Enterprise (الدفعة 3 — رخصة تجارية في enterprise/LICENSE،
-                       ليست MIT): index.js (نقطة الدخول: ترخيص ⇒ أعلام ⇒ تسجيل قدرات) +
-                       licensing.js (⚠️ ليس license.js — يتصادم مع ملف LICENSE على ويندوز
-                       غير الحساس لحالة الأحرف؛ يقرأ ~/.satr/license.json: key بنمط
-                       SATR-EE-XXXXXX-XXXXXX + exp + features) + usage.js
-                       (3.3: ~/.satr/usage/YYYY-MM.jsonl + تجميع
-                       satr:ee:usage) + audit.js (3.4: ~/.satr/audit/YYYY-MM-DD.jsonl —
-                       prompt/tool_use/file_edit/أذونات + satr:ee:audit).
-                       البناء المجتمعي يستثنيه (!enterprise/** + قائمة السماح)؛ بناء EE
-                       عبر npm run dist:ee (scripts/ee-builder-config.js يوسّع إعداد
-                       package.json). حذف المجلد كلياً = النواة تعمل كاملة (معيار §1 —
-                       متحقَّق آلياً). قسم «سطر Enterprise» في ⚙ يظهر عند تحميل الطبقة؛
+scripts/enterprise-  ← عقد checkout الخاص لـEnterprise: `enterprise-source.js` يتحقق من
+source.js               SATR_ENTERPRISE_DIR المطلق خارج Community ومن contractVersion=1؛
+                       `ee-builder-config.js` يحقنه في enterprise/ داخل حزمة EE فقط.
+                       المصدر المملوك في مستودع `satr-enterprise` الخاص ولا يدخل Git العام.
+                       غيابه = النواة تعمل كاملة (معيار §1، متحقق في test:enterprise)؛
                        Ollama الفردي موجود في electron/adapters/ollama.js ولا يتطلب الترخيص.
 electron/bgprocs.js  ← متتبّع عمليات الخلفية المعمّرة (خوادم التطوير): الـ SDK لا يكشف
                        للمضيف أي مقبض لعمليات تُشغّلها الأدوات، فنتعقّبها على مستوى النظام.
@@ -444,7 +437,7 @@ result`)، فالواجهة لا تتغيّر.
 ### طبقة القدرات ونموذج Community + Enterprise (features.js — المرحلة 5ج)
 
 **التصميم الكامل في `docs/ARCHITECTURE.md`** (نموذج «النواة + Enterprise إضافي» بطريقة
-مستودع GitHub واحد + مجلد `enterprise/` مُقفل — اقرأه قبل أي عمل يمسّ الفصل).
+مستودع Community عام + مستودع Enterprise خاص يُحقن وقت البناء — اقرأه قبل أي عمل يمسّ الفصل).
 - **`electron/features.js`**: المُحمِّل الشرطي (`try require('../enterprise')`) + feature-flags.
   النواة تعمل **كاملة** إن غاب `enterprise/` (معيار قبول دائم). فشل Enterprise معزول لا
   يُسقط النواة. `features.init()` في main.js؛ IPC `satr:features` (لقطة القدرات).
@@ -617,7 +610,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `~/.satr/activity.json` بكتابة ذرية أفضل جهد وبصمة داخلية للمشروع. لا يدوّن نص الطلب أو
   مدخلات الأدوات أو المخرجات أو المسارات المطلقة أو معرّفات الجلسات/الأذونات. قسم «النشاط
   المحلي» في ⚙ يعرض آخر 20 حدثاً للمشروع الحالي، ومسحه يتطلب تأكيداً صريحاً؛ سجل Enterprise
-  الكامل في `enterprise/audit.js` لم يتغير.
+  الكامل في `satr-enterprise/audit.js` الخاص مستقل.
 
 ### منسّق باحثين للقراءة فقط (الأولوية 6 — الخطوة 1)
 
