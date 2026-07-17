@@ -910,12 +910,15 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **`electron/updater.js`** عبر `electron-updater` + إصدارات GitHub (`build.publish` = github):
   يزيل التوزيع اليدوي. **حارس `app.isPackaged`**: لا يعمل في npm start (يتخطّى صامتاً).
   بلا توقيع رقمي (ويندوز NSIS يحدّث بلا شهادة — تحقق حيّ). مثبّتنا per-user فلا صلاحيات مدير.
-- **التدفق**: فحص بعد 8ث من الإقلاع ⇒ تنزيل خلفي تلقائي (`autoDownload`) ⇒ إشعار عربي
-  لا يقاطع أسفل النافذة، وزرّ «أعد التشغيل الآن» عند الجهوز (`quitAndInstall`)؛ وإلا
-  يُثبَّت عند الإغلاق (`autoInstallOnAppQuit`). الأحداث تُبثّ للواجهة كنوع `update` عبر
-  `emitToWindow` (قناة satr:event، مستقلة عن الدور)، وIPC `satr:restartUpdate` للتثبيت.
+- **التدفق الآمن المعتمد**: فحص بعد 8ث من الإقلاع ⇒ إشعار عربي `available` لا يقاطع ⇒
+  المستخدم يضغط «نزّل الآن» (`downloadUpdate`) ⇒ تقدّم `progress` ⇒ «أعد التشغيل الآن»
+  عند `ready` (`quitAndInstall`). ‏`autoDownload=false` و`autoInstallOnAppQuit=false`:
+  لا تنزيل قبل الموافقة ولا تثبيت عند الإغلاق. الأحداث تُبثّ للواجهة كنوع `update` عبر
+  `emitToWindow` (قناة satr:event، مستقلة عن الدور)، وIPC
+  `satr:downloadUpdate`/`satr:restartUpdate` للخطوتين الصريحتين.
 - **العقد**: `{type:'update', phase:'available'|'progress'|'ready'|'error', version?, percent?}`.
-  الخطأ يُخفي الإشعار صامتاً (يبقى التثبيت اليدوي متاحاً). preload يكشف `restartUpdate`.
+  الخطأ يُخفي الإشعار صامتاً (يبقى التثبيت اليدوي متاحاً). preload يكشف
+  `downloadUpdate` و`restartUpdate` فقط.
 - **تمهيد**: التحديث يبدأ من أول إصدار يحوي المُحدِّث (v2.4.1). النشر يرفع `latest.yml`
   مع المثبّت لكل إصدار (يولّده electron-builder عند dist مع publish config).
 
@@ -1235,13 +1238,16 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **وضع تحكّم المتصفح (نمط Comet — 2026-07-12)**: زرّ toggle `#browserCtl` بجوار زرّ
   الإرسال (🖱️ متصفح) يمنح الوكيل صلاحية قيادة المعاينة بسلاسة (حلقة snapshot→act بلا مربع
   إذن لكل فعل). العلم `browserControl` يمرّ في send (app.js `browserControlOn` +
-  localStorage `satr_browser_control`، منقّى في main.js boolean) إلى `agent.start`.
-  **الأمان (حرج، fail-safe)**: canUseTool يوافق تلقائياً **فقط** على أدوات المتصفح الثماني
+  localStorage `satr_browser_control`، منقّى في main.js boolean) إلى `agent.start` و
+  `codex.start`. **الأمان (حرج، fail-safe)**: في SDK يوافق `canUseTool` تلقائياً **فقط**
+  على أدوات المتصفح الثماني
   المؤهَّلة (`BROWSER_AUTO_TOOLS` = mcp__satr-terminal__{open_preview,read_page,screenshot,
   browser_snapshot,browser_click,browser_type,browser_navigate,browser_wait_for}) — و
   **`run_in_terminal` وكل أدوات الملفّات تبقى تطلب إذناً** (ليست في المجموعة، فأي اسم
   خاطئ يُقلّل الصلاحية لا يزيدها). معطّل افتراضياً، حالته ظاهرة (زرّ ذهبي `.active` +
-  aria-pressed) وإشعار عربي عند التبديل. محرك SDK فقط (أدوات المتصفح لا توجد في codex.js).
+  aria-pressed) وإشعار عربي عند التبديل. **Codex يملك الرؤية والأفعال نفسها** عبر
+  `codexmcp.js`؛ أفعاله تمرّ افتراضياً عبر `requestPermission` داخل الخادم ويعفيها
+  `browserControl` الصريح. المحوّلات لا تملك أدوات المتصفح.
   تهديد حقن البرومبت من صفحات الويب يبقى قائماً — لذا الوضع اختياري صريح يبادر به المستخدم.
 - **رؤية الـ console وأخطاء الشبكة للوكيل (2026-07-12 — «ابنِ→عايِن→صحّح»)**: أداة
   `browser_console` تعطي الوكيل رسائل console الصفحة (وأخطاء JavaScript غير الملتقطة) +
