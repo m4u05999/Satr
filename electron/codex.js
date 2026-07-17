@@ -28,6 +28,7 @@ const skillCatalog = require('./skills');
 const preview = require('./preview');   // وحدة المعاينة المشتركة (رؤية الويب لـ Codex — الخيار 1)
 const codexmcp = require('./codexmcp');  // خادم MCP‏ streamable-HTTP داخل العملية
 const keys = require('./keys');
+const memory = require('./memory'); // ذاكرة مشروع شخصية — حقن قرائي مقصوص (تكافؤ agent.js)
 const testsprite = require('./testsprite');
 const testspriteHarness = require('./testspriteharness');
 
@@ -707,6 +708,12 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // تُمرَّر كـ data-URL (لا حاجة لملف مؤقت — كلا الشكلين image/localImage يعمل).
       const inputItems = [];
       inputItems.push(...skillCatalog.codexInputs(skillContext));
+      // ذاكرة المشروع (الأولوية 4 — تكافؤ agent.js/المحوّلات): استرجاع مقصوص من prompt
+      // المستخدم الأصلي (لا effectivePrompt الذي قد يحمل حقن TestSprite)، ككتلة نصية
+      // موسومة <satr_project_memory> غير تنفيذية قبل نص الدور. السياقات المعزولة
+      // (المراجع/العصف — browserControl:false الصريح، نفس بوابة TestSprite) لا ترثها.
+      const memoryPrompt = browserControl === false ? '' : memory.retrieve(cwd, prompt).text;
+      if (memoryPrompt) inputItems.push({ type: 'text', text: memoryPrompt, text_elements: [] });
       if (effectivePrompt) inputItems.push({ type: 'text', text: effectivePrompt, text_elements: [] });
       if (Array.isArray(images)) {
         for (const im of images) {

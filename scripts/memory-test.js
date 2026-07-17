@@ -62,10 +62,23 @@ async function main() {
     assert.strictEqual(memory.remove(project, saved.item.id, options).ok, true);
     assert.strictEqual(memory.search(project, 'محدث', options).items.length, 0);
 
+    // حارس عدم تراجع: حقن الذاكرة في محرك Codex (تكافؤ agent.js) — استرجاع من prompt
+    // المستخدم الأصلي، معزول عن المراجع/العصف (browserControl:false)، وقبل نص الدور.
+    const codexSource = await fsp.readFile(path.join(__dirname, '..', 'electron', 'codex.js'), 'utf8');
+    assert(codexSource.includes("require('./memory')"),
+      'codex.js must import project memory');
+    assert(codexSource.includes("browserControl === false ? '' : memory.retrieve(cwd, prompt).text"),
+      'codex memory injection must use the original user prompt and stay out of isolated contexts');
+    const memoryAt = codexSource.indexOf('memory.retrieve(cwd, prompt)');
+    const promptAt = codexSource.indexOf('inputItems.push({ type: \'text\', text: effectivePrompt');
+    assert(memoryAt > 0 && promptAt > memoryAt,
+      'memory block must be pushed before the user prompt input item');
+
     console.log('✓ memory candidate requires explicit save');
     console.log('✓ secret patterns are rejected before disk');
     console.log('✓ keyword index and retrieval budgets are bounded');
     console.log('✓ memory update and deletion');
+    console.log('✓ codex engine memory injection guard (isolated contexts excluded)');
   } finally {
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
