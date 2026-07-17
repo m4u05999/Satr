@@ -320,12 +320,17 @@ async function main() {
 
     const conflictingPatch = artifact.patch.replace('export const value = 1;', 'export const missing = 999;');
     const conflictingId = executionTeamModule.artifactId(artifact.head, conflictingPatch);
-    const alternateProject = process.platform === 'win32' ? '\\\\?\\' + project : project;
+    let alternateProject = project;
     if (process.platform === 'win32') {
+      const extendedProject = '\\\\?\\' + project;
       const projectStat = fs.statSync(project, { bigint: true });
-      const alternateStat = fs.statSync(alternateProject, { bigint: true });
-      assert.notStrictEqual(path.resolve(project).toLowerCase(), path.resolve(alternateProject).toLowerCase());
-      assert.deepStrictEqual([projectStat.dev, projectStat.ino], [alternateStat.dev, alternateStat.ino]);
+      const extendedStat = fs.statSync(extendedProject, { bigint: true });
+      assert.notStrictEqual(path.resolve(project).toLowerCase(), path.resolve(extendedProject).toLowerCase());
+      assert.deepStrictEqual([projectStat.dev, projectStat.ino], [extendedStat.dev, extendedStat.ino]);
+      assert.strictEqual(mergerModule._internals.sameEntry(project, extendedProject), true);
+      alternateProject = project[0] === project[0].toUpperCase()
+        ? project[0].toLowerCase() + project.slice(1)
+        : project[0].toUpperCase() + project.slice(1);
     }
     const conflict = await merger.apply({
       ...mergeInput, sourceRoot: alternateProject, patch: conflictingPatch, artifact_id: conflictingId,

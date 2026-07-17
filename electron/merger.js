@@ -137,4 +137,5 @@ module.exports = {
   apply: singleton.apply,
   ROOT,
   MAX_PATCH_BYTES,
+  _internals: { sameEntry },
 };
