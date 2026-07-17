@@ -42,6 +42,18 @@ function samePath(left, right) {
   return comparablePath(left) === comparablePath(right);
 }
 
+function sameEntry(left, right) {
+  try {
+    const leftStat = fs.statSync(left, { bigint: true });
+    const rightStat = fs.statSync(right, { bigint: true });
+    if (!leftStat.isDirectory() || !rightStat.isDirectory()) return false;
+    if (leftStat.ino !== 0n && rightStat.ino !== 0n) {
+      return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+    }
+  } catch { return false; }
+  return samePath(left, right);
+}
+
 function inside(root, target) {
   const relative = path.relative(comparablePath(root), comparablePath(target));
   return Boolean(relative)
@@ -86,8 +98,8 @@ function create(options) {
       expectedRoot = fs.realpathSync(data.sourceRoot);
       requestedCwd = fs.realpathSync(data.cwd);
     } catch { return { ok: false, error: 'no_repo' }; }
-    if (!samePath(repoRoot, expectedRoot)
-      || (!samePath(requestedCwd, repoRoot) && !inside(repoRoot, requestedCwd))) {
+    if (!sameEntry(repoRoot, expectedRoot)
+      || (!sameEntry(requestedCwd, repoRoot) && !inside(repoRoot, requestedCwd))) {
       return { ok: false, error: 'wrong_repo' };
     }
     const head = await runGit(repoRoot, ['rev-parse', '--verify', 'HEAD'], settings);

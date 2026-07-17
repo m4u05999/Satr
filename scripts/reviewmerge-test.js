@@ -312,15 +312,23 @@ async function main() {
     await fsp.rm(path.join(project, 'confidential.txt'));
     assert.strictEqual(await git(project, ['status', '--porcelain']), '');
 
+    const otherProject = path.join(temp, 'other-project');
+    await fsp.mkdir(otherProject);
+    const wrongRepo = await merger.apply({ ...mergeInput, sourceRoot: otherProject, confirmed: true });
+    assert.strictEqual(wrongRepo.ok, false);
+    assert.strictEqual(wrongRepo.error, 'wrong_repo');
+
     const conflictingPatch = artifact.patch.replace('export const value = 1;', 'export const missing = 999;');
     const conflictingId = executionTeamModule.artifactId(artifact.head, conflictingPatch);
-    const caseVariantProject = process.platform === 'win32'
-      ? (project[0] === project[0].toUpperCase()
-        ? project[0].toLowerCase() + project.slice(1)
-        : project[0].toUpperCase() + project.slice(1))
-      : project;
+    const alternateProject = process.platform === 'win32' ? '\\\\?\\' + project : project;
+    if (process.platform === 'win32') {
+      const projectStat = fs.statSync(project, { bigint: true });
+      const alternateStat = fs.statSync(alternateProject, { bigint: true });
+      assert.notStrictEqual(path.resolve(project).toLowerCase(), path.resolve(alternateProject).toLowerCase());
+      assert.deepStrictEqual([projectStat.dev, projectStat.ino], [alternateStat.dev, alternateStat.ino]);
+    }
     const conflict = await merger.apply({
-      ...mergeInput, sourceRoot: caseVariantProject, patch: conflictingPatch, artifact_id: conflictingId,
+      ...mergeInput, sourceRoot: alternateProject, patch: conflictingPatch, artifact_id: conflictingId,
       verification: { artifact_id: conflictingId, state: 'passed', checks: [] }, confirmed: true,
     });
     assert.strictEqual(conflict.ok, false);
