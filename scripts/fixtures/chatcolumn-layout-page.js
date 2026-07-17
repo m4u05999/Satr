@@ -1,6 +1,8 @@
 const violations = [];
 const checks = [];
 const cases = [];
+const layoutSheet = new CSSStyleSheet();
+document.adoptedStyleSheets = [...document.adoptedStyleSheets, layoutSheet];
 window.__chatcolumnLayoutProgress = 'loading';
 
 window.satr = {
@@ -100,6 +102,9 @@ async function openFiles(input) {
 async function exerciseLayout(spec) {
   window.__chatcolumnLayoutProgress = spec.name;
   document.body.className = spec.className;
+  layoutSheet.replaceSync(
+    `body #chatColumn { width: ${spec.width}px !important; flex: 0 0 ${spec.width}px !important; }`,
+  );
   const composer = document.querySelector('satr-composer');
   const chatColumn = document.getElementById('chatColumn');
   const footer = document.querySelector('footer');
