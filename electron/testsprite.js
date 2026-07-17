@@ -21,6 +21,8 @@ const CODEX_ENABLED_TOOLS = [
 ];
 const MISSING_KEY_MESSAGE = 'تكامل TestSprite مطلوب، لكن مفتاحه غير مضبوط. أضف مفتاحاً جديداً من ⚙ ← مفاتيح المزوّدين والتكاملات.';
 const TERMINAL_STATUSES = new Set(['PASSED', 'FAILED', 'SKIPPED']);
+const INTENT_PREFIX_LIMIT = 400;
+const INJECTED_RUN_BLOCK_RE = /<satr_testsprite_run\b[^>]*>[\s\S]*?<\/satr_testsprite_run\s*>/gi;
 
 function isValidApiKey(value) {
   return typeof value === 'string' && /^sk-user-[A-Za-z0-9_-]{40,8000}$/.test(value.trim());
@@ -37,15 +39,23 @@ function normalizeIntentText(prompt) {
 
 function classifyRequest(prompt) {
   if (typeof prompt !== 'string') return { explicit: false, generic: false };
-  const text = prompt.trim();
+  // كتلة التشغيل يولّدها «سطر» نفسه؛ إعادة لصقها أو اقتباس تقرير يحويها ليست نية جديدة.
+  // ننزعها قبل سقف المقدمة، ثم نفحص أول 400 محرف فقط لأن طلب المستخدم الحقيقي يتصدر الرسالة.
+  const text = prompt.replace(INJECTED_RUN_BLOCK_RE, '').trim().slice(0, INTENT_PREFIX_LIMIT);
   const arabic = normalizeIntentText(text);
-  const mentionsService = /\btestsprite\b/i.test(text) || /تست\s*سبرايت/.test(arabic);
-  const requestsAction = /\b(?:use|run|test|check|generate|open|bootstrap|connect|via|with)\b/i.test(text)
-    || /(?:استخدم|شغل|اختبر|افحص|ولد|انشي|افتح|اربط|عبر|بواسط[هة])/.test(arabic);
+  // لا يكفي أن يذكر تقريرٌ الخدمة في موضع وفعلَ اختبار في موضع آخر؛ يجب اجتماعهما في
+  // الجملة نفسها. حدود الجملة مقصودة ومحدودة إلى .!؟ والسطر الجديد.
+  const explicit = text.split(/[.!؟\r\n]+/).some((sentence) => {
+    const normalized = normalizeIntentText(sentence);
+    const mentionsService = /\btestsprite\b/i.test(sentence) || /تست\s*سبرايت/.test(normalized);
+    const requestsAction = /\b(?:use|run|test|check|generate|open|bootstrap|connect|via|with)\b/i.test(sentence)
+      || /(?:استخدم|شغل|اختبر|افحص|ولد|انشي|افتح|اربط|عبر|بواسط[هة])/.test(normalized);
+    return mentionsService && requestsAction;
+  });
   const generic = /^(?:(?:انا|نحن)\s+)?(?:اريد|نريد|ابغي|بدي|ابدا|ابدء|نفذ|شغل|قم\s+ب)\s+(?:ان\s+)?(?:اختبار|اختبر|فحص|افحص)(?:\s|$)/.test(arabic)
     || /^(?:اختبر|افحص)(?:\s|$)/.test(arabic)
     || /^(?:اختبار|فحص)\s+(?:كامل|شامل|سريع|المشروع|التطبيق|الواجه[هة]|التعديلات|الحالات)/.test(arabic);
-  return { explicit: mentionsService && requestsAction, generic };
+  return { explicit, generic };
 }
 
 function requested(prompt, options) {

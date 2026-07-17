@@ -9,6 +9,7 @@ const SUITE = [
   'test:skills',
   'test:tasks',
   'test:memory',
+  'test:design-guard',
   'test:repomap',
   'test:context',
   'test:orchestrator',
