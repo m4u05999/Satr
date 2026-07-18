@@ -13,6 +13,12 @@ const mergerModule = require('../electron/merger');
 const reviewerModule = require('../electron/reviewer');
 const worktrees = require('../electron/worktrees');
 
+// مهل واسعة ضد تقطّع ضغط CPU (نمط علاج executionteam في 4b460c1):
+// مهلة المراجع التجريبي لا تُطلق زوراً حين يتأخر emit المجدول، والانتظار الشرطي
+// يتحمّل جدولة بطيئة — بلا أي تخفيف في assertions القيم والحالات.
+const TEST_REVIEW_TIMEOUT_MS = 10000;
+const WAIT_TIMEOUT_MS = 30000;
+
 function git(cwd, args) {
   return new Promise((resolve, reject) => {
     execFile('git', args, { cwd, windowsHide: true, encoding: 'utf8' }, (error, stdout, stderr) => {
@@ -99,7 +105,7 @@ function reviewRunner(engine, stats, options) {
 function reviewerFor(root, configs, statsByEngine, timeoutMs) {
   return reviewerModule.create({
     isolationRoot: root,
-    timeoutMs: timeoutMs || 1000,
+    timeoutMs: timeoutMs || TEST_REVIEW_TIMEOUT_MS,
     resolveEngine(engine) {
       const config = configs[engine];
       if (config === false || !Object.prototype.hasOwnProperty.call(configs, engine)) return null;
@@ -123,7 +129,7 @@ async function completedReview(reviewer, teamId, label) {
   return waitFor(() => {
     const review = reviewer.latest(teamId);
     return review && ['completed', 'failed', 'timed_out', 'stopped'].includes(review.state) ? review : null;
-  }, 3000, label);
+  }, WAIT_TIMEOUT_MS, label);
 }
 
 async function main() {
@@ -215,7 +221,7 @@ async function main() {
     const isolatedCwd = isolationStats.codex.calls[0].cwd;
     assert.notStrictEqual(path.resolve(isolatedCwd), path.resolve(project));
     assert.deepStrictEqual(isolationStats.codex.calls[0].parentEntries, ['workspace']);
-    await waitFor(() => !fs.existsSync(isolatedCwd), 2000, 'isolated cwd cleanup');
+    await waitFor(() => !fs.existsSync(isolatedCwd), WAIT_TIMEOUT_MS, 'isolated cwd cleanup');
 
     const forbiddenEvents = ['permission_request', 'tool_use', 'file_edit', 'model_term', 'preview_open'];
     for (const engine of ['sdk', 'codex']) {
