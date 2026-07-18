@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>update ui</title>
+  <link rel="stylesheet" href="../../src/vendor/fonts.css">
+  <link rel="stylesheet" href="../../src/styles/base.css">
+</head>
+<body>
+<main>
+  <button id="backgroundAction" type="button">إجراء مستقل</button>
+  <span id="backgroundCount">0</span>
+</main>
+
+<div id="updateToast" hidden>
+  <span class="upd-ico" aria-hidden="true">⬇</span>
+  <span id="updateText"></span>
+  <button id="updateDownload" type="button" hidden>نزّل الآن</button>
+  <button id="updateRestart" type="button" hidden>أعد التشغيل الآن</button>
+  <button id="updateDismiss" type="button" title="إخفاء">✕</button>
+</div>
+
+<script type="module" src="update-ui-page.js"></script>
+</body>
+</html>

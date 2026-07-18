@@ -9,6 +9,7 @@ const SUITE = [
   'test:skills',
   'test:slash-menu',
   'test:chat-rtl',
+  'test:update-ui',
   'test:tasks',
   'test:memory',
   'test:design-guard',

@@ -1,4 +1,5 @@
 import { formatPermissionDetail } from './lib/permission-detail.js';
+import { createUpdateToast } from './lib/update-toast.js';
 
 // قشرة الإقلاع والتوجيه (Orchestration) — وحدة ES منذ التنظيف النهائي ت-13
 // (كانت IIFE كلاسيكية طوال التفكيك — قرار ت-0 لتفادي مفاجآت strict mode).
@@ -483,40 +484,13 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
   // ---------- التحديث التلقائي (المرحلة 17 + موافقة صريحة 2026-07-12) ----------
   // إشعار لا يقاطع بموافقة في كل خطوة: «متوفّر» ⇐ زرّ «نزّل الآن» ⇐ تقدّم ⇐ «جاهز»
   // ⇐ زرّ «أعد التشغيل الآن». لا تنزيل ولا تثبيت تلقائيان (المستخدم يملك كل خطوة).
-  let transientToastTimer = 0;
-  function showTransientNotice(message) {
-    const toast = $('updateToast');
-    clearTimeout(transientToastTimer);
-    $('updateText').textContent = message;
-    $('updateDownload').hidden = true; $('updateRestart').hidden = true; toast.hidden = false;
-    transientToastTimer = setTimeout(() => { toast.hidden = true; }, 4500);
-  }
-  function handleUpdateEvent(ev) {
-    const toast = $('updateToast'), txt = $('updateText');
-    const download = $('updateDownload'), restart = $('updateRestart');
-    clearTimeout(transientToastTimer);
-    if (ev.phase === 'available') {
-      txt.textContent = 'تتوفّر نسخة جديدة' + (ev.version ? ' (' + ev.version + ')' : '') + '.';
-      download.hidden = false; restart.hidden = true; toast.hidden = false;
-    } else if (ev.phase === 'progress') {
-      txt.textContent = 'تنزيل التحديث… ' + (ev.percent || 0) + '٪';
-      download.hidden = true; restart.hidden = true; toast.hidden = false;
-    } else if (ev.phase === 'ready') {
-      txt.textContent = 'التحديث' + (ev.version ? ' (' + ev.version + ')' : '') + ' جاهز للتثبيت.';
-      download.hidden = true; restart.hidden = false; toast.hidden = false;
-    } else if (ev.phase === 'error') {
-      toast.hidden = true; // فشل صامت — لا نزعج المستخدم (يبقى التثبيت اليدوي متاحاً)
-    }
-  }
-  $('updateDownload').addEventListener('click', () => {
-    $('updateText').textContent = 'جارٍ بدء التنزيل…';
-    $('updateDownload').hidden = true;
-    window.satr.downloadUpdate();
-  });
-  $('updateRestart').addEventListener('click', () => window.satr.restartUpdate());
-  $('updateDismiss').addEventListener('click', () => {
-    clearTimeout(transientToastTimer); $('updateToast').hidden = true;
-  });
+  const { showTransientNotice, handleUpdateEvent } = createUpdateToast({
+    toast: $('updateToast'),
+    text: $('updateText'),
+    download: $('updateDownload'),
+    restart: $('updateRestart'),
+    dismiss: $('updateDismiss'),
+  }, window.satr);
 
   // إشعار اكتمال الدور: انتقل لمكوّن <satr-chat> (ت-12) — chatEl.notifyTurnDone(isError)
 

@@ -199,7 +199,9 @@ src/ui/lib/          ← وحدات ES مشتركة للمكوّنات: sheet.js
                        diff.js (buildDiff بعقدها الثلاثي: محادثة/عارض/git) + diff.css.js
                        (المصدر الوحيد لأنماط بطاقة الفرق منذ ت-12: تُعتمد على المستند من
                        chat.js للـ light DOM وعلى shadowRoot في git/العارض) + highlight.js
-                       (HL_CFG + hlLine). جسر window.SatrUI أُزيل في ت-13 — استيراد مباشر فقط
+                       (HL_CFG + hlLine) + update-toast.js (توست التحديث/الإشعار العابر —
+                       استُخرج من app.js لاختباره حيّاً في test:update-ui، سلوك مطابق حرفياً).
+                       جسر window.SatrUI أُزيل في ت-13 — استيراد مباشر فقط
 src/ui/components/   ← 15 مكوّن Web Component (بادئة satr-، ملف لكل مكوّن) — انظر قسم
                        «مكوّنات الواجهة» أدناه (الخامس عشر: preview-panel — م-1)
 src/vendor/          ← أصول مُضمّنة (vendored) للواجهة — الناتج مُلتزَم (لا اعتمادية npm وقت
@@ -921,6 +923,11 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `downloadUpdate` و`restartUpdate` فقط.
 - **تمهيد**: التحديث يبدأ من أول إصدار يحوي المُحدِّث (v2.4.1). النشر يرفع `latest.yml`
   مع المثبّت لكل إصدار (يولّده electron-builder عند dist مع publish config).
+- **التحقق**: `npm run test:update-ui` (حي، ضمن test:full) — طبقتان: عقد updater.js مع
+  fake autoUpdater محقون عبر require.cache (الأعلام autoDownload/autoInstallOnAppQuit=false،
+  خرائط الأحداث الأربعة، عدم تسريب رسالة الخطأ الخام، التفويض الصريح فقط)، وتوست
+  Chromium فعلي عبر `src/ui/lib/update-toast.js` المستخرجة (غير حاجب، الموافقتان،
+  الفشل الصامت) تحت CSP صارم. fixture الترميز محروس بمطابقة `#updateToast` مع index.html.
 
 ### دمج الطرفية مع النموذج — أداة run_in_terminal (المرحلة 16)
 
