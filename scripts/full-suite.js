@@ -10,6 +10,7 @@ const SUITE = [
   'test:slash-menu',
   'test:chat-rtl',
   'test:update-ui',
+  'test:task-ledger-ui',
   'test:tasks',
   'test:memory',
   'test:design-guard',

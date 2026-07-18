@@ -17,6 +17,7 @@
     "test:design-guard": "node scripts/design-guard-test.js",
     "test:chat-rtl": "electron scripts/chat-rtl-test.js",
     "test:update-ui": "electron scripts/update-ui-test.js",
+    "test:task-ledger-ui": "electron scripts/task-ledger-ui-test.js",
     "test:repomap": "node scripts/repomap-test.js",
     "test:context": "node scripts/context-test.js",
     "test:orchestrator": "node scripts/orchestrator-test.js",
