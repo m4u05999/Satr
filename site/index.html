@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src https://api.github.com; base-uri 'none'; form-action 'none'">
+  <title>سطر — البيت العربي لأدوات الذكاء الاصطناعي في سطر الأوامر</title>
+  <meta name="description" content="الطرفيات تكسر العربية — حروف مقطّعة معكوسة. «سطر» يشغّل Claude Code وأدوات الذكاء الاصطناعي في واجهة عربية تعرض لغتك كما تستحق. مجاني ومفتوح المصدر.">
+  <meta property="og:title" content="سطر — البيت العربي لأدوات الذكاء الاصطناعي">
+  <meta property="og:description" content="واجهة عربية لـ Claude Code وأخواتها: محادثة RTL سليمة، طرفية عربية، معاينة مدمجة. مجاني ومفتوح المصدر لويندوز.">
+  <meta property="og:type" content="website">
+  <link rel="stylesheet" href="vendor/fonts.css">
+  <link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+
+<div class="grain" aria-hidden="true"></div>
+<div id="goldLine" aria-hidden="true"></div>
+
+<header class="site-header">
+  <a class="brand" href="#hero">سطر</a>
+  <nav>
+    <a href="#features">القدرات</a>
+    <a href="#engines">المحرّكات</a>
+    <a href="https://github.com/m4u05999/Satr" rel="noopener">GitHub</a>
+    <a class="nav-cta" href="#download">تنزيل</a>
+  </nav>
+</header>
+
+<!-- المشهد 1: الالتئام — حروف مقطّعة معكوسة (العطل نفسه) تلتئم إلى «سطر» -->
+<section id="hero">
+  <div class="hero-stage">
+    <div class="broken-layer" aria-hidden="true">
+      <!-- أشكال العرض المعزولة قصداً: هكذا تعرض الطرفيات المعطوبة كلمة «سطر» -->
+      <span class="glyph glyph-1">&#xFEB1;</span>
+      <span class="glyph glyph-2">&#xFEC1;</span>
+      <span class="glyph glyph-3">&#xFEAD;</span>
+    </div>
+    <h1 class="hero-word">سطر<span class="hero-cursor" aria-hidden="true"></span></h1>
+  </div>
+  <p class="hero-tagline" aria-label="البيت العربي لأدوات الذكاء الاصطناعي في سطر الأوامر"><span id="taglineText"></span></p>
+  <p class="hero-sub">‏Claude Code وأخواتها تتحدث العربية أخيراً — محادثة سليمة الاتجاه، طرفية عربية، ومعاينة مدمجة. على جهازك، مجاناً، بلا حساب.</p>
+  <div class="hero-ctas">
+    <a class="btn btn-gold" href="#download">نزّل لويندوز</a>
+    <a class="btn btn-ghost" href="https://github.com/m4u05999/Satr" rel="noopener">مفتوح المصدر ★</a>
+  </div>
+  <p class="scroll-hint">مرّر لترى المشكلة</p>
+</section>
+
+<!-- المشهد 2: المشكلة — طرفية حقيقية السلوك تكسر الجواب العربي -->
+<section id="problem">
+  <div class="wrap">
+    <h2 class="section-title" data-reveal>جرّب أن تسأل بالعربية<br>في طرفية <span class="gold">عادية</span></h2>
+    <div class="terminal" data-reveal>
+      <div class="term-chrome">
+        <span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span>
+        <span class="term-title">Windows Terminal — claude</span>
+      </div>
+      <div class="term-body" id="termBody" aria-label="محاكاة طرفية تعرض العربية مكسورة"></div>
+    </div>
+    <p class="problem-caption" data-reveal>حروف مقطّعة، ترتيب معكوس، قراءة مستحيلة.<br>هذا ما يعيشه كل مطوّر عربي مع أدوات الذكاء الاصطناعي في الطرفية.</p>
+  </div>
+</section>
+
+<!-- المشهد 3: الانقلاب — من الكسر إلى «سطر» -->
+<section id="flip">
+  <div class="wrap">
+    <h2 class="section-title" data-reveal>‏«سطر» يقلب الصورة<span class="gold">.</span></h2>
+    <p class="section-lead" data-reveal>المحرّك نفسه، القوة نفسها — لكن المحادثة تصلك في واجهة عربية تعرض لغتك كما كُتبت: متصلة، سليمة الاتجاه، مريحة للعين.</p>
+    <div class="flip-stage" data-reveal>
+      <div class="app-frame">
+        <img src="assets/app-chat.png" alt="واجهة «سطر»: السؤال نفسه الذي كسرته الطرفية يُجاب هنا بعربية سليمة مع بطاقة فرق للتعديل" loading="lazy">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- المشهد 4: القدرات -->
+<section id="features">
+  <div class="wrap">
+    <h2 class="section-title" data-reveal>ليس مترجماً فوق طرفية<span class="gold">.</span><br>بيئة عمل كاملة<span class="gold">.</span></h2>
+    <div class="feature-cards">
+      <article class="feature-card" data-reveal>
+        <div class="feature-text">
+          <span class="feature-num">01</span>
+          <h3>محادثة عربية سليمة</h3>
+          <p>‏RTL حقيقي مع عزل الكود والمسارات LTR داخل السطر العربي، بطاقات فروقات قابلة للطي والتراجع، وأذونات بمربع حوار عربي واضح قبل كل فعل حساس.</p>
+        </div>
+        <div class="app-frame"><img src="assets/app-tasks.png" alt="سجل المهام الحي في «سطر»: تقدم الخطة وحالات المهام واعتمادياتها بالعربية" loading="lazy"></div>
+      </article>
+      <article class="feature-card" data-reveal>
+        <div class="feature-text">
+          <span class="feature-num">02</span>
+          <h3>طرفية عربية مدمجة</h3>
+          <p>أول طرفية تعرض العربية متصلة وباتجاهها الصحيح — عارض BiDi فوق محرك طرفية حقيقي، مع تعدد تبويبات وتبديل ذكي للتطبيقات الشاشية.</p>
+        </div>
+        <div class="app-frame"><img src="assets/app-term.png" alt="الطرفية العربية في «سطر»: أسطر عربية متصلة ترسو يميناً بجانب الأوامر اللاتينية، مع سطر إدخال عربي" loading="lazy"></div>
+      </article>
+      <article class="feature-card" data-reveal>
+        <div class="feature-text">
+          <span class="feature-num">03</span>
+          <h3>الوكيل يرى ما يبني</h3>
+          <p>متصفح معاينة مدمج: النموذج يفتح مشروعك، يلتقط لقطات، يقرأ الأخطاء من console، وينقر ويكتب ويصحح نفسه — وأنت ترى كل خطوة.</p>
+        </div>
+        <div class="app-frame"><img src="assets/app-preview.png" alt="المعاينة المدمجة في «سطر»: متجر عربي يعمل على localhost داخل التطبيق بشريط عنوان وأدوات فحص" loading="lazy"></div>
+      </article>
+      <article class="feature-card" data-reveal>
+        <div class="feature-text">
+          <span class="feature-num">04</span>
+          <h3>غرفة عمليات لفرق من الوكلاء</h3>
+          <p>عوامل متوازية في نسخ معزولة، مراجعة متقاطعة بين محرّكين مختلفين، وبوابة دمج لا تُفتح إلا بموافقتك — هندسة برمجيات جماعية بالعربية.</p>
+        </div>
+        <div class="app-frame"><img src="assets/app-ops.png" alt="غرفة العمليات في «سطر»: عاملان متوازيان بملكيات ملفات منفصلة وميزانية كتابة ومؤشر مراحل" loading="lazy"></div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- المشهد 5: المحرّكات -->
+<section id="engines">
+  <h2 class="section-title" data-reveal>بيت واحد لكل الأدوات</h2>
+  <p class="section-lead" data-reveal>‏Claude أولاً — والبقية تتبع. بدّل المحرّك من قائمة واحدة.</p>
+  <div class="marquee-wrap">
+    <div class="marquee" id="marquee" aria-label="المحركات المدعومة">
+      <span>Claude Code</span><span>Codex</span><span>Gemini</span><span>DeepSeek</span><span>Qwen</span><span>MiniMax</span><span>Ollama</span>
+    </div>
+  </div>
+</section>
+
+<!-- المشهد 6: الثقة -->
+<section id="trust">
+  <div class="wrap">
+    <h2 class="section-title" data-reveal>مفتوح، مُختبَر، وبلا مقايضات</h2>
+    <div class="trust-grid">
+      <div class="trust-item" data-reveal><strong>MIT</strong><span>مفتوح المصدر بالكامل — اقرأ كل سطر يعمل على جهازك</span></div>
+      <div class="trust-item" data-reveal><strong>27/27</strong><span>طقم اختبارات يمر كاملاً قبل كل إصدار</span></div>
+      <div class="trust-item" data-reveal><strong>0</strong><span>حساب إجباري أو خادم وسيط — مفاتيحك تبقى عندك</span></div>
+      <div class="trust-item" data-reveal><strong>تلقائي</strong><span>تحديثات داخل التطبيق بموافقتك في كل خطوة</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- المشهد 7: التنزيل -->
+<section id="download">
+  <div class="wrap">
+    <h2 class="section-title" data-reveal>جرّب «سطر» الآن</h2>
+    <p class="section-lead" data-reveal>مثبّت ويندوز خفيف — يعمل مع اشتراك Claude القائم لديك.</p>
+    <div data-reveal>
+      <a class="btn btn-gold" id="dlBtn" href="https://github.com/m4u05999/Satr/releases/latest" rel="noopener">تنزيل «سطر» لويندوز</a>
+      <span class="dl-version" id="dlVersion"></span>
+      <div class="winget" dir="ltr">
+        <code id="wingetCmd">winget install satr</code>
+        <button type="button" id="wingetCopy">نسخ</button>
+      </div>
+      <p class="dl-note">يتطلب ويندوز 10 1809+ و‏Claude Code مثبّتاً — والبوابة الأولى في التطبيق ترشدك خطوة بخطوة.</p>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <span>«سطر» — صُنع بحب للمطوّر العربي</span>
+  <nav>
+    <a href="https://github.com/m4u05999/Satr" rel="noopener">GitHub</a>
+    ·
+    <a href="https://github.com/m4u05999/Satr/releases" rel="noopener">الإصدارات</a>
+    ·
+    <a href="https://github.com/m4u05999/Satr/issues" rel="noopener">تواصل</a>
+  </nav>
+</footer>
+
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/ScrollTrigger.min.js"></script>
+<script src="vendor/lenis.min.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

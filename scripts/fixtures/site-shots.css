@@ -1,0 +1,22 @@
+/* موائمات fixture لقطات الموقع: تعويض أغلفة display:contents للمكوّنات
+   غير المسجّلة (topbar/composer ترميز light DOM ساكن — البنية والأنماط من base.css) */
+satr-topbar, satr-composer, satr-chat { display: contents; }
+
+/* لقطة نظيفة: لا وميض مؤشر كتابة أثناء الالتقاط، ولا زر قفز عائماً فوق المحتوى */
+* { caret-color: transparent; }
+#jumpDown { display: none !important; }
+
+/* لقطة الطرفية: اللوحة تملأ نافذة الالتقاط (الأصل 42vh داخل التطبيق) */
+body.shot-term { margin: 0; }
+body.shot-term #termPanel { height: 100vh; border-top: none; }
+
+/* لقطة غرفة العمليات: اللوحة بعرض سطحها الجانبي وسط خلفية التطبيق */
+body.shot-ops { margin: 0; display: flex; justify-content: center; background: var(--bg); }
+body.shot-ops .ops-host { width: 700px; height: 100vh; display: flex; }
+body.shot-ops satr-ops-room { flex: 1; display: flex; }
+
+/* لقطة المعاينة: اللوحة تملأ النافذة والموقع التجريبي يُركّب فوق pvBox
+   (تجاوز عرض السطح الجانبي الأصلي — قاعدة المستند تغلب :host) */
+body.shot-preview { margin: 0; }
+body.shot-preview satr-preview-panel { display: flex; height: 100vh; width: 100vw; max-width: 100vw; min-width: 100vw; }
+#storeFrame { position: fixed; border: 0; background: #fff; }

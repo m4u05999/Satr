@@ -1,0 +1,618 @@
+/* ============================================================
+   سطر — صفحة الهبوط | نظام التصميم
+   اللوحة مقتبسة قيماً من src/styles/base.css (هوية التطبيق نفسها):
+   رمادية Sand الدافئة + الذهبي #D9A441. الموقع امتداد بصري للمنتج.
+   ============================================================ */
+
+:root {
+  /* اللوحة — من tokens التطبيق */
+  --bg-deep: #0d0d0c;
+  --bg: #111110;
+  --surface: #191918;
+  --surface-2: #222221;
+  --surface-3: #2a2a28;
+  --border-dim: #2a2a28;
+  --border: #3b3a37;
+  --border-strong: #62605b;
+  --text: #eeeeec;
+  --text-dim: #b5b3ad;
+  --text-faint: #7c7b74;
+  --gold: #D9A441;
+  --gold-strong: #E5B655;
+  --on-gold: #1A1408;
+  --gold-soft: rgba(217, 164, 65, 0.12);
+  --gold-border: rgba(217, 164, 65, 0.35);
+  --green: #71d083;
+  --red: #ec5d5e;
+
+  /* الخطوط */
+  --sans: 'IBM Plex Sans Arabic', 'Segoe UI', 'Tahoma', system-ui, sans-serif;
+  --mono: 'Cascadia Mono', 'Consolas', monospace;
+
+  /* الحركة — منحنى التطبيق + منحنيات عرض للمَشاهد الكبيرة */
+  --ease: cubic-bezier(.2, .8, .3, 1);
+  --ease-out-expo: cubic-bezier(.16, 1, .3, 1);
+  --dur: .18s;
+
+  /* سلّم العرض الطباعي — التوقيع البصري للموقع */
+  --display-xl: clamp(4.5rem, 16vw, 13rem);
+  --display-lg: clamp(2.2rem, 6vw, 4.2rem);
+  --display-md: clamp(1.4rem, 3vw, 2rem);
+
+  --content-width: 72rem;
+
+  /* سلّم z-index — نفس أسماء سلّم التطبيق الحاكم (حارس التصميم يرفض الأرقام الصريحة) */
+  --z-local: 10;
+  --z-sticky: 30;
+  --z-popover: 60;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  scroll-behavior: auto; /* ‏Lenis يتولى السلاسة */
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.8;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- قوام: حبيبات + توهج ---------- */
+.grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--z-local);
+  opacity: .5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.05'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* الخيط الذهبي — مؤشر تقدم القراءة على الحافة اليمنى (RTL) */
+#goldLine {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 2px;
+  height: 100vh;
+  z-index: var(--z-sticky);
+  background: linear-gradient(to bottom, var(--gold), var(--gold-strong));
+  transform-origin: top;
+  transform: scaleY(0);
+  box-shadow: 0 0 12px rgba(217, 164, 65, .5);
+}
+
+/* ---------- الرأس ---------- */
+.site-header {
+  position: fixed;
+  top: 0;
+  inset-inline: 0;
+  z-index: var(--z-popover);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  background: linear-gradient(to bottom, rgba(17, 17, 16, .85), transparent);
+  backdrop-filter: blur(2px);
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.3rem;
+  color: var(--gold);
+  text-decoration: none;
+  letter-spacing: .02em;
+}
+
+.site-header nav {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.site-header nav a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: .95rem;
+  transition: color var(--dur) var(--ease);
+}
+
+.site-header nav a:hover { color: var(--text); }
+
+.nav-cta {
+  border: 1px solid var(--gold-border);
+  border-radius: 999px;
+  padding: .35rem 1.1rem;
+  color: var(--gold) !important;
+  background: var(--gold-soft);
+}
+
+.nav-cta:hover { background: var(--gold); color: var(--on-gold) !important; }
+
+/* ---------- المقاطع العامة ---------- */
+section {
+  position: relative;
+  padding: 8rem 2rem;
+}
+
+.wrap {
+  max-width: var(--content-width);
+  margin: 0 auto;
+}
+
+.section-title {
+  font-size: var(--display-lg);
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 0 0 1rem;
+}
+
+.section-lead {
+  color: var(--text-dim);
+  font-size: var(--display-md);
+  line-height: 1.7;
+  max-width: 46rem;
+  margin: 0 0 3rem;
+}
+
+.gold { color: var(--gold); }
+
+/* ---------- المشهد 1: الالتئام (Hero) ---------- */
+#hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding-top: 6rem;
+  background:
+    radial-gradient(ellipse 60% 40% at 50% 45%, rgba(217, 164, 65, .07), transparent 70%),
+    var(--bg);
+  overflow: hidden;
+}
+
+.hero-stage {
+  position: relative;
+  width: 100%;
+  height: calc(var(--display-xl) * 1.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* الطبقة المكسورة: حروف معزولة مبعثرة (أشكال العرض المعزولة قصداً —
+   هذا هو العطل الذي نرويه) */
+.broken-layer {
+  position: absolute;
+  inset: 0;
+  direction: ltr;
+}
+
+.glyph {
+  position: absolute;
+  top: 50%;
+  font-size: calc(var(--display-xl) * .55);
+  font-weight: 500;
+  color: var(--text-faint);
+  text-shadow: 0 0 24px rgba(238, 238, 236, .12);
+  will-change: transform, opacity;
+}
+
+/* المواضع عبر transform من JS (قاعدة 60fps) — left ثابتة للمرساة فقط */
+.glyph-1, .glyph-2, .glyph-3 { left: 50%; }
+
+/* الكلمة الملتئمة */
+.hero-word {
+  position: relative;
+  font-size: var(--display-xl);
+  font-weight: 700;
+  line-height: 1.1;
+  margin: 0;
+  color: var(--text);
+  opacity: 0;
+  will-change: transform, opacity, filter;
+  text-shadow: 0 0 80px rgba(217, 164, 65, .25);
+}
+
+.hero-cursor {
+  display: inline-block;
+  width: .09em;
+  height: .85em;
+  margin-inline-start: .06em;
+  vertical-align: text-bottom;
+  background: var(--gold);
+  opacity: 0;
+  box-shadow: 0 0 16px rgba(217, 164, 65, .8);
+}
+
+.hero-tagline {
+  font-size: var(--display-md);
+  color: var(--text-dim);
+  min-height: 2.2em;
+  margin: 1.5rem 0 0;
+}
+
+.hero-sub {
+  color: var(--text-faint);
+  max-width: 42rem;
+  margin: 1rem auto 2.5rem;
+  opacity: 0;
+}
+
+.hero-ctas {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  opacity: 0;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .8rem 2rem;
+  border-radius: 999px;
+  font-size: 1.05rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.btn-gold {
+  background: var(--gold);
+  color: var(--on-gold);
+  box-shadow: 0 4px 24px rgba(217, 164, 65, .3);
+}
+
+.btn-gold:hover {
+  background: var(--gold-strong);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(217, 164, 65, .45);
+}
+
+.btn-ghost {
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+
+.btn-ghost:hover { border-color: var(--gold-border); color: var(--gold); }
+
+.scroll-hint {
+  position: absolute;
+  bottom: 2rem;
+  inset-inline: 0;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: .85rem;
+  opacity: 0;
+}
+
+.scroll-hint::after {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 2.2rem;
+  margin: .5rem auto 0;
+  background: linear-gradient(to bottom, var(--gold), transparent);
+}
+
+/* ---------- المشهد 2: المشكلة (الطرفية المكسورة) ---------- */
+#problem { background: var(--bg-deep); }
+
+.terminal {
+  position: relative;
+  max-width: 54rem;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0a0a09;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .6);
+  overflow: hidden;
+  direction: ltr;
+  text-align: left;
+}
+
+/* ‏scanlines خافتة — قوام الشاشة */
+.terminal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .18) 2px 3px);
+}
+
+.term-chrome {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .6rem .9rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.term-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--surface-3); }
+.term-dot.red { background: #e0564f; }
+.term-dot.yellow { background: #dfb54b; }
+.term-dot.green { background: #5fb85f; }
+
+.term-title {
+  margin-inline-start: auto;
+  color: var(--text-faint);
+  font-size: .78rem;
+  font-family: var(--mono);
+}
+
+.term-body {
+  padding: 1.2rem 1.4rem 1.6rem;
+  font-family: var(--mono);
+  font-size: .95rem;
+  line-height: 1.9;
+  min-height: 16rem;
+  color: #cfcecb;
+}
+
+.term-line { white-space: pre-wrap; word-break: break-all; min-height: 1.9em; }
+
+.term-prompt { color: var(--green); }
+
+/* الخرج المكسور: ترتيب منطقي مفروض LTR (كما تفعل طرفية بلا BiDi) */
+.term-broken {
+  direction: ltr;
+  unicode-bidi: bidi-override;
+  color: #b8b6b0;
+}
+
+.term-cursor {
+  display: inline-block;
+  width: .55em;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  background: #cfcecb;
+  animation: blink 1.05s steps(1) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+.problem-caption {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--display-md);
+  max-width: 40rem;
+  margin: 3.5rem auto 0;
+}
+
+/* ---------- المشهد 3: الانقلاب ---------- */
+#flip { background: var(--bg); }
+
+.flip-stage {
+  position: relative;
+  max-width: 60rem;
+  margin: 0 auto;
+}
+
+.app-frame {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .55);
+}
+
+.app-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.frame-placeholder {
+  aspect-ratio: 16 / 9.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  background:
+    radial-gradient(ellipse 50% 40% at 50% 40%, rgba(217, 164, 65, .05), transparent),
+    var(--surface);
+}
+
+/* ---------- المشهد 4: القدرات ---------- */
+#features { background: var(--bg-deep); }
+
+.feature-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 5rem;
+  margin-top: 4rem;
+}
+
+.feature-card {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 3rem;
+  align-items: center;
+}
+
+.feature-card:nth-child(even) { direction: ltr; }
+.feature-card:nth-child(even) > * { direction: rtl; }
+
+.feature-text h3 {
+  font-size: 1.7rem;
+  margin: 0 0 .8rem;
+}
+
+.feature-text p {
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.feature-num {
+  font-family: var(--mono);
+  color: var(--gold);
+  font-size: .9rem;
+  letter-spacing: .1em;
+  display: block;
+  margin-bottom: .6rem;
+  direction: ltr;
+  text-align: start;
+}
+
+/* ---------- المشهد 5: المحرّكات ---------- */
+#engines {
+  padding-block: 6rem;
+  overflow: hidden;
+  text-align: center;
+}
+
+/* غلاف LTR: يرسي الشريط العريض على اليسار كي لا يهرب خارج الشاشة في RTL */
+.marquee-wrap {
+  direction: ltr;
+  overflow: hidden;
+  width: 100%;
+  margin-top: 3rem;
+  /* قناع تلاشي الأطراف */
+  mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+}
+
+.marquee {
+  display: flex;
+  gap: 4rem;
+  width: max-content;
+  will-change: transform;
+}
+
+.marquee span { padding-inline-end: 0; }
+
+.marquee span {
+  font-family: var(--mono);
+  font-size: 1.6rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  transition: color var(--dur) var(--ease);
+}
+
+.marquee span:hover { color: var(--gold); }
+
+/* ---------- المشهد 6: الثقة ---------- */
+#trust { background: var(--bg-deep); }
+
+.trust-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1.5rem;
+  margin-top: 3rem;
+}
+
+.trust-item {
+  border: 1px solid var(--border-dim);
+  border-radius: 12px;
+  padding: 2rem 1.5rem;
+  background: var(--surface);
+}
+
+.trust-item strong {
+  display: block;
+  font-size: 2.2rem;
+  color: var(--gold);
+  font-weight: 700;
+  margin-bottom: .4rem;
+}
+
+.trust-item span { color: var(--text-dim); font-size: .95rem; }
+
+/* ---------- المشهد 7: التنزيل ---------- */
+#download {
+  min-height: 80vh;
+  display: flex;
+  align-items: center;
+  text-align: center;
+  background:
+    radial-gradient(ellipse 55% 45% at 50% 55%, rgba(217, 164, 65, .09), transparent 70%),
+    var(--bg);
+}
+
+#download .wrap { width: 100%; }
+
+.dl-version {
+  font-family: var(--mono);
+  color: var(--text-faint);
+  font-size: .9rem;
+  direction: ltr;
+  display: block;
+  margin-top: 1rem;
+}
+
+.winget {
+  display: inline-flex;
+  align-items: center;
+  gap: .8rem;
+  margin-top: 2.5rem;
+  padding: .7rem 1.3rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-deep);
+  font-family: var(--mono);
+  font-size: .95rem;
+  color: var(--text-dim);
+  direction: ltr;
+}
+
+.winget button {
+  border: 0;
+  background: var(--surface-3);
+  color: var(--text);
+  border-radius: 6px;
+  padding: .25rem .8rem;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: .85rem;
+  transition: background var(--dur) var(--ease);
+}
+
+.winget button:hover { background: var(--gold); color: var(--on-gold); }
+
+.dl-note { color: var(--text-faint); font-size: .85rem; margin-top: 1.5rem; }
+
+/* ---------- التذييل ---------- */
+.site-footer {
+  border-top: 1px solid var(--border-dim);
+  padding: 3rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  color: var(--text-faint);
+  font-size: .9rem;
+}
+
+.site-footer a { color: var(--text-dim); text-decoration: none; }
+.site-footer a:hover { color: var(--gold); }
+
+/* ---------- كشف العناصر عند التمرير ---------- */
+[data-reveal] { opacity: 0; transform: translateY(40px); }
+
+/* ‏reduced-motion: كل شيء يظهر ثابتاً بلا حركة */
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] { opacity: 1; transform: none; }
+  .hero-word, .hero-sub, .hero-ctas, .scroll-hint { opacity: 1 !important; }
+  .broken-layer { display: none; }
+  .term-cursor { animation: none; }
+}
+
+/* ---------- تجاوب ---------- */
+@media (max-width: 48rem) {
+  section { padding: 5rem 1.2rem; }
+  .feature-card { grid-template-columns: 1fr; gap: 1.5rem; }
+  .feature-card:nth-child(even) { direction: rtl; }
+  .site-header { padding: .8rem 1.2rem; }
+  .site-header nav { gap: .9rem; }
+  .term-body { font-size: .8rem; }
+}

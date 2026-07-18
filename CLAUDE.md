@@ -227,6 +227,14 @@ scripts/agent-eval.js ← مرصد واختبارات الوكيل (الأولو
                        خرج أدوات افتراضياً. التشغيل: npm run eval:agent؛ baseline الملتزم في
                        docs/AGENT-EVAL-BASELINE.md (تحديثه الصريح: npm run eval:agent:baseline).
 docs/PLAN.md         ← خطة التنفيذ المرحلية — اقرأها قبل أي مرحلة جديدة
+site/                ← صفحة الهبوط (قرار «توزيع أوسع» 2026-07-18): HTML/CSS/JS خالص بفكرة
+                       «السطر الذي يلتئم»، GSAP+ScrollTrigger+Lenis مضمّنة vendored (صفر
+                       CDN، CSP صارم، reduced-motion كامل)، اللوحة من tokens التطبيق،
+                       واللقطات في assets/ من مكوّنات الواجهة الإنتاجية. خارج حزمة
+                       التطبيق (files allowlist). التطوير: npm run site:serve (4600)؛
+                       الترقية: vendor:site؛ توليد اللقطات: site:shots (حتمي — الزمن
+                       مجمَّد في fixture الغرفة، ونافذة offscreen واحدة تُعاد — الثانية
+                       تفشل ERR_FAILED). fixtures تحت scripts/fixtures/site-shots-*
 ```
 
 ملاحظة CSP: لا يوجد `'unsafe-inline'` — أي `<style>` أو `<script>` مضمّن جديد في index.html

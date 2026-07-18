@@ -61,14 +61,19 @@
     "predist:dir": "node scripts/update-csp.js",
     "dist:dir": "electron-builder --win --dir",
     "predist:ee": "node scripts/update-csp.js",
-    "dist:ee": "electron-builder --win --config scripts/ee-builder-config.js --publish never"
+    "dist:ee": "electron-builder --win --config scripts/ee-builder-config.js --publish never",
+    "site:serve": "node scripts/site-serve.js",
+    "vendor:site": "node scripts/vendor-site.js",
+    "site:shots": "electron scripts/site-shots.js"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "electron": "^33.0.0",
-    "electron-builder": "^25.0.0"
+    "electron-builder": "^25.0.0",
+    "gsap": "^3.15.0",
+    "lenis": "^1.3.25"
   },
   "build": {
     "appId": "ai.satr.app",

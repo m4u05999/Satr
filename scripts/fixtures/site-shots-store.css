@@ -1,0 +1,20 @@
+/* متجر تجريبي للقطة المعاينة — بسيط ونظيف بهوية مستقلة عن «سطر» */
+* { box-sizing: border-box; }
+body { margin: 0; font-family: 'Segoe UI', 'Tahoma', sans-serif; background: #f7f6f3; color: #1f2430; }
+.store-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 28px; background: #fff; border-bottom: 1px solid #e8e5df; }
+.store-head strong { font-size: 20px; color: #0f766e; }
+.store-head nav { display: flex; gap: 22px; font-size: 14px; color: #5b6472; }
+.store-head .cart { color: #0f766e; font-weight: 600; }
+.store-hero { text-align: center; padding: 46px 20px 40px; background: linear-gradient(135deg, #0f766e, #14b8a6); color: #fff; }
+.store-hero h1 { margin: 0 0 8px; font-size: 34px; }
+.store-hero p { margin: 0 0 18px; opacity: .92; }
+.store-hero button { border: 0; border-radius: 999px; padding: 10px 30px; font-size: 15px; font-weight: 600; color: #0f766e; background: #fff; }
+.store-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; padding: 26px 28px; }
+.store-grid article { background: #fff; border: 1px solid #e8e5df; border-radius: 12px; padding: 12px; }
+.store-grid .ph { height: 110px; border-radius: 8px; }
+.ph1 { background: linear-gradient(135deg, #fde68a, #f59e0b); }
+.ph2 { background: linear-gradient(135deg, #bfdbfe, #3b82f6); }
+.ph3 { background: linear-gradient(135deg, #ddd6fe, #8b5cf6); }
+.ph4 { background: linear-gradient(135deg, #bbf7d0, #22c55e); }
+.store-grid h3 { margin: 10px 0 4px; font-size: 15px; }
+.store-grid span { color: #0f766e; font-weight: 700; font-size: 14px; }

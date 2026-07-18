@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>site shots — chat</title>
+  <link rel="stylesheet" href="../../src/vendor/fonts.css">
+  <link rel="stylesheet" href="../../src/styles/base.css">
+  <link rel="stylesheet" href="site-shots.css">
+</head>
+<body>
+
+<satr-topbar>
+<header>
+  <div class="wordmark">سطر<span class="cursor" aria-hidden="true"></span></div>
+  <div class="controls">
+    <div class="field">
+      <label for="cwd">مجلد المشروع</label>
+      <input type="text" id="cwd" value="D:\projects\matjar-app" spellcheck="false" readonly>
+      <button id="pickFolder" title="اختيار مجلد">📁</button>
+    </div>
+    <button id="newSession">جلسة جديدة</button>
+    <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
+    <button id="previewToggle" title="المعاينة المدمجة">🌐</button>
+    <button id="filesToggle" title="ملفات المشروع">📄</button>
+    <button id="gitToggle" title="تغييرات المشروع (git)">±</button>
+    <button id="opsRoomToggle" title="غرفة العمليات">غرفة العمليات</button>
+    <button id="exportChat" title="تصدير المحادثة (Markdown)">📤</button>
+    <button id="themeToggle" title="تبديل الوضع">🌙</button>
+    <div class="settings-wrap">
+      <button id="settingsBtn" title="الإعدادات">⚙</button>
+    </div>
+  </div>
+</header>
+</satr-topbar>
+
+<div id="banner"></div>
+
+<div id="midRow">
+<div id="chatColumn">
+<satr-chat></satr-chat>
+<satr-composer>
+<footer>
+  <div id="bgBar" aria-label="عمليات قيد التشغيل" hidden>
+    <span class="bg-label"><span class="bg-dot" aria-hidden="true"></span>عمليات قيد التشغيل</span>
+    <span id="bgChips" class="bg-chips"></span>
+    <button id="bgKillAll" type="button">إيقاف الكل</button>
+  </div>
+  <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
+  <div class="composer-tools">
+    <span class="ct-label">المحرك</span>
+    <select id="engine" title="المحرك/المزوّد">
+      <option value="sdk" selected>SDK — بث وأذونات حية</option>
+    </select>
+    <span class="ct-label">النموذج</span>
+    <select id="model" title="النموذج"><option value="">Opus 4.8</option></select>
+    <select id="perm" title="وضع الصلاحيات">
+      <option value="acceptEdits" selected>قبول التعديلات تلقائياً</option>
+    </select>
+    <button id="attachBtn" type="button" title="إرفاق صورة">📎 إرفاق</button>
+  </div>
+  <div class="composer">
+    <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، / للأوامر، @ للملفات)" rows="1"></textarea>
+    <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح">🖱️ متصفح</button>
+    <button id="send">إرسال</button>
+  </div>
+  <div class="statusline">
+    <span id="sessionInfo">الجلسة: 9f3a…7c2 · sdk</span>
+    <span id="costInfo">‏14.2k رمز · $0.11</span>
+  </div>
+</footer>
+</satr-composer>
+</div>
+</div>
+
+<script src="site-shots-reset.js"></script>
+<script type="module" src="site-shots-page.js"></script>
+</body>
+</html>
