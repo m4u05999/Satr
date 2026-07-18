@@ -31,6 +31,7 @@ const keys = require('./keys');
 const memory = require('./memory'); // ذاكرة مشروع شخصية — حقن قرائي مقصوص (تكافؤ agent.js)
 const testsprite = require('./testsprite');
 const testspriteHarness = require('./testspriteharness');
+const runtimeenv = require('./runtimeenv');
 
 const IS_WIN = process.platform === 'win32';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة تراجع ولا نعرض فرقاً
@@ -707,8 +708,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         + 'تكتب العربية سليمة والأقدم تكسرها — فاختر نموذجاً قوياً بالعربية عند الحاجة '
         + '(models_explore)، وضع النص المطلوب بين "علامتَي اقتباس" وسمِّ نمط الخط (ديواني/كوفي) '
         + 'لجودة أعلى؛ أو ضع النص العربي كطبقة HTML فوق الصورة. لا تمنعه منعاً مطلقاً. '
-        + 'لا تستخدم من Agent Skills إلا المهارات المرفقة صراحةً بمدخلات هذا الدور.'
-        + ' النموذج المختار حالياً في واجهة «سطر» هو «' + resolvedModel + '» (من OpenAI Codex).';
+        + 'لا تستخدم من Agent Skills إلا المهارات المرفقة صراحةً بمدخلات هذا الدور. '
+        + runtimeenv.environmentLine('codex', resolvedModel);
       const startParams = { cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, experimentalRawEvents: false, persistExtendedHistory: false };
       if (sessionId) {
         // استئناف خيط قائم من القرص (~/.codex/sessions) بمعرّفه. الحقول cwd/السياسة/

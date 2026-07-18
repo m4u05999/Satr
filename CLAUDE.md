@@ -491,7 +491,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 
 - **السرد والأولوية**: IPC للقراءة فقط `satr:listSkills(cwd)` (`electron/skills.js`) يفحص
   `.agents/skills/*/SKILL.md` ثم `.claude/skills/*/SKILL.md` في المشروع، ثم المسارين نفسيهما
-  تحت home. أول اسم يفوز، لذلك القياسي `.agents` يغلب نسخة التوافق `.claude`. يعاد
+  تحت home، ثم مهارات التطبيق المضمّنة بأدنى أولوية. أول اسم يفوز، لذلك المشروع يغلب المستخدم
+  وكلاهما يغلب المضمّن، والقياسي `.agents` يغلب نسخة التوافق `.claude`. يعاد
   `[{name, description, source, format, location}]` بلا مسارات مطلقة للواجهة.
 - **progressive disclosure**: الفهرس يقرأ رأس `SKILL.md` فقط. المحتوى الكامل (≤128KiB)
   والموارد النصية (≤256KiB للملف، ≤100 مورداً، عمق ≤5) لا تُقرأ إلا باستدعاء الأداة.
@@ -513,9 +514,9 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   و`tools.md` (**مولّد آلياً**: `npm run gen:satr-guide` يشتقه من `codexmcp.buildTools()`
   و`tools.defs()` — لا يُحرَّر يدوياً). الحارس `npm run test:satr-guide` (ضمن test:full)
   يقارن الكتالوج بالمولَّد لحظياً فأي تغيير أداة دون إعادة التوليد **يكسر الطقم** —
-  علاج التقادم آلي لا بشري. **حدّ حالي موثّق**: المهارة تُكتشف من مجلد المشروع فقط
-  (`.agents` خارج حزمة التوزيع) — إيصالها لمستخدمي «سطر» النهائيين (مصدر «مهارات مضمّنة»
-  ثالث في skills.js بأدنى أولوية + إدخالها الحزمة، أو زرع في home) قرار مؤجَّل للمالك.
+  علاج التقادم آلي لا بشري. تُحزم `satr-guide` وحدها كمصدر `builtin` ثالث بأدنى أولوية، من دون
+  زرع أي ملف في home؛ ويبقى `tafqeet` مثال مشروع فقط. تخزين التعطيل بالاسم في اللوحة يشمل
+  المهارة المضمّنة تلقائياً.
 - **التحقق**: `npm run test:skills` يثبت precedence والتحميل التدريجي وحدود الموارد وأدوات
   المحوّلات ومدخلات Codex، ثم `npm run eval:agent` يحمي baseline الوكيل 12/12.
 
@@ -1607,6 +1608,9 @@ npm run dist:dir   # بناء مجلد بدون مثبّت (أسرع للتجر�
   (انظر agent.js). البناء يستثني `claude-agent-sdk-win32-x64` عبر `files`، ومع node-pty
   مقلَّم الـ prebuilds (المرحلة 8) يبلغ المثبّت ~80م.ب.
 - **لا إعادة بناء أصلية**: `npmRebuild: false` — انظر «الطرفية العربية المدمجة» أعلاه.
+- **المهارة المضمّنة**: `build.files` يضم `.agents/skills/satr-guide/**/*` فقط، ويطابقه
+  `asarUnpack` لأن حصر الموارد يعتمد `realpathSync`. في الإنتاج يحوّل `skills.js` جذر
+  `app.asar` إلى `app.asar.unpacked`؛ وفي التطوير يقرأ المسار المباشر نفسه.
 - **مثبّت عربي بالكامل**: `build/installer.nsh` يفرض `$LANGUAGE=1025` في `preInit` و
   `customUnInit`. **لا تضع `multiLanguageInstaller: false`** — في electron-builder تعني
   تجاهل `installerLanguages` وفرض الإنجليزية (en_US). اترك `installerLanguages: ["ar_SA"]`

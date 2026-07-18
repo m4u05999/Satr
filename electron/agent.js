@@ -26,6 +26,7 @@ const memory = require('./memory'); // ذاكرة مشروع شخصية بموا
 const keys = require('./keys');
 const testsprite = require('./testsprite');
 const testspriteHarness = require('./testspriteharness');
+const runtimeenv = require('./runtimeenv');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -658,7 +659,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'لرفع الجودة: (1) ضع النص العربي المطلوب بين علامتَي اقتباس مزدوجتين "…" في البرومبت ' +
       'ليرسمه النموذج حرفياً، و(2) سمِّ نمط الخط (مثل «بخط ديواني» أو «كوفي» لا مجرّد ' +
       '«بالعربية»). ومع نموذج أضعف (أو حين تريد تحكّماً طِباعيّاً دقيقاً) ولّد الخلفية/العنصر ' +
-      'ثم ضع النص العربي كطبقة HTML/CSS فوقه في الموقع. لا تمنع النص العربي منعاً مطلقاً — بل اختر الأداة المناسبة له.' +
+      'ثم ضع النص العربي كطبقة HTML/CSS فوقه في الموقع. لا تمنع النص العربي منعاً مطلقاً — بل اختر الأداة المناسبة له. ' +
+      runtimeenv.environmentLine('sdk', model) +
       (portableSkillPrompt ? '\n\n' + portableSkillPrompt : ''),
   };
   if (policyMode === 'text-only') {

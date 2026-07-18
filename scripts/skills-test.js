@@ -71,6 +71,7 @@ async function main() {
   const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'satr-skills-test-'));
   const project = path.join(temp, 'project');
   const home = path.join(temp, 'home');
+  const discoveryOptions = { home, builtinRoot: path.join(temp, 'builtin') };
   await fsp.mkdir(project, { recursive: true });
   try {
     await write(project, '.agents/skills/portable/SKILL.md', [
@@ -93,17 +94,17 @@ async function main() {
       '---', 'name: global', 'description: |', '  مهارة مستخدم قياسية', '  بوصف متعدد الأسطر', '---', 'GLOBAL_MARKER', '',
     ].join('\n'));
 
-    const catalog = skills.discoverSkills(project, { home });
+    const catalog = skills.discoverSkills(project, discoveryOptions);
     assert.deepStrictEqual(catalog.map((skill) => skill.name), ['global', 'legacy', 'portable']);
     const portable = catalog.find((skill) => skill.name === 'portable');
     assert.strictEqual(portable.format, 'standard');
     assert.strictEqual(portable.source, 'project');
     assert(catalog.find((skill) => skill.name === 'global').description.includes('بوصف متعدد الأسطر'));
 
-    const selected = skills.resolveSelection(project, ['portable', 'legacy'], { home });
+    const selected = skills.resolveSelection(project, ['portable', 'legacy'], discoveryOptions);
     assert.deepStrictEqual(selected.enabled.map((skill) => skill.name), ['legacy', 'portable']);
     assert.deepStrictEqual(selected.nativeClaude, ['legacy']);
-    assert.strictEqual(skills.resolveSelection(project, 'all', { home }).nativeClaude, 'all');
+    assert.strictEqual(skills.resolveSelection(project, 'all', discoveryOptions).nativeClaude, 'all');
 
     const prompt = skills.catalogPrompt(selected);
     assert(prompt.includes('portable'));

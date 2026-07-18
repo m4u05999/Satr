@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const assert = require('assert');
 const gen = require('./gen-satr-guide');
 const skills = require('../electron/skills');
@@ -20,6 +21,13 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
 (async () => {
   const root = path.join(__dirname, '..');
   const dir = path.join(root, '.agents', 'skills', 'satr-guide');
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-guide-test-'));
+  const project = path.join(temp, 'project');
+  const home = path.join(temp, 'home');
+  const builtinRoot = path.join(root, '.agents', 'skills');
+  const packageJson = require('../package.json');
+  fs.mkdirSync(project, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
 
   // 1) الاكتشاف عبر فهرس المهارات الفعلي (skills.js — لا فحص ملفات يدوي)
   const list = await skills.listSkills(root);
@@ -27,6 +35,42 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
   ok(!!guide, 'فهرس المهارات يكتشف satr-guide');
   ok(/سطر/.test(guide.description) && /كيف|ميزات/.test(guide.description),
     'وصف المهارة يذكر «سطر» والأسئلة الإجرائية (شرط الاستدعاء عند السؤال)');
+
+  let builtinContext;
+  try {
+    const builtinCatalog = skills.discoverSkills(project, { home, builtinRoot });
+    const builtinGuide = builtinCatalog.find((s) => s.name === 'satr-guide');
+    ok(!!builtinGuide && builtinGuide.source === 'builtin', 'المشروع الفارغ يكتشف satr-guide من المصدر المضمّن');
+    ok(builtinCatalog.length === 1 && !builtinCatalog.some((s) => s.name === 'tafqeet'),
+      'المصدر المضمّن مقصور على satr-guide ولا يشحن مثال tafqeet');
+
+    const overrideDir = path.join(project, '.agents', 'skills', 'satr-guide');
+    fs.mkdirSync(overrideDir, { recursive: true });
+    fs.writeFileSync(path.join(overrideDir, 'SKILL.md'), [
+      '---',
+      'name: satr-guide',
+      'description: تخصيص المشروع يفوز',
+      '---',
+      'PROJECT_OVERRIDE',
+      '',
+    ].join('\n'), 'utf8');
+    const overridden = skills.discoverSkills(project, { home, builtinRoot }).find((s) => s.name === 'satr-guide');
+    ok(overridden && overridden.source === 'project' && overridden.description === 'تخصيص المشروع يفوز',
+      'تخصيص المشروع يغلب satr-guide المضمّنة بالاسم نفسه');
+
+    const bundlePattern = '.agents/skills/satr-guide/**/*';
+    ok(packageJson.build.files.includes(bundlePattern) && !packageJson.build.files.some((p) => /tafqeet/.test(p)),
+      'build.files يحزم satr-guide وحدها دون tafqeet');
+    ok(Array.isArray(packageJson.build.asarUnpack) && packageJson.build.asarUnpack.includes(bundlePattern),
+      'asarUnpack يطابق نمط satr-guide المضمّنة');
+    const bundledFiles = fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile());
+    const bundledBytes = bundledFiles.reduce((total, entry) => total + fs.statSync(path.join(dir, entry.name)).size, 0);
+    ok(bundledFiles.length === 3 && bundledFiles.every((entry) => entry.name.endsWith('.md')) && bundledBytes < 32 * 1024,
+      'المهارة المضمّنة ثلاثة ملفات Markdown وحجمها هامشي');
+    builtinContext = skills.resolveSelection(path.join(temp, 'empty-project'), 'all', { home, builtinRoot });
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 
   // 2) SKILL.md: حاجز الهلوسة + الإحالة للموردين + تمييز مساري التنفيذ
   const skillMd = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
@@ -51,9 +95,8 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
     .forEach((n) => ok(disk.includes('`' + n + '`'), 'الكتالوج يشمل ' + n));
 
   // 6) موردا المهارة قابلان للقراءة عبر عقد read_skill_resource الفعلي (سقوف ومسارات)
-  const ctx = skills.resolveSelection(root, 'all');
   for (const res of ['features.md', 'tools.md']) {
-    const r = skills.readResource(ctx, 'satr-guide', res);
+    const r = skills.readResource(builtinContext, 'satr-guide', res);
     ok(r && r.ok && r.content.length > 200, 'readResource يقرأ ' + res + ' ضمن الحدود');
   }
 

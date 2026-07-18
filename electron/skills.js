@@ -2,8 +2,9 @@
  * فهرس مهارات «سطر» المحمول + تحميلها التدريجي.
  *
  * المسار القياسي هو .agents/skills مع إبقاء .claude/skills للتوافق. ترتيب الفوز:
- * مشروع قياسي ← مشروع Claude ← مستخدم قياسي ← مستخدم Claude. الفهرس يعرض metadata
- * فقط؛ محتوى SKILL.md والموارد لا يُقرأ إلا عند استدعاء loadSkill/readResource.
+ * مشروع قياسي ← مشروع Claude ← مستخدم قياسي ← مستخدم Claude ← مضمّن مع التطبيق.
+ * أول اسم يفوز، والمصدر المضمّن مقصور على مهارات «سطر» الرسمية. الفهرس يعرض metadata فقط؛
+ * محتوى SKILL.md والموارد لا يُقرأ إلا عند استدعاء loadSkill/readResource.
  * لا تُنفّذ السكربتات تلقائياً، وكل قراءة محصورة داخل جذر المهارة وبسقوف حجم.
  */
 
@@ -22,6 +23,7 @@ const MAX_RESOURCE_BYTES = 256 * 1024;
 const MAX_RESOURCES = 100;
 const MAX_RESOURCE_DEPTH = 5;
 const MAX_CATALOG_CHARS = 16 * 1024;
+const BUILTIN_SKILLS = new Set(['satr-guide']);
 
 function parseFrontmatter(text) {
   const clean = String(text || '').replace(/^﻿/, '');
@@ -54,7 +56,12 @@ function parseFrontmatter(text) {
   return output;
 }
 
-function rootsFor(cwd, home) {
+function builtinSkillsRoot() {
+  const electronDir = __dirname.replace('app.asar', 'app.asar.unpacked');
+  return path.join(path.dirname(electronDir), '.agents', 'skills');
+}
+
+function rootsFor(cwd, home, builtinRoot) {
   const roots = [];
   if (typeof cwd === 'string' && cwd.trim()) {
     const project = path.resolve(cwd.trim());
@@ -67,6 +74,13 @@ function rootsFor(cwd, home) {
   roots.push(
     { root: path.join(userHome, '.agents', 'skills'), source: 'user', format: 'standard', location: '~/.agents/skills' },
     { root: path.join(userHome, '.claude', 'skills'), source: 'user', format: 'claude', location: '~/.claude/skills' },
+    {
+      root: builtinRoot || builtinSkillsRoot(),
+      source: 'builtin',
+      format: 'standard',
+      location: 'مضمّنة مع سطر',
+      allowedNames: BUILTIN_SKILLS,
+    },
   );
   return roots;
 }
@@ -88,6 +102,7 @@ function scanRoot(spec, seen, output) {
   try { entries = fs.readdirSync(spec.root, { withFileTypes: true }); } catch { return; }
   for (const entry of entries) {
     if (output.length >= MAX_SKILLS) return;
+    if (spec.allowedNames && !spec.allowedNames.has(entry.name)) continue;
     if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_DIR.test(entry.name)) continue;
     const directory = path.join(spec.root, entry.name);
     const file = path.join(directory, 'SKILL.md');
@@ -101,6 +116,7 @@ function scanRoot(spec, seen, output) {
     const frontmatter = parseFrontmatter(head) || {};
     const declared = typeof frontmatter.name === 'string' ? frontmatter.name.trim() : '';
     const name = SAFE_NAME.test(declared) ? declared : entry.name;
+    if (spec.allowedNames && !spec.allowedNames.has(name)) continue;
     if (!SAFE_NAME.test(name) || seen.has(name)) continue;
     seen.add(name);
     output.push({
@@ -119,7 +135,9 @@ function scanRoot(spec, seen, output) {
 function discoverSkills(cwd, options) {
   const output = [];
   const seen = new Set();
-  for (const root of rootsFor(cwd, options && options.home)) scanRoot(root, seen, output);
+  for (const root of rootsFor(cwd, options && options.home, options && options.builtinRoot)) {
+    scanRoot(root, seen, output);
+  }
   output.sort((left, right) => left.name.localeCompare(right.name, 'en'));
   return output;
 }

@@ -101,7 +101,8 @@ class SatrSkillsPanel extends HTMLElement {
       const r = document.createElement('div'); r.className = 'skill-row';
       const nm = document.createElement('span'); nm.className = 'skill-name'; nm.dir = 'ltr'; nm.textContent = s.name;
       const src = document.createElement('span'); src.className = 'skill-src';
-      const scope = s.source === 'project' ? 'المشروع' : 'المستخدم';
+      const scopes = { project: 'المشروع', user: 'المستخدم', builtin: 'مضمّنة' };
+      const scope = scopes[s.source] || 'مصدر آخر';
       const format = s.format === 'standard' ? 'قياسية' : 'Claude';
       src.textContent = scope + ' · ' + format;
       r.appendChild(nm); r.appendChild(src);
