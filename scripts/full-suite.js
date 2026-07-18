@@ -7,6 +7,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const SUITE = [
   'test:skills',
+  'test:slash-menu',
   'test:tasks',
   'test:memory',
   'test:design-guard',

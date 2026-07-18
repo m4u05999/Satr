@@ -558,6 +558,8 @@
   .slash-item .desc { font-size: 12.5px; color: var(--text-dim); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; text-align: start; }
   .slash-item.active, .slash-item:hover { background: var(--gold-soft); }
   .slash-item.active .desc { color: var(--text); }
+  .slash-section { padding: var(--space-1h) var(--space-4); border-top: 1px solid var(--border); background: var(--surface); color: var(--text-dim); font-size: 11px; font-weight: 600; }
+  .slash-section:first-child { border-top: none; }
   /* أوامر CLI المتزامنة (مهارات مضمّنة + مهاراتك): لون مميز */
   .slash-item.cli .cmd { color: var(--green); }
   /* سهم التوسيع + الوصف الكامل (درس مصغّر): أكورديون، ⇄ توسّع المحدد */

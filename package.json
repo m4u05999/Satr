@@ -31,6 +31,7 @@
     "test:opsroom-all-live": "node scripts/opsroom-suite.js --live",
     "test:xterm-csp": "electron scripts/xterm-csp-test.js",
     "test:chatcolumn-layout": "electron scripts/chatcolumn-layout-test.js",
+    "test:slash-menu": "electron scripts/slash-menu-test.js",
     "test:terminal-tabs": "electron scripts/terminal-tabs-test.js",
     "test:codex-executor-probe": "node scripts/codex-executor-probe.js",
     "test:codexmcp": "node scripts/codexmcp-test.js",

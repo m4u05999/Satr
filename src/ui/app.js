@@ -46,6 +46,30 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
     if (saved !== null) el.value = saved;
     el.addEventListener('change', () => localStorage.setItem('satr_' + id, el.value));
   });
+  // خيار منخفض اللمس في ⚙: مهارات المستخدم تبقى ظاهرة افتراضياً، ويخفيها المستخدم
+  // من قائمة «/» فقط عند الحاجة. البناء بـ DOM آمن كي لا نزيد ترميز topbar الثابت.
+  (function initUserSkillsVisibility() {
+    const field = document.createElement('div');
+    field.className = 'field';
+    const label = document.createElement('label');
+    label.htmlFor = 'hideUserSkills';
+    label.textContent = 'إخفاء مهارات المستخدم من قائمة /';
+    const checkbox = document.createElement('input');
+    checkbox.id = 'hideUserSkills';
+    checkbox.type = 'checkbox';
+    try { checkbox.checked = localStorage.getItem('satr_hide_user_skills') === '1'; } catch (e) {}
+    checkbox.addEventListener('change', () => {
+      try { localStorage.setItem('satr_hide_user_skills', checkbox.checked ? '1' : '0'); } catch (e) {}
+      customElements.whenDefined('satr-composer').then(() => {
+        const composer = document.querySelector('satr-composer');
+        if (composer && composer.setHideUserSkills) composer.setHideUserSkills(checkbox.checked);
+      });
+    });
+    field.appendChild(label);
+    field.appendChild(checkbox);
+    const effort = $('effort').closest('.field');
+    effort.insertAdjacentElement('afterend', field);
+  })();
   // الموجة 4: تنبيه أمني عند تفعيل «تلقائي ذكي» (auto). محتوى الويب غير الموثوق قد يحقن
   // أوامر؛ فالأدوات القرائية تُوافَق تلقائياً لكن التنفيذ/الكتابة تبقى خلف مربع الإذن العربي.
   $('perm').addEventListener('change', () => {
@@ -599,16 +623,18 @@ import { formatPermissionDetail } from './lib/permission-detail.js';
       if (chatEl.showOpsEvent) chatEl.showOpsEvent(ev.entry);
       return;
     }
+    if (ev.type === 'system' && ev.subtype === 'commands_changed') {
+      // حدث كتالوج مستقل عن عمر كتلة الرد: يستبدل الكاش حتى لو وصل بين دورين.
+      if (composerEl.commandsChanged) composerEl.commandsChanged(ev.commands);
+      return;
+    }
     const block = currentBlock;
     if (!block || block.done) return;
     if (ev.type === 'stream_text') {
       if (ev.text) block.addDelta(ev.text, ev.phase);
       return;
     }
-    if (ev.type === 'system' && ev.subtype === 'commands_changed') {
-      // دفعة تحديث لقائمة أوامر CLI منتصف الجلسة — التطبيع والفلترة داخل المكوّن (ت-10)
-      if (composerEl.commandsChanged) composerEl.commandsChanged(ev.commands);
-    } else if (ev.type === 'system' && ev.subtype === 'compact_boundary') {
+    if (ev.type === 'system' && ev.subtype === 'compact_boundary') {
       block.compacted(ev.compact_metadata);
     } else if (ev.type === 'system' && ev.session_id) {
       sessionId = ev.session_id;

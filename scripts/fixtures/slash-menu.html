@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>slash menu</title>
+  <link rel="stylesheet" href="../../src/vendor/fonts.css">
+  <link rel="stylesheet" href="../../src/styles/base.css">
+</head>
+<body>
+<input id="cwd" value="D:\sater\satr-2" aria-hidden="true">
+<label for="hideUserSkills">إخفاء مهارات المستخدم من قائمة /</label>
+<input id="hideUserSkills" type="checkbox">
+
+<div id="chatColumn">
+<satr-composer>
+<footer>
+  <div id="bgBar" aria-label="عمليات قيد التشغيل">
+    <span class="bg-label"><span class="bg-dot" aria-hidden="true"></span>عمليات قيد التشغيل</span>
+    <span id="bgChips" class="bg-chips"></span>
+    <button id="bgKillAll" type="button">إيقاف الكل</button>
+  </div>
+  <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
+  <div class="composer-tools">
+    <span class="ct-label">المحرك</span>
+    <select id="engine"><option value="sdk">SDK</option></select>
+    <span class="ct-label">النموذج</span>
+    <select id="model"><option value="">الافتراضي</option></select>
+    <select id="perm"><option value="default">افتراضي</option></select>
+    <button id="attachBtn" type="button">📎 إرفاق</button>
+    <input id="fileInput" type="file" accept="image/png" hidden>
+  </div>
+  <div class="composer">
+    <div id="slashMenu" role="listbox"></div>
+    <div id="fileMenu" role="listbox"></div>
+    <textarea id="input" rows="1"></textarea>
+    <button id="browserCtl" type="button" aria-pressed="false">🖱️ متصفح</button>
+    <button id="send">إرسال</button>
+  </div>
+  <div class="statusline"><span id="sessionInfo">لا جلسة</span><span id="costInfo"></span></div>
+</footer>
+</satr-composer>
+</div>
+
+<script src="slash-menu-page.js"></script>
+<script type="module" src="../../src/ui/components/composer.js"></script>
+</body>
+</html>

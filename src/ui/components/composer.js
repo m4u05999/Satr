@@ -147,7 +147,27 @@ class SatrComposer extends HTMLElement {
   // code-review/init/…) ومهارات المستخدم وأوامر أساسية. تُعرض في قائمة «/» وتُرسل
   // كدور عادي (نمط /ضغط المثبت). تُستبعد ما له نسخة عربية أصلية أفضل في «سطر».
   const CLI_CMD_EXCLUDE = new Set(['clear', 'compact', 'context']);
-  let cliCommands = [], cliCmdsCwd = null, cliCmdsLoading = false;
+  const SLASH_SECTIONS = [
+    { id: 'satr', label: 'أوامر سطر' },
+    { id: 'claude', label: 'أوامر Claude Code' },
+    { id: 'project', label: 'مهارات المشروع' },
+    { id: 'user', label: 'مهاراتك (من ~/.claude)' },
+  ];
+  let cliCommands = [], cliCmdsCwd = null, cliCmdsLoading = false, cliCmdsVersion = 0;
+  let skillSources = new Map(), hideUserSkills = false;
+  try { hideUserSkills = localStorage.getItem('satr_hide_user_skills') === '1'; } catch (e) {}
+
+  function sourcesFromSkills(skills) {
+    return new Map((Array.isArray(skills) ? skills : [])
+      .filter((skill) => skill && skill.name && (skill.source === 'project' || skill.source === 'user'))
+      .map((skill) => [String(skill.name), skill.source]));
+  }
+
+  function requestSkillSources(cwd) {
+    return typeof window.satr.listSkills === 'function'
+      ? Promise.resolve(window.satr.listSkills(cwd)).catch(() => [])
+      : Promise.resolve([]);
+  }
 
   // تعريب السطر المطويّ للأوامر المضمّنة المعروفة (قاعدة «العربية أولاً») —
   // الوصف الإنجليزي الكامل يبقى في التوسيع (الدرس المصغّر الأصلي)، وأي أمر جديد
@@ -157,6 +177,8 @@ class SatrComposer extends HTMLElement {
     'code-review': 'مراجعة التغييرات الحالية بحثاً عن أخطاء وفرص تبسيط',
     'review': 'مراجعة طلب سحب (Pull Request)',
     'security-review': 'مراجعة أمنية كاملة للتغييرات المعلقة على الفرع الحالي',
+    'pr-comments': 'معالجة ملاحظات المراجعة على طلب السحب الحالي',
+    'release-notes': 'إنشاء ملاحظات إصدار موجزة من التغييرات الحالية',
     'simplify': 'تبسيط الكود المتغيّر: إعادة استخدام وتنظيف وكفاءة (ثم تطبيق الإصلاحات)',
     'debug': 'تشخيص علّة: جمع الأدلة وفرضيات السبب الجذري ثم الإصلاح',
     'init': 'إنشاء ملف CLAUDE.md بتوثيق قاعدة الكود لهذا المشروع',
@@ -164,7 +186,6 @@ class SatrComposer extends HTMLElement {
     'batch': 'تنفيذ مهام متكررة على ملفات كثيرة دفعة واحدة بالتوازي',
     'loop': 'تكرار أمر أو مهمة على فترات زمنية (أو بوتيرة ذاتية)',
     'schedule': 'جدولة وكلاء سحابيين يعملون بمواعيد دورية (روتينات)',
-    're-fresh': 'بدء جلسة نظيفة بسياق مُلخّص لمهمتك التالية (تسليم منظم)',
     'update-config': 'ضبط إعدادات Claude Code عبر settings.json (أذونات/خطافات/متغيرات)',
     'fewer-permission-prompts': 'تقليل مطالبات الأذونات بإنشاء قائمة سماح من استخدامك الفعلي',
     'reload-skills': 'إعادة تحميل المهارات المكتشفة من القرص',
@@ -174,19 +195,18 @@ class SatrComposer extends HTMLElement {
     'usage-credits': 'رصيد الاستخدام الإضافي المتبقي',
     'extra-usage': 'إعدادات الاستخدام الإضافي بعد بلوغ حدود الخطة',
     'insights': 'رؤى وإحصاءات من استخدامك لـ Claude Code',
-    'design-sync': 'دفع نظام تصميم React إلى claude.ai/design',
     'run-skill-generator': 'مولّد مهارات: إنشاء مهارة جديدة بمعالج تفاعلي',
     'heapdump': 'تفريغ ذاكرة عملية Node لتشخيص تسريباتها',
     'goal': 'تحديد هدف الجلسة لتوجيه عمل النموذج',
     'team-onboarding': 'تهيئة إعدادات الفريق المشتركة',
   };
 
-  function cliToItem(c) {
+  function cliToItem(c, section) {
     const insert = '/' + c.name + ' ';
     const full = (c.description || '').trim();
     // السطر المطويّ: التعريب المُراجَع إن وُجد، وإلا أول سطر من وصف CLI
     // (بلا رموز وسائط خام [...] و<...>) — قصّه يتولاه CSS
-    const ar = CLI_CMD_AR[c.name] || '';
+    const ar = section === 'claude' ? (CLI_CMD_AR[c.name] || '') : '';
     const short = ar || full.split('\n')[0].replace(/[\[<][^\]>]*[\]>]/g, '').replace(/\s{2,}/g, ' ').trim();
     return {
       cmd: '/' + c.name,
@@ -195,6 +215,7 @@ class SatrComposer extends HTMLElement {
       // الوصف الكامل درسٌ مصغّر لجمهورنا المتعلم — بالتوسيع: التعريب ثم الأصل الإنجليزي
       descFull: (ar ? ar + '\n\n' : '') + full + (c.argumentHint ? '\n\nالوسائط: ' + c.argumentHint : ''),
       cli: true,
+      section,
       // إدراج الأمر في المحرّر (مع إتاحة الوسائط) — الإرسال بـ Enter كدور عادي
       run: () => {
         input.value = insert;
@@ -210,19 +231,29 @@ class SatrComposer extends HTMLElement {
     const cwd = $('cwd').value.trim();
     if (cliCmdsCwd === cwd || cliCmdsLoading) return;
     cliCmdsLoading = true;
-    window.satr.listCommands(cwd).then((r) => {
+    const version = cliCmdsVersion;
+    Promise.all([window.satr.listCommands(cwd), requestSkillSources(cwd)]).then(([r, skills]) => {
+      if (version !== cliCmdsVersion) return;
       cliCmdsLoading = false;
       cliCmdsCwd = cwd;
+      skillSources = sourcesFromSkills(skills);
       if (r && r.ok) {
         cliCommands = r.commands.filter((c) => c.name && !CLI_CMD_EXCLUDE.has(c.name));
         // إن كانت القائمة مفتوحة الآن أعد بناءها لتشمل الواصل حديثاً
         if (slashOpenNow() && input.value.startsWith('/')) openSlash(input.value.slice(1));
       }
-    }).catch(() => { cliCmdsLoading = false; });
+    }).catch(() => { if (version === cliCmdsVersion) cliCmdsLoading = false; });
   }
 
   function allSlashCommands() {
-    return commands.concat(cliCommands.map(cliToItem));
+    const grouped = new Map(SLASH_SECTIONS.map((section) => [section.id, []]));
+    grouped.get('satr').push(...commands.map((command) => ({ ...command, section: 'satr' })));
+    for (const command of cliCommands) {
+      const section = skillSources.get(command.name) || 'claude';
+      if (section === 'user' && hideUserSkills) continue;
+      grouped.get(section).push(cliToItem(command, section));
+    }
+    return SLASH_SECTIONS.flatMap((section) => grouped.get(section.id));
   }
 
   // توسيع أوصاف أوامر CLI (قرار قبول 14.1): أكورديون — أمر واحد موسّع، وزرّ «توسيع
@@ -246,11 +277,24 @@ class SatrComposer extends HTMLElement {
     slashIndex = Math.min(slashIndex, slashFiltered.length - 1);
     slashMenu.replaceChildren();
     let hasCli = false;
+    let renderedSection = null;
     slashFiltered.forEach((c, i) => {
+      if (c.section !== renderedSection) {
+        renderedSection = c.section;
+        const section = SLASH_SECTIONS.find((item) => item.id === renderedSection);
+        const separator = document.createElement('div');
+        separator.className = 'slash-section';
+        separator.dataset.section = renderedSection;
+        separator.setAttribute('role', 'presentation');
+        separator.textContent = section ? section.label : '';
+        slashMenu.appendChild(separator);
+      }
       const expanded = c.cli && (slashExpandAll || slashExpandedCmd === c.cmd);
       const el = document.createElement('div');
       el.className = 'slash-item' + (i === slashIndex ? ' active' : '') + (c.cli ? ' cli' : '') + (expanded ? ' expanded' : '');
       el.setAttribute('role', 'option');
+      el.dataset.command = c.cmd;
+      el.dataset.section = c.section;
       const row = document.createElement('div');
       row.className = 'slash-row';
       const command = document.createElement('span');
@@ -443,7 +487,7 @@ class SatrComposer extends HTMLElement {
     if (slashOpenNow()) {
       if (e.key === 'ArrowDown') { e.preventDefault(); slashIndex = (slashIndex + 1) % slashFiltered.length; openSlash(input.value.slice(1)); return; }
       if (e.key === 'ArrowUp')   { e.preventDefault(); slashIndex = (slashIndex - 1 + slashFiltered.length) % slashFiltered.length; openSlash(input.value.slice(1)); return; }
-      if (e.key === 'Enter')     { e.preventDefault(); pickSlash(slashIndex); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickSlash(slashIndex); return; }
       if (e.key === 'Escape')    { e.preventDefault(); closeSlash(); return; }
       // ⇄ على عنصر CLI محدد: توسيع/طيّ وصفه الكامل (لا يسرق Enter ولا ▲▼)
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -464,9 +508,17 @@ class SatrComposer extends HTMLElement {
     // بعد الإرسال: تمدد المحرّر + مسح المسودة + إغلاق القائمتين (input.value تصفّره القشرة)
     this.afterSend = () => { autoResize(); clearDraft(); closeSlash(); closeFiles(); };
     this.setBgProcs = (procs) => { bgProcs = Array.isArray(procs) ? procs : []; renderBgBar(); };
+    this.setHideUserSkills = (hide) => {
+      hideUserSkills = Boolean(hide);
+      if (slashOpenNow() && input.value.startsWith('/')) openSlash(input.value.slice(1));
+    };
     // دفعة commands_changed منتصف الجلسة: تحل محل قائمة CLI المخزنة بالكامل
     this.commandsChanged = (list) => {
       if (!Array.isArray(list)) return;
+      const cwd = $('cwd').value.trim();
+      const sameCwd = cliCmdsCwd === cwd;
+      const version = ++cliCmdsVersion;
+      cliCmdsLoading = false;
       cliCommands = list
         .map((c) => ({
           name: String(c.name || ''),
@@ -475,7 +527,14 @@ class SatrComposer extends HTMLElement {
           aliases: Array.isArray(c.aliases) ? c.aliases.map(String) : [],
         }))
         .filter((c) => c.name && !CLI_CMD_EXCLUDE.has(c.name));
-      cliCmdsCwd = $('cwd').value.trim();
+      cliCmdsCwd = cwd;
+      if (!sameCwd) skillSources = new Map();
+      if (slashOpenNow() && input.value.startsWith('/')) openSlash(input.value.slice(1));
+      requestSkillSources(cwd).then((skills) => {
+        if (version !== cliCmdsVersion || cliCmdsCwd !== cwd) return;
+        skillSources = sourcesFromSkills(skills);
+        if (slashOpenNow() && input.value.startsWith('/')) openSlash(input.value.slice(1));
+      });
     };
   }
 }
