@@ -8,6 +8,7 @@ const ROOT = path.resolve(__dirname, '..');
 const SUITE = [
   'test:skills',
   'test:slash-menu',
+  'test:chat-rtl',
   'test:tasks',
   'test:memory',
   'test:design-guard',

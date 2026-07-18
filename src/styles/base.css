@@ -225,7 +225,9 @@
     background: var(--chat-user-surface); border: 0; border-inline-start: 2px solid var(--gold-border);
     /* 3px زاوية هوية الفقاعة (قرار مالك — لا تُقرَّب)؛ البقية على السلّم حرفياً */
     border-radius: var(--radius-lg) 3px var(--radius-lg) var(--radius-lg); padding: var(--space-2h) var(--space-4);
-    white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext;
+    /* الاتجاه يحسمه chat.js إحصائياً بـ dir صريح على الفقاعة (دفعة RTL المختلط —
+       plaintext كان يكسر الأسطر العربية البادئة برموز لاتينية، لقطات مالك) */
+    white-space: pre-wrap; overflow-wrap: anywhere;
   }
   .msg.assistant { position: relative; gap: var(--space-2h); padding-inline-start: var(--space-5); }
   .msg.assistant::before {
@@ -235,10 +237,9 @@
   .msg.assistant > .who { color: var(--gold); font-weight: 650; letter-spacing: .01em; }
 
   .md { unicode-bidi: plaintext; }
-  /* الفقرات تحلّ اتجاهها الأساسي بنفسها من أول حرف قوي —
-     unicode-bidi لا يُورَّث، فتطبيقه على الحاوية وحدها لا يكفي
-     للأسطر المختلطة (عربي + مسارات/أكواد LTR) داخل القوائم والفقرات */
-  .md p { unicode-bidi: plaintext; }
+  /* الفقرات وعناصر القوائم: اتجاه إحصائي صريح (dir) يحسمه renderMD — بديل «أول حرف
+     قوي» (plaintext) الذي كان يكسر الفقرة العربية البادئة برمز لاتيني: ترتيبها البصري
+     ينقلب وعلامات الترقيم تقفز للطرف الخاطئ (لقطات مالك — تقارير المراجعة التقنية) */
   .md > * { margin-bottom: .6em; }
   .md > *:last-child { margin-bottom: 0; }
   /* العناوين وخلايا الجداول: أساس RTL ثابت (لا plaintext) — عنوان أو خلية تبدأ

@@ -15,6 +15,7 @@
     "test:verify-config-dialog": "electron scripts/verify-config-dialog-live-test.js",
     "test:memory": "node scripts/memory-test.js",
     "test:design-guard": "node scripts/design-guard-test.js",
+    "test:chat-rtl": "electron scripts/chat-rtl-test.js",
     "test:repomap": "node scripts/repomap-test.js",
     "test:context": "node scripts/context-test.js",
     "test:orchestrator": "node scripts/orchestrator-test.js",

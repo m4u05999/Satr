@@ -114,6 +114,19 @@ class SatrChat extends HTMLElement {
     if (t.endsWith('|')) t = t.slice(0, -1);
     return t.split('|').map((c) => c.trim());
   }
+  // اتجاه نص إحصائي (نمط عارض الملفات المثبّت: عربي ≥ نصف اللاتيني ⇒ RTL) —
+  // بديل حسم «أول حرف قوي» (plaintext) الذي يكسر الفقرة العربية البادئة برمز لاتيني
+  // (لقطات مالك 2026-07-18: تقارير المراجعة التقنية تتبعثر وعلامات الترقيم تقفز)
+  function textDir(text) {
+    const ar = (text.match(/[؀-ۿݐ-ݿ]/g) || []).length;
+    const lat = (text.match(/[A-Za-z]/g) || []).length;
+    if (!ar && !lat) return '';
+    return ar * 2 >= lat ? 'rtl' : 'ltr';
+  }
+  function dirAttr(text) {
+    const dir = textDir(text);
+    return dir ? ' dir="' + dir + '"' : '';
+  }
   function renderMD(text) {
     const out = [];
     const lines = text.split('\n');
@@ -148,27 +161,30 @@ class SatrChat extends HTMLElement {
         out.push(html + '</tbody></table>');
       } else if (/^\s*[-*]\s+/.test(line)) {              // قائمة نقطية
         const items = [];
-        // <bdi> يحلّ اتجاه نص العنصر وحده ويعزله عن صندوق العلامة (انظر CSS القائمة)
+        // <bdi> يعزل نص العنصر عن صندوق العلامة، وdir الإحصائي الصريح يحسم اتجاهه
+        // (bdi وحده يحسم بأول حرف قوي فيكسر العنصر العربي البادئ برمز لاتيني)
         while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-          items.push('<li><bdi>' + inlineMD(lines[i].replace(/^\s*[-*]\s+/, '')) + '</bdi></li>'); i++;
+          const raw = lines[i].replace(/^\s*[-*]\s+/, '');
+          items.push('<li><bdi' + dirAttr(raw) + '>' + inlineMD(raw) + '</bdi></li>'); i++;
         }
         out.push('<ul>' + items.join('') + '</ul>');
       } else if (/^\s*\d+[.)]\s+/.test(line)) {           // قائمة مرقمة
         const items = [];
         while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
-          items.push('<li><bdi>' + inlineMD(lines[i].replace(/^\s*\d+[.)]\s+/, '')) + '</bdi></li>'); i++;
+          const raw = lines[i].replace(/^\s*\d+[.)]\s+/, '');
+          items.push('<li><bdi' + dirAttr(raw) + '>' + inlineMD(raw) + '</bdi></li>'); i++;
         }
         out.push('<ol>' + items.join('') + '</ol>');
       } else if (line.trim() === '') {
         i++;
       } else {                                            // فقرة
-        const buf = [];
+        const buf = [], raw = [];
         while (i < lines.length && lines[i].trim() !== '' &&
                !/^(```|#{1,3}\s|\s*[-*]\s+|\s*\d+[.)]\s+)/.test(lines[i]) &&
                !HR_RE.test(lines[i]) && !isTableStart(lines, i)) {
-          buf.push(inlineMD(lines[i])); i++;
+          raw.push(lines[i]); buf.push(inlineMD(lines[i])); i++;
         }
-        out.push('<p>' + buf.join('<br>') + '</p>');
+        out.push('<p' + dirAttr(raw.join('\n')) + '>' + buf.join('<br>') + '</p>');
       }
     }
     return out.join('');
@@ -225,6 +241,10 @@ class SatrChat extends HTMLElement {
     if (text) {
       const b = document.createElement('div');
       b.className = 'bubble'; b.textContent = text;
+      // اتجاه إحصائي موحّد للفقاعة كلها (نمط أساس العارض) — plaintext كان يكسر
+      // الأسطر العربية البادئة برموز لاتينية (برومبتات تقنية = الحالة الغالبة)
+      const dir = textDir(text);
+      if (dir) b.dir = dir;
       w.appendChild(b);
       addMsgCopy(w.querySelector('.who'), () => text);
     }
