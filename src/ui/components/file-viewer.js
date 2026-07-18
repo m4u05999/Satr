@@ -18,7 +18,7 @@ const ownSheet = sheet(`
   :host([open]) { display: flex; }
   :host([open]) .viewer-box { animation: pop var(--dur) var(--ease); }
   @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.985); } }
-  .viewer-box { margin: auto; width: min(1020px, 94vw); height: 86vh; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow-modal); }
+  .viewer-box { margin: auto; width: min(1020px, 94vw); height: 86vh; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow-modal); }
   .viewer-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
   .viewer-name { font-family: var(--mono); direction: ltr; text-align: left; color: var(--gold); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .viewer-meta { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); direction: ltr; white-space: nowrap; }

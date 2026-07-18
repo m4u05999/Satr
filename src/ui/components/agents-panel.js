@@ -1,7 +1,7 @@
 // <satr-agents-panel> — لوحة «/وكلاء»: الوكلاء الفرعيون المكتشفون (قراءة فقط — المرحلة 14.2).
 // أول مكوّن من تفكيك الواجهة (ت-1 — docs/COMPONENTS-PLAN.md): نقل حرفي لمنطق openAgents
 // من القشرة بلا أي تغيير سلوك. العقد: open(cwd) يفتح ويجلب، close() يغلق،
-// وزرّا «تحديث/✕» داخليان. الأنماط عبر adoptedStyleSheets حصراً (CSP يحجب <style> في Shadow).
+// وزرّا «تحديث/✕» داخليان. الأنماط عبر adoptedStyleSheets حصراً (CSP يحجب وسم style في Shadow).
 import { sheet } from '../lib/sheet.js';
 import { panelSheet } from '../lib/panel.css.js';
 
@@ -9,7 +9,7 @@ const ownSheet = sheet(`
   /* صفوف لوحة /وكلاء — منقولة كما هي من base.css */
   .agent-row { padding: 12px 16px; border-bottom: 1px solid var(--border); }
   .agent-row .aname { font-family: var(--mono); direction: ltr; unicode-bidi: embed; color: var(--gold); font-size: 13px; }
-  .agent-row .abadge { font-size: 10.5px; border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; color: var(--text-dim); margin-inline-start: 8px; }
+  .agent-row .abadge { font-size: 10.5px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px 7px; color: var(--text-dim); margin-inline-start: 8px; }
   .agent-row .adesc { font-size: 12.5px; color: var(--text-dim); margin-top: 4px; unicode-bidi: plaintext; }
   .agent-row .ameta { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; direction: ltr; text-align: right; font-family: var(--mono); }
 `);

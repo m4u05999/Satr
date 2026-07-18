@@ -25,14 +25,14 @@ const previewSheet = sheet(`
   }
   .pv-head button {
     background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 8px; padding: 4px 9px; font-size: 12.5px; cursor: pointer;
+    border-radius: var(--radius-md); padding: 4px 9px; font-size: 12.5px; cursor: pointer;
   }
   .pv-head button:hover { border-color: var(--gold); }
   .pv-head button:disabled { opacity: .45; cursor: default; border-color: var(--border); }
   #pvUrl {
     flex: 1; min-width: 0; direction: ltr; text-align: left; font-family: var(--mono);
     font-size: 12px; background: var(--bg); border: 1px solid var(--border);
-    color: var(--text); border-radius: 8px; padding: 5px 9px; outline: none;
+    color: var(--text); border-radius: var(--radius-md); padding: 5px 9px; outline: none;
   }
   #pvUrl:focus { border-color: var(--gold); }
   #pvReload.loading { color: var(--gold); border-color: var(--gold-border); }
@@ -45,7 +45,7 @@ const previewSheet = sheet(`
   #pvAgentTag {
     position: absolute; top: 5px; inset-inline: 0; margin-inline: auto; width: max-content;
     max-width: 70%; z-index: var(--z-local); display: none; align-items: center; gap: 5px;
-    background: var(--gold); color: var(--on-gold); border-radius: 999px; padding: 3px 12px;
+    background: var(--gold); color: var(--on-gold); border-radius: var(--radius-pill); padding: 3px 12px;
     font-size: 11.5px; font-weight: 600; box-shadow: var(--shadow-pop);
     pointer-events: none; unicode-bidi: plaintext; white-space: nowrap;
   }
@@ -61,7 +61,7 @@ const previewSheet = sheet(`
   #pvCtlBadge {
     display: none; align-items: center; gap: 4px; flex: none; pointer-events: none;
     background: var(--gold-soft); color: var(--gold-strong); border: 1px solid var(--gold-border);
-    border-radius: 999px; padding: 4px 9px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    border-radius: var(--radius-pill); padding: 4px 9px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
   }
   :host(.ctl-mode) #pvCtlBadge { display: inline-flex; }
   :host(.ctl-mode) { border-inline-start-color: var(--gold); }
@@ -80,7 +80,7 @@ const previewSheet = sheet(`
     background: var(--surface); border-bottom: 1px solid var(--border); }
   #pvConsole .pc-title { flex: 1; color: var(--text-dim); font-size: 12px; }
   #pvConsole .pc-head button { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
-    border-radius: 7px; padding: 3px 9px; font-size: 11.5px; cursor: pointer; }
+    border-radius: var(--radius-md); padding: 3px 9px; font-size: 11.5px; cursor: pointer; }
   #pvConsole .pc-head button:hover { border-color: var(--gold); color: var(--text); }
   #pcLog { flex: 1; overflow: auto; padding: 3px 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
   #pcLog .pc-line { padding: 1px 10px; white-space: pre-wrap; word-break: break-word;
@@ -109,19 +109,19 @@ const previewSheet = sheet(`
   #pvPickBar .pb-info { display: flex; flex-wrap: wrap; gap: 4px 6px; direction: ltr; }
   #pvPickBar .pb-info:empty { display: none; }
   #pvPickBar .pb-chip { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim);
-    background: var(--bg); border: 1px solid var(--border-dim); border-radius: 6px; padding: 1px 6px;
+    background: var(--bg); border: 1px solid var(--border-dim); border-radius: var(--radius-sm); padding: 1px 6px;
     unicode-bidi: plaintext; display: inline-flex; align-items: center; gap: 4px; }
   #pvPickBar .pb-chip b { color: var(--text-faint); font-weight: 400; }
-  #pvPickBar .pb-sw { width: 11px; height: 11px; border-radius: 3px; border: 1px solid var(--border-strong); flex: none; }
+  #pvPickBar .pb-sw { width: 11px; height: 11px; border-radius: var(--radius-xs); border: 1px solid var(--border-strong); flex: none; }
   #pvPickBar .pb-row { display: flex; gap: 6px; }
   #pvPickBar #pbInput { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
-    color: var(--text); border-radius: 8px; padding: 6px 10px; font-size: 13px; font-family: var(--sans);
+    color: var(--text); border-radius: var(--radius-md); padding: 6px 10px; font-size: 13px; font-family: var(--sans);
     outline: none; unicode-bidi: plaintext; }
   #pvPickBar #pbInput:focus { border-color: var(--gold); }
   #pvPickBar #pbSend { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600;
-    border-radius: 8px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; }
+    border-radius: var(--radius-md); padding: 6px 14px; font-size: 12.5px; cursor: pointer; }
   #pvPickBar #pbCancel { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
-    border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+    border-radius: var(--radius-md); padding: 6px 10px; cursor: pointer; }
   /* مساحة العرض: فارغة — WebContentsView الأصلية تُرسم فوقها بنفس المستطيل */
   #pvBox { flex: 1; position: relative; min-height: 0; }
   .pv-hint {

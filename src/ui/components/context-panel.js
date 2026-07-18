@@ -12,13 +12,13 @@ const ownSheet = sheet(`
   .ctx-pct { font-size: 26px; font-weight: 700; color: var(--gold); font-family: var(--mono); direction: ltr; }
   .ctx-tokens { font-size: 12.5px; color: var(--text-dim); font-family: var(--mono); direction: ltr; margin-top: 2px; }
   .ctx-model { font-size: 12px; color: var(--text-dim); direction: ltr; margin-top: 4px; }
-  .ctx-bar { height: 10px; border-radius: 6px; background: var(--surface-2); overflow: hidden; margin-top: 10px; border: 1px solid var(--border); }
+  .ctx-bar { height: 10px; border-radius: var(--radius-sm); background: var(--surface-2); overflow: hidden; margin-top: 10px; border: 1px solid var(--border); }
   .ctx-bar > span { display: block; height: 100%; background: var(--gold); }
   .ctx-cat { padding: 9px 16px; border-bottom: 1px solid var(--border); }
   .ctx-cat-row { display: flex; align-items: baseline; gap: 8px; }
   .ctx-cat-name { font-size: 13px; flex: 1; min-width: 0; unicode-bidi: plaintext; }
   .ctx-cat-tok { font-size: 12px; color: var(--text-dim); font-family: var(--mono); direction: ltr; }
-  .ctx-cat-bar { height: 5px; border-radius: 4px; background: var(--surface-2); overflow: hidden; margin-top: 5px; }
+  .ctx-cat-bar { height: 5px; border-radius: var(--radius-xs); background: var(--surface-2); overflow: hidden; margin-top: 5px; }
   .ctx-cat-bar > span { display: block; height: 100%; background: var(--gold); opacity: .75; }
   /* ملاحظات أسفل المؤشر — نفس نمط mcp-hint (نسخة اللوحة، الأصل انتقل لمكوّن الموصّلات) */
   .mcp-hint { font-size: 12px; color: var(--text-dim); margin-top: 5px; unicode-bidi: plaintext; line-height: 1.6; }

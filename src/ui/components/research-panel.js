@@ -8,7 +8,7 @@ const ownSheet = sheet(`
   .setup { display: grid; gap: 9px; padding: 13px; border-bottom: 1px solid var(--border); }
   textarea, select {
     width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 8px; padding: 8px 10px; font-family: var(--sans); font-size: 13px; outline: none;
+    border-radius: var(--radius-md); padding: 8px 10px; font-family: var(--sans); font-size: 13px; outline: none;
   }
   textarea { min-height: 86px; resize: vertical; unicode-bidi: plaintext; line-height: 1.6; }
   textarea:focus, select:focus { border-color: var(--gold); }
@@ -18,7 +18,7 @@ const ownSheet = sheet(`
   .setup-hint, .status { color: var(--text-dim); font-size: 11.5px; line-height: 1.6; }
   .status { padding: 7px 13px; min-height: 30px; border-bottom: 1px solid var(--border); }
   .stop { color: var(--red); }
-  .agent-card { margin: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  .agent-card { margin: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
   .agent-head { display: flex; align-items: baseline; gap: 8px; padding: 7px 12px; font-size: 12.5px; background: var(--gold-soft); }
   .agent-head .aname { color: var(--gold); font-weight: 600; white-space: nowrap; }
   .agent-head .adesc { color: var(--text-dim); flex: 1; }
@@ -29,7 +29,7 @@ const ownSheet = sheet(`
   .agent-summary { padding: 6px 13px 10px; white-space: pre-wrap; unicode-bidi: plaintext; line-height: 1.7; font-size: 12.5px; }
   .sources { padding: 0 13px 10px; display: flex; flex-wrap: wrap; gap: 5px; }
   .source { padding: 2px 7px; font: 10.5px var(--mono); direction: ltr; color: var(--gold); }
-  .merged { margin: 10px 12px 16px; padding: 11px 13px; border: 1px solid var(--green-border); border-radius: 10px; }
+  .merged { margin: 10px 12px 16px; padding: 11px 13px; border: 1px solid var(--green-border); border-radius: var(--radius-lg); }
   .merged h3 { color: var(--green); font-size: 13px; margin-bottom: 7px; }
   .merged pre { white-space: pre-wrap; unicode-bidi: plaintext; font: 12.5px/1.7 var(--sans); color: var(--text); }
   .empty { padding: 24px 16px; text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.8; }

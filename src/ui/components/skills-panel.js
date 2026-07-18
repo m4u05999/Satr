@@ -17,11 +17,11 @@ const ownSheet = sheet(`
   .skill-info { flex: 1; min-width: 0; }
   .skill-row { display: flex; align-items: baseline; gap: 8px; }
   .skill-name { font-family: var(--mono); color: var(--gold); font-size: 13px; direction: ltr; }
-  .skill-src { font-size: 10.5px; color: var(--text-dim); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; white-space: nowrap; }
+  .skill-src { font-size: 10.5px; color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 5px; white-space: nowrap; }
   .skill-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; unicode-bidi: plaintext; line-height: 1.5; }
   .skill-hint { padding: 16px; color: var(--text-dim); font-size: 13px; line-height: 2; }
   .skill-hint p { margin-bottom: 6px; }
-  .skill-hint code { font-family: var(--mono); direction: ltr; background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .skill-hint code { font-family: var(--mono); direction: ltr; background: var(--bg); padding: 1px 5px; border-radius: var(--radius-xs); font-size: 12px; }
 `);
 
 class SatrSkillsPanel extends HTMLElement {

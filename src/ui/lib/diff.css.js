@@ -6,7 +6,7 @@ import { sheet } from './sheet.js';
 
 export const diffSheet = sheet(`
   .diffs { display: flex; flex-direction: column; gap: 8px; }
-  .diff { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .diff { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg); }
   /* الترويسة عربية (RTL): الوسم والعدّاد والأزرار؛ اسم الملف وحده LTR */
   .diff-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--surface-2); font-size: 12px; }
   .diff-toggle { background: none; border: none; color: var(--text-dim); padding: 0 2px; font-size: 12px; cursor: pointer; transition: transform var(--dur) var(--ease); }

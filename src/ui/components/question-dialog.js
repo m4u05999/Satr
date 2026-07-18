@@ -17,7 +17,7 @@ const ownSheet = sheet(`
   :host([open]) .q-box { animation: pop var(--dur) var(--ease); }
   @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.985); } }
   .q-box {
-    background: var(--surface-2); border: 1px solid var(--gold); border-radius: 14px;
+    background: var(--surface-2); border: 1px solid var(--gold); border-radius: var(--radius-xl);
     padding: 18px 20px; width: 560px; max-width: 92vw; max-height: 86vh;
     display: flex; flex-direction: column; box-shadow: var(--shadow-modal);
   }
@@ -30,7 +30,7 @@ const ownSheet = sheet(`
   .q-options { display: flex; flex-direction: column; gap: 6px; }
   .q-opt {
     display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px;
-    border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer;
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); cursor: pointer;
     transition: border-color var(--dur) var(--ease);
   }
   .q-opt:hover { border-color: var(--gold); }
@@ -40,7 +40,7 @@ const ownSheet = sheet(`
   .q-opt-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; unicode-bidi: plaintext; }
   .q-opt-preview {
     font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); direction: ltr; text-align: start;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
     padding: 6px 8px; margin-top: 6px; max-height: 140px; overflow: auto;
     white-space: pre-wrap; overflow-wrap: anywhere;
   }

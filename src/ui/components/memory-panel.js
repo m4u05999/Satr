@@ -15,7 +15,7 @@ const ownSheet = sheet(`
   .editor-row { display: flex; gap: 7px; align-items: center; }
   .editor label { color: var(--text-dim); font-size: 11px; }
   .editor select, .editor textarea, .path-input {
-    background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-md);
     padding: 6px 9px; font-family: var(--sans); font-size: 12px; outline: none;
   }
   .editor select:focus, .editor textarea:focus, .path-input:focus { border-color: var(--gold); }
@@ -31,7 +31,7 @@ const ownSheet = sheet(`
   .memory:hover { background: var(--surface-2); }
   .memory-head { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
   .kind { color: var(--gold); font-size: 11px; font-weight: 700; }
-  .badge { color: var(--text-dim); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; font-size: 10px; }
+  .badge { color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 5px; font-size: 10px; }
   .memory-actions { display: flex; gap: 5px; margin-inline-start: auto; }
   .memory-actions button { padding: 2px 8px; font-size: 10.5px; }
   .content { margin-top: 7px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; unicode-bidi: plaintext; }

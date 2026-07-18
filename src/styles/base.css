@@ -158,14 +158,14 @@
   .field label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   input[type="text"], select {
     background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 8px; padding: 6px 10px; font-family: var(--sans); font-size: 13px; outline: none;
+    border-radius: var(--radius-md); padding: 6px 10px; font-family: var(--sans); font-size: 13px; outline: none;
     transition: border-color var(--dur) var(--ease);
   }
   input[type="text"]:focus, select:focus, textarea:focus { border-color: var(--gold); }
   #cwd { width: 240px; direction: ltr; text-align: left; font-family: var(--mono); font-size: 12px; }
   button {
     background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-    border-radius: 8px; padding: 6px 13px; font-family: var(--sans); font-size: 13px;
+    border-radius: var(--radius-md); padding: 6px 13px; font-family: var(--sans); font-size: 13px;
     cursor: pointer; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
   }
   button:hover { border-color: var(--gold); background: var(--surface-3); }
@@ -194,7 +194,7 @@
   #jumpDown {
     position: sticky; bottom: 6px; display: block; margin: 10px auto 0;
     background: var(--surface-2); border: 1px solid var(--gold); color: var(--gold);
-    border-radius: 20px; padding: 5px 16px; font-size: 12.5px;
+    border-radius: var(--radius-pill); padding: 5px 16px; font-size: 12.5px;
     box-shadow: var(--shadow-pop); z-index: var(--z-sticky); animation: pop var(--dur) var(--ease);
   }
   #jumpDown[hidden] { display: none; }
@@ -206,7 +206,7 @@
   .empty .hints { max-width: 340px; margin: 14px auto 0; text-align: right; font-size: 13.5px; display: flex; flex-direction: column; gap: 7px; }
   .empty .hints > span { display: flex; align-items: baseline; gap: 8px; }
   .empty .hints kbd { min-width: 52px; text-align: center; }
-  .empty kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px; font-family: var(--mono); font-size: 12px; }
+  .empty kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px 7px; font-family: var(--mono); font-size: 12px; }
 
   /* دخول ناعم للرسائل الجديدة (الدفعة 4.1) — انزياح طفيف + ظهور، يحترم تفضيل تقليل الحركة */
   @keyframes rise { from { opacity: 0; transform: translateY(5px); } }
@@ -221,7 +221,8 @@
   .msg.user .who { color: var(--gold); font-weight: 600; }
   .msg.user .bubble {
     background: var(--chat-user-surface); border: 0; border-inline-start: 2px solid var(--gold-border);
-    border-radius: 12px 3px 12px 12px; padding: 10px 15px;
+    /* 3px زاوية هوية الفقاعة (قرار مالك — لا تُقرَّب)؛ البقية على السلّم حرفياً */
+    border-radius: var(--radius-lg) 3px var(--radius-lg) var(--radius-lg); padding: 10px 15px;
     white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext;
   }
   .msg.assistant { position: relative; gap: 10px; padding-inline-start: 24px; }
@@ -255,18 +256,18 @@
   .md th { background: var(--surface-2); color: var(--gold); font-weight: 600; white-space: nowrap; }
   .md tbody tr:nth-child(even) { background: var(--surface-2); }
   .md hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
-  .md code { font-family: var(--mono); background: var(--bg); padding: 1px 6px; border-radius: 5px; font-size: .88em; direction: ltr; unicode-bidi: embed; }
-  .md pre { direction: ltr; text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; overflow-x: auto; line-height: 1.55; position: relative; }
+  .md code { font-family: var(--mono); background: var(--bg); padding: 1px 6px; border-radius: var(--radius-sm); font-size: .88em; direction: ltr; unicode-bidi: embed; }
+  .md pre { direction: ltr; text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; overflow-x: auto; line-height: 1.55; position: relative; }
   .md pre code { background: none; padding: 0; }
   /* زر نسخ كتلة الكود (دفعة UX): يظهر عند التحويم، يُحقن بعد اكتمال الدور */
   .code-copy {
     position: absolute; top: 6px; right: 6px; font-size: 11px; padding: 2px 9px;
-    border-radius: 6px; opacity: 0; transition: opacity var(--dur) var(--ease);
+    border-radius: var(--radius-sm); opacity: 0; transition: opacity var(--dur) var(--ease);
   }
   .md pre:hover .code-copy { opacity: 1; }
   /* زر نسخ الرسالة كاملة: في سطر «من» — يظهر عند التحويم على الرسالة */
   .msg-copy {
-    font-size: 11px; padding: 1px 9px; border-radius: 6px; color: var(--text-dim);
+    font-size: 11px; padding: 1px 9px; border-radius: var(--radius-sm); color: var(--text-dim);
     opacity: 0; transition: opacity var(--dur) var(--ease);
   }
   .msg:hover .msg-copy, .msg-copy:focus-visible { opacity: 1; }
@@ -318,7 +319,7 @@
   .tool {
     display: flex; align-items: center; gap: 8px;
     font-family: var(--mono); font-size: 12px; direction: ltr;
-    background: transparent; border: 0; border-radius: 7px;
+    background: transparent; border: 0; border-radius: var(--radius-md);
     padding: 4px 8px; color: var(--text-dim); align-self: stretch; max-width: 100%; overflow: hidden;
   }
   .tool:hover { background: var(--surface-2); }
@@ -351,15 +352,15 @@
   .history-answer { animation: none; }
 
   .meta { align-self: flex-end; font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); direction: ltr; text-align: right; }
-  .error-box { background: var(--red-soft); border: 1px solid var(--red-border); color: var(--red); border-radius: 10px; padding: 10px 14px; font-size: 13px; white-space: pre-wrap; unicode-bidi: plaintext; }
+  .error-box { background: var(--red-soft); border: 1px solid var(--red-border); color: var(--red); border-radius: var(--radius-lg); padding: 10px 14px; font-size: 13px; white-space: pre-wrap; unicode-bidi: plaintext; }
   .notice { color: var(--text-dim); font-size: 13px; text-align: center; }
   /* إشعار بزرّ فعل (م-1: اقتراح «افتح المعاينة» عند رصد خادم تطوير) */
-  .notice .notice-act { margin-inline-start: 10px; font-size: 12px; padding: 2px 12px; border-radius: 8px; }
+  .notice .notice-act { margin-inline-start: 10px; font-size: 12px; padding: 2px 12px; border-radius: var(--radius-md); }
 
   /* سجل المهام: حالة منظمة ضمن transcript، لا صندوقاً مثبتاً يغطي المحادثة. */
   .task-ledger {
     max-height: 46vh; overflow-y: auto;
-    padding: 14px 16px; border: 1px solid var(--border); border-radius: 13px;
+    padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-lg);
     background: var(--surface); box-shadow: var(--shadow-pop); animation: rise var(--dur) var(--ease);
   }
   .task-ledger.state-paused { border-color: var(--gold-border); }
@@ -380,7 +381,7 @@
   .task-ledger.collapsed .task-progress-track,
   .task-ledger.collapsed .task-list { display: none; }
   .task-ledger.collapsed .task-ledger-toggle { margin-inline-start: auto; }
-  .task-progress-track { height: 4px; margin: 10px 0 12px; overflow: hidden; border-radius: 4px; background: var(--surface-3); }
+  .task-progress-track { height: 4px; margin: 10px 0 12px; overflow: hidden; border-radius: var(--radius-xs); background: var(--surface-3); }
   .task-progress-fill { height: 100%; background: var(--gold); transition: width var(--dur) var(--ease); }
   .state-completed .task-progress-fill { background: var(--green); }
   .task-list { display: flex; flex-direction: column; gap: 3px; }
@@ -393,7 +394,7 @@
   .status-blocked .task-status-icon { color: var(--red); }
   .task-title { min-width: 0; flex: 1; color: var(--text); font-size: 13.5px; unicode-bidi: plaintext; }
   .status-completed .task-title { color: var(--text-dim); text-decoration: line-through; }
-  .task-owner { flex: none; color: var(--text-faint); font-size: 11px; border: 1px solid var(--border); border-radius: 9px; padding: 0 7px; }
+  .task-owner { flex: none; color: var(--text-faint); font-size: 11px; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0 7px; }
   .task-dependencies { margin-inline-start: 24px; color: var(--text-faint); font-size: 11px; unicode-bidi: plaintext; }
   .task-evidence { margin: 3px 0 0; margin-inline-start: 24px; color: var(--text-dim); font-size: 11.5px; }
   .task-evidence summary { cursor: pointer; color: var(--green); }
@@ -402,7 +403,7 @@
 
   /* Checkpoint الدور والتحقق: metadata خفيفة مرتبطة بالتعديلات لا بـGit history. */
   .checkpoint-card {
-    padding: 12px 15px; border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 15px; border: 1px solid var(--border); border-radius: var(--radius-lg);
     background: var(--surface); animation: rise var(--dur) var(--ease);
   }
   .checkpoint-card.state-passed { border-color: var(--green-border); }
@@ -427,7 +428,7 @@
   .verification-check summary { cursor: pointer; unicode-bidi: plaintext; }
   .verification-check pre {
     max-height: 180px; margin-top: 5px; padding: 8px 10px; overflow: auto;
-    border: 1px solid var(--border); border-radius: 7px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg);
     color: var(--text-dim); font: 10.5px/1.55 var(--mono); white-space: pre-wrap;
   }
   .verification-digest { margin-top: 4px; color: var(--text-faint); font: 10.5px var(--mono); }
@@ -462,7 +463,7 @@
   /* شريط المؤلّف (§5-د-1): محرك/نموذج بجوار الإرسال */
   .composer-tools { max-width: 880px; margin: 0 auto var(--space-2); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   .composer-tools .ct-label { font-size: 11.5px; color: var(--text-dim); }
-  .composer-tools select, .composer-tools button { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 6px 10px; font-size: 12.5px; font-family: var(--sans); outline: none; cursor: pointer; }
+  .composer-tools select, .composer-tools button { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-lg); padding: 6px 10px; font-size: 12.5px; font-family: var(--sans); outline: none; cursor: pointer; }
   .composer-tools select:hover, .composer-tools button:hover { border-color: var(--gold); }
   .ct-hint { font-size: 11.5px; color: var(--text-dim); }
   /* شريط الحالة عربي RTL — المعرّفات والأرقام اللاتينية تنعزل LTR تلقائياً بخوارزمية BiDi */
@@ -501,14 +502,14 @@
   /* أشرطة تمرير موحّدة على الثيم الداكن (بدل افتراضي Chromium الفاتح) */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 6px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: var(--radius-sm); border: 2px solid var(--bg); }
   ::-webkit-scrollbar-thumb:hover { background: var(--border); }
 
   /* لوحة الإعدادات المنبثقة (النموذج/المحرك/الصلاحيات) — تُطوى خلف ⚙ لتخفيف الشريط العلوي */
   .settings-wrap { position: relative; }
   #settingsPop {
     position: absolute; top: calc(100% + 8px); left: 0; z-index: var(--z-popover);
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
     padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 300px;
     box-shadow: var(--shadow-pop); animation: pop var(--dur) var(--ease);
   }
@@ -522,7 +523,7 @@
   .dirs-head button { font-size: 12px; padding: 3px 10px; }
   #dirChips { display: flex; flex-direction: column; gap: 5px; }
   #dirChips:empty::after { content: 'لا مجلدات إضافية — النموذج يرى مجلد المشروع فقط'; font-size: 11.5px; color: var(--text-dim); }
-  .dir-chip { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 4px 9px; }
+  .dir-chip { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 4px 9px; }
   .dir-chip .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; text-align: left; font-family: var(--mono); font-size: 11.5px; color: var(--text); }
   .dir-chip .rm { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 0 3px; font-size: 12px; }
   .dir-chip .rm:hover { color: var(--red); }
@@ -579,7 +580,7 @@
   .attachments { max-width: 880px; margin: 0 auto var(--space-2); display: none; gap: var(--space-2); flex-wrap: wrap; }
   .attachments.open { display: flex; }
   .attach-chip { position: relative; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 3px; background: var(--surface-2); }
-  .attach-chip img { height: 46px; width: auto; max-width: 110px; border-radius: 5px; display: block; object-fit: cover; }
+  .attach-chip img { height: 46px; width: auto; max-width: 110px; border-radius: var(--radius-sm); display: block; object-fit: cover; }
   .attach-chip .rm {
     position: absolute; top: -7px; inset-inline-end: -7px; width: 18px; height: 18px;
     padding: 0; border: none; border-radius: 50%; background: var(--red); color: var(--on-danger);
@@ -601,7 +602,7 @@
   #bgKillAll { font-size: 12px; padding: 3px 9px; }
   /* مصغّرات الصور داخل فقاعة رسالة المستخدم */
   .msg.user .imgs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-  .msg.user .imgs img { height: 120px; width: auto; max-width: 240px; border-radius: 8px; border: 1px solid var(--border); display: block; object-fit: cover; }
+  .msg.user .imgs img { height: 120px; width: auto; max-width: 240px; border-radius: var(--radius-md); border: 1px solid var(--border); display: block; object-fit: cover; }
 
   /* ===== لوحة الجلسات: انتقلت إلى مكوّن satr-sessions-panel (تفكيك ت-4) ===== */
   /* ⚠️ قواعد panel-head/search/list باقية: لوحتا الملفات وgit (light DOM) تستخدمانها
@@ -624,7 +625,7 @@
   #updateToast {
     position: fixed; bottom: 16px; left: 16px; z-index: var(--z-toast); max-width: 380px;
     display: flex; align-items: center; gap: 10px; padding: 10px 14px;
-    background: var(--surface-2); border: 1px solid var(--gold); border-radius: 12px;
+    background: var(--surface-2); border: 1px solid var(--gold); border-radius: var(--radius-lg);
     box-shadow: var(--shadow-pop); font-size: 13px; color: var(--text);
   }
   #updateToast[hidden] { display: none; }
@@ -645,7 +646,7 @@
   /* ===== بطاقة ضغط المحادثة (/ضغط) ===== */
   .compact-card {
     border: 1px solid var(--gold-border); background: var(--gold-soft);
-    border-radius: 10px; padding: 10px 14px; font-size: 13px; color: var(--text);
+    border-radius: var(--radius-lg); padding: 10px 14px; font-size: 13px; color: var(--text);
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   }
   .compact-card .ico { font-size: 16px; }
@@ -657,7 +658,7 @@
 
   /* ===== لوحتا الموصّلات (/موصلات) والسياق (/سياق) ===== */
   /* بطاقة الوكيل الفرعي (المرحلة 14.2): رأس بحالة + أدوات متداخلة + سجل نصي حي */
-  .agent-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  .agent-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
   .agent-head { display: flex; align-items: baseline; gap: 8px; padding: 7px 12px; font-size: 12.5px; background: var(--gold-soft); }
   .agent-head .aname { color: var(--gold); font-weight: 600; white-space: nowrap; }
   .agent-head .adesc { color: var(--text-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; text-align: start; }
@@ -702,7 +703,7 @@
   .term-head button { font-size: 12px; padding: 2px 10px; }
   /* شريط التبويبات (المرحلة 15.2): تبويب لكل طرفية + زر ＋ */
   #termTabs { display: flex; gap: 4px; overflow-x: auto; max-width: 55%; }
-  .term-tab { display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; border: 1px solid var(--border); border-radius: 7px 7px 0 0; background: var(--bg); color: var(--text-dim); cursor: pointer; white-space: nowrap; font-size: 12px; }
+  .term-tab { display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; border: 1px solid var(--border); border-radius: var(--radius-md) var(--radius-md) 0 0; background: var(--bg); color: var(--text-dim); cursor: pointer; white-space: nowrap; font-size: 12px; }
   .term-tab.active { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   .term-tab:focus-visible { border-color: var(--gold); background: var(--gold-soft); }
   .term-tab .term-tab-label { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; }
@@ -748,7 +749,7 @@
      مؤشر المتصفح («المؤشر الملعون» محلول جذرياً — قرار الصدى في وثيقة التصميم §8.2) */
   #termInputRow { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--surface); }
   #termInput {
-    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md);
     padding: 6px 12px; color: var(--text); outline: none;
     font-family: 'Cascadia Mono', 'Consolas', 'IBM Plex Sans Arabic', 'Segoe UI', monospace; font-size: 13px;
   }

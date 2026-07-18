@@ -14,14 +14,14 @@ const controlsText = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   button {
     background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-    border-radius: 8px; padding: 6px 13px; font-family: var(--sans); font-size: 13px;
+    border-radius: var(--radius-md); padding: 6px 13px; font-family: var(--sans); font-size: 13px;
     cursor: pointer; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
   }
   button:hover { border-color: var(--gold); background: var(--surface-3); }
   button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
   input[type="text"] {
     background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 8px; padding: 6px 10px; font-family: var(--sans); font-size: 13px; outline: none;
+    border-radius: var(--radius-md); padding: 6px 10px; font-family: var(--sans); font-size: 13px; outline: none;
     transition: border-color var(--dur) var(--ease);
   }
   input[type="text"]:focus { border-color: var(--gold); }

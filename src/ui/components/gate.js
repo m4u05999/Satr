@@ -20,7 +20,7 @@ const ownSheet = sheet(`
   :host([hidden]) { display: none; }
   .gate-card {
     width: 100%; max-width: 560px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 16px; padding: 30px 30px 24px;
+    border: 1px solid var(--border); border-radius: var(--radius-xl); padding: 30px 30px 24px;
   }
   .gate-logo { font-size: 30px; font-weight: 700; color: var(--gold); display: flex; align-items: baseline; gap: 4px; justify-content: center; margin-bottom: 18px; user-select: none; }
   .gate-logo .cursor { display: inline-block; width: 13px; height: 26px; background: var(--gold); animation: blink 1.1s steps(1) infinite; transform: translateY(3px); }
@@ -39,7 +39,7 @@ const ownSheet = sheet(`
   .gate-cmd { display: flex; align-items: stretch; gap: 6px; margin-top: 8px; }
   .gate-cmd code {
     flex: 1; direction: ltr; text-align: left; font-family: var(--mono); font-size: 12.5px;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md);
     padding: 8px 10px; color: var(--text); overflow-x: auto; white-space: nowrap; user-select: all;
   }
   .gate-cmd button { flex: 0 0 auto; font-size: 12px; padding: 6px 12px; }

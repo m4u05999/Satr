@@ -39,10 +39,36 @@ const ZINDEX_BASELINE = new Map([
   ['src/styles/base.css', 2],
 ]);
 
-// hex بأطوال CSS الشرعية فقط (3/4/6/8) — يستبعد أرقام مثل ‎#31873 في التعليقات
+// hex بأطوال CSS الشرعية فقط (3/8/6/4) — يستبعد أرقام مثل ‎#31873 في التعليقات
 const HEX_RE = /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![0-9a-fA-F])/;
 const RGB_RE = /rgba?\(/;
 const ZINDEX_RE = /z-index:\s*\d/;
+// التصريح كاملاً ثم عدّ قيم px داخله — ملاحظة مراجعة Codex: فحص بداية القيمة وحدها
+// يُمرّر خطأً shorthand مثل «var(--radius-md) 11px». قيمتا 0 و50% مشروعتان (محايد/دائرة)
+const RADIUS_DECL_RE = /border-radius:\s*([^;}{]*)/g;
+const RADIUS_PX_RE = /\d+(?:\.\d+)?px/g;
+
+// baseline قيم px المتبقية داخل تصريحات border-radius (بعد المرحلتين أ+ب من دفعة
+// «سلّم الزوايا»): زوايا هوية فقاعتَي المحادثة وحدها — قرار مالك لا تُقرَّب
+// (لمسها يغيّر شخصية الفقاعة). النقص يطالب بتحديث baseline
+const RADIUS_BASELINE = new Map([
+  // فقاعة المساعد 3px 14px 14px 3px (أربع قيم) + فقاعة المستخدم 3px (قيمة واحدة)
+  ['src/styles/base.css', 5],
+]);
+
+// عدّ قيم px داخل كل تصريحات border-radius في الملف (تعليقات // منزوعة سلفاً)
+function countRadiusPx(file) {
+  const hits = [];
+  for (const { line, number } of codeLines(file)) {
+    let match;
+    RADIUS_DECL_RE.lastIndex = 0;
+    while ((match = RADIUS_DECL_RE.exec(line)) !== null) {
+      const values = match[1].match(RADIUS_PX_RE) || [];
+      for (let i = 0; i < values.length; i++) hits.push(number);
+    }
+  }
+  return hits;
+}
 
 function listJsFiles(dir) {
   const out = [];
@@ -110,6 +136,13 @@ function main() {
     checkBaseline('z-index رقمي', rel, hits, ZINDEX_BASELINE);
   }
 
+  // 2ب. قيم px داخل تصريحات border-radius خارج سلّم --radius-* (نفس نطاق z-index)
+  for (const file of [...uiFiles, path.join(ROOT, 'src', 'styles', 'base.css')]) {
+    const rel = relOf(file);
+    const hits = countRadiusPx(file);
+    checkBaseline('border-radius رقمي', rel, hits, RADIUS_BASELINE);
+  }
+
   // 3. السمات المضمّنة في index.html (محظورة بـ CSP — القاعدة في CLAUDE.md)
   const html = fs.readFileSync(path.join(ROOT, 'src', 'index.html'), 'utf8');
   const inline = html.match(/\s(?:style|on[a-z]+)\s*=\s*["']/gi) || [];
@@ -123,6 +156,7 @@ function main() {
   }
   console.log('✓ لا ألوان صلبة جديدة خارج tokens في src/ui');
   console.log('✓ لا z-index رقمية جديدة خارج سلّم --z-*');
+  console.log('✓ لا border-radius رقمية جديدة خارج سلّم --radius-*');
   console.log('✓ لا سمات مضمّنة في index.html');
   console.log('design-guard: نجح — tokens وسلّم z-index وCSP بلا انتهاكات جديدة.');
 }
