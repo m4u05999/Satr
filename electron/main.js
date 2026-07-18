@@ -903,6 +903,18 @@ ipcMain.handle('satr:answerQuestion', (event, p) => {
   return { ok };
 });
 
+// رد الواجهة على التسليم البشري browser_handoff (زرا «استلمت»/«إلغاء» في شريط لوحة
+// المعاينة): id بنمط ho_… من المحرك (SDK أو Codex — كلاهما في currentRun)، وdone
+// boolean فقط. لا نص حر — التنقية طبقة أولى وresolveHandoff يتجاهل معرّفاً غير معلّق.
+const SAFE_HANDOFF_ID = /^ho_[A-Za-z0-9_]{1,64}$/;
+ipcMain.handle('satr:handoffDone', (event, p) => {
+  // مراجعة Codex: boolean حصراً — !!"false" أو !!{} كانت تتحول «استلمت» زوراً
+  if (!p || typeof p.id !== 'string' || !SAFE_HANDOFF_ID.test(p.id) || typeof p.done !== 'boolean') return { ok: false };
+  let ok = false;
+  if (currentRun && typeof currentRun.resolveHandoff === 'function') ok = currentRun.resolveHandoff(p.id, p.done);
+  return { ok };
+});
+
 // ---------- التراجع عن تعديل ملف (المرحلة 3) ----------
 // المعرّف هو tool_use_id الذي أصدره المحرك؛ نتحقق من شكله قبل تمريره.
 // المسار نفسه مخزَّن في لقطة agent.js (ليس مدخلاً من الواجهة) فلا حقن مسارات.

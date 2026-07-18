@@ -514,6 +514,16 @@ import { createUpdateToast } from './lib/update-toast.js';
       questionEl.ask({ id: ev.id, questions: ev.questions });
       return;
     }
+    // التسليم البشري (browser_handoff): الوكيل سلّم قيادة المعاينة — شريط 🤝 في اللوحة
+    // ينتظر «استلمت»/«إلغاء». handoff_end يخفيه (يغطي أيضاً حسم إيقاف الدور من المحرك).
+    if (ev.type === 'handoff_request' && ev.id) {
+      if (previewEl.showHandoff) previewEl.showHandoff(ev.id, ev.reason);
+      return;
+    }
+    if (ev.type === 'handoff_end') {
+      if (previewEl.hideHandoff) previewEl.hideHandoff();
+      return;
+    }
     if (ev.type === 'testsprite_progress') {
       const completed = Number.isInteger(ev.completed) && ev.completed >= 0 ? ev.completed : 0;
       const total = Number.isInteger(ev.total) && ev.total >= 0 ? ev.total : 0;
@@ -670,6 +680,8 @@ import { createUpdateToast } from './lib/update-toast.js';
     sendBtn.classList.remove('stop');
     closePermDialog();
     closeQuestionDialog();
+    // شريط التسليم البشري لا يعيش بعد الدور (المحرك فكّ الانتظار بالإلغاء عند الإيقاف)
+    if (previewEl && previewEl.hideHandoff) previewEl.hideHandoff();
     input.focus();
   }
 

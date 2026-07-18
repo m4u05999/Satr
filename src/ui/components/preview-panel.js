@@ -122,6 +122,19 @@ const previewSheet = sheet(`
     border-radius: var(--radius-md); padding: var(--space-1h) var(--space-4); font-size: 12.5px; cursor: pointer; }
   #pvPickBar #pbCancel { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
     border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); cursor: pointer; }
+  /* شريط التسليم البشري (browser_handoff): الوكيل سلّم القيادة — المستخدم يكمل بيده
+     ثم يضغط «استلمت». يظهر تحت الرأس مباشرة (منطقة لا يغطّيها العرض الأصلي بعد إعادة
+     القياس — فتحه يقلّص pvBox عبر التدفق الطبيعي فيبلَّغ المستطيل الجديد تلقائياً). */
+  #pvHandoff { display: none; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2h);
+    background: var(--gold-soft); border-bottom: 1px solid var(--gold-border); }
+  #pvHandoff.show { display: flex; animation: pop var(--dur) var(--ease); }
+  #pvHandoff .ho-icon { flex: none; font-size: 16px; }
+  #pvHandoff .ho-text { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); unicode-bidi: plaintext; }
+  #pvHandoff .ho-text b { color: var(--gold-strong); }
+  #pvHandoff #hoDone { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600;
+    border-radius: var(--radius-md); padding: var(--space-1h) var(--space-4); font-size: 12.5px; cursor: pointer; flex: none; }
+  #pvHandoff #hoCancel { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); cursor: pointer; flex: none; }
   /* مساحة العرض: فارغة — WebContentsView الأصلية تُرسم فوقها بنفس المستطيل */
   #pvBox { flex: 1; position: relative; min-height: 0; }
   .pv-hint {
@@ -163,6 +176,13 @@ const MARKUP = `
     <button id="pvClearStore" type="button" title="مسح تخزين الصفحة (كوكيز + localStorage + cache) وإعادة التحميل">🧹</button>
     <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
+  </div>
+  <!-- شريط التسليم البشري (browser_handoff): يظهر حين يسلّم الوكيل القيادة للمستخدم -->
+  <div id="pvHandoff">
+    <span class="ho-icon">🤝</span>
+    <span class="ho-text"><b>الوكيل يسلّمك القيادة:</b> <span id="hoReason"></span></span>
+    <button id="hoDone" type="button" title="أكملتُ المطلوب — أعد القيادة للوكيل">استلمت ✓</button>
+    <button id="hoCancel" type="button" title="إلغاء التسليم (يُبلَّغ الوكيل أن الخطوة لم تكتمل)">إلغاء</button>
   </div>
   <div id="pvBox">
     <div class="pv-hint" id="pvHint">
@@ -693,7 +713,7 @@ class SatrPreviewPanel extends HTMLElement {
       browser_console: 'يفحص الأخطاء', browser_network: 'يفحص الشبكة', screenshot: 'يلتقط لقطة', browser_screenshot_element: 'يلتقط عنصراً',
       browser_snapshot: 'يفحص العناصر', browser_click: 'ينقر', browser_type: 'يكتب',
       browser_select_option: 'يختار', browser_press_key: 'يضغط مفتاحاً', browser_scroll: 'يمرّر',
-      browser_hover: 'يحوّم', browser_wait_for: 'ينتظر',
+      browser_hover: 'يحوّم', browser_wait_for: 'ينتظر', browser_handoff: 'يسلّمك القيادة',
     };
     // مؤشّر «وضع تحكّم المتصفح مفعّل» (الخيار A): يقرأ حالة زرّ الوضع في المحرّر
     // (#browserCtl، light DOM) من aria-pressed ويتابع تغيّره بـ MutationObserver —
@@ -716,6 +736,31 @@ class SatrPreviewPanel extends HTMLElement {
       clearTimeout(agentTimer);
       agentTimer = setTimeout(() => { agentTag.classList.remove('show'); agentLine.classList.remove('show'); }, 2500);
     };
+
+    // ---------- شريط التسليم البشري (browser_handoff) ----------
+    // القشرة تستدعي showHandoff عند حدث handoff_request وhideHandoff عند handoff_end
+    // (أو نهاية الدور احتياطاً — يغطي حسم الإيقاف). الردّ boolean فقط عبر satr:handoffDone؛
+    // المحرك (SDK/Codex) هو من ينهي التسليم فعلياً ويصفّر السجلات في العملية الرئيسية.
+    const hoBar = $('pvHandoff'), hoReason = $('hoReason');
+    let handoffId = null;
+    const answerHandoff = (done) => {
+      if (!handoffId) return;
+      const id = handoffId;
+      handoffId = null;
+      hoBar.classList.remove('show');
+      window.satr.handoffDone(id, done);
+    };
+    $('hoDone').addEventListener('click', () => answerHandoff(true));
+    $('hoCancel').addEventListener('click', () => answerHandoff(false));
+    this.showHandoff = (id, reason) => {
+      openPanel(false); // التسليم يفترض معاينة مفتوحة — فتح اللوحة إن كانت مطوية كي يُرى الشريط
+      handoffId = String(id || '');
+      hoReason.textContent = String(reason || '');
+      hoBar.classList.add('show');
+      // القيادة بيد المستخدم — أخفِ مؤشر نشاط الوكيل إن كان ظاهراً
+      agentTag.classList.remove('show'); agentLine.classList.remove('show');
+    };
+    this.hideHandoff = () => { handoffId = null; hoBar.classList.remove('show'); };
   }
 }
 

@@ -29,6 +29,11 @@ const preview = {
   typeText: async () => ({ ok: true, tag: 'input' }),
   selectOption: async () => ({ ok: true, label: 'الأول' }),
   pressKey: () => ({ ok: true, key: 'Enter' }),
+  // حالة التسليم البشري (browser_handoff) — يحاكي عقد preview.js: علم واحد + idempotent
+  _handoff: false,
+  startHandoff() { if (this._handoff) return { ok: false, error: 'active' }; this._handoff = true; return { ok: true }; },
+  endHandoff() { const was = this._handoff; this._handoff = false; return { ok: true, wasActive: was }; },
+  isHandoffActive() { return this._handoff; },
 };
 
 function post(url, token, msg) {
@@ -140,6 +145,54 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   jj = JSON.parse(rr.body);
   ok(jj.result.isError && /رُفض الإذن/.test(jj.result.content[0].text), 'غياب بوابة الإذن يرفض open_preview ولا يتصفح بصمت');
   await srv4.stop();
+
+  // ---------- التسليم البشري browser_handoff (دفعة «تحكم الوكيل الكامل») ----------
+  // tools/list يشمل الأداة الجديدة (على srv الأول)
+  r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 20, method: 'tools/list' });
+  ok(JSON.parse(r.body).result.tools.some((t) => t.name === 'browser_handoff'), 'tools/list يشمل browser_handoff');
+
+  // غياب requestHandoff ⇒ رفض fail-closed (لا تعليق ولا تنفيذ)
+  r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 21, method: 'tools/call', params: { name: 'browser_handoff', arguments: { reason: 'سجّل دخولك' } } });
+  j = JSON.parse(r.body);
+  ok(j.result.isError && /غير متاح/.test(j.result.content[0].text), 'غياب requestHandoff ⇒ browser_handoff ترفض fail-closed');
+
+  // دورة كاملة: أثناء التسليم تُحجب الأدوات، ثم «استلمت» يعيد القيادة وينهي التعليق
+  let handoffResolve = null;
+  const srv5 = await codexmcp.start({
+    preview,
+    requestPermission: allowAll,
+    requestHandoff: (reason) => new Promise((res) => { handoffResolve = res; }),
+  });
+  const handoffP = post(srv5.url, srv5.token, { jsonrpc: '2.0', id: 22, method: 'tools/call', params: { name: 'browser_handoff', arguments: { reason: 'سجّل دخولك إلى GitHub' } } });
+  // انتظار تفعيل العلم (النداء يمرّ ببوابة الإذن ثم startHandoff)
+  for (let i = 0; i < 50 && !preview.isHandoffActive(); i++) await new Promise((res) => setTimeout(res, 10));
+  ok(preview.isHandoffActive(), 'browser_handoff يفعّل علم التسليم في preview');
+  rr = await post(srv5.url, srv5.token, { jsonrpc: '2.0', id: 23, method: 'tools/call', params: { name: 'browser_navigate', arguments: { url: 'http://localhost:3000/x' } } });
+  jj = JSON.parse(rr.body);
+  ok(jj.result.isError && /التسليم البشري جارٍ/.test(jj.result.content[0].text), 'أثناء التسليم browser_navigate محجوبة برسالة موحّدة');
+  rr = await post(srv5.url, srv5.token, { jsonrpc: '2.0', id: 24, method: 'tools/call', params: { name: 'open_preview', arguments: { url: 'http://localhost:3000' } } });
+  jj = JSON.parse(rr.body);
+  ok(jj.result.isError && /التسليم البشري جارٍ/.test(jj.result.content[0].text), 'أثناء التسليم open_preview محجوبة أيضاً');
+  handoffResolve(true); // المستخدم ضغط «استلمت»
+  rr = await handoffP; jj = JSON.parse(rr.body);
+  ok(!jj.result.isError && /استلم المستخدم/.test(jj.result.content[0].text), '«استلمت» ⇒ نتيجة نجاح تطلب snapshot جديداً');
+  ok(!preview.isHandoffActive(), 'بعد الاستلام يُرفع التعليق (endHandoff)');
+  rr = await post(srv5.url, srv5.token, { jsonrpc: '2.0', id: 25, method: 'tools/call', params: { name: 'browser_navigate', arguments: { url: 'http://localhost:3000/y' } } });
+  ok(!JSON.parse(rr.body).result.isError, 'بعد الاستلام تعود أدوات المعاينة للعمل');
+
+  // مسار الإلغاء: المستخدم ضغط «إلغاء» ⇒ خطأ صريح + رفع التعليق
+  const cancelP = post(srv5.url, srv5.token, { jsonrpc: '2.0', id: 26, method: 'tools/call', params: { name: 'browser_handoff', arguments: { reason: 'أدخل رمز 2FA' } } });
+  for (let i = 0; i < 50 && !preview.isHandoffActive(); i++) await new Promise((res) => setTimeout(res, 10));
+  handoffResolve(false);
+  rr = await cancelP; jj = JSON.parse(rr.body);
+  ok(jj.result.isError && /ألغى المستخدم/.test(jj.result.content[0].text), '«إلغاء» ⇒ خطأ صريح للنموذج بلا محتوى صفحة');
+  ok(!preview.isHandoffActive(), 'الإلغاء يرفع التعليق أيضاً (fail-closed لا يعلق)');
+
+  // reason فارغ ⇒ رفض قبل أي تعليق
+  rr = await post(srv5.url, srv5.token, { jsonrpc: '2.0', id: 27, method: 'tools/call', params: { name: 'browser_handoff', arguments: { reason: '   ' } } });
+  jj = JSON.parse(rr.body);
+  ok(jj.result.isError && /reason مطلوب/.test(jj.result.content[0].text) && !preview.isHandoffActive(), 'reason فارغ ⇒ رفض بلا تفعيل تعليق');
+  await srv5.stop();
 
   await srv.stop();
   await srv2.stop();

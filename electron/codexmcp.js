@@ -43,9 +43,13 @@ function imageResult(base64) {
 
 // أخطاء أدوات المعاينة الموحّدة → رسالة عربية (نظير التغليف في agent.js)
 function whyClosed(err, extra) {
+  // أثناء التسليم البشري كل دوال preview.js الوكيلية تعيد {error:'handoff'} — رسالة موحّدة
+  if (err === 'handoff') return HANDOFF_BLOCKED;
   if (err === 'closed') return 'المعاينة غير مفتوحة — استخدم open_preview أولاً.';
   return (extra || 'تعذّرت العملية') + ' (' + (err || 'خطأ') + ').';
 }
+// رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
+const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
 
 const PERMISSION_KEYS = new Set(['url', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page']);
 function permissionInput(value) {
@@ -69,6 +73,11 @@ function permissionInput(value) {
 function buildTools(deps) {
   const preview = deps.preview;
   const openPreview = typeof deps.openPreview === 'function' ? deps.openPreview : null;
+  // التسليم البشري: codex.js يوفّر requestHandoff (بثّ الشريط + انتظار «استلمت»).
+  // غيابه ⇒ الأداة ترفض fail-closed (نفس مبدأ requestPermission أدناه).
+  const requestHandoff = typeof deps.requestHandoff === 'function' ? deps.requestHandoff : null;
+  // حارس التسليم للأداتين المشتركتين مع الواجهة (navigate/open غير محجوبتين في preview.js)
+  const handoffActive = () => !!(preview.isHandoffActive && preview.isHandoffActive());
   return [
     {
       name: 'open_preview',
@@ -76,6 +85,7 @@ function buildTools(deps) {
         + 'المدمجة داخل «سطر». استعملها بعد تشغيل خادم المشروع بدل فتح متصفح خارجي.',
       inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'العنوان http/https' } }, required: ['url'] },
       handler: async (args) => {
+        if (handoffActive()) return textResult(HANDOFF_BLOCKED, true);
         const url = String((args && args.url) || '').trim();
         if (!preview.isHttpUrl(url)) return textResult('عنوان غير صالح — http/https فقط', true);
         if (openPreview) { openPreview(url); return textResult('فُتحت المعاينة المدمجة على ' + url); }
@@ -89,6 +99,7 @@ function buildTools(deps) {
       description: 'انتقل بلوحة المعاينة القائمة إلى عنوان http/https آخر (بلا إعادة فتح).',
       inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
       handler: async (args) => {
+        if (handoffActive()) return textResult(HANDOFF_BLOCKED, true);
         const r = preview.navigate(String((args && args.url) || ''));
         return (r && r.ok) ? textResult('انتقلت المعاينة إلى ' + String(args.url))
           : textResult(whyClosed(r && r.error, 'تعذّر التنقّل'), true);
@@ -319,8 +330,37 @@ function buildTools(deps) {
         return textResult('ضُغط ' + r.key + '.');
       },
     },
+    {
+      // التسليم البشري (دفعة «تحكم الوكيل الكامل» — تكافؤ أداة SDK في agent.js):
+      // startHandoff يعلّق كل أدوات المعاينة في preview.js المشترك، requestHandoff (من
+      // codex.js) يبثّ الشريط وينتظر «استلمت»، وendHandoff يصفّر سجلّي console/الشبكة.
+      name: 'browser_handoff',
+      description: 'سلّم قيادة المعاينة للمستخدم ليكمل خطوة بيده داخل متصفح «سطر» (تسجيل دخول، '
+        + 'كلمة مرور، رمز تحقق 2FA أو بيانات حساسة) ثم انتظر ضغطه «استلمت». استعملها بدل طلب '
+        + 'بيانات حساسة في المحادثة وبدل إحالة المستخدم لمتصفح خارجي. أثناء التسليم كل أدوات '
+        + 'المعاينة معلّقة ولا ترى الصفحة. بعد الاستلام خذ browser_snapshot جديداً وأكمل.',
+      inputSchema: { type: 'object', properties: { reason: { type: 'string', description: 'ما المطلوب من المستخدم بالعربية — يظهر في شريط الاستلام' } }, required: ['reason'] },
+      handler: async (args) => {
+        if (!requestHandoff) return textResult('التسليم البشري غير متاح في هذا السياق.', true);
+        const reason = String((args && args.reason) || '').replace(CONTROL_CHARS_RE, ' ').trim().slice(0, 300);
+        if (!reason) return textResult('reason مطلوب — اذكر للمستخدم ما المطلوب منه.', true);
+        const st = preview.startHandoff();
+        if (!st.ok) {
+          return textResult(st.error === 'closed'
+            ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً ثم سلّم القيادة.'
+            : 'تسليم آخر جارٍ بالفعل — انتظر نتيجته.', true);
+        }
+        let done = false;
+        try { done = !!(await requestHandoff(reason)); }
+        finally { preview.endHandoff(); } // يصفّر سجلّي console/الشبكة — لا يقرأ الوكيل ما جرى أثناء التسليم
+        if (!done) return textResult('ألغى المستخدم التسليم ولم تكتمل الخطوة. لا تكرر الطلب فوراً — اسأل المستخدم عن البديل.', true);
+        return textResult('استلم المستخدم وأكمل الخطوة بيده. الصفحة قد تغيّرت — خذ browser_snapshot جديداً قبل أي فعل.');
+      },
+    },
   ];
 }
+// محارف التحكم تُنقّى من reason قبل عرضه في شريط الاستلام (نظير تنقية agent.js)
+const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]+/g;
 
 // ينشئ خطأ JSON-RPC
 function rpcError(id, code, message) {

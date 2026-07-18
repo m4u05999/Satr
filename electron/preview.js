@@ -31,6 +31,30 @@ const LEVELS = ['verbose', 'info', 'warning', 'error']; // ترميز Electron �
 function pushLog(arr, item) { arr.push(item); if (arr.length > LOG_CAP) arr.shift(); }
 function resetLogs() { consoleBuf = []; netErrBuf = []; netReqBuf = []; }
 
+// ---------- التسليم البشري (browser_handoff — دفعة «تحكم الوكيل الكامل» 2026-07-18) ----------
+// أثناء التسليم يقود المستخدم المعاينة بيده (تسجيل دخول/2FA/بيانات حساسة) و**تُعلَّق كل
+// أدوات الوكيل — رؤيةً وفعلاً — fail-closed** حتى يضغط «استلمت» (قرار مالك: الوكيل لا
+// يرى ولا يفعل لحظة إدخال البيانات الحساسة). العلم هنا في الوحدة المشتركة فيغطي محرك
+// SDK (أدوات agent.js) وCodex ‏(codexmcp.js يفوّض إلينا) معاً. دوال **الواجهة** (action/
+// captureFrame/startPick/setBounds) لا تُحجب — المستخدم هو القائد. navigate مشتركة بين
+// شريط العنوان والوكيل فتُحجب عند **موقع الأداة** في المحرّكين لا هنا.
+let handoffActive = false;
+function startHandoff() {
+  if (!currentWC()) return { ok: false, error: 'closed' };
+  if (handoffActive) return { ok: false, error: 'active' };
+  handoffActive = true;
+  return { ok: true };
+}
+// نهاية التسليم (استلام/إلغاء/إيقاف الدور): تصفير سجلّي console والشبكة إلزامي — قد
+// تحمل ما أُدخل أثناء التسليم (كلمة مرور في جسم طلب مُعلَّم فاشلاً مثلاً). idempotent.
+function endHandoff() {
+  if (!handoffActive) return { ok: true, wasActive: false };
+  handoffActive = false;
+  resetLogs();
+  return { ok: true, wasActive: true };
+}
+function isHandoffActive() { return handoffActive; }
+
 function emit(ev) {
   if (typeof sender === 'function') { try { sender(ev); } catch (e) {} }
 }
@@ -395,6 +419,7 @@ const READ_SCRIPT = `(function(){
 })()`;
 
 async function readPage() {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -407,6 +432,7 @@ async function readPage() {
 // سجلّ الـ console وأخطاء الشبكة الملتقطة للصفحة الحالية (لا executeJavaScript — بثّ حيّ).
 // LEVELS يترجم ترميز Electron، والأخطاء تُبرَز أولاً في العرض ليركّز عليها الوكيل.
 function getConsole() {
+  if (handoffActive) return { error: 'handoff' };
   if (!currentWC()) return { error: 'closed' };
   const logs = consoleBuf.slice(-150).map((l) => ({
     level: LEVELS[l.level] || 'log',
@@ -420,6 +446,7 @@ function getConsole() {
 // سجلّ الشبكة الكامل للصفحة الحالية (البند ب): كل الطلبات المكتملة + الفاشلة. للوكيل
 // عبر browser_network (تشخيص: أي طلب رجع 404/500، أو لم يُطلب أصلاً). بثّ حيّ — لا executeJavaScript.
 function getNetwork() {
+  if (handoffActive) return { error: 'handoff' };
   if (!currentWC()) return { error: 'closed' };
   return { ok: true, requests: netReqBuf.slice(-150), netErrors: netErrBuf.slice(-80) };
 }
@@ -494,6 +521,7 @@ const SNAPSHOT_SCRIPT = `(function(){
 })()`;
 
 async function snapshot() {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -514,6 +542,7 @@ const WAIT_FN = `function(opt){
 }`;
 
 async function waitFor(cond, timeoutMs) {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   const c = cond || {};
@@ -532,6 +561,7 @@ async function waitFor(cond, timeoutMs) {
 }
 
 async function screenshot() {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -556,6 +586,7 @@ const RECT_FN = `function(loc){
 }`;
 
 async function screenshotElement(locator) {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -578,6 +609,7 @@ async function screenshotElement(locator) {
 // سقف ارتفاع 20000px (أداء/رموز)، وسقوط للقطة العادية إن تعذّر CDP. scale:1 ⇒ 1 CSS px = 1 بكسل.
 const MAX_FULL_HEIGHT = 20000;
 async function screenshotFull() {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -646,6 +678,7 @@ const TYPE_FN = `function(loc, text){
 }`;
 
 async function clickElement(locator) {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -656,6 +689,7 @@ async function clickElement(locator) {
 }
 
 async function typeText(locator, text) {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -710,6 +744,7 @@ const SCROLL_FN = `function(dir, amount){
 }`;
 
 async function selectOption(locator, value) {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -721,6 +756,7 @@ async function selectOption(locator, value) {
 }
 
 async function hover(locator) {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -731,6 +767,7 @@ async function hover(locator) {
 }
 
 async function scroll(direction, amount) {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
@@ -750,6 +787,7 @@ const KEY_MAP = {
   Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
 };
 function pressKey(key) {
+  if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   const code = KEY_MAP[String(key)];
@@ -801,4 +839,4 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, emitAgentActivity, close, destroy, isHttpUrl };
+module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, emitAgentActivity, startHandoff, endHandoff, isHandoffActive, close, destroy, isHttpUrl };

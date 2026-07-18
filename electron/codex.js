@@ -147,16 +147,10 @@ function mapMode(mode) {
 
 // متصفح «سطر» هو المسار الوحيد للمعاينة في أدوار الدردشة. نحجب إطلاق متصفح نظام خارجي
 // عندما تكون أدوات المعاينة متاحة؛ أوامر خوادم التطوير العادية (npm run dev ونحوها) لا تتأثر.
-function isExternalBrowserLaunchCommand(command) {
-  if (typeof command !== 'string' || !command.trim()) return false;
-  const text = command.trim();
-  const directBrowser = /(?:^|[;&|]\s*)(?:"[^"\r\n]*[\\/])?(?:chrome|msedge|firefox|brave)(?:\.exe)?(?:"|\s|$)/i;
-  const launcherWithBrowser = /\b(?:Start-Process|start)\b[^\r\n]*\b(?:chrome|msedge|firefox|brave)(?:\.exe)?\b/i;
-  if (directBrowser.test(text) || launcherWithBrowser.test(text)) return true;
-  if (!/(?:https?:\/\/|\blocalhost(?::\d+)?\b)/i.test(text)) return false;
-  return /\b(?:Start-Process|Invoke-Item|explorer(?:\.exe)?|xdg-open|sensible-browser)\b/i.test(text)
-    || /(?:^|[;&|]\s*)(?:start|open)\s+(?:""\s+)?/i.test(text);
-}
+// (دفعة «تحكم الوكيل الكامل» 2026-07-18: الدالة انتقلت إلى electron/browserguard.js
+// المشترك مع محرك SDK — نسخة واحدة لا نسختان تتباعدان، مع promptRequestsExternalBrowser
+// لاحترام طلب المستخدم الصريح لمتصفح خارجي.)
+const { isExternalBrowserLaunchCommand, promptRequestsExternalBrowser } = require('./browserguard');
 
 // ---------- الأدوات الموافَق عليها «دائماً» (لعمر التطبيق — نظير agent.js) ----------
 const alwaysAllowed = new Set();
@@ -188,6 +182,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   let testspriteHarnessHost = null;
   let testspriteProgressWatcher = null;
   let effectivePrompt = prompt;
+  // طلب المستخدم الصريح لمتصفح خارجي في رسالة هذا الدور يعطّل حاجب browserguard (قرار مالك)
+  const allowExternalBrowser = promptRequestsExternalBrowser(prompt);
   if (browserControl !== false) try {
     mcpHost = await codexmcp.start({
       preview,
@@ -205,6 +201,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // → previewSender → preview-panel). أدوات Codex تُنفَّذ على خادم HTTP منفصل فلا تظهر
       // كـ tool_use في دوره، فهذا المسار البديل لإظهار نشاطه على المتصفح (نظير app.js لـ SDK).
       onActivity: (method, tool) => { if (method === 'tools/call' && tool) { try { preview.emitAgentActivity(tool); } catch (e) {} } },
+      // التسليم البشري (browser_handoff): يبثّ شريط الاستلام للواجهة وينتظر ردّها عبر
+      // resolveHandoff (‏satr:handoffDone). بعد الحسم يبثّ handoff_end فيختفي الشريط حتى
+      // لو جاء الحسم من إيقاف الدور. startHandoff/endHandoff في يد codexmcp (نظير أداة SDK).
+      requestHandoff: (reason) => {
+        const id = 'ho_cx_' + (++handoffSeq) + '_' + Math.random().toString(36).slice(2, 6);
+        return new Promise((resolve) => {
+          pendingHandoffs.set(id, { resolve });
+          emit({ type: 'handoff_request', id, reason });
+        }).then((done) => { emit({ type: 'handoff_end', id }); return done; });
+      },
     });
   } catch (e) { mcpHost = null; }
   const appServerArgs = ['app-server'];
@@ -218,7 +224,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // قصيرة، فكانت تُلغي الاستدعاء قبل أن يلحق المستخدم الموافقة — فيتلقّى النموذج فشلاً
       // ويقترح bypassPermissions بدل انتظار الإذن. نرفعها لتتّسع لموافقة بشرية (الأدوات
       // القرائية لا تنتظر إذناً فلا تتأثر). إيقاف الدور يفكّ أي إذن معلّق فلا تعليق دائم.
-      '-c', 'mcp_servers.satr_preview.tool_timeout_sec=600',
+      // 1800ث (قرار مالك 2026-07-18): browser_handoff ينتظر تسجيل دخول + 2FA + بريد
+      // تحقق بيد المستخدم — 600ث كانت تضيق عنها فيُلغى النداء قبل «استلمت».
+      '-c', 'mcp_servers.satr_preview.tool_timeout_sec=1800',
       '-c', 'mcp_servers.satr_preview.startup_timeout_sec=30',
     );
     spawnEnv.SATR_MCP_TOKEN = mcpHost.token;
@@ -283,6 +291,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   const perms = new Map();         // id طلب الخادم (إذن) → {reqId, tool}
   const mcpPerms = new Map();      // إذن فعل متصفح MCP معلّق: permId → {resolve, tool}
   let mcpPermSeq = 0;
+  const pendingHandoffs = new Map(); // تسليم بشري معلّق: id → {resolve} (browser_handoff)
+  let handoffSeq = 0;
   let threadId = null;
   let finished = false;
   let stopping = false;
@@ -412,16 +422,20 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       const p = m.params || {};
       const toolName = isFile ? 'apply_patch' : 'Shell';
       const command = isFile ? '' : (Array.isArray(p.command) ? p.command.join(' ') : (p.command || ''));
-      if (!isFile && browserControl !== false && isExternalBrowserLaunchCommand(command)) {
+      // **مراجعة Codex (مثبّتة)**: ذكر المستخدم للمتصفح الخارجي لا يعطّل الحاجب كلياً —
+      // المطابقة (externalBrowser + allowExternalBrowser) تفرض مربع إذن **لمرة واحدة**
+      // بتخطي القبول التلقائي أدناه، فلا تعفيها «موافقة دائمة» سابقة على Shell.
+      const externalBrowser = !isFile && browserControl !== false && isExternalBrowserLaunchCommand(command);
+      if (externalBrowser && !allowExternalBrowser) {
         respond(m.id, { decision: 'decline' });
         emit({ type: 'stderr', text: 'حُجب فتح متصفح خارجي. استخدم أدوات معاينة «سطر» (open_preview وbrowser_*).' });
         return;
       }
       // قبول تلقائي بلا سؤال:
-      //  - أداة موافَق عليها «دائماً» لهذه الجلسة.
+      //  - أداة موافَق عليها «دائماً» لهذه الجلسة (عدا أمر متصفح خارجي — يسأل كل مرة).
       //  - وضع acceptEdits: التعديلات (apply_patch) تُقبل تلقائياً — الأوامر تبقى تسأل
       //    (مطابقة سلوك acceptEdits في Claude: Edit/Write تلقائية وBash يسأل).
-      if (alwaysAllowed.has(toolName) || (permissionMode === 'acceptEdits' && isFile)) {
+      if (!externalBrowser && (alwaysAllowed.has(toolName) || (permissionMode === 'acceptEdits' && isFile))) {
         respond(m.id, { decision: 'accept' });
         return;
       }
@@ -609,6 +623,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     }
     // فكّ أي إذن فعل متصفح معلّق بالرفض (لا يعلّق نداء MCP بعد إنهاء الدور)
     for (const [permId, info] of mcpPerms) { try { info.resolve(false); } catch {} mcpPerms.delete(permId); }
+    // فكّ أي تسليم بشري معلّق بالإلغاء (متابعة codexmcp تنهي التسليم وتصفّر السجلات)
+    for (const [hid, info] of pendingHandoffs) { try { info.resolve(false); } catch {} pendingHandoffs.delete(hid); }
     try { proc.stdin.end(); } catch {}
     setTimeout(() => { try { proc.kill(); } catch {} }, 500);
     if (mcpHost) { try { mcpHost.stop(); } catch {} mcpHost = null; } // أوقِف خادم رؤية الويب MCP
@@ -678,6 +694,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         + 'وللتفاعل مع الصفحة: خذ لقطة بـ browser_snapshot (تعطيك كل عنصر بصيغة [ref] role "name")، '
         + 'ثم مرّر الـ ref إلى browser_click/browser_type/browser_select_option/browser_press_key '
         + '(تطلب إذن المستخدم)، وأعد أخذ اللقطة بعد كل فعل لأن المُعرّفات تتغيّر. إذا تعذّرت أدوات المعاينة فأبلغ المستخدم صراحةً؛ لا تفتح Chrome/Edge/Firefox ولا تستعمل Start-Process/start/open كبديل. '
+        // دفعة «تحكم الوكيل الكامل»: الويب العام + العرض الاستباقي + التسليم البشري
+        + 'والمعاينة ليست حكراً على localhost — تصفّح بها أي موقع (توثيق، GitHub، لوحات تحكم) '
+        + 'عبر open_preview وbrowser_navigate. حين تتطلب مهمة خطوات يدوية على موقع لا تطلب من '
+        + 'المستخدم فتح متصفحه وتنفيذها — اعرض أن تنفّذها أنت داخل المعاينة، وعند بيانات حساسة '
+        + '(تسجيل دخول/كلمة مرور/رمز 2FA) استدعِ أداة browser_handoff بسبب واضح: تُسلَّم قيادة '
+        + 'المعاينة للمستخدم يُدخلها بيده ثم يعيدها لك فتكمل؛ أثناء التسليم كل أدوات المعاينة '
+        + 'معلّقة، وبعد الاستلام خذ browser_snapshot جديداً. لا تطلب كلمات مرور في المحادثة أبداً. '
         + 'عند توليد الصور/الفيديو (مثل Higgsfield) اكتب برومبتاً غنيّاً بالتفاصيل البصرية '
         + '(الإنجليزية أوثق تحكّماً، والنماذج الأحدث تفهم العربية أيضاً). النص داخل الصورة '
         + 'مشروط بالنموذج: النماذج الحديثة (GPT Image 2 الأدقّ بالعربية، وNano Banana Pro/2) '
@@ -752,6 +775,14 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       if (allow && always) alwaysAllowed.add(info.tool);
       const decision = allow ? (always ? 'acceptForSession' : 'accept') : 'decline';
       respond(info.serverId, { decision });
+      return true;
+    },
+    // رد الواجهة على تسليم browser_handoff: done=true «استلمت» / false «إلغاء»
+    resolveHandoff(id, done) {
+      const h = pendingHandoffs.get(id);
+      if (!h) return false;
+      pendingHandoffs.delete(id);
+      try { h.resolve(!!done); } catch {}
       return true;
     },
     // إيقاف: مقاطعة الدور + رفض الأذونات المعلّقة + إنهاء العملية

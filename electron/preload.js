@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('satr', {
   restartUpdate: () => ipcRenderer.invoke('satr:restartUpdate'),
   permission: (id, allow, always) => ipcRenderer.invoke('satr:permission', { id, allow, always }),
   answerQuestion: (id, selections) => ipcRenderer.invoke('satr:answerQuestion', { id, selections }), // AskUserQuestion (SDK)
+  handoffDone: (id, done) => ipcRenderer.invoke('satr:handoffDone', { id, done }), // التسليم البشري browser_handoff (استلمت/إلغاء)
   undoEdit: (id) => ipcRenderer.invoke('satr:undoEdit', id),
   listBgProcs: () => ipcRenderer.invoke('satr:listBgProcs'),
   killBgProc: (id) => ipcRenderer.invoke('satr:killBgProc', id),

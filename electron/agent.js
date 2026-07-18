@@ -140,11 +140,19 @@ const BROWSER_AUTO_TOOLS = new Set([
   'mcp__satr-terminal__browser_hover',
   'mcp__satr-terminal__browser_navigate',
   'mcp__satr-terminal__browser_wait_for',
+  // التسليم البشري: أثره الوحيد شريط استلام يقرّره المستخدم بنفسه (استلمت/إلغاء) —
+  // منح القيادة للمستخدم فعل آمن fail-safe فيدخل مجموعة التفويض.
+  'mcp__satr-terminal__browser_handoff',
 ]);
 // وضع auto (الموجة 4): المنطق النقي وقائمة الأدوات الآمنة في autogate.js (قابل للاختبار
 // مستقلاً عن electron/SDK — نمط diff.js/inject.js). autoNeedsPrompt يقرّر إجبار المربع.
 const { autoNeedsPrompt, decideAutoApproval } = require('./autogate');
+// حارس المتصفح الخارجي المشترك مع Codex (دفعة «تحكم الوكيل الكامل» — 2026-07-18):
+// اعتراض أوامر فتح متصفح النظام + فحص طلب المستخدم الصريح الذي يعطّل الاعتراض للدور.
+const browserguard = require('./browserguard');
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
+// رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
+const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
 
 // تطبيع أدوات Todo/Task ورسائل Agent الفعلية في SDK إلى عقد task_update الموحّد.
 // لا نتدخل في تنفيذ الأدوات؛ نرصد رسائلها الموثّقة فقط ونترك التخزين لـ main.js.
@@ -386,6 +394,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
   const pendingQuestions = new Map(); // id → { resolve, input } لأسئلة AskUserQuestion المعلّقة
+  const pendingHandoffs = new Map(); // id → { resolve } لتسليمات browser_handoff بانتظار «استلمت»
+  // طلب المستخدم الصريح لمتصفح خارجي في رسالة هذا الدور يعطّل اعتراض browserguard (قرار مالك)
+  const allowExternalBrowser = browserguard.promptRequestsExternalBrowser(prompt);
   const taskTitles = new Map(); // task_id → عنوان؛ يربط رسائل Claude الجزئية بلا افتراضات
   const taskStatuses = new Map(); // task_id → حالة؛ تحديث owner وحده لا يعيدها pending
   const pendingTaskCreates = new Map(); // tool_use_id لـTaskCreate → input حتى تصل نتيجته ذات id
@@ -536,7 +547,23 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           }
         });
       }
-      const decision = decideAutoApproval(toolName, {
+      // اعتراض المتصفح الخارجي (دفعة «تحكم الوكيل الكامل» — نظير حاجب Codex في codex.js):
+      // التوجيه النصي وحده يُنسى في الجلسات الطويلة، فأمر Bash/الطرفية الذي يفتح متصفح
+      // نظام خارجي يُرفض بإرشاد يعيد النموذج لأدوات المعاينة في الدور نفسه — قبل مربع
+      // الإذن وقبل أي «موافقة دائمة» على Bash (وإلا نفذ صامتاً في bypass/acceptEdits).
+      // **مراجعة Codex (مثبّتة)**: ذكر المستخدم للمتصفح الخارجي لا «يعطّل» الحارس كلياً —
+      // heuristic قد تصيب ذكراً عابراً («المشكلة تظهر في كروم») فتتحول موافقة Bash
+      // الدائمة إلى تنفيذ صامت. لذا المطابقة تفرض **مربع إذن لمرة واحدة**: تتخطى
+      // decideAutoApproval فلا تعفيها موافقة دائمة ولا وضع auto — المستخدم يحسم بنقرة.
+      const externalBrowserCmd = (toolName === 'Bash' || toolName === 'mcp__satr-terminal__run_in_terminal')
+        && browserguard.isExternalBrowserLaunchCommand(input && input.command);
+      if (externalBrowserCmd && !allowExternalBrowser) {
+        return { behavior: 'deny', message:
+          'حُجب فتح متصفح خارجي: معاينة «سطر» المدمجة متصفح كامل — استخدم open_preview ' +
+          '(أو browser_navigate إن كانت مفتوحة) ثم أكمل بأدوات browser_*. لا تعد محاولة ' +
+          'الفتح الخارجي إلا إذا طلبه المستخدم صراحةً في رسالته.' };
+      }
+      const decision = externalBrowserCmd ? 'ask' : decideAutoApproval(toolName, {
         permissionMode, alwaysAllowed, browserControl,
         readOnly: PORTABLE_SKILL_TOOLS.has(toolName) || READ_ONLY_VERIFY_TOOLS.has(toolName) || MEMORY_PROPOSAL_TOOLS.has(toolName),
         browserTool: BROWSER_AUTO_TOOLS.has(toolName),
@@ -606,6 +633,15 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'puppeteer-core، ولا تُطلق Chrome/متصفحاً منفصلاً (headless أو غيره) لالتقاط لقطات — ' +
       'فذلك أبطأ وأكلف ويترك ملفات مؤقتة في المشروع، وأدوات «سطر» تعطيك النتيجة نفسها ' +
       'لحظياً من المعاينة القائمة. المعاينة متصفح حقيقي كامل؛ استعمله عبر هذه الأدوات. ' +
+      // دفعة «تحكم الوكيل الكامل» (2026-07-18): المعاينة للويب العام لا localhost فقط +
+      // العرض الاستباقي لتنفيذ الخطوات اليدوية + التسليم البشري للبيانات الحساسة.
+      'والمعاينة ليست حكراً على localhost — تصفّح بها أي موقع ويب (توثيق، GitHub، لوحات ' +
+      'تحكم) عبر open_preview وbrowser_navigate. حين تتطلب مهمة خطوات يدوية على موقع ' +
+      '(إعدادات حساب، إنشاء token، تفعيل خيار) لا تطلب من المستخدم فتح متصفحه وتنفيذها — ' +
+      'اعرض أن تنفّذها أنت داخل المعاينة. وعند خطوة تحتاج بيانات حساسة (تسجيل دخول، ' +
+      'كلمة مرور، رمز تحقق 2FA) استدعِ أداة browser_handoff مع سبب واضح: تُسلَّم قيادة ' +
+      'المعاينة للمستخدم يُدخل بياناته بيده ثم يعيد لك القيادة فتكمل من حيث توقفت — ' +
+      'لا تطلب أبداً كتابة كلمة مرور في المحادثة، ولا تحاول قراءتها من الصفحة. ' +
       // توليد الصور/الفيديو (Higgsfield أو أي أداة توليد بصري): المولّدات تتفاوت في العربية.
       // النماذج الأحدث (GPT Image وNano Banana Pro/2) تكتب النص العربي جيداً بتشكيل واتجاه
       // سليمين، بينما مولّدات diffusion الأقدم تخرجه مقطّعاً معكوساً. لذا التوجيه مشروط
@@ -707,6 +743,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'فتح متصفح خارجي.',
       { url: z.string().describe('العنوان الكامل http/https (مثل http://localhost:3000)') },
       async (args) => {
+        // open_preview/browser_navigate مشتركتان مع الواجهة في preview.js فلا حارس هناك —
+        // الحجب أثناء التسليم البشري هنا عند موقع الأداة (المستخدم يتنقل بحرية، الوكيل لا)
+        if (preview.isHandoffActive()) return { content: [{ type: 'text', text: HANDOFF_BLOCKED }], isError: true };
         const url = String((args && args.url) || '').trim();
         let okUrl = false;
         try {
@@ -730,7 +769,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async () => {
         const r = await preview.readPage();
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed'
             ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : 'تعذّرت قراءة الصفحة (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -760,7 +800,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async () => {
         const r = preview.getConsole();
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed'
             ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : 'تعذّرت قراءة السجلّ (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -790,7 +831,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async () => {
         const r = preview.getNetwork();
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed'
             ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : 'تعذّرت قراءة سجلّ الشبكة (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -820,7 +862,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         const full = !!(args && args.full_page);
         const r = full ? await preview.screenshotFull() : await preview.screenshot();
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed'
             ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : 'تعذّر التقاط اللقطة (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -838,7 +881,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async (args) => {
         const r = await preview.screenshotElement(String((args && args.ref) || ''));
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_visible' ? 'العنصر غير ظاهر (بلا أبعاد).'
             : 'تعذّر التقاط اللقطة (' + ((r && r.error) || 'خطأ') + ').';
@@ -859,7 +903,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async (args) => {
         const r = await preview.clickElement(String((args && args.ref) || ''));
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'not_found' ? 'لم يُعثر على عنصر بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.'
             : 'تعذّر النقر (' + ((r && r.error) || 'خطأ') + ').';
@@ -879,7 +924,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async (args) => {
         const r = await preview.typeText(String((args && args.ref) || ''), String((args && args.text) || ''));
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'not_found' ? 'لم يُعثر على حقل بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_editable' ? 'العنصر ليس حقل إدخال قابلاً للكتابة.'
             : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.'
@@ -902,7 +948,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async () => {
         const r = await preview.snapshot();
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed'
             ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : 'تعذّرت اللقطة (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -926,9 +973,12 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'المعاينة أول مرة استعمل open_preview.',
       { url: z.string().describe('العنوان الكامل http/https') },
       async (args) => {
+        // navigate مشتركة مع شريط عنوان الواجهة — حجب التسليم هنا عند موقع الأداة
+        if (preview.isHandoffActive()) return { content: [{ type: 'text', text: HANDOFF_BLOCKED }], isError: true };
         const r = preview.navigate(String((args && args.url) || ''));
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'bad_url' ? 'عنوان غير صالح — http/https فقط.'
             : 'تعذّر التنقّل (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -950,7 +1000,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         const a = args || {};
         const r = await preview.waitFor({ text: a.text, selector: a.selector }, a.timeout_ms);
         if (!r || (!r.ok && r.error)) {
-          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'bad_condition' ? 'حدّد text أو selector صالحاً.'
             : 'تعذّر الانتظار (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -970,7 +1021,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async (args) => {
         const r = await preview.selectOption(String((args && args.ref) || ''), String((args && args.value) || ''));
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'not_found' ? 'لم يُعثر على القائمة — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_select' ? 'العنصر ليس قائمة منسدلة <select>.'
             : r && r.error === 'no_option' ? 'لا خيار بهذه القيمة/النص في القائمة.'
@@ -988,7 +1040,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async (args) => {
         const r = preview.pressKey(String((args && args.key) || ''));
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'bad_key' ? 'مفتاح غير مدعوم (استعمل الأسماء المذكورة في وصف الأداة).'
             : 'تعذّر الضغط (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -1007,7 +1060,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async (args) => {
         const r = await preview.scroll(String((args && args.direction) || 'down'), args && args.amount);
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : 'تعذّر التمرير (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
         }
@@ -1022,7 +1076,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       async (args) => {
         const r = await preview.hover(String((args && args.ref) || ''));
         if (!r || !r.ok) {
-          const why = r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+          const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.'
             : 'تعذّر التحويم (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -1030,8 +1085,41 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         return { content: [{ type: 'text', text: 'حُوّم فوق <' + r.tag + '>.' }] };
       }
     );
+    // أداة browser_handoff (دفعة «تحكم الوكيل الكامل» — التسليم البشري): حين تحتاج خطوة
+    // بيانات حساسة (تسجيل دخول/كلمة مرور/2FA) يسلّم الوكيل قيادة المعاينة للمستخدم يدخلها
+    // بيده في WebContentsView مباشرة (متصفح حقيقي؛ الكوكيز تبقى في partition الدائمة عبر
+    // التشغيلات)، و**تُعلَّق كل أدوات المعاينة fail-closed** (رؤيةً وفعلاً — علم handoff في
+    // preview.js المشترك) حتى يضغط «استلمت» في شريط لوحة المعاينة. الانتظار بنمط
+    // pendingQuestions المثبّت: الواجهة تردّ عبر satr:handoffDone → resolveHandoff، وإيقاف
+    // الدور يفكّ الانتظار بالإلغاء. النتيجة نصية فقط — لا يصل الوكيل أي محتوى من الصفحة.
+    const handoffTool = sdk.tool(
+      'browser_handoff',
+      'سلّم قيادة المعاينة للمستخدم ليكمل خطوة بيده داخل متصفح «سطر» (تسجيل دخول، كلمة ' +
+      'مرور، رمز تحقق 2FA، أو أي بيانات حساسة) ثم انتظر ضغطه «استلمت». استعملها بدل طلب ' +
+      'بيانات حساسة في المحادثة وبدل إحالة المستخدم لمتصفح خارجي. أثناء التسليم كل أدوات ' +
+      'المعاينة معلّقة ولا ترى الصفحة. بعد الاستلام خذ browser_snapshot جديداً وأكمل.',
+      { reason: z.string().describe('ما المطلوب من المستخدم بالعربية — يظهر في شريط الاستلام (مثل: سجّل دخولك إلى GitHub ثم اضغط استلمت)') },
+      async (args) => {
+        const reason = String((args && args.reason) || '').replace(/[\u0000-\u001F\u007F]+/g, ' ').trim().slice(0, 300);
+        if (!reason) return { content: [{ type: 'text', text: 'reason مطلوب — اذكر للمستخدم ما المطلوب منه.' }], isError: true };
+        const st = preview.startHandoff();
+        if (!st.ok) {
+          const why = st.error === 'closed'
+            ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً ثم سلّم القيادة.'
+            : 'تسليم آخر جارٍ بالفعل — انتظر نتيجته.';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        const id = 'ho_' + Math.random().toString(36).slice(2);
+        emit({ type: 'handoff_request', id, reason });
+        const done = await new Promise((resolve) => { pendingHandoffs.set(id, { resolve }); });
+        preview.endHandoff(); // يصفّر سجلّي console/الشبكة — لا يقرأ الوكيل ما جرى أثناء التسليم
+        emit({ type: 'handoff_end', id });
+        if (!done) return { content: [{ type: 'text', text: 'ألغى المستخدم التسليم ولم تكتمل الخطوة. لا تكرر الطلب فوراً — اسأل المستخدم عن البديل.' }], isError: true };
+        return { content: [{ type: 'text', text: 'استلم المستخدم وأكمل الخطوة بيده. الصفحة قد تغيّرت — خذ browser_snapshot جديداً قبل أي فعل.' }] };
+      }
+    );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, handoffTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }
@@ -1180,6 +1268,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         pendingQuestions.delete(id);
         p.resolve({ behavior: 'deny', message: 'انتهى التشغيل' });
       }
+      // تسليم بشري معلّق عند نهاية التشغيل: يُفكّ بالإلغاء (متابعة الأداة تنهي التسليم)
+      for (const [id, h] of pendingHandoffs) {
+        pendingHandoffs.delete(id);
+        h.resolve(false);
+      }
     }
   })();
 
@@ -1207,6 +1300,15 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         : { behavior: 'deny', message: 'لم يُختَر جواب صالح' });
       return true;
     },
+    // رد الواجهة على تسليم browser_handoff: done=true «استلمت» / false «إلغاء».
+    // نهاية التسليم (endHandoff + تصفير السجلات + حدث handoff_end) في متابعة الأداة نفسها.
+    resolveHandoff(id, done) {
+      const h = pendingHandoffs.get(id);
+      if (!h) return false;
+      pendingHandoffs.delete(id);
+      h.resolve(!!done);
+      return true;
+    },
     // إيقاف حقيقي: مقاطعة النموذج + إنهاء الإدخال + رفض الأذونات والأسئلة المعلقة
     async stop() {
       if (testspriteRequested) testsprite.scrubConfig(cwd);
@@ -1223,6 +1325,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       for (const [id, p] of pendingQuestions) {
         pendingQuestions.delete(id);
         p.resolve({ behavior: 'deny', message: 'أوقف المستخدم الطلب' });
+      }
+      // تسليم بشري معلّق: يُفكّ بالإلغاء — متابعة الأداة تنهي التسليم وتصفّر السجلات
+      for (const [id, h] of pendingHandoffs) {
+        pendingHandoffs.delete(id);
+        h.resolve(false);
       }
       try { await q.interrupt(); } catch (e) { /* قد يكون التشغيل انتهى أصلاً */ }
       closeInput();
