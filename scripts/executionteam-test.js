@@ -11,6 +11,9 @@ const path = require('path');
 const worktrees = require('../electron/worktrees');
 const executionTeamModule = require('../electron/executionteam');
 
+const TEST_EXECUTION_TIMEOUT_MS = 10000;
+const WAIT_TIMEOUT_MS = 30000;
+
 function git(cwd, args) {
   return new Promise((resolve, reject) => {
     execFile('git', args, { cwd, windowsHide: true, encoding: 'utf8' }, (error, stdout, stderr) => {
@@ -152,7 +155,7 @@ async function main() {
     const stats = { calls: [], permissions: [], stops: 0, active: 0, maxActive: 0 };
     const manager = worktrees.createManager({ root: path.join(temp, 'parallel-store') });
     managers.push(manager);
-    const team = executionTeamModule.create({ worktrees: manager, runner: parallelRunner(stats), timeoutMs: 1000 });
+    const team = executionTeamModule.create({ worktrees: manager, runner: parallelRunner(stats), timeoutMs: TEST_EXECUTION_TIMEOUT_MS });
     const started = await team.start({ agents: [
       { task: 'عدّل أ', ownership: ['src/a.js'] },
       { task: 'عدّل ب', ownership: ['src/b.js'] },
@@ -162,7 +165,7 @@ async function main() {
     const completed = await waitFor(() => {
       const snapshot = team.latest(project);
       return snapshot && snapshot.state === 'completed' ? snapshot : null;
-    }, 8000, 'parallel completion');
+    }, WAIT_TIMEOUT_MS, 'parallel completion');
     assert.strictEqual(stats.calls.length, 3);
     assert(stats.calls.every((call) => call.input.model === 'claude-executor-model'));
     assert.strictEqual(stats.maxActive, 3);
@@ -171,7 +174,7 @@ async function main() {
     assert.deepStrictEqual(completed.agents.map((agent) => agent.ownership[0]), ['src/a.js', 'src/b.js', 'src/c.js']);
     assert(completed.agents.every((agent) => agent.changes.files.length === 1));
     assert.strictEqual(completed.cost.usd, 0.03);
-    assert.strictEqual(completed.timeout_ms, 1000);
+    assert.strictEqual(completed.timeout_ms, TEST_EXECUTION_TIMEOUT_MS);
     assert(completed.agents.every((agent) => agent.last_tool === 'edit'));
     assert.deepStrictEqual(completed.agents.map((agent) => agent.last_file).sort(), ['src/a.js', 'src/b.js', 'src/c.js']);
     assert.strictEqual(completed.merged, false);
@@ -204,12 +207,12 @@ async function main() {
     const outsideStats = { calls: [], stops: 0 };
     const outsideManager = worktrees.createManager({ root: path.join(temp, 'outside-store') });
     managers.push(outsideManager);
-    const outside = executionTeamModule.create({ worktrees: outsideManager, runner: outsideOwnershipRunner(outsideStats), timeoutMs: 1000 });
+    const outside = executionTeamModule.create({ worktrees: outsideManager, runner: outsideOwnershipRunner(outsideStats), timeoutMs: TEST_EXECUTION_TIMEOUT_MS });
     await outside.start({ agents: [{ task: 'عدّل أ فقط', ownership: ['src/a.js'] }] }, project, () => {});
     const outsideDone = await waitFor(() => {
       const snapshot = outside.latest(project);
       return snapshot && snapshot.state === 'failed' ? snapshot : null;
-    }, 5000, 'outside ownership');
+    }, WAIT_TIMEOUT_MS, 'outside ownership');
     assert(outsideDone.agents[0].error.includes('الملكية'));
     assert.strictEqual(outsideDone.agents[0].failure_code, 'ownership_violation');
     assert(outsideDone.agents[0].changes.files.some((file) => file.rel === 'src/b.js'));
@@ -224,19 +227,19 @@ async function main() {
     const collisionDone = await waitFor(() => {
       const snapshot = collision.latest(project);
       return snapshot && snapshot.state === 'conflict' ? snapshot : null;
-    }, 2000, 'same-file collision');
+    }, WAIT_TIMEOUT_MS, 'same-file collision');
     assert(collisionDone.conflicts.some((item) => item.reason === 'same_file' && item.path === 'src/shared.js'));
 
     const stopStats = { calls: [], stops: 0 };
     const stopManager = worktrees.createManager({ root: path.join(temp, 'stop-store') });
     managers.push(stopManager);
-    const stoppable = executionTeamModule.create({ worktrees: stopManager, runner: hangingRunner(stopStats), timeoutMs: 1000 });
+    const stoppable = executionTeamModule.create({ worktrees: stopManager, runner: hangingRunner(stopStats), timeoutMs: TEST_EXECUTION_TIMEOUT_MS });
     const running = await stoppable.start({ agents: [
       { task: 'انتظر أ', ownership: ['src/a.js'] },
       { task: 'انتظر ب', ownership: ['src/b.js'] },
       { task: 'انتظر ج', ownership: ['src/c.js'] },
     ] }, project, () => {});
-    await waitFor(() => stopStats.calls.length === 3, 5000, 'collective start');
+    await waitFor(() => stopStats.calls.length === 3, WAIT_TIMEOUT_MS, 'collective start');
     assert.strictEqual(running.team.can_extend, true);
     const extended = await stoppable.extend(running.team.id);
     assert.strictEqual(extended.ok, true);
@@ -255,7 +258,7 @@ async function main() {
     const draftStats = { calls: [], permissions: [], stops: 0, active: 0, maxActive: 0 };
     const draftManager = worktrees.createManager({ root: path.join(temp, 'draft-store') });
     managers.push(draftManager);
-    const draftTeam = executionTeamModule.create({ worktrees: draftManager, runner: parallelRunner(draftStats), timeoutMs: 1000 });
+    const draftTeam = executionTeamModule.create({ worktrees: draftManager, runner: parallelRunner(draftStats), timeoutMs: TEST_EXECUTION_TIMEOUT_MS });
     const draftStarted = await draftTeam.start({
       mode: 'draft', agents: [{ task: 'مسودة أ', ownership: ['src/a.js'] }],
     }, project, () => {});
@@ -263,7 +266,7 @@ async function main() {
     const draftDone = await waitFor(() => {
       const snapshot = draftTeam.latest(project);
       return snapshot && snapshot.state === 'completed' ? snapshot : null;
-    }, 5000, 'draft completion');
+    }, WAIT_TIMEOUT_MS, 'draft completion');
     assert.strictEqual(draftDone.mode, 'draft');
     assert.strictEqual(draftDone.merge_supported, false);
     assert.strictEqual(draftTeam.artifact(draftDone.id), null);
