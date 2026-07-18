@@ -148,7 +148,9 @@
     <div data-reveal>
       <a class="btn btn-gold" id="dlBtn" href="https://github.com/m4u05999/Satr/releases/latest" rel="noopener">تنزيل «سطر» لويندوز</a>
       <span class="dl-version" id="dlVersion"></span>
-      <div class="winget" dir="ltr">
+      <!-- مخفي حتى قبول حزمة «سطر» في مستودع winget-pkgs (قرار مالك 2026-07-18):
+           لا تُعرض تعليمات لا تعمل بعد — أزل hidden عند القبول -->
+      <div class="winget" dir="ltr" hidden>
         <code id="wingetCmd">winget install satr</code>
         <button type="button" id="wingetCopy">نسخ</button>
       </div>

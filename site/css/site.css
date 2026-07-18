@@ -549,6 +549,9 @@ section {
   margin-top: 1rem;
 }
 
+/* قاعدة المؤلف تغلب [hidden] من ورقة المتصفح — الإخفاء الصريح ضروري */
+.winget[hidden] { display: none; }
+
 .winget {
   display: inline-flex;
   align-items: center;
