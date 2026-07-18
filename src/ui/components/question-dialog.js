@@ -18,18 +18,18 @@ const ownSheet = sheet(`
   @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.985); } }
   .q-box {
     background: var(--surface-2); border: 1px solid var(--gold); border-radius: var(--radius-xl);
-    padding: 18px 20px; width: 560px; max-width: 92vw; max-height: 86vh;
+    padding: var(--space-4) 20px; width: 560px; max-width: 92vw; max-height: 86vh;
     display: flex; flex-direction: column; box-shadow: var(--shadow-modal);
   }
-  h3 { color: var(--gold); font-size: 16px; margin-bottom: 4px; }
-  .q-list { overflow-y: auto; margin-top: 6px; }
-  .q-item { margin-top: 14px; }
-  .q-item:first-child { margin-top: 8px; }
+  h3 { color: var(--gold); font-size: 16px; margin-bottom: var(--space-1); }
+  .q-list { overflow-y: auto; margin-top: var(--space-1h); }
+  .q-item { margin-top: var(--space-4); }
+  .q-item:first-child { margin-top: var(--space-2); }
   .q-header { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; }
-  .q-text { color: var(--text); font-weight: 600; margin-bottom: 8px; }
-  .q-options { display: flex; flex-direction: column; gap: 6px; }
+  .q-text { color: var(--text); font-weight: 600; margin-bottom: var(--space-2); }
+  .q-options { display: flex; flex-direction: column; gap: var(--space-1h); }
   .q-opt {
-    display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px;
+    display: flex; gap: var(--space-2); align-items: flex-start; padding: var(--space-2) var(--space-2h);
     border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); cursor: pointer;
     transition: border-color var(--dur) var(--ease);
   }
@@ -41,11 +41,11 @@ const ownSheet = sheet(`
   .q-opt-preview {
     font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); direction: ltr; text-align: start;
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
-    padding: 6px 8px; margin-top: 6px; max-height: 140px; overflow: auto;
+    padding: var(--space-1h) var(--space-2); margin-top: var(--space-1h); max-height: 140px; overflow: auto;
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
-  .q-msg { color: var(--red); font-size: 12px; margin-top: 10px; }
-  .q-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .q-msg { color: var(--red); font-size: 12px; margin-top: var(--space-2h); }
+  .q-actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); flex-wrap: wrap; }
   .q-actions .submit { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600; }
   .q-actions .submit:disabled { opacity: .5; cursor: not-allowed; }
   .q-actions .cancel { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); }

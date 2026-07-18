@@ -7,11 +7,11 @@ import { panelSheet } from '../lib/panel.css.js';
 
 const ownSheet = sheet(`
   /* صفوف لوحة /وكلاء — منقولة كما هي من base.css */
-  .agent-row { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .agent-row { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
   .agent-row .aname { font-family: var(--mono); direction: ltr; unicode-bidi: embed; color: var(--gold); font-size: 13px; }
-  .agent-row .abadge { font-size: 10.5px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px 7px; color: var(--text-dim); margin-inline-start: 8px; }
-  .agent-row .adesc { font-size: 12.5px; color: var(--text-dim); margin-top: 4px; unicode-bidi: plaintext; }
-  .agent-row .ameta { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; direction: ltr; text-align: right; font-family: var(--mono); }
+  .agent-row .abadge { font-size: 10.5px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px var(--space-2); color: var(--text-dim); margin-inline-start: var(--space-2); }
+  .agent-row .adesc { font-size: 12.5px; color: var(--text-dim); margin-top: var(--space-1); unicode-bidi: plaintext; }
+  .agent-row .ameta { font-size: 11.5px; color: var(--text-dim); margin-top: var(--space-1); direction: ltr; text-align: right; font-family: var(--mono); }
 `);
 
 function esc(s) {

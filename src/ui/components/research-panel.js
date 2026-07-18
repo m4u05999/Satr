@@ -5,34 +5,34 @@ import { panelSheet } from '../lib/panel.css.js';
 
 const ownSheet = sheet(`
   :host { width: 520px; }
-  .setup { display: grid; gap: 9px; padding: 13px; border-bottom: 1px solid var(--border); }
+  .setup { display: grid; gap: var(--space-2h); padding: var(--space-3); border-bottom: 1px solid var(--border); }
   textarea, select {
     width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: var(--radius-md); padding: 8px 10px; font-family: var(--sans); font-size: 13px; outline: none;
+    border-radius: var(--radius-md); padding: var(--space-2) var(--space-2h); font-family: var(--sans); font-size: 13px; outline: none;
   }
   textarea { min-height: 86px; resize: vertical; unicode-bidi: plaintext; line-height: 1.6; }
   textarea:focus, select:focus { border-color: var(--gold); }
-  .setup-row { display: flex; gap: 8px; align-items: center; }
+  .setup-row { display: flex; gap: var(--space-2); align-items: center; }
   .setup-row select { width: 150px; }
   .setup-row .start { color: var(--gold); border-color: var(--gold-border); }
   .setup-hint, .status { color: var(--text-dim); font-size: 11.5px; line-height: 1.6; }
-  .status { padding: 7px 13px; min-height: 30px; border-bottom: 1px solid var(--border); }
+  .status { padding: var(--space-2) var(--space-3); min-height: 30px; border-bottom: 1px solid var(--border); }
   .stop { color: var(--red); }
-  .agent-card { margin: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
-  .agent-head { display: flex; align-items: baseline; gap: 8px; padding: 7px 12px; font-size: 12.5px; background: var(--gold-soft); }
+  .agent-card { margin: var(--space-2h) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+  .agent-head { display: flex; align-items: baseline; gap: var(--space-2); padding: var(--space-2) var(--space-3); font-size: 12.5px; background: var(--gold-soft); }
   .agent-head .aname { color: var(--gold); font-weight: 600; white-space: nowrap; }
   .agent-head .adesc { color: var(--text-dim); flex: 1; }
   .agent-head .state { flex: none; font-size: 11px; color: var(--text-dim); }
   .agent-card.completed .state { color: var(--green); }
   .agent-card.failed .state, .agent-card.timed_out .state { color: var(--red); }
-  .agent-meta { padding: 6px 12px; color: var(--text-faint); font: 10.5px var(--mono); direction: ltr; text-align: left; }
-  .agent-summary { padding: 6px 13px 10px; white-space: pre-wrap; unicode-bidi: plaintext; line-height: 1.7; font-size: 12.5px; }
-  .sources { padding: 0 13px 10px; display: flex; flex-wrap: wrap; gap: 5px; }
-  .source { padding: 2px 7px; font: 10.5px var(--mono); direction: ltr; color: var(--gold); }
-  .merged { margin: 10px 12px 16px; padding: 11px 13px; border: 1px solid var(--green-border); border-radius: var(--radius-lg); }
-  .merged h3 { color: var(--green); font-size: 13px; margin-bottom: 7px; }
+  .agent-meta { padding: var(--space-1h) var(--space-3); color: var(--text-faint); font: 10.5px var(--mono); direction: ltr; text-align: left; }
+  .agent-summary { padding: var(--space-1h) var(--space-3) var(--space-2h); white-space: pre-wrap; unicode-bidi: plaintext; line-height: 1.7; font-size: 12.5px; }
+  .sources { padding: 0 var(--space-3) var(--space-2h); display: flex; flex-wrap: wrap; gap: var(--space-1h); }
+  .source { padding: 2px var(--space-2); font: 10.5px var(--mono); direction: ltr; color: var(--gold); }
+  .merged { margin: var(--space-2h) var(--space-3) var(--space-4); padding: var(--space-3) var(--space-3); border: 1px solid var(--green-border); border-radius: var(--radius-lg); }
+  .merged h3 { color: var(--green); font-size: 13px; margin-bottom: var(--space-2); }
   .merged pre { white-space: pre-wrap; unicode-bidi: plaintext; font: 12.5px/1.7 var(--sans); color: var(--text); }
-  .empty { padding: 24px 16px; text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.8; }
+  .empty { padding: var(--space-5) var(--space-4); text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.8; }
 `);
 
 const STATE_LABELS = {

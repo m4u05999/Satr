@@ -5,10 +5,10 @@
 import { sheet } from './sheet.js';
 
 export const diffSheet = sheet(`
-  .diffs { display: flex; flex-direction: column; gap: 8px; }
+  .diffs { display: flex; flex-direction: column; gap: var(--space-2); }
   .diff { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg); }
   /* الترويسة عربية (RTL): الوسم والعدّاد والأزرار؛ اسم الملف وحده LTR */
-  .diff-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--surface-2); font-size: 12px; }
+  .diff-head { display: flex; align-items: center; gap: var(--space-2h); padding: var(--space-1h) var(--space-2h); background: var(--surface-2); font-size: 12px; }
   .diff-toggle { background: none; border: none; color: var(--text-dim); padding: 0 2px; font-size: 12px; cursor: pointer; transition: transform var(--dur) var(--ease); }
   .diff-toggle:hover { border: none; color: var(--gold); }
   .diff.collapsed .diff-toggle { transform: rotate(-90deg); }
@@ -16,17 +16,17 @@ export const diffSheet = sheet(`
   .diff-tag { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
   .diff-counts { font-family: var(--mono); direction: ltr; font-size: 12px; white-space: nowrap; }
   .diff-counts .a { color: var(--green); }
-  .diff-counts .d { color: var(--red); margin-inline-start: 8px; }
-  .diff-undo { font-size: 11.5px; padding: 3px 11px; white-space: nowrap; }
+  .diff-counts .d { color: var(--red); margin-inline-start: var(--space-2); }
+  .diff-undo { font-size: 11.5px; padding: 3px var(--space-3); white-space: nowrap; }
   .diff-undo:disabled { opacity: .55; cursor: default; border-color: var(--border); }
   /* جسم الفرق: كود LTR أحادي المسافة داخل واجهة RTL */
   .diff-body { direction: ltr; text-align: left; font-family: var(--mono); font-size: 12px; line-height: 1.55; overflow-x: auto; max-height: 440px; overflow-y: auto; }
   .diff.collapsed .diff-body { display: none; }
   .diff.undone { opacity: .55; }
   .dl { display: flex; white-space: pre; }
-  .dl .ln { flex: 0 0 auto; width: 38px; text-align: right; padding: 0 6px; color: var(--text-faint); user-select: none; }
+  .dl .ln { flex: 0 0 auto; width: 38px; text-align: right; padding: 0 var(--space-1h); color: var(--text-faint); user-select: none; }
   .dl .sg { flex: 0 0 auto; width: 16px; text-align: center; user-select: none; }
-  .dl .tx { flex: 1; padding: 0 8px; white-space: pre; }
+  .dl .tx { flex: 1; padding: 0 var(--space-2); white-space: pre; }
   .dl.add { background: var(--green-soft); }
   .dl.add .sg { color: var(--green); }
   .dl.del { background: var(--red-soft); }
@@ -37,5 +37,5 @@ export const diffSheet = sheet(`
   .diff.rtl-doc .dl { flex-direction: row-reverse; }
   .diff.rtl-doc .dl .tx { direction: rtl; text-align: right; white-space: pre-wrap; overflow-wrap: anywhere; }
   .diff.rtl-doc .dl .ln { text-align: left; }
-  .diff-note { padding: 4px 10px; font-size: 11.5px; color: var(--text-dim); border-top: 1px solid var(--border); }
+  .diff-note { padding: var(--space-1) var(--space-2h); font-size: 11.5px; color: var(--text-dim); border-top: 1px solid var(--border); }
 `);

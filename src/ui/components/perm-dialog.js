@@ -17,24 +17,24 @@ const ownSheet = sheet(`
   @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.985); } }
   .perm-box {
     background: var(--surface-2); border: 1px solid var(--gold); border-radius: var(--radius-xl);
-    padding: 20px 22px; width: 500px; max-width: 92vw;
+    padding: 20px var(--space-5); width: 500px; max-width: 92vw;
     box-shadow: var(--shadow-modal);
   }
-  h3 { color: var(--gold); font-size: 16px; margin-bottom: 10px; }
+  h3 { color: var(--gold); font-size: 16px; margin-bottom: var(--space-2h); }
   .tool-name {
     font-family: var(--mono); direction: ltr; unicode-bidi: embed;
-    color: var(--text); background: var(--bg); border-radius: var(--radius-sm); padding: 2px 8px;
+    color: var(--text); background: var(--bg); border-radius: var(--radius-sm); padding: 2px var(--space-2);
   }
   .perm-detail {
     font-family: var(--mono); text-align: start;
     background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md);
-    padding: 8px 10px; margin: 10px 0 0; font-size: 12px;
+    padding: var(--space-2) var(--space-2h); margin: var(--space-2h) 0 0; font-size: 12px;
     max-height: 180px; overflow: auto; white-space: pre-wrap;
     /* plaintext: كل سطر يحلّ اتجاهه بنفسه (أمر لاتيني LTR، رسالة عربية RTL).
        overflow-wrap يلفّ الرموز الطويلة دون كسر الحروف العربية وسط الكلمة */
     unicode-bidi: plaintext; overflow-wrap: anywhere;
   }
-  .perm-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .perm-actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); flex-wrap: wrap; }
   .perm-actions .allow { background: var(--green); color: var(--on-green); border: none; font-weight: 600; }
   .perm-actions .deny { background: var(--red); color: var(--on-danger); border: none; font-weight: 600; }
 `);

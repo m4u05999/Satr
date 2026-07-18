@@ -8,10 +8,10 @@ import { panelSheet } from '../lib/panel.css.js';
 
 const ownSheet = sheet(`
   /* صفوف الموصّلات — منقولة كما هي من base.css */
-  .mcp { padding: 12px 16px; border-bottom: 1px solid var(--border); }
-  .mcp-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .mcp { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
+  .mcp-row { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
   .mcp-name { font-family: var(--mono); color: var(--gold); font-size: 13px; direction: ltr; flex: 1; min-width: 0; word-break: break-all; }
-  .mcp-badge { font-size: 11px; border-radius: var(--radius-sm); padding: 1px 8px; white-space: nowrap; border: 1px solid var(--border); }
+  .mcp-badge { font-size: 11px; border-radius: var(--radius-sm); padding: 1px var(--space-2); white-space: nowrap; border: 1px solid var(--border); }
   .mcp-badge.connected { color: var(--green); border-color: var(--green-border); }
   .mcp-badge.pending   { color: var(--gold); border-color: var(--gold-border); }
   /* التمييز عن pending بالخلفية والحد الذهبيين؛ النص --text لتباين ≥4.5:1 على الخلفية
@@ -19,15 +19,15 @@ const ownSheet = sheet(`
   .mcp-badge.needsauth { color: var(--text); background: var(--gold-soft); border-color: var(--gold-border); }
   .mcp-badge.failed    { color: var(--red); border-color: var(--red-border); }
   .mcp-badge.disabled  { color: var(--text-dim); }
-  .mcp-meta { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; direction: ltr; text-align: right; font-family: var(--mono); }
-  .mcp-hint { font-size: 12px; color: var(--text-dim); margin-top: 5px; unicode-bidi: plaintext; line-height: 1.6; }
-  .mcp-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-  .mcp-actions button { font-size: 12px; padding: 3px 11px; }
+  .mcp-meta { font-size: 11.5px; color: var(--text-dim); margin-top: var(--space-1); direction: ltr; text-align: right; font-family: var(--mono); }
+  .mcp-hint { font-size: 12px; color: var(--text-dim); margin-top: var(--space-1h); unicode-bidi: plaintext; line-height: 1.6; }
+  .mcp-actions { display: flex; gap: var(--space-1h); margin-top: var(--space-2); flex-wrap: wrap; }
+  .mcp-actions button { font-size: 12px; padding: 3px var(--space-3); }
   .mcp-actions button:disabled { opacity: .55; cursor: default; border-color: var(--border); }
   /* إرشاد حالة الفراغ (كان .skill-hint المشترك في base.css — دَينُ ت-2 حُسم هنا) */
-  .skill-hint { padding: 16px; color: var(--text-dim); font-size: 13px; line-height: 2; }
-  .skill-hint p { margin-bottom: 6px; }
-  .skill-hint code { font-family: var(--mono); direction: ltr; background: var(--bg); padding: 1px 5px; border-radius: var(--radius-xs); font-size: 12px; }
+  .skill-hint { padding: var(--space-4); color: var(--text-dim); font-size: 13px; line-height: 2; }
+  .skill-hint p { margin-bottom: var(--space-1h); }
+  .skill-hint code { font-family: var(--mono); direction: ltr; background: var(--bg); padding: 1px var(--space-1h); border-radius: var(--radius-xs); font-size: 12px; }
 `);
 
 // ترجمة الحالة لشارة عربية + صنف لوني

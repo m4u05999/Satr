@@ -56,6 +56,38 @@ const RADIUS_BASELINE = new Map([
   ['src/styles/base.css', 5],
 ]);
 
+// تصريحات المسافات (gap/padding/margin وفروعها الاتجاهية) — قيم px فوق 3 فقط:
+// الصغائر 1/2/3px حدود وإزاحات دقيقة خارج سلّم المسافات أصلاً (قرار مالك — دفعة «سلّم المسافات»).
+// lookbehind يربط الاسم ببداية التصريح — ملاحظة مراجعة Codex: بدونه تُلتقط خطأً
+// خصائص أخرى تنتهي بالاسم نفسه (--card-padding / scroll-padding / scroll-margin / grid-gap)
+const SPACE_DECL_RE = /(?<![-\w])(?:gap|row-gap|column-gap|padding|margin)(?:-(?:top|bottom|left|right|inline|block|inline-start|inline-end|block-start|block-end))?:\s*([^;{}\n]+)/g;
+
+// baseline قيم المسافات المتبقية بعد المرحلتين (السلّم الموسّع بقرار مالك + تقريبات
+// مرحلة ب المعتمدة: 5→1h، 7→2، 9→2h، 11/13→3، 14/15/17/18→4، 22/26→5، 30→6):
+// بقي استثناء الفئة الثالثة حصراً — 20px (×6) و28px (×1) على بعد 4px من الجارين،
+// قرار مالك: تبقى كما هي (7 مواضع لا تستحق زحزحة مدركة). النقص يطالب بتحديث baseline
+const SPACE_BASELINE = new Map([
+  ['src/styles/base.css', 2],
+  ['src/ui/components/gate.js', 2],
+  ['src/ui/components/perm-dialog.js', 1],
+  ['src/ui/components/preview-panel.js', 1],
+  ['src/ui/components/question-dialog.js', 1],
+]);
+
+// عدّ قيم px فوق 3 داخل تصريحات المسافات (تعليقات // منزوعة سلفاً)
+function countSpacePx(file) {
+  const hits = [];
+  for (const { line, number } of codeLines(file)) {
+    let match;
+    SPACE_DECL_RE.lastIndex = 0;
+    while ((match = SPACE_DECL_RE.exec(line)) !== null) {
+      const values = match[1].match(/(?:^|\s)\d+(?:\.\d+)?px/g) || [];
+      for (const value of values) { if (parseFloat(value) > 3) hits.push(number); }
+    }
+  }
+  return hits;
+}
+
 // عدّ قيم px داخل كل تصريحات border-radius في الملف (تعليقات // منزوعة سلفاً)
 function countRadiusPx(file) {
   const hits = [];
@@ -143,6 +175,13 @@ function main() {
     checkBaseline('border-radius رقمي', rel, hits, RADIUS_BASELINE);
   }
 
+  // 2ج. قيم px فوق 3 داخل تصريحات المسافات خارج سلّم --space-* الموسّع
+  for (const file of [...uiFiles, path.join(ROOT, 'src', 'styles', 'base.css')]) {
+    const rel = relOf(file);
+    const hits = countSpacePx(file);
+    checkBaseline('مسافة رقمية', rel, hits, SPACE_BASELINE);
+  }
+
   // 3. السمات المضمّنة في index.html (محظورة بـ CSP — القاعدة في CLAUDE.md)
   const html = fs.readFileSync(path.join(ROOT, 'src', 'index.html'), 'utf8');
   const inline = html.match(/\s(?:style|on[a-z]+)\s*=\s*["']/gi) || [];
@@ -157,6 +196,7 @@ function main() {
   console.log('✓ لا ألوان صلبة جديدة خارج tokens في src/ui');
   console.log('✓ لا z-index رقمية جديدة خارج سلّم --z-*');
   console.log('✓ لا border-radius رقمية جديدة خارج سلّم --radius-*');
+  console.log('✓ لا مسافات رقمية جديدة خارج سلّم --space-* الموسّع');
   console.log('✓ لا سمات مضمّنة في index.html');
   console.log('design-guard: نجح — tokens وسلّم z-index وCSP بلا انتهاكات جديدة.');
 }

@@ -12,7 +12,7 @@ const ownSheet = sheet(`
   /* عرض لوحة الجلسات 400px (أضيق من افتراضي panel.css.js) */
   :host { width: 400px; }
   /* صفوف الجلسات — منقولة كما هي من base.css */
-  .sess { padding: 11px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .sess { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); cursor: pointer; }
   .sess:hover, .sess:focus-visible { background: var(--gold-soft); outline: none; }
   .sess .t {
     font-size: 13.5px; unicode-bidi: plaintext; line-height: 1.55;

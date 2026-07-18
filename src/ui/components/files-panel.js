@@ -8,7 +8,7 @@ import { panelSheet } from '../lib/panel.css.js';
 
 const ownSheet = sheet(`
   /* صفوف الشجرة: مجلد قابل للطي وملف قابل للفتح — الأسماء LTR داخل واجهة RTL */
-  .ft-row { display: flex; align-items: center; gap: 7px; padding: 4px 14px; cursor: pointer; font-size: 13px; color: var(--text); }
+  .ft-row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-4); cursor: pointer; font-size: 13px; color: var(--text); }
   .ft-row:hover, .ft-row:focus-visible { background: var(--gold-soft); outline: none; }
   .ft-row .ft-ico { flex: none; font-size: 12px; width: 16px; text-align: center; }
   .ft-row .ft-name { font-family: var(--mono); direction: ltr; unicode-bidi: embed; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -16,7 +16,7 @@ const ownSheet = sheet(`
   .ft-kids[hidden] { display: none; }
   /* نتائج بحث المحتوى (4.6): موضع LTR (ملف:سطر) + مقتطف باتجاه تلقائي */
   .panel-list[hidden] { display: none; }
-  .fh-row { padding: 6px 14px; cursor: pointer; border-bottom: 1px solid var(--border-dim); }
+  .fh-row { padding: var(--space-1h) var(--space-4); cursor: pointer; border-bottom: 1px solid var(--border-dim); }
   .fh-row:hover, .fh-row:focus-visible { background: var(--gold-soft); outline: none; }
   .fh-loc { display: block; font-family: var(--mono); direction: ltr; unicode-bidi: embed; text-align: left; font-size: 11.5px; color: var(--gold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fh-text { display: block; font-family: var(--mono); font-size: 12px; color: var(--text-dim); text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -10,30 +10,30 @@ import { buildDiff } from '../lib/diff.js';
 
 const ownSheet = sheet(`
   /* صفوف لوحة git — منقولة كما هي من base.css */
-  .gd-row { display: flex; align-items: center; gap: 8px; padding: 7px 14px; cursor: pointer; border-bottom: 1px solid var(--border-dim); }
+  .gd-row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); cursor: pointer; border-bottom: 1px solid var(--border-dim); }
   .gd-row:hover, .gd-row:focus-visible { background: var(--gold-soft); outline: none; }
-  .gd-badge { flex: none; font-size: 10.5px; padding: 1px 7px; border-radius: var(--radius-pill); border: 1px solid var(--border); color: var(--text-dim); }
+  .gd-badge { flex: none; font-size: 10.5px; padding: 1px var(--space-2); border-radius: var(--radius-pill); border: 1px solid var(--border); color: var(--text-dim); }
   .gd-badge.new { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
   .gd-badge.del { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
   .gd-badge.mod { color: var(--gold); border-color: var(--gold-border); background: var(--gold-soft); }
   .gd-name { flex: 1; min-width: 0; font-family: var(--mono); direction: ltr; unicode-bidi: embed; text-align: left; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gd-counts { flex: none; font-family: var(--mono); direction: ltr; font-size: 11.5px; }
   .gd-counts .a { color: var(--green); }
-  .gd-counts .d { color: var(--red); margin-inline-start: 5px; }
-  .gd-card { padding: 0 10px 8px; }
+  .gd-counts .d { color: var(--red); margin-inline-start: var(--space-1h); }
+  .gd-card { padding: 0 var(--space-2h) var(--space-2); }
   .gd-card[hidden] { display: none; }
   .gd-card .diff { margin: 0; }
   /* أفعال git (دفعة «أفعال git») — أزرار صغيرة لكل صف + شريط الالتزام */
-  .gd-actions { flex: none; display: flex; gap: 4px; }
-  .gd-act { font-size: 11px; padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); cursor: pointer; white-space: nowrap; }
+  .gd-actions { flex: none; display: flex; gap: var(--space-1); }
+  .gd-act { font-size: 11px; padding: 2px var(--space-2); border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); cursor: pointer; white-space: nowrap; }
   .gd-act:hover { border-color: var(--gold); color: var(--text); }
   .gd-act.staged { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
   .gd-act.discard:hover { border-color: var(--red-border); color: var(--red); background: var(--red-soft); }
   .gd-act:disabled { opacity: .5; cursor: default; }
-  .gd-commit { display: flex; gap: 6px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
-  .gd-commit input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-md); padding: 6px 10px; font-family: var(--sans); font-size: 12.5px; outline: none; }
+  .gd-commit { display: flex; gap: var(--space-1h); align-items: center; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: var(--surface); }
+  .gd-commit input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); font-family: var(--sans); font-size: 12.5px; outline: none; }
   .gd-commit input:focus { border-color: var(--gold); }
-  .gd-commit button { flex: none; font-size: 12px; padding: 5px 12px; border-radius: var(--radius-md); border: 1px solid var(--gold-border); background: var(--gold-soft); color: var(--gold); cursor: pointer; }
+  .gd-commit button { flex: none; font-size: 12px; padding: var(--space-1h) var(--space-3); border-radius: var(--radius-md); border: 1px solid var(--gold-border); background: var(--gold-soft); color: var(--gold); cursor: pointer; }
   .gd-commit button:hover { background: var(--gold); color: var(--bg); }
   .gd-commit button:disabled { opacity: .5; cursor: default; background: var(--surface-2); color: var(--text-dim); border-color: var(--border); }
   .hint.gd-ok { color: var(--green); }

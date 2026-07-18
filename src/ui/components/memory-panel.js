@@ -6,39 +6,39 @@ import { panelSheet } from '../lib/panel.css.js';
 
 const ownSheet = sheet(`
   :host { width: 470px; }
-  .candidate { padding: 13px; border-bottom: 1px solid var(--gold-border); background: var(--gold-soft); }
+  .candidate { padding: var(--space-3); border-bottom: 1px solid var(--gold-border); background: var(--gold-soft); }
   .candidate[hidden] { display: none; }
-  .candidate-title { color: var(--gold); font-weight: 700; margin-bottom: 8px; }
+  .candidate-title { color: var(--gold); font-weight: 700; margin-bottom: var(--space-2); }
   .candidate-note, .status, .empty { color: var(--text-dim); font-size: 12px; line-height: 1.7; }
-  .status { min-height: 21px; padding: 0 13px; color: var(--red); }
-  .editor { display: grid; gap: 8px; }
-  .editor-row { display: flex; gap: 7px; align-items: center; }
+  .status { min-height: 21px; padding: 0 var(--space-3); color: var(--red); }
+  .editor { display: grid; gap: var(--space-2); }
+  .editor-row { display: flex; gap: var(--space-2); align-items: center; }
   .editor label { color: var(--text-dim); font-size: 11px; }
   .editor select, .editor textarea, .path-input {
     background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-md);
-    padding: 6px 9px; font-family: var(--sans); font-size: 12px; outline: none;
+    padding: var(--space-1h) var(--space-2h); font-family: var(--sans); font-size: 12px; outline: none;
   }
   .editor select:focus, .editor textarea:focus, .path-input:focus { border-color: var(--gold); }
   .editor textarea { width: 100%; min-height: 82px; resize: vertical; unicode-bidi: plaintext; line-height: 1.6; }
   .editor select { min-width: 105px; }
   .path-input { flex: 1; min-width: 0; direction: ltr; font-family: var(--mono); }
-  .share-row { display: flex; align-items: flex-start; gap: 7px; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
+  .share-row { display: flex; align-items: flex-start; gap: var(--space-2); color: var(--text-dim); font-size: 12px; line-height: 1.5; }
   .share-row input { margin-top: 3px; accent-color: var(--gold); }
-  .editor-actions { display: flex; gap: 7px; }
+  .editor-actions { display: flex; gap: var(--space-2); }
   .primary { border-color: var(--gold-border); color: var(--gold); }
   .danger { color: var(--red); }
-  .memory { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .memory { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
   .memory:hover { background: var(--surface-2); }
-  .memory-head { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  .memory-head { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
   .kind { color: var(--gold); font-size: 11px; font-weight: 700; }
-  .badge { color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 5px; font-size: 10px; }
-  .memory-actions { display: flex; gap: 5px; margin-inline-start: auto; }
-  .memory-actions button { padding: 2px 8px; font-size: 10.5px; }
-  .content { margin-top: 7px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; unicode-bidi: plaintext; }
-  .meta { margin-top: 6px; color: var(--text-faint); font-size: 10.5px; line-height: 1.6; unicode-bidi: plaintext; }
+  .badge { color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--space-1h); font-size: 10px; }
+  .memory-actions { display: flex; gap: var(--space-1h); margin-inline-start: auto; }
+  .memory-actions button { padding: 2px var(--space-2); font-size: 10.5px; }
+  .content { margin-top: var(--space-2); font-size: 13px; line-height: 1.7; white-space: pre-wrap; unicode-bidi: plaintext; }
+  .meta { margin-top: var(--space-1h); color: var(--text-faint); font-size: 10.5px; line-height: 1.6; unicode-bidi: plaintext; }
   .scope-path { direction: ltr; font-family: var(--mono); }
-  .share-hint { margin-top: 7px; color: var(--gold); font-size: 11px; line-height: 1.6; }
-  .empty { padding: 24px 16px; text-align: center; }
+  .share-hint { margin-top: var(--space-2); color: var(--gold); font-size: 11px; line-height: 1.6; }
+  .empty { padding: var(--space-5) var(--space-4); text-align: center; }
 `);
 
 const KIND_LABELS = { fact: 'حقيقة', decision: 'قرار', command: 'أمر', failure: 'درس فشل' };

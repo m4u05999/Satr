@@ -19,21 +19,21 @@ const ownSheet = sheet(`
   :host([open]) .viewer-box { animation: pop var(--dur) var(--ease); }
   @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.985); } }
   .viewer-box { margin: auto; width: min(1020px, 94vw); height: 86vh; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow-modal); }
-  .viewer-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .viewer-head { display: flex; align-items: center; gap: var(--space-2h); padding: var(--space-2h) var(--space-4); border-bottom: 1px solid var(--border); }
   .viewer-name { font-family: var(--mono); direction: ltr; text-align: left; color: var(--gold); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .viewer-meta { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); direction: ltr; white-space: nowrap; }
   .viewer-body { flex: 1; overflow: auto; background: var(--bg-deep); }
-  pre { margin: 0; padding: 10px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; direction: ltr; text-align: left; counter-reset: ln; width: max-content; min-width: 100%; }
+  pre { margin: 0; padding: var(--space-2h) 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; direction: ltr; text-align: left; counter-reset: ln; width: max-content; min-width: 100%; }
   /* السطر flex: عمود أرقام ثابت (::before عنصر flex مجهول) + نص السطر .lt بأساس
      اتجاه موحّد للملف (قبول 4.3 — لقطات مالك). ملف كود: أرقام يساراً ونص pre يمتد أفقياً */
   pre .l { display: flex; counter-increment: ln; }
-  pre .l::before { content: counter(ln); flex: 0 0 64px; padding-inline-end: 16px; color: var(--text-faint); text-align: right; user-select: none; }
-  pre .lt { flex: 1; white-space: pre; padding-inline-end: 16px; min-width: 0; }
+  pre .l::before { content: counter(ln); flex: 0 0 64px; padding-inline-end: var(--space-4); color: var(--text-faint); text-align: right; user-select: none; }
+  pre .lt { flex: 1; white-space: pre; padding-inline-end: var(--space-4); min-width: 0; }
   /* وضع «مستند عربي» (rtl-doc): مرآة كاملة — الأرقام عمود يميناً، النص يرسو يميناً
      بجانبها، والأسطر الطويلة تلتف داخل العرض (pre-wrap) بدل التمدد الأفقي القاطع للقراءة */
   pre.rtl-doc { width: auto; }
   pre.rtl-doc .l { flex-direction: row-reverse; }
-  pre.rtl-doc .l::before { text-align: left; padding-inline-end: 8px; padding-inline-start: 16px; }
+  pre.rtl-doc .l::before { text-align: left; padding-inline-end: var(--space-2); padding-inline-start: var(--space-4); }
   /* text-align: right ضرورية صراحةً — الوراثة تغلب اتجاه dir=rtl (لقطة مالك مثبّتة) */
   pre.rtl-doc .lt { white-space: pre-wrap; overflow-wrap: anywhere; padding-inline-end: 0; text-align: right; }
   /* سطر القفز من نتيجة بحث (4.6) */
@@ -43,11 +43,11 @@ const ownSheet = sheet(`
   .hl-s { color: var(--green); }                          /* نص مقتبس */
   .hl-k { color: var(--gold); }                           /* كلمة مفتاحية */
   .hl-n { color: var(--blue); }                           /* رقم */
-  .viewer-note { padding: 8px 14px; font-size: 12px; color: var(--gold); border-top: 1px solid var(--border); }
+  .viewer-note { padding: var(--space-2) var(--space-4); font-size: 12px; color: var(--gold); border-top: 1px solid var(--border); }
   .viewer-note[hidden] { display: none; }
   /* تحرير خفيف (4.5): textarea بديل يملأ الجسم — تراجع/إعادة أصليان وIME عربي سليم؛
      بلا تظليل ولا أرقام أسطر أثناء التحرير (مقايضة واعية — قبول المالك للنطاق) */
-  textarea { display: none; width: 100%; height: 100%; border: 0; outline: none; resize: none; background: var(--bg-deep); color: var(--text); font-family: var(--mono); font-size: 12.5px; line-height: 1.65; padding: 10px 16px; box-sizing: border-box; }
+  textarea { display: none; width: 100%; height: 100%; border: 0; outline: none; resize: none; background: var(--bg-deep); color: var(--text); font-family: var(--mono); font-size: 12.5px; line-height: 1.65; padding: var(--space-2h) var(--space-4); box-sizing: border-box; }
   .viewer-body.editing { overflow: hidden; }
   .viewer-body.editing textarea { display: block; }
   .viewer-body.editing pre { display: none; }

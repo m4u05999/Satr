@@ -14,14 +14,14 @@ const controlsText = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   button {
     background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-    border-radius: var(--radius-md); padding: 6px 13px; font-family: var(--sans); font-size: 13px;
+    border-radius: var(--radius-md); padding: var(--space-1h) var(--space-3); font-family: var(--sans); font-size: 13px;
     cursor: pointer; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
   }
   button:hover { border-color: var(--gold); background: var(--surface-3); }
   button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
   input[type="text"] {
     background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: var(--radius-md); padding: 6px 10px; font-family: var(--sans); font-size: 13px; outline: none;
+    border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); font-family: var(--sans); font-size: 13px; outline: none;
     transition: border-color var(--dur) var(--ease);
   }
   input[type="text"]:focus { border-color: var(--gold); }
@@ -43,13 +43,13 @@ export const panelSheet = sheet(controlsText + `
   :host([open]) { transform: translateX(0); box-shadow: var(--shadow-panel); }
   .panel-head {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border);
     font-weight: 600; color: var(--gold);
   }
-  .panel-head-actions { display: flex; gap: 6px; }
-  .panel-search { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .panel-head-actions { display: flex; gap: var(--space-1h); }
+  .panel-search { padding: var(--space-2h) var(--space-3); border-bottom: 1px solid var(--border); }
   .panel-search input { width: 100%; }
   .panel-list { flex: 1; overflow-y: auto; }
-  .panel-list .hint { padding: 16px; color: var(--text-dim); font-size: 13px; text-align: center; }
-  .panel-head button.refresh { font-size: 12px; padding: 3px 10px; color: var(--text); }
+  .panel-list .hint { padding: var(--space-4); color: var(--text-dim); font-size: 13px; text-align: center; }
+  .panel-head button.refresh { font-size: 12px; padding: 3px var(--space-2h); color: var(--text); }
 `);

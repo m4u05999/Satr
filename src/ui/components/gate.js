@@ -20,15 +20,15 @@ const ownSheet = sheet(`
   :host([hidden]) { display: none; }
   .gate-card {
     width: 100%; max-width: 560px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: var(--radius-xl); padding: 30px 30px 24px;
+    border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-6) var(--space-6) var(--space-5);
   }
-  .gate-logo { font-size: 30px; font-weight: 700; color: var(--gold); display: flex; align-items: baseline; gap: 4px; justify-content: center; margin-bottom: 18px; user-select: none; }
+  .gate-logo { font-size: 30px; font-weight: 700; color: var(--gold); display: flex; align-items: baseline; gap: var(--space-1); justify-content: center; margin-bottom: var(--space-4); user-select: none; }
   .gate-logo .cursor { display: inline-block; width: 13px; height: 26px; background: var(--gold); animation: blink 1.1s steps(1) infinite; transform: translateY(3px); }
   @keyframes blink { 50% { opacity: 0; } }
-  h1 { font-size: 21px; font-weight: 700; text-align: center; margin-bottom: 8px; }
-  .gate-sub { color: var(--text-dim); font-size: 14px; text-align: center; margin-bottom: 22px; }
-  .gate-steps { list-style: none; display: flex; flex-direction: column; gap: 14px; margin-bottom: 22px; }
-  .gate-step { display: flex; gap: 12px; align-items: flex-start; }
+  h1 { font-size: 21px; font-weight: 700; text-align: center; margin-bottom: var(--space-2); }
+  .gate-sub { color: var(--text-dim); font-size: 14px; text-align: center; margin-bottom: var(--space-5); }
+  .gate-steps { list-style: none; display: flex; flex-direction: column; gap: var(--space-4); margin-bottom: var(--space-5); }
+  .gate-step { display: flex; gap: var(--space-3); align-items: flex-start; }
   .gate-mark { flex: 0 0 24px; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; border: 1px solid var(--border); margin-top: 2px; }
   .gate-mark.done { background: var(--green-soft); color: var(--green); border-color: transparent; }
   .gate-mark.todo { background: var(--gold-soft); color: var(--gold); border-color: transparent; }
@@ -36,15 +36,15 @@ const ownSheet = sheet(`
   .gate-body .t { font-size: 14.5px; font-weight: 600; margin-bottom: 3px; }
   .gate-body .d { font-size: 13px; color: var(--text-dim); }
   .gate-body .d a { color: var(--gold); }
-  .gate-cmd { display: flex; align-items: stretch; gap: 6px; margin-top: 8px; }
+  .gate-cmd { display: flex; align-items: stretch; gap: var(--space-1h); margin-top: var(--space-2); }
   .gate-cmd code {
     flex: 1; direction: ltr; text-align: left; font-family: var(--mono); font-size: 12.5px;
     background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md);
-    padding: 8px 10px; color: var(--text); overflow-x: auto; white-space: nowrap; user-select: all;
+    padding: var(--space-2) var(--space-2h); color: var(--text); overflow-x: auto; white-space: nowrap; user-select: all;
   }
-  .gate-cmd button { flex: 0 0 auto; font-size: 12px; padding: 6px 12px; }
+  .gate-cmd button { flex: 0 0 auto; font-size: 12px; padding: var(--space-1h) var(--space-3); }
   .gate-actions { display: flex; justify-content: center; }
-  .recheck { background: var(--gold); color: var(--on-gold); border-color: var(--gold); font-weight: 700; padding: 9px 26px; font-size: 14px; }
+  .recheck { background: var(--gold); color: var(--on-gold); border-color: var(--gold); font-weight: 700; padding: var(--space-2h) var(--space-5); font-size: 14px; }
   .recheck:hover { filter: brightness(1.07); }
   .recheck:disabled { opacity: .55; cursor: default; }
   .gate-foot { text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 20px; line-height: 1.7; }
