@@ -566,6 +566,18 @@ class SatrChat extends HTMLElement {
     thread.appendChild(n); scrollDown();
   }
 
+  function showImageLightbox(src, alt) {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'shot-lightbox';
+    const close = document.createElement('button');
+    close.type = 'button'; close.className = 'shot-close'; close.textContent = '✕'; close.title = 'إغلاق';
+    const image = document.createElement('img'); image.src = src; image.alt = alt || 'لقطة الوكيل';
+    close.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+    dialog.addEventListener('close', () => dialog.remove());
+    dialog.appendChild(close); dialog.appendChild(image); document.body.appendChild(dialog); dialog.showModal();
+  }
+
   function toolDetail(inp) {
     if (!inp) return '';
     if (Array.isArray(inp.checks)) {
@@ -799,6 +811,19 @@ class SatrChat extends HTMLElement {
         el.querySelector('.state').textContent = isError ? '✗' : '✓';
         if (isError) el.classList.add('error');
         workTitle.textContent = isError ? 'واجه عائقاً ويتابع' : 'يتابع العمل';
+      },
+      addScreenshot(dataUrl, kind) {
+        if (!/^data:image\/png;base64,/.test(String(dataUrl || ''))) return;
+        const el = document.createElement('div'); el.className = 'tool browser-shot done';
+        const name = document.createElement('span'); name.className = 'name';
+        name.textContent = kind === 'element' ? 'لقطة عنصر' : kind === 'full_page' ? 'لقطة صفحة كاملة' : 'لقطة المعاينة';
+        const open = document.createElement('button'); open.type = 'button'; open.className = 'shot-thumb'; open.title = 'تكبير اللقطة';
+        const image = document.createElement('img'); image.src = dataUrl; image.alt = 'ما رآه الوكيل في المعاينة';
+        const state = document.createElement('span'); state.className = 'state'; state.textContent = '✓';
+        open.appendChild(image); open.addEventListener('click', () => showImageLightbox(dataUrl, image.alt));
+        el.appendChild(name); el.appendChild(open); el.appendChild(state);
+        tools.appendChild(el); toolsWrap.hidden = false; toolCount += 1;
+        toolsLabel.textContent = 'الإجراءات (' + toolCount + ')'; revealActivity('يتحقق بصرياً'); scrollDown();
       },
       addDiff(ev) {
         diffs.appendChild(bDiff(ev));

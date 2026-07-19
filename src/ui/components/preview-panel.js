@@ -65,6 +65,11 @@ const previewSheet = sheet(`
   }
   :host(.ctl-mode) #pvCtlBadge { display: inline-flex; }
   :host(.ctl-mode) { border-inline-start-color: var(--gold); }
+  #pvServerState { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; color: var(--text-faint); font-size: 11px; white-space: nowrap; }
+  #pvServerState.running { color: var(--green); }
+  #pvServerDot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  #pvServerRestart { padding: 2px var(--space-2); font-size: 10.5px; }
+  #pvServerRestart[hidden] { display: none; }
   /* معاينة متجاوبة (محاكاة الأجهزة): زرّ يدوّر بين كامل/موبايل/لوحي. حين يُختار جهاز
      يُعرَض المحتوى بعرضه موسّطاً في pvBox (الجوانب خلفية اللوحة) فتتفاعل media queries. */
   #pvDevice.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
@@ -91,6 +96,8 @@ const previewSheet = sheet(`
   #pcLog .pc-line.netreq { color: var(--text-dim); }
   #pcLog .pc-line.netreq.bad { color: var(--red); }
   #pcLog .pc-src { color: var(--text-faint); }
+  #pcLog .pc-fix { direction: rtl; margin-inline-start: var(--space-2); background: var(--gold-soft); color: var(--gold-strong);
+    border: 1px solid var(--gold-border); border-radius: var(--radius-sm); padding: 1px var(--space-2); cursor: pointer; font-family: var(--sans); }
   /* مرشّح فئة السجلّ (البند ب): إخفاء الفئة غير المختارة عبر صنف على الحاوية */
   #pcLog.only-console .pc-line[data-cat="net"] { display: none; }
   #pcLog.only-net .pc-line[data-cat="console"] { display: none; }
@@ -114,6 +121,9 @@ const previewSheet = sheet(`
   #pvPickBar .pb-chip b { color: var(--text-faint); font-weight: 400; }
   #pvPickBar .pb-sw { width: 11px; height: 11px; border-radius: var(--radius-xs); border: 1px solid var(--border-strong); flex: none; }
   #pvPickBar .pb-row { display: flex; gap: var(--space-1h); }
+  #pvPickBar .pb-actions { display: flex; gap: var(--space-1h); flex-wrap: wrap; }
+  #pvPickBar .pb-quick { background: var(--gold-soft); color: var(--gold-strong); border: 1px solid var(--gold-border);
+    border-radius: var(--radius-pill); padding: var(--space-1) var(--space-3); cursor: pointer; font-size: 11.5px; }
   #pvPickBar #pbInput { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
     color: var(--text); border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); font-size: 13px; font-family: var(--sans);
     outline: none; unicode-bidi: plaintext; }
@@ -179,6 +189,7 @@ const MARKUP = `
     <button id="pvDevtools" type="button" title="أدوات المطوّر (DevTools) — فحص كامل للصفحة في نافذة منفصلة">🔧</button>
     <button id="pvNet" type="button" title="محاكاة سرعة الشبكة: عادي/بطيء/سريع/غير متصل">🚦</button>
     <button id="pvClearStore" type="button" title="مسح تخزين الصفحة (كوكيز + localStorage + cache) وإعادة التحميل">🧹</button>
+    <span id="pvServerState"><span id="pvServerDot"></span><span id="pvServerText">حالة الخادم</span><button id="pvServerRestart" type="button" hidden>تشغيل</button></span>
     <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
@@ -213,6 +224,11 @@ const MARKUP = `
   <div id="pvPickBar">
     <div class="pb-el"><span class="pb-tag" id="pbTag"></span><span class="pb-text" id="pbText"></span></div>
     <div class="pb-info" id="pbInfo"></div>
+    <div class="pb-actions">
+      <button id="pbExplain" class="pb-quick" type="button">اشرح</button>
+      <button id="pbFix" class="pb-quick" type="button">أصلح</button>
+      <button id="pbImprove" class="pb-quick" type="button">حسّن</button>
+    </div>
     <div class="pb-row">
       <input id="pbInput" type="text" placeholder="ماذا تريد أن يتغيّر في هذا العنصر؟ (مثال: اجعله أخضر)">
       <button id="pbSend" type="button" title="إرسال للوكيل">إرسال</button>
@@ -306,6 +322,8 @@ class SatrPreviewPanel extends HTMLElement {
     const consoleBtn = $('pvConsoleBtn'), consolePanel = $('pvConsole'), pcLog = $('pcLog');
     const PC_CAP = 500; // سقف أسطر DOM (إخلاء الأقدم)
     let pcErrBadge = 0; // عدّاد أخطاء غير مرئية — يُصفَّر عند فتح اللوحة/المسح/التنقّل
+    let errorWatch = null;
+    let errorWave = [];
     const pcEmpty = () => {
       pcLog.textContent = '';
       const e = document.createElement('div');
@@ -319,7 +337,7 @@ class SatrPreviewPanel extends HTMLElement {
     };
     const pcClearLog = () => { pcErrBadge = 0; pcPaintBadge(); pcEmpty(); };
     // cat = 'console' | 'net' (فئة المرشّح)؛ cls = صنف اللون؛ isErr = يُحسب في العدّاد
-    const pcAppend = (cls, text, srcText, cat, isErr) => {
+    const pcAppend = (cls, text, srcText, cat, isErr, fixContext) => {
       const empty = pcLog.querySelector('.pc-empty'); if (empty) empty.remove();
       const atBottom = pcLog.scrollHeight - pcLog.scrollTop - pcLog.clientHeight < 24;
       const line = document.createElement('div');
@@ -327,6 +345,11 @@ class SatrPreviewPanel extends HTMLElement {
       line.dataset.cat = cat || 'console';
       line.textContent = text;
       if (srcText) { const s = document.createElement('span'); s.className = 'pc-src'; s.textContent = '  ' + srcText; line.appendChild(s); }
+      if (isErr && fixContext) {
+        const fix = document.createElement('button'); fix.type = 'button'; fix.className = 'pc-fix'; fix.textContent = '🤖 أصلحه';
+        fix.addEventListener('click', () => this.dispatchEvent(new CustomEvent('preview-fix', { bubbles: true, detail: fixContext })));
+        line.appendChild(fix);
+      }
       pcLog.appendChild(line);
       while (pcLog.childElementCount > PC_CAP) pcLog.removeChild(pcLog.firstChild);
       if (atBottom) pcLog.scrollTop = pcLog.scrollHeight; // التصاق بالذيل إن كان القارئ عنده
@@ -393,16 +416,25 @@ class SatrPreviewPanel extends HTMLElement {
     });
     // تُستهلك في onPreview أدناه (نفس القناة satr:preview)
     this._pcConsole = (ev) => {
+      if (errorWatch) {
+        const isConsoleError = ev.type === 'console' && (ev.levelLabel === 'error' || ev.levelLabel === 'warning');
+        const isNetworkError = ev.type === 'neterr' || (ev.type === 'netreq' && (ev.status >= 400 || ev.status === 0));
+        if (isConsoleError || isNetworkError) errorWave.push({ ...ev });
+      }
       if (ev.type === 'console') {
         const lvl = ev.levelLabel || 'log';
-        pcAppend(lvl, '[' + lvl + '] ' + (ev.message || ''), ev.source ? (ev.source + ':' + ev.line) : '', 'console', lvl === 'error' || lvl === 'warning');
+        const isErr = lvl === 'error' || lvl === 'warning';
+        pcAppend(lvl, '[' + lvl + '] ' + (ev.message || ''), ev.source ? (ev.source + ':' + ev.line) : '', 'console', isErr,
+          isErr ? { kind: 'console', level: lvl, message: ev.message || '', source: ev.source || '', line: ev.line || 0, url: urlIn.value } : null);
       } else if (ev.type === 'neterr') {
-        pcAppend('net', '🌐 ' + (ev.error || 'network error') + ' → ' + (ev.url || ''), ev.resourceType || '', 'net', true);
+        pcAppend('net', '🌐 ' + (ev.error || 'network error') + ' → ' + (ev.url || ''), ev.resourceType || '', 'net', true,
+          { kind: 'network', error: ev.error || '', url: ev.url || '', resourceType: ev.resourceType || '', status: 0 });
       } else if (ev.type === 'netreq') {
         // البند ب: سجلّ الشبكة الكامل — كل طلب مكتمل (لون أحمر لرمز خطأ ≥400)
         const bad = ev.status >= 400 || ev.status === 0;
         pcAppend('netreq' + (bad ? ' bad' : ''), (ev.status || '—') + ' ' + (ev.method || 'GET') + ' ' + (ev.url || ''),
-          (ev.resourceType || '') + (ev.fromCache ? ' · كاش' : ''), 'net', bad);
+          (ev.resourceType || '') + (ev.fromCache ? ' · كاش' : ''), 'net', bad,
+          bad ? { kind: 'network', method: ev.method || 'GET', url: ev.url || '', status: ev.status || 0, resourceType: ev.resourceType || '' } : null);
       } else if (ev.type === 'console_clear') pcClearLog();
     };
 
@@ -430,6 +462,7 @@ class SatrPreviewPanel extends HTMLElement {
         else urlIn.focus();
       } else if (!started) urlIn.focus();
       reportBounds();
+      if (this.refreshServerStatus) this.refreshServerStatus();
     };
     const closePanel = () => {
       this.removeAttribute('open');
@@ -461,12 +494,15 @@ class SatrPreviewPanel extends HTMLElement {
         return u;
       } catch (e) { return null; }
     };
-    const go = async (raw) => {
+    const go = async (raw, source) => {
       const u = normalize(raw);
       if (!u) { showErr('عنوان غير صالح — http/https فقط'); return; }
       err.classList.remove('show');
       // loadURL يعود ok فور بدء التحميل؛ فشل خادم متوقف يصل لاحقاً عبر حدث failed
-      const r = started ? await window.satr.previewNavigate(u) : await window.satr.previewOpen(u);
+      const fromAgent = source === 'agent';
+      const r = started
+        ? await (fromAgent ? window.satr.previewNavigateAgent(u) : window.satr.previewNavigate(u))
+        : await (fromAgent ? window.satr.previewOpenAgent(u) : window.satr.previewOpen(u));
       if (r && r.ok) {
         started = true;
         hint.style.display = 'none';
@@ -492,6 +528,23 @@ class SatrPreviewPanel extends HTMLElement {
 
     let restartRecord = null;
     let restoreInProgress = false;
+    const serverState = $('pvServerState'), serverText = $('pvServerText'), serverRestart = $('pvServerRestart');
+    this.refreshServerStatus = async () => {
+      const cwdEl = document.getElementById('cwd');
+      const cwd = cwdEl ? cwdEl.value.trim() : '';
+      let info = null;
+      try { if (cwd) info = await window.satr.devServerInfo(cwd); } catch (e) {}
+      serverState.classList.toggle('running', !!(info && info.running));
+      if (info && info.running) {
+        serverText.textContent = 'الخادم يعمل'; serverRestart.hidden = true;
+      } else if (info && info.record) {
+        serverText.textContent = 'الخادم متوقف'; serverRestart.hidden = false;
+        restartRecord = { cwd, ...info.record };
+      } else {
+        serverText.textContent = 'لا خادم مسجّل'; serverRestart.hidden = true;
+      }
+      return info;
+    };
     async function handleFailed(ev) {
       if (restoreInProgress) {
         showErr('الخادم يبدو قيد الإقلاع — جرّب ⟳');
@@ -533,7 +586,10 @@ class SatrPreviewPanel extends HTMLElement {
           if (attempt === 3) restoreInProgress = false;
         }, attempt * 4000);
       }
+      this.refreshServerStatus();
     });
+    serverRestart.addEventListener('click', () => restartServerBtn.click());
+    setInterval(() => { if (this.hasAttribute('open')) this.refreshServerStatus(); }, 5000);
 
     // ---------- أحداث العرض الأصلي ----------
     window.satr.onPreview((ev) => {
@@ -545,6 +601,7 @@ class SatrPreviewPanel extends HTMLElement {
         fwdBtn.disabled = !ev.canGoForward;
         err.classList.remove('show');
         restoreInProgress = false;
+        this.refreshServerStatus();
       } else if (ev.type === 'loading') {
         reloadBtn.classList.toggle('loading', !!ev.loading);
       } else if (ev.type === 'failed') {
@@ -557,6 +614,12 @@ class SatrPreviewPanel extends HTMLElement {
       } else if (ev.type === 'agent_activity') {
         // نشاط محرك Codex على المتصفح (أدواته على خادم HTTP منفصل — لا تظهر كـ tool_use)
         this.flashAgentActivity(ev.tool);
+      } else if (ev.type === 'agent_screenshot') {
+        this.dispatchEvent(new CustomEvent('agent-screenshot', { bubbles: true, detail: ev }));
+      } else if (ev.type === 'preview_download_saved') {
+        this.dispatchEvent(new CustomEvent('preview-notice', { bubbles: true, detail: '⬇ حُفظ تنزيل المعاينة في: ' + ev.path }));
+      } else if (ev.type === 'preview_download_failed') {
+        this.dispatchEvent(new CustomEvent('preview-notice', { bubbles: true, detail: 'تعذّر حفظ تنزيل المعاينة' + (ev.filename ? ': ' + ev.filename : '') }));
       } else if (ev.type === 'console' || ev.type === 'neterr' || ev.type === 'netreq' || ev.type === 'console_clear') {
         this._pcConsole(ev); // لوحة Console/الشبكة للمستخدم (الخيار 2 + البند ب)
       }
@@ -617,16 +680,29 @@ class SatrPreviewPanel extends HTMLElement {
     pickBtn.addEventListener('click', startPick);
     $('pbCancel').addEventListener('click', closePickBar);
 
-    const submitPick = () => {
+    const submitPick = async () => {
       const instruction = pbInput.value.trim();
       if (!instruction || !picked) return;
+      let imageDataUrl = '';
+      try {
+        const shot = picked.selector ? await window.satr.previewElementShot(picked.selector) : null;
+        if (shot && shot.ok && shot.base64) imageDataUrl = 'data:image/png;base64,' + shot.base64;
+      } catch (e) {}
       // يُرسل للقشرة سياق العنصر + الطلب — القشرة تركّبه وترسله كدور محادثة عادي
       this.dispatchEvent(new CustomEvent('preview-edit', {
         bubbles: true,
-        detail: { instruction, url: urlIn.value, tag: picked.tag, selector: picked.selector, html: picked.html, text: picked.text, box: picked.box, styles: picked.styles },
+        detail: { instruction, url: urlIn.value, tag: picked.tag, selector: picked.selector, html: picked.html, text: picked.text, box: picked.box, styles: picked.styles, imageDataUrl },
       }));
       closePickBar();
     };
+    const quick = {
+      pbExplain: 'اشرح وظيفة هذا العنصر وكيف يرتبط ببقية الواجهة، واذكر مصدره في المشروع.',
+      pbFix: 'افحص هذا العنصر وأصلح الخلل الظاهر فيه مع التحقق من النتيجة في المعاينة.',
+      pbImprove: 'حسّن تصميم هذا العنصر وتجربته وتجاوبه مع الحفاظ على أسلوب المشروع.',
+    };
+    Object.entries(quick).forEach(([id, instruction]) => {
+      $(id).addEventListener('click', () => { pbInput.value = instruction; submitPick(); });
+    });
     $('pbSend').addEventListener('click', submitPick);
     pbInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') submitPick();
@@ -738,11 +814,22 @@ class SatrPreviewPanel extends HTMLElement {
     // ---------- العقد العام ----------
     // فتح بعنوان جاهز (اقتراح localhost المرصود / أداة open_preview — القشرة تستدعيها).
     // autoLast=false: العنوان القادم أدقّ من المحفوظ فلا نفتح الأخير أولاً (تفادي سباق).
-    this.openWith = (url) => { openPanel(false); go(url); };
+    this.openWith = (url, options) => { openPanel(false); go(url, options && options.agent ? 'agent' : 'user'); };
     // م-1-ج: تحديث تلقائي — القشرة تستدعيها عند اكتمال دور عدّل ملفات والمعاينة مفتوحة.
     // reload فعلي فقط إن كان الوضع مُفعّلاً والعرض حيّاً (خارج ذلك تجاهل صامت آمن).
     this.reloadIfLive = () => {
-      if (autoReload && started && this.hasAttribute('open')) window.satr.previewAction('reload');
+      if (autoReload && started && this.hasAttribute('open')) {
+        if (errorWatch) clearTimeout(errorWatch);
+        errorWave = [];
+        window.satr.previewAction('reload');
+        errorWatch = setTimeout(() => {
+          const wave = errorWave.slice(0, 30);
+          errorWave = []; errorWatch = null;
+          if (wave.length) this.dispatchEvent(new CustomEvent('preview-error-wave', { bubbles: true, detail: { count: wave.length, errors: wave } }));
+        }, 4200);
+        return true;
+      }
+      return false;
     };
     // إصلاح احتجاب مربع الإذن خلف المعاينة (لقطة مالك): القشرة تستدعيها عند ظهور/إخفاء
     // مربع إذن — نُخفي العرض الأصلي (bounds صفر) فيبرز المربع فوق اللوحة، ثم نعيده.
@@ -768,7 +855,9 @@ class SatrPreviewPanel extends HTMLElement {
       browser_console: 'يفحص الأخطاء', browser_network: 'يفحص الشبكة', screenshot: 'يلتقط لقطة', browser_screenshot_element: 'يلتقط عنصراً',
       browser_snapshot: 'يفحص العناصر', browser_click: 'ينقر', browser_type: 'يكتب',
       browser_select_option: 'يختار', browser_press_key: 'يضغط مفتاحاً', browser_scroll: 'يمرّر',
-      browser_hover: 'يحوّم', browser_wait_for: 'ينتظر', browser_handoff: 'يسلّمك القيادة',
+      browser_hover: 'يحوّم', browser_wait_for: 'ينتظر', browser_evaluate: 'يشخّص JavaScript',
+      browser_set_viewport: 'يختبر التجاوب', browser_perf: 'يقيس الأداء', browser_back: 'يرجع',
+      browser_forward: 'يتقدّم', browser_handoff: 'يسلّمك القيادة',
     };
     // مؤشّر «وضع تحكّم المتصفح مفعّل» (الخيار A): يقرأ حالة زرّ الوضع في المحرّر
     // (#browserCtl، light DOM) من aria-pressed ويتابع تغيّره بـ MutationObserver —

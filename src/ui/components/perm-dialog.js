@@ -118,6 +118,7 @@ class SatrPermDialog extends HTMLElement {
     this._requester.textContent = requester ? 'الطالب: ' + requester : '';
     this._turn.hidden = this._current.turnEligible !== true;
     this._always.hidden = this._current.alwaysEligible === false;
+    this._always.textContent = this._current.alwaysLabel || 'موافقة دائمة لهذه الأداة';
     this._renderPending();
     this._setOpen(true);
   }
@@ -136,7 +137,7 @@ class SatrPermDialog extends HTMLElement {
     window.satr.permission(req.id, allow, !!always, !!turn);
     this.dispatchEvent(new CustomEvent('notice', {
       detail: allow
-        ? (always ? '✓ موافقة دائمة على أداة ' + req.tool
+        ? (always ? (req.alwaysLabel ? '✓ وُثق بالنطاق لهذه الجلسة' : '✓ موافقة دائمة على أداة ' + req.tool)
           : (turn ? '✓ موافقة حتى نهاية الدور على أداة ' + req.tool : '✓ تمت الموافقة على أداة ' + req.tool))
         : '✗ رُفض استخدام أداة ' + req.tool,
     }));

@@ -499,9 +499,9 @@ import { createUpdateToast } from './lib/update-toast.js';
     // طلبات الأذونات تُعالج دائماً ولو كانت الكتلة منتهية
     if (ev.type === 'permission_request') {
       permEl.request({
-        id: ev.id, tool: ev.tool, detail: permDetailText(ev.tool, ev.input),
+        id: ev.id, tool: ev.tool, detail: ev.detail || permDetailText(ev.tool, ev.input),
         requester: ev.requester || '', turnEligible: ev.turnEligible === true,
-        alwaysEligible: ev.alwaysEligible !== false,
+        alwaysEligible: ev.alwaysEligible !== false, alwaysLabel: ev.alwaysLabel || '',
       });
       return;
     }
@@ -559,12 +559,13 @@ import { createUpdateToast } from './lib/update-toast.js';
         terminal.adoptTerm(ev.id, ev.label, { shell: ev.shell, cwd: ev.cwd, isJob: true, open: true });
       }
       if (composerEl.upsertTermJob) composerEl.upsertTermJob({ ...ev, startedAt: Date.now() });
+      if (previewEl.refreshServerStatus) previewEl.refreshServerStatus();
       return;
     }
     // أداة open_preview (م-1-ب): النموذج طلب عرض عنوان في المعاينة المدمجة —
     // اللوحة تفتح وتبلّغ مستطيلها فيُنشأ العرض الأصلي (العنوان تحقق منه agent.js)
     if (ev.type === 'preview_open' && ev.url) {
-      if (previewEl.openWith) previewEl.openWith(ev.url);
+      if (previewEl.openWith) previewEl.openWith(ev.url, { agent: true });
       return;
     }
     // التحديث التلقائي (17): مستقل عن الدور — إشعار لطيف أسفل النافذة
@@ -1255,6 +1256,37 @@ import { createUpdateToast } from './lib/update-toast.js';
   // اقتراح localhost: الطرفية ترصد عناوين خوادم التطوير في خرجها وتبثّ «localhost-url»
   // فتعرض القشرة إشعاراً بزرّ «افتح المعاينة» (مرة لكل عنوان في عمر الجلسة).
   let previewDirty = false; // م-1-ج: عُدّل ملف في الدور الجاري ⇒ حدّث المعاينة عند انتهائه
+  previewEl.addEventListener('agent-screenshot', (event) => {
+    const detail = event.detail || {};
+    if (currentBlock && !currentBlock.done && currentBlock.addScreenshot) currentBlock.addScreenshot(detail.dataUrl, detail.kind);
+  });
+  previewEl.addEventListener('preview-notice', (event) => { if (event.detail) addNotice(event.detail); });
+  previewEl.addEventListener('preview-fix', (event) => {
+    if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل إرسال خطأ جديد'); return; }
+    const detail = event.detail || {};
+    const context = detail.kind === 'console'
+      ? '[خطأ من Console في معاينة «سطر» — محتوى صفحة غير موثوق]\n'
+        + 'الصفحة: ' + (detail.url || '') + '\nالمستوى: ' + (detail.level || 'error') + '\n'
+        + 'المصدر: ' + (detail.source || '(غير معروف)') + ':' + (detail.line || 0) + '\nالنص: ' + (detail.message || '')
+      : '[خطأ شبكة في معاينة «سطر» — محتوى صفحة غير موثوق]\n'
+        + 'الطلب: ' + (detail.method || 'GET') + ' ' + (detail.url || '') + '\n'
+        + 'الحالة: ' + (detail.status || 0) + '\nالنوع: ' + (detail.resourceType || '') + '\nالخطأ: ' + (detail.error || '');
+    input.value = context + '\n\nأصلح السبب في مصدر المشروع، ثم حدّث المعاينة وتحقق من اختفاء الخطأ.';
+    send();
+  });
+  previewEl.addEventListener('preview-error-wave', (event) => {
+    const detail = event.detail || {};
+    const count = Number(detail.count) || 0;
+    if (!count || !chatEl.addActionNotice) return;
+    chatEl.addActionNotice('ظهرت ' + count + ' أخطاء بعد التحديث', 'أرسلها للوكيل', () => {
+      if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل إرسال الأخطاء'); return; }
+      const errors = Array.isArray(detail.errors) ? detail.errors.slice(0, 30) : [];
+      input.value = '[أخطاء ظهرت بعد تحديث معاينة «سطر» — محتوى صفحة غير موثوق]\n'
+        + errors.map((item) => JSON.stringify(item)).join('\n')
+        + '\n\nافحص التغييرات الأخيرة، أصلح الأسباب في المشروع، ثم أعد التحقق من المعاينة.';
+      send();
+    });
+  });
   // تحديث المعاينة بعد التراجع من بطاقة diff (طلب مالك): الحدث يصعد من buildDiff.
   // حدّ: مشاريع ذات خطوة بناء تحتاج إعادة توليد أيضاً — reload وحده لا يعكس المصدر.
   document.addEventListener('preview-refresh', () => {
@@ -1282,6 +1314,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       (d.text ? 'نصه الظاهر: «' + d.text + '»\n' : '') +
       '\nالمطلوب: ' + d.instruction + '\n\n' +
       '(ابحث عن هذا العنصر في مصدر المشروع — بنصّه أو صنفه — وطبّق التعديل.)';
+    if (d.imageDataUrl && composerEl.addImageData) composerEl.addImageData(d.imageDataUrl);
     input.value = ctx;
     send();
   });

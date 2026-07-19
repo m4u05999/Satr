@@ -531,6 +531,14 @@ class SatrComposer extends HTMLElement {
     // ---------- الواجهة العامة للقشرة ----------
     this.setCommands = (list) => { commands = Array.isArray(list) ? list : []; };
     this.getImages = () => pendingImages.slice();
+    this.addImageData = (dataUrl) => {
+      const value = String(dataUrl || '');
+      const match = value.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
+      if (!match || pendingImages.length >= 6) return false;
+      pendingImages.push({ id: 'img_' + Math.random().toString(36).slice(2), media_type: match[1], data: match[2], dataUrl: value });
+      renderAttachments();
+      return true;
+    };
     this.clearImages = () => { pendingImages = []; renderAttachments(); };
     // بعد الإرسال: تمدد المحرّر + مسح المسودة + إغلاق القائمتين (input.value تصفّره القشرة)
     this.afterSend = () => { autoResize(); clearDraft(); closeSlash(); closeFiles(); };
