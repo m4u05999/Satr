@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('satr', {
   stop: () => ipcRenderer.invoke('satr:stop'),
   listSessions: () => ipcRenderer.invoke('satr:listSessions'),
   readSession: (project, id) => ipcRenderer.invoke('satr:readSession', { project, id }),
+  sessionMetaList: () => ipcRenderer.invoke('satr:sessionMetaList'),
+  sessionMetaSet: (sessionId, patch) => ipcRenderer.invoke('satr:sessionMetaSet', { ...(patch || {}), sessionId }),
   listCodexSessions: () => ipcRenderer.invoke('satr:listCodexSessions'),
   readCodexSession: (id) => ipcRenderer.invoke('satr:readCodexSession', { id }),
   listFiles: (cwd) => ipcRenderer.invoke('satr:listFiles', cwd),

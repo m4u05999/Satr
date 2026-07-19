@@ -10,6 +10,7 @@ const os = require('os');
 const { spawn } = require('child_process');
 
 const sessions = require('./sessions');
+const sessionmeta = require('./sessionmeta');
 const files = require('./files');
 const searchMod = require('./search'); // بحث محتوى المشروع (الدفعة 4.6)
 const gitdiff = require('./gitdiff'); // فروقات git للوحة التغييرات (الدفعة 4.7) — قراءة فقط
@@ -1023,6 +1024,23 @@ ipcMain.handle('satr:restartUpdate', () => { updater.quitAndInstall(); return { 
 
 ipcMain.handle('satr:listSessions', () => sessions.listSessions());
 ipcMain.handle('satr:readSession', (event, p) => sessions.readSession(p && p.project, p && p.id));
+ipcMain.handle('satr:sessionMetaList', () => ({ ok: true, entries: sessionmeta.list() }));
+ipcMain.handle('satr:sessionMetaSet', (event, p) => {
+  if (!p || typeof p.sessionId !== 'string' || !SAFE_SESSION.test(p.sessionId)) {
+    return { ok: false, error: 'bad_input' };
+  }
+  const patch = {};
+  if (Object.prototype.hasOwnProperty.call(p, 'pinned')) {
+    if (typeof p.pinned !== 'boolean') return { ok: false, error: 'bad_input' };
+    patch.pinned = p.pinned;
+  }
+  if (Object.prototype.hasOwnProperty.call(p, 'title')) {
+    if (typeof p.title !== 'string' || p.title.length > 1000) return { ok: false, error: 'bad_input' };
+    patch.title = p.title;
+  }
+  if (!Object.keys(patch).length) return { ok: false, error: 'bad_input' };
+  return sessionmeta.set(p.sessionId, patch);
+});
 
 // جلسات Codex (تلميع المرحلة 4 — قراءة فقط، التحقق من المعرّف داخل codexsessions.js)
 ipcMain.handle('satr:listCodexSessions', () => codexSessions.listCodexSessions());
