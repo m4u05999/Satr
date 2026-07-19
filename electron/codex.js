@@ -33,6 +33,7 @@ const testsprite = require('./testsprite');
 const testspriteHarness = require('./testspriteharness');
 const envbrief = require('./envbrief');
 const execguard = require('./execguard');
+const browserpolicy = require('./browserpolicy');
 
 const IS_WIN = process.platform === 'win32';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة تراجع ولا نعرض فرقاً
@@ -158,8 +159,12 @@ const browserorigin = require('./browserorigin');
 // ---------- الأدوات الموافَق عليها «دائماً» (لعمر التطبيق — نظير agent.js) ----------
 const alwaysAllowed = new Set();
 
-function shouldAutoApproveMcp(access, browserControl, permissionMode, remembered, neverAlways, toolName, target, trustedSet, currentUrl) {
+function shouldAutoApproveMcp(access, browserControl, permissionMode, remembered, neverAlways, toolName, target, trustedSet, currentUrl, input, pageContext, budgetStatus) {
   if (permissionMode === 'bypassPermissions') return true;
+  if (browserpolicy.isSensitiveAction(toolName, input, pageContext)
+    || browserpolicy.requiresExplicitApproval(toolName)
+    || browserpolicy.hasLeakRisk(browserpolicy.leakValueForTool(toolName, input))
+    || (budgetStatus && budgetStatus.impacting && !budgetStatus.allowed)) return false;
   if (access === 'browser' && browserControl === true) {
     const browserClass = browserorigin.classifyBrowserTool(toolName);
     if (!browserorigin.canAutoControl(toolName, target, trustedSet)) return false;
@@ -177,7 +182,7 @@ function decodeBase64(s) { try { return Buffer.from(s, 'base64').toString('utf8'
 /**
  * يبدأ دوراً واحداً ويعيد مقبضاً فيه stop و resolvePermission (نفس عقد agent.start).
  */
-async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, browserControl, trustedBrowserOrigins }, cwd, emit) {
+async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, browserControl, trustedBrowserOrigins, browserBudget }, cwd, emit) {
   const bin = resolveCodexBin();
   if (!bin) {
     emit({ type: 'spawn_error', text: 'لم يُعثر على Codex CLI. ثبّته: npm install -g @openai/codex' });
@@ -195,6 +200,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   let testspriteHarnessHost = null;
   let testspriteProgressWatcher = null;
   let effectivePrompt = prompt;
+  const actionBudget = browserBudget && typeof browserBudget.check === 'function'
+    ? browserBudget : browserpolicy.createActionBudget();
   // طلب المستخدم الصريح لمتصفح خارجي في رسالة هذا الدور يعطّل حاجب browserguard (قرار مالك)
   const allowExternalBrowser = promptRequestsExternalBrowser(prompt);
   if (browserControl !== false) try {
@@ -204,10 +211,20 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       openPreview: (url) => emit({ type: 'preview_open', url }),
       // أفعال المتصفح (نقر/كتابة/اختيار/مفتاح) تمرّ بمربع الإذن العربي نفسه — Codex لا
       // يبوّب نداءات MCP، فنبوّبها هنا (نفس قناة أذونات الأوامر: emit + resolvePermission).
-      // bypassPermissions أو «موافقة دائمة» للأداة يعفيان. رفض ⇒ لا يُنفَّذ الفعل.
-      requestPermission: (toolName, input, access, neverAlways, target, currentUrl) => new Promise((resolve) => {
+      // الفعل الحسّاس وميزانية الأفعال يتجاوزان «الموافقة الدائمة» ووضع التحكم؛ bypassPermissions وحده يعفيهما.
+      requestPermission: (toolName, input, access, neverAlways, target, currentUrl, pageContext, rawInput) => new Promise((resolve) => {
+        const policyInput = rawInput && typeof rawInput === 'object' ? rawInput : input;
+        const budgetStatus = actionBudget.check(toolName);
+        const sensitive = browserpolicy.isSensitiveAction(toolName, policyInput, pageContext);
+        const leakRisk = browserpolicy.hasLeakRisk(browserpolicy.leakValueForTool(toolName, policyInput));
+        const forcePrompt = sensitive || browserpolicy.requiresExplicitApproval(toolName)
+          || leakRisk || (budgetStatus.impacting && !budgetStatus.allowed);
         if (shouldAutoApproveMcp(access, browserControl, permissionMode,
-          alwaysAllowed.has(toolName), neverAlways, toolName, target, trustedBrowserOrigins, currentUrl)) { resolve(true); return; }
+          alwaysAllowed.has(toolName), neverAlways, toolName, target, trustedBrowserOrigins, currentUrl,
+          policyInput, pageContext, budgetStatus)) {
+          actionBudget.consume(toolName);
+          resolve(true); return;
+        }
         const permId = 'cxmcp_' + (++mcpPermSeq) + '_' + Math.random().toString(36).slice(2, 6);
         const browserClass = browserorigin.classifyBrowserTool(toolName);
         const targetTrusted = browserorigin.isTrusted(target, trustedBrowserOrigins);
@@ -217,11 +234,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         const originTrust = browserControl === true
           && (browserClass === 'navigate' || browserClass === 'act')
           && (!targetTrusted || (browserClass === 'act' && !currentTrusted));
-        mcpPerms.set(permId, { resolve, tool: toolName, neverAlways: !!neverAlways, originTrust, origin });
+        const policyDetail = browserpolicy.permissionDetail(toolName, policyInput, pageContext, budgetStatus);
+        mcpPerms.set(permId, {
+          resolve, tool: toolName, neverAlways: !!neverAlways || forcePrompt, originTrust, origin,
+          budgetAction: budgetStatus.impacting, budgetExtend: budgetStatus.impacting && !budgetStatus.allowed,
+        });
         emit({
           type: 'permission_request', id: permId, tool: toolName, input: input || {},
-          detail: originTrust ? browserorigin.trustPrompt(toolName, trustTarget) + (trustTarget !== target ? '\nوجهة الفعل: ' + target : '') + '\n\nتفاصيل الفعل:\n' + JSON.stringify(input || {}, null, 2).slice(0, 8000) : '',
-          turnEligible: false, alwaysEligible: originTrust ? !!origin : !neverAlways,
+          detail: [originTrust ? browserorigin.trustPrompt(toolName, trustTarget) + (trustTarget !== target ? '\nوجهة الفعل: ' + target : '') : '',
+            policyDetail, 'تفاصيل الفعل:\n' + JSON.stringify(input || {}, null, 2).slice(0, 8000)].filter(Boolean).join('\n\n'),
+          turnEligible: false, alwaysEligible: originTrust ? !!origin : (!neverAlways && !forcePrompt),
           alwaysLabel: originTrust ? 'ثق بالنطاق لهذه الجلسة' : '', originTrust,
         });
       }),
@@ -232,11 +254,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // التسليم البشري (browser_handoff): يبثّ شريط الاستلام للواجهة وينتظر ردّها عبر
       // resolveHandoff (‏satr:handoffDone). بعد الحسم يبثّ handoff_end فيختفي الشريط حتى
       // لو جاء الحسم من إيقاف الدور. startHandoff/endHandoff في يد codexmcp (نظير أداة SDK).
-      requestHandoff: (reason) => {
+      requestHandoff: (reason, meta) => {
         const id = 'ho_cx_' + (++handoffSeq) + '_' + Math.random().toString(36).slice(2, 6);
         return new Promise((resolve) => {
           pendingHandoffs.set(id, { resolve });
-          emit({ type: 'handoff_request', id, reason });
+          emit({ type: 'handoff_request', id, reason, mode: meta && meta.mode === 'step' ? 'step' : 'full' });
         }).then((done) => { emit({ type: 'handoff_end', id }); return done; });
       },
     });
@@ -658,6 +680,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     for (const [permId, info] of mcpPerms) { try { info.resolve(false); } catch {} mcpPerms.delete(permId); }
     // فكّ أي تسليم بشري معلّق بالإلغاء (متابعة codexmcp تنهي التسليم وتصفّر السجلات)
     for (const [hid, info] of pendingHandoffs) { try { info.resolve(false); } catch {} pendingHandoffs.delete(hid); }
+    preview.clearSecretTransfers();
     try { proc.stdin.end(); } catch {}
     setTimeout(() => { try { proc.kill(); } catch {} }, 500);
     if (mcpHost) { try { mcpHost.stop(); } catch {} mcpHost = null; } // أوقِف خادم رؤية الويب MCP
@@ -771,6 +794,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       const mcp = mcpPerms.get(id);
       if (mcp) {
         mcpPerms.delete(id);
+        if (allow && mcp.budgetExtend) actionBudget.extend();
+        if (allow && mcp.budgetAction && !actionBudget.consume(mcp.tool).allowed) {
+          try { mcp.resolve(false); } catch {}
+          return true;
+        }
         if (allow && always && mcp.originTrust && mcp.origin && trustedBrowserOrigins instanceof Set) {
           trustedBrowserOrigins.add(mcp.origin);
         } else if (allow && always && !mcp.neverAlways) alwaysAllowed.add(mcp.tool);
@@ -796,6 +824,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     // إيقاف: مقاطعة الدور + رفض الأذونات المعلّقة + إنهاء العملية
     async stop() {
       stopping = true;
+      preview.clearSensitiveState();
       for (const [permId, info] of perms) {
         try { respond(info.serverId, { decision: 'cancel' }); } catch {}
         perms.delete(permId);

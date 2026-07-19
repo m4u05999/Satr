@@ -17,7 +17,9 @@ const NAVIGATE_TOOLS = new Set([
 ]);
 const ACT_TOOLS = new Set([
   'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_evaluate',
+  'browser_fill_form', 'browser_transfer_field', 'browser_request_secret',
 ]);
+const HANDOFF_TOOLS = new Set(['browser_handoff', 'browser_handoff_step']);
 
 function bareToolName(name) {
   return String(name || '').replace(/^mcp__satr-terminal__/, '');
@@ -63,7 +65,7 @@ function classifyBrowserTool(name) {
   if (READ_TOOLS.has(bare)) return 'read';
   if (NAVIGATE_TOOLS.has(bare)) return 'navigate';
   if (ACT_TOOLS.has(bare)) return 'act';
-  if (bare === 'browser_handoff') return 'handoff';
+  if (HANDOFF_TOOLS.has(bare)) return 'handoff';
   return null;
 }
 
@@ -79,7 +81,9 @@ function actionLabel(name) {
     open_preview: 'فتح المعاينة', browser_navigate: 'التنقّل', browser_back: 'الرجوع',
     browser_forward: 'التقدّم', browser_click: 'النقر', browser_type: 'الكتابة',
     browser_select_option: 'اختيار عنصر', browser_press_key: 'ضغط مفتاح',
-    browser_evaluate: 'تنفيذ JavaScript تشخيصي',
+    browser_evaluate: 'تنفيذ JavaScript تشخيصي', browser_fill_form: 'تعبئة نموذج',
+    browser_transfer_field: 'نقل قيمة سرية بين حقلين', browser_request_secret: 'طلب إدخال سر في حقل',
+    browser_handoff_step: 'تسليم خطوة للمستخدم',
   };
   const bare = bareToolName(name);
   return labels[bare] || bare || 'فعل متصفح';

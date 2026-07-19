@@ -26,6 +26,7 @@ const term = require('./term');
 const termjobs = require('./termjobs');
 const bgprocs = require('./bgprocs');
 const browserorigin = require('./browserorigin');
+const browserpolicy = require('./browserpolicy');
 
 const PROTOCOL_VERSION = '2024-11-05'; // نسخة MCP التي يتفاوض عليها العميل (rmcp يقبلها)
 const SERVER_INFO = { name: 'satr-preview', title: 'Satr Preview', version: '1.0.0' };
@@ -59,11 +60,18 @@ function whyClosed(err, extra) {
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
 
-const PERMISSION_KEYS = new Set(['url', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page', 'expression', 'width', 'height', 'command', 'label', 'id', 'tail_lines']);
+const PERMISSION_KEYS = new Set(['url', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page', 'expression', 'width', 'height', 'command', 'label', 'id', 'tail_lines', 'from_ref', 'to_ref', 'transfer_id', 'field_ref', 'reason', 'resume_hint', 'fields']);
 function permissionInput(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const out = {};
   for (const [key, item] of Object.entries(value)) {
+    if (key === 'fields' && Array.isArray(item)) {
+      out.fields = item.slice(0, 20).map((field) => ({
+        ref: String((field && (field.ref || field.selector)) || '').slice(0, 1000),
+        value: String((field && field.value) || '').slice(0, 4000),
+      }));
+      continue;
+    }
     if (!PERMISSION_KEYS.has(key)) continue;
     if (typeof item === 'string') out[key] = item.slice(0, 4000);
     else if (typeof item === 'boolean') out[key] = item;
@@ -385,6 +393,56 @@ function buildTools(deps) {
       },
     },
     {
+      name: 'browser_fill_form',
+      description: 'عبّئ عدة حقول غير سرّية دفعة واحدة من سياق المهمة. القيم ظاهرة في مربع الإذن، ولا تُرسل النموذج. السر مرفوض ويوجّه لأدوات النقل/الإدخال اليدوي.',
+      inputSchema: { type: 'object', properties: {
+        fields: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: {
+          ref: { type: 'string', description: 'ref أو مُحدِّد CSS' }, value: { type: 'string', maxLength: 4000 },
+        }, required: ['ref', 'value'] } },
+      }, required: ['fields'] },
+      handler: async (args) => {
+        const r = await preview.fillForm(args && args.fields);
+        if (!r || !r.ok) {
+          const why = r && r.error === 'secret' ? 'رُفضت قيمة سرّية. استخدم browser_transfer_field أو browser_request_secret.'
+            : whyClosed(r && r.error, 'تعذّرت تعبئة النموذج');
+          return textResult(why, true);
+        }
+        return textResult('عُبّئ ' + r.filled + ' حقول غير سرّية. لم يُرسل النموذج.');
+      },
+    },
+    {
+      name: 'browser_transfer_field',
+      description: 'انقل قيمة حقل سرّية إلى حقل آخر دون أن يراها النموذج. في الصفحة نفسها مرّر from_ref وto_ref. بين صفحتين التقط from_ref لتحصل على transfer_id مبهم، ثم الصقه مع to_ref. لا تُعاد القيمة.',
+      inputSchema: { type: 'object', properties: {
+        from_ref: { type: 'string' }, to_ref: { type: 'string' }, transfer_id: { type: 'string' },
+      } },
+      handler: async (args) => {
+        const r = await preview.transferField(args && args.from_ref, args && args.to_ref, args && args.transfer_id);
+        if (!r || !r.ok) return textResult('تعذّر نقل القيمة السرّية (' + ((r && r.error) || 'خطأ') + ').', true);
+        return textResult(JSON.stringify(r.stored
+          ? { ok: true, stored: true, transfer_id: r.transfer_id }
+          : { ok: true, moved: true }));
+      },
+    },
+    {
+      name: 'browser_request_secret',
+      description: 'اطلب من المستخدم إدخال قيمة سرّية بيده في حقل المعاينة. يبرز الحقل ويظهر شريط عربي، وتعود filled فقط بلا القيمة.',
+      inputSchema: { type: 'object', properties: {
+        field_ref: { type: 'string', description: 'ref أو مُحدِّد CSS للحقل' },
+        reason: { type: 'string', maxLength: 300, description: 'سبب موجز بلا أي قيمة سرّية' },
+      }, required: ['field_ref', 'reason'] },
+      handler: async (args) => {
+        const r = await preview.requestSecret(args && args.field_ref, args && args.reason);
+        if (!r || !r.ok) {
+          const why = r && r.error === 'cancelled' ? 'ألغى المستخدم إدخال السر.'
+            : r && r.error === 'empty' ? 'ضغط المستخدم «تم» لكن الحقل بقي فارغاً.'
+            : 'تعذّر طلب السر (' + ((r && r.error) || 'خطأ') + ').';
+          return textResult(why, true);
+        }
+        return textResult(JSON.stringify({ ok: true, filled: true }));
+      },
+    },
+    {
       // التسليم البشري (دفعة «تحكم الوكيل الكامل» — تكافؤ أداة SDK في agent.js):
       // startHandoff يعلّق كل أدوات المعاينة في preview.js المشترك، requestHandoff (من
       // codex.js) يبثّ الشريط وينتظر «استلمت»، وendHandoff يصفّر سجلّي console/الشبكة.
@@ -409,6 +467,26 @@ function buildTools(deps) {
         finally { preview.endHandoff(); } // يصفّر سجلّي console/الشبكة — لا يقرأ الوكيل ما جرى أثناء التسليم
         if (!done) return textResult('ألغى المستخدم التسليم ولم تكتمل الخطوة. لا تكرر الطلب فوراً — اسأل المستخدم عن البديل.', true);
         return textResult('استلم المستخدم وأكمل الخطوة بيده. الصفحة قد تغيّرت — خذ browser_snapshot جديداً قبل أي فعل.');
+      },
+    },
+    {
+      name: 'browser_handoff_step',
+      description: 'سلّم للمستخدم خطوة واحدة محددة داخل المعاينة ثم استأنف بسلاسة. أثناء الخطوة أدوات الوكيل معلّقة؛ بعد «تم» خذ snapshot جديداً واتبع resume_hint.',
+      inputSchema: { type: 'object', properties: {
+        reason: { type: 'string', maxLength: 300 }, resume_hint: { type: 'string', maxLength: 500 },
+      }, required: ['reason', 'resume_hint'] },
+      handler: async (args) => {
+        if (!requestHandoff) return textResult('التسليم التعاوني غير متاح في هذا السياق.', true);
+        const reason = String((args && args.reason) || '').replace(CONTROL_CHARS_RE, ' ').trim().slice(0, 300);
+        const resumeHint = String((args && args.resume_hint) || '').replace(CONTROL_CHARS_RE, ' ').trim().slice(0, 500);
+        if (!reason || !resumeHint) return textResult('reason وresume_hint مطلوبان.', true);
+        const st = preview.startHandoff();
+        if (!st.ok) return textResult(st.error === 'closed' ? 'المعاينة غير مفتوحة.' : 'تسليم آخر جارٍ.', true);
+        let done = false;
+        try { done = !!(await requestHandoff(reason, { mode: 'step' })); }
+        finally { preview.endHandoff(); }
+        if (!done) return textResult('ألغى المستخدم الخطوة ولم تكتمل.', true);
+        return textResult('اكتملت الخطوة بيد المستخدم. خذ browser_snapshot جديداً ثم استأنف من: ' + resumeHint);
       },
     },
     {
@@ -523,6 +601,9 @@ function start(deps) {
         const tool = toolMap.get(String(name));
         if (!tool) return isNotification ? null : rpcError(id, -32602, 'أداة غير معروفة: ' + name);
         const input = (params && params.arguments) || {};
+        if (browserpolicy.hasVisibleSecret(tool.name, input)) {
+          return rpcOk(id, textResult('رُفض تمرير السر كنص. استخدم browser_transfer_field أو browser_request_secret.', true));
+        }
         let allowed = tool.access === 'read';
         if (!allowed && requestPermission) {
           const currentUrl = typeof preview.currentUrl === 'function' ? preview.currentUrl() : null;
@@ -531,12 +612,14 @@ function start(deps) {
             ? preview.navigationTarget(direction) : null;
           let target = tool.access === 'browser'
             ? browserorigin.targetForTool(tool.name, input, currentUrl, navigationTarget) : null;
-          if (tool.browserClass === 'act' && typeof preview.browserTarget === 'function') {
-            target = await preview.browserTarget(tool.name, input) || target;
-          }
+          const pageContext = tool.browserClass === 'act' && typeof preview.browserActionContext === 'function'
+            ? await preview.browserActionContext(tool.name, input) : { currentUrl, targetUrl: target };
+          if (pageContext && pageContext.targetUrl) target = pageContext.targetUrl;
+          else if (tool.browserClass === 'act' && typeof preview.browserTarget === 'function') target = await preview.browserTarget(tool.name, input) || target;
           try {
             allowed = await requestPermission(
-              tool.name, permissionInput(input), tool.access, tool.neverAlways === true, target, currentUrl
+              tool.name, permissionInput(browserpolicy.safePermissionInput(tool.name, input)), tool.access,
+              tool.neverAlways === true, target, currentUrl, pageContext, input
             );
           } catch (e) { allowed = false; }
         }

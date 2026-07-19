@@ -21,6 +21,8 @@ const SUITE = [
   'test:codexmcp',
   'test:browserguard',
   'test:browserorigin',
+  'test:browserpolicy',
+  'test:browser-platform-live',
   'test:execguard',
   'test:termjobs',
   'test:envbrief',

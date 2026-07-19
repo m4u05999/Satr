@@ -1,12 +1,17 @@
 const violations = [];
 const calls = [];
+const secretCalls = [];
+let stopCalls = 0;
 let eventHandler = null;
+let previewHandler = null;
 window.__handoffLiveProgress = 'loading';
 
 window.satr = {
   handoffDone: async (id, done) => { calls.push({ id, done }); return { ok: true }; },
+  secretDone: async (id, done) => { secretCalls.push({ id, done }); return { ok: true }; },
+  stop: async () => { stopCalls += 1; return { ok: true }; },
   onEvent: (callback) => { eventHandler = callback; },
-  onPreview: () => {},
+  onPreview: (callback) => { previewHandler = callback; },
   previewBounds: () => {},
   previewOpen: async () => ({ ok: true }),
   previewClose: async () => ({ ok: true }),
@@ -43,10 +48,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // محاكاة قناة satr:event مع استعمال الواجهتين العامتين للمكوّن نفسه؛ الفحص الساكن في
     // الاختبار يربط هذا العقد بمجرى app.js الحقيقي وبـ endRun الحقيقي.
     window.satr.onEvent((event) => {
-      if (event.type === 'handoff_request' && event.id) panel.showHandoff(event.id, event.reason);
+      if (event.type === 'handoff_request' && event.id) panel.showHandoff(event.id, event.reason, event.mode);
       else if (event.type === 'handoff_end') panel.hideHandoff();
     });
     const emit = (event) => eventHandler(event);
+    const emitPreview = (event) => previewHandler(event);
 
     window.__handoffLiveProgress = 'request';
     emit({ type: 'handoff_request', id: 'ho_live_done', reason: 'سجّل دخولك إلى GitHub ثم عد' });
@@ -90,14 +96,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     done.click();
     assert(calls.length === 2, 'بقي معرّف تسليم قابل للرد بعد endRun.');
 
+    window.__handoffLiveProgress = 'step';
+    emit({ type: 'handoff_request', id: 'ho_live_step', mode: 'step', reason: 'أدخل رمز DNS' });
+    await frames(2);
+    assert(root.getElementById('hoPrefix').textContent === 'أكمل:', 'التسليم المرحلي لا يعرض «أكمل:».');
+    assert(done.textContent.includes('تم'), 'زر التسليم المرحلي لا يعرض «تم».');
+    done.click();
+    await frames(2);
+    assert(calls.length === 3 && calls[2].id === 'ho_live_step' && calls[2].done === true,
+      'التسليم المرحلي لم يُحسم عبر handoffDone.');
+
+    window.__handoffLiveProgress = 'secret';
+    emitPreview({ type: 'secret_request', id: 'secret_0123456789abcdef0123456789abcdef', reason: 'مفتاح SMTP' });
+    await frames(2);
+    const secretBar = root.getElementById('pvSecret');
+    assert(secretBar.classList.contains('show') && root.getElementById('secretReason').textContent === 'مفتاح SMTP',
+      'طلب السر لم يظهر في شريط المعاينة.');
+    root.getElementById('secretDone').click();
+    await frames(2);
+    assert(secretCalls.length === 1 && secretCalls[0].done === true && !secretBar.classList.contains('show'),
+      'شريط السر لم يرسل boolean فقط أو لم يختفِ.');
+
+    window.__handoffLiveProgress = 'trace';
+    root.getElementById('pvUrl').blur();
+    emitPreview({ type: 'nav', url: 'https://app.brevo.com/settings', canGoBack: false, canGoForward: false });
+    emitPreview({ type: 'title', title: 'Brevo' });
+    emitPreview({ type: 'agent_activity', tool: 'browser_fill_form' });
+    await frames(2);
+    const trace = root.getElementById('pvTaskTrace');
+    assert(trace.classList.contains('show') && /Brevo/.test(root.getElementById('traceList').textContent),
+      'أثر مهمة الإعداد لم يعرض الصفحة والفعل: ' + trace.className + ' / ' + root.getElementById('traceList').textContent);
+    root.getElementById('traceStop').click();
+    await frames(2);
+    assert(stopCalls === 1, 'زر إيقاف مهمة الإعداد لم يستدع stop.');
+
     assert(violations.length === 0, 'رُصد securitypolicyviolation.');
     window.__handoffLiveProgress = 'complete';
-    window.__handoffLiveResult = { pass: true, calls, violations };
+    window.__handoffLiveResult = { pass: true, calls, secretCalls, stopCalls, violations };
   } catch (error) {
     window.__handoffLiveResult = {
       pass: false,
       error: error && error.stack ? error.stack : String(error),
       calls,
+      secretCalls,
+      stopCalls,
       violations,
     };
   }

@@ -157,9 +157,13 @@ const BROWSER_AUTO_TOOLS = new Set([
   'mcp__satr-terminal__browser_perf',
   'mcp__satr-terminal__browser_back',
   'mcp__satr-terminal__browser_forward',
+  'mcp__satr-terminal__browser_fill_form',
+  'mcp__satr-terminal__browser_transfer_field',
+  'mcp__satr-terminal__browser_request_secret',
   // التسليم البشري: أثره الوحيد شريط استلام يقرّره المستخدم بنفسه (استلمت/إلغاء) —
   // منح القيادة للمستخدم فعل آمن fail-safe فيدخل مجموعة التفويض.
   'mcp__satr-terminal__browser_handoff',
+  'mcp__satr-terminal__browser_handoff_step',
 ]);
 // وضع auto (الموجة 4): المنطق النقي وقائمة الأدوات الآمنة في autogate.js (قابل للاختبار
 // مستقلاً عن electron/SDK — نمط diff.js/inject.js). autoNeedsPrompt يقرّر إجبار المربع.
@@ -168,6 +172,7 @@ const { autoNeedsPrompt, decideAutoApproval } = require('./autogate');
 // اعتراض أوامر فتح متصفح النظام + فحص طلب المستخدم الصريح الذي يعطّل الاعتراض للدور.
 const browserguard = require('./browserguard');
 const browserorigin = require('./browserorigin');
+const browserpolicy = require('./browserpolicy');
 const execguard = require('./execguard');
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
@@ -408,7 +413,7 @@ function buildQuestionAnswer(originalInput, selections) {
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
  */
-async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs, browserControl, trustedBrowserOrigins }, cwd, emit, internalPolicy) {
+async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs, browserControl, trustedBrowserOrigins, browserBudget }, cwd, emit, internalPolicy) {
   const policyMode = internalPolicy && internalPolicy.mode;
   const isolatedPolicy = policyMode === 'text-only' || policyMode === 'read-only-planner';
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
@@ -420,6 +425,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   const turnAllowed = new Set(); // موافقات مؤقتة لهذا الدور فقط؛ تُصفّر عند result/stop
   const pendingQuestions = new Map(); // id → { resolve, input } لأسئلة AskUserQuestion المعلّقة
   const pendingHandoffs = new Map(); // id → { resolve } لتسليمات browser_handoff بانتظار «استلمت»
+  const actionBudget = browserBudget && typeof browserBudget.check === 'function'
+    ? browserBudget : browserpolicy.createActionBudget();
   // طلب المستخدم الصريح لمتصفح خارجي في رسالة هذا الدور يعطّل اعتراض browserguard (قرار مالك)
   const allowExternalBrowser = browserguard.promptRequestsExternalBrowser(prompt);
   const taskTitles = new Map(); // task_id → عنوان؛ يربط رسائل Claude الجزئية بلا افتراضات
@@ -599,44 +606,70 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // قناة إخراج صامتة. هذا الحارس يسبق alwaysAllowed عمداً؛ الموافقة الموسّعة هنا
       // تثق بالـ origin لعمر التطبيق ولا تمنح الأداة نفسها إعفاءً عاماً.
       const browserClass = browserorigin.classifyBrowserTool(toolName);
-      if (browserControl === true && browserClass) {
-        if (permissionMode === 'bypassPermissions' || browserClass === 'read' || browserClass === 'handoff') {
-          return { behavior: 'allow', updatedInput: input };
+      if (browserClass) {
+        if (browserpolicy.hasVisibleSecret(toolName, input)) {
+          return { behavior: 'deny', message: 'رُفض تمرير السر كنص. استخدم browser_transfer_field أو browser_request_secret.' };
         }
+        if (permissionMode === 'bypassPermissions') return { behavior: 'allow', updatedInput: input };
         const currentUrl = typeof preview.currentUrl === 'function' ? preview.currentUrl() : null;
         const bare = String(toolName || '').replace(/^mcp__satr-terminal__/, '');
         const direction = bare === 'browser_back' ? 'back' : bare === 'browser_forward' ? 'forward' : '';
         const navigationTarget = direction && typeof preview.navigationTarget === 'function'
           ? preview.navigationTarget(direction) : null;
         let target = browserorigin.targetForTool(toolName, input, currentUrl, navigationTarget);
-        if (browserClass === 'act' && typeof preview.browserTarget === 'function') {
-          target = await preview.browserTarget(toolName, input) || target;
-        }
+        const pageContext = browserClass === 'act' && typeof preview.browserActionContext === 'function'
+          ? await preview.browserActionContext(toolName, input) : { currentUrl, targetUrl: target };
+        if (pageContext && pageContext.targetUrl) target = pageContext.targetUrl;
+        else if (browserClass === 'act' && typeof preview.browserTarget === 'function') target = await preview.browserTarget(toolName, input) || target;
+        const budgetStatus = actionBudget.check(toolName);
+        const sensitive = browserpolicy.isSensitiveAction(toolName, input, pageContext);
+        const leakRisk = browserpolicy.hasLeakRisk(browserpolicy.leakValueForTool(toolName, input));
+        const forcePrompt = sensitive || browserpolicy.requiresExplicitApproval(toolName)
+          || leakRisk || (budgetStatus.impacting && !budgetStatus.allowed);
         const trustedTarget = browserorigin.isTrusted(target, trustedBrowserOrigins);
         const trustedCurrent = browserorigin.isTrusted(currentUrl, trustedBrowserOrigins);
-        if (trustedTarget && (browserClass !== 'act' || trustedCurrent)) {
+        const trustedAction = trustedTarget && (browserClass !== 'act' || trustedCurrent);
+        if (browserControl === true && !forcePrompt
+          && (browserClass === 'read' || browserClass === 'handoff' || trustedAction)) {
+          actionBudget.consume(toolName);
           return { behavior: 'allow', updatedInput: input };
         }
-        const trustTarget = trustedTarget ? currentUrl : target;
-        const origin = browserorigin.originOf(trustTarget);
-        const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
-        const requester = typeof agentID === 'string'
-          ? agentID.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 80) : '';
-        emit({
-          type: 'permission_request', id, tool: toolName, input, requester,
-          detail: browserorigin.trustPrompt(toolName, trustTarget) + (trustTarget !== target ? '\nوجهة الفعل: ' + target : '') + '\n\nتفاصيل الفعل:\n' + JSON.stringify(input || {}, null, 2).slice(0, 8000), turnEligible: false,
-          alwaysEligible: !!origin, alwaysLabel: 'ثق بالنطاق لهذه الجلسة', originTrust: true,
-        });
-        return new Promise((resolve) => {
-          pending.set(id, { resolve, toolName, input, turnEligible: false, originTrust: true, origin });
-          if (signal) {
-            signal.addEventListener('abort', () => {
-              if (pending.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
-            }, { once: true });
-          }
-        });
+        if (browserControl === true || forcePrompt) {
+          const trustTarget = trustedTarget ? currentUrl : target;
+          const origin = browserorigin.originOf(trustTarget);
+          const originTrust = browserControl === true
+            && (browserClass === 'navigate' || browserClass === 'act') && !trustedAction;
+          const policyDetail = browserpolicy.permissionDetail(toolName, input, pageContext, budgetStatus);
+          const trustDetail = browserControl === true && !trustedAction
+            ? browserorigin.trustPrompt(toolName, trustTarget) + (trustTarget !== target ? '\nوجهة الفعل: ' + target : '') : '';
+          const safeInput = browserpolicy.safePermissionInput(toolName, input);
+          const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
+          const requester = typeof agentID === 'string'
+            ? agentID.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 80) : '';
+          emit({
+            type: 'permission_request', id, tool: toolName, input: safeInput, requester,
+            detail: [trustDetail, policyDetail, 'تفاصيل الفعل:\n' + JSON.stringify(safeInput || {}, null, 2).slice(0, 8000)].filter(Boolean).join('\n\n'),
+            turnEligible: false, alwaysEligible: originTrust && !!origin,
+            alwaysLabel: originTrust ? 'ثق بالنطاق لهذه الجلسة' : '', originTrust,
+          });
+          return new Promise((resolve) => {
+            pending.set(id, {
+              resolve, toolName, input, turnEligible: false, originTrust, origin,
+              neverAlways: forcePrompt,
+              budgetAction: budgetStatus.impacting, budgetExtend: budgetStatus.impacting && !budgetStatus.allowed,
+            });
+            if (signal) {
+              signal.addEventListener('abort', () => {
+                if (pending.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
+              }, { once: true });
+            }
+          });
+        }
       }
-      if (turnAllowed.has(toolName)) return { behavior: 'allow', updatedInput: input };
+      if (turnAllowed.has(toolName)) {
+        if (browserClass) actionBudget.consume(toolName);
+        return { behavior: 'allow', updatedInput: input };
+      }
       const isReadOnly = PORTABLE_SKILL_TOOLS.has(toolName) || READ_ONLY_VERIFY_TOOLS.has(toolName)
         || MEMORY_PROPOSAL_TOOLS.has(toolName) || BACKGROUND_READ_TOOLS.has(toolName);
       const decision = externalBrowserCmd ? 'ask' : decideAutoApproval(toolName, {
@@ -644,7 +677,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         readOnly: isReadOnly,
         browserTool: BROWSER_AUTO_TOOLS.has(toolName),
       });
-      if (decision === 'allow') return { behavior: 'allow', updatedInput: input };
+      if (decision === 'allow') {
+        if (browserClass) actionBudget.consume(toolName);
+        return { behavior: 'allow', updatedInput: input };
+      }
       const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
       const requester = typeof agentID === 'string'
         ? agentID.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 80) : '';
@@ -652,7 +688,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       emit({ type: 'permission_request', id, tool: toolName, input, requester, turnEligible,
         alwaysEligible: !NEVER_ALWAYS_TOOLS.has(toolName) });
       return new Promise((resolve) => {
-        pending.set(id, { resolve, toolName, input, turnEligible });
+        pending.set(id, { resolve, toolName, input, turnEligible, budgetAction: !!browserClass });
         if (signal) {
           signal.addEventListener('abort', () => {
             if (pending.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
@@ -1210,7 +1246,61 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         const r = await preview.forward();
         return r && r.ok
           ? { content: [{ type: 'text', text: browserActionProof('تم طلب التقدّم' + (r.url ? ' إلى ' + r.url : '') + '.', r) }] }
-          : { content: [{ type: 'text', text: 'تعذّر التقدّم (' + ((r && r.error) || 'خطأ') + ').' }], isError: true };
+        : { content: [{ type: 'text', text: 'تعذّر التقدّم (' + ((r && r.error) || 'خطأ') + ').' }], isError: true };
+      }
+    );
+    const fillFormTool = sdk.tool(
+      'browser_fill_form',
+      'عبّئ عدة حقول غير سرّية دفعة واحدة من سياق المهمة. القيم ظاهرة في مربع الإذن، ولا تُرسل النموذج. إذا احتوت قيمة سراً فستُرفض؛ استخدم browser_transfer_field أو browser_request_secret.',
+      {
+        fields: z.array(z.object({
+          ref: z.string().describe('ref من browser_snapshot أو مُحدِّد CSS'),
+          value: z.string().max(4000).describe('قيمة غير سرّية يعرفها الوكيل من سياق المهمة'),
+        })).min(1).max(20),
+      },
+      async (args) => {
+        const r = await preview.fillForm(args && args.fields);
+        if (!r || !r.ok) {
+          const why = r && r.error === 'secret'
+            ? 'رُفضت قيمة سرّية. استخدم browser_transfer_field أو browser_request_secret.'
+            : r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : 'تعذّرت تعبئة النموذج (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: 'عُبّئ ' + r.filled + ' حقول غير سرّية. لم يُرسل النموذج.' }] };
+      }
+    );
+    const transferFieldTool = sdk.tool(
+      'browser_transfer_field',
+      'انقل قيمة حقل سرّية إلى حقل آخر من دون أن يراها النموذج. في الصفحة نفسها مرّر from_ref وto_ref. بين صفحتين: مرّر from_ref وحده لتحصل على transfer_id مبهم، ثم انتقل ومرّر transfer_id مع to_ref. لا تُعاد القيمة أبداً.',
+      {
+        from_ref: z.string().optional().describe('حقل المصدر: ref أو مُحدِّد CSS'),
+        to_ref: z.string().optional().describe('حقل الوجهة: ref أو مُحدِّد CSS'),
+        transfer_id: z.string().optional().describe('المعرّف المبهم الذي أعادته مرحلة الالتقاط بين صفحتين'),
+      },
+      async (args) => {
+        const r = await preview.transferField(args && args.from_ref, args && args.to_ref, args && args.transfer_id);
+        if (!r || !r.ok) return { content: [{ type: 'text', text: 'تعذّر نقل القيمة السرّية (' + ((r && r.error) || 'خطأ') + ').' }], isError: true };
+        if (r.stored) return { content: [{ type: 'text', text: JSON.stringify({ ok: true, stored: true, transfer_id: r.transfer_id }) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, moved: true }) }] };
+      }
+    );
+    const requestSecretTool = sdk.tool(
+      'browser_request_secret',
+      'اطلب من المستخدم إدخال قيمة سرّية بيده في حقل المعاينة. يبرز الحقل ويظهر شريط عربي؛ تبقى أدوات الوكيل معلّقة حتى «تم»، والنتيجة filled فقط بلا القيمة.',
+      {
+        field_ref: z.string().describe('ref من browser_snapshot أو مُحدِّد CSS للحقل'),
+        reason: z.string().max(300).describe('سبب موجز يظهر للمستخدم، بلا أي قيمة سرّية'),
+      },
+      async (args) => {
+        const r = await preview.requestSecret(args && args.field_ref, args && args.reason);
+        if (!r || !r.ok) {
+          const why = r && r.error === 'cancelled' ? 'ألغى المستخدم إدخال السر.'
+            : r && r.error === 'empty' ? 'ضغط المستخدم «تم» لكن الحقل بقي فارغاً.'
+            : 'تعذّر طلب السر (' + ((r && r.error) || 'خطأ') + ').';
+          return { content: [{ type: 'text', text: why }], isError: true };
+        }
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, filled: true }) }] };
       }
     );
     // أداة browser_handoff (دفعة «تحكم الوكيل الكامل» — التسليم البشري): حين تحتاج خطوة
@@ -1246,8 +1336,30 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         return { content: [{ type: 'text', text: 'استلم المستخدم وأكمل الخطوة بيده. الصفحة قد تغيّرت — خذ browser_snapshot جديداً قبل أي فعل.' }] };
       }
     );
+    const handoffStepTool = sdk.tool(
+      'browser_handoff_step',
+      'سلّم للمستخدم خطوة واحدة محددة داخل المعاينة ثم استأنف بسلاسة. أثناء الخطوة كل أدوات الوكيل معلّقة؛ بعد «تم» خذ browser_snapshot جديداً واتبع resume_hint.',
+      {
+        reason: z.string().max(300).describe('الخطوة التي يكملها المستخدم — تظهر بعد «أكمل:»'),
+        resume_hint: z.string().max(500).describe('تلميح غير سري لما يفعله الوكيل بعد عودة القيادة'),
+      },
+      async (args) => {
+        const reason = String((args && args.reason) || '').replace(/[\u0000-\u001F\u007F]+/g, ' ').trim().slice(0, 300);
+        const resumeHint = String((args && args.resume_hint) || '').replace(/[\u0000-\u001F\u007F]+/g, ' ').trim().slice(0, 500);
+        if (!reason || !resumeHint) return { content: [{ type: 'text', text: 'reason وresume_hint مطلوبان.' }], isError: true };
+        const st = preview.startHandoff();
+        if (!st.ok) return { content: [{ type: 'text', text: st.error === 'closed' ? 'المعاينة غير مفتوحة.' : 'تسليم آخر جارٍ.' }], isError: true };
+        const id = 'ho_step_' + Math.random().toString(36).slice(2);
+        emit({ type: 'handoff_request', id, reason, mode: 'step' });
+        const done = await new Promise((resolve) => { pendingHandoffs.set(id, { resolve }); });
+        preview.endHandoff();
+        emit({ type: 'handoff_end', id });
+        if (!done) return { content: [{ type: 'text', text: 'ألغى المستخدم الخطوة ولم تكتمل.' }], isError: true };
+        return { content: [{ type: 'text', text: 'اكتملت الخطوة بيد المستخدم. خذ browser_snapshot جديداً ثم استأنف من: ' + resumeHint }] };
+      }
+    );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, handoffTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }
@@ -1383,6 +1495,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     } finally {
       closeInput();
       turnAllowed.clear();
+      preview.clearSecretTransfers();
       if (testspriteProgressWatcher) { testspriteProgressWatcher.stop(); testspriteProgressWatcher = null; }
       if (testspriteHarnessHost) {
         const host = testspriteHarnessHost;
@@ -1412,9 +1525,17 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       const p = pending.get(id);
       if (!p) return false;
       pending.delete(id);
+      if (allow && p.budgetExtend) actionBudget.extend();
+      if (allow && p.budgetAction) {
+        const consumed = actionBudget.consume(p.toolName);
+        if (!consumed.allowed) {
+          p.resolve({ behavior: 'deny', message: 'بلغت ميزانية أفعال المتصفح؛ لم يُنفّذ الفعل.' });
+          return true;
+        }
+      }
       if (allow && always && p.originTrust && p.origin && trustedBrowserOrigins instanceof Set) {
         trustedBrowserOrigins.add(p.origin);
-      } else if (allow && always && !NEVER_ALWAYS_TOOLS.has(p.toolName)) alwaysAllowed.add(p.toolName);
+      } else if (allow && always && !p.neverAlways && !NEVER_ALWAYS_TOOLS.has(p.toolName)) alwaysAllowed.add(p.toolName);
       if (allow && turn && p.turnEligible) turnAllowed.add(p.toolName);
       p.resolve(allow
         ? { behavior: 'allow', updatedInput: p.input }
@@ -1445,6 +1566,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     // إيقاف حقيقي: مقاطعة النموذج + إنهاء الإدخال + رفض الأذونات والأسئلة المعلقة
     async stop() {
       turnAllowed.clear();
+      preview.clearSensitiveState();
       if (testspriteRequested) testsprite.scrubConfig(cwd);
       if (testspriteProgressWatcher) { testspriteProgressWatcher.stop(); testspriteProgressWatcher = null; }
       if (testspriteHarnessHost) {

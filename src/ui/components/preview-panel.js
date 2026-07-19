@@ -145,6 +145,25 @@ const previewSheet = sheet(`
     border-radius: var(--radius-md); padding: var(--space-1h) var(--space-4); font-size: 12.5px; cursor: pointer; flex: none; }
   #pvHandoff #hoCancel { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
     border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); cursor: pointer; flex: none; }
+  #pvSecret { display: none; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2h);
+    background: var(--gold-soft); border-bottom: 1px solid var(--gold-border); }
+  #pvSecret.show { display: flex; animation: pop var(--dur) var(--ease); }
+  #pvSecret .secret-text { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); unicode-bidi: plaintext; }
+  #pvSecret .secret-text b { color: var(--gold-strong); }
+  #pvSecret button { border-radius: var(--radius-md); padding: var(--space-1h) var(--space-3); cursor: pointer; flex: none; }
+  #secretDone { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600; }
+  #secretCancel { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); }
+  #pvTaskTrace { display: none; flex-direction: column; gap: var(--space-1); padding: var(--space-1h) var(--space-2h);
+    background: var(--surface-2); border-bottom: 1px solid var(--border-dim); }
+  #pvTaskTrace.show { display: flex; }
+  .trace-head { display: flex; align-items: center; gap: var(--space-2); font-size: 11.5px; color: var(--text-dim); }
+  .trace-head b { flex: 1; color: var(--text); }
+  #traceStop { border: 1px solid var(--red-border); background: var(--red-soft); color: var(--red);
+    border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); cursor: pointer; }
+  #traceList { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; max-height: 66px; overflow: auto; }
+  #traceList li { display: flex; gap: var(--space-2); min-width: 0; font-size: 10.5px; color: var(--text-faint); }
+  #traceList .trace-title { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #traceList .trace-action { flex: none; color: var(--gold-strong); }
   /* مساحة العرض: فارغة — WebContentsView الأصلية تُرسم فوقها بنفس المستطيل */
   #pvBox { flex: 1; position: relative; min-height: 0; }
   .pv-hint {
@@ -196,9 +215,19 @@ const MARKUP = `
   <!-- شريط التسليم البشري (browser_handoff): يظهر حين يسلّم الوكيل القيادة للمستخدم -->
   <div id="pvHandoff">
     <span class="ho-icon">🤝</span>
-    <span class="ho-text"><b>الوكيل يسلّمك القيادة:</b> <span id="hoReason"></span></span>
+    <span class="ho-text"><b id="hoPrefix">الوكيل يسلّمك القيادة:</b> <span id="hoReason"></span></span>
     <button id="hoDone" type="button" title="أكملتُ المطلوب — أعد القيادة للوكيل">استلمت ✓</button>
     <button id="hoCancel" type="button" title="إلغاء التسليم (يُبلَّغ الوكيل أن الخطوة لم تكتمل)">إلغاء</button>
+  </div>
+  <div id="pvSecret">
+    <span>🔐</span>
+    <span class="secret-text"><b>الوكيل يحتاج قيمة سرّية هنا:</b> <span id="secretReason"></span></span>
+    <button id="secretDone" type="button">تم ✓</button>
+    <button id="secretCancel" type="button">إلغاء</button>
+  </div>
+  <div id="pvTaskTrace">
+    <div class="trace-head"><b>أثر مهمة الإعداد</b><button id="traceStop" type="button">إيقاف المهمة</button></div>
+    <ol id="traceList"></ol>
   </div>
   <div id="pvBox">
     <div class="pv-hint" id="pvHint">
@@ -591,6 +620,64 @@ class SatrPreviewPanel extends HTMLElement {
     serverRestart.addEventListener('click', () => restartServerBtn.click());
     setInterval(() => { if (this.hasAttribute('open')) this.refreshServerStatus(); }, 5000);
 
+    // ---------- أثر مهمة الإعداد + إدخال السر بيد المستخدم ----------
+    const traceBox = $('pvTaskTrace'), traceList = $('traceList');
+    const traceEntries = [];
+    let traceActive = false;
+    let lastTitle = '';
+    const upsertTrace = (url, action) => {
+      if (!traceActive || !url) return;
+      let entry = traceEntries.find((item) => item.url === url);
+      if (!entry) {
+        entry = { url, title: lastTitle || url, action: action || 'زار الصفحة' };
+        traceEntries.push(entry);
+        if (traceEntries.length > 8) traceEntries.shift();
+      } else {
+        if (lastTitle) entry.title = lastTitle;
+        if (action) entry.action = action;
+      }
+      traceList.textContent = '';
+      for (const item of traceEntries) {
+        const li = document.createElement('li');
+        const title = document.createElement('span'); title.className = 'trace-title'; title.textContent = item.title || item.url; title.title = item.url;
+        const last = document.createElement('span'); last.className = 'trace-action'; last.textContent = item.action;
+        li.appendChild(title); li.appendChild(last); traceList.appendChild(li);
+      }
+      traceBox.classList.toggle('show', traceEntries.length > 0);
+    };
+    const recordTraceAction = (label) => {
+      traceActive = true;
+      upsertTrace(urlIn.value, label);
+    };
+    $('traceStop').addEventListener('click', async () => {
+      try { await window.satr.stop(); } catch (e) {}
+      this.dispatchEvent(new CustomEvent('preview-notice', { bubbles: true, detail: 'أُوقفت مهمة المتصفح بطلبك.' }));
+    });
+    this.resetTaskTrace = () => {
+      traceActive = false; traceEntries.length = 0; lastTitle = '';
+      traceList.textContent = ''; traceBox.classList.remove('show');
+    };
+
+    const secretBar = $('pvSecret'), secretReason = $('secretReason');
+    let secretRequestId = null;
+    const answerSecret = async (done) => {
+      if (!secretRequestId) return;
+      const id = secretRequestId;
+      secretRequestId = null;
+      secretBar.classList.remove('show');
+      try { await window.satr.secretDone(id, done); } catch (e) {}
+    };
+    $('secretDone').addEventListener('click', () => answerSecret(true));
+    $('secretCancel').addEventListener('click', () => answerSecret(false));
+    const showSecretRequest = (id, reason) => {
+      openPanel(false);
+      secretRequestId = String(id || '');
+      secretReason.textContent = String(reason || '');
+      secretBar.classList.add('show');
+    };
+    const hideSecretRequest = () => { secretRequestId = null; secretBar.classList.remove('show'); };
+    this.hideSecretRequest = hideSecretRequest;
+
     // ---------- أحداث العرض الأصلي ----------
     window.satr.onPreview((ev) => {
       if (!ev) return;
@@ -602,6 +689,10 @@ class SatrPreviewPanel extends HTMLElement {
         err.classList.remove('show');
         restoreInProgress = false;
         this.refreshServerStatus();
+        upsertTrace(ev.url, 'زار الصفحة');
+      } else if (ev.type === 'title') {
+        lastTitle = String(ev.title || '').slice(0, 200);
+        upsertTrace(urlIn.value, 'زار الصفحة');
       } else if (ev.type === 'loading') {
         reloadBtn.classList.toggle('loading', !!ev.loading);
       } else if (ev.type === 'failed') {
@@ -614,6 +705,10 @@ class SatrPreviewPanel extends HTMLElement {
       } else if (ev.type === 'agent_activity') {
         // نشاط محرك Codex على المتصفح (أدواته على خادم HTTP منفصل — لا تظهر كـ tool_use)
         this.flashAgentActivity(ev.tool);
+      } else if (ev.type === 'secret_request') {
+        showSecretRequest(ev.id, ev.reason);
+      } else if (ev.type === 'secret_end') {
+        hideSecretRequest();
       } else if (ev.type === 'agent_screenshot') {
         this.dispatchEvent(new CustomEvent('agent-screenshot', { bubbles: true, detail: ev }));
       } else if (ev.type === 'preview_download_saved') {
@@ -857,7 +952,9 @@ class SatrPreviewPanel extends HTMLElement {
       browser_select_option: 'يختار', browser_press_key: 'يضغط مفتاحاً', browser_scroll: 'يمرّر',
       browser_hover: 'يحوّم', browser_wait_for: 'ينتظر', browser_evaluate: 'يشخّص JavaScript',
       browser_set_viewport: 'يختبر التجاوب', browser_perf: 'يقيس الأداء', browser_back: 'يرجع',
-      browser_forward: 'يتقدّم', browser_handoff: 'يسلّمك القيادة',
+      browser_forward: 'يتقدّم', browser_handoff: 'يسلّمك القيادة', browser_handoff_step: 'يسلّمك خطوة',
+      browser_fill_form: 'يعبّئ نموذجاً', browser_transfer_field: 'ينقل قيمة سرّية',
+      browser_request_secret: 'ينتظر إدخال سرّ',
     };
     // مؤشّر «وضع تحكّم المتصفح مفعّل» (الخيار A): يقرأ حالة زرّ الوضع في المحرّر
     // (#browserCtl، light DOM) من aria-pressed ويتابع تغيّره بـ MutationObserver —
@@ -874,6 +971,7 @@ class SatrPreviewPanel extends HTMLElement {
       const bare = String(toolName || '').replace('mcp__satr-terminal__', '');
       const label = ACTION_LABELS[bare];
       if (!label) return; // ليست أداة متصفح — لا تُظهر شيئاً
+      recordTraceAction(label);
       agentTag.textContent = '🤖 الوكيل ' + label + '…';
       agentTag.classList.add('show');
       agentLine.classList.add('show');
@@ -885,7 +983,7 @@ class SatrPreviewPanel extends HTMLElement {
     // القشرة تستدعي showHandoff عند حدث handoff_request وhideHandoff عند handoff_end
     // (أو نهاية الدور احتياطاً — يغطي حسم الإيقاف). الردّ boolean فقط عبر satr:handoffDone؛
     // المحرك (SDK/Codex) هو من ينهي التسليم فعلياً ويصفّر السجلات في العملية الرئيسية.
-    const hoBar = $('pvHandoff'), hoReason = $('hoReason');
+    const hoBar = $('pvHandoff'), hoPrefix = $('hoPrefix'), hoReason = $('hoReason'), hoDone = $('hoDone');
     let handoffId = null;
     const answerHandoff = (done) => {
       if (!handoffId) return;
@@ -894,11 +992,13 @@ class SatrPreviewPanel extends HTMLElement {
       hoBar.classList.remove('show');
       window.satr.handoffDone(id, done);
     };
-    $('hoDone').addEventListener('click', () => answerHandoff(true));
+    hoDone.addEventListener('click', () => answerHandoff(true));
     $('hoCancel').addEventListener('click', () => answerHandoff(false));
-    this.showHandoff = (id, reason) => {
+    this.showHandoff = (id, reason, mode) => {
       openPanel(false); // التسليم يفترض معاينة مفتوحة — فتح اللوحة إن كانت مطوية كي يُرى الشريط
       handoffId = String(id || '');
+      hoPrefix.textContent = mode === 'step' ? 'أكمل:' : 'الوكيل يسلّمك القيادة:';
+      hoDone.textContent = mode === 'step' ? 'تم ✓' : 'استلمت ✓';
       hoReason.textContent = String(reason || '');
       hoBar.classList.add('show');
       // القيادة بيد المستخدم — أخفِ مؤشر نشاط الوكيل إن كان ظاهراً

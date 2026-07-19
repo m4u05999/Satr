@@ -34,6 +34,7 @@ function assertStaticContract() {
     && appSource.slice(endRunStart, endRunEnd).includes('previewEl.hideHandoff'),
   'endRun لا يخفي شريط التسليم.');
   assert(panelSource.includes('window.satr.handoffDone(id, done)'), 'المكوّن لا يرد عبر handoffDone بعقد boolean.');
+  assert(panelSource.includes('window.satr.secretDone(id, done)'), 'المكوّن لا يرد عبر secretDone بعقد boolean.');
   assert.strictEqual(packageJson.scripts['test:handoff-bar-live'], 'electron scripts/handoff-bar-live-test.js');
   assert(fullSuite.includes("'test:handoff-bar-live'"), 'غاب test:handoff-bar-live من full-suite.');
 }
@@ -76,10 +77,13 @@ async function main() {
     assert.deepStrictEqual(result.calls, [
       { id: 'ho_live_done', done: true },
       { id: 'ho_live_cancel', done: false },
+      { id: 'ho_live_step', done: true },
     ]);
+    assert.deepStrictEqual(result.secretCalls, [{ id: 'secret_0123456789abcdef0123456789abcdef', done: true }]);
+    assert.strictEqual(result.stopCalls, 1);
     assert.deepStrictEqual(result.violations, [], 'رُصد securitypolicyviolation.');
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console أثناء اختبار شريط التسليم.');
-    console.log('handoff-bar-live: نجح — request/reason/done/cancel/end/endRun؛ صفر CSP.');
+    console.log('handoff-bar-live: نجح — التسليم الكامل/المرحلي، طلب السر، أثر المهمة، وإيقافها؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

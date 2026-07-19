@@ -22,6 +22,14 @@ async function testPermissionDetail() {
   assert(detail.includes('العنصر: e7'));
   assert(detail.includes('"مرحبا\\nworld"'));
   assert(formatPermissionDetail('mcp__satr-preview__browser_type', { ref: '#email', text: 'a@b.test' }).includes('a@b.test'));
+  const form = formatPermissionDetail('browser_fill_form', { fields: [
+    { ref: 'e1', value: 'smtp-relay.brevo.com' }, { ref: 'e2', value: '587' },
+  ] });
+  assert(form.includes('smtp-relay.brevo.com') && form.includes('587'));
+  const secretRequest = formatPermissionDetail('browser_request_secret', {
+    field_ref: 'e3', reason: 'مفتاح SMTP', value: 'sk-proj-abcdefghijklmnopqrstuvwxyz',
+  });
+  assert(secretRequest.includes('مفتاح SMTP') && !secretRequest.includes('sk-proj-'));
   assert.strictEqual(formatPermissionDetail('browser_click', { ref: 'e5' }), '');
 
   const long = formatPermissionDetail('browser_type', { ref: 'e7', text: 'س'.repeat(700) });
@@ -59,6 +67,9 @@ async function testWiring() {
   const viewer = await fsp.readFile(path.join(ROOT, 'src', 'ui', 'components', 'file-viewer.js'), 'utf8');
   assert(preload.includes('writeFile: (cwd, rel, content, version)'));
   assert(main.includes('saveFromViewer(cwd, rel, p.content, version)'));
+  assert(preload.includes('secretDone: (id, done)'));
+  assert(main.includes("const SAFE_SECRET_REQUEST_ID = /^secret_[a-f0-9]{32}$/"));
+  assert(main.includes("typeof p.done !== 'boolean'"));
   assert(viewer.includes('this._rel, content, this._version'));
 }
 

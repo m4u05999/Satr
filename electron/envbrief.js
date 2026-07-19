@@ -9,6 +9,7 @@ const SDK_TOOL_NAMES = Object.freeze([
   'open_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network',
   'screenshot', 'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover', 'browser_click',
   'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
+  'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
   'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
   'load_skill', 'read_skill_resource', 'verification_config', 'verify_project', 'propose_memory',
 ]);
@@ -41,6 +42,7 @@ function executionPolicy(engine) {
     '- قبل تشغيل خادم استعمل list_background_tasks كي لا تنشئ نسخة ثانية.',
     afterStart,
     '- Bash/exec الداخلي القصير مسموح للفحص السريع مثل git status وقراءة حالة الملفات، لا للخوادم.',
+    '- في إعداد المنصات فضّل API/CLI المتاح مثل gh وnetlify عبر الطرفية المرئية؛ استخدم المتصفح فقط حين لا توجد واجهة برمجية سلسة أو تلزم لوحة بصرية.',
   ].join('\n');
 }
 
@@ -54,6 +56,10 @@ function browserPolicy(hasBrowser) {
     '- افحص ما بنيته عبر read_page وbrowser_snapshot وscreenshot وbrowser_console وbrowser_network.',
     '- خذ browser_snapshot قبل التفاعل، واستعمل refs مع browser_click/browser_type ثم خذ لقطة جديدة لأن refs تتغيّر.',
     '- القراءة حرة في وضع تحكم المتصفح؛ أما الفعل والتنقّل وbrowser_evaluate على نطاق خارجي جديد فتحتاج ثقة المستخدم بالنطاق مرة واحدة. localhost موثوق دائماً.',
+    '- الثقة بالنطاق لا تعفي الفعل الحسّاس: الإرسال والحفظ والنشر والحذف والتفويض وbrowser_evaluate تُؤكّد كل مرة، ولا تعتبر وضع تحكّم المتصفح إذناً دائماً لها.',
+    '- لا تمرّر مفتاح API أو رمزاً أو كلمة مرور كنص إلى أي أداة أو إلى browser_fill_form. انقل القيمة بين الحقول عبر browser_transfer_field، أو اطلب من المستخدم إدخالها بنفسه عبر browser_request_secret؛ لا تذكر القيمة في الرد أو الذاكرة.',
+    '- استعمل browser_fill_form لتعبئة مجموعة حقول غير سرّية من سياق المهمة، واجعل إرسال النموذج فعلاً مستقلاً. عند خطوة بشرية واحدة استعمل browser_handoff_step مع resume_hint واضحاً ثم خذ browser_snapshot جديداً.',
+    '- في إعداد متعدد المنصات حدّث Task Ledger بخطة/أداة المهام المتاحة لمحركك بعد كل محطة؛ تصل الواجهة بعقد task_update موضحاً ما اكتمل وما ينتظر المستخدم وما يلي.',
     '- تحقق من التجاوب فعلياً عبر browser_set_viewport، ثم أرفق دليلاً من screenshot أو القيم الفعلية؛ واستعمل browser_perf لتشخيص البطء.',
     '- عند تسجيل الدخول أو كلمة مرور أو 2FA استخدم browser_handoff ولا تطلب السر في المحادثة.',
   ].join('\n');

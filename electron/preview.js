@@ -12,7 +12,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { WebContentsView, session, app, nativeImage } = require('electron');
+const memory = require('./memory');
 
 let view = null;      // WebContentsView الحيّة (تُنشأ عند الفتح وتُدمَّر عند الإغلاق)
 let hostWin = null;   // النافذة المضيفة
@@ -42,6 +44,11 @@ function resetLogs() { consoleBuf = []; netErrBuf = []; netReqBuf = []; }
 // captureFrame/startPick/setBounds) لا تُحجب — المستخدم هو القائد. navigate مشتركة بين
 // شريط العنوان والوكيل فتُحجب عند **موقع الأداة** في المحرّكين لا هنا.
 let handoffActive = false;
+let sensitiveOperation = false;
+const secretTransfers = new Map();
+const MAX_SECRET_TRANSFERS = 8;
+const SECRET_TRANSFER_TTL_MS = 10 * 60 * 1000;
+let secretRequest = null;
 function startHandoff() {
   if (!currentWC()) return { ok: false, error: 'closed' };
   if (handoffActive) return { ok: false, error: 'active' };
@@ -57,6 +64,19 @@ function endHandoff() {
   return { ok: true, wasActive: true };
 }
 function isHandoffActive() { return handoffActive; }
+
+function pruneSecretTransfers(now) {
+  const time = Number(now) || Date.now();
+  for (const [id, entry] of secretTransfers) {
+    if (!entry || entry.expiresAt <= time) secretTransfers.delete(id);
+  }
+  while (secretTransfers.size > MAX_SECRET_TRANSFERS) secretTransfers.delete(secretTransfers.keys().next().value);
+}
+
+function clearSecretTransfers() {
+  secretTransfers.clear();
+  return { ok: true };
+}
 
 function emit(ev) {
   if (typeof sender === 'function') { try { sender(ev); } catch (e) {} }
@@ -88,6 +108,7 @@ function wireNetwork() {
   try {
     const wr = session.fromPartition(PARTITION).webRequest;
     wr.onErrorOccurred((details) => {
+      if (handoffActive || sensitiveOperation) return;
       // ERR_ABORTED = أُلغي بتنقّل جديد (ليس خطأً) — نتجاهله كي لا نضجّ سجل الوكيل
       if (!details || details.error === 'net::ERR_ABORTED') return;
       const entry = {
@@ -95,12 +116,14 @@ function wireNetwork() {
         error: String(details.error || ''),
         type: String(details.resourceType || ''),
       };
+      if (memory.hasSecret(entry.url) || memory.hasSecret(entry.error)) return;
       pushLog(netErrBuf, entry);
       emit({ type: 'neterr', url: entry.url, error: entry.error, resourceType: entry.type });
     });
     // سجلّ الشبكة الكامل (البند ب): كل طلب مكتمل (لا الفاشل فقط) — للوكيل عبر
     // browser_network وللمستخدم في لوحة 🐞. نتجاهل data:/blob: (ضجيج بلا قيمة تشخيص).
     wr.onCompleted((details) => {
+      if (handoffActive || sensitiveOperation) return;
       if (!details) return;
       const u = String(details.url || '');
       if (u.startsWith('data:') || u.startsWith('blob:')) return;
@@ -111,6 +134,7 @@ function wireNetwork() {
         type: String(details.resourceType || ''),
         fromCache: !!details.fromCache,
       };
+      if (memory.hasSecret(entry.url)) return;
       pushLog(netReqBuf, entry);
       emit({ type: 'netreq', method: entry.method, url: entry.url, status: entry.status, resourceType: entry.type, fromCache: entry.fromCache });
     });
@@ -195,12 +219,14 @@ function wireEvents(wc) {
   // التقاط رسائل console الصفحة (تشمل الأخطاء غير الملتقطة): للوكيل عبر browser_console
   // (buffer) **وبثّ حيّ للواجهة** (لوحة console للمستخدم — الخيار 2).
   wc.on('console-message', (e, level, message, line, sourceId) => {
+    if (handoffActive || sensitiveOperation) return;
     const entry = {
       level: Number(level) || 0,
       message: String(message || '').slice(0, 2000),
       line: Number(line) || 0,
       source: String(sourceId || '').slice(0, 300),
     };
+    if (memory.hasSecret(entry.message) || memory.hasSecret(entry.source)) return;
     pushLog(consoleBuf, entry);
     emit({ type: 'console', levelLabel: LEVELS[entry.level] || 'log', message: entry.message, line: entry.line, source: entry.source });
   });
@@ -509,6 +535,29 @@ const ACTION_TARGET_FN = `function(name,loc){
   }
   return location.href;
 }`;
+const ACTION_CONTEXT_FN = `function(name,input){
+  function resolve(loc){if(loc==='__active__')return document.activeElement;loc=String(loc||'');if(/^e[0-9]+$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):document.activeElement;}
+  var bare=String(name||'').replace(/^mcp__satr-terminal__/,''),data=input&&typeof input==='object'?input:{},el=null;
+  try{el=resolve(bare==='browser_press_key'?'__active__':data.ref||data.selector||'');}catch(e){return {currentUrl:location.href,badSelector:true};}
+  var form=el&&(el.form||(el.closest&&el.closest('form'))),target=location.href,formAction='',formMethod='';
+  if(el){var anchor=el.closest&&el.closest('a[href]');if(anchor&&anchor.href)target=anchor.href;}
+  if(form){formAction=form.action||location.href;formMethod=String(form.method||'get').toLowerCase();target=formAction;}
+  var type=el&&el.getAttribute?String(el.getAttribute('type')||'').toLowerCase():'',tag=el&&el.tagName?el.tagName.toLowerCase():'';
+  var text='';try{text=((el&&el.textContent)||'').replace(/\\s+/g,' ').trim().slice(0,160);}catch(e){}
+  var aria='';try{aria=String((el&&el.getAttribute&&el.getAttribute('aria-label'))||'').replace(/\\s+/g,' ').trim().slice(0,160);}catch(e){}
+  var isSubmit=!!el&&(type==='submit'||(tag==='button'&&(!type||type==='submit'))||(el.getAttribute&&el.getAttribute('role')==='button'&&/submit/i.test(aria||text)));
+  var cross=false;try{cross=!!form&&formMethod==='post'&&new URL(formAction,location.href).origin!==location.origin;}catch(e){}
+  return {currentUrl:location.href,targetUrl:target,tag:tag,type:type,elementText:text,ariaLabel:aria,inForm:!!form,isSubmit:isSubmit,formAction:formAction,formMethod:formMethod,crossOriginPost:cross};
+}`;
+
+async function browserActionContext(name, input) {
+  if (handoffActive) return null;
+  const wc = currentWC();
+  if (!wc) return null;
+  try {
+    return await wc.executeJavaScript('(' + ACTION_CONTEXT_FN + ')(' + JSON.stringify(String(name || '')) + ',' + JSON.stringify(input || {}) + ')', true);
+  } catch { return { currentUrl: wc.getURL() }; }
+}
 async function browserTarget(name, input) {
   if (handoffActive) return null;
   const wc = currentWC();
@@ -603,7 +652,6 @@ const SNAPSHOT_SCRIPT = `(function(){
       var ph = el.getAttribute('placeholder'); if (ph) return clean(ph);
       if (el.id) { var l; try { l = document.querySelector('label[for="' + esc(el.id) + '"]'); } catch(e){} if (l && clean(l.textContent)) return clean(l.textContent); }
       var nm = el.getAttribute('name'); if (nm) return clean(nm);
-      if (el.value && (el.type || '') !== 'password') return clean(el.value).slice(0, 80);
       return '';
     }
     if (tag === 'img') return clean(el.getAttribute('alt'));
@@ -910,6 +958,152 @@ async function typeText(locator, text) {
   return r.error === 'action_failed' ? { error: 'type_failed' } : r;
 }
 
+// ---------- إعداد المنصات: تعبئة جماعية ونقل أسرار بلا رؤية الوكيل ----------
+// fillForm لا يقبل سراً ويعيد عدد الحقول فقط. transferField يقرأ القيمة داخل العرض؛
+// في الصفحة نفسها لا تخرج القيمة حتى للعملية الرئيسية، وبين صفحتين تحفظ مؤقتاً تحت
+// معرّف مبهم ثم تُمسح بعد اللصق/نهاية المهمة. لا نتيجة أو حدث يحمل القيمة.
+const FILL_FIELDS_FN = `function(fields){
+  function resolve(loc){loc=String(loc||'');if(/^e[0-9]+$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):null;}
+  function writable(el){return !!el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable);}
+  function set(el,value){el.focus();if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}else{el.textContent=value;el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));}}
+  var resolved=[];for(var i=0;i<fields.length;i++){var el;try{el=resolve(fields[i].ref);}catch(e){return {ok:false,reason:'bad_selector',index:i};}if(!el)return {ok:false,reason:'not_found',index:i};if(!writable(el))return {ok:false,reason:'not_editable',index:i};resolved.push(el);}
+  for(var j=0;j<resolved.length;j++)set(resolved[j],String(fields[j].value));
+  return {ok:true,filled:resolved.length};
+}`;
+const TRANSFER_SAME_FN = `function(fromLoc,toLoc){
+  function resolve(loc){loc=String(loc||'');if(/^e[0-9]+$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):null;}
+  function read(el){if(el.tagName==='INPUT'||el.tagName==='TEXTAREA')return el.value;if(el.isContentEditable)return el.textContent||'';return null;}
+  function write(el,value){if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true;}if(el.isContentEditable){el.textContent=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));return true;}return false;}
+  var from,to;try{from=resolve(fromLoc);to=resolve(toLoc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!from||!to)return {ok:false,reason:'not_found'};var value=read(from);if(value===null)return {ok:false,reason:'not_readable'};from.setAttribute('data-satr-secret-field','1');if(!write(to,value))return {ok:false,reason:'not_editable'};return {ok:true,moved:true};
+}`;
+const TRANSFER_READ_FN = `function(loc){function resolve(v){v=String(v||'');if(/^e[0-9]+$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):null);if(value===null)return {ok:false,reason:'not_readable'};el.setAttribute('data-satr-secret-field','1');return {ok:true,value:String(value)};}`;
+const TRANSFER_WRITE_FN = `function(loc,value){function resolve(v){v=String(v||'');if(/^e[0-9]+$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return {ok:true,moved:true};}if(el.isContentEditable){el.textContent=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));return {ok:true,moved:true};}return {ok:false,reason:'not_editable'};}`;
+
+function cleanLocator(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text && text.length <= 1000 && !/[\u0000-\u001F\u007F]/.test(text) ? text : '';
+}
+
+async function fillForm(fields) {
+  if (handoffActive) return { error: 'handoff' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  if (!Array.isArray(fields) || !fields.length || fields.length > 20) return { error: 'bad_fields' };
+  let total = 0;
+  const cleaned = [];
+  for (const field of fields) {
+    const ref = cleanLocator(field && (field.ref || field.selector));
+    const value = typeof (field && field.value) === 'string' ? field.value : '';
+    total += value.length;
+    if (!ref || value.length > 4000 || total > 16000) return { error: 'bad_fields' };
+    if (memory.hasSecret(value)) return { error: 'secret' };
+    cleaned.push({ ref, value });
+  }
+  await waitReady(wc);
+  try {
+    const result = await wc.executeJavaScript('(' + FILL_FIELDS_FN + ')(' + JSON.stringify(cleaned) + ')', true);
+    return result && result.ok ? { ok: true, filled: result.filled } : { error: (result && result.reason) || 'fill_failed', index: result && result.index };
+  } catch { return { error: 'fill_failed' }; }
+}
+
+async function transferField(fromLocator, toLocator, transferId) {
+  if (handoffActive) return { error: 'handoff' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  const fromRef = cleanLocator(fromLocator);
+  const toRef = cleanLocator(toLocator);
+  const token = typeof transferId === 'string' && /^xfer_[a-f0-9]{32}$/.test(transferId) ? transferId : '';
+  if ((!fromRef || !toRef) && !(fromRef && !toRef && !token) && !(!fromRef && toRef && token)) return { error: 'bad_input' };
+  await waitReady(wc);
+  sensitiveOperation = true;
+  try {
+    if (fromRef && toRef) {
+      const result = await wc.executeJavaScript('(' + TRANSFER_SAME_FN + ')(' + JSON.stringify(fromRef) + ',' + JSON.stringify(toRef) + ')', true);
+      return result && result.ok ? { ok: true, moved: true } : { error: (result && result.reason) || 'transfer_failed' };
+    }
+    if (fromRef) {
+      const result = await wc.executeJavaScript('(' + TRANSFER_READ_FN + ')(' + JSON.stringify(fromRef) + ')', true);
+      if (!result || !result.ok || typeof result.value !== 'string' || !result.value || result.value.length > 32768) {
+        return { error: (result && result.reason) || 'empty_source' };
+      }
+      pruneSecretTransfers();
+      const id = 'xfer_' + crypto.randomBytes(16).toString('hex');
+      secretTransfers.set(id, { value: result.value, expiresAt: Date.now() + SECRET_TRANSFER_TTL_MS });
+      pruneSecretTransfers();
+      return { ok: true, moved: false, stored: true, transfer_id: id };
+    }
+    pruneSecretTransfers();
+    const entry = secretTransfers.get(token);
+    if (!entry) return { error: 'transfer_expired' };
+    const result = await wc.executeJavaScript('(' + TRANSFER_WRITE_FN + ')(' + JSON.stringify(toRef) + ',' + JSON.stringify(entry.value) + ')', true);
+    if (result && result.ok) secretTransfers.delete(token);
+    return result && result.ok ? { ok: true, moved: true } : { error: (result && result.reason) || 'transfer_failed' };
+  } catch { return { error: 'transfer_failed' }; }
+  finally {
+    sensitiveOperation = false;
+    resetLogs();
+    emit({ type: 'console_clear' });
+  }
+}
+
+const SECRET_MARK_FN = `function(loc){function resolve(v){v=String(v||'');if(/^e[0-9]+$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};if(!(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable))return {ok:false,reason:'not_editable'};try{el.scrollIntoView({block:'center',inline:'center'});el.focus();el.setAttribute('data-satr-secret-field','1');var old=document.querySelector('[data-satr-secret-request]');if(old)old.remove();var r=el.getBoundingClientRect(),box=document.createElement('div');box.setAttribute('data-satr-secret-request','1');box.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;border:3px solid #D9A441;border-radius:5px;box-shadow:0 0 0 4px rgba(217,164,65,.22);';box.style.left=Math.max(0,r.left)+'px';box.style.top=Math.max(0,r.top)+'px';box.style.width=Math.max(1,r.width)+'px';box.style.height=Math.max(1,r.height)+'px';document.documentElement.appendChild(box);}catch(e){}return {ok:true};}`;
+const SECRET_DONE_FN = `function(loc){function resolve(v){v=String(v||'');if(/^e[0-9]+$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el=null;try{el=resolve(loc);}catch(e){}var box=document.querySelector('[data-satr-secret-request]');if(box)box.remove();if(!el)return {ok:false,filled:false};var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):'');el.setAttribute('data-satr-secret-field','1');return {ok:true,filled:String(value||'').length>0};}`;
+
+async function requestSecret(locator, reason) {
+  const wc = currentWC();
+  const ref = cleanLocator(locator);
+  const why = typeof reason === 'string' ? reason.replace(/[\u0000-\u001F\u007F]+/g, ' ').trim().slice(0, 300) : '';
+  if (!wc) return { error: 'closed' };
+  if (!ref || !why || memory.hasSecret(why)) return { error: 'bad_input' };
+  if (secretRequest || handoffActive) return { error: 'active' };
+  const state = startHandoff();
+  if (!state.ok) return { error: state.error };
+  sensitiveOperation = true;
+  let marked;
+  try { marked = await wc.executeJavaScript('(' + SECRET_MARK_FN + ')(' + JSON.stringify(ref) + ')', true); }
+  catch { marked = null; }
+  finally { sensitiveOperation = false; }
+  if (!marked || !marked.ok) { endHandoff(); return { error: (marked && marked.reason) || 'request_failed' }; }
+  const id = 'secret_' + crypto.randomBytes(16).toString('hex');
+  return new Promise((resolve) => {
+    secretRequest = { id, ref, resolve };
+    emit({ type: 'secret_request', id, reason: why });
+  });
+}
+
+async function resolveSecretRequest(id, done) {
+  const pending = secretRequest;
+  if (!pending || pending.id !== id || typeof done !== 'boolean') return { ok: false };
+  secretRequest = null;
+  let filled = false;
+  sensitiveOperation = true;
+  try {
+    const wc = currentWC();
+    const result = wc ? await wc.executeJavaScript('(' + SECRET_DONE_FN + ')(' + JSON.stringify(pending.ref) + ')', true) : null;
+    filled = !!(done && result && result.ok && result.filled);
+  } catch { filled = false; }
+  finally {
+    sensitiveOperation = false;
+    endHandoff();
+    emit({ type: 'secret_end', id });
+  }
+  pending.resolve(filled ? { ok: true, filled: true } : { ok: false, filled: false, error: done ? 'empty' : 'cancelled' });
+  return { ok: true };
+}
+
+function cancelSecretRequest() {
+  if (!secretRequest) return { ok: true, active: false };
+  const id = secretRequest.id;
+  resolveSecretRequest(id, false).catch(() => {});
+  return { ok: true, active: true };
+}
+
+function clearSensitiveState() {
+  clearSecretTransfers();
+  cancelSecretRequest();
+  return { ok: true };
+}
+
 // ---------- إكمال طقم الأفعال (البند 2) — قائمة منسدلة/مفتاح/تمرير/تحويم ----------
 // select/hover يُحلّان الهدف بنفس منطق ref-أو-selector (resolve مضمّن). press_key عبر
 // sendInputEvent (أحداث مفاتيح حقيقية موثوقة — تُرسل للعرض المعزول وحده، فتُطلق سلوك
@@ -1043,7 +1237,9 @@ async function evaluate(expression) {
     });
     if (result && result.exceptionDetails) return { error: 'evaluate_failed', message: String(result.exceptionDetails.text || 'JavaScript error').slice(0, 1000) };
     const value = result && result.result ? result.result.value : undefined;
-    return { ok: true, value: String(value == null ? value : value).slice(0, 48 * 1024), truncated: String(value || '').length > 48 * 1024 };
+    const text = String(value == null ? value : value);
+    if (memory.hasSecret(text)) return { error: 'secret_result', message: 'حُجبت النتيجة لأنها قد تحتوي سراً؛ استخدم browser_transfer_field بدلاً من قراءتها.' };
+    return { ok: true, value: text.slice(0, 48 * 1024), truncated: text.length > 48 * 1024 };
   } catch (error) {
     try { if (dbg.isAttached && dbg.isAttached()) await dbg.sendCommand('Runtime.terminateExecution'); } catch {}
     return { error: 'evaluate_failed', message: String((error && error.message) || error).slice(0, 1000) };
@@ -1133,6 +1329,7 @@ function emitAgentActivity(tool) {
 
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
 function close() {
+  clearSensitiveState();
   if (!view) return { ok: true };
   try { if (hostWin && !hostWin.isDestroyed()) hostWin.contentView.removeChildView(view); } catch (e) {}
   try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {}
@@ -1149,7 +1346,8 @@ module.exports = {
   open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor,
   getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText,
   selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
-  currentUrl, navigationTarget, browserTarget, captureFrame, emitAgentActivity, startHandoff, endHandoff,
+  fillForm, transferField, requestSecret, resolveSecretRequest, clearSecretTransfers, clearSensitiveState,
+  currentUrl, navigationTarget, browserTarget, browserActionContext, captureFrame, emitAgentActivity, startHandoff, endHandoff,
   isHandoffActive, close, destroy, isHttpUrl,
   _internals: { safeDownloadName, uniqueDownloadPath, effectiveBounds, isLocalHttpsUrl },
 };

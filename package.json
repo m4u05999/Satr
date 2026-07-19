@@ -40,6 +40,8 @@
     "test:codexmcp": "node scripts/codexmcp-test.js",
     "test:browserguard": "node scripts/browserguard-test.js",
     "test:browserorigin": "node scripts/browserorigin-test.js",
+    "test:browserpolicy": "node scripts/browserpolicy-test.js",
+    "test:browser-platform-live": "electron scripts/browser-platform-live-test.js",
     "test:execguard": "node scripts/execguard-test.js",
     "test:termjobs": "node scripts/termjobs-test.js",
     "test:envbrief": "node scripts/envbrief-test.js",

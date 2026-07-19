@@ -22,6 +22,7 @@ function sameNames(actual, declared, engine) {
   assert(brief.includes('run_in_background'));
   assert(brief.includes('get_background_output'));
   assert(brief.includes('بيئة سطر:'));
+  assert(brief.includes('فضّل API/CLI') && brief.includes('gh') && brief.includes('netlify'), 'الموجز يفضّل الواجهة البرمجية لكل المحركات');
 }
 
 sameNames(sdkActual, envbrief.toolNames('sdk'), 'sdk');
@@ -35,6 +36,11 @@ for (const engine of ['sdk', 'codex']) {
   for (const tool of ['browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward']) {
     assert(brief.includes(tool), 'موجز ' + engine + ' لا يذكر ' + tool);
   }
+  for (const tool of ['browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step']) {
+    assert(brief.includes(tool), 'موجز ' + engine + ' لا يذكر ' + tool);
+  }
+  assert(brief.includes('لا تمرّر مفتاح API') && brief.includes('تُؤكّد كل مرة'), 'موجز ' + engine + ' لا يثبت قاعدة الأسرار والفعل الحسّاس');
+  assert(brief.includes('Task Ledger') && brief.includes('task_update'), 'موجز ' + engine + ' لا يثبت أثر مهمة الإعداد');
 }
 
 for (const file of [

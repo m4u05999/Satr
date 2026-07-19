@@ -129,10 +129,20 @@ const devservers = require('./devservers');
 const updater = require('./updater');
 const preview = require('./preview'); // لوحة المعاينة المدمجة (م-1 — الدفعة 5)
 const browserorigin = require('./browserorigin');
+const browserpolicy = require('./browserpolicy');
 
 // ثقة نطاقات المتصفح تعيش بعمر التطبيق فقط. localhost موثوق من browserorigin دائماً؛
 // أما النطاق الخارجي فلا يدخل المجموعة إلا من شريط العنوان الذي حرّكه المستخدم بنفسه.
 const trustedBrowserOrigins = new Set();
+const browserBudgets = new Map();
+function browserBudgetFor(engine, sessionId) {
+  const sessionKey = sessionId ? engine + ':session:' + sessionId : '';
+  if (sessionKey && browserBudgets.has(sessionKey)) return browserBudgets.get(sessionKey);
+  const budget = browserpolicy.createActionBudget();
+  if (sessionKey) browserBudgets.set(sessionKey, budget);
+  while (browserBudgets.size > 50) browserBudgets.delete(browserBudgets.keys().next().value);
+  return budget;
+}
 
 function sdkReviewEngineAvailable() {
   if (!agent.resolveClaudeBin()) return false;
@@ -428,6 +438,7 @@ function sanitizeImages(arr) {
 
 // إيقاف أي تشغيل جارٍ أياً كان محركه (محوّل غير SDK أو تشغيل SDK)
 function stopAll() {
+  preview.clearSensitiveState();
   if (currentCliRun) {
     const h = currentCliRun;
     currentCliRun = null;
@@ -636,6 +647,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
   const token = ++runSeq;
   const runEngine = (payload.engine === 'codex' || adapters.get(payload.engine)) ? payload.engine : 'sdk';
   let activeSessionId = payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null;
+  const browserBudget = browserBudgetFor(runEngine, activeSessionId);
   const priorVerification = activeSessionId ? checkpoints.consumeVerification(runEngine, activeSessionId) : '';
   const enginePrompt = priorVerification
     ? '<satr_verification_result>\n' + priorVerification + '\n</satr_verification_result>\n\n' + prompt
@@ -646,6 +658,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
     if (token !== runSeq || !obj || typeof obj !== 'object') return;
     if (obj.type === 'system' && SAFE_SESSION.test(obj.session_id || '')) {
       activeSessionId = obj.session_id;
+      browserBudgets.set(runEngine + ':session:' + activeSessionId, browserBudget);
       checkpoints.bindSession(runId, activeSessionId);
     }
     if (obj.type === 'task_update') {
@@ -720,6 +733,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
         // false محجوز للسياقات المعزولة (مراجع/عصف) كي لا تُنشأ أدوات المعاينة أصلاً.
         browserControl: payload.browserControl === true ? true : null,
         trustedBrowserOrigins,
+        browserBudget,
       }, cwd, emit);
       return { started: true, engine: 'codex' };
     } catch (e) {
@@ -778,6 +792,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
       extraDirs: sanitizeExtraDirs(payload.extraDirs),
       browserControl: payload.browserControl === true, // وضع تحكّم المتصفح (محرك SDK فقط)
       trustedBrowserOrigins,
+      browserBudget,
     }, cwd, emit);
     return { started: true, engine: 'sdk' };
   } catch (e) {
@@ -972,6 +987,14 @@ ipcMain.handle('satr:handoffDone', (event, p) => {
   let ok = false;
   if (currentRun && typeof currentRun.resolveHandoff === 'function') ok = currentRun.resolveHandoff(p.id, p.done);
   return { ok };
+});
+
+// إدخال سرّ بيد المستخدم داخل WebContentsView: الواجهة تعيد id+boolean فقط، وpreview.js
+// يتحقق من امتلاء الحقل داخلياً بلا إعادة القيمة أو تسجيلها.
+const SAFE_SECRET_REQUEST_ID = /^secret_[a-f0-9]{32}$/;
+ipcMain.handle('satr:secretDone', (event, p) => {
+  if (!p || typeof p.id !== 'string' || !SAFE_SECRET_REQUEST_ID.test(p.id) || typeof p.done !== 'boolean') return { ok: false };
+  return preview.resolveSecretRequest(p.id, p.done);
 });
 
 // ---------- التراجع عن تعديل ملف (المرحلة 3) ----------

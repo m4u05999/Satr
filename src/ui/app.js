@@ -521,7 +521,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     // التسليم البشري (browser_handoff): الوكيل سلّم قيادة المعاينة — شريط 🤝 في اللوحة
     // ينتظر «استلمت»/«إلغاء». handoff_end يخفيه (يغطي أيضاً حسم إيقاف الدور من المحرك).
     if (ev.type === 'handoff_request' && ev.id) {
-      if (previewEl.showHandoff) previewEl.showHandoff(ev.id, ev.reason);
+      if (previewEl.showHandoff) previewEl.showHandoff(ev.id, ev.reason, ev.mode);
       return;
     }
     if (ev.type === 'handoff_end') {
@@ -695,6 +695,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     closeQuestionDialog();
     // شريط التسليم البشري لا يعيش بعد الدور (المحرك فكّ الانتظار بالإلغاء عند الإيقاف)
     if (previewEl && previewEl.hideHandoff) previewEl.hideHandoff();
+    if (previewEl && previewEl.hideSecretRequest) previewEl.hideSecretRequest();
     input.focus();
   }
 
@@ -740,7 +741,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     paintBrowserControl();
     if (notify && was !== browserControlOn && chatEl.addActionNotice) {
       chatEl.addActionNotice(browserControlOn
-        ? '🖱️ وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة بلا إذن لكل فعل (أفعال المتصفح فقط).'
+        ? '🖱️ وضع تحكّم المتصفح مفعّل — الأفعال العادية على النطاقات الموثوقة تلقائية، والحفظ والنشر والإرسال والأفعال الحسّاسة تُسأل كل مرة.'
         : 'أُوقف وضع تحكّم المتصفح — عاد الإذن اليدوي لكل فعل متصفح.');
     }
   }
@@ -936,6 +937,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (composerEl.clearImages) composerEl.clearImages();
     $('sessionInfo').textContent = 'لا جلسة';
     chatEl.reset(); // حالة الفراغ + تصفير الكلفة التراكمية وشريطها (داخل المكوّن منذ ت-12)
+    if (previewEl.resetTaskTrace) previewEl.resetTaskTrace();
     // إطفاء تلقائي لوضع تحكّم المتصفح: لا نحمل صلاحية قيادة تلقائية لمهمة جديدة صامتاً
     if (browserControlOn) { setBrowserControl(false, false); addNotice('🖱️ أُوقف وضع تحكّم المتصفح تلقائياً مع الجلسة الجديدة.'); }
   }
