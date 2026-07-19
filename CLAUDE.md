@@ -129,6 +129,8 @@ electron/browserguard.js ← حارس المتصفح الخارجي (دفعة «
                        isExternalBrowserLaunchCommand (استُخرجت من codex.js — نسخة واحدة)
                        + promptRequestsExternalBrowser (طلب المستخدم الصريح لمتصفح خارجي
                        في رسالة الدور يعطّل الاعتراض — قرار مالك). اختبار test:browserguard
+electron/browserorigin.js ← تطبيع origin وتصنيف أدوات المتصفح (read/navigate/act/handoff)
+                       وثقة localhost/نطاقات المستخدم؛ منطق نقي يحرسه test:browserorigin.
 electron/execguard.js ← حارس نقي لأوامر الخوادم: يرفض Bash/run_in_terminal الخلفي أو أمر
                        خادم معروف ويوجّه إلى run_in_background قبل أي موافقة دائمة.
 electron/envbrief.js  ← المصدر الموحّد لهوية «سطر» وجرد أدوات كل محرك وسياسة التنفيذ
@@ -1012,6 +1014,9 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   حصراً عبر `run_in_background`، يسبقه `list_background_tasks` ويتبعه `open_preview`
   حيث تتوفر أدوات المتصفح و`get_background_output` للسجل. `test:envbrief` يقارن كل جرد
   بتعريفات الأدوات الفعلية كي يفشل عند التقادم.
+- سياسة المتصفح الموحدة تذكر أن القراءة حرة مع التفويض، وأن التنقّل/الفعل/التقييم على
+  origin خارجي جديد يسأل مرة قبل الثقة، وتفرض تحقق التجاوب بـ`browser_set_viewport`
+  مع دليل لقطة أو أبعاد فعلية.
 
 ### مزامنة أوامر CLI في قائمة «/» (المرحلة 14.1)
 
@@ -1275,6 +1280,9 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `{type:'nav', url, canGoBack, canGoForward}` / `{type:'title', title}` /
   `{type:'loading', loading}` / `{type:'failed', code, desc, url}`. preload يكشفها
   `previewOpen/previewNavigate/previewAction/previewBounds/previewClose/onPreview`.
+  فتح الوكيل يستخدم IPCين منفصلين `previewOpenAgent/previewNavigateAgent` بنفس تنقية URL
+  كي لا يُسجَّل origin كثقة مستخدم. `previewElementShot {selector}` يقبل نصاً بلا محارف
+  تحكم ≤1000 فقط ويلتقط العنصر المحدد دون بث مصغرة وكيل.
 - **اقتراح localhost التلقائي**: الطرفية (terminal-panel) ترصد عناوين
   `localhost/127.0.0.1` في خرج أي تبويب (بما فيها طرفية النموذج 🤖) وتبثّ حدث DOM
   ‏`localhost-url`؛ القشرة تعرض إشعاراً بزرّ «افتح المعاينة» (`chatEl.addActionNotice` —
@@ -1312,8 +1320,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   + input/change لتوافق React). **الأمان (حرج)**: تمرّان بـ `canUseTool` مثل Bash —
   مربع الإذن العربي كل مرة (لسن في alwaysAllowed)، bypassPermissions وحده يعفيها.
   `formatPermissionDetail` يعرض العنصر والنص المراد كتابته صراحةً داخل مربع الإذن فقط
-  (مقصوصاً عند 600 محرف؛ لا يضاف إلى بطاقة الأداة). قائمة النطاقات لم تلزم لأن الإذن
-  اليدوي لكل فعل أقوى.
+  (مقصوصاً عند 600 محرف؛ لا يضاف إلى بطاقة الأداة). هذا القرار التاريخي استُبدل في دفعة
+  «المتصفح عضو مشترك» بثقة origin المشروطة أعلاه لأن وضع التحكم كان يعفي الأفعال جماعياً.
 - **ترقية أفعال المتصفح — لقطة + ref حتمي (2026-07-12)**: نمط Playwright MCP/browser-use
   الصناعي (بحث موثّق): بدل تخمين النموذج مُحدِّد CSS من outerHTML (هشّ)، أداة جديدة
   `browser_snapshot` تعطي لقطة مدمجة لكل عنصر تفاعلي `[ref] role "name"` (تسِم كلاً بسمة
@@ -1327,21 +1335,21 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   snapshot→act→snapshot). تحقّق حيّ (مسبار معزول 8/8، خادم HTTP فعلي): لقطة بأدوار/أسماء/
   refs صحيحة · نقر/كتابة بـ ref يغيّران DOM ويُطلقان input · wait_for (ظهور/مهلة) ·
   تراجع CSS · ref قديم بعد reload ⇒ not_found · مُحدِّد فاسد ⇒ bad_selector.
-- **وضع تحكّم المتصفح (نمط Comet — 2026-07-12)**: زرّ toggle `#browserCtl` بجوار زرّ
-  الإرسال (🖱️ متصفح) يمنح الوكيل صلاحية قيادة المعاينة بسلاسة (حلقة snapshot→act بلا مربع
-  إذن لكل فعل). العلم `browserControl` يمرّ في send (app.js `browserControlOn` +
-  localStorage `satr_browser_control`، منقّى في main.js boolean) إلى `agent.start` و
-  `codex.start`. **الأمان (حرج، fail-safe)**: في SDK يوافق `canUseTool` تلقائياً **فقط**
-  على أدوات المتصفح الثماني
-  المؤهَّلة (`BROWSER_AUTO_TOOLS` = mcp__satr-terminal__{open_preview,read_page,screenshot,
-  browser_snapshot,browser_click,browser_type,browser_navigate,browser_wait_for}) — و
-  **`run_in_terminal` و`run_in_background` و`stop_background_task` وكل أدوات الملفّات
-  تبقى تطلب إذناً** (ليست في المجموعة، فأي اسم
-  خاطئ يُقلّل الصلاحية لا يزيدها). معطّل افتراضياً، حالته ظاهرة (زرّ ذهبي `.active` +
-  aria-pressed) وإشعار عربي عند التبديل. **Codex يملك الرؤية والأفعال نفسها** عبر
-  `codexmcp.js`؛ أفعاله تمرّ افتراضياً عبر `requestPermission` داخل الخادم ويعفيها
-  `browserControl` الصريح. المحوّلات لا تملك أدوات المتصفح.
-  تهديد حقن البرومبت من صفحات الويب يبقى قائماً — لذا الوضع اختياري صريح يبادر به المستخدم.
+- **وضع تحكّم المتصفح + النطاقات الموثوقة (دفعة «المتصفح عضو مشترك» — 2026-07-19)**:
+  زرّ `#browserCtl` يمنح قيادة سلسة لكنه **لا يعفي كل فعل على كل نطاق**. مجموعة origins
+  تعيش بعمر التطبيق في main: localhost/127.0.0.1 (أي منفذ) موثوقان دائماً، وأي origin
+  خارجي لا يدخلها إلا حين يفتحه المستخدم بنفسه من شريط العنوان أو يضغط «ثق بالنطاق لهذه
+  الجلسة» في طلب الإذن. قراءة `read_page/snapshot/console/network/screenshot/wait/scroll/
+  hover/set_viewport/perf` حرة تحت التفويض على أي صفحة؛ `open_preview/navigate/back/forward`
+  و`click/type/select/press/evaluate` لا تمر تلقائياً إلا على origin موثوق. الطلب يعرض
+  الفعل والعنوان والمدخل، والموافقة الموسعة تثق بالـorigin لا باسم الأداة؛ حارس SDK يسبق
+  `alwaysAllowed`، وCodex يمرّر target من `codexmcp` إلى `shouldAutoApproveMcp`.
+  للنقر/Enter يجب أن يكون origin الصفحة الحالية موثوقاً، وتُفحص أيضاً وجهة `a[href]` أو
+  `form.action` قبل الإعفاء، فلا يقفز رابط من صفحة موثوقة إلى origin جديد بصمت ولا تعفي
+  وجهة موثوقة فعلاً صادراً من صفحة وافق المستخدم على زيارتها مرةً فقط.
+  `browser_handoff` منح قيادة آمن مستقل، و`bypassPermissions` وحده يتجاوز البوابة كلها.
+  التشغيل/الإيقاف والملفات لا تدخل هذا التفويض. الاختبارات: `test:browserorigin` +
+  `test:codexmcp` (تصنيف وtarget وثقة/fail-closed).
 - **رؤية الـ console وأخطاء الشبكة للوكيل (2026-07-12 — «ابنِ→عايِن→صحّح»)**: أداة
   `browser_console` تعطي الوكيل رسائل console الصفحة (وأخطاء JavaScript غير الملتقطة) +
   طلبات الشبكة الفاشلة — فيشخّص لماذا لا تعمل صفحة بناها ويصحّح نفسه. الالتقاط في
@@ -1429,8 +1437,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   حيّ بـ codex حقيقي: `initialize → tools/list → satr_preview=ready` (بينما فشلت خوادمه
   الأخرى). إشعار `mcpServer/startupStatus/updated` (كان يُتجاهَل) يُرصد الآن لفشل
   satr_preview فقط (تدهور رشيق: Codex يعمل بلا رؤية إن فشل). في دردشة Codex تبقى الأدوات
-  متاحة دائماً: زر «متصفح» مفعّل = تفويض صريح بلا مربعات متكررة، ومطفأ = كل tools/call
-  يمرّ بمربع الإذن العربي (بما فيه open_preview والقراءة)، بينما `browserControl:false`
+  متاحة دائماً: زر «متصفح» مفعّل = القراءة حرة والفعل/التنقّل مشروط بثقة origin، ومطفأ =
+  كل tools/call يمرّ بمربع الإذن العربي (بما فيه open_preview والقراءة)، بينما `browserControl:false`
   الصريح في المراجع/العصف يعطّل الخادم كلياً. open_preview يبثّ
   `preview_open` للواجهة (app.js يفتح اللوحة generically لأي محرك). codex.js محجوز لـ Claude
   (حدّ ملكية الملفات في الفريق الثلاثي).
@@ -1441,10 +1449,11 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
     سؤال — خطر مع صفحات غير موثوقة (حقن برومبت). الحل: `codexmcp.js` يمرّر الأفعال الأربع
     التي تُغيّر الصفحة عبر `deps.requestPermission(tool, input)` الذي يوفّره codex.js فيبثّ
     `permission_request` (مربع الإذن العربي نفسه) وينتظر الردّ عبر `mcpPerms` +
-    `resolvePermission` (قناة أذونات الأوامر نفسها). bypassPermissions أو «موافقة دائمة»
-    للأداة يعفيان؛ الرفض/إيقاف الدور يفكّ الإذن المعلّق. أدوات المتصفح كلها مصنّفة
+    `resolvePermission` (قناة أذونات الأوامر نفسها). في وضع التحكم لا تعفي «موافقة دائمة»
+    قديمة فعلاً على origin جديد؛ زر الثقة يضيف origin فقط. `bypassPermissions` وحده يتجاوز؛
+    الرفض/إيقاف الدور يفكّ الإذن المعلّق. أدوات المتصفح كلها مصنّفة
     `browser` وتُبوّب، بينما get/list_background_tasks وحدهما `read` بلا إذن. تحقّق:
-    `npm run test:codexmcp` (64 — يشمل تصنيف browser/read/exec وfail-closed) +
+    `npm run test:codexmcp` (يشمل تصنيف browser/read/exec/target وfail-closed) +
     `eval:agent` 12/12 + إقلاع نظيف.
   - **مهلة أداة MCP لأفعال الإذن (إصلاح اختبار يدوي — 2026-07-13)**: بوابة الإذن أعلاه
     تُبقي استدعاء أداة MCP معلّقاً (‏`await requestPermission` في guard) حتى يوافق المستخدم
@@ -1485,6 +1494,31 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
     600⇒**1800ث** لتتّسع لدخول + 2FA. إيقاف الدور يفكّ التسليم بالإلغاء في المحرّكين.
     الاختبار: `test:browserguard` (نقي 32) + توسعة `test:codexmcp` (64 — دورة كاملة
     استلام/إلغاء/تعليق/fail-closed).
+- **شفافية المتصفح المشتركة (دفعة «المتصفح عضو مشترك»)**:
+  - `click/type/select/hover/scroll/press` تومض outline ذهبياً **داخل الصفحة** قبل الفعل.
+    الأفعال الأربعة المؤثرة تعيد `{ok,navigated,dom_changed,note?}` بعد رصد URL و
+    `MutationObserver` قصير؛ عدم رصد أثر يُقال للنموذج صراحةً بدل نجاح وهمي. الكتابة تدعم
+    `contenteditable` عبر focus+selection+beforeinput/execCommand/input.
+  - `screenshot` و`browser_screenshot_element` يبثان `agent_screenshot` بمصغرة PNG ≤360px/
+    512KiB عبر قناة `satr:preview`؛ القشرة تضيفها إلى بطاقة أدوات الدور، والنقر يفتح عارضاً
+    مكبراً. صورة MCP الأصلية تبقى للنموذج. لقطة 🎯 تستخدم IPC صامتاً فلا تُسجّل كلقطة وكيل.
+  - كل خطأ console/شبكة في لوحة 🐞 له زر «🤖 أصلحه» يرسل سياقاً منظماً كدور عادي. بعد
+    `reloadIfLive` تُجمع الأخطاء الجديدة 4.2ث وتظهر مرة لكل موجة في `addActionNotice`
+    بزر «أرسلها للوكيل».
+  - شريط 🎯 يضيف «اشرح/أصلح/حسّن»، ويلتقط العنصر تلقائياً ويرفق PNG عبر مسار صور
+    المحرّكين الأصيلين؛ المحوّلات النصية تتراجع للوصف. outerHTML يبقى محتوى غير موثوقاً
+    مقتطعاً. رأس المعاينة يعرض شارة خادم cwd خضراء، أو رمادية بزر تشغيل من سجل devservers.
+- **عدة التحقق الذاتي**: الأدوات المتكافئة في SDK/Codex هي `browser_evaluate` (act؛ تعبير
+  ≤8000، CDP timeout، نتيجة ≤48K)، `browser_set_viewport` (read؛ 240..1920×240..1200
+  ويعيد innerWidth الفعلي)، `browser_perf` (read؛ navigation/resources/طلبات فاشلة)، و
+  `browser_back/browser_forward` (navigate مع target من سجل NavigationHistory). تدخل
+  `envbrief` و`satr-guide` وحارس الجرد تلقائياً.
+- **متانة العرض والتنزيل**: partition المعاينة يعترض `will-download`، ينقّي الاسم ويختار
+  مساراً فريداً داخل Downloads ثم يبث المسار الفعلي أو الفشل؛ لا حفظ صامت. خطاف
+  `certificate-error` يقبل شهادة ذاتية لـ`https://localhost`/`127.0.0.1` حصراً ويرفض
+  الشهادة السيئة لأي origin خارجي. `test:preview-member-live` يغطي الفعل/الوميض/
+  contenteditable/evaluate/viewport/history/download وحصر الاستثناء، و
+  `test:browser-member-live` يغطي المصغرة/أصلحه/موجة الأخطاء/🎯/شارة الخادم تحت CSP.
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
   رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`

@@ -28,6 +28,15 @@ sameNames(sdkActual, envbrief.toolNames('sdk'), 'sdk');
 sameNames(codexActual, envbrief.toolNames('codex'), 'codex');
 sameNames(adapterActual, envbrief.toolNames('adapter'), 'adapter');
 
+for (const engine of ['sdk', 'codex']) {
+  const brief = envbrief.build(engine, 'test-model');
+  assert(brief.includes('نطاق خارجي جديد') && brief.includes('localhost موثوق دائماً'), 'موجز ' + engine + ' لا يشرح سياسة النطاقات الموثوقة');
+  assert(brief.includes('browser_set_viewport') && brief.includes('دليلاً'), 'موجز ' + engine + ' لا يفرض تحقق التجاوب بدليل');
+  for (const tool of ['browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward']) {
+    assert(brief.includes(tool), 'موجز ' + engine + ' لا يذكر ' + tool);
+  }
+}
+
 for (const file of [
   'electron/agent.js', 'electron/codex.js',
   'electron/adapters/openai-compatible.js', 'electron/adapters/gemini.js',

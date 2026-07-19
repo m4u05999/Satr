@@ -15,6 +15,8 @@ const codex = require('../electron/codex');
 const preview = {
   isHttpUrl: (u) => /^https?:\/\//.test(String(u)),
   navigate: () => ({ ok: true }),
+  currentUrl: () => 'https://untrusted.example/page',
+  navigationTarget: (direction) => direction === 'back' ? 'https://previous.example/' : 'https://next.example/',
   readPage: async () => ({ ok: true, page: { title: 'صفحة', url: 'http://localhost:3000/', headings: ['h1: مرحبا'], links: [], buttons: ['إرسال'], inputs: [], bodyText: 'محتوى' } }),
   snapshot: async () => ({ ok: true, snap: { title: 'ص', url: 'http://x', elements: ['[e1] button "إرسال"'], count: 1, truncated: false } }),
   getConsole: () => ({ ok: true, logs: [{ level: 'error', message: 'oops', line: 4, source: 'app.js' }], netErrors: [] }),
@@ -25,10 +27,15 @@ const preview = {
   waitFor: async () => ({ ok: true, found: true }),
   scroll: async () => ({ ok: true, scrollY: 120, moved: 120, max: 2000 }),
   hover: async () => ({ ok: true, tag: 'a' }),
-  clickElement: async () => ({ ok: true, tag: 'button', text: 'إرسال' }),
-  typeText: async () => ({ ok: true, tag: 'input' }),
-  selectOption: async () => ({ ok: true, label: 'الأول' }),
-  pressKey: () => ({ ok: true, key: 'Enter' }),
+  clickElement: async () => ({ ok: true, tag: 'button', text: 'إرسال', navigated: false, dom_changed: true }),
+  typeText: async () => ({ ok: true, tag: 'input', navigated: false, dom_changed: true }),
+  selectOption: async () => ({ ok: true, label: 'الأول', navigated: false, dom_changed: true }),
+  pressKey: async () => ({ ok: true, key: 'Enter', navigated: false, dom_changed: false, note: 'لم يتغيّر شيء' }),
+  evaluate: async () => ({ ok: true, value: '{"ready":true}', truncated: false }),
+  setViewport: async (width, height) => ({ ok: true, requested: { width, height }, actual: { width, height: height || 600 } }),
+  perf: async () => ({ ok: true, perf: { navigation: { load: 120 } }, failed_requests: [] }),
+  back: async () => ({ ok: true, navigated: true, dom_changed: false, url: 'https://previous.example/' }),
+  forward: async () => ({ ok: true, navigated: true, dom_changed: false, url: 'https://next.example/' }),
   // حالة التسليم البشري (browser_handoff) — يحاكي عقد preview.js: علم واحد + idempotent
   _handoff: false,
   startHandoff() { if (this._handoff) return { ok: false, error: 'active' }; this._handoff = true; return { ok: true }; },
@@ -84,10 +91,16 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   ['open_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network', 'screenshot',
    'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover',
    'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
+   'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
    'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
-  ok(names.length === 20, 'عدد أدوات Codex MCP أصبح 20 (16 متصفح + 4 خلفية)');
+  ok(names.length === 25, 'عدد أدوات Codex MCP أصبح 25 (21 متصفح + 4 خلفية)');
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
+  const builtTools = codexmcp.buildTools({ preview });
+  const built = (name) => builtTools.find((tool) => tool.name === name);
+  ok(built('browser_evaluate').browserClass === 'act', 'browser_evaluate مصنّفة act');
+  ok(built('browser_set_viewport').browserClass === 'read' && built('browser_perf').browserClass === 'read', 'viewport/perf مصنّفتان read');
+  ok(built('browser_back').browserClass === 'navigate' && built('browser_forward').browserClass === 'navigate', 'back/forward مصنّفتان navigate');
 
   // tools/call: read_page نص مغلّف
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'read_page', arguments: {} } });
@@ -121,8 +134,8 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   // بوابة الإذن: كل أدوات المعاينة تمرّ بـ requestPermission، وغيابها يرفض fail-closed.
   const asked = [];
   const askedMeta = [];
-  const gate = (decision) => async (tool, input, access, neverAlways) => {
-    asked.push(tool); askedMeta.push({ tool, access, neverAlways }); return decision;
+  const gate = (decision) => async (tool, input, access, neverAlways, target, currentUrl) => {
+    asked.push(tool); askedMeta.push({ tool, access, neverAlways, target, currentUrl }); return decision;
   };
 
   // (أ) رفض ⇒ browser_click لا يُنفَّذ ويعيد خطأ إذن
@@ -138,6 +151,9 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_type', arguments: { ref: 'e7', text: 'x' } } });
   jj = JSON.parse(rr.body);
   ok(asked.includes('browser_type') && !jj.result.isError && /كُتب النص/.test(jj.result.content[0].text), 'قبول الإذن ⇒ browser_type يُنفَّذ');
+  ok(/dom_changed=true/.test(jj.result.content[0].text), 'نتيجة الفعل تعيد دليل dom_changed للنموذج');
+  ok(askedMeta.some((item) => item.tool === 'browser_type' && item.target === 'https://untrusted.example/page'), 'codexmcp يمرّر هدف الصفحة الحالية لبوابة الفعل');
+  ok(askedMeta.some((item) => item.tool === 'browser_type' && item.currentUrl === 'https://untrusted.example/page'), 'codexmcp يمرّر origin الصفحة الحالية أيضاً');
 
   // (ج) أدوات الخلفية القرائية حرّة، وأدوات التنفيذ تبقى خلف البوابة المصنّفة.
   asked.length = 0;
@@ -161,11 +177,17 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   ok(jj.result.isError && askedMeta.some((item) => item.tool === 'stop_background_task' && item.access === 'exec' && item.neverAlways), 'stop_background_task تطلب exec ولا تقبل «دائماً»');
   await srv3.stop();
 
-  ok(codex.shouldAutoApproveMcp('browser', true, 'default', false, false), 'browserControl يعفي أدوات المتصفح');
-  ok(!codex.shouldAutoApproveMcp('exec', true, 'default', false, false), 'browserControl لا يعفي run_in_background');
-  ok(!codex.shouldAutoApproveMcp('exec', true, 'default', false, true), 'browserControl لا يعفي stop_background_task');
-  ok(codex.shouldAutoApproveMcp('exec', false, 'default', true, false), 'الموافقة الدائمة الخاصة تعفي تشغيل الخلفية');
-  ok(!codex.shouldAutoApproveMcp('exec', false, 'default', true, true), 'stop لا تعفيه الموافقة الدائمة');
+  const trustedOrigins = new Set(['https://trusted.example']);
+  ok(codex.shouldAutoApproveMcp('browser', true, 'default', false, false, 'read_page', 'https://evil.example', trustedOrigins), 'browserControl يعفي القراءة على أي نطاق');
+  ok(!codex.shouldAutoApproveMcp('browser', true, 'default', false, false, 'browser_click', 'https://evil.example', trustedOrigins), 'browserControl لا يعفي فعلاً على نطاق غير موثوق');
+  ok(codex.shouldAutoApproveMcp('browser', true, 'default', false, false, 'browser_click', 'https://trusted.example/x', trustedOrigins), 'browserControl يعفي فعلاً على نطاق موثوق');
+  ok(!codex.shouldAutoApproveMcp('browser', true, 'default', false, false, 'browser_click', 'https://trusted.example/x', trustedOrigins, 'https://evil.example/page'), 'وجهة موثوقة لا تعفي فعلاً صادرًا من صفحة غير موثوقة');
+  ok(codex.shouldAutoApproveMcp('browser', true, 'default', false, false, 'browser_navigate', 'http://localhost:5173', trustedOrigins), 'localhost موثوق دائماً للتنقّل');
+  ok(codex.shouldAutoApproveMcp('browser', true, 'bypassPermissions', false, false, 'browser_click', 'https://evil.example', trustedOrigins), 'bypassPermissions يتجاوز بوابة النطاق');
+  ok(!codex.shouldAutoApproveMcp('exec', true, 'default', false, false, 'run_in_background', null, trustedOrigins), 'browserControl لا يعفي run_in_background');
+  ok(!codex.shouldAutoApproveMcp('exec', true, 'default', false, true, 'stop_background_task', null, trustedOrigins), 'browserControl لا يعفي stop_background_task');
+  ok(codex.shouldAutoApproveMcp('exec', false, 'default', true, false, 'run_in_background', null, trustedOrigins), 'الموافقة الدائمة الخاصة تعفي تشغيل الخلفية');
+  ok(!codex.shouldAutoApproveMcp('exec', false, 'default', true, true, 'stop_background_task', null, trustedOrigins), 'stop لا تعفيه الموافقة الدائمة');
 
   const srv4 = await codexmcp.start({ preview });
   rr = await post(srv4.url, srv4.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'open_preview', arguments: { url: 'http://localhost:3000' } } });
