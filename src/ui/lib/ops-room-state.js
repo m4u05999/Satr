@@ -26,6 +26,7 @@ export function createOpsRoomState() {
     team: null,
     review: null,
     verification: null,
+    preview: null,
     pending: '',
     status: '',
   };
@@ -54,7 +55,7 @@ function reduceRuntimeEvent(state, event) {
     return {
       ...state,
       team: { ...event.team },
-      ...(replaced ? { room: null, entries: [], review: null, verification: null } : {}),
+      ...(replaced ? { room: null, entries: [], review: null, verification: null, preview: null } : {}),
     };
   }
   if (event.type === 'execution_review_update' && event.review) {
@@ -63,6 +64,10 @@ function reduceRuntimeEvent(state, event) {
   }
   if (event.type === 'execution_verification_update' && event.verification) {
     return { ...state, verification: { ...event.verification } };
+  }
+  if (event.type === 'execution_preview_update') {
+    if (event.preview && state.team && event.preview.artifact_id !== state.team.artifact_id) return state;
+    return { ...state, preview: event.preview ? { ...event.preview } : null };
   }
   return state;
 }
@@ -80,6 +85,7 @@ export function opsRoomReducer(state, action) {
       team: input.team ? { ...input.team } : null,
       review: input.review ? { ...input.review } : null,
       verification: input.verification ? { ...input.verification } : null,
+      preview: input.preview ? { ...input.preview } : null,
       pending: '',
       status: '',
     };
@@ -94,6 +100,8 @@ export function opsRoomReducer(state, action) {
       ...(input.team ? { team: { ...input.team } } : {}),
       ...(input.review ? { review: { ...input.review } } : {}),
       ...(input.verification ? { verification: { ...input.verification } } : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, 'preview')
+        ? { preview: input.preview ? { ...input.preview } : null } : {}),
     };
   }
   if (input.type === 'status') return { ...current, status: String(input.status || '') };
@@ -127,6 +135,9 @@ export function deriveOpsRoomState(state) {
   const verificationActive = verificationCurrent && current.verification.state === 'running';
   const reviewApproved = approvedReviewForArtifact(current.review, team, artifactId);
   const verificationPassed = verificationCurrent && current.verification.state === 'passed';
+  const previewCurrent = !!(current.preview && artifactId && current.preview.artifact_id === artifactId);
+  const previewActive = previewCurrent && ['starting', 'running', 'stopping'].includes(current.preview.state);
+  const previewNeedsCleanup = previewCurrent && current.preview.state === 'cleanup_failed';
   const busy = !!current.pending;
   const canStart = !busy && (!team || teamTerminal) && !reviewActive && !verificationActive;
   const canStop = !busy && (!!(team && !teamTerminal) || reviewActive || verificationActive);
@@ -138,6 +149,9 @@ export function deriveOpsRoomState(state) {
     && current.verification.state === 'pending_confirmation';
   const canMerge = !busy && !!(team && team.merge_supported && !team.merged
     && reviewApproved && verificationPassed);
+  const showPreview = !!(team && team.merge_supported && !team.merged && verificationPassed);
+  const canPreview = !busy && showPreview && !previewActive && !previewNeedsCleanup;
+  const canStopPreview = !busy && (previewActive || previewNeedsCleanup);
   let nextAction = { key: 'wait', action: '', label: 'لا يوجد انتقال مطلوب حالياً.' };
   if (busy) nextAction = { key: 'pending', action: '', label: 'جارٍ تنفيذ الانتقال المطلوب…' };
   else if (canMerge) nextAction = { key: 'merge', action: 'merge', label: 'نجح التحقق ووافقت المراجعات؛ الخطوة التالية دمج الأثر بتأكيد صريح.' };
@@ -178,12 +192,17 @@ export function deriveOpsRoomState(state) {
     verificationActive,
     reviewApproved,
     verificationPassed,
+    previewActive,
+    previewNeedsCleanup,
     canStart,
     canStop,
     canReview,
     canPrepareVerification,
     canRunVerification,
     canMerge,
+    showPreview,
+    canPreview,
+    canStopPreview,
     nextAction,
   };
 }

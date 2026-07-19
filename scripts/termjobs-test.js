@@ -11,6 +11,8 @@ process.env.SATR_DEVSERVER_FILE = path.join(temp, 'devservers.json');
 const term = require('../electron/term');
 const termjobs = require('../electron/termjobs');
 const devservers = require('../electron/devservers');
+const notices = [];
+termjobs.setNotifier((event) => notices.push(event));
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 async function waitFor(fn, label, timeout = 12000) {
@@ -40,6 +42,20 @@ async function waitFor(fn, label, timeout = 12000) {
   assert(term.readBuffer(started.id, 32).data.length > 0, 'readBuffer tail فارغ');
   assert(termjobs.stop(started.id).ok, 'فشل إيقاف المهمة');
   await waitFor(() => !termjobs.info(started.id), 'حذف المهمة بعد الإيقاف');
+
+  const previewRoot = path.join(temp, 'preview-worktree');
+  fs.mkdirSync(previewRoot);
+  const previewJob = termjobs.startJob(previewRoot,
+    'node -e "console.log(\'READY http://localhost:4318\'); setInterval(()=>{}, 150)"', 'معاينة تكاملية', {
+      recordDevServer: false, publicCwd: '',
+    });
+  assert(previewJob.ok, previewJob.message || previewJob.error);
+  await waitFor(() => term.readBuffer(previewJob.id, 64 * 1024).data.includes('READY'), 'خرج المعاينة');
+  assert.strictEqual(devservers.info(previewRoot), null, 'لوّثت المعاينة التكاملية سجل devservers');
+  const previewNotice = notices.find((event) => event.type === 'bg_term' && event.id === previewJob.id);
+  assert(previewNotice && previewNotice.cwd === '', 'تسرّب مسار worktree المؤقت في حدث البث');
+  assert(termjobs.stop(previewJob.id).ok, 'فشل إيقاف معاينة التكامل');
+  await waitFor(() => !termjobs.info(previewJob.id), 'حذف معاينة التكامل بعد الإيقاف');
 
   const jobs = [];
   for (let index = 0; index < termjobs.MAX_JOBS; index++) {

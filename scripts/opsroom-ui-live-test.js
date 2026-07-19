@@ -62,7 +62,8 @@ async function main() {
     assert.deepStrictEqual(result.violations, [], 'رُصد securitypolicyviolation أثناء الاختبار.');
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console أثناء الاختبار.');
     for (const check of [
-      'recent-observable-activity', 'elapsed-and-deadline', 'truthful-running-guidance',
+      'seeded-chat-task', 'single-agent-default', 'recent-observable-activity',
+      'elapsed-and-deadline', 'truthful-running-guidance',
       'quiet-without-stall-claim', 'timeout-recovery-guidance', 'explicit-retry',
       'deduplicated-terminal-notice', 'zero-csp-violations',
     ]) assert(result.checks.includes(check), 'غاب فحص غرفة العمليات الحي: ' + check);

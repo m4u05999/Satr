@@ -186,4 +186,4 @@ async function changes(cwd) {
   return { ok: true, repo: true, files, more: Math.max(0, entries.length - MAX_FILES), partial };
 }
 
-module.exports = { changes };
+module.exports = { changes, parseUnified };

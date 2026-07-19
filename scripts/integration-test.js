@@ -34,12 +34,12 @@ async function commitAll(project, message) {
   return git(project, ['rev-parse', 'HEAD']);
 }
 
-async function setConfig(project, commands, message) {
+async function setConfig(project, commands, message, preview) {
   const created = verify.createConfig(project, commands.map((command) => ({
     ...command,
     label: typeof command.label === 'string' && command.label.trim() ? command.label : command.id,
     timeout_seconds: Number.isInteger(command.timeout_seconds) ? command.timeout_seconds : 120,
-  })), { confirmed: true, overwrite: true });
+  })), { confirmed: true, overwrite: true, preview });
   assert.strictEqual(created.ok, true, 'فشل الكاتب الإنتاجي في إعداد fixture التكامل: ' + created.error);
   return commitAll(project, message);
 }
@@ -77,7 +77,26 @@ async function main() {
   const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'satr-integration-test-'));
   const project = path.join(temp, 'project');
   const manager = worktreesModule.createManager({ root: path.join(temp, 'worktrees') });
-  const integration = integrationModule.create({ worktrees: manager });
+  const previewJobs = new Map();
+  const previewCalls = [];
+  let previewSequence = 0;
+  let previewStartError = '';
+  const fakeTermjobs = {
+    startJob(cwd, command, label, options) {
+      if (previewStartError) return { ok: false, error: previewStartError };
+      const id = 'preview-job-' + (++previewSequence);
+      previewJobs.set(id, { id, cwd, command, label, options });
+      previewCalls.push(previewJobs.get(id));
+      return { ok: true, id };
+    },
+    info(id) { return previewJobs.get(id) || null; },
+    stop(id) { return previewJobs.delete(id) ? { ok: true } : { ok: false, error: 'no_job' }; },
+  };
+  const integration = integrationModule.create({
+    worktrees: manager,
+    termjobs: fakeTermjobs,
+    waitForUrl: async () => ({ ok: true }),
+  });
   const merger = mergerModule.create({ root: path.join(temp, 'merge') });
   try {
     await fsp.mkdir(path.join(project, 'src'), { recursive: true });
@@ -88,7 +107,9 @@ async function main() {
     await fsp.writeFile(path.join(project, 'checks', 'fail.js'), "console.log('SECRET_TOKEN_DO_NOT_PUBLISH'); process.exit(7);\n", 'utf8');
     await fsp.writeFile(path.join(project, 'checks', 'timeout.js'), 'setInterval(() => {}, 1000);\n', 'utf8');
     await git(project, ['init']);
-    await setConfig(project, [{ id: 'test', label: 'اختبار الأثر', command: 'node checks/success.js', timeout_seconds: 10 }], 'base');
+    await setConfig(project, [{ id: 'test', label: 'اختبار الأثر', command: 'node checks/success.js', timeout_seconds: 10 }], 'base', {
+      command: 'node checks/preview.js', url: 'http://localhost:4319/', timeout_seconds: 20,
+    });
 
     const successArtifact = await makeArtifact(manager, project, async (worktree) => {
       await fsp.writeFile(path.join(worktree, 'src', 'app.txt'), 'changed\n', 'utf8');
@@ -116,6 +137,72 @@ async function main() {
     });
     assert.strictEqual(await fsp.readFile(path.join(project, 'src', 'app.txt'), 'utf8'), sourceBefore);
     assert((await fsp.readFile(path.join(project, '.satr', 'verify.json'), 'utf8')).includes('disk-only'));
+    await assertCleanWorktrees(project);
+
+    assert.strictEqual((await integration.preparePreview(successArtifact, false)).error, 'confirmation_required');
+    const unverifiedIntegration = integrationModule.create({
+      worktrees: manager, termjobs: fakeTermjobs, waitForUrl: async () => ({ ok: true }),
+    });
+    assert.strictEqual((await unverifiedIntegration.preparePreview(successArtifact, true)).error, 'verification_required');
+    const previewed = await integration.preparePreview({ ...successArtifact, command: 'node external-evil.js' }, true);
+    assert.strictEqual(previewed.ok, true);
+    assert.strictEqual(previewed.url, 'http://localhost:4319/');
+    assert.strictEqual(previewCalls[0].command, 'node checks/preview.js');
+    assert.strictEqual(previewCalls[0].options.recordDevServer, false);
+    assert.strictEqual(previewCalls[0].options.publicCwd, '');
+    assert.notStrictEqual(path.resolve(previewCalls[0].cwd), path.resolve(project));
+    assert.strictEqual((await integration.preparePreview(successArtifact, true)).error, 'busy');
+    assert.strictEqual((await integration.stopPreview()).ok, true);
+    assert.strictEqual(previewJobs.size, 0);
+    await assertCleanWorktrees(project);
+
+    previewStartError = 'preview_start_failed';
+    const previewFailure = await integration.preparePreview(successArtifact, true);
+    assert.strictEqual(previewFailure.error, 'preview_start_failed');
+    previewStartError = '';
+    await assertCleanWorktrees(project);
+
+    let failPreviewRemoval = false;
+    const cleanupManager = {
+      ...manager,
+      remove: (id) => failPreviewRemoval ? Promise.resolve({ ok: false, error: 'remove_failed' }) : manager.remove(id),
+    };
+    const cleanupIntegration = integrationModule.create({
+      worktrees: cleanupManager,
+      termjobs: fakeTermjobs,
+      waitForUrl: async () => ({ ok: true }),
+    });
+    assert.strictEqual((await cleanupIntegration.prepare(successArtifact)).ok, true);
+    assert.strictEqual((await cleanupIntegration.run(successArtifact, true)).ok, true);
+    assert.strictEqual((await cleanupIntegration.preparePreview(successArtifact, true)).ok, true);
+    failPreviewRemoval = true;
+    const cleanupFailed = await cleanupIntegration.stopPreview();
+    assert.strictEqual(cleanupFailed.error, 'cleanup_failed');
+    assert.strictEqual(cleanupFailed.preview.state, 'cleanup_failed');
+    failPreviewRemoval = false;
+    assert.strictEqual((await cleanupIntegration.stopPreview()).ok, true);
+    await assertCleanWorktrees(project);
+
+    let delayPreviewCreate = false;
+    const racingManager = {
+      ...manager,
+      async create(cwd, head) {
+        if (delayPreviewCreate) await new Promise((resolve) => setTimeout(resolve, 100));
+        return manager.create(cwd, head);
+      },
+    };
+    const racingIntegration = integrationModule.create({
+      worktrees: racingManager,
+      termjobs: fakeTermjobs,
+      waitForUrl: async () => ({ ok: true }),
+    });
+    assert.strictEqual((await racingIntegration.prepare(successArtifact)).ok, true);
+    assert.strictEqual((await racingIntegration.run(successArtifact, true)).ok, true);
+    delayPreviewCreate = true;
+    const startingPreview = racingIntegration.preparePreview(successArtifact, true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.strictEqual((await racingIntegration.stopPreview()).ok, true);
+    assert.strictEqual((await startingPreview).error, 'preview_stopped');
     await assertCleanWorktrees(project);
 
     await setConfig(project, [{ id: 'fail', label: 'فشل مقصود', command: 'node checks/fail.js', timeout_seconds: 10 }], 'failure config');
@@ -206,12 +293,19 @@ async function main() {
     assert((await git(project, ['status', '--porcelain'])).includes('src/app.txt'));
     await assertCleanWorktrees(project);
 
+    const mainSource = await fsp.readFile(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+    assert(mainSource.includes("ipcMain.handle('satr:executionPreviewStart'")
+      && mainSource.includes("Object.prototype.hasOwnProperty.call(p, 'command')"));
+    assert(mainSource.includes('const previewCleanup = await integration.stopPreview();'));
+    assert(mainSource.includes('integration.stopAll();'));
+
     console.log('✓ commands come only from verify.json at artifact HEAD and require independent confirmation');
     console.log('✓ integration worktree passes, fails, times out, stops, and is removed on every path');
     console.log('✓ config absence and artifact edits to verification policy fail closed');
     console.log('✓ public verification results omit commands, raw output, and secrets');
     console.log('✓ verification is bound to artifact_id and merger keeps review, verification, HEAD, and cleanliness guards');
     console.log('✓ source remains untouched until explicit merge and no commit or history operation is created');
+    console.log('✓ preview requires passed verification and confirmation, reads its command from HEAD, stays unique, and cleans up');
   } finally {
     await manager.removeAll().catch(() => {});
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });

@@ -21,7 +21,8 @@ function publicJob(job) {
   };
 }
 
-function startJob(cwd, command, label) {
+function startJob(cwd, command, label, options) {
+  const settings = options && typeof options === 'object' ? options : {};
   if (jobs.size >= MAX_JOBS) return { ok: false, error: 'too_many', message: 'بلغت مهام الخلفية الحد الأقصى (' + MAX_JOBS + ').' };
   const cleanCommand = term.sanitizeCommand(command);
   if (!cleanCommand.trim()) return { ok: false, error: 'empty', message: 'أمر فارغ.' };
@@ -31,9 +32,12 @@ function startJob(cwd, command, label) {
   const job = {
     id: started.id, label: cleanLabel, command: cleanCommand, cwd: path.resolve(cwd),
     shell: started.shell, startedAt: Date.now(),
+    recordDevServer: settings.recordDevServer !== false,
+    publicCwd: settings.publicCwd == null ? path.resolve(cwd) : String(settings.publicCwd),
+    onExit: typeof settings.onExit === 'function' ? settings.onExit : null,
   };
   jobs.set(job.id, job);
-  devservers.recordStart(job.cwd, job.command, job.label);
+  if (job.recordDevServer) devservers.recordStart(job.cwd, job.command, job.label);
   const shell = String(job.shell || '').toLowerCase();
   const line = shell.includes('cmd') ? cleanCommand + ' & exit' : cleanCommand + '; exit';
   const written = term.writeTerm(job.id, line + '\r');
@@ -42,7 +46,7 @@ function startJob(cwd, command, label) {
     term.killTerm(job.id);
     return written;
   }
-  notify({ type: 'bg_term', id: job.id, label: job.label, shell: job.shell, cwd: job.cwd });
+  notify({ type: 'bg_term', id: job.id, label: job.label, shell: job.shell, cwd: job.publicCwd });
   return { ok: true, ...publicJob(job) };
 }
 
@@ -56,10 +60,11 @@ function stop(id) {
 term.subscribe((event) => {
   const job = jobs.get(event.id);
   if (!job) return;
-  if (event.type === 'data') devservers.observeOutput(job.id, job.cwd, event.data);
+  if (event.type === 'data' && job.recordDevServer) devservers.observeOutput(job.id, job.cwd, event.data);
   if (event.type === 'exit') {
     jobs.delete(job.id);
-    devservers.forgetOutput(job.id);
+    if (job.recordDevServer) devservers.forgetOutput(job.id);
+    if (job.onExit) Promise.resolve(job.onExit({ id: job.id, exitCode: event.exitCode })).catch(() => {});
   }
 });
 

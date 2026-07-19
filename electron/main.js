@@ -579,6 +579,15 @@ function emitOpsVerification(roomId, teamId, obj) {
   emitToWindow(obj);
 }
 
+function emitOpsPreview(roomId, teamId, obj) {
+  const previewState = obj && obj.type === 'execution_preview_update' ? obj.preview : null;
+  if (previewState && opsroom.SAFE_ARTIFACT_ID.test(previewState.artifact_id || '')) {
+    recordOpsSystem(roomId, 'verification', 'انتقلت المعاينة التكاملية إلى الحالة ' + previewState.state + '.',
+      teamId, previewState.artifact_id, 'preview:' + previewState.artifact_id + ':' + previewState.state);
+  }
+  emitToWindow({ ...(obj || {}), room_id: roomId, team_id: teamId });
+}
+
 // آخر محرك أُرسل به طلب — وصفٌ لمجرى المراقبة (لا يغيّر سلوك النواة)
 let lastEngine = 'sdk';
 
@@ -1278,6 +1287,14 @@ function sanitizeOwnership(value) {
   return [...new Set(patterns)];
 }
 
+function sanitizeArtifactRel(value) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 512
+    || /[\x00-\x1F\x7F-\x9F?*]/.test(value)) return '';
+  const rel = value.replace(/\\/g, '/');
+  const normalized = executorModule.normalizeOwnership([rel]);
+  return normalized && normalized.length === 1 && normalized[0] === rel ? rel : '';
+}
+
 ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
   const p = payload || {};
   const cwd = sanitizeMemoryCwd(p.cwd);
@@ -1305,6 +1322,8 @@ ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
     const unavailable = unavailableReviewEngines(['sdk']);
     if (unavailable.length) return { ok: false, error: 'review_engine_unavailable', engines: unavailable };
   }
+  const previewCleanup = await integration.stopPreview();
+  if (!previewCleanup.ok) return previewCleanup;
   const created = opsroom.createRoom();
   if (!created.ok) return { ok: false, error: 'ops_room_unavailable' };
   const roomId = created.room.room_id;
@@ -1369,6 +1388,18 @@ ipcMain.handle('satr:executionReviewLatest', (event, payload) => {
   return { ok: true, review: reviewer.latest(p.teamId) };
 });
 
+ipcMain.handle('satr:executionFileDiff', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const rel = sanitizeArtifactRel(p.rel);
+  if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '')
+    || !integration.SAFE_ARTIFACT_ID.test(p.artifactId || '') || !rel) {
+    return { ok: false, error: 'bad_input' };
+  }
+  const artifact = executionTeam.artifact(p.teamId);
+  if (!artifact || artifact.artifact_id !== p.artifactId) return { ok: false, error: 'artifact_mismatch' };
+  return opsartifacts.fileDiff(artifact, rel);
+});
+
 ipcMain.handle('satr:executionVerificationPrepare', async (event, payload) => {
   const p = payload || {};
   if (!executionTeamModule.SAFE_RUN_ID.test(p.teamId || '') || !reviewerModule.SAFE_REVIEW_ID.test(p.reviewId || '')) {
@@ -1414,8 +1445,31 @@ ipcMain.handle('satr:executionVerificationLatest', (event, payload) => {
   const teamId = payload && payload.teamId;
   if (!executionTeamModule.SAFE_RUN_ID.test(teamId || '')) return { ok: false, error: 'bad_input' };
   const artifact = executionTeam.artifact(teamId);
-  return { ok: true, verification: artifact ? integration.latest(artifact.artifact_id) : null };
+  return {
+    ok: true,
+    verification: artifact ? integration.latest(artifact.artifact_id) : null,
+    preview: artifact ? integration.latestPreview(artifact.artifact_id) : null,
+  };
 });
+
+ipcMain.handle('satr:executionPreviewStart', async (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  if (!cwd || !executionTeamModule.SAFE_RUN_ID.test(p.teamId || '')
+    || !integration.SAFE_ARTIFACT_ID.test(p.artifactId || '') || p.confirmed !== true
+    || Object.prototype.hasOwnProperty.call(p, 'command')) {
+    return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
+  }
+  const artifact = executionTeam.artifact(p.teamId);
+  if (!artifact || artifact.artifact_id !== p.artifactId
+    || path.resolve(artifact.sourceRoot) !== path.resolve(cwd)) {
+    return { ok: false, error: 'artifact_mismatch' };
+  }
+  return integration.preparePreview(artifact, true,
+    (obj) => emitOpsPreview(artifact.room_id, p.teamId, obj));
+});
+
+ipcMain.handle('satr:executionPreviewStop', async () => integration.stopPreview());
 
 ipcMain.handle('satr:executionMerge', async (event, payload) => {
   const p = payload || {};
@@ -1431,13 +1485,19 @@ ipcMain.handle('satr:executionMerge', async (event, payload) => {
   if (!verified.ok) return verified;
   const result = await merger.apply({ ...artifact, review_gate: gate, verification, confirmed: true });
   if (!result.ok) return result;
+  const previewCleanup = await integration.stopPreview();
   const marked = executionTeam.markMerged(p.teamId);
   opsartifacts.remove(artifact.artifact_id, { projectRoot: artifact.sourceRoot });
   savedOpsArtifacts.delete(savedOpsArtifactKey(artifact.sourceRoot, artifact.artifact_id));
   if (marked && marked.team) updateOpsRoomIndex(artifact.sourceRoot, marked.team, false);
   recordOpsSystem(artifact.room_id, 'phase_gate', 'اكتمل انتقال الدمج للأثر المعتمد.',
     p.teamId, artifact.artifact_id, 'merge:completed');
-  return { ...result, team: marked && marked.team ? marked.team : null };
+  return {
+    ...result,
+    team: marked && marked.team ? marked.team : null,
+    preview: previewCleanup.preview || null,
+    ...(previewCleanup.ok ? {} : { preview_cleanup_failed: true, cleanup_error: 'cleanup_failed' }),
+  };
 });
 
 // ---------- سجل غرفة العمليات الدائم (المرحلة 6) ----------
@@ -1831,21 +1891,33 @@ app.whenReady().then(() => {
   } catch (e) { /* أفضل جهد */ }
 });
 app.whenReady().then(createWindow);
-app.on('window-all-closed', () => {
+let shutdownCleanup = null;
+let shutdownClean = false;
+
+async function cleanupBeforeQuit() {
   stopAll();
-  orchestrator.stopAll();
-  opsBrainstorm.stopAll();
-  opsPlanner.stopAll();
-  executor.stopAll();
-  executionTeam.stopAll();
-  reviewer.stopAll();
-  integration.stopAll();
-  // إنهاء عمليات الخلفية المتتبَّعة كي لا تبقى خوادم تطوير بلا واجهة تديرها بعد الإغلاق
+  await Promise.allSettled([
+    orchestrator.stopAll(), opsBrainstorm.stopAll(), opsPlanner.stopAll(), executor.stopAll(),
+    executionTeam.stopAll(), reviewer.stopAll(), integration.stopAll(),
+  ]);
+  if (integration.latestPreview()) await integration.stopAll();
   bgprocs.killAll();
-  term.killAll(); // صدفة الطرفية المدمجة تموت مع «سطر» (المرحلة 8)
-  if (process.platform !== 'darwin') app.quit();
+  term.killAll();
+}
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') { app.quit(); return; }
+  cleanupBeforeQuit().catch(() => {});
 });
-app.on('before-quit', () => { orchestrator.stopAll(); opsBrainstorm.stopAll(); opsPlanner.stopAll(); executor.stopAll(); executionTeam.stopAll(); reviewer.stopAll(); integration.stopAll(); bgprocs.killAll(); term.killAll(); });
+app.on('before-quit', (event) => {
+  if (shutdownClean) return;
+  event.preventDefault();
+  if (shutdownCleanup) return;
+  shutdownCleanup = cleanupBeforeQuit().finally(() => {
+    shutdownClean = true;
+    app.quit();
+  });
+});
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });

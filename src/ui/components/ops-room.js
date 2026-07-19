@@ -3,6 +3,8 @@
 import { sheet } from '../lib/sheet.js';
 import { panelSheet, controlsSheet } from '../lib/panel.css.js';
 import { cardSheet } from '../lib/card.css.js';
+import { buildDiff } from '../lib/diff.js';
+import { diffSheet } from '../lib/diff.css.js';
 import {
   createOpsRoomState, deriveAgentActivity, deriveOpsRoomState, opsRoomReducer,
 } from '../lib/ops-room-state.js';
@@ -75,6 +77,8 @@ const roomSheet = sheet(`
   .action-bar button { flex: 0 0 auto; font-size: .75rem; }
   .primary-action { color: var(--gold); border-color: var(--gold-border); background: var(--surface-3); }
   .primary-action[data-action="merge"] { color: var(--green); border-color: var(--green-border); }
+  .preview-action { color: var(--gold); border-color: var(--gold-border); }
+  .preview-stop { color: var(--red); }
   .primary-reason { color: var(--red); font-size: .72rem; unicode-bidi: plaintext; }
   .primary-reason[hidden] { display: none; }
   .status-row, .timeout-row {
@@ -192,6 +196,12 @@ const roomSheet = sheet(`
     padding-block: var(--space-2); border-bottom: 1px solid var(--border-dim);
   }
   .agent-meta:last-child, .file-row:last-child, .check-row:last-child { border-bottom: none; }
+  .file-diff-request {
+    width: 100%; background: transparent; border: none; border-radius: var(--space-0);
+    color: var(--text); text-align: start; cursor: pointer;
+  }
+  .file-diff-request:hover { background: var(--surface-3); border: none; }
+  .file-diff-error { padding: var(--space-2); color: var(--red); unicode-bidi: plaintext; }
   .path, .command, .artifact {
     direction: ltr; unicode-bidi: isolate; font-family: var(--mono); text-align: left;
     overflow-wrap: anywhere;
@@ -199,6 +209,10 @@ const roomSheet = sheet(`
   .path, .command { flex: 1; min-width: 0; }
   .counts { direction: ltr; font-family: var(--mono); color: var(--text-dim); white-space: nowrap; }
   .summary { white-space: pre-wrap; unicode-bidi: plaintext; }
+  .review-section { display: grid; gap: var(--space-1); }
+  .review-section h4 { color: var(--gold); font-size: .78rem; }
+  .review-section ul { margin: var(--space-0); padding-inline-start: var(--space-5); display: grid; gap: var(--space-1); }
+  .review-section li { unicode-bidi: plaintext; }
   .live-activity {
     display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
     padding: 0 var(--space-3) var(--space-3); color: var(--text-dim); font-size: .75rem;
@@ -306,6 +320,10 @@ const ERROR_LABELS = {
   review_artifact_mismatch: 'المراجعة تخص أثراً قديماً — أعد المراجعة للأثر الحالي.',
   verification_artifact_mismatch: 'التحقق يخص أثراً قديماً — ثبّت التحقق وشغّل الاختبارات للأثر الحالي.',
   verification_required: 'يلزم نجاح التحقق للأثر الحالي — شغّل الاختبارات المعتمدة وعالج أي فشل قبل الدمج.',
+  preview_config_required: 'يلزم قسم preview صالح في .satr/verify.json المعتمد عند HEAD.',
+  preview_timeout: 'لم تصبح المعاينة جاهزة ضمن المهلة المعتمدة — افحص أمر المعاينة ثم أعد المحاولة.',
+  preview_exited: 'توقفت مهمة المعاينة قبل أن تصبح جاهزة — افحص أمر المعاينة ثم أعد المحاولة.',
+  preview_failed: 'تعذّر تجهيز المعاينة التكاملية المعزولة — أعد المحاولة بعد فحص إعداد المعاينة.',
   dirty_worktree: 'شجرة المشروع غير نظيفة — احفظ (commit) أو تراجع عن تعديلاتك غير الملتزمة قبل الدمج.',
   head_changed: 'تغيّر HEAD منذ التنفيذ — أعد التنفيذ والمراجعة والتحقق على HEAD الحالي قبل الدمج.',
   conflict: 'يتعارض الأثر مع شجرة المشروع — أعد التنفيذ من HEAD الحالي ثم كرر المراجعة والتحقق.',
@@ -381,6 +399,27 @@ function engineLabel(value) {
   if (value === 'system') return 'النظام';
   if (value === 'user') return 'المستخدم';
   return value || 'غير محدد';
+}
+
+function reviewSections(summary, recommendation) {
+  const sections = { risks: [], notes: [], recommendation: [] };
+  const names = { المخاطر: 'risks', الملاحظات: 'notes', التوصية: 'recommendation' };
+  let current = 'notes';
+  for (const raw of text(summary).replace(/\[verdict:\s*(?:approve|changes_required|reject)\s*\]/ig, '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const headingLine = line.replace(/^#{1,6}\s*/, '')
+      .replace(/^\*\*(المخاطر|الملاحظات|التوصية)\s*:?\*\*\s*:?[ \t]*/, '$1: ');
+    const heading = /^(المخاطر|الملاحظات|التوصية)\s*:?\s*(.*)$/.exec(headingLine);
+    if (heading) {
+      current = names[heading[1]];
+      if (heading[2]) sections[current].push(heading[2].replace(/^[-*•]\s*/, ''));
+      continue;
+    }
+    sections[current].push(line.replace(/^[-*•]\s*/, ''));
+  }
+  if (recommendation) sections.recommendation.push('عقد المراجع: ' + recommendation);
+  return sections;
 }
 
 function remainingLabel(deadline) {
@@ -482,7 +521,7 @@ class SatrOpsRoom extends HTMLElement {
     super();
     const root = this.attachShadow({ mode: 'open' });
     this._layoutSheet = sheet(':host {}');
-    root.adoptedStyleSheets = [panelSheet, cardSheet, roomSheet, this._layoutSheet];
+    root.adoptedStyleSheets = [panelSheet, cardSheet, diffSheet, roomSheet, this._layoutSheet];
     const head = makeElement('div', 'panel-head');
     const title = makeElement('span', 'panel-title', 'غرفة العمليات');
     const compactState = makeElement('span', 'compact-state'); compactState.setAttribute('aria-live', 'polite');
@@ -499,9 +538,12 @@ class SatrOpsRoom extends HTMLElement {
     const actionBar = makeElement('div', 'action-bar');
     const nextStep = makeElement('div', 'next-step'); nextStep.setAttribute('aria-live', 'polite');
     const primaryButton = makeElement('button', 'primary-action'); primaryButton.type = 'button'; primaryButton.hidden = true;
+    const previewButton = makeElement('button', 'preview-action', '🖥 شاهدها تعمل'); previewButton.type = 'button'; previewButton.hidden = true;
+    const previewStopButton = makeElement('button', 'preview-stop', 'أوقف المعاينة'); previewStopButton.type = 'button'; previewStopButton.hidden = true;
     const primaryReason = makeElement('span', 'primary-reason'); primaryReason.hidden = true;
     primaryReason.setAttribute('aria-live', 'polite');
-    actionBar.appendChild(nextStep); actionBar.appendChild(primaryReason); actionBar.appendChild(primaryButton);
+    actionBar.appendChild(nextStep); actionBar.appendChild(primaryReason); actionBar.appendChild(previewButton);
+    actionBar.appendChild(previewStopButton); actionBar.appendChild(primaryButton);
     const stageIndicator = makeElement('ol', 'stage-indicator'); stageIndicator.setAttribute('aria-label', 'مراحل غرفة العمليات');
     const nav = makeElement('nav', 'room-nav'); nav.setAttribute('role', 'tablist');
     nav.setAttribute('aria-label', 'أقسام غرفة العمليات');
@@ -538,7 +580,8 @@ class SatrOpsRoom extends HTMLElement {
     this._closeButton = closeButton;
     this._verifyConfigButton = verifyConfigButton;
     this._buttons = {
-      primary: this._primaryButton, extend: extendButton, stop: stopButton,
+      primary: this._primaryButton, preview: previewButton, previewStop: previewStopButton,
+      extend: extendButton, stop: stopButton,
     };
     this._state = createOpsRoomState();
     this._cwd = '';
@@ -557,6 +600,7 @@ class SatrOpsRoom extends HTMLElement {
     this._planDraft = '';
     this._appliedPlanId = '';
     this._notified = new Set();
+    this._diffCache = new Map();
     this._clock = null;
     this._buildStages();
     this._buildViews();
@@ -568,6 +612,8 @@ class SatrOpsRoom extends HTMLElement {
     this._compactButton = compactButton;
     this._compactButton.addEventListener('click', () => this._toggleCompact());
     this._primaryButton.addEventListener('click', () => this._runPrimaryAction());
+    this._buttons.preview.addEventListener('click', () => this._startPreview());
+    this._buttons.previewStop.addEventListener('click', () => this._stopPreview());
     this._buttons.extend.addEventListener('click', () => this._extendTimeout());
     this._buttons.stop.addEventListener('click', () => this._stop());
     resizeHandle.addEventListener('pointerdown', (event) => this._beginResize(event));
@@ -777,7 +823,10 @@ class SatrOpsRoom extends HTMLElement {
   }
 
   _dispatch(action) {
+    const previousArtifact = this._state.team && this._state.team.artifact_id;
     this._state = opsRoomReducer(this._state, action);
+    const nextArtifact = this._state.team && this._state.team.artifact_id;
+    if (previousArtifact !== nextArtifact) this._diffCache.clear();
     this._render();
     if ((action.type === 'settled' || action.type === 'status') && text(action.status)) {
       this.dispatchEvent(new CustomEvent('ops-notice', { bubbles: true, detail: action.status }));
@@ -840,7 +889,7 @@ class SatrOpsRoom extends HTMLElement {
     const count = document.createElement('select'); count.setAttribute('aria-label', 'عدد عوامل التنفيذ');
     for (let value = 1; value <= 3; value++) {
       const option = document.createElement('option'); option.value = String(value); option.textContent = String(value);
-      if (value === (previous.length || 2)) option.selected = true; count.appendChild(option);
+      if (value === (previous.length || 1)) option.selected = true; count.appendChild(option);
     }
     countWrap.appendChild(countLabel); countWrap.appendChild(count);
     const timeoutWrap = document.createElement('label'); timeoutWrap.className = 'setup-field';
@@ -856,7 +905,7 @@ class SatrOpsRoom extends HTMLElement {
     fields.appendChild(countWrap); fields.appendChild(timeoutWrap);
     head.appendChild(title); head.appendChild(fields); setup.appendChild(head);
     const note = document.createElement('div'); note.className = 'setup-note';
-    note.textContent = 'التنفيذ عبر Claude SDK فقط. المهلة محدودة مسبقاً وبسقف عشر دقائق لكل عامل؛ لا تمديد تلقائياً.';
+    note.textContent = 'المسار الافتراضي بعامل واحد: تنفيذ معزول ← مراجعة ← تحقق ← شاهدها تعمل ← دمج. الفريق من عاملين أو ثلاثة خيار متقدم للمهام ذات الملكيات المنفصلة.';
     const planRow = document.createElement('div'); planRow.className = 'setup-actions';
     const planButton = document.createElement('button'); planButton.type = 'button';
     const planRunning = this._plan && this._plan.state === 'running';
@@ -873,7 +922,7 @@ class SatrOpsRoom extends HTMLElement {
     }
     const inputs = [];
     for (let index = 1; index <= 3; index++) {
-      const worker = document.createElement('section'); worker.className = 'worker-input'; worker.hidden = index > (previous.length || 2);
+      const worker = document.createElement('section'); worker.className = 'worker-input'; worker.hidden = index > (previous.length || 1);
       const workerTitle = document.createElement('div'); workerTitle.className = 'worker-title'; workerTitle.textContent = 'عامل ' + index;
       const taskWrap = document.createElement('label'); taskWrap.className = 'setup-field';
       const taskLabel = document.createElement('span'); taskLabel.textContent = 'المهمة';
@@ -1057,28 +1106,65 @@ class SatrOpsRoom extends HTMLElement {
   _renderDiffs() {
     const view = this._views.diffs; view.textContent = '';
     const team = this._state.team;
-    let count = 0;
+    const files = ((team && team.agents) || []).flatMap((agent) => {
+      const changes = agent.changes || {};
+      return (Array.isArray(changes.files) ? changes.files : []).map((file) => ({ file, agent }));
+    });
+    if (files.length) {
+      const totals = files.reduce((value, item) => ({
+        added: value.added + (Number(item.file.added) || 0),
+        removed: value.removed + (Number(item.file.removed) || 0),
+      }), { added: 0, removed: 0 });
+      const summary = document.createElement('div'); summary.className = 'gate-summary';
+      summary.textContent = 'سيُدمج ' + files.length + ' ملفاً: +' + totals.added + ' −' + totals.removed;
+      view.appendChild(summary);
+    }
     for (const agent of (team && team.agents) || []) {
       const changes = agent.changes || {};
       if (!Array.isArray(changes.files) || !changes.files.length) continue;
-      count += changes.files.length;
       view.appendChild(this._card({
         title: 'فروقات ' + (agent.label || agent.id), state: agent.state,
         stateLabel: changes.files.length + ' ملفات',
-        summary: 'يعرض السطح أسماء الملفات والإحصاءات فقط؛ نص patch يبقى في العملية الرئيسية.',
+        summary: 'انقر ملفاً لطلب فرقه وحده من العملية الرئيسية؛ لا يُبث patch الكامل إلى الواجهة.',
         actor: agent.label || agent.id, engine: agent.engine || 'sdk', artifact: team.artifact_id, time: team.updated_at,
         body: (body) => {
           for (const file of changes.files) {
-            const row = document.createElement('div'); row.className = 'file-row';
+            const result = document.createElement('div');
+            const row = document.createElement('button'); row.type = 'button'; row.className = 'file-row file-diff-request';
             const path = document.createElement('span'); path.className = 'path'; path.textContent = file.rel;
             const counts = document.createElement('span'); counts.className = 'counts';
             counts.textContent = '+' + (file.added || 0) + ' −' + (file.removed || 0);
-            row.appendChild(path); row.appendChild(counts); body.appendChild(row);
+            row.appendChild(path); row.appendChild(counts); body.appendChild(row); body.appendChild(result);
+            const key = team.artifact_id + '\0' + file.rel;
+            const cached = this._diffCache.get(key);
+            if (cached && cached.ok) result.appendChild(buildDiff({ ...cached.diff, noUndo: true }));
+            else if (cached) {
+              result.className = 'file-diff-error'; result.textContent = 'تعذّر عرض فرق هذا الملف: ' + cached.error;
+            }
+            row.addEventListener('click', () => this._loadFileDiff(team.id, team.artifact_id, file, row, result));
           }
         },
       }));
     }
-    if (!count) this._empty(view, 'لا توجد بيانات فروقات عامة بعد.');
+    if (!files.length) this._empty(view, 'لا توجد بيانات فروقات عامة بعد.');
+  }
+
+  async _loadFileDiff(teamId, artifactId, file, button, container) {
+    const key = artifactId + '\0' + file.rel;
+    if (this._diffCache.has(key) || button.disabled) return;
+    button.disabled = true;
+    const previous = button.title; button.title = 'جارٍ تحميل فرق الملف…';
+    let result = null;
+    try { result = await window.satr.executionFileDiff(teamId, artifactId, file.rel); } catch {}
+    const stored = result && result.ok && result.diff ? result : { ok: false, error: result && result.error || 'diff_unavailable' };
+    this._diffCache.set(key, stored);
+    container.textContent = '';
+    if (stored.ok) container.appendChild(buildDiff({ ...stored.diff, noUndo: true }));
+    else {
+      container.className = 'file-diff-error';
+      container.textContent = stored.error === 'binary_diff' ? 'هذا ملف ثنائي ولا يتوفر له فرق نصي.' : 'تعذّر عرض فرق هذا الملف.';
+    }
+    button.disabled = false; button.title = previous;
   }
 
   _renderReview() {
@@ -1087,12 +1173,27 @@ class SatrOpsRoom extends HTMLElement {
     const review = this._state.review;
     for (const item of (review && review.reviews) || []) {
       const decision = item.verdict && item.verdict.decision;
+      const sections = reviewSections(item.summary, item.recommendation);
       view.appendChild(this._card({
         title: 'مراجعة ' + engineLabel(item.engine), state: decision || item.state,
         stateLabel: decision === 'approve' ? 'موافقة' : decision === 'changes_required' ? 'تغييرات مطلوبة'
           : decision === 'reject' ? 'رفض' : item.state,
-        summary: item.summary || item.error || 'مراجعة عمياء قراءة فقط.', actor: 'reviewer',
+        summary: item.error || 'حكم مراجعة عمياء قراءة فقط؛ افتح التفاصيل لرؤية المخاطر والملاحظات والتوصية.', actor: 'reviewer',
         engine: item.engine, artifact: item.artifact_id, time: item.updated_at,
+        body: (body) => {
+          for (const [label, values] of [
+            ['المخاطر', sections.risks], ['الملاحظات', sections.notes], ['التوصية', sections.recommendation],
+          ]) {
+            const section = document.createElement('section'); section.className = 'review-section';
+            const title = document.createElement('h4'); title.textContent = label; section.appendChild(title);
+            const list = document.createElement('ul');
+            const items = values.length ? values : ['لم يذكر المراجع بنوداً مستقلة.'];
+            for (const value of items) {
+              const row = document.createElement('li'); row.dir = 'auto'; row.textContent = value; list.appendChild(row);
+            }
+            section.appendChild(list); body.appendChild(section);
+          }
+        },
       }));
     }
     const gate = document.createElement('div'); gate.className = 'gate-summary';
@@ -1238,6 +1339,10 @@ class SatrOpsRoom extends HTMLElement {
   _render() {
     const derived = deriveOpsRoomState(this._state);
     this._renderPrimaryAction(derived);
+    this._buttons.preview.hidden = !derived.showPreview || derived.previewNeedsCleanup;
+    this._buttons.preview.disabled = !derived.previewActive && !derived.canPreview;
+    this._buttons.preview.textContent = derived.previewActive ? '🖥 افتح المعاينة' : '🖥 شاهدها تعمل';
+    this._buttons.previewStop.hidden = !derived.canStopPreview;
     this._timeoutRow.hidden = true;
     this._buttons.stop.hidden = !derived.canStop;
     this._status.textContent = this._state.status || (this._state.pending ? 'جارٍ تنفيذ الانتقال المطلوب…'
@@ -1345,8 +1450,49 @@ class SatrOpsRoom extends HTMLElement {
     let result = null;
     try { result = await window.satr.executionMerge(this._state.team.id, this._state.review.id, true); } catch {}
     this._dispatch({ type: 'settled', ...(result && result.team ? { team: result.team } : {}),
-      status: result && result.ok ? 'طُبّق الأثر بلا commit.'
+      ...(result && Object.prototype.hasOwnProperty.call(result, 'preview') ? { preview: result.preview } : {}),
+      status: result && result.ok && result.preview_cleanup_failed
+        ? 'طُبّق الأثر، لكن تعذّر تنظيف معاينته التكاملية؛ نظّف worktree يدوياً.'
+        : result && result.ok ? 'طُبّق الأثر بلا commit.'
         : errorLabel(result, 'merge', 'تعذّر الدمج بأمان — راجع حالة Git ثم أعد المحاولة.') });
+  }
+
+  async _startPreview() {
+    const derived = deriveOpsRoomState(this._state);
+    const active = this._state.preview;
+    if (derived.previewActive && active && active.url) {
+      this.dispatchEvent(new CustomEvent('ops-preview-open', { bubbles: true, detail: { url: active.url } }));
+      return;
+    }
+    if (!derived.canPreview) return;
+    const confirmed = await this._confirm({
+      kind: 'preview', title: 'تأكيد تشغيل المعاينة التكاملية', confirmLabel: 'شغّل المعاينة',
+      description: 'ستعمل المعاينة المعتمدة عند HEAD داخل worktree تكاملي مؤقت بعد نجاح التحقق للأثر نفسه.',
+      items: [derived.artifactId],
+    });
+    if (!confirmed) return;
+    this._dispatch({ type: 'pending', action: 'preview' });
+    let result = null;
+    try {
+      result = await window.satr.executionPreviewStart(this._cwd, this._state.team.id, derived.artifactId, true);
+    } catch {}
+    this._dispatch({ type: 'settled', ...(result && result.preview ? { preview: result.preview } : {}),
+      status: result && result.ok ? 'المعاينة التكاملية جاهزة في تبويب الأدوات.'
+        : errorLabel(result, 'verification', 'تعذّر تشغيل المعاينة التكاملية — افحص إعداد preview ثم أعد المحاولة.') });
+    if (result && result.ok && result.url) {
+      this.dispatchEvent(new CustomEvent('ops-preview-open', { bubbles: true, detail: { url: result.url } }));
+    }
+  }
+
+  async _stopPreview() {
+    if (!deriveOpsRoomState(this._state).canStopPreview) return;
+    this._dispatch({ type: 'pending', action: 'preview-stop' });
+    let result = null;
+    try { result = await window.satr.executionPreviewStop(); } catch {}
+    this._dispatch({ type: 'settled',
+      ...(result && Object.prototype.hasOwnProperty.call(result, 'preview') ? { preview: result.preview } : {}),
+      status: result && result.ok ? 'أُوقفت المعاينة التكاملية ونُظّفت نسختها المؤقتة.'
+        : errorLabel(result, 'verification', 'تعذّر تنظيف المعاينة التكاملية؛ نظّف worktree يدوياً ثم أعد المحاولة.') });
   }
 
   async _stop() {
@@ -1385,7 +1531,7 @@ class SatrOpsRoom extends HTMLElement {
       if (loaded && loaded.room) {
         this._state = opsRoomReducer(this._state, {
           type: 'hydrate', room: loaded.room, team: this._state.team,
-          review: this._state.review, verification: this._state.verification,
+          review: this._state.review, verification: this._state.verification, preview: this._state.preview,
         });
         this._render();
       }
@@ -1562,10 +1708,11 @@ class SatrOpsRoom extends HTMLElement {
     this.setAttribute('open', '');
     clearInterval(this._clock);
     this._clock = setInterval(() => this._refreshCountdowns(), 1000);
-    this._history = []; this._brainstorm = null; this._plan = null;
+    this._history = []; this._brainstorm = null; this._plan = null; this._planDraft = '';
+    this._diffCache.clear();
     this._groupSeen = { work: '', results: '', log: '' };
     this._state = createOpsRoomState(); this._render();
-    let team = null; let review = null; let verification = null; let room = null;
+    let team = null; let review = null; let verification = null; let preview = null; let room = null;
     try {
       const brainstormed = await window.satr.opsBrainstormLatest(this._cwd);
       this._brainstorm = brainstormed && brainstormed.run;
@@ -1578,15 +1725,29 @@ class SatrOpsRoom extends HTMLElement {
         review = reviewed && reviewed.review;
         const verified = await window.satr.executionVerificationLatest(team.id);
         verification = verified && verified.verification || team.verification;
+        preview = verified && verified.preview;
         if (team.room_id) {
           const loaded = await window.satr.opsRoomLoad(team.room_id);
           room = loaded && loaded.room;
         }
       }
     } catch {}
-    this._dispatch({ type: 'hydrate', room, team, review, verification });
+    this._dispatch({ type: 'hydrate', room, team, review, verification, preview });
     if (this._plan && this._plan.state === 'completed') this._applyPlan();
     await this._loadHistory();
+  }
+
+  seedTask(task) {
+    const value = text(task).trim().slice(0, 4000);
+    if (!value) return false;
+    this._planDraft = value;
+    this._selectView('tasks');
+    this._renderTasks();
+    if (this._setup && this._setup.inputs[0]) {
+      this._setup.inputs[0].querySelector('.task').value = value;
+      this._syncSetupActions();
+    }
+    return true;
   }
 
   close() {

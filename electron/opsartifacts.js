@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const executor = require('./executor');
+const gitdiff = require('./gitdiff');
 const memory = require('./memory');
 const opsroom = require('./opsroom');
 
@@ -20,6 +21,8 @@ const MAX_PATCH_BYTES = 12 * 1024 * 1024;
 const MAX_FILE_BYTES = 18 * 1024 * 1024;
 const MAX_ARTIFACTS = 50;
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_FILE_DIFF_BYTES = 256 * 1024;
+const MAX_FILE_DIFF_LINES = 600;
 const SAFE_HEAD = /^[0-9a-f]{40,64}$/;
 const SAFE_ENGINE = new Set(['sdk', 'codex']);
 
@@ -75,6 +78,83 @@ function sanitizeFile(file) {
     agent_id: cleanText(file && file.agent_id, 80),
     engine: cleanText(file && file.engine, 32),
   };
+}
+
+function decodeGitPath(value) {
+  const input = String(value || '').trim();
+  if (input === '/dev/null') return input;
+  if (!input.startsWith('"') || !input.endsWith('"')) return input;
+  const bytes = [];
+  const escapes = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+  const content = input.slice(1, -1);
+  for (let index = 0; index < content.length; index++) {
+    if (content[index] !== '\\') {
+      const codePoint = content.codePointAt(index);
+      const character = String.fromCodePoint(codePoint);
+      bytes.push(...Buffer.from(character, 'utf8'));
+      if (character.length === 2) index++;
+      continue;
+    }
+    const next = content[++index];
+    if (/[0-7]/.test(next || '')) {
+      let octal = next;
+      while (octal.length < 3 && /[0-7]/.test(content[index + 1] || '')) octal += content[++index];
+      bytes.push(parseInt(octal, 8));
+    } else if (Object.prototype.hasOwnProperty.call(escapes, next)) bytes.push(escapes[next]);
+    else bytes.push(...Buffer.from(next || '', 'utf8'));
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+function headerPath(line) {
+  const value = decodeGitPath(String(line || '').slice(4));
+  if (value === '/dev/null') return value;
+  return value.startsWith('a/') || value.startsWith('b/') ? value.slice(2) : value;
+}
+
+function patchSection(patch, rel) {
+  const starts = [...String(patch || '').matchAll(/^diff --git /gm)].map((match) => match.index);
+  for (let index = 0; index < starts.length; index++) {
+    const section = patch.slice(starts[index], starts[index + 1] == null ? patch.length : starts[index + 1]);
+    const oldHeader = section.match(/^--- (.+)$/m);
+    const newHeader = section.match(/^\+\+\+ (.+)$/m);
+    const oldRel = oldHeader ? headerPath(oldHeader[0]) : '';
+    const newRel = newHeader ? headerPath(newHeader[0]) : '';
+    if (oldRel === rel || newRel === rel) return { section, oldRel, newRel };
+  }
+  return null;
+}
+
+function fileDiff(artifact, rel) {
+  if (!artifact || typeof artifact.patch !== 'string' || !Array.isArray(artifact.files)) {
+    return { ok: false, error: 'bad_input' };
+  }
+  const file = artifact.files.find((item) => item && item.rel === rel);
+  if (!file) return { ok: false, error: 'file_not_in_artifact' };
+  const found = patchSection(artifact.patch, rel);
+  if (!found) return { ok: false, error: 'diff_unavailable' };
+  if (/^GIT binary patch$/m.test(found.section) || /^Binary files /m.test(found.section)) {
+    return { ok: false, error: 'binary_diff' };
+  }
+  const parsed = gitdiff.parseUnified(Buffer.from(found.section, 'utf8'));
+  const diff = {
+    rel,
+    isNew: found.oldRel === '/dev/null' || file.kind === 'new',
+    isDelete: found.newRel === '/dev/null' || file.kind === 'del',
+    tool: 'Edit',
+    added: parsed.added,
+    removed: parsed.removed,
+    lines: parsed.lines.slice(0, MAX_FILE_DIFF_LINES),
+    truncated: parsed.truncated || parsed.lines.length > MAX_FILE_DIFF_LINES,
+    noUndo: true,
+  };
+  while (diff.lines.length && Buffer.byteLength(JSON.stringify({ ok: true, diff }), 'utf8') > MAX_FILE_DIFF_BYTES) {
+    diff.lines.pop(); diff.truncated = true;
+  }
+  if (Buffer.byteLength(JSON.stringify({ ok: true, diff }), 'utf8') > MAX_FILE_DIFF_BYTES) {
+    return { ok: false, error: 'diff_too_large' };
+  }
+  return { ok: true, diff };
 }
 
 function sanitizeAgent(agent) {
@@ -221,5 +301,6 @@ function prune(options) {
 
 module.exports = {
   SCHEMA_VERSION, ROOT, MAX_PATCH_BYTES, MAX_FILE_BYTES, MAX_ARTIFACTS, MAX_AGE_MS,
-  projectScope, fileFor, save, load, remove, prune,
+  MAX_FILE_DIFF_BYTES, MAX_FILE_DIFF_LINES,
+  projectScope, fileFor, save, load, remove, prune, fileDiff,
 };

@@ -5,6 +5,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const opsartifacts = require('../electron/opsartifacts');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -130,12 +131,27 @@ async function testReducer() {
   assert.strictEqual(deriveOpsRoomState(state).canPrepareVerification, true, 'all actual verdicts unlock prepare only');
   assert.strictEqual(deriveOpsRoomState(state).nextAction.action, 'prepare');
   state = opsRoomReducer(state, { type: 'settled', verification: { ...current.verification, state: 'pending_confirmation' } });
+  assert.strictEqual(deriveOpsRoomState(state).showPreview, false, 'preview stays hidden before passed verification');
   assert.strictEqual(deriveOpsRoomState(state).canRunVerification, true, 'pending verification needs explicit confirmation');
   assert.strictEqual(deriveOpsRoomState(state).nextAction.action, 'verify');
   state = opsRoomReducer(state, { type: 'settled', verification: current.verification });
   assert.strictEqual(deriveOpsRoomState(state).canMerge, true, 'same-artifact approvals and verification unlock merge');
+  assert.strictEqual(deriveOpsRoomState(state).showPreview, true, 'passed verification exposes preview helper');
+  assert.strictEqual(deriveOpsRoomState(state).canPreview, true, 'preview needs its own explicit action');
   assert.strictEqual(deriveOpsRoomState(state).nextAction.action, 'merge');
   assert.strictEqual(isCurrentArtifact(current.verification, state), true, 'artifact helper accepts current fingerprint');
+  state = opsRoomReducer(state, { type: 'event', event: {
+    type: 'execution_preview_update', preview: { artifact_id: artifact, state: 'running', url: 'http://localhost:4319/' },
+  } });
+  assert.strictEqual(deriveOpsRoomState(state).previewActive, true);
+  assert.strictEqual(deriveOpsRoomState(state).canStopPreview, true);
+  assert.strictEqual(deriveOpsRoomState(state).canMerge, true, 'live preview must not alter merge gate');
+  state = opsRoomReducer(state, { type: 'settled', preview: {
+    artifact_id: artifact, state: 'cleanup_failed', url: 'http://localhost:4319/',
+  } });
+  assert.strictEqual(deriveOpsRoomState(state).canPreview, false, 'failed cleanup must block another preview');
+  assert.strictEqual(deriveOpsRoomState(state).canStopPreview, true, 'failed cleanup must expose an explicit retry');
+  state = opsRoomReducer(state, { type: 'settled', preview: null });
 
   const staleReview = fixture(staleArtifact).review;
   state = opsRoomReducer(state, { type: 'settled', review: staleReview, verification: current.verification });
@@ -153,6 +169,22 @@ async function testReducer() {
   } };
   state = opsRoomReducer(state, { type: 'settled', review: rejected, verification: current.verification });
   assert.strictEqual(deriveOpsRoomState(state).canMerge, false, 'rejection cannot be overridden');
+
+  const oneFilePatch = [
+    'diff --git a/src/app.js b/src/app.js',
+    'index 1111111..2222222 100644',
+    '--- a/src/app.js',
+    '+++ b/src/app.js',
+    '@@ -1 +1 @@',
+    '-old',
+    '+new',
+    '',
+  ].join('\n');
+  const diffArtifact = { patch: oneFilePatch, files: [{ rel: 'src/app.js', kind: 'mod', added: 1, removed: 1 }] };
+  assert.strictEqual(opsartifacts.fileDiff(diffArtifact, 'src/outside.js').error, 'file_not_in_artifact');
+  const fileDiff = opsartifacts.fileDiff(diffArtifact, 'src/app.js');
+  assert(fileDiff.ok && fileDiff.diff.lines.length === 2 && !Object.prototype.hasOwnProperty.call(fileDiff, 'patch'));
+  assert(Buffer.byteLength(JSON.stringify(fileDiff), 'utf8') <= opsartifacts.MAX_FILE_DIFF_BYTES);
 }
 
 function testDesignGuard() {
@@ -275,7 +307,8 @@ function testDesignGuard() {
   assert(component.includes('const action = derived.nextAction && derived.nextAction.action'),
     'primary action must come directly from derived nextAction');
   assert(component.includes("const actionBar = makeElement('div', 'action-bar')")
-    && component.includes('actionBar.appendChild(nextStep); actionBar.appendChild(primaryReason); actionBar.appendChild(primaryButton);')
+    && component.includes('actionBar.appendChild(nextStep); actionBar.appendChild(primaryReason); actionBar.appendChild(previewButton);')
+    && component.includes('actionBar.appendChild(previewStopButton); actionBar.appendChild(primaryButton);')
     && component.includes('[head, stageIndicator, nav, statusRow, timeoutRow, list, actionBar, resizeHandle]')
     && !component.includes('room-actions'),
   'primary nextAction must live in the bottom action bar after scrollable content');
@@ -386,6 +419,24 @@ function testDesignGuard() {
   for (const method of ['opsRoomHistory', 'opsRoomRestore', 'opsRoomArtifactDelete', 'opsBrainstormStart', 'opsPlanStart']) {
     assert(preload.includes(method), 'missing narrow preload method ' + method);
   }
+  const chat = read('src/ui/components/chat.js');
+  assert(chat.includes('🏗 نفّذ في غرفة العمليات') && chat.includes("new CustomEvent('ops-room-open'"));
+  assert(!app.includes("cmd: '/غرفة-العمليات'") && !app.includes("en: '/ops-room'"));
+  assert(app.includes('opsRoomEl.seedTask(taskSeed)') && component.includes('seedTask(task)'));
+  assert(component.includes('previous.length || 1') && component.includes('شاهدها تعمل ← دمج'));
+  assert(component.includes('window.satr.executionPreviewStart') && component.includes('derived.showPreview'));
+  const renderDiffs = component.slice(component.indexOf('  _renderDiffs() {'), component.indexOf('\n  async _loadFileDiff'));
+  const loadFileDiff = component.slice(component.indexOf('  async _loadFileDiff'), component.indexOf('\n  _renderReview()'));
+  assert(!renderDiffs.includes('window.satr.executionFileDiff')
+    && loadFileDiff.includes('window.satr.executionFileDiff(teamId, artifactId, file.rel)'));
+  assert(component.includes("['المخاطر', sections.risks]")
+    && component.includes("['الملاحظات', sections.notes]")
+    && component.includes("['التوصية', sections.recommendation]"));
+  assert(main.includes("ipcMain.handle('satr:executionFileDiff'")
+    && main.includes("ipcMain.handle('satr:executionPreviewStart'")
+    && main.includes("Object.prototype.hasOwnProperty.call(p, 'command')"));
+  assert(verifyPreload.includes('executionFileDiff') && verifyPreload.includes('executionPreviewStart')
+    && verifyPreload.includes('executionPreviewStop'));
 }
 
 async function main() {

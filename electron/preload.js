@@ -62,10 +62,17 @@ contextBridge.exposeInMainWorld('satr', {
   executionReviewStart: (teamId) => ipcRenderer.invoke('satr:executionReviewStart', { teamId }),
   executionReviewStop: (reviewId) => ipcRenderer.invoke('satr:executionReviewStop', { reviewId }),
   executionReviewLatest: (teamId) => ipcRenderer.invoke('satr:executionReviewLatest', { teamId }),
+  executionFileDiff: (teamId, artifactId, rel) => ipcRenderer.invoke('satr:executionFileDiff', {
+    teamId, artifactId, rel,
+  }),
   executionVerificationPrepare: (teamId, reviewId) => ipcRenderer.invoke('satr:executionVerificationPrepare', { teamId, reviewId }),
   executionVerificationRun: (teamId, reviewId, artifactId, confirmed) => ipcRenderer.invoke('satr:executionVerificationRun', { teamId, reviewId, artifactId, confirmed }),
   executionVerificationStop: (artifactId) => ipcRenderer.invoke('satr:executionVerificationStop', { artifactId }),
   executionVerificationLatest: (teamId) => ipcRenderer.invoke('satr:executionVerificationLatest', { teamId }),
+  executionPreviewStart: (cwd, teamId, artifactId, confirmed) => ipcRenderer.invoke('satr:executionPreviewStart', {
+    cwd, teamId, artifactId, confirmed,
+  }),
+  executionPreviewStop: () => ipcRenderer.invoke('satr:executionPreviewStop'),
   executionMerge: (teamId, reviewId, confirmed) => ipcRenderer.invoke('satr:executionMerge', { teamId, reviewId, confirmed }),
   opsRoomLoad: (roomId) => ipcRenderer.invoke('satr:opsRoomLoad', { roomId }),
   opsRoomHistory: (cwd) => ipcRenderer.invoke('satr:opsRoomHistory', { cwd }),

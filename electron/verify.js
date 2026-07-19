@@ -21,6 +21,7 @@ const MAX_CHECKS = 6;
 const MAX_COMMAND = 1000;
 const MAX_LABEL = 120;
 const MAX_TIMEOUT_SECONDS = 600;
+const MAX_PREVIEW_URL = 2048;
 const MAX_OUTPUT = 6000;
 const MAX_EXEC_OUTPUT = 64 * 1024;
 const MAX_MODEL_RESULT = 32 * 1024;
@@ -37,7 +38,32 @@ function realInside(root, target) {
   }
 }
 
-function buildConfig(commands) {
+function normalizePreview(value) {
+  if (value == null) return { ok: true, preview: null };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false, error: 'bad_preview' };
+  const command = typeof value.command === 'string' ? value.command.trim() : '';
+  const url = typeof value.url === 'string' ? value.url.trim() : '';
+  const timeout = value.timeout_seconds == null ? 60 : value.timeout_seconds;
+  if (!command || command.length > MAX_COMMAND || /[\r\n\0]/.test(command)) {
+    return { ok: false, error: 'bad_preview_command' };
+  }
+  if (!url || url.length > MAX_PREVIEW_URL || /[\u0000-\u001F\u007F]/.test(url)) {
+    return { ok: false, error: 'bad_preview_url' };
+  }
+  let parsed;
+  try { parsed = new URL(url); } catch { return { ok: false, error: 'bad_preview_url' }; }
+  const host = parsed.hostname.toLowerCase();
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password
+    || !['localhost', '127.0.0.1', '[::1]'].includes(host)) {
+    return { ok: false, error: 'bad_preview_url' };
+  }
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > MAX_TIMEOUT_SECONDS) {
+    return { ok: false, error: 'bad_preview_timeout' };
+  }
+  return { ok: true, preview: { command, url: parsed.href, timeout_seconds: timeout } };
+}
+
+function buildConfig(commands, preview) {
   if (!Array.isArray(commands) || !commands.length) return { ok: false, error: 'empty' };
   if (commands.length > MAX_CHECKS) return { ok: false, error: 'too_many_commands' };
   const normalized = [];
@@ -61,7 +87,13 @@ function buildConfig(commands) {
     seen.add(id);
     normalized.push({ id, label, command, timeout_seconds: timeout });
   }
-  const config = { version: CONFIG_VERSION, commands: normalized };
+  const normalizedPreview = normalizePreview(preview);
+  if (!normalizedPreview.ok) return normalizedPreview;
+  const config = {
+    version: CONFIG_VERSION,
+    commands: normalized,
+    ...(normalizedPreview.preview ? { preview: normalizedPreview.preview } : {}),
+  };
   const source = JSON.stringify(config, null, 2) + '\n';
   if (Buffer.byteLength(source, 'utf8') > MAX_CONFIG_BYTES) return { ok: false, error: 'bad_config' };
   const parsed = parseConfig(source);
@@ -84,7 +116,7 @@ function inspectConfigTarget(root, target) {
 function createConfig(cwd, commands, options) {
   const settings = options || {};
   if (settings.confirmed !== true) return { ok: false, error: 'confirmation_required' };
-  const built = buildConfig(commands);
+  const built = buildConfig(commands, settings.preview);
   if (!built.ok) return built;
   if (typeof cwd !== 'string' || !cwd.trim() || cwd.includes('\0')) return { ok: false, error: 'bad_cwd' };
   const root = path.resolve(cwd.trim());
@@ -167,7 +199,9 @@ function parseConfig(source) {
       checks.push({ id, label: label || id, command, timeout_seconds: timeout });
     }
     if (!checks.length) return { ok: false, error: 'empty' };
-    return { ok: true, version: CONFIG_VERSION, checks };
+    const preview = normalizePreview(parsed.preview);
+    if (!preview.ok) return preview;
+    return { ok: true, version: CONFIG_VERSION, checks, preview: preview.preview };
   } catch {
     return { ok: false, error: 'bad_config' };
   }
@@ -350,6 +384,7 @@ module.exports = {
   MAX_COMMAND,
   MAX_LABEL,
   MAX_TIMEOUT_SECONDS,
+  MAX_PREVIEW_URL,
   loadConfig,
   parseConfig,
   buildConfig,
@@ -360,5 +395,6 @@ module.exports = {
   boundedExecutor,
   formatConfig,
   formatResult,
+  normalizePreview,
   SAFE_CHECK_ID,
 };

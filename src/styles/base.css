@@ -250,8 +250,8 @@
   .msg .who { display: flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--text-dim); }
   .msg.user { align-self: flex-start; max-width: 78%; gap: var(--space-1h); }
   .msg.user .who { color: var(--gold); font-weight: 600; }
-  .msg-user-edit { padding: 0 var(--space-1); border: none; background: none; color: var(--text-dim); font-size: 11px; }
-  .msg-user-edit:hover { border: none; background: none; color: var(--gold); }
+  .msg-user-edit, .msg-ops-room { padding: 0 var(--space-1); border: none; background: none; color: var(--text-dim); font-size: 11px; }
+  .msg-user-edit:hover, .msg-ops-room:hover { border: none; background: none; color: var(--gold); }
   .msg.user.superseded { opacity: .58; }
   .msg.user.superseded .bubble { text-decoration: line-through; text-decoration-thickness: 1px; }
   .msg-superseded { color: var(--text-dim); font-size: 10.5px; }

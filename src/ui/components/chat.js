@@ -337,6 +337,15 @@ class SatrChat extends HTMLElement {
     w.className = 'msg user';
     const who = document.createElement('div'); who.className = 'who';
     const label = document.createElement('span'); label.textContent = 'أنت'; who.appendChild(label);
+    const ops = document.createElement('button'); ops.type = 'button'; ops.className = 'msg-ops-room';
+    ops.textContent = '🏗 نفّذ في غرفة العمليات';
+    ops.title = 'افتح غرفة العمليات وابذر نص هذه الرسالة كمهمة بلا تشغيل تلقائي';
+    ops.addEventListener('click', () => {
+      component.dispatchEvent(new CustomEvent('ops-room-open', {
+        bubbles: true,
+        detail: { task: text || '' },
+      }));
+    });
     const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'msg-user-edit'; edit.textContent = '✏️';
     edit.title = 'حرّر وأعد الإرسال — لا يرجع سياق الخادم ولا ينشئ تفريع جلسة حقيقياً';
     edit.setAttribute('aria-label', 'تعديل هذه الرسالة وإعادتها إلى المحرّر');
@@ -350,7 +359,7 @@ class SatrChat extends HTMLElement {
         detail: { text: text || '', images: Array.isArray(images) ? images.slice() : [] },
       }));
     });
-    who.appendChild(edit); w.appendChild(who);
+    who.appendChild(ops); who.appendChild(edit); w.appendChild(who);
     if (text) {
       const b = document.createElement('div');
       b.className = 'bubble'; b.textContent = text;

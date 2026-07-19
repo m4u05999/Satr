@@ -74,13 +74,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     await customElements.whenDefined('satr-ops-room');
     const room = document.getElementById('room');
     const startedAt = Date.now() - 125000;
-    currentTeam = team('running', agent('running', Date.now() - 20000), startedAt);
     room.addEventListener('ops-notice', (event) => notices.push(event.detail));
-    window.__opsroomUiLiveProgress = 'open-running';
-    await room.open('C:\fixture');
+    window.__opsroomUiLiveProgress = 'seed-task';
+    await room.open('C:\\fixture');
+    assert(room.seedTask('مهمة مبذورة من رسالة المستخدم الحالية.'), 'رفض المكوّن بذرة المهمة النصية.');
     await frames(3);
 
     const root = room.shadowRoot;
+    assert(root.querySelector('select[aria-label="عدد عوامل التنفيذ"]').value === '1', 'الافتراضي ليس عاملاً واحداً.');
+    assert(root.querySelector('.task').value === 'مهمة مبذورة من رسالة المستخدم الحالية.', 'لم تصل بذرة المهمة إلى العامل الأول.');
+    checks.push('seeded-chat-task', 'single-agent-default');
+
+    window.__opsroomUiLiveProgress = 'open-running';
+    currentTeam = team('running', agent('running', Date.now() - 20000), startedAt);
+    room.handleEvent({ type: 'execution_team_update', team: currentTeam });
+    await frames(3);
     const activity = root.querySelector('.observable-activity');
     assert(room.hasAttribute('open'), 'لم تفتح غرفة العمليات في fixture الحي.');
     assert(activity && activity.dataset.activity === 'recent', 'لم تُعرض حالة النشاط الحديث.');

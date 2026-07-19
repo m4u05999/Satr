@@ -682,6 +682,10 @@ import { createUpdateToast } from './lib/update-toast.js';
       opsRoomEl.handleEvent(ev);
       return;
     }
+    if (ev.type === 'execution_preview_update') {
+      opsRoomEl.handleEvent(ev);
+      return;
+    }
     if (ev.type === 'ops_brainstorm_update' || ev.type === 'ops_plan_update') {
       opsRoomEl.handleEvent(ev);
       return;
@@ -943,7 +947,6 @@ import { createUpdateToast } from './lib/update-toast.js';
     { cmd: '/جلسات',   en: '/sessions', desc: 'تصفح الجلسات المحفوظة واستئنافها',     run: () => openSessions() },
     { cmd: '/ذاكرة',   en: '/memory', desc: 'مراجعة ذاكرة المشروع الشخصية والبحث والتعديل والحذف', run: () => openMemory() },
     { cmd: '/بحث',     en: '/research', desc: 'تشغيل 1–3 باحثين للقراءة فقط وإعادة خلاصة ومصادر', sdkOnly: true, run: () => openResearch() },
-    { cmd: '/غرفة-العمليات', en: '/ops-room', desc: 'تنفيذ معزول ومراجعة وتحقق ودمج صريح', sdkOnly: true, run: () => openOpsRoom() },
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
     { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
     { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', sdkOnly: true, run: () => openMcp() },
@@ -1257,10 +1260,15 @@ import { createUpdateToast } from './lib/update-toast.js';
     surfaceCoordinator.openPanel('research', document.activeElement, () => researchEl.open($('cwd').value.trim()));
   }
 
-  function openOpsRoom(source) {
+  function openOpsRoom(source, taskSeed) {
     $('opsRoomToggle').classList.add('active');
     surfaceCoordinator.openPanel('ops-room', source || document.activeElement,
-      () => opsRoomEl.open($('cwd').value.trim()));
+      () => {
+        const opened = opsRoomEl.open($('cwd').value.trim());
+        if (typeof taskSeed === 'string' && taskSeed.trim() && opsRoomEl.seedTask) {
+          Promise.resolve(opened).then(() => opsRoomEl.seedTask(taskSeed));
+        }
+      });
   }
 
   $('opsRoomToggle').addEventListener('click', () => {
@@ -1268,6 +1276,10 @@ import { createUpdateToast } from './lib/update-toast.js';
   });
   opsRoomEl.addEventListener('panel-close', () => $('opsRoomToggle').classList.remove('active'));
   opsRoomEl.addEventListener('ops-notice', (event) => showTransientNotice(event.detail));
+  opsRoomEl.addEventListener('ops-preview-open', (event) => {
+    const url = event.detail && event.detail.url;
+    if (typeof url === 'string' && url && previewEl.openWith) previewEl.openWith(url);
+  });
   opsRoomEl.addEventListener('verify-config-open', (event) => {
     const detail = event.detail || {};
     verifyConfigEl.open(detail.cwd || $('cwd').value.trim());
@@ -1282,7 +1294,10 @@ import { createUpdateToast } from './lib/update-toast.js';
       if (typeof detail.resolve === 'function') detail.resolve(confirmed);
     });
   });
-  document.addEventListener('ops-room-open', (event) => openOpsRoom(event.target));
+  document.addEventListener('ops-room-open', (event) => {
+    const detail = event.detail && typeof event.detail === 'object' ? event.detail : {};
+    openOpsRoom(event.target, typeof detail.task === 'string' ? detail.task : lastUserTurn.prompt);
+  });
 
   researchEl.addEventListener('research-source', (event) => {
     const detail = event.detail || {};

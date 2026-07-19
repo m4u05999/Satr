@@ -52,6 +52,20 @@ async function main() {
     assert.strictEqual(verify.buildConfig([{ ...commands[0], timeout_seconds: 601 }]).error, 'bad_timeout');
     assert.strictEqual(verify.buildConfig([{ ...commands[0], timeout_seconds: 0 }]).error, 'bad_timeout');
     assert.strictEqual(verify.buildConfig([commands[0], { ...commands[0] }]).error, 'bad_command');
+    const previewConfig = verify.buildConfig(commands, {
+      command: 'npm run dev', url: 'http://localhost:5173/app', timeout_seconds: 45,
+    });
+    assert.strictEqual(previewConfig.ok, true);
+    assert.deepStrictEqual(verify.parseConfig(previewConfig.source).preview, {
+      command: 'npm run dev', url: 'http://localhost:5173/app', timeout_seconds: 45,
+    });
+    assert.strictEqual(verify.buildConfig(commands, { command: 'npm run dev\nwhoami', url: 'http://localhost:5173' }).error,
+      'bad_preview_command');
+    assert.strictEqual(verify.buildConfig(commands, { command: 'npm run dev', url: 'https://example.com' }).error,
+      'bad_preview_url');
+    assert.strictEqual(verify.buildConfig(commands, {
+      command: 'npm run dev', url: 'http://localhost:5173', timeout_seconds: 601,
+    }).error, 'bad_preview_timeout');
 
     const outside = path.join(temp, 'outside');
     const linkedProject = path.join(temp, 'linked-project');
