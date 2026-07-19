@@ -131,6 +131,8 @@ electron/browserguard.js ← حارس المتصفح الخارجي (دفعة «
                        في رسالة الدور يعطّل الاعتراض — قرار مالك). اختبار test:browserguard
 electron/browserorigin.js ← تطبيع origin وتصنيف أدوات المتصفح (read/navigate/act/handoff)
                        وثقة localhost/نطاقات المستخدم؛ منطق نقي يحرسه test:browserorigin.
+electron/browserpolicy.js ← سياسة متعامدة للأفعال الحسّاسة/خطر التسريب/ميزانية أفعال مهمة التصفح:
+                       تستعمل memory.hasSecret، وتفرض neverAlways، ويحرسها test:browserpolicy.
 electron/execguard.js ← حارس نقي لأوامر الخوادم: يرفض Bash/run_in_terminal الخلفي أو أمر
                        خادم معروف ويوجّه إلى run_in_background قبل أي موافقة دائمة.
 electron/envbrief.js  ← المصدر الموحّد لهوية «سطر» وجرد أدوات كل محرك وسياسة التنفيذ
@@ -192,6 +194,8 @@ electron/preview.js  ← لوحة المعاينة المدمجة (م-1 — ال
                        الواجهة ترسم الإطار وتبلّغ مستطيل العرض (satr:previewBounds)
                        والعرض الأصلي يطفو فوقه؛ أحداثه عبر قناة satr:preview.
                        يبثّ أيضاً agent_activity (نشاط Codex على المتصفح) عبر previewSender
+                       ويملك تعبئة النماذج غير السرّية ونقل الأسرار بمخزن مؤقت مبهم وطلب
+                       إدخال المستخدم داخل الحقل؛ لا يعيد قيمة سرّية ولا يسجلها.
 electron/codexmcp.js ← خادم MCP‏ streamable-HTTP داخل العملية يعطي محرك Codex رؤية الويب
                        (الخيار 1): يفوّض أدوات المعاينة (open_preview/read_page/snapshot/
                        console/network/screenshot + أفعال بالإذن) مباشرةً إلى preview.js.
@@ -546,6 +550,9 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   خفيفة أعلى الخيط. `satr:taskLedger` يعيد snapshot عند استئناف جلسة، و`satr:taskAction`
   يقبل `pause|resume` فقط. الإيقاف زر ظاهر يوقف الدور ويحفظ ledger؛ الاستئناف ظاهر ولا
   يرسل prompt تلقائياً — يطلب من المستخدم إرسال متابعة.
+- **مهام إعداد المنصات**: يوجّه `envbrief` المحرّكين إلى تحديث السجل بعد كل منصة بما اكتمل
+  وما ينتظر المستخدم وما يلي، فتعيش خطة Brevo/Netlify/Gmail عبر الأدوار. لوحة المعاينة
+  تضيف أثراً مرئياً مقتضباً للصفحات وآخر فعل وزر «إيقاف المهمة»؛ هذا أثر شفافية لا مخزن جديد.
 - **التحقق**: `npm run test:tasks` يغطي schema/التخزين/merge/الأدلة/الإيقاف والاستئناف
   وحدود الإدخال وأداة المحوّلات. و`npm run test:task-ledger-ui` (حي، ضمن test:full) يغطي
   بطاقة السجل في `<satr-chat>` الإنتاجي داخل Chromium تحت CSP صارم: عتبة الظهور (≥3 مهام)،
@@ -1017,6 +1024,9 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - سياسة المتصفح الموحدة تذكر أن القراءة حرة مع التفويض، وأن التنقّل/الفعل/التقييم على
   origin خارجي جديد يسأل مرة قبل الثقة، وتفرض تحقق التجاوب بـ`browser_set_viewport`
   مع دليل لقطة أو أبعاد فعلية.
+- في إعداد المنصات تفضّل السياسة `API/CLI` المتاح (`gh`/`netlify`) عبر الطرفية المرئية،
+  وتلجأ للمتصفح للفجوات البصرية فقط. كما تمنع تمرير الأسرار نصاً وتوجّه إلى
+  `browser_transfer_field`/`browser_request_secret` وتفرض `task_update` عبر المنصات.
 
 ### مزامنة أوامر CLI في قائمة «/» (المرحلة 14.1)
 
@@ -1280,6 +1290,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `{type:'nav', url, canGoBack, canGoForward}` / `{type:'title', title}` /
   `{type:'loading', loading}` / `{type:'failed', code, desc, url}`. preload يكشفها
   `previewOpen/previewNavigate/previewAction/previewBounds/previewClose/onPreview`.
+  طلب السر يبث `secret_request {id,reason}`/`secret_end {id}` على القناة نفسها؛ preload
+  يكشف `secretDone(id,done)` فقط، وmain لا يقبل إلا `secret_<32hex>` وboolean ولا قيمة.
   فتح الوكيل يستخدم IPCين منفصلين `previewOpenAgent/previewNavigateAgent` بنفس تنقية URL
   كي لا يُسجَّل origin كثقة مستخدم. `previewElementShot {selector}` يقبل نصاً بلا محارف
   تحكم ≤1000 فقط ويلتقط العنصر المحدد دون بث مصغرة وكيل.
@@ -1350,6 +1362,22 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `browser_handoff` منح قيادة آمن مستقل، و`bypassPermissions` وحده يتجاوز البوابة كلها.
   التشغيل/الإيقاف والملفات لا تدخل هذا التفويض. الاختبارات: `test:browserorigin` +
   `test:codexmcp` (تصنيف وtarget وثقة/fail-closed).
+- **مساعد إعداد المنصات والتكاملات (2026-07-19)**: `browserpolicy.js` طبقة مستقلة بعد
+  ثقة origin: submit وEnter داخل نموذج وcross-origin POST والأزرار ذات مفردات
+  send/save/deploy/delete/authorize ونظائرها العربية، وكذلك `browser_evaluate`، تُؤكّد
+  **كل مرة** بلا «دائماً» ولا موافقة دور؛ `bypassPermissions` وحده يتجاوزها. التنقّل أو
+  evaluate ذوا حمولة >1024 محرف أو تطابق `memory.hasSecret` يُعرضان منقّحين، وميزانية
+  المهمة 40 فعلاً مؤثراً تُمدّد صراحةً 20 فعلاً. الموافقة الموسعة في طلب مركّب قد تثق
+  بالـorigin فقط، ولا تحفظ إعفاء الفعل الحسّاس.
+  الأدوات المتكافئة في SDK/Codex: `browser_fill_form` (1..20 حقلاً غير سري؛ السر مرفوض؛
+  مراجعة مرئية لكل استدعاء بلا إرسال النموذج)،
+  `browser_transfer_field` (نقل داخل الصفحة بلا خروج القيمة، أو عبر صفحتين بمعرّف
+  `xfer_<32hex>` في مخزن العملية الرئيسية يُمسح بعد اللصق/الدور)، `browser_request_secret`
+  (IPC منقّى `secret_<32hex>` + boolean فقط، والنتيجة `{filled:true}`)، و
+  `browser_handoff_step(reason,resume_hint)`. أثناء الإدخال/التسليم تبقى الأدوات معلّقة
+  fail-closed وتُصفّر سجلات console/network. `browser_snapshot` لا يعيد قيم inputs، ونتيجة
+  `browser_evaluate` المطابقة لحارس الأسرار تُحجب. التحقق: `test:browserpolicy` و
+  `test:codexmcp` ومسبار `test:browser-platform-live` بصفحتين واختبار عدم تسريب صريح.
 - **رؤية الـ console وأخطاء الشبكة للوكيل (2026-07-12 — «ابنِ→عايِن→صحّح»)**: أداة
   `browser_console` تعطي الوكيل رسائل console الصفحة (وأخطاء JavaScript غير الملتقطة) +
   طلبات الشبكة الفاشلة — فيشخّص لماذا لا تعمل صفحة بناها ويصحّح نفسه. الالتقاط في
