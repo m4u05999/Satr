@@ -28,6 +28,8 @@ const AUTO_SAFE_TOOLS = new Set([
   'mcp__satr-terminal__browser_console',
   'mcp__satr-terminal__browser_network',
   'mcp__satr-terminal__browser_wait_for',
+  'mcp__satr-terminal__get_background_output',
+  'mcp__satr-terminal__list_background_tasks',
   // مهارات/تحقق/ذاكرة — قراءة أو اقتراح بلا كتابة قرص
   'mcp__satr-skills__load_skill',
   'mcp__satr-skills__read_skill_resource',

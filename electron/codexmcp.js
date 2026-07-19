@@ -22,6 +22,9 @@
 
 const http = require('http');
 const crypto = require('crypto');
+const term = require('./term');
+const termjobs = require('./termjobs');
+const bgprocs = require('./bgprocs');
 
 const PROTOCOL_VERSION = '2024-11-05'; // نسخة MCP التي يتفاوض عليها العميل (rmcp يقبلها)
 const SERVER_INFO = { name: 'satr-preview', title: 'Satr Preview', version: '1.0.0' };
@@ -51,7 +54,7 @@ function whyClosed(err, extra) {
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
 
-const PERMISSION_KEYS = new Set(['url', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page']);
+const PERMISSION_KEYS = new Set(['url', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page', 'command', 'label', 'id', 'tail_lines']);
 function permissionInput(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const out = {};
@@ -78,7 +81,7 @@ function buildTools(deps) {
   const requestHandoff = typeof deps.requestHandoff === 'function' ? deps.requestHandoff : null;
   // حارس التسليم للأداتين المشتركتين مع الواجهة (navigate/open غير محجوبتين في preview.js)
   const handoffActive = () => !!(preview.isHandoffActive && preview.isHandoffActive());
-  return [
+  const tools = [
     {
       name: 'open_preview',
       description: 'اعرض عنوان ويب (عادةً خادم تطوير محلي http://localhost:…) في لوحة المعاينة '
@@ -357,7 +360,63 @@ function buildTools(deps) {
         return textResult('استلم المستخدم وأكمل الخطوة بيده. الصفحة قد تغيّرت — خذ browser_snapshot جديداً قبل أي فعل.');
       },
     },
+    {
+      name: 'run_in_background', access: 'exec',
+      description: 'شغّل خادم تطوير أو مهمة طويلة داخل تبويب طرفية مرئي ومعمّر في «سطر». يبقى بعد نهاية الدور والجلسة حتى يوقفه المستخدم.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'أمر صدفة في سطر واحد' },
+          label: { type: 'string', description: 'اسم عربي موجز للتبويب' },
+        },
+        required: ['command'],
+      },
+      handler: async (args) => {
+        const result = termjobs.startJob(deps.cwd, args && args.command, args && args.label);
+        return result.ok
+          ? textResult('بدأت المهمة ' + result.id + ' في تبويب مرئي. استخدم get_background_output للاطلاع على سجلها وopen_preview لعرض الخادم.')
+          : textResult(result.message || 'تعذّر بدء المهمة الخلفية.', true);
+      },
+    },
+    {
+      name: 'get_background_output', access: 'read',
+      description: 'اقرأ ذيل سجل مهمة خلفية معمّرة من طرفية «سطر» بلا إيقافها.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          tail_lines: { type: 'integer', minimum: 1, maximum: 2000 },
+        },
+        required: ['id'],
+      },
+      handler: async (args) => {
+        const id = String((args && args.id) || '');
+        if (!termjobs.info(id)) return textResult('لا توجد مهمة حيّة بهذا المعرّف.', true);
+        const result = term.readBuffer(id, term.MAX_BUFFER_BYTES);
+        if (!result.ok) return textResult('تعذّرت قراءة سجل المهمة.', true);
+        const count = Number.isInteger(args && args.tail_lines) ? Math.min(args.tail_lines, 2000) : 200;
+        const output = result.data.replace(/\r/g, '').split('\n').slice(-count).join('\n').slice(-48 * 1024);
+        return textResult(output || '(لا يوجد خرج بعد)');
+      },
+    },
+    {
+      name: 'list_background_tasks', access: 'read',
+      description: 'اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة لتجنب تشغيل خادم ثانٍ.',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => textResult(JSON.stringify({ terminal_jobs: termjobs.list(), legacy_processes: bgprocs.list() }, null, 2)),
+    },
+    {
+      name: 'stop_background_task', access: 'exec', neverAlways: true,
+      description: 'أوقف مهمة خلفية معمّرة أو عملية خلفية قديمة. يطلب الإذن في كل مرة.',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      handler: async (args) => {
+        const id = String((args && args.id) || '');
+        const result = termjobs.info(id) ? termjobs.stop(id) : bgprocs.kill(id);
+        return result.ok ? textResult('أُوقفت المهمة ' + id + '.') : textResult('لم تُوجد مهمة حيّة بهذا المعرّف.', true);
+      },
+    },
   ];
+  return tools.map((tool) => ({ ...tool, access: tool.access || 'browser' }));
 }
 // محارف التحكم تُنقّى من reason قبل عرضه في شريط الاستلام (نظير تنقية agent.js)
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]+/g;
@@ -377,9 +436,7 @@ function rpcOk(id, result) {
 function start(deps) {
   const tools = buildTools(deps || {});
   const toolMap = new Map(tools.map((t) => [t.name, t]));
-  // Codex لا يمرّر MCP عبر بوابة موافقات app-server. لذلك **كل** أداة معاينة تمر هنا
-  // عبر مربع إذن «سطر» (أو التفويض الصريح browserControl في codex.js). غياب البوابة
-  // يُرفض fail-closed؛ فلا تتحول إضافة أداة مستقبلية إلى قدرة صامتة بالخطأ.
+  // القراءة حرّة، أما المتصفح والتنفيذ فيمران ببوابة مصنّفة. غيابها يرفض fail-closed.
   const requestPermission = typeof (deps && deps.requestPermission) === 'function' ? deps.requestPermission : null;
   const token = crypto.randomBytes(24).toString('hex');
   const sessionId = crypto.randomBytes(16).toString('hex');
@@ -410,11 +467,11 @@ function start(deps) {
         const tool = toolMap.get(String(name));
         if (!tool) return isNotification ? null : rpcError(id, -32602, 'أداة غير معروفة: ' + name);
         const input = (params && params.arguments) || {};
-        let allowed = false;
-        if (requestPermission) {
-          try { allowed = await requestPermission(tool.name, permissionInput(input)); } catch (e) { allowed = false; }
+        let allowed = tool.access === 'read';
+        if (!allowed && requestPermission) {
+          try { allowed = await requestPermission(tool.name, permissionInput(input), tool.access, tool.neverAlways === true); } catch (e) { allowed = false; }
         }
-        if (!allowed) return rpcOk(id, textResult('رُفض الإذن — لم تُنفَّذ أداة المتصفح ' + tool.name + '.', true));
+        if (!allowed) return rpcOk(id, textResult('رُفض الإذن — لم تُنفَّذ الأداة ' + tool.name + '.', true));
         const result = await tool.handler(input);
         return rpcOk(id, result);
       }

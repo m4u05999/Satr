@@ -31,7 +31,8 @@ const keys = require('./keys');
 const memory = require('./memory'); // ذاكرة مشروع شخصية — حقن قرائي مقصوص (تكافؤ agent.js)
 const testsprite = require('./testsprite');
 const testspriteHarness = require('./testspriteharness');
-const runtimeenv = require('./runtimeenv');
+const envbrief = require('./envbrief');
+const execguard = require('./execguard');
 
 const IS_WIN = process.platform === 'win32';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة تراجع ولا نعرض فرقاً
@@ -156,6 +157,12 @@ const { isExternalBrowserLaunchCommand, promptRequestsExternalBrowser } = requir
 // ---------- الأدوات الموافَق عليها «دائماً» (لعمر التطبيق — نظير agent.js) ----------
 const alwaysAllowed = new Set();
 
+function shouldAutoApproveMcp(access, browserControl, permissionMode, remembered, neverAlways) {
+  if (permissionMode === 'bypassPermissions') return true;
+  if (access === 'browser' && browserControl === true) return true;
+  return remembered === true && neverAlways !== true;
+}
+
 /**
  * عميل JSON-RPC خفيف فوق `codex app-server` (stdio، أسطر JSON مفصولة بـ \n).
  * يبثّ ServerRequest (أذونات) وnotifications (أحداث)، ويستقبل ردودنا.
@@ -188,15 +195,18 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   if (browserControl !== false) try {
     mcpHost = await codexmcp.start({
       preview,
+      cwd,
       openPreview: (url) => emit({ type: 'preview_open', url }),
       // أفعال المتصفح (نقر/كتابة/اختيار/مفتاح) تمرّ بمربع الإذن العربي نفسه — Codex لا
       // يبوّب نداءات MCP، فنبوّبها هنا (نفس قناة أذونات الأوامر: emit + resolvePermission).
       // bypassPermissions أو «موافقة دائمة» للأداة يعفيان. رفض ⇒ لا يُنفَّذ الفعل.
-      requestPermission: (toolName, input) => new Promise((resolve) => {
-        if (browserControl === true || permissionMode === 'bypassPermissions' || alwaysAllowed.has(toolName)) { resolve(true); return; }
+      requestPermission: (toolName, input, access, neverAlways) => new Promise((resolve) => {
+        if (shouldAutoApproveMcp(access, browserControl, permissionMode,
+          alwaysAllowed.has(toolName), neverAlways)) { resolve(true); return; }
         const permId = 'cxmcp_' + (++mcpPermSeq) + '_' + Math.random().toString(36).slice(2, 6);
-        mcpPerms.set(permId, { resolve, tool: toolName });
-        emit({ type: 'permission_request', id: permId, tool: toolName, input: input || {} });
+        mcpPerms.set(permId, { resolve, tool: toolName, neverAlways: !!neverAlways });
+        emit({ type: 'permission_request', id: permId, tool: toolName, input: input || {},
+          turnEligible: false, alwaysEligible: !neverAlways });
       }),
       // مؤشّر نشاط: عند كل نداء أداة يومض «🤖 الوكيل …» على لوحة المعاينة (عبر preview.js
       // → previewSender → preview-panel). أدوات Codex تُنفَّذ على خادم HTTP منفصل فلا تظهر
@@ -423,6 +433,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       const p = m.params || {};
       const toolName = isFile ? 'apply_patch' : 'Shell';
       const command = isFile ? '' : (Array.isArray(p.command) ? p.command.join(' ') : (p.command || ''));
+      if (!isFile && execguard.isServerCommand(command)) {
+        respond(m.id, { decision: 'decline' });
+        emit({ type: 'stderr', text: execguard.buildRedirectMessage() });
+        return;
+      }
       // **مراجعة Codex (مثبّتة)**: ذكر المستخدم للمتصفح الخارجي لا يعطّل الحاجب كلياً —
       // المطابقة (externalBrowser + allowExternalBrowser) تفرض مربع إذن **لمرة واحدة**
       // بتخطي القبول التلقائي أدناه، فلا تعفيها «موافقة دائمة» سابقة على Shell.
@@ -682,34 +697,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // تعريف الوكيل ببيئته والنموذج المختار (نظير systemPrompt في agent.js). النماذج لا
       // تعرف اسمها الرمزي (بيانات التدريب تسبق الإصدار) فتُعرّف نفسها عموماً بـ GPT-5؛
       // حقن الاسم هنا يجعلها تجيب بدقّة. developerInstructions إضافي (لا يستبدل تعليمات Codex).
-      const devInstructions = 'تواصل مع المستخدم بالعربية افتراضياً في كل شرحك وردودك '
-        + '(«سطر» منصّة عربية)، مع إبقاء الكود والمسارات والأوامر والمصطلحات التقنية بالإنجليزية '
-        + 'LTR؛ وإن طلب لغة أخرى صراحةً فاتّبعه. '
-        + 'أنت تعمل داخل تطبيق «سطر» (Satr) — واجهة عربية لسطح المكتب '
-        + 'تُشغّل Codex بجوار Claude Code. '
-        + 'وفيه متصفح معاينة مدمج: عند تشغيل خادم ويب محلي استعمل أداة open_preview (من خادم '
-        + 'satr_preview) لعرضه داخل «سطر» بدل فتح متصفح خارجي، ثم افحص ما بنيته بأدوات المعاينة: '
-        + 'read_page (بنية الصفحة النصية) وbrowser_snapshot (العناصر التفاعلية) وscreenshot '
-        + '(لقطة بصرية) وbrowser_console (أخطاء JavaScript) وbrowser_network (طلبات الشبكة برموز '
-        + 'الحالة) — استعملها للتحقق من نتيجة تعديلاتك وتصحيح نفسك. '
-        + 'وللتفاعل مع الصفحة: خذ لقطة بـ browser_snapshot (تعطيك كل عنصر بصيغة [ref] role "name")، '
-        + 'ثم مرّر الـ ref إلى browser_click/browser_type/browser_select_option/browser_press_key '
-        + '(تطلب إذن المستخدم)، وأعد أخذ اللقطة بعد كل فعل لأن المُعرّفات تتغيّر. إذا تعذّرت أدوات المعاينة فأبلغ المستخدم صراحةً؛ لا تفتح Chrome/Edge/Firefox ولا تستعمل Start-Process/start/open كبديل. '
-        // دفعة «تحكم الوكيل الكامل»: الويب العام + العرض الاستباقي + التسليم البشري
-        + 'والمعاينة ليست حكراً على localhost — تصفّح بها أي موقع (توثيق، GitHub، لوحات تحكم) '
-        + 'عبر open_preview وbrowser_navigate. حين تتطلب مهمة خطوات يدوية على موقع لا تطلب من '
-        + 'المستخدم فتح متصفحه وتنفيذها — اعرض أن تنفّذها أنت داخل المعاينة، وعند بيانات حساسة '
-        + '(تسجيل دخول/كلمة مرور/رمز 2FA) استدعِ أداة browser_handoff بسبب واضح: تُسلَّم قيادة '
-        + 'المعاينة للمستخدم يُدخلها بيده ثم يعيدها لك فتكمل؛ أثناء التسليم كل أدوات المعاينة '
-        + 'معلّقة، وبعد الاستلام خذ browser_snapshot جديداً. لا تطلب كلمات مرور في المحادثة أبداً. '
-        + 'عند توليد الصور/الفيديو (مثل Higgsfield) اكتب برومبتاً غنيّاً بالتفاصيل البصرية '
-        + '(الإنجليزية أوثق تحكّماً، والنماذج الأحدث تفهم العربية أيضاً). النص داخل الصورة '
-        + 'مشروط بالنموذج: النماذج الحديثة (GPT Image 2 الأدقّ بالعربية، وNano Banana Pro/2) '
-        + 'تكتب العربية سليمة والأقدم تكسرها — فاختر نموذجاً قوياً بالعربية عند الحاجة '
-        + '(models_explore)، وضع النص المطلوب بين "علامتَي اقتباس" وسمِّ نمط الخط (ديواني/كوفي) '
-        + 'لجودة أعلى؛ أو ضع النص العربي كطبقة HTML فوق الصورة. لا تمنعه منعاً مطلقاً. '
-        + 'لا تستخدم من Agent Skills إلا المهارات المرفقة صراحةً بمدخلات هذا الدور. '
-        + runtimeenv.environmentLine('codex', resolvedModel);
+      const devInstructions = envbrief.build('codex', resolvedModel);
       const startParams = { cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, experimentalRawEvents: false, persistExtendedHistory: false };
       if (sessionId) {
         // استئناف خيط قائم من القرص (~/.codex/sessions) بمعرّفه. الحقول cwd/السياسة/
@@ -766,7 +754,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       const mcp = mcpPerms.get(id);
       if (mcp) {
         mcpPerms.delete(id);
-        if (allow && always) alwaysAllowed.add(mcp.tool);
+        if (allow && always && !mcp.neverAlways) alwaysAllowed.add(mcp.tool);
         try { mcp.resolve(!!allow); } catch {}
         return true;
       }
@@ -800,4 +788,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   };
 }
 
-module.exports = { start, undoEdit, resolveCodexBin, authStatus, DEFAULT_MODEL, isExternalBrowserLaunchCommand };
+module.exports = {
+  start, undoEdit, resolveCodexBin, authStatus, DEFAULT_MODEL,
+  isExternalBrowserLaunchCommand, shouldAutoApproveMcp,
+};

@@ -124,6 +124,8 @@ const activity = require('./activity');
 const keys = require('./keys');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
+const termjobs = require('./termjobs');
+const devservers = require('./devservers');
 const updater = require('./updater');
 const preview = require('./preview'); // لوحة المعاينة المدمجة (م-1 — الدفعة 5)
 
@@ -565,6 +567,7 @@ let lastEngine = 'sdk';
 
 // تتبّع عمليات الخلفية: يُبثّ مباشرةً (لا عبر token الدور) لأنه يعيش بعد انتهاء الدور
 bgprocs.setNotifier((procs) => emitToWindow({ type: 'bg_procs', procs }));
+termjobs.setNotifier((event) => emitToWindow(event));
 
 // رقم تسلسلي للتشغيل: أحداث متأخرة من تشغيل أُلغي (proc_done مثلاً)
 // لا يجوز أن تصل للواجهة فتُنهي رسالة التشغيل الجديد قبل أوانها
@@ -792,10 +795,19 @@ term.setNotifier((obj) => {
 });
 
 ipcMain.handle('satr:termStart', (event, p) => {
-  const cwd = typeof (p && p.cwd) === 'string' ? p.cwd : '';
+  const cwd = sanitizeMemoryCwd(p && p.cwd);
+  if (!cwd) return { ok: false, error: 'bad_cwd' };
   const cols = Number.isInteger(p && p.cols) ? p.cols : 0;
   const rows = Number.isInteger(p && p.rows) ? p.rows : 0;
   return term.startTerm(cwd, cols, rows);
+});
+
+ipcMain.handle('satr:termList', () => term.listTerms());
+ipcMain.handle('satr:termReadBuffer', (event, p) => {
+  if (!p || typeof p.id !== 'string' || !SAFE_TERM_ID.test(p.id)) return { ok: false, error: 'bad_id' };
+  const tailBytes = Number.isInteger(p.tailBytes) && p.tailBytes > 0
+    ? Math.min(p.tailBytes, term.MAX_BUFFER_BYTES) : term.MAX_BUFFER_BYTES;
+  return term.readBuffer(p.id, tailBytes);
 });
 
 ipcMain.handle('satr:termInput', (event, p) => {
@@ -855,6 +867,26 @@ ipcMain.handle('satr:previewPickCancel', () => preview.cancelPick());
 ipcMain.handle('satr:previewFrame', () => preview.captureFrame());   // م-5: إطار للتسجيل
 ipcMain.handle('satr:previewClose', () => preview.close());
 
+ipcMain.handle('satr:devServerInfo', (event, p) => {
+  const cwd = sanitizeMemoryCwd(p && p.cwd);
+  if (!cwd) return { ok: false, error: 'bad_cwd' };
+  const record = devservers.info(cwd);
+  const running = termjobs.list().some((job) => path.resolve(job.cwd) === cwd);
+  return { ok: true, record, running };
+});
+ipcMain.handle('satr:devServerRestart', (event, p) => {
+  const cwd = sanitizeMemoryCwd(p && p.cwd);
+  if (!cwd) return { ok: false, error: 'bad_cwd' };
+  const record = devservers.info(cwd);
+  if (!record || typeof record.command !== 'string') return { ok: false, error: 'no_record' };
+  if (termjobs.list().some((job) => path.resolve(job.cwd) === cwd)) return { ok: false, error: 'already_running' };
+  const started = termjobs.startJob(cwd, record.command, record.label);
+  return started.ok ? {
+    ok: true, id: started.id, label: started.label, shell: started.shell,
+    cwd: started.cwd, last_url: record.last_url || null,
+  } : started;
+});
+
 // ---------- عمليات الخلفية المعمّرة (خوادم التطوير ونحوها) ----------
 // مستقلة عن الدور: تُسرد وتُقتل حتى بعد انتهاء التشغيل واختفاء زرّ الإيقاف.
 const SAFE_BG_ID = /^bg_[0-9]{1,12}$/;
@@ -869,9 +901,9 @@ ipcMain.handle('satr:killBgProc', (event, id) => {
 ipcMain.handle('satr:permission', (event, p) => {
   if (!p || typeof p.id !== 'string') return { ok: false };
   let ok = false;
-  if (currentRun) ok = currentRun.resolvePermission(p.id, !!p.allow, !!p.always);
+  if (currentRun) ok = currentRun.resolvePermission(p.id, !!p.allow, !!p.always, !!p.turn);
   if (!ok && currentCliRun && typeof currentCliRun.resolvePermission === 'function') {
-    ok = currentCliRun.resolvePermission(p.id, !!p.allow, !!p.always);
+    ok = currentCliRun.resolvePermission(p.id, !!p.allow, !!p.always, !!p.turn);
   }
   if (!ok && pendingVerificationPermissions.has(p.id)) {
     const resolve = pendingVerificationPermissions.get(p.id);

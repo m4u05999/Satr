@@ -19,6 +19,7 @@ const { execSync } = require('child_process');
 const { computeDiff } = require('./diff');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
+const termjobs = require('./termjobs');
 const preview = require('./preview'); // م-3: أدوات قراءة المعاينة للوكيل (موديول مشترك)
 const skillCatalog = require('./skills'); // .agents قياسي + .claude توافق؛ تحميل تدريجي
 const verify = require('./verify'); // تحقق صريح مستقل عن أدوات المتصفح
@@ -26,7 +27,7 @@ const memory = require('./memory'); // ذاكرة مشروع شخصية بموا
 const keys = require('./keys');
 const testsprite = require('./testsprite');
 const testspriteHarness = require('./testspriteharness');
-const runtimeenv = require('./runtimeenv');
+const envbrief = require('./envbrief');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -38,7 +39,17 @@ const PORTABLE_SKILL_TOOLS = new Set([
 ]);
 const READ_ONLY_VERIFY_TOOLS = new Set(['mcp__satr-verify__verification_config']);
 const MEMORY_PROPOSAL_TOOLS = new Set(['mcp__satr-memory__propose_memory']);
+const BACKGROUND_READ_TOOLS = new Set([
+  'mcp__satr-terminal__get_background_output',
+  'mcp__satr-terminal__list_background_tasks',
+]);
 const VERIFY_EXEC_TOOL = 'mcp__satr-verify__verify_project';
+const STOP_BACKGROUND_TOOL = 'mcp__satr-terminal__stop_background_task';
+const NEVER_ALWAYS_TOOLS = new Set([VERIFY_EXEC_TOOL, STOP_BACKGROUND_TOOL]);
+const NEVER_TURN_TOOLS = new Set([
+  'Bash', 'mcp__satr-terminal__run_in_terminal', 'mcp__satr-terminal__run_in_background',
+  STOP_BACKGROUND_TOOL, VERIFY_EXEC_TOOL,
+]);
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة ولا نعرض فرقاً (أداء وذاكرة)
 const MAX_SKILL_TOOL_CHARS = 48 * 1024;
 
@@ -151,6 +162,7 @@ const { autoNeedsPrompt, decideAutoApproval } = require('./autogate');
 // حارس المتصفح الخارجي المشترك مع Codex (دفعة «تحكم الوكيل الكامل» — 2026-07-18):
 // اعتراض أوامر فتح متصفح النظام + فحص طلب المستخدم الصريح الذي يعطّل الاعتراض للدور.
 const browserguard = require('./browserguard');
+const execguard = require('./execguard');
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
@@ -394,6 +406,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   const { query } = await loadSdk();
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
+  const turnAllowed = new Set(); // موافقات مؤقتة لهذا الدور فقط؛ تُصفّر عند result/stop
   const pendingQuestions = new Map(); // id → { resolve, input } لأسئلة AskUserQuestion المعلّقة
   const pendingHandoffs = new Map(); // id → { resolve } لتسليمات browser_handoff بانتظار «استلمت»
   // طلب المستخدم الصريح لمتصفح خارجي في رسالة هذا الدور يعطّل اعتراض browserguard (قرار مالك)
@@ -520,7 +533,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     // المستخدم/المشروع. ضبطه على الثلاثة يجعل المحرك يطابق Claude Code التفاعلي.
     settingSources: isolatedPolicy ? [] : ['user', 'project', 'local'],
     stderr: (data) => emit({ type: 'stderr', text: String(data) }),
-    canUseTool: async (toolName, input, { signal, toolUseID }) => {
+    canUseTool: async (toolName, input, { signal, toolUseID, agentID }) => {
       // الموجة 4 (مراجعة كودكس): في auto، الأداة غير القرائية تُسأل **دائماً** — لا تعفيها
       // «موافقة دائمة» مُنحت في وضع سابق (وإلا التفّت على حماية auto). browserControl يبقى
       // استثناءً صريحاً أدناه (تفويض متصفح فعّله المستخدم بزرّ، لا موافقة عابرة قديمة).
@@ -548,6 +561,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           }
         });
       }
+      // الخوادم والعمليات الطويلة لا يجوز أن تكون أحفاد عملية claude.exe المؤقتة.
+      // الاعتراض يسبق الموافقة الدائمة ووضع auto كي لا يتسرّب خادم سبق السماح بـ Bash له.
+      const guardedCommand = input && input.command;
+      if (execguard.isBackgroundBash(toolName, input) || execguard.isServerCommand(guardedCommand)
+        && (toolName === 'Bash' || toolName === 'mcp__satr-terminal__run_in_terminal')) {
+        return { behavior: 'deny', message: execguard.buildRedirectMessage() };
+      }
       // اعتراض المتصفح الخارجي (دفعة «تحكم الوكيل الكامل» — نظير حاجب Codex في codex.js):
       // التوجيه النصي وحده يُنسى في الجلسات الطويلة، فأمر Bash/الطرفية الذي يفتح متصفح
       // نظام خارجي يُرفض بإرشاد يعيد النموذج لأدوات المعاينة في الدور نفسه — قبل مربع
@@ -564,16 +584,23 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           '(أو browser_navigate إن كانت مفتوحة) ثم أكمل بأدوات browser_*. لا تعد محاولة ' +
           'الفتح الخارجي إلا إذا طلبه المستخدم صراحةً في رسالته.' };
       }
+      if (turnAllowed.has(toolName)) return { behavior: 'allow', updatedInput: input };
+      const isReadOnly = PORTABLE_SKILL_TOOLS.has(toolName) || READ_ONLY_VERIFY_TOOLS.has(toolName)
+        || MEMORY_PROPOSAL_TOOLS.has(toolName) || BACKGROUND_READ_TOOLS.has(toolName);
       const decision = externalBrowserCmd ? 'ask' : decideAutoApproval(toolName, {
         permissionMode, alwaysAllowed, browserControl,
-        readOnly: PORTABLE_SKILL_TOOLS.has(toolName) || READ_ONLY_VERIFY_TOOLS.has(toolName) || MEMORY_PROPOSAL_TOOLS.has(toolName),
+        readOnly: isReadOnly,
         browserTool: BROWSER_AUTO_TOOLS.has(toolName),
       });
       if (decision === 'allow') return { behavior: 'allow', updatedInput: input };
       const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
-      emit({ type: 'permission_request', id, tool: toolName, input });
+      const requester = typeof agentID === 'string'
+        ? agentID.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 80) : '';
+      const turnEligible = !NEVER_TURN_TOOLS.has(toolName);
+      emit({ type: 'permission_request', id, tool: toolName, input, requester, turnEligible,
+        alwaysEligible: !NEVER_ALWAYS_TOOLS.has(toolName) });
       return new Promise((resolve) => {
-        pending.set(id, { resolve, toolName, input });
+        pending.set(id, { resolve, toolName, input, turnEligible });
         if (signal) {
           signal.addEventListener('abort', () => {
             if (pending.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
@@ -611,57 +638,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   options.systemPrompt = {
     type: 'preset',
     preset: 'claude_code',
-    append: '**اللغة**: تواصل مع المستخدم بالعربية افتراضياً في كل شرحك وردودك وملخّصاتك ' +
-      '(«سطر» منصّة عربية). أبقِ الكود والمسارات والأوامر وأسماء الملفات والمصطلحات التقنية ' +
-      'بالإنجليزية LTR داخل النص. إن طلب المستخدم لغة أخرى صراحةً فاتّبع طلبه. ' +
-      'أنت تعمل داخل تطبيق «سطر» (Satr) — واجهة عربية لسطح المكتب تغلّف Claude Code، ' +
-      'وفيها متصفح معاينة مدمج بجانب المحادثة. عند تشغيل خادم ويب محلي استخدم أداة ' +
-      'open_preview لعرض العنوان داخل «سطر» مباشرة، ولا تفتح متصفحاً خارجياً ' +
-      '(Start-Process / start / open) إلا إذا طلب المستخدم ذلك صراحةً. ' +
-      'بعد العرض افحص ما بنيته بأدوات المعاينة: read_page يعطيك بنية الصفحة النصية، و ' +
-      'screenshot يريك مظهرها بصرياً، و browser_console يعطيك أخطاء JavaScript وفشل ' +
-      'طلبات الشبكة، و browser_network يعطيك سجلّ الطلبات كاملاً برموز الحالة (لتشخيص ' +
-      'مورد/واجهة برمجية رجعت خطأ) — استعملها للتحقق من نتيجة تعديلاتك وتشخيص ما لا يعمل وتصحيح نفسك. ' +
-      'وللتفاعل مع الصفحة (تجربة زر أو ملء نموذج): خذ أولاً لقطة بـ browser_snapshot فتحصل ' +
-      'على كل عنصر تفاعلي بصيغة [ref] role "name"، ثم مرّر الـ ref (مثل e5) إلى ' +
-      'browser_click أو browser_type — هذا حتمي وأدقّ من تخمين مُحدِّد CSS. أعد أخذ اللقطة ' +
-      'بعد كل نقر/تنقّل لأن المُعرّفات تتغيّر، واستعمل browser_wait_for بعد فعل يحمّل محتوى ' +
-      'ديناميكياً، وbrowser_navigate للانتقال بين الصفحات. أفعال إضافية: browser_select_option ' +
-      'للقوائم المنسدلة، browser_press_key لمفاتيح مثل Enter/Tab (بعد تركيز الحقل)، ' +
-      'browser_scroll لكشف محتوى أسفل الصفحة، وbrowser_hover لإظهار قوائم التحويم. ' +
-      '**مهم جداً**: لفحص الصفحة أو أخذ لقطة أو قراءة عناصرها استعمل أدوات المعاينة هذه ' +
-      'حصراً. لا تكتب ولا تشغّل سكربتات puppeteer أو playwright أو selenium ولا تثبّت ' +
-      'puppeteer-core، ولا تُطلق Chrome/متصفحاً منفصلاً (headless أو غيره) لالتقاط لقطات — ' +
-      'فذلك أبطأ وأكلف ويترك ملفات مؤقتة في المشروع، وأدوات «سطر» تعطيك النتيجة نفسها ' +
-      'لحظياً من المعاينة القائمة. المعاينة متصفح حقيقي كامل؛ استعمله عبر هذه الأدوات. ' +
-      // دفعة «تحكم الوكيل الكامل» (2026-07-18): المعاينة للويب العام لا localhost فقط +
-      // العرض الاستباقي لتنفيذ الخطوات اليدوية + التسليم البشري للبيانات الحساسة.
-      'والمعاينة ليست حكراً على localhost — تصفّح بها أي موقع ويب (توثيق، GitHub، لوحات ' +
-      'تحكم) عبر open_preview وbrowser_navigate. حين تتطلب مهمة خطوات يدوية على موقع ' +
-      '(إعدادات حساب، إنشاء token، تفعيل خيار) لا تطلب من المستخدم فتح متصفحه وتنفيذها — ' +
-      'اعرض أن تنفّذها أنت داخل المعاينة. وعند خطوة تحتاج بيانات حساسة (تسجيل دخول، ' +
-      'كلمة مرور، رمز تحقق 2FA) استدعِ أداة browser_handoff مع سبب واضح: تُسلَّم قيادة ' +
-      'المعاينة للمستخدم يُدخل بياناته بيده ثم يعيد لك القيادة فتكمل من حيث توقفت — ' +
-      'لا تطلب أبداً كتابة كلمة مرور في المحادثة، ولا تحاول قراءتها من الصفحة. ' +
-      // توليد الصور/الفيديو (Higgsfield أو أي أداة توليد بصري): المولّدات تتفاوت في العربية.
-      // النماذج الأحدث (GPT Image وNano Banana Pro/2) تكتب النص العربي جيداً بتشكيل واتجاه
-      // سليمين، بينما مولّدات diffusion الأقدم تخرجه مقطّعاً معكوساً. لذا التوجيه مشروط
-      // بالنموذج لا مطلق: اختر نموذجاً قوياً بالعربية عند الحاجة، أو اطبع النص كطبقة HTML.
-      '**توليد الصور والفيديو**: عند استخدام أدوات التوليد البصري (مثل Higgsfield ' +
-      'generate_image/generate_video وأخواتها): اكتب برومبتاً **غنيّاً بالتفاصيل البصرية** ' +
-      '(الأسلوب، الإضاءة، التكوين، المزاج، الدقة) — الإنجليزية تعطي أوثق تحكّم عبر كل ' +
-      'المولّدات، لكن النماذج الأحدث تفهم البرومبت العربي جيداً أيضاً. أما **النص المكتوب ' +
-      'داخل الصورة** فمشروط بالنموذج: مولّدات diffusion القديمة تكسر العربية (حروف مقطّعة ' +
-      'معكوسة)، بينما النماذج الحديثة (GPT Image أقواها، ثم Nano Banana Pro/2 من عائلة ' +
-      'Gemini) تكتبها سليمة (GPT Image 2 الأدقّ في العربية والـ RTL، وNano Banana Pro ممتاز ' +
-      'أيضاً وأقوى في الصور الواقعية والوجوه). لذا إن احتاج المستخدم نصاً عربياً داخل الصورة: ' +
-      'استعن بـ models_explore لترشيح نموذج قوي في كتابة العربية واستعمله مباشرةً. وحينها ' +
-      'لرفع الجودة: (1) ضع النص العربي المطلوب بين علامتَي اقتباس مزدوجتين "…" في البرومبت ' +
-      'ليرسمه النموذج حرفياً، و(2) سمِّ نمط الخط (مثل «بخط ديواني» أو «كوفي» لا مجرّد ' +
-      '«بالعربية»). ومع نموذج أضعف (أو حين تريد تحكّماً طِباعيّاً دقيقاً) ولّد الخلفية/العنصر ' +
-      'ثم ضع النص العربي كطبقة HTML/CSS فوقه في الموقع. لا تمنع النص العربي منعاً مطلقاً — بل اختر الأداة المناسبة له. ' +
-      runtimeenv.environmentLine('sdk', model) +
-      (portableSkillPrompt ? '\n\n' + portableSkillPrompt : ''),
+    append: envbrief.build('sdk', model)
+      + (portableSkillPrompt ? '\n\n' + portableSkillPrompt : ''),
   };
   if (policyMode === 'text-only') {
     options.systemPrompt = 'أنت مستشار نصي عربي مستقل. أجب من الموجز فقط، بلا أدوات أو ملفات أو متصفح أو طرفية.';
@@ -697,6 +675,49 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         const head = (r.timedOut ? '[انتهت المهلة — قد يكون أمراً طويلاً/تفاعلياً]\n' : '') +
           'exit code: ' + (r.exitCode === null ? 'غير معروف' : r.exitCode) + '\n---\n';
         return { content: [{ type: 'text', text: head + (r.output || '(لا خرج)') }], isError: r.exitCode !== 0 && r.exitCode !== null };
+      }
+    );
+    const backgroundTool = sdk.tool(
+      'run_in_background',
+      'شغّل خادم تطوير أو مهمة طويلة داخل تبويب طرفية مرئي ومعمّر في «سطر». يبقى بعد نهاية الدور والجلسة حتى يوقفه المستخدم.',
+      {
+        command: z.string().describe('أمر صدفة في سطر واحد'),
+        label: z.string().optional().describe('اسم موجز للتبويب'),
+      },
+      async (args) => {
+        const result = termjobs.startJob(cwd, args.command, args.label);
+        if (!result.ok) return { content: [{ type: 'text', text: result.message || result.error }], isError: true };
+        return { content: [{ type: 'text', text: 'بدأت المهمة ' + result.id + ' في تبويب مرئي. استخدم get_background_output للاطلاع على سجلها وopen_preview لعرض الخادم.' }] };
+      }
+    );
+    const backgroundOutputTool = sdk.tool(
+      'get_background_output',
+      'اقرأ ذيل سجل مهمة خلفية معمّرة من طرفية «سطر» بلا إيقافها.',
+      { id: z.string(), tail_lines: z.number().int().min(1).max(2000).optional() },
+      async (args) => {
+        if (!termjobs.info(args.id)) return { content: [{ type: 'text', text: 'لا توجد مهمة حيّة بهذا المعرّف.' }], isError: true };
+        const read = term.readBuffer(args.id, term.MAX_BUFFER_BYTES);
+        if (!read.ok) return { content: [{ type: 'text', text: 'تعذّرت قراءة سجل المهمة.' }], isError: true };
+        const count = Number.isInteger(args.tail_lines) ? args.tail_lines : 200;
+        const output = read.data.replace(/\r/g, '').split('\n').slice(-count).join('\n').slice(-48 * 1024);
+        return { content: [{ type: 'text', text: output || '(لا يوجد خرج بعد)' }] };
+      }
+    );
+    const backgroundListTool = sdk.tool(
+      'list_background_tasks',
+      'اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة قبل تشغيل خادم جديد.',
+      {},
+      async () => ({ content: [{ type: 'text', text: JSON.stringify({ terminal_jobs: termjobs.list(), legacy_processes: bgprocs.list() }, null, 2) }] })
+    );
+    const backgroundStopTool = sdk.tool(
+      'stop_background_task',
+      'أوقف مهمة خلفية معمّرة أو عملية خلفية قديمة. يطلب الإذن في كل مرة.',
+      { id: z.string() },
+      async (args) => {
+        const result = termjobs.info(args.id) ? termjobs.stop(args.id) : bgprocs.kill(args.id);
+        return result.ok
+          ? { content: [{ type: 'text', text: 'أُوقفت المهمة ' + args.id + '.' }] }
+          : { content: [{ type: 'text', text: 'لم تُوجد مهمة حيّة بهذا المعرّف.' }], isError: true };
       }
     );
     const loadSkillTool = sdk.tool(
@@ -1121,7 +1142,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, handoffTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, handoffTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }
@@ -1245,6 +1266,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           emit(msg);
         } else if (msg.type === 'result') {
           emit(msg);
+          turnAllowed.clear();
           closeInput(); // انتهى الدور — إغلاق قناة الإدخال ينهي التشغيل
         }
         // أنواع أخرى (status/progress…) لا تعنينا حالياً
@@ -1255,6 +1277,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       emit({ type: 'proc_done', code: 1 });
     } finally {
       closeInput();
+      turnAllowed.clear();
       if (testspriteProgressWatcher) { testspriteProgressWatcher.stop(); testspriteProgressWatcher = null; }
       if (testspriteHarnessHost) {
         const host = testspriteHarnessHost;
@@ -1280,11 +1303,12 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
 
   return {
     // رد الواجهة على طلب إذن
-    resolvePermission(id, allow, always) {
+    resolvePermission(id, allow, always, turn) {
       const p = pending.get(id);
       if (!p) return false;
       pending.delete(id);
-      if (allow && always && p.toolName !== VERIFY_EXEC_TOOL) alwaysAllowed.add(p.toolName);
+      if (allow && always && !NEVER_ALWAYS_TOOLS.has(p.toolName)) alwaysAllowed.add(p.toolName);
+      if (allow && turn && p.turnEligible) turnAllowed.add(p.toolName);
       p.resolve(allow
         ? { behavior: 'allow', updatedInput: p.input }
         : { behavior: 'deny', message: 'رفض المستخدم استخدام هذه الأداة' });
@@ -1313,6 +1337,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     },
     // إيقاف حقيقي: مقاطعة النموذج + إنهاء الإدخال + رفض الأذونات والأسئلة المعلقة
     async stop() {
+      turnAllowed.clear();
       if (testspriteRequested) testsprite.scrubConfig(cwd);
       if (testspriteProgressWatcher) { testspriteProgressWatcher.stop(); testspriteProgressWatcher = null; }
       if (testspriteHarnessHost) {

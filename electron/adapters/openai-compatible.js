@@ -35,6 +35,7 @@ const tools = require('../tools'); // أدوات الوكيل (2.1): read_file /
 const skillCatalog = require('../skills'); // metadata فقط أولاً؛ المحتوى عبر load_skill عند الطلب
 const memory = require('../memory'); // ذاكرة مشروع شخصية مُقَرّة ضمن ميزانية
 const contextBudget = require('../context'); // خلاصة repo map + usage تقديري موسوم estimate
+const envbrief = require('../envbrief');
 const usage = require('./usage'); // عقد input/output/cached/reasoning موحّد للمحوّلات
 
 const MAX_TURNS = 40;       // آخر 40 رسالة لكل جلسة (سقف الرموز)
@@ -127,7 +128,7 @@ function make(config) {
       if (permissionMode === 'bypassPermissions') return Promise.resolve(true);
       if (tier === 'write' && (autoAllowWrites || alwaysAllowed.has(name))) return Promise.resolve(true);
       const id = String(callId);
-      emit({ type: 'permission_request', id, tool: name, input: displayInput(args) });
+      emit({ type: 'permission_request', id, tool: name, input: displayInput(args), alwaysEligible: tier !== 'exec' });
       return new Promise((resolve) => { pendingPerms.set(id, { resolve, name }); });
     }
 
@@ -242,7 +243,7 @@ function make(config) {
       const builtContext = await contextBudget.buildBlindContext({
         cwd,
         prompt,
-        systemParts: [skillPrompt, memoryPrompt],
+        systemParts: [envbrief.build('adapter', useModel, { compact: true }), skillPrompt, memoryPrompt],
         history,
         toolDefinitions: tools.defs({ strictTools }),
       });

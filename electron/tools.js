@@ -26,6 +26,8 @@ const verify = require('./verify'); // تحقق صريح من .satr/verify.json 
 const memory = require('./memory'); // اقتراح ذاكرة فقط؛ الحفظ الصريح يتم من الواجهة
 const { computeDiff } = require('./diff');
 const term = require('./term'); // طرفية النموذج المرئية (2.3) — نفس مفرد المرحلة 16
+const termjobs = require('./termjobs');
+const bgprocs = require('./bgprocs');
 
 const MAX_RESULT = 48 * 1024;  // سقف نتيجة الأداة (محارف) — حماية سياق النموذج
 const MAX_LIST = 1500;         // سقف أسطر list_files
@@ -68,7 +70,8 @@ function undoEdit(id) {
 // null    = قراءة بلا إذن (تطابق Claude Code)
 function permissionTier(name) {
   if (WRITE_TOOLS.has(name)) return 'write';
-  if (name === 'run_command' || name === 'verify_project') return 'exec';
+  if (name === 'run_command' || name === 'verify_project'
+    || name === 'run_in_background' || name === 'stop_background_task') return 'exec';
   return null;
 }
 function needsPermission(name) { return permissionTier(name) !== null; }
@@ -266,6 +269,56 @@ const DEFS = [
           timeout_seconds: { type: 'number', description: 'Optional timeout in seconds (default 120, max 600)' },
         },
         required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_in_background',
+      description: "Start a development server or long-running task in a persistent visible Satr terminal tab. It survives the turn and chat session until stopped.",
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'One-line shell command' },
+          label: { type: 'string', description: 'Short label for the visible terminal tab' },
+        },
+        required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_background_output',
+      description: 'Read the tail of a persistent Satr background terminal without stopping it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          tail_lines: { type: 'integer', minimum: 1, maximum: 2000 },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_background_tasks',
+      description: 'List persistent Satr terminal jobs and legacy tracked background processes. Call before starting another server.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'stop_background_task',
+      description: 'Stop one persistent background task. The user is asked for permission every time.',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
       },
     },
   },
@@ -582,6 +635,33 @@ async function run(name, cwd, args, ctx) {
         });
       }
       return { ok: true, content: 'حُذف الملف ' + rel };
+    }
+    if (name === 'run_in_background') {
+      const result = termjobs.startJob(cwd, args && args.command, args && args.label);
+      if (!result.ok) return { ok: false, content: 'خطأ: ' + (result.message || result.error) };
+      if (ctx && typeof ctx.emit === 'function') {
+        ctx.emit({ type: 'bg_term', id: result.id, label: result.label, shell: result.shell, cwd: result.cwd });
+      }
+      return { ok: true, content: 'بدأت المهمة ' + result.id + ' في تبويب مرئي. استخدم get_background_output للاطلاع على سجلها وopen_preview لعرض الخادم.' };
+    }
+    if (name === 'get_background_output') {
+      const id = String((args && args.id) || '');
+      if (!termjobs.info(id)) return { ok: false, content: 'خطأ: لا توجد مهمة حيّة بهذا المعرّف.' };
+      const read = term.readBuffer(id, term.MAX_BUFFER_BYTES);
+      if (!read.ok) return { ok: false, content: 'خطأ: تعذّرت قراءة سجل المهمة.' };
+      const count = Number.isInteger(args && args.tail_lines) ? Math.min(args.tail_lines, 2000) : 200;
+      const output = read.data.replace(/\r/g, '').split('\n').slice(-count).join('\n').slice(-MAX_RESULT);
+      return { ok: true, content: output || '(لا يوجد خرج بعد)' };
+    }
+    if (name === 'list_background_tasks') {
+      return { ok: true, content: JSON.stringify({ terminal_jobs: termjobs.list(), legacy_processes: bgprocs.list() }, null, 2).slice(0, MAX_RESULT) };
+    }
+    if (name === 'stop_background_task') {
+      const id = String((args && args.id) || '');
+      const result = termjobs.info(id) ? termjobs.stop(id) : bgprocs.kill(id);
+      return result.ok
+        ? { ok: true, content: 'أُوقفت المهمة ' + id + '.' }
+        : { ok: false, content: 'خطأ: لم تُوجد مهمة حيّة بهذا المعرّف.' };
     }
     if (name === 'run_command') {
       // 2.3: تنفيذ في طرفية النموذج المرئية (نفس مسار run_in_terminal للـ SDK — المرحلة 16):

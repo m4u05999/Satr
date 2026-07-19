@@ -26,6 +26,7 @@ const tools = require('../tools'); // أدوات الوكيل (2.1–2.3)
 const skillCatalog = require('../skills'); // فهرس المهارات المحمولة والتحميل التدريجي
 const memory = require('../memory'); // ذاكرة مشروع شخصية مُقَرّة ضمن ميزانية
 const contextBudget = require('../context'); // خلاصة repo map + usage تقديري موسوم estimate
+const envbrief = require('../envbrief');
 
 // ---- بِتّات خاصة بمزوّد Gemini ----
 const API_HOST = 'generativelanguage.googleapis.com';
@@ -118,7 +119,7 @@ function start(input, cwd, emit) {
   function askPermission(callId, name, args, tier) {
     if (permissionMode === 'bypassPermissions') return Promise.resolve(true);
     if (tier === 'write' && (autoAllowWrites || alwaysAllowed.has(name))) return Promise.resolve(true);
-    emit({ type: 'permission_request', id: callId, tool: name, input: displayInput(args) });
+    emit({ type: 'permission_request', id: callId, tool: name, input: displayInput(args), alwaysEligible: tier !== 'exec' });
     return new Promise((resolve) => { pendingPerms.set(callId, { resolve, name }); });
   }
 
@@ -214,7 +215,7 @@ function start(input, cwd, emit) {
     const builtContext = await contextBudget.buildBlindContext({
       cwd,
       prompt,
-      systemParts: [skillPrompt, memoryPrompt],
+      systemParts: [envbrief.build('adapter', useModel, { compact: true }), skillPrompt, memoryPrompt],
       history,
       toolDefinitions: tools.defs(),
     });

@@ -21,14 +21,34 @@ const IS_WIN = process.platform === 'win32';
 let pty = null;        // وحدة node-pty (تحميل كسول)
 let ptyLoadError = null;
 
-// سجلّ الطرفيات الحيّة: id → { id, proc, shell } (المرحلة 15 — تعدد الطرفيات)
+// سجلّ الطرفيات الحيّة: يحفظ وصف الطرفية وذيل خرجها كي تستعيده الواجهة بعد إعادة التحميل.
 const terminals = new Map();
 let seq = 0;
-const MAX_TERMS = 8; // سقف أمان: يمنع تسريب العمليات إن أساءت الواجهة الاستدعاء
+const MAX_TERMS = 12; // 8 تبويبات للمستخدم + 4 مهام معمّرة مستقلة بلا مزاحمة
+const MAX_BUFFER_BYTES = 256 * 1024;
+const captureQueues = new Map();
+const listeners = new Set();
 
 // دالة بثّ الأحداث للواجهة — يضبطها main.js (نفس نمط bgprocs.setNotifier)
 let notify = () => {};
 function setNotifier(fn) { notify = typeof fn === 'function' ? fn : () => {}; }
+function subscribe(fn) {
+  if (typeof fn !== 'function') return () => {};
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+function emit(event) {
+  notify(event);
+  for (const listener of listeners) {
+    try { listener(event); } catch (e) { console.error('[term] فشل مستمع داخلي:', e && e.message); }
+  }
+}
+
+function appendBuffer(entry, data) {
+  const chunk = Buffer.from(String(data || ''), 'utf8');
+  entry.buffer = Buffer.concat([entry.buffer, chunk]);
+  if (entry.buffer.length > MAX_BUFFER_BYTES) entry.buffer = entry.buffer.subarray(entry.buffer.length - MAX_BUFFER_BYTES);
+}
 
 // تحميل node-pty عند أول طلب فقط — رسالة الخطأ تُعاد للواجهة بالعربية بدل انهيار صامت
 function loadPty() {
@@ -62,7 +82,7 @@ function defaultShell() {
  * بدء طرفية جديدة (المرحلة 15 — كل استدعاء ينشئ واحدة، بسقف MAX_TERMS).
  * cwd/cols/rows منقّاة مسبقاً في main.js، ونعيد التحقق دفاعياً هنا.
  */
-function startTerm(cwd, cols, rows) {
+function startTerm(cwd, cols, rows, meta) {
   if (terminals.size >= MAX_TERMS) {
     return { ok: false, error: 'too_many', message: 'بلغت الحد الأقصى للطرفيات (' + MAX_TERMS + ') — أغلق واحدة أولاً.' };
   }
@@ -114,14 +134,26 @@ function startTerm(cwd, cols, rows) {
     return { ok: false, error: 'spawn_failed', message: 'تعذّر تشغيل الصدفة — أعد المحاولة أو راجع سجل التشغيل.' };
   }
 
-  terminals.set(id, { id, proc, shell });
+  const safeMeta = meta && typeof meta === 'object' ? meta : {};
+  const entry = {
+    id, proc, shell, cwd: dir,
+    label: typeof safeMeta.label === 'string' ? safeMeta.label : '',
+    isModel: safeMeta.isModel === true,
+    isJob: safeMeta.isJob === true,
+    buffer: Buffer.alloc(0),
+  };
+  terminals.set(id, entry);
 
   // خرج pty نص UTF-8 (node-pty يتكفّل بالفك) — يُبثّ مع معرّف طرفيته لتوجّهه الواجهة
-  proc.onData((data) => notify({ type: 'data', id, data }));
+  proc.onData((data) => {
+    appendBuffer(entry, data);
+    emit({ type: 'data', id, data });
+  });
   proc.onExit(({ exitCode }) => {
     // خروج الصدفة (exit أو انهيار): أزِل الطرفية وأخبر الواجهة لتعرض «انتهت الجلسة»
     terminals.delete(id);
-    notify({ type: 'exit', id, exitCode });
+    captureQueues.delete(id);
+    emit({ type: 'exit', id, exitCode });
   });
 
   return { ok: true, id, shell };
@@ -158,7 +190,18 @@ function killTerm(id) {
 
 // قائمة معرّفات الطرفيات الحيّة (للواجهة: استرجاع أو تشخيص)
 function listTerms() {
-  return Array.from(terminals.values()).map((t) => ({ id: t.id, shell: t.shell }));
+  return Array.from(terminals.values()).map((t) => ({
+    id: t.id, label: t.label, isModel: t.isModel, isJob: t.isJob, shell: t.shell, cwd: t.cwd,
+  }));
+}
+
+function readBuffer(id, tailBytes) {
+  const t = terminals.get(id);
+  if (!t) return { ok: false, error: 'no_term' };
+  const wanted = Number.isInteger(tailBytes) && tailBytes > 0
+    ? Math.min(tailBytes, MAX_BUFFER_BYTES) : MAX_BUFFER_BYTES;
+  const data = t.buffer.subarray(Math.max(0, t.buffer.length - wanted)).toString('utf8');
+  return { ok: true, data };
 }
 
 // ---------- طرفية النموذج المخصّصة (المرحلة 16.2 — أداة run_in_terminal) ----------
@@ -171,7 +214,7 @@ function ensureModelTerm(cwd) {
   if (modelTermId && terminals.has(modelTermId)) {
     return { ok: true, id: modelTermId, shell: terminals.get(modelTermId).shell, created: false };
   }
-  const r = startTerm(cwd, 120, 30);
+  const r = startTerm(cwd, 120, 30, { label: 'النموذج', isModel: true });
   if (!r.ok) return r;
   modelTermId = r.id;
   return { ok: true, id: r.id, shell: r.shell, created: true };
@@ -195,7 +238,7 @@ function sanitizeCommand(cmd) {
 const MAX_CAPTURE = 512 * 1024;   // سقف خرج ملتقَط (يحمي ذاكرة النموذج والعملية)
 const DEFAULT_CAP_TIMEOUT = 120000; // مهلة افتراضية للأمر (قابلة للتخصيص من المستدعي)
 
-function runCapture(id, command, opts) {
+function runCaptureNow(id, command, opts) {
   return new Promise((resolve) => {
     const t = terminals.get(id);
     if (!t) return resolve({ ok: false, error: 'no_term', message: 'لا توجد طرفية بهذا المعرّف.' });
@@ -270,16 +313,29 @@ function runCapture(id, command, opts) {
   });
 }
 
+// لكل طرفية طابور مستقل: لا تتشابك علامتا التقاط حين تطلب أداتان التنفيذ بالتوازي.
+function runCapture(id, command, opts) {
+  const previous = captureQueues.get(id) || Promise.resolve();
+  const current = previous.catch(() => {}).then(() => runCaptureNow(id, command, opts));
+  captureQueues.set(id, current);
+  current.finally(() => {
+    if (captureQueues.get(id) === current) captureQueues.delete(id);
+  }).catch(() => {});
+  return current;
+}
+
 // قتل مضمون لكل الطرفيات عند إغلاق التطبيق (window-all-closed / before-quit)
 function killAll() {
   for (const t of terminals.values()) {
     try { t.proc.kill(); } catch (e) {}
   }
   terminals.clear();
+  captureQueues.clear();
   modelTermId = null;
 }
 
 module.exports = {
-  setNotifier, startTerm, writeTerm, resizeTerm, killTerm, listTerms,
-  runCapture, ensureModelTerm, getModelTermId, killAll,
+  MAX_TERMS, MAX_BUFFER_BYTES,
+  setNotifier, subscribe, startTerm, writeTerm, resizeTerm, killTerm, listTerms, readBuffer,
+  sanitizeCommand, runCapture, ensureModelTerm, getModelTermId, killAll,
 };

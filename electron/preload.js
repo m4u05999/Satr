@@ -91,7 +91,7 @@ contextBridge.exposeInMainWorld('satr', {
   listAgents: (cwd) => ipcRenderer.invoke('satr:listAgents', cwd),
   downloadUpdate: () => ipcRenderer.invoke('satr:downloadUpdate'),
   restartUpdate: () => ipcRenderer.invoke('satr:restartUpdate'),
-  permission: (id, allow, always) => ipcRenderer.invoke('satr:permission', { id, allow, always }),
+  permission: (id, allow, always, turn) => ipcRenderer.invoke('satr:permission', { id, allow, always, turn }),
   answerQuestion: (id, selections) => ipcRenderer.invoke('satr:answerQuestion', { id, selections }), // AskUserQuestion (SDK)
   handoffDone: (id, done) => ipcRenderer.invoke('satr:handoffDone', { id, done }), // التسليم البشري browser_handoff (استلمت/إلغاء)
   undoEdit: (id) => ipcRenderer.invoke('satr:undoEdit', id),
@@ -104,6 +104,8 @@ contextBridge.exposeInMainWorld('satr', {
   },
   // الطرفية المدمجة (المرحلة 8) — قناة أحداث مستقلة عالية الإنتاجية satr:term
   termStart: (cwd, cols, rows) => ipcRenderer.invoke('satr:termStart', { cwd, cols, rows }),
+  termList: () => ipcRenderer.invoke('satr:termList'),
+  termReadBuffer: (id, tailBytes) => ipcRenderer.invoke('satr:termReadBuffer', { id, tailBytes }),
   termInput: (id, data) => ipcRenderer.invoke('satr:termInput', { id, data }),
   termResize: (id, cols, rows) => ipcRenderer.invoke('satr:termResize', { id, cols, rows }),
   termKill: (id) => ipcRenderer.invoke('satr:termKill', { id }),
@@ -121,6 +123,8 @@ contextBridge.exposeInMainWorld('satr', {
   previewPickCancel: () => ipcRenderer.invoke('satr:previewPickCancel'),
   previewFrame: () => ipcRenderer.invoke('satr:previewFrame'),           // م-5: إطار للتسجيل
   previewClose: () => ipcRenderer.invoke('satr:previewClose'),
+  devServerInfo: (cwd) => ipcRenderer.invoke('satr:devServerInfo', { cwd }),
+  devServerRestart: (cwd) => ipcRenderer.invoke('satr:devServerRestart', { cwd }),
   onPreview: (callback) => {
     const handler = (_e, obj) => callback(obj);
     ipcRenderer.on('satr:preview', handler);
