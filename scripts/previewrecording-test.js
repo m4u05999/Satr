@@ -35,6 +35,16 @@ session.emit('will-download', {}, item, owner);
 assert.strictEqual(item.savePath, path.join(downloadsPath, name));
 item.emit('done', {}, 'completed');
 assert.deepStrictEqual(emitted[0], { type: 'preview_recording_saved', filename: name, path: item.savePath });
+const promoName = 'satr-promo-segment-promo_0123456789abcdef01234567-2026-07-19-10-20-30.mp4';
+assert.strictEqual(recording.recordingSavePath(downloadsPath, promoName,
+  (candidate) => candidate === path.join(downloadsPath, promoName)),
+path.join(downloadsPath, promoName.replace('.mp4', '-2.mp4')));
+const promoItem = new FakeItem(promoName);
+session.emit('will-download', {}, promoItem, owner);
+assert.strictEqual(promoItem.savePath, path.join(downloadsPath, promoName));
+promoItem.emit('done', {}, 'completed');
+assert.deepStrictEqual(emitted[1], { type: 'promo_recording_saved', filename: promoName,
+  saved_filename: promoName, path: promoItem.savePath });
 detach();
 assert.strictEqual(session.listenerCount('will-download'), 0);
 

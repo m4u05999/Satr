@@ -199,13 +199,19 @@ electron/preview.js  ← لوحة المعاينة المدمجة (م-1 — ال
                        يبثّ أيضاً agent_activity (نشاط Codex على المتصفح) عبر previewSender
                        ويملك تعبئة النماذج غير السرّية ونقل الأسرار بمخزن مؤقت مبهم وطلب
                        إدخال المستخدم داخل الحقل؛ لا يعيد قيمة سرّية ولا يسجلها.
+electron/promocapture.js ← دورة نافذة التقاط المنتج المرئية وتفرد تسجيل البرومو: نسب اجتماعية
+                       بيضاء، URL‏ http/https، حصر مصدر desktop capture بالنافذة المنشأة،
+                       إيقاف/إغلاق، وسجل مقاطع الجلسة داخل Downloads. لا يسجّل MediaStream
+                       في main؛ renderer وحده يرمّز عبر MediaRecorder.
+electron/previewrecording.js ← يثبّت تنزيلات المعاينة ومقاطع البرومو ذات الأسماء المنقّاة
+                       في Downloads بمسارات فريدة، ويرفض بقية تنزيلات النافذة عن هذا العقد.
 electron/codexmcp.js ← خادم MCP‏ streamable-HTTP داخل العملية يعطي محرك Codex رؤية الويب
                        (الخيار 1): يفوّض أدوات المعاينة (open_preview/read_page/snapshot/
                        console/network/screenshot + أفعال بالإذن) مباشرةً إلى preview.js.
                        http المدمجة صفر اعتماديات، 127.0.0.1، Bearer بزمن ثابت. codex.js
                        يبدأه قبل spawn ويحقنه عبر -c mcp_servers.satr_preview (انظر قسم
-                       «رؤية الويب لـ Codex»). ويعرض أدوات الخلفية الأربع بتفويض termjobs؛
-                       الأدوات مصنّفة browser/read/exec كي لا يعفي browserControl التنفيذ.
+                       «رؤية الويب لـ Codex»). ويعرض أدوات الخلفية الأربع وأدوات البرومو
+                       الثلاث؛ الأدوات مصنّفة browser/read/exec كي لا يعفي browserControl التنفيذ.
 src/index.html       ← هيكل الواجهة: HTML فقط — وسوم المكوّنات + ترميز light DOM لمن يحتاجه
                        (topbar/composer) + وسوم تحميل الوحدات (التفكيك اكتمل — docs/COMPONENTS-PLAN.md)
 src/styles/base.css  ← الورقة الأساس: Design Tokens في :root (تعبر حدود Shadow بالوراثة) +
@@ -268,7 +274,8 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
 في docs/COMPONENTS-PLAN.md §1).
 قالب الـ CSP نفسه (التوجيهات لا الهاشات) معرّف في `scripts/update-csp.js`، فأي توجيه جديد
 يُضاف هناك لا في index.html مباشرة (وإلا داسه `prestart`). مثال: `img-src 'self' data:`
-أُضيف للمرحلة 4 ليسمح بمصغّرات الصور الملصقة (data: URL).
+أُضيف للمرحلة 4 ليسمح بمصغّرات الصور الملصقة (data: URL)، و`media-src 'self' blob:`
+يسمح حصراً بعرض/تجميع وسائط الاستوديو المحلية؛ لا `connect-src` جديد ولا URL وسائط بعيد.
 تنبيه نهايات الأسطر: محلّل HTML يطبّع CRLF إلى LF قبل حساب هاش CSP، وupdate-csp يطبّع
 مثله قبل الهش — لا تحسب الهاش يدوياً على ملف CRLF (git autocrlf يسحب LF كـ CRLF على ويندوز).
 
@@ -1071,6 +1078,9 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - سياسة المتصفح الموحدة تذكر أن القراءة حرة مع التفويض، وأن التنقّل/الفعل/التقييم على
   origin خارجي جديد يسأل مرة قبل الثقة، وتفرض تحقق التجاوب بـ`browser_set_viewport`
   مع دليل لقطة أو أبعاد فعلية.
+- سياسة البرومو توجّه المحرّكين إلى `promo_record_start` ثم أدوات المتصفح القائمة ثم
+  `promo_record_stop`، وتثبت أن البدء تسجيل شاشة حساس بإذن صريح كل مرة وبلا «دائماً»،
+  وأن الالتقاط نافذة المنتج وحدها والملفات محلية في Downloads بلا رفع.
 - في إعداد المنصات تفضّل السياسة `API/CLI` المتاح (`gh`/`netlify`) عبر الطرفية المرئية،
   وتلجأ للمتصفح للفجوات البصرية فقط. كما تمنع تمرير الأسرار نصاً وتوجّه إلى
   `browser_transfer_field`/`browser_request_secret` وتفرض `task_update` عبر المنصات.
@@ -1594,14 +1604,31 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   الشهادة السيئة لأي origin خارجي. `test:preview-member-live` يغطي الفعل/الوميض/
   contenteditable/evaluate/viewport/history/download وحصر الاستثناء، و
   `test:browser-member-live` يغطي المصغرة/أصلحه/موجة الأخطاء/🎯/شارة الخادم تحت CSP.
-- **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
-  بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒
-  رسم على `<canvas>` مخفي ⇒ `captureStream(8)` ⇒ `MediaRecorder` ⇒ Blob ⇒ `<a download>`
-  (نمط تصدير 4.8 — لا CSP جديد). يسجّل العرض وحده؛ الإغلاق يوقف وينزّل.
+- **تسجيل فيديو التصفح (م-5، ترقية «استوديو البروموا الوكيلي» — المرحلة 1)**: زرّ ⏺
+  يختار `16:9` ‏(1920×1080) أو `9:16` ‏(1080×1920) أو `1:1` ‏(1080×1080)، ثم يطلب
+  إذناً صريحاً ويفتح `BrowserWindow` مرئية، مستقلة، sandbox، بلا preload أو واجهة «سطر».
+  `promocapture.js` يحمّل URL المنتج وينتظر استقراره، ويستدعي
+  `desktopCapturer.getSources({types:['window']})` ويطابق `HWND` لمعرّف النافذة حصراً.
+  على Electron 33/Windows ثبت حياً أن `getSources` قد لا يدرج نافذة **العملية نفسها** رغم
+  ظهورها؛ عندها فقط يستخدم `BrowserWindow.getMediaSourceId()` المباشر (`window:HWND:1`)
+  للنافذة المنشأة، وتمنح بوابة `setDisplayMediaRequestHandler` إطار المنتج نفسه حصراً.
+  لا title fallback ولا شاشة كاملة ولا source id من renderer.
+- الواجهة تستقبل المعرّف من main وتطلب `getUserMedia` بقيود
+  `chromeMediaSource:'desktop'` + المعرّف + `30fps`، ثم `MediaRecorder` مباشرةً؛ أزيلت
+  حلقة `capturePage`/PNG و`canvas.captureStream(8)` من مسار التسجيل. مؤشر ⏹ أحمر نابض
+  يبقى في رأس المعاينة، والإيقاف/انتهاء الدور/إغلاق التطبيق يوقف المسارات ويغلق نافذة
+  المنتج. التنزيل محلي في Downloads باسم `satr-promo-segment-*` منقّى وفريد ولا يُرفع.
+- الأدوات المتكافئة: `promo_record_start({aspect,url?})` و`promo_record_stop()` أفعال
+  `neverAlways` في SDK وCodex، و`promo_list_segments()` قراءة. أدوات القيادة هي أدوات
+  المتصفح القائمة لأن `preview.js` يوجّهها مؤقتاً إلى نافذة المنتج؛ لا أدوات قيادة جديدة.
+  IPC الواجهة محددة (`promoCaptureStart/Stop/Ready/Commit/Abort`)؛ `confirmed:true` لازم،
+  وmain يرفض `sourceId` من renderer. تحقق Electron الحي: `ERR_FAILED=false`، stream واحد،
+  `frameRate=30`، MediaRecorder‏ MP4/H.264 ذو `ftyp` وBlob غير فارغ، ثم إغلاق كامل.
 - **الحاوية mp4 مفضّلة (دفعة «mp4»)**: `pickRecMime()` يفاضل `video/mp4;codecs=avc1…`
   أولاً ثم webm عبر `MediaRecorder.isTypeSupported`، والنوع والامتداد يتبعان المُختار.
-  التنزيل ليس صامتاً بعد الآن: `previewrecording.js` يعترض فقط أسماء `satr-preview-*`
-  القادمة من renderer الرئيسي، يثبت مساراً فريداً داخل `app.getPath('downloads')`، ثم يبث
+  التنزيل ليس صامتاً: `previewrecording.js` يعترض أسماء `satr-preview-*` و
+  `satr-promo-segment-*` القادمة من renderer الرئيسي، يثبت مساراً فريداً داخل
+  `app.getPath('downloads')`، ثم يبث
   `preview_recording_saved` بالمسار الفعلي لتعرضه المحادثة. **قرار مثبّت بمسبار حيّ**:
   Electron 33 (Chromium 130) يدعم MediaRecorder بحاوية mp4
   (H.264) فلا حاجة لـ muxer ولا ffmpeg ولا أي اعتمادية — MediaRecorder يغلّف داخلياً.

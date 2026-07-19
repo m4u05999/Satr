@@ -3,7 +3,7 @@
  * مسؤولة عن: إنشاء النافذة، تشغيل Claude CLI، جسر IPC مع الواجهة
  */
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -37,6 +37,7 @@ const merger = require('./merger'); // تطبيق patch بعد المراجعة 
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const previewrecording = require('./previewrecording'); // تنزيل تسجيل المعاينة إلى Downloads + إشعار المسار
+const promocapture = require('./promocapture'); // نافذة التقاط المنتج المرئية + تسجيل 30fps في renderer
 const testsprite = require('./testsprite'); // تكامل TestSprite MCP — مفتاح مشفّر، لا يظهر كمحرّك
 const claudeauth = require('./claudeauth');
 const adapters = require('./adapters');
@@ -223,7 +224,24 @@ function createWindow() {
   const ownerWebContents = mainWindow.webContents;
   const detachPreviewRecording = previewrecording.attach(ownerWebContents.session, ownerWebContents, {
     downloadsPath: app.getPath('downloads'), emit: emitToWindow,
+    onResult: (result) => promocapture.downloadResult(result),
   });
+  promocapture.configure({
+    BrowserWindow,
+    desktopCapturer,
+    displaySession: ownerWebContents.session,
+    ownerWebContents,
+    downloadsPath: app.getPath('downloads'),
+    isHttpUrl: preview.isHttpUrl,
+    defaultUrl: () => preview.currentUrl(),
+    emit: (event) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:promo', event);
+    },
+    onTarget: (webContents) => {
+      if (webContents) preview.attachExternalWebContents(webContents);
+    },
+  });
+  preview.setExternalTargetProvider(() => promocapture.currentWebContents(), previewSender);
 
   // الروابط الخارجية تفتح في المتصفح وليس داخل التطبيق
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -235,6 +253,7 @@ function createWindow() {
     detachPreviewRecording();
     mainWindow = null;
     preview.destroy(); // عرض المعاينة ابن النافذة — تدمير صريح احتياطاً
+    promocapture.stopAll().catch(() => {});
     stopAll();
   });
 
@@ -440,6 +459,7 @@ function sanitizeImages(arr) {
 // إيقاف أي تشغيل جارٍ أياً كان محركه (محوّل غير SDK أو تشغيل SDK)
 function stopAll() {
   preview.clearSensitiveState();
+  promocapture.stopAll().catch(() => {});
   if (currentCliRun) {
     const h = currentCliRun;
     currentCliRun = null;
@@ -716,6 +736,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
     if (obj.type === 'result' || obj.type === 'proc_done') {
       const checkpoint = checkpoints.finish(runId);
       if (checkpoint) emitToWindow(checkpoint);
+      promocapture.stopAll().catch(() => {});
     }
     emitToWindow(obj);
   };
@@ -918,6 +939,47 @@ ipcMain.handle('satr:previewElementShot', async (event, p) => {
   return preview.screenshotElement(selector, { emitThumbnail: false });
 });
 ipcMain.handle('satr:previewClose', () => preview.close());
+
+// ---------- التقاط البرومو الأصلي (30fps) ----------
+// لا أمر أو source id يأتي من renderer: الوحدة تنشئ نافذة المنتج وتشتق مصدر
+// desktopCapturer بنفسها. الواجهة ترسل aspect من قائمة بيضاء وURL ‏http/https فقط.
+ipcMain.handle('satr:promoCaptureStart', async (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const aspect = promocapture.sanitizeAspect(p.aspect);
+  const url = p.url == null || p.url === '' ? '' : String(p.url);
+  if (!aspect || p.confirmed !== true || url && !preview.isHttpUrl(url)
+      || Object.prototype.hasOwnProperty.call(p, 'sourceId')) {
+    return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
+  }
+  return promocapture.start({ aspect, url });
+});
+
+ipcMain.handle('satr:promoCaptureStop', () => promocapture.stop());
+
+ipcMain.handle('satr:promoCaptureReady', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  if (!promocapture.SAFE_PROMO_SESSION.test(p.sessionId || '') || typeof p.ok !== 'boolean'
+      || p.error != null && typeof p.error !== 'string') return { ok: false, error: 'bad_input' };
+  return promocapture.rendererReady(p.sessionId, p.ok, p.error || '');
+});
+
+ipcMain.handle('satr:promoCaptureCommit', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  if (!promocapture.SAFE_PROMO_SESSION.test(p.sessionId || '')
+      || !Number.isInteger(p.durationMs) || !promocapture.SAFE_SEGMENT_NAME.test(p.filename || '')) {
+    return { ok: false, error: 'bad_input' };
+  }
+  return promocapture.rendererCommit(p.sessionId, p.durationMs, p.filename);
+});
+
+ipcMain.handle('satr:promoCaptureAbort', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  if (!promocapture.SAFE_PROMO_SESSION.test(p.sessionId || '')
+      || typeof p.error !== 'string' || !/^[a-z0-9_:-]{1,80}$/i.test(p.error)) {
+    return { ok: false, error: 'bad_input' };
+  }
+  return promocapture.rendererAbort(p.sessionId, p.error);
+});
 
 ipcMain.handle('satr:devServerInfo', (event, p) => {
   const cwd = sanitizeMemoryCwd(p && p.cwd);
@@ -1898,7 +1960,7 @@ async function cleanupBeforeQuit() {
   stopAll();
   await Promise.allSettled([
     orchestrator.stopAll(), opsBrainstorm.stopAll(), opsPlanner.stopAll(), executor.stopAll(),
-    executionTeam.stopAll(), reviewer.stopAll(), integration.stopAll(),
+    executionTeam.stopAll(), reviewer.stopAll(), integration.stopAll(), promocapture.stopAll(),
   ]);
   if (integration.latestPreview()) await integration.stopAll();
   bgprocs.killAll();

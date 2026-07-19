@@ -53,6 +53,14 @@ const preview = {
   isHandoffActive() { return this._handoff; },
 };
 
+const promoCapture = {
+  starts: 0,
+  stops: 0,
+  start: async () => { promoCapture.starts += 1; return { ok: true, session_id: 'promo_0123456789abcdef01234567' }; },
+  stop: async () => { promoCapture.stops += 1; return { ok: true, path: 'C:\\Downloads\\segment.mp4', duration_ms: 900 }; },
+  listSegments: () => ({ ok: true, session_id: null, segments: [] }),
+};
+
 function post(url, token, msg) {
   return new Promise((resolve) => {
     const data = Buffer.from(JSON.stringify(msg));
@@ -105,17 +113,21 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
    'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
    'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
    'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
-   'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task']
+   'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task',
+   'promo_record_start', 'promo_record_stop', 'promo_list_segments']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
-  ok(names.length === 29, 'عدد أدوات Codex MCP أصبح 29 (25 متصفح + 4 خلفية)');
+  ok(names.length === 32, 'عدد أدوات Codex MCP أصبح 32 (25 متصفح + 4 خلفية + 3 برومو)');
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
-  const builtTools = codexmcp.buildTools({ preview });
+  const builtTools = codexmcp.buildTools({ preview, promoCapture });
   const built = (name) => builtTools.find((tool) => tool.name === name);
   ok(built('browser_evaluate').browserClass === 'act', 'browser_evaluate مصنّفة act');
   ok(built('browser_set_viewport').browserClass === 'read' && built('browser_perf').browserClass === 'read', 'viewport/perf مصنّفتان read');
   ok(built('browser_back').browserClass === 'navigate' && built('browser_forward').browserClass === 'navigate', 'back/forward مصنّفتان navigate');
   ok(['browser_fill_form', 'browser_transfer_field', 'browser_request_secret'].every((name) => built(name).browserClass === 'act'), 'أدوات الحقول الجديدة مصنّفة act');
   ok(built('browser_handoff_step').browserClass === 'handoff', 'browser_handoff_step مصنّفة handoff');
+  ok(built('promo_record_start').access === 'exec' && built('promo_record_start').neverAlways, 'بدء تسجيل البرومو فعل صريح بلا «دائماً»');
+  ok(built('promo_record_stop').access === 'exec' && built('promo_record_stop').neverAlways, 'إيقاف تسجيل البرومو فعل صريح بلا «دائماً»');
+  ok(built('promo_list_segments').access === 'read', 'سرد مقاطع البرومو قراءة حرّة');
 
   // tools/call: read_page نص مغلّف
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'read_page', arguments: {} } });
@@ -212,6 +224,26 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   ok(jj.result.isError && askedMeta.some((item) => item.tool === 'stop_background_task' && item.access === 'exec' && item.neverAlways), 'stop_background_task تطلب exec ولا تقبل «دائماً»');
   await srv3.stop();
 
+  asked.length = 0; askedMeta.length = 0;
+  srv3 = await codexmcp.start({ preview, promoCapture, requestPermission: gate(false) });
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'promo_record_start', arguments: { aspect: '16:9' } } });
+  jj = JSON.parse(rr.body);
+  ok(jj.result.isError && promoCapture.starts === 0
+    && askedMeta.some((item) => item.tool === 'promo_record_start' && item.access === 'exec' && item.neverAlways),
+  'رفض إذن promo_record_start يمنع التسجيل ويعطّل «دائماً»');
+  await srv3.stop();
+
+  asked.length = 0; askedMeta.length = 0;
+  srv3 = await codexmcp.start({ preview, promoCapture, requestPermission: gate(true) });
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'promo_record_start', arguments: { aspect: '9:16' } } });
+  jj = JSON.parse(rr.body);
+  ok(!jj.result.isError && promoCapture.starts === 1 && /promo_/.test(jj.result.content[0].text), 'قبول إذن promo_record_start يبدأ التسجيل');
+  asked.length = 0;
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'promo_list_segments', arguments: {} } });
+  jj = JSON.parse(rr.body);
+  ok(!jj.result.isError && !asked.includes('promo_list_segments'), 'promo_list_segments قراءة بلا مربع إذن');
+  await srv3.stop();
+
   const trustedOrigins = new Set(['https://trusted.example']);
   ok(codex.shouldAutoApproveMcp('browser', true, 'default', false, false, 'read_page', 'https://evil.example', trustedOrigins), 'browserControl يعفي القراءة على أي نطاق');
   ok(!codex.shouldAutoApproveMcp('browser', true, 'default', false, false, 'browser_click', 'https://evil.example', trustedOrigins), 'browserControl لا يعفي فعلاً على نطاق غير موثوق');
@@ -226,8 +258,10 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   ok(codex.shouldAutoApproveMcp('browser', true, 'bypassPermissions', false, false, 'browser_click', 'https://evil.example', trustedOrigins), 'bypassPermissions يتجاوز بوابة النطاق');
   ok(!codex.shouldAutoApproveMcp('exec', true, 'default', false, false, 'run_in_background', null, trustedOrigins), 'browserControl لا يعفي run_in_background');
   ok(!codex.shouldAutoApproveMcp('exec', true, 'default', false, true, 'stop_background_task', null, trustedOrigins), 'browserControl لا يعفي stop_background_task');
+  ok(!codex.shouldAutoApproveMcp('exec', true, 'default', false, true, 'promo_record_start', null, trustedOrigins), 'browserControl لا يعفي تسجيل الشاشة');
   ok(codex.shouldAutoApproveMcp('exec', false, 'default', true, false, 'run_in_background', null, trustedOrigins), 'الموافقة الدائمة الخاصة تعفي تشغيل الخلفية');
   ok(!codex.shouldAutoApproveMcp('exec', false, 'default', true, true, 'stop_background_task', null, trustedOrigins), 'stop لا تعفيه الموافقة الدائمة');
+  ok(!codex.shouldAutoApproveMcp('exec', false, 'default', true, true, 'promo_record_start', null, trustedOrigins), 'الموافقة الدائمة لا تعفي بدء تسجيل البرومو');
 
   const srv4 = await codexmcp.start({ preview });
   rr = await post(srv4.url, srv4.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'open_preview', arguments: { url: 'http://localhost:3000' } } });

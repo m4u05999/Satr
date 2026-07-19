@@ -27,6 +27,7 @@ const termjobs = require('./termjobs');
 const bgprocs = require('./bgprocs');
 const browserorigin = require('./browserorigin');
 const browserpolicy = require('./browserpolicy');
+const promocapture = require('./promocapture');
 
 const PROTOCOL_VERSION = '2024-11-05'; // نسخة MCP التي يتفاوض عليها العميل (rmcp يقبلها)
 const SERVER_INFO = { name: 'satr-preview', title: 'Satr Preview', version: '1.0.0' };
@@ -60,7 +61,7 @@ function whyClosed(err, extra) {
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
 
-const PERMISSION_KEYS = new Set(['url', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page', 'expression', 'width', 'height', 'command', 'label', 'id', 'tail_lines', 'from_ref', 'to_ref', 'transfer_id', 'field_ref', 'reason', 'resume_hint', 'fields']);
+const PERMISSION_KEYS = new Set(['url', 'aspect', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page', 'expression', 'width', 'height', 'command', 'label', 'id', 'tail_lines', 'from_ref', 'to_ref', 'transfer_id', 'field_ref', 'reason', 'resume_hint', 'fields']);
 function permissionInput(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const out = {};
@@ -88,6 +89,7 @@ function permissionInput(value) {
  */
 function buildTools(deps) {
   const preview = deps.preview;
+  const promo = deps.promoCapture || promocapture;
   const openPreview = typeof deps.openPreview === 'function' ? deps.openPreview : null;
   // التسليم البشري: codex.js يوفّر requestHandoff (بثّ الشريط + انتظار «استلمت»).
   // غيابه ⇒ الأداة ترفض fail-closed (نفس مبدأ requestPermission أدناه).
@@ -488,6 +490,35 @@ function buildTools(deps) {
         if (!done) return textResult('ألغى المستخدم الخطوة ولم تكتمل.', true);
         return textResult('اكتملت الخطوة بيد المستخدم. خذ browser_snapshot جديداً ثم استأنف من: ' + resumeHint);
       },
+    },
+    {
+      name: 'promo_record_start', access: 'exec', neverAlways: true,
+      description: 'ابدأ تسجيل فيديو برومو لنافذة منتج مرئية مخصّصة، ملء الإطار وبـ30fps. يطلب إذن تسجيل الشاشة صراحةً كل مرة، ويلتقط نافذة المنتج وحدها بلا شاشة المستخدم وبلا رفع.',
+      inputSchema: { type: 'object', properties: {
+        aspect: { type: 'string', enum: ['16:9', '9:16', '1:1'] },
+        url: { type: 'string', description: 'عنوان المنتج http/https؛ اختياري إن كانت المعاينة مفتوحة' },
+      }, required: ['aspect'] },
+      handler: async (args) => {
+        const result = await promo.start({ aspect: args && args.aspect, url: args && args.url });
+        return result.ok ? textResult(JSON.stringify({ ok: true, session_id: result.session_id }))
+          : textResult('تعذّر بدء تسجيل البرومو (' + (result.error || 'خطأ') + ').', true);
+      },
+    },
+    {
+      name: 'promo_record_stop', access: 'exec', neverAlways: true,
+      description: 'أوقف تسجيل البرومو الجاري واحفظ المقطع محلياً في Downloads. لا يرفع الملف إلى أي خدمة.',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => {
+        const result = await promo.stop();
+        return result.ok ? textResult(JSON.stringify({ ok: true, path: result.path, duration_ms: result.duration_ms }))
+          : textResult('تعذّر إيقاف/حفظ تسجيل البرومو (' + (result.error || 'خطأ') + ').', true);
+      },
+    },
+    {
+      name: 'promo_list_segments', access: 'read',
+      description: 'اسرد مقاطع البرومو المسجّلة محلياً في جلسة الاستوديو الحالية. قراءة فقط ولا ترفع الملفات.',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => textResult(JSON.stringify(promo.listSegments(), null, 2)),
     },
     {
       name: 'run_in_background', access: 'exec',

@@ -21,6 +21,7 @@ const bgprocs = require('./bgprocs');
 const term = require('./term');
 const termjobs = require('./termjobs');
 const preview = require('./preview'); // م-3: أدوات قراءة المعاينة للوكيل (موديول مشترك)
+const promocapture = require('./promocapture'); // تسجيل نافذة المنتج الأصلية بـ30fps
 const skillCatalog = require('./skills'); // .agents قياسي + .claude توافق؛ تحميل تدريجي
 const verify = require('./verify'); // تحقق صريح مستقل عن أدوات المتصفح
 const memory = require('./memory'); // ذاكرة مشروع شخصية بموافقة صريحة
@@ -43,12 +44,15 @@ const BACKGROUND_READ_TOOLS = new Set([
   'mcp__satr-terminal__get_background_output',
   'mcp__satr-terminal__list_background_tasks',
 ]);
+const PROMO_READ_TOOLS = new Set(['mcp__satr-terminal__promo_list_segments']);
 const VERIFY_EXEC_TOOL = 'mcp__satr-verify__verify_project';
 const STOP_BACKGROUND_TOOL = 'mcp__satr-terminal__stop_background_task';
-const NEVER_ALWAYS_TOOLS = new Set([VERIFY_EXEC_TOOL, STOP_BACKGROUND_TOOL]);
+const PROMO_START_TOOL = 'mcp__satr-terminal__promo_record_start';
+const PROMO_STOP_TOOL = 'mcp__satr-terminal__promo_record_stop';
+const NEVER_ALWAYS_TOOLS = new Set([VERIFY_EXEC_TOOL, STOP_BACKGROUND_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL]);
 const NEVER_TURN_TOOLS = new Set([
   'Bash', 'mcp__satr-terminal__run_in_terminal', 'mcp__satr-terminal__run_in_background',
-  STOP_BACKGROUND_TOOL, VERIFY_EXEC_TOOL,
+  STOP_BACKGROUND_TOOL, VERIFY_EXEC_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL,
 ]);
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة ولا نعرض فرقاً (أداء وذاكرة)
 const MAX_SKILL_TOOL_CHARS = 48 * 1024;
@@ -671,7 +675,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         return { behavior: 'allow', updatedInput: input };
       }
       const isReadOnly = PORTABLE_SKILL_TOOLS.has(toolName) || READ_ONLY_VERIFY_TOOLS.has(toolName)
-        || MEMORY_PROPOSAL_TOOLS.has(toolName) || BACKGROUND_READ_TOOLS.has(toolName);
+        || MEMORY_PROPOSAL_TOOLS.has(toolName) || BACKGROUND_READ_TOOLS.has(toolName)
+        || PROMO_READ_TOOLS.has(toolName);
       const decision = externalBrowserCmd ? 'ask' : decideAutoApproval(toolName, {
         permissionMode, alwaysAllowed, browserControl,
         readOnly: isReadOnly,
@@ -807,6 +812,37 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           ? { content: [{ type: 'text', text: 'أُوقفت المهمة ' + args.id + '.' }] }
           : { content: [{ type: 'text', text: 'لم تُوجد مهمة حيّة بهذا المعرّف.' }], isError: true };
       }
+    );
+    const promoRecordStartTool = sdk.tool(
+      'promo_record_start',
+      'ابدأ تسجيل فيديو برومو لنافذة منتج مرئية مخصّصة، ملء الإطار وبـ30fps. يطلب إذن تسجيل الشاشة صراحةً كل مرة، ويلتقط نافذة المنتج وحدها بلا شاشة المستخدم وبلا رفع.',
+      {
+        aspect: z.enum(['16:9', '9:16', '1:1']).describe('نسبة الفيديو الاجتماعية'),
+        url: z.string().optional().describe('عنوان المنتج http/https؛ عند غيابه يُستخدم عنوان المعاينة الحالي'),
+      },
+      async (args) => {
+        const result = await promocapture.start({ aspect: args && args.aspect, url: args && args.url });
+        return result.ok
+          ? { content: [{ type: 'text', text: JSON.stringify({ ok: true, session_id: result.session_id }) }] }
+          : { content: [{ type: 'text', text: 'تعذّر بدء تسجيل البرومو (' + (result.error || 'خطأ') + ').' }], isError: true };
+      }
+    );
+    const promoRecordStopTool = sdk.tool(
+      'promo_record_stop',
+      'أوقف تسجيل البرومو الجاري واحفظ المقطع محلياً في Downloads. لا يرفع الملف إلى أي خدمة.',
+      {},
+      async () => {
+        const result = await promocapture.stop();
+        return result.ok
+          ? { content: [{ type: 'text', text: JSON.stringify({ ok: true, path: result.path, duration_ms: result.duration_ms }) }] }
+          : { content: [{ type: 'text', text: 'تعذّر إيقاف/حفظ تسجيل البرومو (' + (result.error || 'خطأ') + ').' }], isError: true };
+      }
+    );
+    const promoListSegmentsTool = sdk.tool(
+      'promo_list_segments',
+      'اسرد مقاطع البرومو المسجّلة محلياً في جلسة الاستوديو الحالية. قراءة فقط ولا ترفع الملفات.',
+      {},
+      async () => ({ content: [{ type: 'text', text: JSON.stringify(promocapture.listSegments(), null, 2) }] })
     );
     const loadSkillTool = sdk.tool(
       'load_skill',
@@ -1359,7 +1395,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }

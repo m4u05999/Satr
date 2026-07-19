@@ -31,6 +31,8 @@ const SUITE = [
   'test:satr-guide',
   'test:handoff-bar-live',
   'test:preview-recording',
+  'test:promocapture',
+  'test:promocapture-live',
   'test:claude-auth',
   'test:testsprite-ready',
   'test:viewer-security',

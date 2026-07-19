@@ -47,6 +47,7 @@ const csp = [
   "font-src 'self' data:",
   // الصور الملصقة تُعرض كـ data: URL في مصغّرات الإرفاق وفقاعة المستخدم (المرحلة 4)
   "img-src 'self' data:",
+  "media-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'none'",
 ].join('; ');

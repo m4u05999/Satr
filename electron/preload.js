@@ -136,11 +136,23 @@ contextBridge.exposeInMainWorld('satr', {
   previewFrame: () => ipcRenderer.invoke('satr:previewFrame'),           // م-5: إطار للتسجيل
   previewElementShot: (selector) => ipcRenderer.invoke('satr:previewElementShot', { selector }),
   previewClose: () => ipcRenderer.invoke('satr:previewClose'),
+  promoCaptureStart: (aspect, url, confirmed) => ipcRenderer.invoke('satr:promoCaptureStart', { aspect, url, confirmed }),
+  promoCaptureStop: () => ipcRenderer.invoke('satr:promoCaptureStop'),
+  promoCaptureReady: (sessionId, ok, error) => ipcRenderer.invoke('satr:promoCaptureReady', { sessionId, ok, error }),
+  promoCaptureCommit: (sessionId, durationMs, filename) => ipcRenderer.invoke('satr:promoCaptureCommit', {
+    sessionId, durationMs, filename,
+  }),
+  promoCaptureAbort: (sessionId, error) => ipcRenderer.invoke('satr:promoCaptureAbort', { sessionId, error }),
   devServerInfo: (cwd) => ipcRenderer.invoke('satr:devServerInfo', { cwd }),
   devServerRestart: (cwd) => ipcRenderer.invoke('satr:devServerRestart', { cwd }),
   onPreview: (callback) => {
     const handler = (_e, obj) => callback(obj);
     ipcRenderer.on('satr:preview', handler);
     return () => ipcRenderer.removeListener('satr:preview', handler);
+  },
+  onPromoCapture: (callback) => {
+    const handler = (_e, obj) => callback(obj);
+    ipcRenderer.on('satr:promo', handler);
+    return () => ipcRenderer.removeListener('satr:promo', handler);
   },
 });

@@ -11,6 +11,7 @@ const SDK_TOOL_NAMES = Object.freeze([
   'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
   'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
   'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
+  'promo_record_start', 'promo_record_stop', 'promo_list_segments',
   'load_skill', 'read_skill_resource', 'verification_config', 'verify_project', 'propose_memory',
 ]);
 
@@ -62,6 +63,7 @@ function browserPolicy(hasBrowser) {
     '- في إعداد متعدد المنصات حدّث Task Ledger بخطة/أداة المهام المتاحة لمحركك بعد كل محطة؛ تصل الواجهة بعقد task_update موضحاً ما اكتمل وما ينتظر المستخدم وما يلي.',
     '- تحقق من التجاوب فعلياً عبر browser_set_viewport، ثم أرفق دليلاً من screenshot أو القيم الفعلية؛ واستعمل browser_perf لتشخيص البطء.',
     '- عند تسجيل الدخول أو كلمة مرور أو 2FA استخدم browser_handoff ولا تطلب السر في المحادثة.',
+    '- لتسجيل عرض تسويقي استعمل promo_record_start بعد إذن المستخدم الصريح، قد المنتج بأدوات browser_*، ثم promo_record_stop؛ الالتقاط محصور بنافذة المنتج والملفات تبقى في Downloads بلا رفع.',
   ].join('\n');
 }
 

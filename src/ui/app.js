@@ -584,6 +584,14 @@ import { createUpdateToast } from './lib/update-toast.js';
       addNotice('تعذّر حفظ تسجيل المعاينة' + (ev.filename ? ': ' + ev.filename : ''));
       return;
     }
+    if (ev.type === 'promo_recording_saved') {
+      addNotice('🎬 حُفظ مقطع البرومو في: ' + ev.path);
+      return;
+    }
+    if (ev.type === 'promo_recording_failed') {
+      addNotice('تعذّر حفظ مقطع البرومو' + (ev.filename ? ': ' + ev.filename : ''));
+      return;
+    }
     // أسئلة الاختيار (AskUserQuestion) — تُعالج دائماً أيضاً (تنتظر رد المستخدم أثناء الدور)
     if (ev.type === 'question_request') {
       questionEl.ask({ id: ev.id, questions: ev.questions });

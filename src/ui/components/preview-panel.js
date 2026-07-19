@@ -10,6 +10,7 @@
 // العقد للخارج: openWith(url) — تستدعيها القشرة عند اقتراح localhost المرصود.
 import { sheet } from '../lib/sheet.js';
 import { controlsSheet } from '../lib/panel.css.js';
+import { pickRecMime } from '../lib/media-recorder.js';
 
 const previewSheet = sheet(`
   :host { display: none; }
@@ -39,6 +40,10 @@ const previewSheet = sheet(`
   #pvAuto.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   #pvPick.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   #pvRec.rec { color: var(--on-danger); border-color: var(--red); background: var(--red); animation: pvRecPulse 1.4s infinite; }
+  #pvRecAspect {
+    direction: ltr; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); font-size: 11px;
+  }
   @keyframes pvRecPulse { 50% { opacity: .55; } }
   /* مؤشّر «الوكيل يقود المتصفح» (الخيار 2): شارة عابرة فوق الرأس (لا يغطّيها العرض الأصلي
      لأنه يطفو فوق pvBox فقط) + خيط علوي نابض. يظهران أثناء تنفيذ الوكيل فعلَ متصفح. */
@@ -203,6 +208,11 @@ const MARKUP = `
     <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل">🔄</button>
     <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)">🎯</button>
     <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (mp4)">⏺</button>
+    <select id="pvRecAspect" title="نسبة فيديو البرومو">
+      <option value="16:9">16:9</option>
+      <option value="9:16">9:16</option>
+      <option value="1:1">1:1</option>
+    </select>
     <button id="pvDevice" type="button" title="محاكاة الأجهزة: كامل/موبايل/لوحي (لاختبار التصميم المتجاوب)">🖥️</button>
     <button id="pvConsoleBtn" type="button" title="لوحة Console والأخطاء (رسائل الصفحة وأخطاء الشبكة)">🐞</button>
     <button id="pvDevtools" type="button" title="أدوات المطوّر (DevTools) — فحص كامل للصفحة في نافذة منفصلة">🔧</button>
@@ -824,87 +834,118 @@ class SatrPreviewPanel extends HTMLElement {
       localStorage.setItem('satr_preview_w', String(Math.round(this.getBoundingClientRect().width)));
     });
 
-    // ---------- تسجيل فيديو التصفح (م-5) ----------
-    // صفر اعتماديات: previewFrame (لقطة PNG من العرض) ⇒ رسم على <canvas> ⇒
-    // canvas.captureStream(fps) ⇒ MediaRecorder ⇒ blob ⇒ تنزيل. ~8 إطارات/ث كافية
-    // لتوثيق التصفح. الـ canvas مخفي داخل Shadow. الإيقاف يجمع القطع وينزّل الملف.
-    // الحاوية: **mp4 مفضّلة** (H.264) إن دعمها المحرك (Chromium 130+ في Electron 33 يدعم
-    // MediaRecorder بحاوية mp4 — تحقّق حيّ)، وإلا webm. صفر muxer/اعتماديات (MediaRecorder
-    // يتولّى التغليف داخلياً؛ مسار WebCodecs غير متاح هنا — VideoEncoder غائب في هذا المحرك).
-    // يعيد {mime, container, ext} حسب المدعوم — النوع والامتداد يتبعانه.
-    const pickRecMime = () => {
-      const cands = [
-        { mime: 'video/mp4;codecs=avc1.42E01E', container: 'video/mp4', ext: 'mp4' },
-        { mime: 'video/mp4;codecs=avc1', container: 'video/mp4', ext: 'mp4' },
-        { mime: 'video/mp4', container: 'video/mp4', ext: 'mp4' },
-        { mime: 'video/webm;codecs=vp9', container: 'video/webm', ext: 'webm' },
-        { mime: 'video/webm', container: 'video/webm', ext: 'webm' },
-      ];
-      const MR = window.MediaRecorder;
-      for (const c of cands) if (MR && MR.isTypeSupported(c.mime)) return c;
-      return { mime: '', container: 'video/webm', ext: 'webm' }; // افتراضي المحرك
+    // ---------- تسجيل البرومو الأصلي (م-5) ----------
+    // نافذة منتج مرئية مستقلة يختارها main عبر desktopCapturer؛ renderer وحده يطلب
+    // getUserMedia للمصدر المحدد ويسجّل MediaStream الأصلي بـ30fps. لا capturePage ولا
+    // canvas وسيط، لذلك يبقى المنتج ملء الإطار بلا واجهة «سطر» وبلا إسقاط إطارات اللقطات.
+    const recBtn = $('pvRec'), recAspect = $('pvRecAspect');
+    let recording = false, mediaRec = null, recChunks = [], recStream = null;
+    let recSessionId = '', recStartedAt = 0, recFormat = null, recFinishing = false;
+
+    const paintRecording = (active) => {
+      recording = !!active;
+      recBtn.classList.toggle('rec', recording);
+      recBtn.textContent = recording ? '⏹' : '⏺';
+      recAspect.disabled = recording;
     };
-    const recBtn = $('pvRec');
-    let recording = false, mediaRec = null, recChunks = [], recTimer = 0, recCanvas = null, recCtx = null;
+
+    const clearRecording = () => {
+      if (recStream) for (const track of recStream.getTracks()) { try { track.stop(); } catch (e) {} }
+      recStream = null; mediaRec = null; recChunks = []; recSessionId = ''; recFinishing = false;
+      paintRecording(false);
+    };
+
+    const finishNativeCapture = () => {
+      if (!mediaRec || recFinishing) return;
+      recFinishing = true;
+      try {
+        if (mediaRec.state !== 'inactive') mediaRec.stop();
+        else clearRecording();
+      } catch (e) { clearRecording(); }
+    };
+
+    const beginNativeCapture = async (event) => {
+      if (!event || recording || !event.source_id || !event.session_id) return;
+      openPanel(false);
+      if (event.url) urlIn.value = event.url;
+      if (event.aspect) recAspect.value = event.aspect;
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { mandatory: {
+            chromeMediaSource: 'desktop', chromeMediaSourceId: event.source_id,
+            minWidth: event.width, maxWidth: event.width,
+            minHeight: event.height, maxHeight: event.height,
+            minFrameRate: 30, maxFrameRate: 30,
+          } },
+        });
+        const format = pickRecMime();
+        const options = { videoBitsPerSecond: event.width >= 1920 || event.height >= 1920 ? 16000000 : 10000000 };
+        if (format.mime) options.mimeType = format.mime;
+        const recorder = new MediaRecorder(stream, options);
+        recChunks = [];
+        recStream = stream;
+        mediaRec = recorder;
+        recFormat = format;
+        recSessionId = event.session_id;
+        recStartedAt = performance.now();
+        recFinishing = false;
+        recorder.ondataavailable = (chunk) => { if (chunk.data && chunk.data.size) recChunks.push(chunk.data); };
+        recorder.onstop = async () => {
+          const duration = Math.max(0, Math.round(performance.now() - recStartedAt));
+          const blob = new Blob(recChunks, { type: recFormat.container });
+          const sessionId = recSessionId;
+          const filename = 'satr-promo-segment-' + sessionId + '-'
+            + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + recFormat.ext;
+          if (blob.size) {
+            const committed = await window.satr.promoCaptureCommit(sessionId, duration, filename);
+            if (committed && committed.ok) {
+              const anchor = document.createElement('a');
+              const blobUrl = URL.createObjectURL(blob);
+              anchor.href = blobUrl; anchor.download = filename;
+              document.body.appendChild(anchor); anchor.click(); anchor.remove();
+              setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+            } else {
+              await window.satr.promoCaptureAbort(sessionId, 'commit_failed');
+            }
+          } else {
+            await window.satr.promoCaptureAbort(sessionId, 'empty_recording');
+          }
+          clearRecording();
+        };
+        const videoTrack = stream.getVideoTracks()[0];
+        if (!videoTrack) throw new Error('no_video_track');
+        videoTrack.addEventListener('ended', finishNativeCapture, { once: true });
+        recorder.start(1000);
+        paintRecording(true);
+        await window.satr.promoCaptureReady(event.session_id, true, '');
+      } catch (error) {
+        if (stream) for (const track of stream.getTracks()) { try { track.stop(); } catch (e) {} }
+        clearRecording();
+        await window.satr.promoCaptureReady(event.session_id, false, 'media_failed');
+        showErr('تعذّر بدء التقاط نافذة المنتج.');
+      }
+    };
 
     const stopRec = () => {
-      recording = false;
-      if (recTimer) { clearTimeout(recTimer); recTimer = 0; }
-      recBtn.classList.remove('rec');
-      recBtn.textContent = '⏺';
-      try { if (mediaRec && mediaRec.state !== 'inactive') mediaRec.stop(); } catch (e) {}
-    };
-
-    const drawFrame = (r) => {
-      if (!recCanvas) return;
-      if (recCanvas.width !== r.width || recCanvas.height !== r.height) {
-        recCanvas.width = r.width; recCanvas.height = r.height;
-      }
-      const img = new Image();
-      img.onload = () => { try { recCtx.drawImage(img, 0, 0, recCanvas.width, recCanvas.height); } catch (e) {} };
-      img.src = 'data:image/png;base64,' + r.base64;
-    };
-
-    const tick = async () => {
       if (!recording) return;
-      try { const r = await window.satr.previewFrame(); if (r && r.ok) drawFrame(r); } catch (e) {}
-      if (recording) recTimer = setTimeout(tick, 125); // ~8fps
+      window.satr.promoCaptureStop().catch(() => {});
     };
 
     const startRec = async () => {
-      if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم ابدأ التسجيل.'); return; }
-      // إطار أول متزامن ليُضبط حجم الـ canvas قبل بدء MediaRecorder
-      const first = await window.satr.previewFrame();
-      if (!first || !first.ok) { showErr('تعذّر بدء التسجيل (لا إطار من المعاينة).'); return; }
-      recCanvas = document.createElement('canvas');
-      recCanvas.width = first.width; recCanvas.height = first.height;
-      recCtx = recCanvas.getContext('2d');
-      drawFrame(first);
-      let stream;
-      try { stream = recCanvas.captureStream(8); } catch (e) { showErr('التسجيل غير مدعوم في هذه البيئة.'); return; }
-      const rec = pickRecMime(); // mp4 مفضّلة، وإلا webm
-      try { mediaRec = rec.mime ? new MediaRecorder(stream, { mimeType: rec.mime }) : new MediaRecorder(stream); }
-      catch (e) { showErr('التسجيل غير مدعوم في هذه البيئة.'); return; }
-      recChunks = [];
-      mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
-      mediaRec.onstop = () => {
-        const blob = new Blob(recChunks, { type: rec.container });
-        recChunks = []; recCanvas = null; recCtx = null;
-        if (!blob.size) return;
-        const a = document.createElement('a');
-        const u = URL.createObjectURL(blob);
-        a.href = u;
-        a.download = 'satr-preview-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + rec.ext;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(u), 10000);
-      };
-      mediaRec.start();
-      recording = true;
-      recBtn.classList.add('rec');
-      recBtn.textContent = '⏹';
-      tick();
+      if (!started || !normalize(urlIn.value)) { showErr('افتح المعاينة على مشروعك أولاً ثم ابدأ التسجيل.'); return; }
+      const result = await window.satr.promoCaptureStart(recAspect.value, normalize(urlIn.value), true);
+      if (!result || !result.ok) showErr(result && result.error === 'busy' ? 'يوجد تسجيل برومو جارٍ بالفعل.' : 'تعذّر فتح نافذة التقاط المنتج.');
     };
     recBtn.addEventListener('click', () => { if (recording) stopRec(); else startRec(); });
+    if (typeof window.satr.onPromoCapture === 'function') window.satr.onPromoCapture((event) => {
+      if (!event) return;
+      if (event.type === 'capture_start') beginNativeCapture(event);
+      else if (event.type === 'capture_stop' && event.session_id === recSessionId) finishNativeCapture();
+      else if (event.type === 'capture_failed') { clearRecording(); showErr('تعذّر بدء تسجيل البرومو.'); }
+      else if (event.type === 'capture_closed') clearRecording();
+    });
 
     // ---------- العقد العام ----------
     // فتح بعنوان جاهز (اقتراح localhost المرصود / أداة open_preview — القشرة تستدعيها).

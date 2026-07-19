@@ -21,6 +21,8 @@ let hostWin = null;   // النافذة المضيفة
 let sender = null;    // دالة بثّ الأحداث للواجهة (يمرّرها main.js)
 let lastBounds = null; // آخر مستطيل أبلغته الواجهة — يُطبَّق عند إنشاء عرض جديد
 let viewportOverride = null; // مقاس طلبه الوكيل للتحقق المتجاوب؛ يُطبّق داخل مساحة اللوحة
+let externalTargetProvider = null; // نافذة التقاط المنتج المرئية أثناء تسجيل البرومو
+const wiredWebContents = new WeakSet();
 
 const PARTITION = 'persist:preview';
 
@@ -205,6 +207,8 @@ function wireCertificates() {
 }
 
 function wireEvents(wc) {
+  if (!wc || wiredWebContents.has(wc)) return;
+  wiredWebContents.add(wc);
   const nav = () => emit({
     type: 'nav',
     url: wc.getURL(),
@@ -278,21 +282,28 @@ function ensureView(win, send) {
 // فتح المعاينة على عنوان (تُنشأ الـ view عند أول فتح بعد كل إغلاق — دورة حياة بسيطة)
 function open(win, send, url) {
   if (!isHttpUrl(url)) return { error: 'bad_url' };
+  const external = externalWC();
+  if (external) {
+    sender = send;
+    try { external.loadURL(String(url)); } catch (e) { return { error: 'load_failed' }; }
+    return { ok: true };
+  }
   const v = ensureView(win, send);
   try { v.webContents.loadURL(String(url)); } catch (e) { return { error: 'load_failed' }; }
   return { ok: true };
 }
 
 function navigate(url) {
-  if (!view || view.webContents.isDestroyed()) return { error: 'closed' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
   if (!isHttpUrl(url)) return { error: 'bad_url' };
-  try { view.webContents.loadURL(String(url)); } catch (e) { return { error: 'load_failed' }; }
+  try { wc.loadURL(String(url)); } catch (e) { return { error: 'load_failed' }; }
   return { ok: true };
 }
 
 function action(name) {
-  if (!view || view.webContents.isDestroyed()) return { error: 'closed' };
-  const wc = view.webContents;
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
   const h = wc.navigationHistory;
   try {
     if (name === 'back') { if (h ? h.canGoBack() : wc.canGoBack()) (h ? h.goBack() : wc.goBack()); }
@@ -500,7 +511,39 @@ async function cancelPick() {
 // **أمان**: المحتوى المُستخرَج من صفحة غير موثوقة ⇒ نصّ مغلّف يقرؤه النموذج (حقن
 // برومبت محتمل موثّق — قراءة فقط، الوكيل يطلبه عمداً ليفحص).
 function currentWC() {
-  return (view && !view.webContents.isDestroyed()) ? view.webContents : null;
+  return externalWC() || ((view && !view.webContents.isDestroyed()) ? view.webContents : null);
+}
+
+function externalWC() {
+  if (typeof externalTargetProvider !== 'function') return null;
+  try {
+    const wc = externalTargetProvider();
+    return wc && !wc.isDestroyed() ? wc : null;
+  } catch { return null; }
+}
+
+function setExternalTargetProvider(provider, send) {
+  externalTargetProvider = typeof provider === 'function' ? provider : null;
+  if (typeof send === 'function') sender = send;
+  const wc = externalWC();
+  if (wc) {
+    wirePermissions();
+    wireNetwork();
+    wireDownloads();
+    wireCertificates();
+    wireEvents(wc);
+  }
+  return { ok: true };
+}
+
+function attachExternalWebContents(wc) {
+  if (!wc || wc.isDestroyed()) return { ok: false, error: 'closed' };
+  wirePermissions();
+  wireNetwork();
+  wireDownloads();
+  wireCertificates();
+  wireEvents(wc);
+  return { ok: true };
 }
 
 function currentUrl() {
@@ -1348,6 +1391,6 @@ module.exports = {
   selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
   fillForm, transferField, requestSecret, resolveSecretRequest, clearSecretTransfers, clearSensitiveState,
   currentUrl, navigationTarget, browserTarget, browserActionContext, captureFrame, emitAgentActivity, startHandoff, endHandoff,
-  isHandoffActive, close, destroy, isHttpUrl,
+  isHandoffActive, close, destroy, isHttpUrl, setExternalTargetProvider, attachExternalWebContents,
   _internals: { safeDownloadName, uniqueDownloadPath, effectiveBounds, isLocalHttpsUrl },
 };
