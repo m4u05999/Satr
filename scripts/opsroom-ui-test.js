@@ -398,7 +398,8 @@ function testDesignGuard() {
   const recordingBridge = read('electron/previewrecording.js');
   assert(mainProcess.includes('previewrecording.attach(ownerWebContents.session')
     && recordingBridge.includes("session.on('will-download'")
-    && recordingBridge.includes("type: 'preview_recording_saved'")
+    && recordingBridge.includes("'preview_recording_saved'")
+    && recordingBridge.includes("'promo_final_saved'")
     && app.includes("ev.type === 'preview_recording_saved'"),
   'preview recording must use a sanitized Downloads path and report the completed path to the UI');
   assert(!mainProcess.includes('executionTeam.SAFE_RUN_ID.test('),

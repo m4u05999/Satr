@@ -213,6 +213,7 @@ const MARKUP = `
       <option value="9:16">9:16</option>
       <option value="1:1">1:1</option>
     </select>
+    <button id="pvStudio" type="button" title="فتح استوديو البرومو">🎬</button>
     <button id="pvDevice" type="button" title="محاكاة الأجهزة: كامل/موبايل/لوحي (لاختبار التصميم المتجاوب)">🖥️</button>
     <button id="pvConsoleBtn" type="button" title="لوحة Console والأخطاء (رسائل الصفحة وأخطاء الشبكة)">🐞</button>
     <button id="pvDevtools" type="button" title="أدوات المطوّر (DevTools) — فحص كامل للصفحة في نافذة منفصلة">🔧</button>
@@ -939,6 +940,10 @@ class SatrPreviewPanel extends HTMLElement {
       if (!result || !result.ok) showErr(result && result.error === 'busy' ? 'يوجد تسجيل برومو جارٍ بالفعل.' : 'تعذّر فتح نافذة التقاط المنتج.');
     };
     recBtn.addEventListener('click', () => { if (recording) stopRec(); else startRec(); });
+    $('pvStudio').addEventListener('click', () => {
+      this.dispatchEvent(new CustomEvent('promo-studio-open', { bubbles: true, composed: true,
+        detail: { aspect: recAspect.value } }));
+    });
     if (typeof window.satr.onPromoCapture === 'function') window.satr.onPromoCapture((event) => {
       if (!event) return;
       if (event.type === 'capture_start') beginNativeCapture(event);

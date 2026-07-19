@@ -38,6 +38,7 @@ const codex = require('./codex'); // محرك Codex الأصيل (المرحلة
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const previewrecording = require('./previewrecording'); // تنزيل تسجيل المعاينة إلى Downloads + إشعار المسار
 const promocapture = require('./promocapture'); // نافذة التقاط المنتج المرئية + تسجيل 30fps في renderer
+const promostudio = require('./promostudio'); // storyboard محلي منقّى + حل أصول Downloads للاستوديو
 const testsprite = require('./testsprite'); // تكامل TestSprite MCP — مفتاح مشفّر، لا يظهر كمحرّك
 const claudeauth = require('./claudeauth');
 const adapters = require('./adapters');
@@ -239,6 +240,19 @@ function createWindow() {
     },
     onTarget: (webContents) => {
       if (webContents) preview.attachExternalWebContents(webContents);
+    },
+  });
+  promostudio.configure({
+    downloadsPath: app.getPath('downloads'),
+    exists: fs.existsSync,
+    realpath: fs.realpathSync,
+    aspectForPath: (candidate) => {
+      const segment = promocapture.listSegments().segments.find((item) => item.path === candidate);
+      return segment ? segment.aspect : '';
+    },
+    isAdditionalAllowed: (candidate) => promocapture.listSegments().segments.some((item) => item.path === candidate),
+    emit: (event) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:promo', event);
     },
   });
   preview.setExternalTargetProvider(() => promocapture.currentWebContents(), previewSender);
@@ -979,6 +993,16 @@ ipcMain.handle('satr:promoCaptureAbort', (event, payload) => {
     return { ok: false, error: 'bad_input' };
   }
   return promocapture.rendererAbort(p.sessionId, p.error);
+});
+
+ipcMain.handle('satr:promoStudioState', () => ({
+  ...promostudio.state(), segments: promocapture.listSegments().segments,
+}));
+
+ipcMain.handle('satr:promoAssetUrl', (event, payload) => {
+  const candidate = payload && typeof payload.path === 'string' ? payload.path : '';
+  if (!candidate || candidate.length > 4096 || !path.isAbsolute(candidate)) return { ok: false, error: 'bad_path' };
+  return promostudio.assetUrl(candidate);
 });
 
 ipcMain.handle('satr:devServerInfo', (event, p) => {

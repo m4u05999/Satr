@@ -22,6 +22,7 @@ const term = require('./term');
 const termjobs = require('./termjobs');
 const preview = require('./preview'); // م-3: أدوات قراءة المعاينة للوكيل (موديول مشترك)
 const promocapture = require('./promocapture'); // تسجيل نافذة المنتج الأصلية بـ30fps
+const promostudio = require('./promostudio'); // اقتراح storyboard محلي بلا تصيير تلقائي
 const skillCatalog = require('./skills'); // .agents قياسي + .claude توافق؛ تحميل تدريجي
 const verify = require('./verify'); // تحقق صريح مستقل عن أدوات المتصفح
 const memory = require('./memory'); // ذاكرة مشروع شخصية بموافقة صريحة
@@ -44,7 +45,10 @@ const BACKGROUND_READ_TOOLS = new Set([
   'mcp__satr-terminal__get_background_output',
   'mcp__satr-terminal__list_background_tasks',
 ]);
-const PROMO_READ_TOOLS = new Set(['mcp__satr-terminal__promo_list_segments']);
+const PROMO_READ_TOOLS = new Set([
+  'mcp__satr-terminal__promo_list_segments',
+  'mcp__satr-terminal__promo_propose_storyboard',
+]);
 const VERIFY_EXEC_TOOL = 'mcp__satr-verify__verify_project';
 const STOP_BACKGROUND_TOOL = 'mcp__satr-terminal__stop_background_task';
 const PROMO_START_TOOL = 'mcp__satr-terminal__promo_record_start';
@@ -844,6 +848,27 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       {},
       async () => ({ content: [{ type: 'text', text: JSON.stringify(promocapture.listSegments(), null, 2) }] })
     );
+    const promoProposeStoryboardTool = sdk.tool(
+      'promo_propose_storyboard',
+      'اقترح خطاً زمنياً من مقاطع/أصول محلية داخل Downloads ليراجعه المستخدم في استوديو البرومو. لا يبدأ التصيير ولا يرفع ملفاً.',
+      {
+        scenes: z.array(z.object({
+          segment_path: z.string().optional(),
+          asset: z.string().optional(),
+          caption: z.string().max(500).optional(),
+          duration_ms: z.number().int().min(250).max(120000).optional(),
+          transition: z.enum(['cut', 'fade']).optional(),
+          music: z.string().optional(),
+          voice: z.string().optional(),
+        })).min(1).max(40),
+      },
+      async (args) => {
+        const result = promostudio.propose({ scenes: args && args.scenes });
+        return result.ok
+          ? { content: [{ type: 'text', text: JSON.stringify({ ok: true, scenes: result.storyboard.scenes.length }) }] }
+          : { content: [{ type: 'text', text: 'رُفض storyboard: ' + (result.error || 'bad_storyboard') }], isError: true };
+      }
+    );
     const loadSkillTool = sdk.tool(
       'load_skill',
       'حمّل تعليمات مهارة محمولة مفعّلة عندما يطابق وصفها المهمة. لا تستدعها إلا عند ' +
@@ -1395,7 +1420,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }

@@ -203,6 +203,10 @@ electron/promocapture.js ← دورة نافذة التقاط المنتج ال�
                        بيضاء، URL‏ http/https، حصر مصدر desktop capture بالنافذة المنشأة،
                        إيقاف/إغلاق، وسجل مقاطع الجلسة داخل Downloads. لا يسجّل MediaStream
                        في main؛ renderer وحده يرمّز عبر MediaRecorder.
+electron/promostudio.js ← عقد storyboard المنقّى: 1–40 مشهداً من فيديو/صورة داخل Downloads
+                       فقط، مدة مقيدة، cut/fade، عنوان، وموسيقى/تعليق صوتي محليان. يبث
+                       الاقتراح للواجهة ولا يصيّر أو يرفع؛ يحل file URL كسولاً للأصول
+                       الموجودة في storyboard أو مقاطع جلسة الالتقاط فقط.
 electron/previewrecording.js ← يثبّت تنزيلات المعاينة ومقاطع البرومو ذات الأسماء المنقّاة
                        في Downloads بمسارات فريدة، ويرفض بقية تنزيلات النافذة عن هذا العقد.
 electron/codexmcp.js ← خادم MCP‏ streamable-HTTP داخل العملية يعطي محرك Codex رؤية الويب
@@ -226,11 +230,12 @@ src/ui/lib/          ← وحدات ES مشتركة للمكوّنات: sheet.js
                        diff.js (buildDiff بعقدها الثلاثي: محادثة/عارض/git) + diff.css.js
                        (المصدر الوحيد لأنماط بطاقة الفرق منذ ت-12: تُعتمد على المستند من
                        chat.js للـ light DOM وعلى shadowRoot في git/العارض) + highlight.js
-                       (HL_CFG + hlLine) + update-toast.js (توست التحديث/الإشعار العابر —
+                       (HL_CFG + hlLine) + promo-renderer.js (فك فيديو/صورة + canvas‏ RTL +
+                       Web Audio + MediaRecorder فوري) + update-toast.js (توست التحديث/الإشعار العابر —
                        استُخرج من app.js لاختباره حيّاً في test:update-ui، سلوك مطابق حرفياً).
                        جسر window.SatrUI أُزيل في ت-13 — استيراد مباشر فقط
-src/ui/components/   ← 15 مكوّن Web Component (بادئة satr-، ملف لكل مكوّن) — انظر قسم
-                       «مكوّنات الواجهة» أدناه (الخامس عشر: preview-panel — م-1)
+src/ui/components/   ← 16 مكوّن Web Component (بادئة satr-، ملف لكل مكوّن) — انظر قسم
+                       «مكوّنات الواجهة» أدناه (السادس عشر: promo-studio)
 src/vendor/          ← أصول مُضمّنة (vendored) للواجهة — الناتج مُلتزَم (لا اعتمادية npm وقت
                        تشغيل للواجهة): xterm.js (يولّده scripts/vendor-xterm.js) + خط IBM Plex
                        Sans Arabic في fonts/ مع fonts.css (يولّدهما scripts/vendor-fonts.js)
@@ -1624,6 +1629,31 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   IPC الواجهة محددة (`promoCaptureStart/Stop/Ready/Commit/Abort`)؛ `confirmed:true` لازم،
   وmain يرفض `sourceId` من renderer. تحقق Electron الحي: `ERR_FAILED=false`، stream واحد،
   `frameRate=30`، MediaRecorder‏ MP4/H.264 ذو `ftyp` وBlob غير فارغ، ثم إغلاق كامل.
+- **استوديو الإنتاج (ترقية م-5 — المرحلة 2)**: الأداة المتكافئة
+  `promo_propose_storyboard({scenes})` تقبل 1–40 مشهداً، كل واحد `segment_path|asset`
+  محلياً داخل Downloads، و`caption/duration_ms/transition/music/voice` اختيارية. main
+  يرفض URL بعيداً، مساراً خارج Downloads، امتداداً غير وسائطياً، أو مدة خارج
+  `250..120000ms`؛ الأداة تبث الاقتراح فقط ولا تعتمد أو تصيّر. إن توفرت أداة Higgsfield
+  ‏`generate_audio` للوكيل، يولّد الموسيقى/التعليق بها ثم **ينزّل الملف أولاً** إلى
+  Downloads ويشير إلى مساره المحلي؛ الاستوديو لا يحمّل URL بعيداً ولا يرفع أي أصل.
+- `<satr-promo-studio>` حوار Shadow بأنماط `adoptedStyleSheets` وtokens، ويُدار عبر
+  `surfaceCoordinator` كي تُحجب WebContentsView الأصلية أثناءه. يعرض المشاهد ويتيح أزرار
+  إعادة الترتيب، قص المدة، تحرير العنوان العربي، تبديل الموسيقى والتعليق، حذف مشهد،
+  وإعادة تسجيله عبر مسار المرحلة 1. كل تعديل يسقط الاعتماد؛ زر «صيّر» لا يعمل حتى يضغط
+  المستخدم «اعتماد الخط الزمني» صراحةً (الوكيل يقترح ولا يقرر النتيجة النهائية).
+- المُصيّر صفري الاعتماديات في `promo-renderer.js`: `<video>`/`Image` تفك الأصول المحلية،
+  ويرسمها `canvas` بنسبة storyboard مع `cut` أو fade، ويطبع العنوان بخط IBM Plex Sans
+  Arabic واتجاه `rtl`. Web Audio يمزج صوت المقطع + music بخفض + voice كاملاً إلى
+  `MediaStreamDestination`؛ تُضم مساراته إلى `canvas.captureStream(30)` ثم MediaRecorder
+  يخرج `satr-promo-final-*` إلى Downloads. التصيير **فوري بزمن الجدار**: 60 ثانية فيديو
+  تستغرق نحو 60 ثانية، وتبقى نافذة الاستوديو مفتوحة خلاله.
+- **مقايضة واعية**: التصيير المبني على `requestAnimationFrame` وMediaRecorder غير حتمي
+  frame-perfect وقد يسقط/يكرر إطاراً تحت الحمل. `VideoEncoder:false` في Chromium الحالي
+  وffmpeg ممنوع كاعتمادية يحافظان على النواة المفتوحة صفريّة الاعتماديات؛ ترقية مستقبلية
+  ممكنة باكتشاف ffmpeg اختياري مثبت لدى المستخدم، لا بشحنه ولا بجعله شرطاً.
+- تحقق `test:promo-studio` الحي تحت CSP الصارمة يولّد مقطعين، يغيّر ترتيبهما ومدتهما
+  وعنوانهما والموسيقى، يمر ببوابة الاعتماد وإعادة التسجيل، ويمزج WAV محلياً من `file:`
+  مع عنوان RTL ثم ينتج MP4 غير فارغ. `media-src 'self' blob:` هو التوسعة الوحيدة للقالب.
 - **الحاوية mp4 مفضّلة (دفعة «mp4»)**: `pickRecMime()` يفاضل `video/mp4;codecs=avc1…`
   أولاً ثم webm عبر `MediaRecorder.isTypeSupported`، والنوع والامتداد يتبعان المُختار.
   التنزيل ليس صامتاً: `previewrecording.js` يعترض أسماء `satr-preview-*` و

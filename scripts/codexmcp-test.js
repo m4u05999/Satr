@@ -60,6 +60,10 @@ const promoCapture = {
   stop: async () => { promoCapture.stops += 1; return { ok: true, path: 'C:\\Downloads\\segment.mp4', duration_ms: 900 }; },
   listSegments: () => ({ ok: true, session_id: null, segments: [] }),
 };
+const promoStudio = {
+  proposals: 0,
+  propose: () => { promoStudio.proposals += 1; return { ok: true, storyboard: { scenes: [{ id: 'scene_1' }] } }; },
+};
 
 function post(url, token, msg) {
   return new Promise((resolve) => {
@@ -114,11 +118,11 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
    'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
    'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
    'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task',
-   'promo_record_start', 'promo_record_stop', 'promo_list_segments']
+   'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
-  ok(names.length === 32, 'عدد أدوات Codex MCP أصبح 32 (25 متصفح + 4 خلفية + 3 برومو)');
+  ok(names.length === 33, 'عدد أدوات Codex MCP أصبح 33 (25 متصفح + 4 خلفية + 4 برومو)');
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
-  const builtTools = codexmcp.buildTools({ preview, promoCapture });
+  const builtTools = codexmcp.buildTools({ preview, promoCapture, promoStudio });
   const built = (name) => builtTools.find((tool) => tool.name === name);
   ok(built('browser_evaluate').browserClass === 'act', 'browser_evaluate مصنّفة act');
   ok(built('browser_set_viewport').browserClass === 'read' && built('browser_perf').browserClass === 'read', 'viewport/perf مصنّفتان read');
@@ -128,6 +132,7 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   ok(built('promo_record_start').access === 'exec' && built('promo_record_start').neverAlways, 'بدء تسجيل البرومو فعل صريح بلا «دائماً»');
   ok(built('promo_record_stop').access === 'exec' && built('promo_record_stop').neverAlways, 'إيقاف تسجيل البرومو فعل صريح بلا «دائماً»');
   ok(built('promo_list_segments').access === 'read', 'سرد مقاطع البرومو قراءة حرّة');
+  ok(built('promo_propose_storyboard').access === 'read', 'اقتراح storyboard عرض محلي بلا تنفيذ');
 
   // tools/call: read_page نص مغلّف
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'read_page', arguments: {} } });
@@ -225,7 +230,7 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   await srv3.stop();
 
   asked.length = 0; askedMeta.length = 0;
-  srv3 = await codexmcp.start({ preview, promoCapture, requestPermission: gate(false) });
+  srv3 = await codexmcp.start({ preview, promoCapture, promoStudio, requestPermission: gate(false) });
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'promo_record_start', arguments: { aspect: '16:9' } } });
   jj = JSON.parse(rr.body);
   ok(jj.result.isError && promoCapture.starts === 0
@@ -234,7 +239,7 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   await srv3.stop();
 
   asked.length = 0; askedMeta.length = 0;
-  srv3 = await codexmcp.start({ preview, promoCapture, requestPermission: gate(true) });
+  srv3 = await codexmcp.start({ preview, promoCapture, promoStudio, requestPermission: gate(true) });
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'promo_record_start', arguments: { aspect: '9:16' } } });
   jj = JSON.parse(rr.body);
   ok(!jj.result.isError && promoCapture.starts === 1 && /promo_/.test(jj.result.content[0].text), 'قبول إذن promo_record_start يبدأ التسجيل');
@@ -242,6 +247,9 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'promo_list_segments', arguments: {} } });
   jj = JSON.parse(rr.body);
   ok(!jj.result.isError && !asked.includes('promo_list_segments'), 'promo_list_segments قراءة بلا مربع إذن');
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'promo_propose_storyboard', arguments: { scenes: [{ segment_path: 'C:\\Downloads\\clip.mp4' }] } } });
+  jj = JSON.parse(rr.body);
+  ok(!jj.result.isError && promoStudio.proposals === 1 && !asked.includes('promo_propose_storyboard'), 'اقتراح storyboard يبث العرض بلا إذن تنفيذ ولا تصيير');
   await srv3.stop();
 
   const trustedOrigins = new Set(['https://trusted.example']);

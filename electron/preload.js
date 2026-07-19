@@ -143,6 +143,8 @@ contextBridge.exposeInMainWorld('satr', {
     sessionId, durationMs, filename,
   }),
   promoCaptureAbort: (sessionId, error) => ipcRenderer.invoke('satr:promoCaptureAbort', { sessionId, error }),
+  promoStudioState: () => ipcRenderer.invoke('satr:promoStudioState'),
+  promoAssetUrl: (assetPath) => ipcRenderer.invoke('satr:promoAssetUrl', { path: assetPath }),
   devServerInfo: (cwd) => ipcRenderer.invoke('satr:devServerInfo', { cwd }),
   devServerRestart: (cwd) => ipcRenderer.invoke('satr:devServerRestart', { cwd }),
   onPreview: (callback) => {

@@ -331,6 +331,7 @@ function create(initialDeps) {
           url: active.url,
         };
         segments.push(item);
+        emit({ type: 'segment_saved', session_id: promoSessionId, segment: { ...item } });
         settleStop({ ok: true, path: item.path, duration_ms: item.duration_ms });
       }
     } else {

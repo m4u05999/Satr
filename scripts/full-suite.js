@@ -33,6 +33,7 @@ const SUITE = [
   'test:preview-recording',
   'test:promocapture',
   'test:promocapture-live',
+  'test:promo-studio',
   'test:claude-auth',
   'test:testsprite-ready',
   'test:viewer-security',

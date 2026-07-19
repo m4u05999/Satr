@@ -297,6 +297,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   const opsDialogEl = document.querySelector('satr-ops-dialog');
   const verifyConfigEl = document.querySelector('satr-verify-config-dialog');
   const previewEl = document.querySelector('satr-preview-panel');
+  const promoStudioEl = document.querySelector('satr-promo-studio');
   function addNotice(text) { chatEl.addNotice(text); }
 
   // منسّق الأسطح الواحد: لوحة رئيسية واحدة، سجل active/held/hidden، واستعادة تركيز
@@ -427,6 +428,11 @@ import { createUpdateToast } from './lib/update-toast.js';
   surfaceCoordinator.register('permission-dialog', document.querySelector('satr-perm-dialog'), 'dialog');
   surfaceCoordinator.register('question-dialog', document.querySelector('satr-question-dialog'), 'dialog');
   surfaceCoordinator.register('verify-config-dialog', verifyConfigEl, 'dialog');
+  surfaceCoordinator.register('promo-studio', promoStudioEl, 'dialog');
+
+  promoStudioEl.addEventListener('promo-studio-visible', (event) => {
+    surfaceCoordinator.setDialog('promo-studio', !!event.detail);
+  });
 
   // تحت العتبة الواسعة يبقى سطح جانبي واحد فقط؛ 120rem تبقي للدردشة عرضاً عملياً.
   const MULTI_SURFACE_MEDIA = '(min-width: 120rem)';
@@ -590,6 +596,14 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
     if (ev.type === 'promo_recording_failed') {
       addNotice('تعذّر حفظ مقطع البرومو' + (ev.filename ? ': ' + ev.filename : ''));
+      return;
+    }
+    if (ev.type === 'promo_final_saved') {
+      addNotice('🎞 حُفظ فيديو البرومو النهائي في: ' + ev.path);
+      return;
+    }
+    if (ev.type === 'promo_final_failed') {
+      addNotice('تعذّر حفظ فيديو البرومو النهائي' + (ev.filename ? ': ' + ev.filename : ''));
       return;
     }
     // أسئلة الاختيار (AskUserQuestion) — تُعالج دائماً أيضاً (تنتظر رد المستخدم أثناء الدور)

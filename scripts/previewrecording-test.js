@@ -45,6 +45,13 @@ assert.strictEqual(promoItem.savePath, path.join(downloadsPath, promoName));
 promoItem.emit('done', {}, 'completed');
 assert.deepStrictEqual(emitted[1], { type: 'promo_recording_saved', filename: promoName,
   saved_filename: promoName, path: promoItem.savePath });
+const finalName = 'satr-promo-final-2026-07-19-11-30-00.mp4';
+const finalItem = new FakeItem(finalName);
+session.emit('will-download', {}, finalItem, owner);
+assert.strictEqual(finalItem.savePath, path.join(downloadsPath, finalName));
+finalItem.emit('done', {}, 'completed');
+assert.deepStrictEqual(emitted[2], { type: 'promo_final_saved', filename: finalName,
+  saved_filename: finalName, path: finalItem.savePath });
 detach();
 assert.strictEqual(session.listenerCount('will-download'), 0);
 

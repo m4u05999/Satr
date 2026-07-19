@@ -56,6 +56,7 @@
     "test:preview-recording": "node scripts/previewrecording-test.js",
     "test:promocapture": "node scripts/promocapture-test.js",
     "test:promocapture-live": "electron scripts/promocapture-live-test.js",
+    "test:promo-studio": "node scripts/promostudio-test.js && electron scripts/promo-studio-live-test.js",
     "test:claude-auth": "node scripts/claude-auth-test.js",
     "test:testsprite": "node scripts/testsprite-integration-test.js",
     "testsprite:harness": "node scripts/testsprite-harness.js",

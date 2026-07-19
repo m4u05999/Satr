@@ -28,6 +28,7 @@ const bgprocs = require('./bgprocs');
 const browserorigin = require('./browserorigin');
 const browserpolicy = require('./browserpolicy');
 const promocapture = require('./promocapture');
+const promostudio = require('./promostudio');
 
 const PROTOCOL_VERSION = '2024-11-05'; // نسخة MCP التي يتفاوض عليها العميل (rmcp يقبلها)
 const SERVER_INFO = { name: 'satr-preview', title: 'Satr Preview', version: '1.0.0' };
@@ -90,6 +91,7 @@ function permissionInput(value) {
 function buildTools(deps) {
   const preview = deps.preview;
   const promo = deps.promoCapture || promocapture;
+  const studio = deps.promoStudio || promostudio;
   const openPreview = typeof deps.openPreview === 'function' ? deps.openPreview : null;
   // التسليم البشري: codex.js يوفّر requestHandoff (بثّ الشريط + انتظار «استلمت»).
   // غيابه ⇒ الأداة ترفض fail-closed (نفس مبدأ requestPermission أدناه).
@@ -519,6 +521,22 @@ function buildTools(deps) {
       description: 'اسرد مقاطع البرومو المسجّلة محلياً في جلسة الاستوديو الحالية. قراءة فقط ولا ترفع الملفات.',
       inputSchema: { type: 'object', properties: {} },
       handler: async () => textResult(JSON.stringify(promo.listSegments(), null, 2)),
+    },
+    {
+      name: 'promo_propose_storyboard', access: 'read',
+      description: 'اقترح خطاً زمنياً من مقاطع/أصول محلية داخل Downloads ليراجعه المستخدم في استوديو البرومو. لا يبدأ التصيير ولا يرفع ملفاً.',
+      inputSchema: { type: 'object', properties: {
+        scenes: { type: 'array', minItems: 1, maxItems: 40, items: { type: 'object', properties: {
+          segment_path: { type: 'string' }, asset: { type: 'string' }, caption: { type: 'string', maxLength: 500 },
+          duration_ms: { type: 'integer', minimum: 250, maximum: 120000 },
+          transition: { type: 'string', enum: ['cut', 'fade'] }, music: { type: 'string' }, voice: { type: 'string' },
+        } } },
+      }, required: ['scenes'] },
+      handler: async (args) => {
+        const result = studio.propose({ scenes: args && args.scenes });
+        return result.ok ? textResult(JSON.stringify({ ok: true, scenes: result.storyboard.scenes.length }))
+          : textResult('رُفض storyboard: ' + (result.error || 'bad_storyboard'), true);
+      },
     },
     {
       name: 'run_in_background', access: 'exec',
