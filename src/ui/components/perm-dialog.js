@@ -34,6 +34,8 @@ const ownSheet = sheet(`
        overflow-wrap يلفّ الرموز الطويلة دون كسر الحروف العربية وسط الكلمة */
     unicode-bidi: plaintext; overflow-wrap: anywhere;
   }
+  .requester, .pending-count { margin-top: var(--space-2); color: var(--text-dim); font-size: 12px; }
+  .requester[hidden], .pending-count[hidden], .turn[hidden] { display: none; }
   .perm-actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); flex-wrap: wrap; }
   .perm-actions .allow { background: var(--green); color: var(--on-green); border: none; font-weight: 600; }
   .perm-actions .deny { background: var(--red); color: var(--on-danger); border: none; font-weight: 600; }
@@ -48,19 +50,27 @@ class SatrPermDialog extends HTMLElement {
       '<div class="perm-box">' +
         '<h3>🔐 طلب إذن لاستخدام أداة</h3>' +
         '<p>يطلب النموذج استخدام الأداة <span class="tool-name"></span></p>' +
+        '<p class="requester" hidden></p>' +
         '<div class="perm-detail" dir="ltr"></div>' +
+        '<p class="pending-count" hidden></p>' +
         '<div class="perm-actions">' +
           '<button class="allow">موافقة</button>' +
+          '<button class="turn" hidden>موافقة لهذه الأداة حتى نهاية الدور</button>' +
           '<button class="always">موافقة دائمة لهذه الأداة</button>' +
           '<button class="deny">رفض</button>' +
         '</div>' +
       '</div>';
     this._tool = r.querySelector('.tool-name');
     this._detail = r.querySelector('.perm-detail');
+    this._requester = r.querySelector('.requester');
+    this._pendingCount = r.querySelector('.pending-count');
+    this._turn = r.querySelector('.turn');
+    this._always = r.querySelector('.always');
     this._queue = [];
     this._current = null;
     this._buttons = [...r.querySelectorAll('button')];
     r.querySelector('.allow').addEventListener('click', () => this._answer(true, false));
+    this._turn.addEventListener('click', () => this._answer(true, false, true));
     r.querySelector('.always').addEventListener('click', () => this._answer(true, true));
     r.querySelector('.deny').addEventListener('click', () => this._answer(false, false));
     r.addEventListener('keydown', (event) => this._trapFocus(event));
@@ -70,6 +80,7 @@ class SatrPermDialog extends HTMLElement {
   request(req) {
     this._queue.push(req);
     this._showNext();
+    this._renderPending();
   }
 
   // ضبط ظهور المربع + بثّ الحالة — القشرة تحجب المعاينة أثناء ظهوره فيبرز فوقها
@@ -82,10 +93,11 @@ class SatrPermDialog extends HTMLElement {
 
   _trapFocus(event) {
     if (event.key !== 'Tab') return;
-    const current = this._buttons.indexOf(this.shadowRoot.activeElement);
+    const buttons = this._buttons.filter((button) => !button.hidden && !button.disabled);
+    const current = buttons.indexOf(this.shadowRoot.activeElement);
     const next = event.shiftKey
-      ? this._buttons[(current <= 0 ? this._buttons.length : current) - 1]
-      : this._buttons[(current + 1) % this._buttons.length];
+      ? buttons[(current <= 0 ? buttons.length : current) - 1]
+      : buttons[(current + 1) % buttons.length];
     event.preventDefault(); next.focus();
   }
 
@@ -101,18 +113,31 @@ class SatrPermDialog extends HTMLElement {
     this._current = this._queue.shift();
     this._tool.textContent = this._current.tool;
     this._detail.textContent = this._current.detail || '';
+    const requester = String(this._current.requester || '').trim();
+    this._requester.hidden = !requester;
+    this._requester.textContent = requester ? 'الطالب: ' + requester : '';
+    this._turn.hidden = this._current.turnEligible !== true;
+    this._always.hidden = this._current.alwaysEligible === false;
+    this._renderPending();
     this._setOpen(true);
   }
 
-  _answer(allow, always) {
+  _renderPending() {
+    const count = this._queue.length;
+    this._pendingCount.hidden = count === 0;
+    this._pendingCount.textContent = count ? 'وبعده ' + count + ' طلبات معلّقة' : '';
+  }
+
+  _answer(allow, always, turn) {
     if (!this._current) return;
     const req = this._current;
     this._current = null;
     this._setOpen(false);
-    window.satr.permission(req.id, allow, !!always);
+    window.satr.permission(req.id, allow, !!always, !!turn);
     this.dispatchEvent(new CustomEvent('notice', {
       detail: allow
-        ? (always ? '✓ موافقة دائمة على أداة ' + req.tool : '✓ تمت الموافقة على أداة ' + req.tool)
+        ? (always ? '✓ موافقة دائمة على أداة ' + req.tool
+          : (turn ? '✓ موافقة حتى نهاية الدور على أداة ' + req.tool : '✓ تمت الموافقة على أداة ' + req.tool))
         : '✗ رُفض استخدام أداة ' + req.tool,
     }));
     this._showNext();

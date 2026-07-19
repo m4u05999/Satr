@@ -3,8 +3,8 @@
 // المستند، وأنماط المنطقة تبقى في base.css كما هي (المحدِّدات #termPanel/… لم تتغير —
 // البنية ذاتها تُبنى داخل المكوّن light DOM). المنطقة كانت معزولة ذاتياً بالكامل
 // (قناة satr:term + xterm العالمية + localStorage) فانتقلت **حرفياً** من القشرة.
-// العقد للخارج: adoptModelTerm(id, shell) — تستدعيها القشرة عند حدث model_term
-// (طرفية النموذج 16.2)، وsetTermOpen(open). زر 🖥️ بالشريط يربطه المكوّن بنفسه.
+// العقد للخارج: adoptTerm/adoptModelTerm/activateTerm/setTermOpen. تبنّي الطرفية لا
+// ينشئ pty جديداً؛ يربط xterm بالمعرّف الحيّ في العملية الرئيسية ويستعيد ذيل خرجه.
 // ملاحظة تخطيط: للمكوّن قاعدة display:contents في base.css — غلاف شفاف كي يبقى
 // #termPanel ابناً مباشراً لتخطيط body العمودي كما كان.
 
@@ -77,6 +77,7 @@ class SatrTerminalPanel extends HTMLElement {
 
   function tabDisplayName(tab) {
     if (tab.isModel) return '🤖 النموذج';
+    if (tab.isJob) return '🛠 ' + (tab.jobLabel || 'مهمة خلفية');
     return tab.manualName || tab.oscTitle || shellTabName(tab.shell);
   }
 
@@ -88,7 +89,7 @@ class SatrTerminalPanel extends HTMLElement {
   }
 
   function queueTabTitle(tab, value) {
-    if (tab.isModel || tab.manualName) return;
+    if (tab.isModel || tab.isJob || tab.manualName) return;
     const title = sanitizeTabTitle(value);
     if (!title) return;
     tab.pendingTitle = title;
@@ -97,7 +98,7 @@ class SatrTerminalPanel extends HTMLElement {
       tab.titleTimer = 0;
       const next = tab.pendingTitle;
       tab.pendingTitle = '';
-      if (!next || tab.isModel || tab.manualName || next === tab.oscTitle) return;
+      if (!next || tab.isModel || tab.isJob || tab.manualName || next === tab.oscTitle) return;
       tab.oscTitle = next;
       updateTabLabel(tab);
     }, TAB_TITLE_THROTTLE_MS);
@@ -123,7 +124,7 @@ class SatrTerminalPanel extends HTMLElement {
 
     const tab = {
       tabId: 'tab_' + (++tabSeq), id: null, term, fit, view, grid, bidi, spacer,
-      shell: '', exited: false,
+      shell: '', exited: false, isModel: false, isJob: false, jobLabel: '', cwd: '',
       bidiEls: new Map(), pinned: true, mode: true, userView: true, cellObj: null,
       manualName: '', oscTitle: '', pendingTitle: '', titleTimer: 0,
       inputMasked: false, inputDraft: '',
@@ -178,6 +179,8 @@ class SatrTerminalPanel extends HTMLElement {
     $('termDot').classList.toggle('dead', tab.exited);
     $('termInput').value = tab.inputDraft;
     $('termInput').disabled = tab.exited;
+    $('termRestart').disabled = tab.isJob;
+    $('termRestart2').disabled = tab.isJob;
     applyInputMask(tab);
     termExited.classList.toggle('show', tab.exited);
     applyTabView(tab); // يضبط #termPanel + زر العرض + التركيز + المزامنة
@@ -197,27 +200,48 @@ class SatrTerminalPanel extends HTMLElement {
   }
 
   async function newTab() {
-    if (tabs.length >= 8) { showTermNotice('بلغت الحد الأقصى للطرفيات (8) — أغلق واحدة أولاً.'); return; }
+    if (tabs.filter((tab) => !tab.isJob).length >= 8) { showTermNotice('بلغت الحد الأقصى لطرفيات المستخدم (8) — أغلق واحدة أولاً.'); return; }
     const tab = makeTab();
     activateTab(tab);
     const ok = await startTabPty(tab);
     if (ok) { tab.term.reset(); scheduleBidiSync(); applyTabView(tab); }
   }
 
-  // تبنّي طرفية النموذج (المرحلة 16.2): pty أنشأته العملية الرئيسية لأداة run_in_terminal —
-  // نعرضه كتبويب «🤖 النموذج» ليرى المستخدم ما يشغّله النموذج حياً. لا نستدعي termStart
-  // (الـ pty موجود)، فقط نربط xterm بمعرّفه؛ الموجّه satr:term يوصل خرجه إليه.
-  function adoptModelTerm(id, shell) {
-    if (tabs.some((t) => t.id === id)) return; // مُتبنّى أصلاً
-    if (termPanel.hidden) setTermOpen(true); // افتح اللوحة ليراه المستخدم
+  // تبنّي pty أنشأته العملية الرئيسية: طرفية النموذج أو مهمة 🛠 أو استعادة بعد reload.
+  function adoptTerm(id, label, opts) {
+    const existing = tabs.find((tab) => tab.id === id);
+    const options = opts && typeof opts === 'object' ? opts : {};
+    if (existing) {
+      if (options.open !== false) { setTermOpen(true); activateTab(existing); }
+      return existing;
+    }
     const tab = makeTab();
-    tab.id = id; tab.shell = shell || ''; tab.isModel = true;
+    tab.id = id; tab.shell = options.shell || ''; tab.cwd = options.cwd || '';
+    tab.isModel = options.isModel === true; tab.isJob = options.isJob === true;
+    tab.jobLabel = sanitizeTabTitle(label) || (tab.isJob ? 'مهمة خلفية' : '');
+    if (typeof options.buffer === 'string' && options.buffer) {
+      tab.term.write(options.buffer);
+      scanForLocalUrls(options.buffer);
+    }
     renderTabs();
+    if (options.open !== false) { setTermOpen(true); activateTab(tab); }
+    return tab;
+  }
+
+  function adoptModelTerm(id, shell) {
+    return adoptTerm(id, 'النموذج', { shell, isModel: true, open: true });
+  }
+
+  function activateTerm(id) {
+    const tab = tabs.find((item) => item.id === id);
+    if (!tab) return false;
+    setTermOpen(true);
     activateTab(tab);
+    return true;
   }
 
   function beginTabRename(tab) {
-    if (!tab || tab.isModel || !tab.labelEl || tab.renameInput) return;
+    if (!tab || tab.isModel || tab.isJob || !tab.labelEl || tab.renameInput) return;
     const label = tab.labelEl;
     const input = document.createElement('input');
     input.className = 'term-tab-name-input';
@@ -267,7 +291,7 @@ class SatrTerminalPanel extends HTMLElement {
       const dot = document.createElement('span'); dot.className = 'tdot'; dot.setAttribute('aria-hidden', 'true');
       const lbl = document.createElement('span'); lbl.className = 'term-tab-label'; lbl.textContent = tabDisplayName(t);
       let rename = null;
-      if (!t.isModel) {
+      if (!t.isModel && !t.isJob) {
         rename = document.createElement('button'); rename.className = 'trename'; rename.type = 'button'; rename.textContent = '✎'; rename.title = 'إعادة تسمية';
         rename.addEventListener('click', (event) => { event.stopPropagation(); beginTabRename(t); });
       }
@@ -277,7 +301,7 @@ class SatrTerminalPanel extends HTMLElement {
       el.addEventListener('click', () => { if (t !== active) activateTab(t); });
       el.addEventListener('keydown', (event) => {
         if (event.target !== el) return;
-        if (event.key === 'F2' && !t.isModel) { event.preventDefault(); beginTabRename(t); }
+        if (event.key === 'F2' && !t.isModel && !t.isJob) { event.preventDefault(); beginTabRename(t); }
         else if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           if (t !== active) activateTab(t);
@@ -351,6 +375,7 @@ class SatrTerminalPanel extends HTMLElement {
     if (ev.type === 'data') { tab.term.write(ev.data); scanForLocalUrls(ev.data); } // يحدّث buffer حتى لو التبويب خلفي
     else if (ev.type === 'exit') {
       tab.exited = true;
+      hostEl.dispatchEvent(new CustomEvent('term-exit', { detail: { id: tab.id, isJob: tab.isJob }, bubbles: true }));
       renderTabs();
       if (tab === active) {
         termExited.classList.add('show'); $('termDot').classList.add('dead'); $('termInput').disabled = true;
@@ -649,7 +674,9 @@ class SatrTerminalPanel extends HTMLElement {
 
 
     // الواجهة العامة للقشرة (حدث model_term من مجرى satr:event)
+    this.adoptTerm = adoptTerm;
     this.adoptModelTerm = adoptModelTerm;
+    this.activateTerm = activateTerm;
     this.setTermOpen = setTermOpen;
   }
 }

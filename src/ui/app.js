@@ -498,7 +498,11 @@ import { createUpdateToast } from './lib/update-toast.js';
   window.satr.onEvent((ev) => {
     // طلبات الأذونات تُعالج دائماً ولو كانت الكتلة منتهية
     if (ev.type === 'permission_request') {
-      permEl.request({ id: ev.id, tool: ev.tool, detail: permDetailText(ev.tool, ev.input) });
+      permEl.request({
+        id: ev.id, tool: ev.tool, detail: permDetailText(ev.tool, ev.input),
+        requester: ev.requester || '', turnEligible: ev.turnEligible === true,
+        alwaysEligible: ev.alwaysEligible !== false,
+      });
       return;
     }
     if (ev.type === 'preview_recording_saved') {
@@ -547,6 +551,14 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (ev.type === 'model_term' && ev.id) {
       const t = document.querySelector('satr-terminal-panel');
       if (t && t.adoptModelTerm) t.adoptModelTerm(ev.id, ev.shell);
+      return;
+    }
+    if (ev.type === 'bg_term' && ev.id) {
+      const terminal = document.querySelector('satr-terminal-panel');
+      if (terminal && terminal.adoptTerm) {
+        terminal.adoptTerm(ev.id, ev.label, { shell: ev.shell, cwd: ev.cwd, isJob: true, open: true });
+      }
+      if (composerEl.upsertTermJob) composerEl.upsertTermJob({ ...ev, startedAt: Date.now() });
       return;
     }
     // أداة open_preview (م-1-ب): النموذج طلب عرض عنوان في المعاينة المدمجة —
@@ -1208,6 +1220,36 @@ import { createUpdateToast } from './lib/update-toast.js';
   applyEngineCommands($('engine').value); // أوامر «/» حسب المحرك (تُخفي Claude-الخاصة مع Codex)
   composerEl.addEventListener('composer-send', send);
   composerEl.addEventListener('notice', (e) => addNotice(e.detail));
+  const terminalEl = document.querySelector('satr-terminal-panel');
+  composerEl.addEventListener('show-term', (e) => {
+    if (terminalEl && terminalEl.activateTerm) terminalEl.activateTerm(e.detail);
+  });
+  terminalEl.addEventListener('term-exit', (e) => {
+    if (e.detail && e.detail.isJob && composerEl.removeTermJob) composerEl.removeTermJob(e.detail.id);
+  });
+  // إعادة تحميل renderer لا تقتل ConPTY: نتبنّى كل الطرفيات الحيّة ونكتب ذيل مخزنها.
+  (async () => {
+    try {
+      await Promise.all([
+        customElements.whenDefined('satr-terminal-panel'),
+        customElements.whenDefined('satr-composer'),
+      ]);
+      const live = await window.satr.termList();
+      if (!Array.isArray(live)) return;
+      const jobs = [];
+      for (const item of live) {
+        const read = await window.satr.termReadBuffer(item.id, 256 * 1024);
+        if (terminalEl && terminalEl.adoptTerm) {
+          terminalEl.adoptTerm(item.id, item.label, {
+            shell: item.shell, cwd: item.cwd, isModel: item.isModel, isJob: item.isJob,
+            buffer: read && read.ok ? read.data : '', open: false,
+          });
+        }
+        if (item.isJob) jobs.push({ ...item, startedAt: Date.now() });
+      }
+      if (composerEl.setTermJobs) composerEl.setTermJobs(jobs);
+    } catch (e) {}
+  })();
   // ---------- لوحة المعاينة المدمجة (م-1 — الدفعة 5) ----------
   // المكوّن يملك اللوحة كاملة (زر 🌐 يربطه بنفسه — نمط الطرفية)؛ القشرة توصّل فقط
   // اقتراح localhost: الطرفية ترصد عناوين خوادم التطوير في خرجها وتبثّ «localhost-url»

@@ -144,11 +144,16 @@ const previewSheet = sheet(`
   }
   .pv-hint .big { font-size: 26px; }
   #pvErr {
-    display: none; padding: var(--space-1h) var(--space-3); font-size: 12px; color: var(--red);
+    display: none; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+    padding: var(--space-1h) var(--space-3); font-size: 12px; color: var(--red);
     background: var(--red-soft); border-top: 1px solid var(--red-border);
     unicode-bidi: plaintext;
   }
-  #pvErr.show { display: block; }
+  #pvErr.show { display: flex; }
+  #pvErrText { flex: 1; min-width: 220px; }
+  #pvRestartServer { color: var(--text); background: var(--surface-2); border: 1px solid var(--red-border);
+    border-radius: var(--radius-md); padding: var(--space-1) var(--space-2h); cursor: pointer; }
+  #pvRestartServer[hidden] { display: none; }
   /* مقبض تغيير العرض على الحافة الملاصقة للمحادثة (inline-start = يمين في RTL) */
   #pvResizer {
     position: absolute; top: 0; bottom: 0; inset-inline-start: -3px; width: 7px;
@@ -191,7 +196,7 @@ const MARKUP = `
       و«سطر» سيقترح فتحه هنا تلقائياً.</span>
     </div>
   </div>
-  <div id="pvErr"></div>
+  <div id="pvErr"><span id="pvErrText"></span><button id="pvRestartServer" type="button" hidden>🔁 شغّل خادم المشروع</button></div>
   <!-- لوحة Console/أخطاء للمستخدم (الخيار 2): تُملأ حيّاً من أحداث preview.js -->
   <div id="pvConsole">
     <div class="pc-head">
@@ -229,6 +234,7 @@ class SatrPreviewPanel extends HTMLElement {
     root.appendChild(wrap);
     const $ = (id) => root.getElementById(id);
     const urlIn = $('pvUrl'), box = $('pvBox'), hint = $('pvHint'), err = $('pvErr');
+    const errText = $('pvErrText'), restartServerBtn = $('pvRestartServer');
     const backBtn = $('pvBack'), fwdBtn = $('pvFwd'), reloadBtn = $('pvReload'), autoBtn = $('pvAuto');
     const toggleBtn = document.getElementById('previewToggle'); // زر الشريط العلوي (light DOM)
 
@@ -478,7 +484,56 @@ class SatrPreviewPanel extends HTMLElement {
       if (started) window.satr.previewAction('reload'); else go(urlIn.value);
     });
 
-    function showErr(text) { err.textContent = '⚠ ' + text; err.classList.add('show'); }
+    function showErr(text, showRestart) {
+      errText.textContent = '⚠ ' + text;
+      restartServerBtn.hidden = !showRestart;
+      err.classList.add('show');
+    }
+
+    let restartRecord = null;
+    let restoreInProgress = false;
+    async function handleFailed(ev) {
+      if (restoreInProgress) {
+        showErr('الخادم يبدو قيد الإقلاع — جرّب ⟳');
+        return;
+      }
+      const cwdEl = document.getElementById('cwd');
+      const cwd = cwdEl ? cwdEl.value.trim() : '';
+      let info = null;
+      try { if (cwd) info = await window.satr.devServerInfo(cwd); } catch (e) {}
+      if (info && info.running) {
+        restartRecord = null;
+        showErr('الخادم يبدو قيد الإقلاع — جرّب ⟳');
+        return;
+      }
+      restartRecord = info && info.record ? { cwd, ...info.record } : null;
+      showErr('تعذّر الوصول إلى ' + (ev.url || 'العنوان') +
+        ' — تأكد أن خادم التطوير يعمل ثم اضغط ⟳.', !!restartRecord);
+    }
+
+    restartServerBtn.addEventListener('click', async () => {
+      if (!restartRecord) return;
+      const command = restartRecord.command;
+      if (!confirm('سيشغّل «سطر» أمر الخادم المحفوظ لهذا المشروع:\n\n' + command + '\n\nهل تريد المتابعة؟')) return;
+      restartServerBtn.disabled = true;
+      const result = await window.satr.devServerRestart(restartRecord.cwd);
+      restartServerBtn.disabled = false;
+      if (!result || !result.ok) {
+        showErr(result && result.error === 'already_running'
+          ? 'الخادم يبدو قيد الإقلاع — جرّب ⟳'
+          : 'تعذّر إعادة تشغيل خادم المشروع.');
+        return;
+      }
+      restoreInProgress = true;
+      showErr('يجري تشغيل خادم المشروع في تبويب 🛠 — ستُعاد المحاولة تلقائياً.');
+      const target = result.last_url || restartRecord.last_url || loadSavedUrl() || urlIn.value;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        setTimeout(() => {
+          if (started && target) window.satr.previewNavigate(target);
+          if (attempt === 3) restoreInProgress = false;
+        }, attempt * 4000);
+      }
+    });
 
     // ---------- أحداث العرض الأصلي ----------
     window.satr.onPreview((ev) => {
@@ -489,14 +544,14 @@ class SatrPreviewPanel extends HTMLElement {
         backBtn.disabled = !ev.canGoBack;
         fwdBtn.disabled = !ev.canGoForward;
         err.classList.remove('show');
+        restoreInProgress = false;
       } else if (ev.type === 'loading') {
         reloadBtn.classList.toggle('loading', !!ev.loading);
       } else if (ev.type === 'failed') {
         // م-1-د: فشل الوصول غالباً = الخادم غير قائم (استئناف جلسة قديمة، أو لم يُشغَّل
         // بعد). رسالة واضحة توجّه المستخدم لتشغيله بدل رمز خطأ غامض — العرض يبقى حيّاً
         // (يُظهر صفحة خطأ المتصفح) و⟳ يعيد المحاولة عليه مباشرة.
-        showErr('تعذّر الوصول إلى ' + (ev.url || 'العنوان') +
-          ' — تأكد أن خادم التطوير يعمل (اطلب من الوكيل «شغّل المشروع») ثم اضغط ⟳.');
+        handleFailed(ev);
       } else if (ev.type === 'devtools') {
         devtoolsBtn.classList.toggle('on', !!ev.open); // البند أ: عكس فتح/إغلاق DevTools
       } else if (ev.type === 'agent_activity') {

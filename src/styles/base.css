@@ -604,6 +604,7 @@
   .bg-chip .age { font-family: var(--mono); font-size: 11px; color: var(--text-dim); direction: ltr; }
   .bg-chip .kill { width: 18px; height: 18px; padding: 0; border: none; border-radius: 50%; background: var(--red); color: var(--on-danger); font-size: 11px; line-height: 18px; text-align: center; cursor: pointer; }
   .bg-chip .kill:hover { border: none; }
+  .bg-chip .show { font-size: 11px; padding: 2px var(--space-2); color: var(--accent); white-space: nowrap; }
   #bgKillAll { font-size: 12px; padding: 3px var(--space-2h); }
   /* مصغّرات الصور داخل فقاعة رسالة المستخدم */
   .msg.user .imgs { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-2); }

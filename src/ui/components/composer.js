@@ -12,11 +12,13 @@ class SatrComposer extends HTMLElement {
     if (this._wired) return;
     this._wired = true;
     const $ = (id) => document.getElementById(id);
+    const composerHost = this;
     const input = $('input');
     const notice = (t) => this.dispatchEvent(new CustomEvent('notice', { detail: t }));
     const emitSend = () => this.dispatchEvent(new CustomEvent('composer-send'));
     let commands = []; // عناصر قائمة «/» الأصلية — تُحقن من القشرة (معاودات نداء تنفيذها هناك)
     let bgProcs = []; // عمليات الخلفية المعمّرة المعروضة في شريط «قيد التشغيل»
+    let termJobs = []; // مهام pty المعمّرة المرئية في تبويبات 🛠
     const slashMenu = $('slashMenu');
     let slashIndex = 0, slashFiltered = [];
 
@@ -101,8 +103,32 @@ class SatrComposer extends HTMLElement {
 
   function renderBgBar() {
     bgChips.textContent = '';
-    if (!bgProcs.length) { bgBar.classList.remove('open'); return; }
+    if (!bgProcs.length && !termJobs.length) { bgBar.classList.remove('open'); return; }
     bgBar.classList.add('open');
+    for (const job of termJobs) {
+      const chip = document.createElement('div');
+      chip.className = 'bg-chip job';
+      chip.title = job.command || job.label || 'مهمة خلفية';
+      const cmd = document.createElement('span');
+      cmd.className = 'cmd'; cmd.textContent = '🛠 ' + (job.label || 'مهمة خلفية');
+      const age = document.createElement('span');
+      age.className = 'age'; age.dataset.start = String(job.startedAt || Date.now());
+      age.textContent = fmtDur(Date.now() - Number(age.dataset.start));
+      const show = document.createElement('button');
+      show.className = 'show'; show.type = 'button'; show.textContent = 'إظهار';
+      show.addEventListener('click', () => composerHost.dispatchEvent(new CustomEvent('show-term', { detail: job.id })));
+      const kill = document.createElement('button');
+      kill.className = 'kill'; kill.type = 'button'; kill.textContent = '✕';
+      kill.setAttribute('aria-label', 'إيقاف المهمة');
+      kill.addEventListener('click', async () => {
+        kill.disabled = true; age.removeAttribute('data-start'); age.textContent = 'يُنهى…';
+        await window.satr.termKill(job.id);
+        termJobs = termJobs.filter((item) => item.id !== job.id);
+        renderBgBar();
+      });
+      chip.appendChild(cmd); chip.appendChild(age); chip.appendChild(show); chip.appendChild(kill);
+      bgChips.appendChild(chip);
+    }
     for (const p of bgProcs) {
       const chip = document.createElement('div');
       chip.className = 'bg-chip';
@@ -134,6 +160,7 @@ class SatrComposer extends HTMLElement {
   }, 1000);
 
   $('bgKillAll').addEventListener('click', async () => {
+    for (const id of termJobs.map((job) => job.id)) await window.satr.termKill(id);
     for (const id of bgProcs.map((p) => p.id)) await window.satr.killBgProc(id);
   });
 
@@ -508,6 +535,13 @@ class SatrComposer extends HTMLElement {
     // بعد الإرسال: تمدد المحرّر + مسح المسودة + إغلاق القائمتين (input.value تصفّره القشرة)
     this.afterSend = () => { autoResize(); clearDraft(); closeSlash(); closeFiles(); };
     this.setBgProcs = (procs) => { bgProcs = Array.isArray(procs) ? procs : []; renderBgBar(); };
+    this.setTermJobs = (jobs) => { termJobs = Array.isArray(jobs) ? jobs : []; renderBgBar(); };
+    this.upsertTermJob = (job) => {
+      if (!job || !job.id) return;
+      termJobs = termJobs.filter((item) => item.id !== job.id).concat(job);
+      renderBgBar();
+    };
+    this.removeTermJob = (id) => { termJobs = termJobs.filter((job) => job.id !== id); renderBgBar(); };
     this.setHideUserSkills = (hide) => {
       hideUserSkills = Boolean(hide);
       if (slashOpenNow() && input.value.startsWith('/')) openSlash(input.value.slice(1));
