@@ -128,6 +128,11 @@ const termjobs = require('./termjobs');
 const devservers = require('./devservers');
 const updater = require('./updater');
 const preview = require('./preview'); // لوحة المعاينة المدمجة (م-1 — الدفعة 5)
+const browserorigin = require('./browserorigin');
+
+// ثقة نطاقات المتصفح تعيش بعمر التطبيق فقط. localhost موثوق من browserorigin دائماً؛
+// أما النطاق الخارجي فلا يدخل المجموعة إلا من شريط العنوان الذي حرّكه المستخدم بنفسه.
+const trustedBrowserOrigins = new Set();
 
 function sdkReviewEngineAvailable() {
   if (!agent.resolveClaudeBin()) return false;
@@ -714,6 +719,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
         // ثلاثي الحالة: true = تفويض كل أدوات المتصفح، null = الأدوات متاحة وتطلب إذناً،
         // false محجوز للسياقات المعزولة (مراجع/عصف) كي لا تُنشأ أدوات المعاينة أصلاً.
         browserControl: payload.browserControl === true ? true : null,
+        trustedBrowserOrigins,
       }, cwd, emit);
       return { started: true, engine: 'codex' };
     } catch (e) {
@@ -771,6 +777,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
       effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
       extraDirs: sanitizeExtraDirs(payload.extraDirs),
       browserControl: payload.browserControl === true, // وضع تحكّم المتصفح (محرك SDK فقط)
+      trustedBrowserOrigins,
     }, cwd, emit);
     return { started: true, engine: 'sdk' };
   } catch (e) {
@@ -837,6 +844,7 @@ const PREVIEW_ACTIONS = new Set([
   'back', 'forward', 'reload', 'devtools', 'clear_storage',
   'net_online', 'net_offline', 'net_slow', 'net_fast',
 ]);
+const SAFE_PREVIEW_SELECTOR = /^[^\x00-\x1F\x7F]{1,1000}$/;
 function previewSender(ev) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:preview', ev);
 }
@@ -844,9 +852,23 @@ ipcMain.handle('satr:previewOpen', (event, p) => {
   const url = p && p.url;
   if (!preview.isHttpUrl(url)) return { error: 'bad_url' };
   if (!mainWindow || mainWindow.isDestroyed()) return { error: 'no_window' };
+  browserorigin.trust(url, trustedBrowserOrigins);
   return preview.open(mainWindow, previewSender, url);
 });
 ipcMain.handle('satr:previewNavigate', (event, p) => {
+  const url = p && p.url;
+  if (!preview.isHttpUrl(url)) return { error: 'bad_url' };
+  browserorigin.trust(url, trustedBrowserOrigins);
+  return preview.navigate(url);
+});
+// فتح الوكيل منفصل صراحةً عن فعل المستخدم: يعرض العنوان ولا يمنحه ثقة ضمنية.
+ipcMain.handle('satr:previewOpenAgent', (event, p) => {
+  const url = p && p.url;
+  if (!preview.isHttpUrl(url)) return { error: 'bad_url' };
+  if (!mainWindow || mainWindow.isDestroyed()) return { error: 'no_window' };
+  return preview.open(mainWindow, previewSender, url);
+});
+ipcMain.handle('satr:previewNavigateAgent', (event, p) => {
   const url = p && p.url;
   if (!preview.isHttpUrl(url)) return { error: 'bad_url' };
   return preview.navigate(url);
@@ -865,6 +887,11 @@ ipcMain.handle('satr:previewBounds', (event, p) => {
 ipcMain.handle('satr:previewPick', () => preview.startPick());       // م-2: التحديد بالتأشير
 ipcMain.handle('satr:previewPickCancel', () => preview.cancelPick());
 ipcMain.handle('satr:previewFrame', () => preview.captureFrame());   // م-5: إطار للتسجيل
+ipcMain.handle('satr:previewElementShot', async (event, p) => {
+  const selector = p && p.selector;
+  if (typeof selector !== 'string' || !SAFE_PREVIEW_SELECTOR.test(selector)) return { error: 'bad_selector' };
+  return preview.screenshotElement(selector, { emitThumbnail: false });
+});
 ipcMain.handle('satr:previewClose', () => preview.close());
 
 ipcMain.handle('satr:devServerInfo', (event, p) => {

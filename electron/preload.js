@@ -117,11 +117,14 @@ contextBridge.exposeInMainWorld('satr', {
   // لوحة المعاينة المدمجة (م-1 — الدفعة 5) — قناة أحداث مستقلة satr:preview
   previewOpen: (url) => ipcRenderer.invoke('satr:previewOpen', { url }),
   previewNavigate: (url) => ipcRenderer.invoke('satr:previewNavigate', { url }),
+  previewOpenAgent: (url) => ipcRenderer.invoke('satr:previewOpenAgent', { url }),
+  previewNavigateAgent: (url) => ipcRenderer.invoke('satr:previewNavigateAgent', { url }),
   previewAction: (action) => ipcRenderer.invoke('satr:previewAction', { action }),
   previewBounds: (x, y, width, height) => ipcRenderer.invoke('satr:previewBounds', { x, y, width, height }),
   previewPick: () => ipcRenderer.invoke('satr:previewPick'),             // م-2: التحديد بالتأشير
   previewPickCancel: () => ipcRenderer.invoke('satr:previewPickCancel'),
   previewFrame: () => ipcRenderer.invoke('satr:previewFrame'),           // م-5: إطار للتسجيل
+  previewElementShot: (selector) => ipcRenderer.invoke('satr:previewElementShot', { selector }),
   previewClose: () => ipcRenderer.invoke('satr:previewClose'),
   devServerInfo: (cwd) => ipcRenderer.invoke('satr:devServerInfo', { cwd }),
   devServerRestart: (cwd) => ipcRenderer.invoke('satr:devServerRestart', { cwd }),

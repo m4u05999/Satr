@@ -10,12 +10,15 @@
 // العرض الأصلي يطفو فوق تلك المساحة (إحداثيات DIP تطابق CSS px عند zoom=1).
 // أحداث للواجهة عبر قناة مستقلة satr:preview: nav/title/loading/failed.
 
-const { WebContentsView, session } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const { WebContentsView, session, app, nativeImage } = require('electron');
 
 let view = null;      // WebContentsView الحيّة (تُنشأ عند الفتح وتُدمَّر عند الإغلاق)
 let hostWin = null;   // النافذة المضيفة
 let sender = null;    // دالة بثّ الأحداث للواجهة (يمرّرها main.js)
 let lastBounds = null; // آخر مستطيل أبلغته الواجهة — يُطبَّق عند إنشاء عرض جديد
+let viewportOverride = null; // مقاس طلبه الوكيل للتحقق المتجاوب؛ يُطبّق داخل مساحة اللوحة
 
 const PARTITION = 'persist:preview';
 
@@ -114,6 +117,69 @@ function wireNetwork() {
   } catch (e) {}
 }
 
+// تنزيلات صفحات المعاينة لا تُترك لسلوك Chromium الصامت: اسم منقّى + مسار فريد داخل
+// Downloads، ثم حدث بالمسار الفعلي. partition المعاينة مستقلة فلا يلتقط هذا تسجيلات UI.
+let downloadsWired = false;
+function safeDownloadName(name) {
+  const raw = path.basename(String(name || 'download'))
+    .replace(/[\u0000-\u001F\u007F<>:"/\\|?*]+/g, '_').replace(/[. ]+$/g, '').slice(0, 140);
+  return raw && raw !== '.' && raw !== '..' ? raw : 'download';
+}
+function uniqueDownloadPath(downloadsPath, filename, exists = fs.existsSync) {
+  if (typeof downloadsPath !== 'string' || !path.isAbsolute(downloadsPath)) return null;
+  const safe = safeDownloadName(filename);
+  const ext = path.extname(safe);
+  const stem = ext ? safe.slice(0, -ext.length) : safe;
+  for (let index = 1; index <= 999; index += 1) {
+    const candidate = path.join(downloadsPath, index === 1 ? safe : stem + '-' + index + ext);
+    if (!exists(candidate)) return candidate;
+  }
+  return null;
+}
+function wireDownloads() {
+  if (downloadsWired) return;
+  downloadsWired = true;
+  try {
+    session.fromPartition(PARTITION).on('will-download', (_event, item, webContents) => {
+      if (!item || typeof item.getFilename !== 'function' || typeof item.setSavePath !== 'function') return;
+      const wc = currentWC();
+      if (webContents && wc && webContents.id !== wc.id) return;
+      const savePath = uniqueDownloadPath(app.getPath('downloads'), item.getFilename());
+      if (!savePath) {
+        try { item.cancel(); } catch {}
+        emit({ type: 'preview_download_failed', filename: safeDownloadName(item.getFilename()) });
+        return;
+      }
+      item.setSavePath(savePath);
+      if (typeof item.once === 'function') item.once('done', (_doneEvent, state) => {
+        emit(state === 'completed'
+          ? { type: 'preview_download_saved', filename: path.basename(savePath), path: savePath }
+          : { type: 'preview_download_failed', filename: path.basename(savePath), state: String(state || 'unknown') });
+      });
+    });
+  } catch {}
+}
+
+// شهادات التطوير الذاتية تُقبل لـ localhost/127.0.0.1 فقط. أي شهادة سيئة خارجية
+// تُرفض صراحةً، ولا نمس webContents أخرى في التطبيق.
+let certificateWired = false;
+function isLocalHttpsUrl(url) {
+  try {
+    const parsed = new URL(String(url));
+    return parsed.protocol === 'https:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+  } catch { return false; }
+}
+function wireCertificates() {
+  if (certificateWired || !app || typeof app.on !== 'function') return;
+  certificateWired = true;
+  app.on('certificate-error', (event, webContents, url, _error, _certificate, callback) => {
+    const wc = currentWC();
+    if (!wc || !webContents || webContents.id !== wc.id) return;
+    event.preventDefault();
+    callback(isLocalHttpsUrl(url));
+  });
+}
+
 function wireEvents(wc) {
   const nav = () => emit({
     type: 'nav',
@@ -165,6 +231,8 @@ function ensureView(win, send) {
   if (view && !view.webContents.isDestroyed()) return view;
   wirePermissions();
   wireNetwork();
+  wireDownloads();
+  wireCertificates();
   view = new WebContentsView({
     webPreferences: {
       sandbox: true,
@@ -177,7 +245,7 @@ function ensureView(win, send) {
   view.setBackgroundColor('#ffffff'); // المواقع تفترض خلفية فاتحة قبل رسم أنماطها
   wireEvents(view.webContents);
   win.contentView.addChildView(view);
-  if (lastBounds) view.setBounds(lastBounds);
+  if (lastBounds) view.setBounds(effectiveBounds(lastBounds));
   return view;
 }
 
@@ -266,9 +334,21 @@ function setNetwork(preset) {
 }
 
 // الواجهة تبلّغ مستطيل مساحة العرض داخل النافذة (تقيسه بـ getBoundingClientRect)
+function effectiveBounds(bounds) {
+  if (!viewportOverride || !bounds) return bounds;
+  const width = Math.max(1, Math.min(bounds.width, viewportOverride.width));
+  const height = viewportOverride.height
+    ? Math.max(1, Math.min(bounds.height, viewportOverride.height)) : bounds.height;
+  return {
+    x: bounds.x + Math.max(0, Math.floor((bounds.width - width) / 2)),
+    y: bounds.y,
+    width,
+    height,
+  };
+}
 function setBounds(b) {
   lastBounds = b;
-  if (view && !view.webContents.isDestroyed()) view.setBounds(b);
+  if (view && !view.webContents.isDestroyed()) view.setBounds(effectiveBounds(b));
   return { ok: true };
 }
 
@@ -395,6 +475,51 @@ async function cancelPick() {
 // برومبت محتمل موثّق — قراءة فقط، الوكيل يطلبه عمداً ليفحص).
 function currentWC() {
   return (view && !view.webContents.isDestroyed()) ? view.webContents : null;
+}
+
+function currentUrl() {
+  const wc = currentWC();
+  return wc ? wc.getURL() : null;
+}
+
+function navigationTarget(direction) {
+  const wc = currentWC();
+  if (!wc || !wc.navigationHistory || typeof wc.navigationHistory.getAllEntries !== 'function') return null;
+  try {
+    const entries = wc.navigationHistory.getAllEntries();
+    const active = wc.navigationHistory.getActiveIndex();
+    const index = direction === 'back' ? active - 1 : direction === 'forward' ? active + 1 : -1;
+    return entries[index] && entries[index].url ? String(entries[index].url) : null;
+  } catch {
+    return null;
+  }
+}
+
+// هدف الفعل الأمني: النقر على رابط/زر إرسال يُنسب إلى وجهة الرابط أو form action لا
+// إلى الصفحة الحالية فقط، كي لا يقفز فعل معفى من origin موثوق إلى origin جديد بصمت.
+const ACTION_TARGET_FN = `function(name,loc){
+  function resolve(l){if(l==='__active__')return document.activeElement;l=String(l||'');if(/^e[0-9]+$/.test(l))return document.querySelector('[data-satr-ref="'+l+'"]');return l?document.querySelector(l):document.activeElement;}
+  var el;try{el=resolve(loc);}catch(e){return null;}if(!el)return location.href;
+  if(name==='browser_click'){
+    var anchor=el.closest&&el.closest('a[href]');if(anchor&&anchor.href)return anchor.href;
+    var form=el.form||(el.closest&&el.closest('form'));if(form&&form.action)return form.action;
+  }
+  if(name==='browser_press_key'){
+    var active=document.activeElement,activeForm=active&&(active.form||(active.closest&&active.closest('form')));if(activeForm&&activeForm.action)return activeForm.action;
+  }
+  return location.href;
+}`;
+async function browserTarget(name, input) {
+  if (handoffActive) return null;
+  const wc = currentWC();
+  if (!wc) return null;
+  const bare = String(name || '').replace(/^mcp__satr-terminal__/, '');
+  if (bare !== 'browser_click' && bare !== 'browser_press_key') return wc.getURL();
+  const locator = bare === 'browser_press_key' ? '__active__' : input && input.ref;
+  try {
+    const target = await wc.executeJavaScript('(' + ACTION_TARGET_FN + ')(' + JSON.stringify(bare) + ',' + JSON.stringify(String(locator || '')) + ')', true);
+    return isHttpUrl(target) ? target : wc.getURL();
+  } catch { return wc.getURL(); }
 }
 
 // انتظار انتهاء أي تحميل جارٍ (open_preview قبله بلحظة) بمهلة — كي يقرأ الوكيل بعد الجهوز
@@ -560,6 +685,21 @@ async function waitFor(cond, timeoutMs) {
   return { ok: true, found: false };
 }
 
+function emitScreenshotThumbnail(image, kind, locator) {
+  try {
+    if (!image || image.isEmpty()) return;
+    const size = image.getSize();
+    const thumb = size.width > 360 ? image.resize({ width: 360, quality: 'good' }) : image;
+    const data = thumb.toPNG();
+    if (!data || !data.length || data.length > 512 * 1024) return;
+    emit({
+      type: 'agent_screenshot', kind: String(kind || 'page'),
+      locator: locator ? String(locator).slice(0, 500) : '',
+      dataUrl: 'data:image/png;base64,' + data.toString('base64'),
+    });
+  } catch {}
+}
+
 async function screenshot() {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
@@ -569,6 +709,7 @@ async function screenshot() {
     const img = await wc.capturePage();
     const png = img.toPNG();
     if (!png || !png.length) return { error: 'empty' };
+    emitScreenshotThumbnail(img, 'page');
     return { ok: true, base64: png.toString('base64') };
   } catch (e) { return { error: 'shot_failed' }; }
 }
@@ -585,7 +726,7 @@ const RECT_FN = `function(loc){
   return {x: Math.max(0, Math.floor(r.left)), y: Math.max(0, Math.floor(r.top)), width: Math.ceil(r.width), height: Math.ceil(r.height)};
 }`;
 
-async function screenshotElement(locator) {
+async function screenshotElement(locator, options) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
@@ -600,6 +741,7 @@ async function screenshotElement(locator) {
     });
     const png = img.toPNG();
     if (!png || !png.length) return { error: 'empty' };
+    if (!options || options.emitThumbnail !== false) emitScreenshotThumbnail(img, 'element', locator);
     return { ok: true, base64: png.toString('base64') };
   } catch (e) { return { error: 'shot_failed' }; }
 }
@@ -626,13 +768,17 @@ async function screenshotFull() {
       format: 'png', captureBeyondViewport: true, clip,
     });
     if (!shot || !shot.data) return { error: 'empty' };
+    try { emitScreenshotThumbnail(nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')), 'full_page'); } catch {}
     return { ok: true, base64: shot.data, truncated: height >= MAX_FULL_HEIGHT };
   } catch (e) {
     // سقوط رشيق للقطة نافذة العرض العادية إن فشل مسار CDP
     try {
       const img = await wc.capturePage();
       const png = img.toPNG();
-      if (png && png.length) return { ok: true, base64: png.toString('base64'), fellBack: true };
+      if (png && png.length) {
+        emitScreenshotThumbnail(img, 'page');
+        return { ok: true, base64: png.toString('base64'), fellBack: true };
+      }
     } catch (e2) {}
     return { error: 'shot_failed' };
   } finally {
@@ -648,6 +794,60 @@ async function screenshotFull() {
 // قائمة نطاقات (يعفي فعلاً لا نطاقاً) فلم تلزم. الكتابة عبر native value setter
 // ليلتقطها React/Vue (input/change events)، والنقر el.click() بعد scrollIntoView.
 // resolve: ref (^e\\d+$) ⇒ سمة data-satr-ref؛ غيره ⇒ querySelector (قد يرمي ⇒ bad_selector).
+const FLASH_FN = `function(loc){
+  function resolve(l){ if(l==='__active__') return document.activeElement; if(l==='__page__') return document.documentElement; l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  var el; try { el=resolve(loc); } catch(e){ return {ok:false,reason:'bad_selector'}; }
+  if(!el) return {ok:false,reason:'not_found'};
+  try { if(loc!=='__page__') el.scrollIntoView({block:'center',inline:'center'}); } catch(e){}
+  var old=document.querySelector('[data-satr-agent-flash]'); if(old) old.remove();
+  var r=loc==='__page__'?{left:4,top:4,width:Math.max(1,innerWidth-8),height:Math.max(1,innerHeight-8)}:el.getBoundingClientRect();
+  var box=document.createElement('div'); box.setAttribute('data-satr-agent-flash','1');
+  box.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;border:3px solid #D9A441;border-radius:5px;background:rgba(217,164,65,.12);box-shadow:0 0 0 3px rgba(217,164,65,.20);transition:opacity .35s;';
+  box.style.left=Math.max(0,r.left)+'px'; box.style.top=Math.max(0,r.top)+'px'; box.style.width=Math.max(1,r.width)+'px'; box.style.height=Math.max(1,r.height)+'px';
+  document.documentElement.appendChild(box); setTimeout(function(){box.style.opacity='0';},850); setTimeout(function(){box.remove();},1250);
+  return {ok:true};
+}`;
+const PROBE_BEGIN = `(function(){
+  try{if(window.__satrActionProbe&&window.__satrActionProbe.ob)window.__satrActionProbe.ob.disconnect();}catch(e){}
+  var p={count:0,url:location.href};p.ob=new MutationObserver(function(records){records.forEach(function(r){
+    var t=r.target&&r.target.nodeType===1?r.target:r.target&&r.target.parentElement;
+    if(t&&((t.matches&&t.matches('[data-satr-agent-flash]'))||(t.closest&&t.closest('[data-satr-agent-flash]'))))return;
+    var n=[].slice.call(r.addedNodes||[]).concat([].slice.call(r.removedNodes||[]));
+    if(n.length&&n.every(function(x){return x.nodeType===1&&x.matches&&x.matches('[data-satr-agent-flash]');}))return;p.count++;
+  });});p.ob.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true});window.__satrActionProbe=p;return {url:p.url};
+})()`;
+const PROBE_END = `(function(){var p=window.__satrActionProbe;if(!p)return {count:0,url:location.href};try{p.ob.disconnect();}catch(e){}window.__satrActionProbe=null;return {count:p.count||0,url:location.href};})()`;
+
+async function flashLocator(wc, locator) {
+  try { return await wc.executeJavaScript('(' + FLASH_FN + ')(' + JSON.stringify(String(locator)) + ')', true); }
+  catch { return { ok: false, reason: 'flash_failed' }; }
+}
+
+async function observedResult(wc, beforeUrl, actionResult) {
+  await new Promise((resolve) => setTimeout(resolve, 360));
+  let probe = { count: 0, url: wc.getURL() };
+  try { probe = await wc.executeJavaScript(PROBE_END, true) || probe; } catch {}
+  const navigated = wc.getURL() !== beforeUrl || probe.url !== beforeUrl;
+  const domChanged = !!actionResult.changed || Number(probe.count) > 0;
+  return {
+    ...actionResult, ok: true, navigated, dom_changed: domChanged,
+    note: !navigated && !domChanged ? 'لم يُرصد تغيير في DOM أو التنقّل؛ تحقّق بلقطة جديدة.' : undefined,
+  };
+}
+
+async function observeScript(wc, expression) {
+  const beforeUrl = wc.getURL();
+  try { await wc.executeJavaScript(PROBE_BEGIN, true); } catch {}
+  try {
+    const result = await wc.executeJavaScript(expression, true);
+    if (!result || !result.ok) return { error: (result && result.reason) || 'action_failed' };
+    return observedResult(wc, beforeUrl, result);
+  } catch {
+    if (wc.getURL() !== beforeUrl) return { ok: true, navigated: true, dom_changed: false, note: 'انتقلت الصفحة أثناء الفعل.' };
+    return { error: 'action_failed' };
+  }
+}
+
 const CLICK_FN = `function(loc){
   function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
   var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
@@ -660,21 +860,31 @@ const TYPE_FN = `function(loc, text){
   function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
   var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
   if (!el) return {ok:false, reason:'not_found'};
+  var before = '';
   try {
     el.focus();
     var tag = el.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') {
+      before = el.value;
       var proto = tag === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
       var desc = Object.getOwnPropertyDescriptor(proto, 'value');
       if (desc && desc.set) desc.set.call(el, text); else el.value = text;
       el.dispatchEvent(new Event('input', {bubbles:true}));
       el.dispatchEvent(new Event('change', {bubbles:true}));
     } else if (el.isContentEditable) {
-      el.textContent = text;
-      el.dispatchEvent(new Event('input', {bubbles:true}));
+      before = el.innerHTML;
+      var selection = getSelection(), range = document.createRange();
+      range.selectNodeContents(el); selection.removeAllRanges(); selection.addRange(range);
+      var beforeInput = new InputEvent('beforeinput', {bubbles:true, cancelable:true, inputType:'insertText', data:text});
+      if (el.dispatchEvent(beforeInput)) {
+        var inserted = false;
+        try { inserted = document.execCommand('insertText', false, text); } catch(e){}
+        if (!inserted) el.textContent = text;
+      }
+      el.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text}));
     } else { return {ok:false, reason:'not_editable'}; }
   } catch(e){ return {ok:false, reason:'type_error'}; }
-  return {ok:true, tag: el.tagName.toLowerCase()};
+  return {ok:true, tag: el.tagName.toLowerCase(), changed: (el.isContentEditable ? el.innerHTML : el.value) !== before};
 }`;
 
 async function clickElement(locator) {
@@ -682,10 +892,10 @@ async function clickElement(locator) {
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
-  try {
-    const r = await wc.executeJavaScript('(' + CLICK_FN + ')(' + JSON.stringify(String(locator)) + ')', true);
-    return r && r.ok ? { ok: true, tag: r.tag, text: r.text } : { error: (r && r.reason) || 'click_failed' };
-  } catch (e) { return { error: 'click_failed' }; }
+  const flashed = await flashLocator(wc, locator);
+  if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
+  const r = await observeScript(wc, '(' + CLICK_FN + ')(' + JSON.stringify(String(locator)) + ')');
+  return r.error === 'action_failed' ? { error: 'click_failed' } : r;
 }
 
 async function typeText(locator, text) {
@@ -693,11 +903,11 @@ async function typeText(locator, text) {
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
-  try {
-    const r = await wc.executeJavaScript(
-      '(' + TYPE_FN + ')(' + JSON.stringify(String(locator)) + ',' + JSON.stringify(String(text)) + ')', true);
-    return r && r.ok ? { ok: true, tag: r.tag } : { error: (r && r.reason) || 'type_failed' };
-  } catch (e) { return { error: 'type_failed' }; }
+  const flashed = await flashLocator(wc, locator);
+  if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
+  const r = await observeScript(wc,
+    '(' + TYPE_FN + ')(' + JSON.stringify(String(locator)) + ',' + JSON.stringify(String(text)) + ')');
+  return r.error === 'action_failed' ? { error: 'type_failed' } : r;
 }
 
 // ---------- إكمال طقم الأفعال (البند 2) — قائمة منسدلة/مفتاح/تمرير/تحويم ----------
@@ -713,10 +923,11 @@ const SELECT_FN = `function(loc, val){
   for (i=0;i<opts.length;i++){ if (opts[i].value === val){ match = opts[i]; break; } }
   if (!match) for (i=0;i<opts.length;i++){ if ((opts[i].textContent||'').replace(/\\s+/g,' ').trim() === val){ match = opts[i]; break; } }
   if (!match) return {ok:false, reason:'no_option'};
+  var before = el.value;
   el.value = match.value;
   el.dispatchEvent(new Event('input', {bubbles:true}));
   el.dispatchEvent(new Event('change', {bubbles:true}));
-  return {ok:true, label: (match.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80)};
+  return {ok:true, label: (match.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80), changed: el.value !== before};
 }`;
 const HOVER_FN = `function(loc){
   function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
@@ -748,11 +959,11 @@ async function selectOption(locator, value) {
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
-  try {
-    const r = await wc.executeJavaScript(
-      '(' + SELECT_FN + ')(' + JSON.stringify(String(locator)) + ',' + JSON.stringify(String(value)) + ')', true);
-    return r && r.ok ? { ok: true, label: r.label } : { error: (r && r.reason) || 'select_failed' };
-  } catch (e) { return { error: 'select_failed' }; }
+  const flashed = await flashLocator(wc, locator);
+  if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
+  const r = await observeScript(wc,
+    '(' + SELECT_FN + ')(' + JSON.stringify(String(locator)) + ',' + JSON.stringify(String(value)) + ')');
+  return r.error === 'action_failed' ? { error: 'select_failed' } : r;
 }
 
 async function hover(locator) {
@@ -760,6 +971,8 @@ async function hover(locator) {
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
+  const flashed = await flashLocator(wc, locator);
+  if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
   try {
     const r = await wc.executeJavaScript('(' + HOVER_FN + ')(' + JSON.stringify(String(locator)) + ')', true);
     return r && r.ok ? { ok: true, tag: r.tag } : { error: (r && r.reason) || 'hover_failed' };
@@ -773,6 +986,7 @@ async function scroll(direction, amount) {
   await waitReady(wc);
   const dir = ['up', 'down', 'top', 'bottom'].indexOf(String(direction)) >= 0 ? String(direction) : 'down';
   const amt = Number(amount) > 0 ? Math.min(Number(amount), 20000) : 0;
+  await flashLocator(wc, '__page__');
   try {
     const r = await wc.executeJavaScript('(' + SCROLL_FN + ')(' + JSON.stringify(dir) + ',' + JSON.stringify(amt) + ')', true);
     return r && r.ok ? { ok: true, scrollY: r.scrollY, moved: r.moved, max: r.max } : { error: 'scroll_failed' };
@@ -786,19 +1000,110 @@ const KEY_MAP = {
   ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
   Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
 };
-function pressKey(key) {
+async function pressKey(key) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   const code = KEY_MAP[String(key)];
   if (!code) return { error: 'bad_key' };
+  await flashLocator(wc, '__active__');
+  const beforeUrl = wc.getURL();
+  try { await wc.executeJavaScript(PROBE_BEGIN, true); } catch {}
   try {
     wc.focus();
     wc.sendInputEvent({ type: 'keyDown', keyCode: code });
     wc.sendInputEvent({ type: 'keyUp', keyCode: code });
   } catch (e) { return { error: 'press_failed' }; }
-  return { ok: true, key: String(key) };
+  return observedResult(wc, beforeUrl, { ok: true, key: String(key) });
 }
+
+// JavaScript تشخيصي خلف بوابة origin. السقف يحمي السياق، وCDP timeout يوقف التنفيذ
+// المتزامن الطويل بدلاً من ترك executeJavaScript معلّقاً. النتيجة تُعاد by-value فقط.
+async function evaluate(expression) {
+  if (handoffActive) return { error: 'handoff' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  const expr = typeof expression === 'string' ? expression.trim() : '';
+  if (!expr || expr.length > 8000) return { error: 'bad_expression' };
+  const dbg = wc.debugger;
+  let attachedHere = false;
+  try {
+    if (!dbg.isAttached || !dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; }
+    const source = `(async function(expr){
+      function clean(value){
+        if(value===undefined)return 'undefined';
+        if(typeof value==='string')return value;
+        try{return JSON.stringify(value,function(key,item){if(typeof item==='bigint')return String(item)+'n';if(typeof item==='function')return '[Function]';return item;},2);}catch(e){return String(value);}
+      }
+      var value=await Promise.race([Promise.resolve().then(function(){return (0,eval)(expr);}),new Promise(function(_,reject){setTimeout(function(){reject(new Error('timeout'));},3000);})]);
+      return clean(value);
+    })(${JSON.stringify(expr)})`;
+    const result = await dbg.sendCommand('Runtime.evaluate', {
+      expression: source, awaitPromise: true, returnByValue: true, timeout: 3500,
+    });
+    if (result && result.exceptionDetails) return { error: 'evaluate_failed', message: String(result.exceptionDetails.text || 'JavaScript error').slice(0, 1000) };
+    const value = result && result.result ? result.result.value : undefined;
+    return { ok: true, value: String(value == null ? value : value).slice(0, 48 * 1024), truncated: String(value || '').length > 48 * 1024 };
+  } catch (error) {
+    try { if (dbg.isAttached && dbg.isAttached()) await dbg.sendCommand('Runtime.terminateExecution'); } catch {}
+    return { error: 'evaluate_failed', message: String((error && error.message) || error).slice(0, 1000) };
+  } finally {
+    if (attachedHere) { try { dbg.detach(); } catch {} }
+  }
+}
+
+async function setViewport(width, height) {
+  if (handoffActive) return { error: 'handoff' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  const w = Number(width), h = height == null ? null : Number(height);
+  if (!Number.isInteger(w) || w < 240 || w > 1920
+      || (h != null && (!Number.isInteger(h) || h < 240 || h > 1200))) return { error: 'bad_viewport' };
+  viewportOverride = { width: w, height: h };
+  if (view && lastBounds) view.setBounds(effectiveBounds(lastBounds));
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  try {
+    const actual = await wc.executeJavaScript('({width:window.innerWidth,height:window.innerHeight,dpr:window.devicePixelRatio})', true);
+    return { ok: true, requested: { width: w, height: h }, actual };
+  } catch { return { error: 'viewport_failed' }; }
+}
+
+async function perf() {
+  if (handoffActive) return { error: 'handoff' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const data = await wc.executeJavaScript(`(function(){
+      var nav=performance.getEntriesByType('navigation')[0];
+      var resources=performance.getEntriesByType('resource').map(function(r){return {name:r.name.slice(0,500),type:r.initiatorType||'',duration:Math.round(r.duration),transferSize:Number(r.transferSize)||0,decodedSize:Number(r.decodedBodySize)||0};}).sort(function(a,b){return b.duration-a.duration;}).slice(0,12);
+      return {url:location.href,navigation:nav?{dns:Math.round(nav.domainLookupEnd-nav.domainLookupStart),connect:Math.round(nav.connectEnd-nav.connectStart),ttfb:Math.round(nav.responseStart-nav.requestStart),domContentLoaded:Math.round(nav.domContentLoadedEventEnd-nav.startTime),load:Math.round(nav.loadEventEnd-nav.startTime),transferSize:Number(nav.transferSize)||0}:null,resources:resources};
+    })()`, true);
+    return { ok: true, perf: data, failed_requests: netReqBuf.filter((item) => item.status >= 400 || item.status === 0).slice(-20) };
+  } catch { return { error: 'perf_failed' }; }
+}
+
+async function historyNavigate(direction) {
+  if (handoffActive) return { error: 'handoff' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  const history = wc.navigationHistory;
+  const canGo = direction === 'back'
+    ? (history ? history.canGoBack() : wc.canGoBack())
+    : (history ? history.canGoForward() : wc.canGoForward());
+  if (!canGo) return { ok: true, navigated: false, dom_changed: false, note: direction === 'back' ? 'لا يوجد سجل رجوع.' : 'لا يوجد سجل تقدّم.' };
+  const before = wc.getURL();
+  try { direction === 'back' ? (history ? history.goBack() : wc.goBack()) : (history ? history.goForward() : wc.goForward()); }
+  catch { return { error: 'navigation_failed' }; }
+  await Promise.race([
+    new Promise((resolve) => wc.once('did-navigate', resolve)),
+    new Promise((resolve) => setTimeout(resolve, 1800)),
+  ]);
+  return { ok: true, navigated: wc.getURL() !== before, dom_changed: false, url: wc.getURL() };
+}
+
+function back() { return historyNavigate('back'); }
+function forward() { return historyNavigate('forward'); }
 
 // ---------- التقاط إطار للتسجيل (م-5) ----------
 // المكوّن يطلب إطاراً دورياً (~8/ث) فنعيد PNG base64؛ الواجهة ترسمه على <canvas>
@@ -832,6 +1137,7 @@ function close() {
   try { if (hostWin && !hostWin.isDestroyed()) hostWin.contentView.removeChildView(view); } catch (e) {}
   try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {}
   view = null;
+  viewportOverride = null;
   netThrottled = false; // عرض جديد يبدأ بلا محاكاة شبكة (debugger مات مع الإغلاق)
   return { ok: true };
 }
@@ -839,4 +1145,11 @@ function close() {
 // عند إغلاق التطبيق (نفس فلسفة bgprocs/term)
 function destroy() { close(); hostWin = null; sender = null; }
 
-module.exports = { open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor, getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText, selectOption, hover, scroll, pressKey, captureFrame, emitAgentActivity, startHandoff, endHandoff, isHandoffActive, close, destroy, isHttpUrl };
+module.exports = {
+  open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor,
+  getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText,
+  selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
+  currentUrl, navigationTarget, browserTarget, captureFrame, emitAgentActivity, startHandoff, endHandoff,
+  isHandoffActive, close, destroy, isHttpUrl,
+  _internals: { safeDownloadName, uniqueDownloadPath, effectiveBounds, isLocalHttpsUrl },
+};

@@ -9,6 +9,7 @@ const SDK_TOOL_NAMES = Object.freeze([
   'open_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network',
   'screenshot', 'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover', 'browser_click',
   'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
+  'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
   'load_skill', 'read_skill_resource', 'verification_config', 'verify_project', 'propose_memory',
 ]);
 
@@ -52,6 +53,8 @@ function browserPolicy(hasBrowser) {
     '- افتح صفحات الويب داخل معاينة «سطر» بأداة open_preview، لا Chrome/Edge/Firefox ولا أوامر فتح متصفح خارجي.',
     '- افحص ما بنيته عبر read_page وbrowser_snapshot وscreenshot وbrowser_console وbrowser_network.',
     '- خذ browser_snapshot قبل التفاعل، واستعمل refs مع browser_click/browser_type ثم خذ لقطة جديدة لأن refs تتغيّر.',
+    '- القراءة حرة في وضع تحكم المتصفح؛ أما الفعل والتنقّل وbrowser_evaluate على نطاق خارجي جديد فتحتاج ثقة المستخدم بالنطاق مرة واحدة. localhost موثوق دائماً.',
+    '- تحقق من التجاوب فعلياً عبر browser_set_viewport، ثم أرفق دليلاً من screenshot أو القيم الفعلية؛ واستعمل browser_perf لتشخيص البطء.',
     '- عند تسجيل الدخول أو كلمة مرور أو 2FA استخدم browser_handoff ولا تطلب السر في المحادثة.',
   ].join('\n');
 }

@@ -153,13 +153,18 @@ function mapMode(mode) {
 // المشترك مع محرك SDK — نسخة واحدة لا نسختان تتباعدان، مع promptRequestsExternalBrowser
 // لاحترام طلب المستخدم الصريح لمتصفح خارجي.)
 const { isExternalBrowserLaunchCommand, promptRequestsExternalBrowser } = require('./browserguard');
+const browserorigin = require('./browserorigin');
 
 // ---------- الأدوات الموافَق عليها «دائماً» (لعمر التطبيق — نظير agent.js) ----------
 const alwaysAllowed = new Set();
 
-function shouldAutoApproveMcp(access, browserControl, permissionMode, remembered, neverAlways) {
+function shouldAutoApproveMcp(access, browserControl, permissionMode, remembered, neverAlways, toolName, target, trustedSet, currentUrl) {
   if (permissionMode === 'bypassPermissions') return true;
-  if (access === 'browser' && browserControl === true) return true;
+  if (access === 'browser' && browserControl === true) {
+    const browserClass = browserorigin.classifyBrowserTool(toolName);
+    if (!browserorigin.canAutoControl(toolName, target, trustedSet)) return false;
+    return browserClass !== 'act' || browserorigin.isTrusted(currentUrl || target, trustedSet);
+  }
   return remembered === true && neverAlways !== true;
 }
 
@@ -172,7 +177,7 @@ function decodeBase64(s) { try { return Buffer.from(s, 'base64').toString('utf8'
 /**
  * يبدأ دوراً واحداً ويعيد مقبضاً فيه stop و resolvePermission (نفس عقد agent.start).
  */
-async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, browserControl }, cwd, emit) {
+async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, browserControl, trustedBrowserOrigins }, cwd, emit) {
   const bin = resolveCodexBin();
   if (!bin) {
     emit({ type: 'spawn_error', text: 'لم يُعثر على Codex CLI. ثبّته: npm install -g @openai/codex' });
@@ -200,13 +205,25 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // أفعال المتصفح (نقر/كتابة/اختيار/مفتاح) تمرّ بمربع الإذن العربي نفسه — Codex لا
       // يبوّب نداءات MCP، فنبوّبها هنا (نفس قناة أذونات الأوامر: emit + resolvePermission).
       // bypassPermissions أو «موافقة دائمة» للأداة يعفيان. رفض ⇒ لا يُنفَّذ الفعل.
-      requestPermission: (toolName, input, access, neverAlways) => new Promise((resolve) => {
+      requestPermission: (toolName, input, access, neverAlways, target, currentUrl) => new Promise((resolve) => {
         if (shouldAutoApproveMcp(access, browserControl, permissionMode,
-          alwaysAllowed.has(toolName), neverAlways)) { resolve(true); return; }
+          alwaysAllowed.has(toolName), neverAlways, toolName, target, trustedBrowserOrigins, currentUrl)) { resolve(true); return; }
         const permId = 'cxmcp_' + (++mcpPermSeq) + '_' + Math.random().toString(36).slice(2, 6);
-        mcpPerms.set(permId, { resolve, tool: toolName, neverAlways: !!neverAlways });
-        emit({ type: 'permission_request', id: permId, tool: toolName, input: input || {},
-          turnEligible: false, alwaysEligible: !neverAlways });
+        const browserClass = browserorigin.classifyBrowserTool(toolName);
+        const targetTrusted = browserorigin.isTrusted(target, trustedBrowserOrigins);
+        const currentTrusted = browserorigin.isTrusted(currentUrl, trustedBrowserOrigins);
+        const trustTarget = targetTrusted && browserClass === 'act' && !currentTrusted ? currentUrl : target;
+        const origin = browserorigin.originOf(trustTarget);
+        const originTrust = browserControl === true
+          && (browserClass === 'navigate' || browserClass === 'act')
+          && (!targetTrusted || (browserClass === 'act' && !currentTrusted));
+        mcpPerms.set(permId, { resolve, tool: toolName, neverAlways: !!neverAlways, originTrust, origin });
+        emit({
+          type: 'permission_request', id: permId, tool: toolName, input: input || {},
+          detail: originTrust ? browserorigin.trustPrompt(toolName, trustTarget) + (trustTarget !== target ? '\nوجهة الفعل: ' + target : '') + '\n\nتفاصيل الفعل:\n' + JSON.stringify(input || {}, null, 2).slice(0, 8000) : '',
+          turnEligible: false, alwaysEligible: originTrust ? !!origin : !neverAlways,
+          alwaysLabel: originTrust ? 'ثق بالنطاق لهذه الجلسة' : '', originTrust,
+        });
       }),
       // مؤشّر نشاط: عند كل نداء أداة يومض «🤖 الوكيل …» على لوحة المعاينة (عبر preview.js
       // → previewSender → preview-panel). أدوات Codex تُنفَّذ على خادم HTTP منفصل فلا تظهر
@@ -754,7 +771,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       const mcp = mcpPerms.get(id);
       if (mcp) {
         mcpPerms.delete(id);
-        if (allow && always && !mcp.neverAlways) alwaysAllowed.add(mcp.tool);
+        if (allow && always && mcp.originTrust && mcp.origin && trustedBrowserOrigins instanceof Set) {
+          trustedBrowserOrigins.add(mcp.origin);
+        } else if (allow && always && !mcp.neverAlways) alwaysAllowed.add(mcp.tool);
         try { mcp.resolve(!!allow); } catch {}
         return true;
       }
