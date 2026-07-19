@@ -20,6 +20,9 @@ const SUITE = [
   'test:opsroom-all',
   'test:codexmcp',
   'test:browserguard',
+  'test:execguard',
+  'test:termjobs',
+  'test:envbrief',
   'test:satr-guide',
   'test:handoff-bar-live',
   'test:preview-recording',
@@ -34,6 +37,7 @@ const SUITE = [
   'test:activity',
   'test:opsroom-all-live',
   'test:terminal-tabs',
+  'test:background-ui-live',
   'test:question-dialog',
   'eval:agent',
 ];

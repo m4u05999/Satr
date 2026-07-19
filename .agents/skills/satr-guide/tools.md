@@ -24,6 +24,10 @@
 - **`browser_select_option`** — اختر خياراً من قائمة منسدلة <select>. مرّر ref (من browser_snapshot) أو مُحدِّد CSS، مع value الخيار أو نصّه الظاهر.
 - **`browser_press_key`** — اضغط مفتاحاً على العنصر المركّز في الصفحة (بعد browser_click لتركيزه). لإرسال نموذج بـ Enter أو التنقّل بـ Tab/الأسهم. للكتابة استعمل browser_type.
 - **`browser_handoff`** — سلّم قيادة المعاينة للمستخدم ليكمل خطوة بيده داخل متصفح «سطر» (تسجيل دخول، كلمة مرور، رمز تحقق 2FA أو بيانات حساسة) ثم انتظر ضغطه «استلمت». استعملها بدل طلب بيانات حساسة في المحادثة وبدل إحالة المستخدم لمتصفح خارجي. أثناء التسليم كل أدوات المعاينة معلّقة ولا ترى الصفحة. بعد الاستلام خذ browser_snapshot جديداً وأكمل.
+- **`run_in_background`** — شغّل خادم تطوير أو مهمة طويلة داخل تبويب طرفية مرئي ومعمّر في «سطر». يبقى بعد نهاية الدور والجلسة حتى يوقفه المستخدم.
+- **`get_background_output`** — اقرأ ذيل سجل مهمة خلفية معمّرة من طرفية «سطر» بلا إيقافها.
+- **`list_background_tasks`** — اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة لتجنب تشغيل خادم ثانٍ.
+- **`stop_background_task`** — أوقف مهمة خلفية معمّرة أو عملية خلفية قديمة. يطلب الإذن في كل مرة.
 
 ## أدوات حلقة الوكيل للمحوّلات (DeepSeek/Gemini/Qwen/MiniMax…)
 
@@ -43,5 +47,9 @@
 - **`write_file`** — Create a new file or completely overwrite an existing file in the user's project. The user is asked for permission first. Prefer edit_file for small changes to existing files.
 - **`delete_file`** — Delete a file from the user's project. The user is asked for permission first. This is reliable for any filename (including Arabic names) — prefer it over shell commands like del/rm for deleting files.
 - **`run_command`** — Run a single-line shell command (PowerShell on Windows) in the user's visible terminal and return its output. The user must approve each command. Long-running interactive apps (servers) will be cut by the timeout.
+- **`run_in_background`** — Start a development server or long-running task in a persistent visible Satr terminal tab. It survives the turn and chat session until stopped.
+- **`get_background_output`** — Read the tail of a persistent Satr background terminal without stopping it.
+- **`list_background_tasks`** — List persistent Satr terminal jobs and legacy tracked background processes. Call before starting another server.
+- **`stop_background_task`** — Stop one persistent background task. The user is asked for permission every time.
 - **`edit_file`** — Edit an existing file by exact string replacement. old_string must match the file content exactly (including whitespace) and must be unique unless replace_all is true. The user is asked for permission first.
 

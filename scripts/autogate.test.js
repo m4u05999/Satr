@@ -21,6 +21,8 @@ check('Write تُسأل في auto', autoNeedsPrompt('Write', 'auto') === true);
 check('Edit تُسأل في auto', autoNeedsPrompt('Edit', 'auto') === true);
 check('MultiEdit تُسأل في auto', autoNeedsPrompt('MultiEdit', 'auto') === true);
 check('run_in_terminal تُسأل في auto', autoNeedsPrompt('mcp__satr-terminal__run_in_terminal', 'auto') === true);
+check('run_in_background تُسأل في auto', autoNeedsPrompt('mcp__satr-terminal__run_in_background', 'auto') === true);
+check('stop_background_task تُسأل في auto', autoNeedsPrompt('mcp__satr-terminal__stop_background_task', 'auto') === true);
 check('verify_project تُسأل في auto', autoNeedsPrompt('mcp__satr-verify__verify_project', 'auto') === true);
 check('أداة مجهولة (خادم MCP مستخدم) تُسأل — fail-safe', autoNeedsPrompt('mcp__someserver__do_thing', 'auto') === true);
 check('WebFetch تُسأل في auto', autoNeedsPrompt('WebFetch', 'auto') === true);
@@ -32,6 +34,8 @@ check('Read تمرّ دون سؤال', autoNeedsPrompt('Read', 'auto') === false
 check('Glob تمرّ دون سؤال', autoNeedsPrompt('Glob', 'auto') === false);
 check('Grep تمرّ دون سؤال', autoNeedsPrompt('Grep', 'auto') === false);
 check('read_page (قرائية) تمرّ', autoNeedsPrompt('mcp__satr-terminal__read_page', 'auto') === false);
+check('get_background_output (قرائية) تمرّ', autoNeedsPrompt('mcp__satr-terminal__get_background_output', 'auto') === false);
+check('list_background_tasks (قرائية) تمرّ', autoNeedsPrompt('mcp__satr-terminal__list_background_tasks', 'auto') === false);
 check('browser_console (قرائية) تمرّ', autoNeedsPrompt('mcp__satr-terminal__browser_console', 'auto') === false);
 
 // 3) الإصلاح: أدوات المعاينة غير القرائية أُزيلت من الآمنة ⇒ تُسأل (مراجعة كودكس الثانية)

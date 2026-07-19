@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>اختبار واجهة المهام الخلفية</title>
+  <link rel="stylesheet" href="../../src/vendor/fonts.css">
+  <link rel="stylesheet" href="../../src/vendor/xterm.css">
+  <link rel="stylesheet" href="../../src/styles/base.css">
+</head>
+<body>
+  <header><input id="cwd" value="D:\project"><button id="termToggle" type="button">الطرفية</button></header>
+  <satr-terminal-panel></satr-terminal-panel>
+  <satr-composer><footer>
+    <div id="bgBar"><span id="bgChips" class="bg-chips"></span><button id="bgKillAll" type="button">إيقاف الكل</button></div>
+    <div id="attachments"></div><button id="attachBtn" type="button">إرفاق</button><input id="fileInput" type="file">
+    <textarea id="input"></textarea><button id="send" type="button">إرسال</button>
+    <div id="slashMenu"></div><div id="fileMenu"></div>
+  </footer></satr-composer>
+  <satr-perm-dialog></satr-perm-dialog>
+  <script src="../../src/vendor/xterm.js"></script>
+  <script src="../../src/vendor/addon-fit.js"></script>
+  <script src="background-ui-live-page.js"></script>
+  <script type="module" src="../../src/ui/components/terminal-panel.js"></script>
+  <script type="module" src="../../src/ui/components/composer.js"></script>
+  <script type="module" src="../../src/ui/components/perm-dialog.js"></script>
+</body>
+</html>

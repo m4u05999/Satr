@@ -129,6 +129,10 @@ electron/browserguard.js ← حارس المتصفح الخارجي (دفعة «
                        isExternalBrowserLaunchCommand (استُخرجت من codex.js — نسخة واحدة)
                        + promptRequestsExternalBrowser (طلب المستخدم الصريح لمتصفح خارجي
                        في رسالة الدور يعطّل الاعتراض — قرار مالك). اختبار test:browserguard
+electron/execguard.js ← حارس نقي لأوامر الخوادم: يرفض Bash/run_in_terminal الخلفي أو أمر
+                       خادم معروف ويوجّه إلى run_in_background قبل أي موافقة دائمة.
+electron/envbrief.js  ← المصدر الموحّد لهوية «سطر» وجرد أدوات كل محرك وسياسة التنفيذ
+                       المرئي والمتصفح وسطر البيئة؛ يحرسه test:envbrief ضد التقادم.
 electron/keys.js     ← مخزن أسرار «سطر» (~/.satr/keys.json): get/names/set/remove — بذرة إدارة
                        مفاتيح المزوّدين (نقطة الربط §4.3). القيم لا تُعاد للواجهة أبداً
 electron/tools.js    ← أدوات الوكيل للمحوّلات العمياء (الدفعتان 2.1/2.2): defs() تعريفات
@@ -148,6 +152,7 @@ electron/tools.js    ← أدوات الوكيل للمحوّلات العميا
                        runCapture — نفس مسار run_in_terminal للمرحلة 16) بطبقة إذن 'exec'
                        إلزامية كل مرة (لا «موافقة دائمة» ولا يعفيها acceptEdits —
                        bypassPermissions وحده). permissionTier() تعيد write/exec/null
+                       وتضيف run/stop_background_task كـexec وget/list كقراءة.
 electron/chats.js    ← ذاكرة المحوّلات على القرص (الدفعة 1.3): load/save لسجلّ محادثات REST
                        في ~/.satr/chats/<provider>/<session>.json بصيغة المحوّل الأصلية.
                        تنقية regex صارمة للمعرّفات، سقف 50 جلسة/مزوّد (تنظيف بالأقدم)،
@@ -169,14 +174,15 @@ source.js               SATR_ENTERPRISE_DIR المطلق خارج Community وم
                        المصدر المملوك في مستودع `satr-enterprise` الخاص ولا يدخل Git العام.
                        غيابه = النواة تعمل كاملة (معيار §1، متحقق في test:enterprise)؛
                        Ollama الفردي موجود في electron/adapters/ollama.js ولا يتطلب الترخيص.
-electron/bgprocs.js  ← متتبّع عمليات الخلفية المعمّرة (خوادم التطوير): الـ SDK لا يكشف
-                       للمضيف أي مقبض لعمليات تُشغّلها الأدوات، فنتعقّبها على مستوى النظام.
-                       خطّافا Bash (run_in_background) في agent.js يلتقطان أحفاد عملية «سطر»
-                       قبل/بعد الأمر، والفرق = PIDs الأمر — تُسجَّل وتعيش بعد الدور فيقتلها
-                       المستخدم من شريط «قيد التشغيل». السجلّ في العملية الرئيسية (مستقل عن الدور)
-electron/term.js     ← الطرفية العربية المدمجة (المرحلة 8): دورة حياة pty واحدة عبر node-pty
-                       (ConPTY، ويندوز 10 1809+) + IPC بثّ البايتات بالاتجاهين + تغيير الحجم +
-                       قتل مضمون عند الإغلاق. التصميم الكامل في docs/PHASE8-DESIGN.md
+electron/bgprocs.js  ← شبكة أمان للعمليات الخلفية القديمة التي تفلت من المسار المرئي:
+                       خطّافا Bash يلتقطان PIDs قبل/بعد، وتظهر بجانب مهام pty في شريط
+                       «قيد التشغيل». المسار الأساسي للخوادم هو termjobs لا bgprocs.
+electron/term.js     ← عدة pty عبر node-pty + مخزن خرج دائري 256KiB لكل طرفية + قفل FIFO
+                       لـrunCapture + استعادة التبويبات الحيّة. التصميم في docs/PHASE8-DESIGN.md
+electron/termjobs.js ← مهام معمّرة فوق term.js (MAX_JOBS=4): خوادم/عمليات طويلة في تبويبات
+                       🛠 مرئية، مستقلة عن الدور والجلسة، ولا تكرّر spawn.
+electron/devservers.js ← سجلّ آخر أمر خادم لكل بصمة cwd في ~/.satr/devservers.json، مع
+                       رصد last_url من خرج مهام pty وكتابة ذرية أفضل جهد.
 electron/preview.js  ← لوحة المعاينة المدمجة (م-1 — الدفعة 5 «سطر يرى الويب»): متصفح
                        WebContentsView أصلي (صفر اعتماديات) معزول كلياً — sandbox +
                        partition دائمة مستقلة + **بلا preload** (الصفحة لا ترى window.satr)
@@ -189,7 +195,8 @@ electron/codexmcp.js ← خادم MCP‏ streamable-HTTP داخل العملية
                        console/network/screenshot + أفعال بالإذن) مباشرةً إلى preview.js.
                        http المدمجة صفر اعتماديات، 127.0.0.1، Bearer بزمن ثابت. codex.js
                        يبدأه قبل spawn ويحقنه عبر -c mcp_servers.satr_preview (انظر قسم
-                       «رؤية الويب لـ Codex»). الأفعال تمرّ بمربع الإذن العربي عبر requestPermission
+                       «رؤية الويب لـ Codex»). ويعرض أدوات الخلفية الأربع بتفويض termjobs؛
+                       الأدوات مصنّفة browser/read/exec كي لا يعفي browserControl التنفيذ.
 src/index.html       ← هيكل الواجهة: HTML فقط — وسوم المكوّنات + ترميز light DOM لمن يحتاجه
                        (topbar/composer) + وسوم تحميل الوحدات (التفكيك اكتمل — docs/COMPONENTS-PLAN.md)
 src/styles/base.css  ← الورقة الأساس: Design Tokens في :root (تعبر حدود Shadow بالوراثة) +
@@ -323,9 +330,10 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
    - `result`: النهائي — فيه `total_cost_usd`, `duration_ms`, `session_id`, `is_error`
    - `stream_text`: جزء نصي تدريجي `{text, phase?}` — يُعرض فوراً ويُستبدل بنص `assistant`
      المكتمل؛ المحركان الأصليان يرسلان phase، والمحوّلات التي تغيب عنها تتراجع إلى الإجابة.
-   - `permission_request` (SDK فقط): `{id, tool, input}` — تفتح مربع حوار عربياً،
-     والرد عبر `window.satr.permission(id, allow, always)` → `satr:permission`
-     («دائماً» تُحفظ لعمر التطبيق في agent.js)
+   - `permission_request`: `{id, tool, input, requester?, turnEligible?, alwaysEligible?}` —
+     تفتح مربعاً عربياً بطابور FIFO وعدّاد الطلبات المعلّقة وسياق الطالب best-effort.
+     الرد عبر `window.satr.permission(id, allow, always, turn)`؛ موافقة الدور مجموعة محلية
+     في agent.js تُصفّر عند result/stop ولا تشمل exec/الإيقاف، و«دائماً» تبقى لعمر التطبيق.
    - `file_edit` (SDK فقط، المرحلة 3): `{id, tool, rel, isNew, added, removed, lines, truncated}`
      — يصدر من خطّاف `PostToolUse` بعد نجاح Edit/Write/MultiEdit، تعرضه الواجهة كبطاقة
      فرق قابلة للطيّ. `id` هو `tool_use_id` (يربط الفرق بنفس الأداة). الرد على «تراجع»
@@ -336,6 +344,8 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
      `window.satr.killBgProc(id)` → `satr:killBgProc` (id يطابق `^bg_[0-9]+$`)، والاسترجاع
      عند الإقلاع عبر `window.satr.listBgProcs()` → `satr:listBgProcs`. القتل بـ `taskkill /T /F`.
      تُقتل كل العمليات المتتبَّعة عند إغلاق «سطر» (`window-all-closed`/`before-quit`).
+   - `bg_term`: `{id,label,shell,cwd}` لمهمة pty معمّرة؛ مستقل عن token الدور. الواجهة
+     تتبنّاها كتبويب `🛠 <label>` وتضيفها إلى شريط «قيد التشغيل» مع إظهار/إيقاف.
    - `system`/`compact_boundary` (SDK فقط، أمر /ضغط): `{compact_metadata:{trigger, pre_tokens,
      post_tokens, …}}` — يصدر عند ضغط المحادثة، تعرضه الواجهة كبطاقة «ضُغطت المحادثة: X ← Y رمز».
      الجلسة تبقى نفسها (session_id) فتكمل المحادثة بالملخّص.
@@ -971,11 +981,37 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **الالتقاط** (`term.runCapture`، المرحلة 16.1): يكتب الأمر بـ **اللصق المُقوّس** (bracketed
   paste — يمنع إسقاط PSReadLine لمحارف السطر الطويل)، ويلتقط الخرج بين علامتَي بداية/نهاية
   فريدتين (البداية سطر مستقل بمطابقة تامة تستبعد صدى الأمر)، مع رمز خروج رقمي دائماً
-  (تصفير `$LASTEXITCODE`+السقوط لـ `$?`)، ومهلة (120ث تقطع الخوادم التفاعلية) وسقف خرج 512ك.ب.
+  (تصفير `$LASTEXITCODE`+السقوط لـ `$?`)، ومهلة وسقف خرج 512ك.ب. طلبات الالتقاط لنفس
+  الطرفية تمر بطابور FIFO فلا تتشابك علامات نداءين متوازيين (يشمل verify/run_command).
 - **🔒 أمان (مثبّت)**: الأداة تمر بـ `canUseTool` مثل Bash تماماً — **لا** تُضاف لـ
   `alwaysAllowed`، فمربع الإذن العربي يعمل عليها؛ العرض المرئي لا يخفّف التنفيذ. الأمر نص
   لمجرى pty لا لوسائط spawn، وبايتات التحكم تُنقّى (`sanitizeCommand`). حدّ موثّق:
-  التطبيقات التفاعلية طويلة العمر تُقطع بالمهلة (الخرج حتى تلك اللحظة يعود للنموذج).
+  الخوادم الطويلة لا تستخدم هذه الأداة؛ يحولها execguard إلى run_in_background.
+
+### مهام الطرفية المعمّرة — run_in_background
+
+- `termjobs.startJob(cwd,command,label)` ينشئ pty حقيقياً عبر `term.startTerm` ويكتب أمراً
+  منقّى بسطر واحد؛ المهمة تعيش بعد نهاية الدور وتبديل الجلسة ولا تموت إلا بخروجها أو
+  `termKill/stop_background_task` أو إغلاق التطبيق. يُلحق خروجاً للصدفة بعد الأمر كي
+  يختفي التبويب تلقائياً حين تكتمل مهمة محدودة، بينما الخادم يبقيها مشغولة. `MAX_JOBS=4` مستقل، و`MAX_TERMS=12`
+  يترك ثمانية تبويبات غير مهام للمستخدم وأربعة للمهام.
+- أدوات كل المحركات: `run_in_background` و`stop_background_task` من طبقة exec، و
+  `get_background_output` (ذيل ≤48K) و`list_background_tasks` قرائيتان. الإيقاف لا يقبل
+  «دائماً»، ووضع تحكم المتصفح لا يعفي التشغيل أو الإيقاف في Codex.
+- `term.js` يخزن آخر 256KiB من خرج كل pty من نفس `onData`. `satr:termList` +
+  `satr:termReadBuffer` يعيدان تبنّي التبويبات بعد reload من دون قتل العمليات.
+- `execguard.js` يرفض تشغيل خادم معروف أو `run_in_background=true` عبر Bash/
+  run_in_terminal قبل alwaysAllowed، ويرشد الأداة الصحيحة. `bgprocs` يبقى شبكة أمان.
+
+### وعي بيئة «سطر» الموحّد — envbrief
+
+- `electron/envbrief.js` هو المصدر الفعلي لهوية «سطر» وجرد أدوات المحرك وسياسة التنفيذ
+  المرئي وسياسة المعاينة و`runtimeenv.environmentLine`. يستهلكه `agent.js` و`codex.js`
+  والمحوّلان `openai-compatible.js` و`gemini.js` (نسخة مختصرة للمحوّلات).
+- السياسة: build/test/install/run المرئي عبر `run_in_terminal` أو `run_command`؛ الخادم
+  حصراً عبر `run_in_background`، يسبقه `list_background_tasks` ويتبعه `open_preview`
+  حيث تتوفر أدوات المتصفح و`get_background_output` للسجل. `test:envbrief` يقارن كل جرد
+  بتعريفات الأدوات الفعلية كي يفشل عند التقادم.
 
 ### مزامنة أوامر CLI في قائمة «/» (المرحلة 14.1)
 
@@ -1191,22 +1227,25 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 
 - **الفتح والتبويبات (المرحلة 15)**: زرّ 🖥️ في الشريط العلوي يطوي/يفرد لوحة الطرفية —
   **ليس أمر `/` جديداً** (احتراماً لتجميد الأوامر). **تعدد طرفيات** (رُفع قيد «طرفية واحدة»
-  في MVP): شريط تبويبات في الرأس (تبويب لكل طرفية + زرّ ＋)، بسقف 8. كل تبويب كائن
+  في MVP): شريط تبويبات في الرأس (تبويب لكل طرفية + زرّ ＋)، بسقف 8 تبويبات غير مهام
+  و4 تبويبات مهام 🛠 (MAX_TERMS=12). كل تبويب كائن
   مستقل في الواجهة (نسخة xterm + عارضاه + إسقاط BiDi + حالة عرض)، والنشط وحده ظاهر
   (`.term-view.active`)؛ الرأس وسطر الإدخال والتنبيه تعمل على النشط. موجّه `satr:term`
   يوزّع الأحداث بالمعرّف على تبويبها (الخلفية متعددة عبر Map في term.js منذ 15.1).
 - **أسماء التبويبات (المرحلة 15.4)**: الاسم مشتق من الصدفة ثم OSC منقّى بسقف 40 محرفاً وthrottle، وF2 يثبت اسماً يدوياً لعمر التبويب؛ يحرسها `npm run test:terminal-tabs`.
 - **العقد (IPC)** — كله في `electron/term.js` مع تنقية في main.js:
   - `satr:termStart {cwd, cols, rows}` → `{ok, id, shell}` — ينشئ pty **جديداً** كل مرة
-    (سجلّ Map بسقف MAX_TERMS=8؛ الصدفة `COMSPEC`/PowerShell، cwd مجلد موجود، cols/rows 2..500).
-    `satr:termList` يعيد المعرّفات الحيّة.
+    (سجلّ Map بسقف MAX_TERMS=12؛ الصدفة PowerShell، cwd مجلد موجود، cols/rows 2..500).
+    `satr:termList` يعيد `[{id,label,isModel,isJob,shell,cwd}]` للطرفيات الحيّة، و
+    `satr:termReadBuffer {id,tailBytes}` يعيد ذيل المخزن الدائري.
   - `satr:termInput {id, data}` — كتابة خام إلى pty (id يطابق `^term_[0-9]+$`، data نص
     ≤ 1م.ب). البرومبت/الإدخال آمن لأنه يذهب لـ pty لا لوسائط spawn.
   - `satr:termResize {id, cols, rows}` — أعداد صحيحة 2..500.
   - `satr:termKill {id}` — إنهاء العملية (شجرتها تموت مع ConPTY).
   - أحداث للواجهة عبر قناة مستقلة `satr:term` (عالية الإنتاجية — لا تمر بقناة `satr:event`):
     `{type:'data', id, data}` و `{type:'exit', id, exitCode}`.
-  - preload يكشف: `termStart/termInput/termResize/termKill/onTerm` فقط.
+  - preload يكشف دوالاً محددة: `termStart/termList/termReadBuffer/termInput/termResize/
+    termKill/onTerm` فقط.
 - **دورة الحياة**: pty يُقتل في `window-all-closed`/`before-quit` (نفس فلسفة bgprocs)،
   وخروج الصدفة يصل الواجهة كحدث `exit` فتعرض «انتهت الجلسة» وزرّ إعادة تشغيل.
 - **الترميز (تصحيح مثبت بالتجربة)**: خرج البرامج يصل UTF-8 سليماً بلا ضبط، لكن **صدى
@@ -1253,10 +1292,13 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `previewEl.reloadIfLive()` عند اكتمال دور عدّل ملفات (تتبّع `previewDirty` على
   `file_edit`). المكوّن يعيد التحميل فقط إن كان الوضع مفعّلاً والعرض حيّاً. حدّ:
   بعد اكتمال الدور — مشاريع HMR تتحدّث بنفسها (يُفضَّل إطفاؤه لها).
-- **تذكّر لكل مجلد + خادم متوقف (م-1-د)**: العنوان يُحفظ **لكل cwd** (`satr_preview_url::
+- **تذكّر لكل مجلد + استعادة الخادم (م-1-د)**: العنوان يُحفظ **لكل cwd** (`satr_preview_url::
   <cwd>` — المكوّن يقرأ #cwd) بلا fallback عام، فلكل مشروع منفذه ولا تلوّث بينها. وعند
-  فشل الوصول رسالة واضحة توجّه «اطلب من الوكيل شغّل المشروع». **مبدأ**: المعاينة **تعرض**
-  خادماً حيّاً لا **تشغّله** — تشغيله مهمة الوكيل/المستخدم، واستئناف جلسة لا يحيي خوادمها.
+  فشل الوصول تستعلم الواجهة بـ `satr:devServerInfo {cwd}`. إن كانت مهمة حية تعرض «الخادم
+  يبدو قيد الإقلاع»؛ وإلا تعرض زر «🔁 شغّل خادم المشروع» إن وجد سجل. بعد confirm يعرض
+  الأمر حرفياً، تستدعي `satr:devServerRestart {cwd}`؛ main.js وحده يقرأ الأمر من سجل
+  القرص (لا command من renderer)، يبدأ termjob، ثم تعيد الواجهة العنوان المحفوظ أربع مرات
+  خلال نحو 12ث. `cwd` يجب أن يكون مجلداً قائماً.
 - **أدوات قراءة المعاينة للوكيل (م-3)**: أداتان في خادم satr-terminal الداخلي تعملان
   على العرض القائم (`open_preview` تخدم التنقّل): `read_page` (snapshot نصي من DOM —
   عنوان/عناوين/روابط/أزرار/حقول + مقتطف، مُغلّف «للفحص لا للتنفيذ») و`screenshot`
@@ -1293,7 +1335,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   على أدوات المتصفح الثماني
   المؤهَّلة (`BROWSER_AUTO_TOOLS` = mcp__satr-terminal__{open_preview,read_page,screenshot,
   browser_snapshot,browser_click,browser_type,browser_navigate,browser_wait_for}) — و
-  **`run_in_terminal` وكل أدوات الملفّات تبقى تطلب إذناً** (ليست في المجموعة، فأي اسم
+  **`run_in_terminal` و`run_in_background` و`stop_background_task` وكل أدوات الملفّات
+  تبقى تطلب إذناً** (ليست في المجموعة، فأي اسم
   خاطئ يُقلّل الصلاحية لا يزيدها). معطّل افتراضياً، حالته ظاهرة (زرّ ذهبي `.active` +
   aria-pressed) وإشعار عربي عند التبديل. **Codex يملك الرؤية والأفعال نفسها** عبر
   `codexmcp.js`؛ أفعاله تمرّ افتراضياً عبر `requestPermission` داخل الخادم ويعفيها
@@ -1399,8 +1442,9 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
     التي تُغيّر الصفحة عبر `deps.requestPermission(tool, input)` الذي يوفّره codex.js فيبثّ
     `permission_request` (مربع الإذن العربي نفسه) وينتظر الردّ عبر `mcpPerms` +
     `resolvePermission` (قناة أذونات الأوامر نفسها). bypassPermissions أو «موافقة دائمة»
-    للأداة يعفيان؛ الرفض/إيقاف الدور يفكّ الإذن المعلّق. القراءة/الرؤية لا تُبوَّب. تحقّق:
-    `npm run test:codexmcp` (29 — يشمل بوابة الإذن قبولاً/رفضاً وعدم تبويب القراءة) +
+    للأداة يعفيان؛ الرفض/إيقاف الدور يفكّ الإذن المعلّق. أدوات المتصفح كلها مصنّفة
+    `browser` وتُبوّب، بينما get/list_background_tasks وحدهما `read` بلا إذن. تحقّق:
+    `npm run test:codexmcp` (64 — يشمل تصنيف browser/read/exec وfail-closed) +
     `eval:agent` 12/12 + إقلاع نظيف.
   - **مهلة أداة MCP لأفعال الإذن (إصلاح اختبار يدوي — 2026-07-13)**: بوابة الإذن أعلاه
     تُبقي استدعاء أداة MCP معلّقاً (‏`await requestPermission` في guard) حتى يوافق المستخدم
@@ -1439,7 +1483,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
     التسجيل) لا تُحجب — المستخدم هو القائد. `browser_handoff` ضمن BROWSER_AUTO_TOOLS
     (منح القيادة للمستخدم فعل آمن fail-safe)، ومهلة أداة MCP في Codex رُفعت
     600⇒**1800ث** لتتّسع لدخول + 2FA. إيقاف الدور يفكّ التسليم بالإلغاء في المحرّكين.
-    الاختبار: `test:browserguard` (نقي 31) + توسعة `test:codexmcp` (47 — دورة كاملة
+    الاختبار: `test:browserguard` (نقي 32) + توسعة `test:codexmcp` (64 — دورة كاملة
     استلام/إلغاء/تعليق/fail-closed).
 - **تسجيل فيديو التصفح (م-5 — طلب مالك)**: زرّ ⏺ يسجّل جلسة المعاينة فيديو قابل للتنزيل
   بصفر اعتماديات: `preview.captureFrame()` (PNG دوري ~8/ث عبر satr:previewFrame) ⇒

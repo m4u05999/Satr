@@ -28,6 +28,8 @@ function changedFiles() {
     const normalized = relative.replace(/\\/g, '/');
     // تقارير TestSprite صفحات خارجية مولّدة وليست أصول واجهة تُشحَن مع Electron.
     if (normalized.startsWith('testsprite_tests/')) return false;
+    // مواد promo موقع مستقل غير مشحون داخل Electron؛ حارس CSP هنا خاص بواجهة التطبيق.
+    if (normalized.startsWith('promo/')) return false;
     return fs.existsSync(path.join(ROOT, relative));
   });
 }

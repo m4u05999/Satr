@@ -83,8 +83,10 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   const names = j.result.tools.map((t) => t.name);
   ['open_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network', 'screenshot',
    'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover',
-   'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key']
+   'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
+   'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
+  ok(names.length === 20, 'عدد أدوات Codex MCP أصبح 20 (16 متصفح + 4 خلفية)');
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
 
   // tools/call: read_page نص مغلّف
@@ -118,7 +120,10 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
 
   // بوابة الإذن: كل أدوات المعاينة تمرّ بـ requestPermission، وغيابها يرفض fail-closed.
   const asked = [];
-  const gate = (decision) => async (tool, input) => { asked.push(tool); return decision; };
+  const askedMeta = [];
+  const gate = (decision) => async (tool, input, access, neverAlways) => {
+    asked.push(tool); askedMeta.push({ tool, access, neverAlways }); return decision;
+  };
 
   // (أ) رفض ⇒ browser_click لا يُنفَّذ ويعيد خطأ إذن
   let srv3 = await codexmcp.start({ preview, requestPermission: gate(false) });
@@ -134,16 +139,42 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   jj = JSON.parse(rr.body);
   ok(asked.includes('browser_type') && !jj.result.isError && /كُتب النص/.test(jj.result.content[0].text), 'قبول الإذن ⇒ browser_type يُنفَّذ');
 
-  // (ج) القراءة/الرؤية تطلب إذناً أيضاً — هذا هو عقد Codex المتسق مع Claude.
+  // (ج) أدوات الخلفية القرائية حرّة، وأدوات التنفيذ تبقى خلف البوابة المصنّفة.
   asked.length = 0;
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'read_page', arguments: {} } });
-  ok(asked.includes('read_page'), 'read_page تمرّ ببوابة إذن المتصفح');
+  ok(asked.includes('read_page'), 'read_page تبقى ضمن بوابة المتصفح');
+  asked.length = 0; askedMeta.length = 0;
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_background_tasks', arguments: {} } });
+  jj = JSON.parse(rr.body);
+  ok(!asked.includes('list_background_tasks') && !jj.result.isError, 'list_background_tasks حرّة كقراءة');
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'get_background_output', arguments: { id: 'term_999' } } });
+  ok(!asked.includes('get_background_output'), 'get_background_output حرّة كقراءة');
   await srv3.stop();
+
+  asked.length = 0; askedMeta.length = 0;
+  srv3 = await codexmcp.start({ preview, cwd: process.cwd(), requestPermission: gate(false) });
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'run_in_background', arguments: { command: 'npm run dev' } } });
+  jj = JSON.parse(rr.body);
+  ok(jj.result.isError && askedMeta.some((item) => item.tool === 'run_in_background' && item.access === 'exec'), 'run_in_background تطلب إذن exec');
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'stop_background_task', arguments: { id: 'term_1' } } });
+  jj = JSON.parse(rr.body);
+  ok(jj.result.isError && askedMeta.some((item) => item.tool === 'stop_background_task' && item.access === 'exec' && item.neverAlways), 'stop_background_task تطلب exec ولا تقبل «دائماً»');
+  await srv3.stop();
+
+  ok(codex.shouldAutoApproveMcp('browser', true, 'default', false, false), 'browserControl يعفي أدوات المتصفح');
+  ok(!codex.shouldAutoApproveMcp('exec', true, 'default', false, false), 'browserControl لا يعفي run_in_background');
+  ok(!codex.shouldAutoApproveMcp('exec', true, 'default', false, true), 'browserControl لا يعفي stop_background_task');
+  ok(codex.shouldAutoApproveMcp('exec', false, 'default', true, false), 'الموافقة الدائمة الخاصة تعفي تشغيل الخلفية');
+  ok(!codex.shouldAutoApproveMcp('exec', false, 'default', true, true), 'stop لا تعفيه الموافقة الدائمة');
 
   const srv4 = await codexmcp.start({ preview });
   rr = await post(srv4.url, srv4.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'open_preview', arguments: { url: 'http://localhost:3000' } } });
   jj = JSON.parse(rr.body);
   ok(jj.result.isError && /رُفض الإذن/.test(jj.result.content[0].text), 'غياب بوابة الإذن يرفض open_preview ولا يتصفح بصمت');
+  rr = await post(srv4.url, srv4.token, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'run_in_background', arguments: { command: 'npm run dev' } } });
+  ok(JSON.parse(rr.body).result.isError, 'غياب بوابة الإذن يرفض run_in_background fail-closed');
+  rr = await post(srv4.url, srv4.token, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_background_tasks', arguments: {} } });
+  ok(!JSON.parse(rr.body).result.isError, 'غياب البوابة لا يحجب list_background_tasks القرائية');
   await srv4.stop();
 
   // ---------- التسليم البشري browser_handoff (دفعة «تحكم الوكيل الكامل») ----------

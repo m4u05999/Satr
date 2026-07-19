@@ -365,7 +365,8 @@ async function main() {
     assert(mainSource.includes('integration.gate(artifact, verification)'));
     assert(codexSource.includes('if (browserControl !== false) try'));
     assert(mainSource.includes('browserControl: payload.browserControl === true ? true : null'));
-    assert(codexSource.includes('browserControl === true || permissionMode'));
+    assert(codexSource.includes('function shouldAutoApproveMcp(access, browserControl'));
+    assert(codexSource.includes("access === 'browser' && browserControl === true"));
     assert(codexSource.includes("const DEFAULT_MODEL = 'gpt-5.6-sol'"));
     assert(codexSource.includes('model: resolvedModel'));
     assert(!mainSource.includes("review.recommendation !== 'accept'"));
