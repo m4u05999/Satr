@@ -25,7 +25,7 @@
     <button id="bgKillAll" type="button">إيقاف الكل</button>
   </div>
   <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
-  <!-- شريط المؤلّف (§5-د): محرك/نموذج/صلاحيات + إرفاق، بجوار الإرسال (نمط Cursor) -->
+  <!-- شريط المؤلّف (§5-د): محرك/نموذج + إرفاق، بجوار الإرسال (نمط Cursor) -->
   <div class="composer-tools">
     <span class="ct-label">المحرك</span>
     <select id="engine" title="المحرك/المزوّد">
@@ -36,20 +36,22 @@
     </select>
     <span class="ct-label">النموذج</span>
     <select id="model" title="النموذج"><option value="">الافتراضي</option></select>
-    <select id="perm" title="وضع الصلاحيات">
-      <option value="acceptEdits">قبول التعديلات تلقائياً</option>
-      <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
-      <option value="default">افتراضي</option>
-      <option value="auto">تلقائي ذكي (يسأل عن التنفيذ والكتابة)</option>
-      <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
-    </select>
     <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (محرك SDK)">📎 إرفاق</button>
     <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+  </div>
+  <div id="awarenessBar" class="awareness-bar" aria-label="حالة الدور الحالية">
+    <button id="awarenessModel" type="button" dir="ltr" title="فتح قائمة النماذج القائمة">model: default</button>
+    <span aria-hidden="true">·</span>
+    <button id="awarenessEffort" type="button" dir="ltr" title="تدوير جهد التفكير">effort: default</button>
+    <span aria-hidden="true">·</span>
+    <button id="awarenessPerm" type="button" title="تدوير وضع الأذونات الآمن">الأذونات: افتراضي</button>
+    <span aria-hidden="true">·</span>
+    <button id="awarenessContext" type="button" dir="ltr" title="فتح لوحة السياق">context: —%</button>
   </div>
   <div class="composer">
     <div id="slashMenu" role="listbox"></div>
     <div id="fileMenu" role="listbox"></div>
-    <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1"></textarea>
+    <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1" spellcheck="true"></textarea>
     <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح: امنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح فقط — محرك SDK)">🖱️ متصفح</button>
     <button id="send">إرسال</button>
   </div>

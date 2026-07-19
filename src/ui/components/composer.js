@@ -21,6 +21,7 @@ class SatrComposer extends HTMLElement {
     let termJobs = []; // مهام pty المعمّرة المرئية في تبويبات 🛠
     const slashMenu = $('slashMenu');
     let slashIndex = 0, slashFiltered = [];
+    let activeDraftCwd = $('cwd').value.trim();
 
 // ما يلي منقول حرفياً من القشرة (لصق الصور + زر الإرفاق + شريط الخلفية + محرّك
 // قائمتي / و@ + المسودة) — التغييرات الوحيدة: addNotice⇒notice وsend⇒emitSend
@@ -74,6 +75,15 @@ class SatrComposer extends HTMLElement {
       renderAttachments();
     };
     reader.readAsDataURL(file);
+  }
+
+  function addImageData(dataUrl) {
+    const value = String(dataUrl || '');
+    const match = value.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
+    if (!match || pendingImages.length >= 6) return false;
+    pendingImages.push({ id: 'img_' + Math.random().toString(36).slice(2), media_type: match[1], data: match[2], dataUrl: value });
+    renderAttachments();
+    return true;
   }
 
   input.addEventListener('paste', (e) => {
@@ -479,19 +489,42 @@ class SatrComposer extends HTMLElement {
     input.style.height = Math.min(input.scrollHeight, 220) + 'px';
   }
 
-  // حفظ المسودة (دفعة UX): نص المحرّر يعيش في localStorage فلا يضيع بإغلاق «سطر»
+  // حفظ المسودة لكل مشروع: المسار جزء من المفتاح كي لا تدوس مشاريع المستخدم بعضها.
+  const draftKey = (cwd) => 'satr_draft::' + String(cwd || '').trim();
   function saveDraft() {
     try {
-      if (input.value) localStorage.setItem('satr_draft', input.value);
-      else localStorage.removeItem('satr_draft');
+      if (!activeDraftCwd) return;
+      if (input.value) localStorage.setItem(draftKey(activeDraftCwd), input.value);
+      else localStorage.removeItem(draftKey(activeDraftCwd));
     } catch (e) {}
   }
-  function clearDraft() { try { localStorage.removeItem('satr_draft'); } catch (e) {} }
-  // استعادة عند الإقلاع — قبل ربط المستمعين لا يلزم (لا حدث input برمجياً)
-  (() => {
-    const d = localStorage.getItem('satr_draft');
-    if (d && !input.value) { input.value = d; autoResize(); }
-  })();
+  function clearDraft() {
+    try { if (activeDraftCwd) localStorage.removeItem(draftKey(activeDraftCwd)); } catch (e) {}
+  }
+  function loadDraft(cwd) {
+    activeDraftCwd = String(cwd || '').trim();
+    let value = '';
+    try {
+      if (activeDraftCwd) {
+        const key = draftKey(activeDraftCwd);
+        value = localStorage.getItem(key) || '';
+        const legacy = localStorage.getItem('satr_draft');
+        if (!value && legacy) { value = legacy; localStorage.setItem(key, legacy); }
+        if (legacy) localStorage.removeItem('satr_draft');
+      }
+    } catch (e) {}
+    input.value = value;
+    autoResize();
+  }
+  function switchDraft(cwd) {
+    const next = String(cwd || '').trim();
+    if (next === activeDraftCwd) return;
+    saveDraft();
+    loadDraft(next);
+  }
+  // ترحيل المفتاح العام القديم مرة إلى المشروع الحالي، ثم استعادة مسودته.
+  loadDraft(activeDraftCwd);
+  $('cwd').addEventListener('change', () => switchDraft($('cwd').value));
 
   input.addEventListener('input', () => {
     autoResize();
@@ -531,15 +564,15 @@ class SatrComposer extends HTMLElement {
     // ---------- الواجهة العامة للقشرة ----------
     this.setCommands = (list) => { commands = Array.isArray(list) ? list : []; };
     this.getImages = () => pendingImages.slice();
-    this.addImageData = (dataUrl) => {
-      const value = String(dataUrl || '');
-      const match = value.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
-      if (!match || pendingImages.length >= 6) return false;
-      pendingImages.push({ id: 'img_' + Math.random().toString(36).slice(2), media_type: match[1], data: match[2], dataUrl: value });
-      renderAttachments();
-      return true;
-    };
+    this.addImageData = addImageData;
     this.clearImages = () => { pendingImages = []; renderAttachments(); };
+    this.restoreTurn = (text, images) => {
+      input.value = String(text || '');
+      pendingImages = [];
+      for (const image of (Array.isArray(images) ? images : [])) addImageData(image);
+      autoResize(); saveDraft(); closeSlash(); closeFiles(); input.focus();
+    };
+    this.switchDraft = switchDraft;
     // بعد الإرسال: تمدد المحرّر + مسح المسودة + إغلاق القائمتين (input.value تصفّره القشرة)
     this.afterSend = () => { autoResize(); clearDraft(); closeSlash(); closeFiles(); };
     this.setBgProcs = (procs) => { bgProcs = Array.isArray(procs) ? procs : []; renderBgBar(); };

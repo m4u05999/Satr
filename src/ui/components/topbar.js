@@ -10,6 +10,7 @@ class SatrTopbar extends HTMLElement {
     if (this._wired) return;
     this._wired = true;
     const $ = (id) => document.getElementById(id);
+    const host = this;
 
 // ما يلي منقول حرفياً من القشرة — بلا تغيير سلوك
 
@@ -46,7 +47,11 @@ class SatrTopbar extends HTMLElement {
 
   $('pickFolder').addEventListener('click', async () => {
     const p = await window.satr.pickFolder();
-    if (p) { $('cwd').value = p; localStorage.setItem('satr_cwd', p); }
+    if (p) {
+      $('cwd').value = p;
+      localStorage.setItem('satr_cwd', p);
+      $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
+    }
   });
   // ---------- المجلدات الإضافية (المرحلة 14.4) ----------
   // تُمنح للنموذج وصولاً بجانب مجلد المشروع (additionalDirectories في SDK) —
@@ -89,10 +94,54 @@ class SatrTopbar extends HTMLElement {
     settingsPop.hidden = !open;
     settingsBtn.classList.toggle('active', open);
   }
-  settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); setSettingsOpen(settingsPop.hidden); });
+  settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); closeTopPops(); setSettingsOpen(settingsPop.hidden); });
   settingsPop.addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', () => { if (!settingsPop.hidden) setSettingsOpen(false); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !settingsPop.hidden) setSettingsOpen(false); });
+
+  // منبثقا ملخص تغييرات الجلسة والاختصارات — أسطح خفيفة غير حاجبة في الشريط.
+  const changesPop = $('sessionChangesPop'), changesBtn = $('sessionChangesToggle');
+  const shortcutsPop = $('shortcutsPop'), shortcutsBtn = $('shortcutsToggle');
+  let sessionChanges = [];
+  function closeTopPops() { changesPop.hidden = true; shortcutsPop.hidden = true; }
+  function toggleTopPop(target) {
+    const willOpen = target.hidden;
+    setSettingsOpen(false);
+    closeTopPops();
+    target.hidden = !willOpen;
+  }
+  changesBtn.addEventListener('click', (event) => { event.stopPropagation(); toggleTopPop(changesPop); });
+  shortcutsBtn.addEventListener('click', (event) => { event.stopPropagation(); toggleTopPop(shortcutsPop); });
+  changesPop.addEventListener('click', (event) => event.stopPropagation());
+  shortcutsPop.addEventListener('click', (event) => event.stopPropagation());
+  document.addEventListener('click', closeTopPops);
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeTopPops(); });
+
+  function renderSessionChanges() {
+    const list = $('sessionChangesList');
+    const count = $('sessionChangesCount');
+    list.replaceChildren();
+    count.textContent = String(sessionChanges.length);
+    count.hidden = sessionChanges.length === 0;
+    changesBtn.classList.toggle('active', sessionChanges.length > 0);
+    if (!sessionChanges.length) {
+      const empty = document.createElement('div'); empty.className = 'session-changes-empty';
+      empty.textContent = 'لا تغييرات مسجّلة في هذه الجلسة بعد.'; list.appendChild(empty); return;
+    }
+    for (const change of sessionChanges) {
+      const row = document.createElement('button'); row.type = 'button'; row.className = 'session-change-row';
+      const rel = document.createElement('span'); rel.className = 'session-change-path'; rel.dir = 'ltr'; rel.textContent = change.rel;
+      const totals = document.createElement('span'); totals.className = 'session-change-counts'; totals.dir = 'ltr';
+      totals.textContent = '+' + change.added + ' −' + change.removed;
+      row.appendChild(rel); row.appendChild(totals);
+      row.addEventListener('click', () => {
+        closeTopPops();
+        host.dispatchEvent(new CustomEvent('session-diff-open', { bubbles: true, detail: change.card }));
+      });
+      list.appendChild(row);
+    }
+  }
+  renderSessionChanges();
 
   // ---------- سجل نشاط Community المحلي ----------
   const ACTIVITY_LABELS = {
@@ -187,6 +236,10 @@ class SatrTopbar extends HTMLElement {
 
     // الواجهة العامة للقشرة
     this.getExtraDirs = () => extraDirs.slice();
+    this.setSessionChanges = (changes) => {
+      sessionChanges = Array.isArray(changes) ? changes.slice() : [];
+      renderSessionChanges();
+    };
   }
 }
 

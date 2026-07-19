@@ -48,6 +48,13 @@ function formatModelUsage(mu) {
 
 const MARKUP = `
 <main id="main">
+  <div class="thread-search" id="threadSearch" hidden>
+    <input id="threadSearchInput" type="text" placeholder="ابحث داخل المحادثة…" autocomplete="off">
+    <span class="thread-search-count" id="threadSearchCount" dir="ltr">0/0</span>
+    <button id="threadSearchPrev" type="button" title="التطابق السابق">↑</button>
+    <button id="threadSearchNext" type="button" title="التطابق التالي">↓</button>
+    <button id="threadSearchClose" type="button" title="إغلاق البحث">✕</button>
+  </div>
   <div class="thread" id="thread">
     <div class="empty" id="empty">
       <div class="big">سطر</div>
@@ -71,6 +78,7 @@ class SatrChat extends HTMLElement {
     this.innerHTML = MARKUP;
     const $ = (id) => document.getElementById(id);
     const main = $('main'), thread = $('thread');
+    const component = this;
     let usageSummary = emptyUsageSummary(); // ملخص الجلسة في الذاكرة — بلا تخزين دائم
     let seenUsageResults = new WeakSet();
 
@@ -205,6 +213,96 @@ class SatrChat extends HTMLElement {
   jumpDown.addEventListener('click', () => { scrollDown(true); jumpDown.hidden = true; });
   function hideEmpty() { const e = $('empty'); if (e) e.remove(); }
 
+  // بحث الخيط: يعمل على DOM المعروض فقط ولا يغيّر مخازن النص أو منطق البث.
+  const searchBar = $('threadSearch');
+  const searchInput = $('threadSearchInput');
+  const searchCount = $('threadSearchCount');
+  let searchHits = [];
+  let searchIndex = -1;
+
+  function clearSearchMarks() {
+    for (const mark of thread.querySelectorAll('mark.thread-hit')) mark.replaceWith(document.createTextNode(mark.textContent));
+    thread.normalize();
+    searchHits = [];
+    searchIndex = -1;
+  }
+
+  function selectSearchHit(index) {
+    for (const hit of searchHits) hit.classList.remove('current');
+    if (!searchHits.length) { searchCount.textContent = '0/0'; return; }
+    searchIndex = (index + searchHits.length) % searchHits.length;
+    const hit = searchHits[searchIndex];
+    hit.classList.add('current');
+    searchCount.textContent = (searchIndex + 1) + '/' + searchHits.length;
+    hit.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  function highlightSearch() {
+    clearSearchMarks();
+    const query = searchInput.value.trim().toLocaleLowerCase('ar');
+    if (!query) { searchCount.textContent = '0/0'; return; }
+    const nodes = [];
+    const walker = document.createTreeWalker(thread, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent || !node.nodeValue || !node.nodeValue.toLocaleLowerCase('ar').includes(query)) return NodeFilter.FILTER_REJECT;
+        if (parent.closest('button, input, textarea, select, .who, .meta')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const node of nodes) {
+      const raw = node.nodeValue;
+      const lower = raw.toLocaleLowerCase('ar');
+      const fragment = document.createDocumentFragment();
+      let cursor = 0;
+      let match = lower.indexOf(query);
+      while (match >= 0) {
+        fragment.appendChild(document.createTextNode(raw.slice(cursor, match)));
+        const mark = document.createElement('mark'); mark.className = 'thread-hit';
+        mark.textContent = raw.slice(match, match + query.length); fragment.appendChild(mark);
+        cursor = match + query.length;
+        match = lower.indexOf(query, cursor);
+      }
+      fragment.appendChild(document.createTextNode(raw.slice(cursor)));
+      node.replaceWith(fragment);
+    }
+    searchHits = [...thread.querySelectorAll('mark.thread-hit')];
+    selectSearchHit(0);
+  }
+
+  function openThreadSearch() {
+    searchBar.hidden = false;
+    searchInput.focus();
+    searchInput.select();
+    highlightSearch();
+  }
+
+  function closeThreadSearch() {
+    clearSearchMarks();
+    searchInput.value = '';
+    searchCount.textContent = '0/0';
+    searchBar.hidden = true;
+    main.focus({ preventScroll: true });
+  }
+
+  main.tabIndex = -1;
+  document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f'
+      && (main.contains(document.activeElement) || main.matches(':hover'))) {
+      event.preventDefault();
+      openThreadSearch();
+    }
+  });
+  searchInput.addEventListener('input', highlightSearch);
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); selectSearchHit(searchIndex + (event.shiftKey ? -1 : 1)); }
+    else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeThreadSearch(); }
+  });
+  $('threadSearchPrev').addEventListener('click', () => selectSearchHit(searchIndex - 1));
+  $('threadSearchNext').addEventListener('click', () => selectSearchHit(searchIndex + 1));
+  $('threadSearchClose').addEventListener('click', closeThreadSearch);
+
   // ---------- أزرار النسخ (دفعة UX) ----------
   // نسخ للحافظة مع تأكيد بصري قصير على الزر نفسه
   async function copyWithFeedback(btn, text) {
@@ -237,7 +335,22 @@ class SatrChat extends HTMLElement {
     hideEmpty();
     const w = document.createElement('div');
     w.className = 'msg user';
-    w.innerHTML = '<div class="who">أنت</div>';
+    const who = document.createElement('div'); who.className = 'who';
+    const label = document.createElement('span'); label.textContent = 'أنت'; who.appendChild(label);
+    const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'msg-user-edit'; edit.textContent = '✏️';
+    edit.title = 'حرّر وأعد الإرسال — لا يرجع سياق الخادم ولا ينشئ تفريع جلسة حقيقياً';
+    edit.setAttribute('aria-label', 'تعديل هذه الرسالة وإعادتها إلى المحرّر');
+    edit.addEventListener('click', () => {
+      if (w.classList.contains('superseded')) return;
+      w.classList.add('superseded'); edit.disabled = true;
+      const badge = document.createElement('span'); badge.className = 'msg-superseded'; badge.textContent = 'مُعدَّلة/متجاوَزة';
+      who.appendChild(badge);
+      component.dispatchEvent(new CustomEvent('user-edit', {
+        bubbles: true,
+        detail: { text: text || '', images: Array.isArray(images) ? images.slice() : [] },
+      }));
+    });
+    who.appendChild(edit); w.appendChild(who);
     if (text) {
       const b = document.createElement('div');
       b.className = 'bubble'; b.textContent = text;
@@ -246,7 +359,7 @@ class SatrChat extends HTMLElement {
       const dir = textDir(text);
       if (dir) b.dir = dir;
       w.appendChild(b);
-      addMsgCopy(w.querySelector('.who'), () => text);
+      addMsgCopy(who, () => text);
     }
     if (images && images.length) {
       const ic = document.createElement('div'); ic.className = 'imgs';
@@ -596,6 +709,7 @@ class SatrChat extends HTMLElement {
   // كتلة رد المساعد — تعيدها للقشرة بعقدها الحرفي (مجرى الأحداث يستدعي methods)
   function newAssistantBlock(label) {
     hideEmpty();
+    for (const retry of thread.querySelectorAll('.retry-card')) retry.remove();
     const w = document.createElement('div');
     w.className = 'msg assistant';
     const who = document.createElement('div'); who.className = 'who';
@@ -856,6 +970,7 @@ class SatrChat extends HTMLElement {
       },
       finish(resultObj) {
         flushTextSurfaces();
+        if (!resultObj && (worklog.classList.contains('failed') || worklog.classList.contains('stopped'))) return;
         worklog.classList.remove('working', 'answering');
         worklog.classList.add(resultObj && resultObj.is_error ? 'failed' : 'done');
         workTitle.textContent = resultObj && resultObj.is_error ? 'اكتمل مع خطأ' : 'اكتمل العمل';
@@ -904,7 +1019,7 @@ class SatrChat extends HTMLElement {
         flushTextSurfaces();
         worklog.classList.remove('working', 'answering');
         worklog.classList.add('stopped');
-        workTitle.textContent = 'توقّف العمل';
+        workTitle.textContent = 'أُوقِف الدور';
         if (hasActivity) setWorklogCollapsed(true);
         const answerText = phaseText('final_answer');
         const commentaryText = phaseText('commentary');
@@ -914,10 +1029,20 @@ class SatrChat extends HTMLElement {
         if (!w.querySelector('.stopped-note')) {
           const n = document.createElement('div');
           n.className = 'meta stopped-note';
-          n.textContent = '⏹ تم إيقاف الطلب';
+          n.textContent = '⏹ أُوقِف الدور';
           w.appendChild(n);
         }
         scrollDown();
+      },
+      showRetry() {
+        if (w.querySelector('.retry-card')) return;
+        const retry = document.createElement('div'); retry.className = 'retry-card';
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = '🔄 أعد المحاولة';
+        button.addEventListener('click', () => {
+          button.disabled = true;
+          component.dispatchEvent(new CustomEvent('retry-request', { bubbles: true }));
+        });
+        retry.appendChild(button); w.appendChild(retry); scrollDown();
       },
       done: false,
     };
@@ -987,6 +1112,7 @@ class SatrChat extends HTMLElement {
 
   // «جلسة جديدة»: حالة فارغة + تصفير الكلفة التراكمية وشريطها
   function reset() {
+    if (!searchBar.hidden) closeThreadSearch();
     taskLedgerEl = null;
     taskLedgerSession = null;
     checkpointEl = null;
@@ -997,6 +1123,7 @@ class SatrChat extends HTMLElement {
   }
   // تفريغ الخيط لاستئناف محادثة محوّل (نظير reset دون حالة الفراغ — التاريخ سيُبنى فوراً)
   function clearThread() {
+    if (!searchBar.hidden) closeThreadSearch();
     taskLedgerEl = null;
     taskLedgerSession = null;
     checkpointEl = null;

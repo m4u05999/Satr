@@ -59,6 +59,7 @@ class SatrContextPanel extends HTMLElement {
       this._list.appendChild(h);
       return;
     }
+    this.dispatchEvent(new CustomEvent('context-usage', { bubbles: true, composed: true, detail: r.usage }));
     this._render(r.usage, sessionId, busy);
   }
 

@@ -221,7 +221,8 @@ function testDesignGuard() {
   assert(base.includes('@container chat-column (max-width: 48rem)')
     && base.includes('@container chat-column (max-width: 28rem)')
     && base.includes('.composer textarea { grid-column: 1 / -1; width: 100%; }')
-    && base.includes('#perm, #attachBtn { grid-column: 1 / -1; }'),
+    && base.includes('#attachBtn { grid-column: 1 / -1; }')
+    && base.includes('.awareness-bar { justify-content: flex-start; }'),
   'composer responsiveness must follow chat-column width and preserve usable controls');
   const packageJson = JSON.parse(read('package.json'));
   assert.strictEqual(packageJson.scripts['test:chatcolumn-layout'],

@@ -11,6 +11,8 @@ const SUITE = [
   'test:chat-rtl',
   'test:update-ui',
   'test:task-ledger-ui',
+  'test:daily-loop-ui',
+  'test:sessionmeta',
   'test:tasks',
   'test:memory',
   'test:design-guard',

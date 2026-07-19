@@ -30,9 +30,27 @@
     <button id="previewToggle" title="المعاينة المدمجة — متصفح لمشروعك (م-1)">🌐</button>
     <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄</button>
     <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">±</button>
+    <div class="top-pop-wrap">
+      <button id="sessionChangesToggle" type="button" title="تغييرات هذه الجلسة">Δ <span id="sessionChangesCount" hidden>0</span></button>
+      <div id="sessionChangesPop" class="top-pop" hidden>
+        <div class="top-pop-head">تغييرات هذه الجلسة</div>
+        <div id="sessionChangesList" class="session-changes-list"></div>
+      </div>
+    </div>
     <button id="opsRoomToggle" title="غرفة العمليات">غرفة العمليات</button>
     <button id="exportChat" title="تصدير المحادثة الحالية (Markdown)">📤</button>
     <button id="themeToggle" title="تبديل الوضع الفاتح/الداكن">🌙</button>
+    <div class="top-pop-wrap">
+      <button id="shortcutsToggle" type="button" title="اختصارات لوحة المفاتيح">؟</button>
+      <div id="shortcutsPop" class="top-pop shortcuts-pop" hidden>
+        <div class="top-pop-head">اختصارات سريعة</div>
+        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+N</kbd><span>جلسة جديدة</span></div>
+        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+S</kbd><span>إيقاف الدور الجاري</span></div>
+        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+I</kbd><span>تركيز المحرّر</span></div>
+        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+T</kbd><span>طيّ/فرد الطرفية</span></div>
+        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+P</kbd><span>طيّ/فرد المعاينة</span></div>
+      </div>
+    </div>
     <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
     <div class="settings-wrap">
       <button id="settingsBtn" title="الإعدادات">⚙</button>
@@ -46,7 +64,18 @@
             <option value="low">منخفض — أسرع وأرخص</option>
             <option value="medium">متوسط</option>
             <option value="high">مرتفع</option>
+            <option value="xhigh">مرتفع جداً</option>
             <option value="max">أقصى — للمهام المعقدة</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="perm">وضع الأذونات</label>
+          <select id="perm" title="وضع الأذونات — تجاوز كل الأذونات خيار خطر لا يدخل التدوير السريع">
+            <option value="acceptEdits">قبول التعديلات تلقائياً</option>
+            <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
+            <option value="default">افتراضي</option>
+            <option value="auto">تلقائي ذكي (يسأل عن التنفيذ والكتابة)</option>
+            <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
           </select>
         </div>
         <!-- مجلدات إضافية (المرحلة 14.4): تُمنح للنموذج وصولاً بجانب مجلد المشروع -->
@@ -113,7 +142,7 @@
     <button id="bgKillAll" type="button">إيقاف الكل</button>
   </div>
   <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
-  <!-- شريط المؤلّف (§5-د): محرك/نموذج/صلاحيات + إرفاق، بجوار الإرسال (نمط Cursor) -->
+  <!-- شريط المؤلّف (§5-د): محرك/نموذج + إرفاق، بجوار الإرسال (نمط Cursor) -->
   <div class="composer-tools">
     <span class="ct-label">المحرك</span>
     <select id="engine" title="المحرك/المزوّد">
@@ -124,20 +153,22 @@
     </select>
     <span class="ct-label">النموذج</span>
     <select id="model" title="النموذج"><option value="">الافتراضي</option></select>
-    <select id="perm" title="وضع الصلاحيات">
-      <option value="acceptEdits">قبول التعديلات تلقائياً</option>
-      <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
-      <option value="default">افتراضي</option>
-      <option value="auto">تلقائي ذكي (يسأل عن التنفيذ والكتابة)</option>
-      <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
-    </select>
     <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (محرك SDK)">📎 إرفاق</button>
     <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+  </div>
+  <div id="awarenessBar" class="awareness-bar" aria-label="حالة الدور الحالية">
+    <button id="awarenessModel" type="button" dir="ltr" title="فتح قائمة النماذج القائمة">model: default</button>
+    <span aria-hidden="true">·</span>
+    <button id="awarenessEffort" type="button" dir="ltr" title="تدوير جهد التفكير">effort: default</button>
+    <span aria-hidden="true">·</span>
+    <button id="awarenessPerm" type="button" title="تدوير وضع الأذونات الآمن">الأذونات: افتراضي</button>
+    <span aria-hidden="true">·</span>
+    <button id="awarenessContext" type="button" dir="ltr" title="فتح لوحة السياق">context: —%</button>
   </div>
   <div class="composer">
     <div id="slashMenu" role="listbox"></div>
     <div id="fileMenu" role="listbox"></div>
-    <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1"></textarea>
+    <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1" spellcheck="true"></textarea>
     <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح: امنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح فقط — محرك SDK)">🖱️ متصفح</button>
     <button id="send">إرسال</button>
   </div>

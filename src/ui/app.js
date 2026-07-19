@@ -38,6 +38,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   let sessionId = null, busy = false, currentBlock = null;
   let sessionCwd = null;     // المجلد الذي وُلدت فيه الجلسة الحالية (جلسات Claude Code مرتبطة بمجلدها)
   let lastSentPrompt = '';   // آخر طلب أُرسل — يُستعاد للمحرّر عند فشل استئناف جلسة ميتة
+  let lastUserTurn = { prompt: '', images: [] }; // مصدر زر إعادة المحاولة (نص + صور كما أُرسلت)
   let gated = true; // محجوب حتى يؤكّد فحص أول التشغيل توفّر Claude Code (مانع إطلاق)
 
   // ---------- إعدادات محفوظة ----------
@@ -47,6 +48,44 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (saved !== null) el.value = saved;
     el.addEventListener('change', () => localStorage.setItem('satr_' + id, el.value));
   });
+  const EFFORT_CYCLE = ['low', 'medium', 'high', 'xhigh', 'max', ''];
+  const PERMISSION_CYCLE = ['default', 'acceptEdits', 'plan', 'auto'];
+  const PERMISSION_LABELS = {
+    default: 'افتراضي', acceptEdits: 'قبول التعديلات', plan: 'تخطيط فقط', auto: 'تلقائي ذكي',
+    bypassPermissions: 'تجاوز كل الأذونات',
+  };
+  function selectedValueLabel(select) {
+    return select.value || 'default';
+  }
+  function syncAwareness() {
+    const model = $('awarenessModel'), effort = $('awarenessEffort'), permission = $('awarenessPerm');
+    if (model) model.textContent = 'model: ' + selectedValueLabel($('model'));
+    if (effort) effort.textContent = 'effort: ' + ($('effort').value || 'default');
+    if (permission) {
+      const mode = $('perm').value || 'default';
+      permission.textContent = 'الأذونات: ' + (PERMISSION_LABELS[mode] || mode);
+      permission.classList.toggle('mode-warning', mode === 'acceptEdits' || mode === 'auto');
+      permission.classList.toggle('mode-plan', mode === 'plan');
+    }
+  }
+  function cycleSelect(select, values) {
+    const index = values.indexOf(select.value);
+    select.value = values[(index + 1 + values.length) % values.length];
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  $('awarenessModel').addEventListener('click', () => {
+    const select = $('model');
+    select.focus();
+    if (typeof select.showPicker === 'function') {
+      try { select.showPicker(); } catch (error) { select.click(); }
+    } else select.click();
+  });
+  $('awarenessEffort').addEventListener('click', () => cycleSelect($('effort'), EFFORT_CYCLE));
+  $('awarenessPerm').addEventListener('click', () => cycleSelect($('perm'), PERMISSION_CYCLE));
+  $('awarenessContext').addEventListener('click', () => openContext());
+  $('effort').addEventListener('change', syncAwareness);
+  $('perm').addEventListener('change', syncAwareness);
+  syncAwareness();
   // خيار منخفض اللمس في ⚙: مهارات المستخدم تبقى ظاهرة افتراضياً، ويخفيها المستخدم
   // من قائمة «/» فقط عند الحاجة. البناء بـ DOM آمن كي لا نزيد ترميز topbar الثابت.
   (function initUserSkillsVisibility() {
@@ -158,6 +197,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       const o = document.createElement('option'); o.value = m.value; o.textContent = m.label; mSel.appendChild(o);
     }
     if ([...mSel.options].some((o) => o.value === saved)) mSel.value = saved;
+    syncAwareness();
   }
   async function loadProviders() {
     const sel = $('engine');
@@ -201,11 +241,42 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
     lastEngine = e;
   });
-  $('model').addEventListener('change', () => localStorage.setItem('satr_model_' + $('engine').value, $('model').value));
+  $('model').addEventListener('change', () => {
+    localStorage.setItem('satr_model_' + $('engine').value, $('model').value);
+    syncAwareness();
+  });
   loadProviders();
 
   // ---------- مدير المفاتيح + زر اختيار المجلد: انتقلا لمكوّن <satr-topbar> (تفكيك ت-11) ----------
   const topbarEl = document.querySelector('satr-topbar');
+  const sessionChanges = new Map();
+  function sessionChangesPayload() {
+    return [...sessionChanges.entries()].map(([rel, change]) => ({ rel, ...change }));
+  }
+  function renderSessionChanges() {
+    if (topbarEl.setSessionChanges) topbarEl.setSessionChanges(sessionChangesPayload());
+  }
+  function resetSessionChanges() {
+    sessionChanges.clear();
+    renderSessionChanges();
+  }
+  function recordSessionChange(event) {
+    if (!event || !event.rel) return;
+    const previous = sessionChanges.get(event.rel);
+    const added = (previous ? previous.added : 0) + (Number(event.added) || 0);
+    const removed = (previous ? previous.removed : 0) + (Number(event.removed) || 0);
+    const isNew = previous ? previous.isNew : event.isNew === true;
+    const lastId = event.id || (previous && previous.lastId) || '';
+    sessionChanges.set(event.rel, {
+      added, removed, isNew, lastId,
+      card: { ...event, id: lastId, added, removed, isNew },
+    });
+    renderSessionChanges();
+  }
+  customElements.whenDefined('satr-topbar').then(renderSessionChanges);
+  topbarEl.addEventListener('session-diff-open', (event) => {
+    if (event.detail) chatEl.addStandaloneDiff(event.detail);
+  });
 
   // ---------- لصق الصور وزر الإرفاق: انتقلا لمكوّن <satr-composer> (تفكيك ت-10) ----------
   // المكوّن يملك pendingImages والمصغّرات؛ القشرة تقرأ getImages() عند الإرسال
@@ -407,8 +478,8 @@ import { createUpdateToast } from './lib/update-toast.js';
   chatEl.addEventListener('task-action', async (event) => {
     const detail = event.detail || {};
     if (detail.action === 'pause' && busy) {
+      if (currentBlock && !currentBlock.done) { currentBlock.stopped(); currentBlock.showRetry(); }
       await window.satr.stop();
-      if (currentBlock && !currentBlock.done) currentBlock.stopped();
       endRun();
     }
     try {
@@ -653,6 +724,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       }
     } else if (ev.type === 'file_edit') {
       block.addDiff(ev);
+      recordSessionChange(ev);
       previewDirty = true; // م-1-ج: عُدّل ملف في هذا الدور ⇒ المعاينة تحتاج تحديثاً عند انتهائه
     } else if (ev.type === 'result') {
       if (ev.session_id) {
@@ -665,6 +737,8 @@ import { createUpdateToast } from './lib/update-toast.js';
         else block.error(String(ev.result));
       }
       block.finish(ev);
+      if (ev.is_error) block.showRetry();
+      refreshAwarenessContext();
       // م-1-ج: تحديث المعاينة تلقائياً بعد دور عدّل ملفات (المكوّن يقرّر فعلياً حسب وضعه)
       if (previewDirty) { previewDirty = false; if (previewEl.reloadIfLive) previewEl.reloadIfLive(); }
       chatEl.notifyTurnDone(!!ev.is_error);
@@ -676,6 +750,7 @@ import { createUpdateToast } from './lib/update-toast.js';
         const name = eng === 'codex' ? 'Codex' : 'claude';
         block.error('فشل تشغيل أمر ' + name + ' — تأكد أنه مثبت ومسجّل دخوله.\n' + (ev.text || ''));
       }
+      block.showRetry();
       endRun();
     } else if (ev.type === 'proc_done') {
       block.finish(null);
@@ -763,8 +838,8 @@ import { createUpdateToast } from './lib/update-toast.js';
   async function send() {
     if (gated) return; // المحادثة محجوبة حتى تجتاز بوابة أول التشغيل
     if (busy) {
+      if (currentBlock && !currentBlock.done) { currentBlock.stopped(); currentBlock.showRetry(); }
       await window.satr.stop();
-      if (currentBlock && !currentBlock.done) currentBlock.stopped();
       endRun();
       return;
     }
@@ -788,6 +863,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
     sessionCwd = cwdNow;
     lastSentPrompt = prompt;
+    lastUserTurn = { prompt, images: images.map((image) => image.dataUrl) };
     input.value = '';
     if (composerEl.afterSend) composerEl.afterSend(); // تمدد + مسودة + إغلاق القائمتين
     if (composerEl.clearImages) composerEl.clearImages();
@@ -816,6 +892,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     });
     if (r && r.error) {
       currentBlock.error(r.message || r.error);
+      currentBlock.showRetry();
       endRun();
       return;
     }
@@ -922,21 +999,24 @@ import { createUpdateToast } from './lib/update-toast.js';
   }
 
   function setModel(v, label) {
-    $('model').value = v; localStorage.setItem('satr_model', v);
+    $('model').value = v;
+    $('model').dispatchEvent(new Event('change', { bubbles: true }));
     addNotice('✓ تم اختيار نموذج ' + label);
   }
   function setPerm(v, label) {
-    $('perm').value = v; localStorage.setItem('satr_perm', v);
+    $('perm').value = v;
+    $('perm').dispatchEvent(new Event('change', { bubbles: true }));
     addNotice('✓ ' + label);
   }
   function newSession() {
     // 1.3: «جلسة جديدة» على محوّل أعمى تنسى مؤشر الاستئناف على القرص (سجلّه يبقى للتنظيف)
     const engNow = $('engine').value;
     if (isBlindEngine(engNow)) { try { window.satr.forgetChat(engNow); } catch (e) {} }
-    sessionId = null; currentBlock = null;
+    sessionId = null; currentBlock = null; lastUserTurn = { prompt: '', images: [] };
     if (composerEl.clearImages) composerEl.clearImages();
     $('sessionInfo').textContent = 'لا جلسة';
     chatEl.reset(); // حالة الفراغ + تصفير الكلفة التراكمية وشريطها (داخل المكوّن منذ ت-12)
+    resetSessionChanges();
     if (previewEl.resetTaskTrace) previewEl.resetTaskTrace();
     // إطفاء تلقائي لوضع تحكّم المتصفح: لا نحمل صلاحية قيادة تلقائية لمهمة جديدة صامتاً
     if (browserControlOn) { setBrowserControl(false, false); addNotice('🖱️ أُوقف وضع تحكّم المتصفح تلقائياً مع الجلسة الجديدة.'); }
@@ -983,6 +1063,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     currentBlock = null;
     if (composerEl.clearImages) composerEl.clearImages();
     chatEl.clearThread(); // تفريغ الخيط + تصفير الكلفة (داخل المكوّن منذ ت-12)
+    resetSessionChanges();
     const label = providerLabel(c.provider);
     for (const msg of (data.messages || [])) {
       if (msg.role === 'user') chatEl.addUserMsg(msg.text);
@@ -1008,7 +1089,11 @@ import { createUpdateToast } from './lib/update-toast.js';
     newSession();
     sessionId = s.id; // الرسالة القادمة ستُرسل بـ --resume على هذه الجلسة
     $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8);
-    if (data.cwd) { $('cwd').value = data.cwd; localStorage.setItem('satr_cwd', data.cwd); }
+    if (data.cwd) {
+      $('cwd').value = data.cwd;
+      localStorage.setItem('satr_cwd', data.cwd);
+      $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
+    }
     sessionCwd = $('cwd').value.trim(); // الجلسة المستأنفة مرتبطة بمجلدها هذا
     loadTaskLedger($('engine').value, s.id);
     loadCheckpoint($('engine').value, s.id);
@@ -1042,7 +1127,12 @@ import { createUpdateToast } from './lib/update-toast.js';
     currentBlock = null;
     if (composerEl.clearImages) composerEl.clearImages();
     chatEl.clearThread();
-    if (data.cwd) { $('cwd').value = data.cwd; localStorage.setItem('satr_cwd', data.cwd); }
+    resetSessionChanges();
+    if (data.cwd) {
+      $('cwd').value = data.cwd;
+      localStorage.setItem('satr_cwd', data.cwd);
+      $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
+    }
     sessionCwd = $('cwd').value.trim();
     if (data.total > data.messages.length)
       addNotice('عرض آخر ' + data.messages.length + ' من أصل ' + data.total + ' رسالة');
@@ -1205,6 +1295,24 @@ import { createUpdateToast } from './lib/update-toast.js';
   // وإشعارات إجراءات MCP تصل عبر حدث notice فتُعرض في خيط المحادثة.
   const mcpEl = document.querySelector('satr-mcp-panel');
   const contextEl = document.querySelector('satr-context-panel');
+  async function refreshAwarenessContext() {
+    const button = $('awarenessContext');
+    if (!button || typeof window.satr.contextUsage !== 'function') return;
+    const requestedCwd = $('cwd').value.trim();
+    const requestedSessionId = sessionId;
+    try {
+      const result = await window.satr.contextUsage(requestedCwd, requestedSessionId);
+      if (requestedCwd !== $('cwd').value.trim() || requestedSessionId !== sessionId) return;
+      if (!result || !result.ok || !result.usage) { button.textContent = 'context: —%'; return; }
+      const usage = result.usage;
+      const total = Number(usage.totalTokens) || 0;
+      const max = Number(usage.maxTokens) || 0;
+      const percentage = Number.isFinite(Number(usage.percentage))
+        ? Math.round(Number(usage.percentage))
+        : (max ? Math.round((total / max) * 100) : 0);
+      button.textContent = 'context: ' + Math.max(0, Math.min(100, percentage)) + '%';
+    } catch (error) { button.textContent = 'context: —%'; }
+  }
   function openMcp() {
     surfaceCoordinator.openPanel('mcp', document.activeElement, () => mcpEl.open($('cwd').value.trim()));
   }
@@ -1214,6 +1322,15 @@ import { createUpdateToast } from './lib/update-toast.js';
   }
   mcpEl.addEventListener('panel-refresh', openMcp);
   contextEl.addEventListener('panel-refresh', openContext);
+  contextEl.addEventListener('context-usage', (event) => {
+    const usage = event.detail || {};
+    const total = Number(usage.totalTokens) || 0;
+    const max = Number(usage.maxTokens) || 0;
+    const percentage = Number.isFinite(Number(usage.percentage))
+      ? Math.round(Number(usage.percentage))
+      : (max ? Math.round((total / max) * 100) : 0);
+    $('awarenessContext').textContent = 'context: ' + Math.max(0, Math.min(100, percentage)) + '%';
+  });
   mcpEl.addEventListener('notice', (e) => addNotice(e.detail));
 
   // ---------- قائمتا / و@ والمسودة: انتقلت الميكانيكا لمكوّن <satr-composer> (تفكيك ت-10) ----------
@@ -1223,6 +1340,18 @@ import { createUpdateToast } from './lib/update-toast.js';
   applyEngineCommands($('engine').value); // أوامر «/» حسب المحرك (تُخفي Claude-الخاصة مع Codex)
   composerEl.addEventListener('composer-send', send);
   composerEl.addEventListener('notice', (e) => addNotice(e.detail));
+  chatEl.addEventListener('user-edit', (event) => {
+    const detail = event.detail || {};
+    if (composerEl.restoreTurn) composerEl.restoreTurn(detail.text || '', detail.images || []);
+    else input.value = detail.text || '';
+    addNotice('✏️ أُعيدت الرسالة إلى المحرّر. الإرسال الجديد لا يرجع سياق الخادم ولا يفرّع الجلسة.');
+  });
+  chatEl.addEventListener('retry-request', () => {
+    if (busy || (!lastUserTurn.prompt && !lastUserTurn.images.length)) return;
+    if (composerEl.restoreTurn) composerEl.restoreTurn(lastUserTurn.prompt, lastUserTurn.images);
+    else input.value = lastUserTurn.prompt;
+    send();
+  });
   const terminalEl = document.querySelector('satr-terminal-panel');
   composerEl.addEventListener('show-term', (e) => {
     if (terminalEl && terminalEl.activateTerm) terminalEl.activateTerm(e.detail);
@@ -1319,6 +1448,22 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (d.imageDataUrl && composerEl.addImageData) composerEl.addImageData(d.imageDataUrl);
     input.value = ctx;
     send();
+  });
+
+  // اختصارات يومية دقيقة: لا تُلتقط إلا مع Ctrl+Alt معاً، فلا تبتلع تحرير النص المعتاد.
+  document.addEventListener('keydown', (event) => {
+    if (!event.ctrlKey || !event.altKey || event.metaKey || event.shiftKey) return;
+    const key = event.key.toLowerCase();
+    if (!['n', 's', 'i', 't', 'p'].includes(key)) return;
+    if (key === 's' && !busy) return;
+    event.preventDefault();
+    if (key === 'n') {
+      if (busy) addNotice('أوقف الدور الجاري قبل بدء جلسة جديدة');
+      else { newSession(); input.focus(); }
+    } else if (key === 's') send();
+    else if (key === 'i') input.focus();
+    else if (key === 't') $('termToggle').click();
+    else if (key === 'p') $('previewToggle').click();
   });
 
   // ---------- الطرفية المدمجة: انتقلت لمكوّن <satr-terminal-panel> (تفكيك ت-9) ----------

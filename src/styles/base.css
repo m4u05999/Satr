@@ -156,6 +156,24 @@
   }
 
   .controls { display: flex; align-items: center; gap: var(--space-2); flex: 1; flex-wrap: wrap; justify-content: flex-end; }
+  .top-pop-wrap { position: relative; }
+  .top-pop {
+    position: absolute; top: calc(100% + 8px); inset-inline-end: 0; z-index: var(--z-popover);
+    min-width: 300px; max-width: min(440px, 86vw); padding: var(--space-3);
+    border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface);
+    box-shadow: var(--shadow-pop); animation: pop var(--dur) var(--ease);
+  }
+  .top-pop[hidden] { display: none; }
+  .top-pop-head { margin-bottom: var(--space-2); color: var(--gold); font-size: 12.5px; font-weight: 700; }
+  #sessionChangesCount { min-width: 18px; padding-inline: var(--space-1); border-radius: var(--radius-pill); background: var(--gold-soft); color: var(--gold); font: 10px var(--mono); }
+  .session-changes-list { display: grid; gap: var(--space-1); max-height: 320px; overflow: auto; }
+  .session-change-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; width: 100%; text-align: start; }
+  .session-change-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; text-align: left; font: 11.5px var(--mono); }
+  .session-change-counts { direction: ltr; color: var(--text-dim); font: 10.5px var(--mono); }
+  .session-changes-empty { color: var(--text-dim); font-size: 12px; }
+  .shortcuts-pop { display: grid; gap: var(--space-1h); }
+  .shortcut-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); color: var(--text-dim); font-size: 12px; }
+  .shortcut-row kbd { direction: ltr; padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); font: 10.5px var(--mono); }
   .field { display: flex; align-items: center; gap: var(--space-1h); }
   .field label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   input[type="text"], select {
@@ -191,6 +209,17 @@
   /* منذ ت-12: <main> داخل مكوّن satr-chat (بلا Shadow — غلاف شفاف للتخطيط) */
   satr-chat { display: contents; }
   main { flex: 1; min-width: 0; overflow-y: auto; padding: var(--space-5) var(--space-4) var(--space-4); }
+  .thread-search {
+    position: sticky; top: 0; z-index: var(--z-sticky); display: flex; align-items: center; gap: var(--space-1h);
+    max-width: 640px; margin: 0 auto var(--space-3); padding: var(--space-2);
+    border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop);
+  }
+  .thread-search[hidden] { display: none; }
+  .thread-search input { flex: 1; min-width: 0; }
+  .thread-search button { padding: var(--space-1) var(--space-2); }
+  .thread-search-count { direction: ltr; min-width: 48px; text-align: center; color: var(--text-dim); font: 11px var(--mono); }
+  mark.thread-hit { padding: 0; background: var(--gold-soft); color: inherit; border-radius: var(--radius-xs); }
+  mark.thread-hit.current { background: var(--gold); color: var(--on-gold); }
   /* زر «النزول للأحدث» (دفعة UX): يظهر حين ينفكّ الالتصاق بالذيل — sticky داخل
      حاوية التمرير فيبقى ملتصقاً بحافتها السفلى ما دام موضعه الطبيعي (آخر المحتوى) أدنى */
   #jumpDown {
@@ -221,6 +250,11 @@
   .msg .who { display: flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--text-dim); }
   .msg.user { align-self: flex-start; max-width: 78%; gap: var(--space-1h); }
   .msg.user .who { color: var(--gold); font-weight: 600; }
+  .msg-user-edit { padding: 0 var(--space-1); border: none; background: none; color: var(--text-dim); font-size: 11px; }
+  .msg-user-edit:hover { border: none; background: none; color: var(--gold); }
+  .msg.user.superseded { opacity: .58; }
+  .msg.user.superseded .bubble { text-decoration: line-through; text-decoration-thickness: 1px; }
+  .msg-superseded { color: var(--text-dim); font-size: 10.5px; }
   .msg.user .bubble {
     background: var(--chat-user-surface); border: 0; border-inline-start: 2px solid var(--gold-border);
     /* 3px زاوية هوية الفقاعة (قرار مالك — لا تُقرَّب)؛ البقية على السلّم حرفياً */
@@ -364,6 +398,8 @@
   .meta { align-self: flex-end; font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); direction: ltr; text-align: right; }
   .error-box { background: var(--red-soft); border: 1px solid var(--red-border); color: var(--red); border-radius: var(--radius-lg); padding: var(--space-2h) var(--space-4); font-size: 13px; white-space: pre-wrap; unicode-bidi: plaintext; }
   .notice { color: var(--text-dim); font-size: 13px; text-align: center; }
+  .retry-card { display: flex; justify-content: flex-start; }
+  .retry-card button { border-color: var(--gold-border); background: var(--gold-soft); color: var(--gold); }
   /* إشعار بزرّ فعل (م-1: اقتراح «افتح المعاينة» عند رصد خادم تطوير) */
   .notice .notice-act { margin-inline-start: var(--space-2h); font-size: 12px; padding: 2px var(--space-3); border-radius: var(--radius-md); }
 
@@ -475,6 +511,14 @@
   .composer-tools .ct-label { font-size: 11.5px; color: var(--text-dim); }
   .composer-tools select, .composer-tools button { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-lg); padding: var(--space-1h) var(--space-2h); font-size: 12.5px; font-family: var(--sans); outline: none; cursor: pointer; }
   .composer-tools select:hover, .composer-tools button:hover { border-color: var(--gold); }
+  .awareness-bar {
+    max-width: 880px; margin: 0 auto var(--space-2); display: flex; align-items: center; justify-content: flex-start;
+    gap: var(--space-1h); overflow-x: auto; color: var(--text-faint); font-size: 11px;
+  }
+  .awareness-bar button { flex: none; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-dim); background: var(--surface-2); color: var(--text-dim); font-size: 11px; }
+  .awareness-bar button:hover { border-color: var(--gold-border); color: var(--text); }
+  #awarenessPerm.mode-warning { border-color: var(--gold-border); background: var(--gold-soft); color: var(--gold); }
+  #awarenessPerm.mode-plan { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
   .ct-hint { font-size: 11.5px; color: var(--text-dim); }
   /* شريط الحالة عربي RTL — المعرّفات والأرقام اللاتينية تنعزل LTR تلقائياً بخوارزمية BiDi */
   .statusline { max-width: 880px; margin: var(--space-2) auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
@@ -486,6 +530,7 @@
     .composer-tools .ct-label { display: none; }
     .composer-tools select { flex: 1 1 13rem; min-width: 0; max-width: 100%; }
     .composer-tools button { flex: 0 1 auto; min-width: 0; }
+    .awareness-bar { justify-content: flex-start; }
     .composer { gap: var(--space-2); }
     textarea { min-width: 0; }
     #send { padding-inline: var(--space-4); }
@@ -500,7 +545,7 @@
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .composer-tools select, .composer-tools button { width: 100%; }
-    #perm, #attachBtn { grid-column: 1 / -1; }
+    #attachBtn { grid-column: 1 / -1; }
     .composer {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     }

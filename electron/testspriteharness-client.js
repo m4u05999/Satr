@@ -4,6 +4,9 @@
   const calls = [];
   const channels = { event: new Set(), term: new Set(), preview: new Set() };
   let sessionSeq = 0;
+  let autoRespond = true;
+  let sessionRows = [];
+  const sessionMeta = {};
 
   function remember(name, args) {
     calls.push({ name, args: Array.from(args), at: Date.now() });
@@ -55,8 +58,19 @@
     lastChat: async () => ({ sid: null }),
     forgetChat: async () => ({ ok: true }),
     listChats: async () => [],
-    listSessions: async () => [],
+    listSessions: async () => sessionRows.map((row) => ({ ...row })),
     listCodexSessions: async () => [],
+    sessionMetaList: async () => ({ ok: true, entries: { ...sessionMeta } }),
+    sessionMetaSet: async function sessionMetaSet(sessionId, patch) {
+      remember('sessionMetaSet', arguments);
+      const previous = sessionMeta[sessionId] || {};
+      const next = { ...previous, ...(patch || {}) };
+      if (next.title === '') delete next.title;
+      if (next.pinned === false) delete next.pinned;
+      if (Object.keys(next).length) sessionMeta[sessionId] = next;
+      else delete sessionMeta[sessionId];
+      return { ok: true, entry: sessionMeta[sessionId] || {} };
+    },
     readChat: async () => ({ messages: [] }),
     readSession: async () => ({ messages: [] }),
     readCodexSession: async () => ({ messages: [] }),
@@ -87,7 +101,7 @@
     researchStop: async () => ({ ok: true }),
     mcpStatus: async () => ({ ok: true, servers: [] }),
     mcpAction: async () => ({ ok: false, error: 'disabled_in_harness' }),
-    contextUsage: async () => ({ ok: true, used: 0, limit: 0 }),
+    contextUsage: async () => ({ ok: true, usage: { percentage: 42, totalTokens: 42, maxTokens: 100, categories: [] } }),
     opsBrainstormLatest: async () => ({ ok: true, run: null }),
     opsPlanLatest: async () => ({ ok: true, run: null }),
     executionTeamLatest: async () => ({ ok: true, team: null }),
@@ -106,7 +120,7 @@
     send: async (payload) => {
       remember('send', [payload]);
       const sessionId = 'testsprite-harness-' + (++sessionSeq);
-      later(() => {
+      if (autoRespond) later(() => {
         publish('event', { type: 'system', subtype: 'init', session_id: sessionId });
         publish('event', {
           type: 'assistant',
@@ -120,7 +134,8 @@
       });
       return { started: true, engine: (payload && payload.engine) || 'sdk' };
     },
-    stop: async () => {
+    stop: async function stop() {
+      remember('stop', arguments);
       publish('event', { type: 'proc_done', code: 0 });
       return { stopped: true };
     },
@@ -158,6 +173,13 @@
     },
   });
 
-  window.__SATR_TESTSPRITE_HARNESS__ = { version: 1, calls };
+  window.__SATR_TESTSPRITE_HARNESS__ = {
+    version: 1,
+    calls,
+    emitEvent(value) { publish('event', value); },
+    setAutoRespond(value) { autoRespond = value !== false; },
+    setSessions(value) { sessionRows = Array.isArray(value) ? value.map((row) => ({ ...row })) : []; },
+    clearCalls() { calls.length = 0; },
+  };
   document.documentElement.dataset.testspriteHarness = 'true';
 })();
