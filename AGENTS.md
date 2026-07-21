@@ -52,7 +52,10 @@
 text/tool_use) · `user`(tool_result) · `stream_text` · `result`(التكلفة/المدة/session_id) ·
 `permission_request`→`window.satr.permission(id,allow,always)` · `file_edit`(بطاقة فرق)→
 `window.satr.undoEdit(id)` · `proc_done`/`stderr`/`spawn_error`. **أي محرك جديد يطبّع خرجه
-لهذه الأنواع نفسها فلا تتغيّر الواجهة.**
+لهذه الأنواع نفسها فلا تتغيّر الواجهة.** محرك kimi-code يضيف: `system/available_commands`
+(أوامر ACP المائلة المعلنة — تُغطى بأسماء عربية ثابتة `/ضغط /سياق /حالة /مهام /مساعدة`)
+وتسميات عربية لأدوات Kimi الداخلية عبر `KIMI_TOOL_LABELS` في `electron/kimi.js`
+(العنوان الأولي لـ tool_call فقط؛ عناوين التحديثات الحرة تبقى كما هي).
 
 ## محرك Codex (إن عملت عليه)
 `electron/codex.js` يتكلّم JSON-RPC مع `codex app-server` (stdio، أسطر JSON بـ `\n`). نقاط حرجة

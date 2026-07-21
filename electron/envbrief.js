@@ -14,6 +14,10 @@ const SDK_TOOL_NAMES = Object.freeze([
   'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard',
   'load_skill', 'read_skill_resource', 'verification_config', 'verify_project', 'propose_memory',
 ]);
+const KIMI_EXTRA_TOOL_NAMES = Object.freeze([
+  'verification_config', 'verify_project', 'update_task_ledger',
+  'propose_memory', 'load_skill', 'read_skill_resource',
+]);
 
 function codexToolNames() {
   const codexmcp = require('./codexmcp');
@@ -28,11 +32,14 @@ function adapterToolNames() {
 function toolNames(engine) {
   if (engine === 'sdk') return Array.from(SDK_TOOL_NAMES);
   if (engine === 'codex') return codexToolNames();
+  if (engine === 'kimi-code') return codexToolNames().concat(KIMI_EXTRA_TOOL_NAMES);
   return adapterToolNames();
 }
 
 function executionPolicy(engine) {
-  const visible = engine === 'adapter' ? 'run_command' : (engine === 'sdk' ? 'run_in_terminal' : 'أداة exec الأصلية في Codex');
+  const visible = engine === 'adapter' ? 'run_command'
+    : engine === 'sdk' ? 'run_in_terminal'
+      : engine === 'kimi-code' ? 'أداة Bash المدمجة في Kimi Code بعد إذن المستخدم' : 'أداة exec الأصلية في Codex';
   const afterStart = engine === 'adapter'
     ? '- بعد تشغيل الخادم أخبر المستخدم بعنوانه ليعرضه في معاينة «سطر»، واستعمل get_background_output للاطلاع على السجل لاحقاً.'
     : '- بعد تشغيل الخادم استعمل open_preview للعرض، وget_background_output للاطلاع على السجل لاحقاً.';
@@ -70,7 +77,7 @@ function browserPolicy(hasBrowser) {
 }
 
 function build(engine, model, options) {
-  const normalized = engine === 'sdk' || engine === 'codex' ? engine : 'adapter';
+  const normalized = engine === 'sdk' || engine === 'codex' || engine === 'kimi-code' ? engine : 'adapter';
   const names = toolNames(normalized);
   const compact = Boolean(options && options.compact);
   const sections = [
@@ -81,7 +88,7 @@ function build(engine, model, options) {
     browserPolicy(normalized !== 'adapter'),
     'إذا سأل المستخدم عن «سطر» نفسه أو ميزاته أو طريقة استخدامه، حمّل مهارة satr-guide واتبع دليلها قبل الإجابة.',
   ];
-  if (normalized === 'sdk') {
+  if (normalized === 'sdk' || normalized === 'kimi-code') {
     sections.push('استخدم AskUserQuestion حين تحتاج اختياراً واضحاً من المستخدم. استخدم propose_memory لاقتراح ذاكرة دائمة ولا تحفظها مباشرةً.');
   }
   sections.push(runtimeenv.environmentLine(normalized, model));

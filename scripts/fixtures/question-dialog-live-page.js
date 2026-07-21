@@ -124,6 +124,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     await frames(3);
     assert(!el.hasAttribute('open'), 'لم يُغلق السؤال الجديد بعد اختبار الرد القديم.');
 
+    window.__questionLiveProgress = 'free-text';
+    answered = null;
+    el.ask({ id: 'live-text', questions: [{ question: 'ما الرمز؟', header: 'سرّي', kind: 'text', secret: true,
+      multiSelect: false, options: [] }] });
+    await frames(2);
+    window.__questionLiveProgress = 'free-text-rendered';
+    const secretInput = root.querySelector('.q-input');
+    assert(secretInput && secretInput.type === 'password', 'الحقل السرّي لا يستخدم password.');
+    secretInput.value = 'قيمة سرية'; secretInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await frames(1);
+    window.__questionLiveProgress = 'free-text-filled';
+    assert(!submit.disabled, 'لم يُفعّل الإرسال بعد إدخال النص.');
+    submit.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    window.__questionLiveProgress = 'free-text-sent';
+    assert(answered && answered.selections[0].text === 'قيمة سرية', 'لم تُرسل الإجابة النصية كما هي.');
+    assert(!root.querySelector('.q-input'), 'بقيت القيمة السرّية في DOM بعد الإرسال.');
+
+    window.__questionLiveProgress = 'other-text';
+    answered = null;
+    el.ask({ id: 'live-other', questions: [{ question: 'اختر أو اكتب', header: 'أخرى', kind: 'choiceOther', secret: false,
+      multiSelect: false, options: [{ label: 'أ', description: '' }, { label: 'ب', description: '' }] }] });
+    await frames(2);
+    const otherInput = root.querySelector('.q-input');
+    otherInput.value = 'خيار مخصص'; otherInput.dispatchEvent(new Event('input', { bubbles: true }));
+    submit.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert(answered && answered.selections[0].text === 'خيار مخصص'
+      && answered.selections[0].optionIndexes.length === 0, 'لم يُرسل خيار «أخرى» كنص حر.');
+
     assert(violations.length === 0, 'رُصد securitypolicyviolation.');
     window.__questionLiveProgress = 'complete';
     window.__questionLiveResult = { pass: true };

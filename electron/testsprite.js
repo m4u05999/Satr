@@ -58,9 +58,9 @@ function classifyRequest(prompt) {
   return { explicit, generic };
 }
 
-function requested(prompt, options) {
+function requested(prompt) {
   const intent = classifyRequest(prompt);
-  return intent.explicit || (!!(options && options.available) && intent.generic);
+  return intent.explicit;
 }
 
 function needsClarification(prompt) {

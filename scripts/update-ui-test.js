@@ -80,10 +80,11 @@ function testUpdaterContract() {
     const updater = require('../electron/updater');
     assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: false }), false);
     assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'enterprise' }), false);
-    assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community' }), true);
+    assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community' }), false);
+    assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: true }), true);
 
     const emitted = [];
-    updater.initUpdater({ isPackaged: true }, (event) => emitted.push(event));
+    updater.initUpdater({ isPackaged: true }, (event) => emitted.push(event), { edition: 'community', signed: true });
     assert.strictEqual(fake.autoDownload, false);
     assert.strictEqual(fake.autoInstallOnAppQuit, false);
     assert.deepStrictEqual(scheduled.map((item) => item.timeout), [8000]);

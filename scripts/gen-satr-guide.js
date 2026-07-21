@@ -43,7 +43,7 @@ function buildMarkdown() {
     '',
     ...preview,
     '',
-    '## أدوات حلقة الوكيل للمحوّلات (DeepSeek/Gemini/Qwen/MiniMax…)',
+    '## أدوات حلقة الوكيل للمحوّلات (Kimi/DeepSeek/Gemini/Qwen/MiniMax…)',
     '',
     'محرك Claude يملك مقابلاتها الأصلية (Read/Grep/Edit/Bash…) مع run_in_terminal',
     'للتنفيذ في الطرفية المرئية؛ الكتابة والتنفيذ خلف مربع الإذن دائماً.',

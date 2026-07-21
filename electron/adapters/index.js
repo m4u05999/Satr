@@ -90,6 +90,25 @@ register('qwen', openaiCompatible.make({
   ],
 });
 
+// Kimi Code API — تكامل API مباشر بهوية سطر (لا التفاف عبر Claude Code ولا CLI).
+// K3 يفكر دائماً؛ يجب حفظ reasoning_content مع رسائل نداء الأدوات كي يقبل الجولة التالية.
+register('kimi', openaiCompatible.make({
+  id: 'kimi',
+  host: 'api.kimi.com', path: '/coding/v1/chat/completions',
+  keyName: 'KIMI_API_KEY', defaultModel: 'k3', label: 'Kimi K3 API', includeUsage: true,
+  capabilities: { vision: true },
+  reasoningKey: 'reasoning_content',
+  effortMap: { low: 'low', medium: 'high', high: 'high', xhigh: 'max', max: 'max' },
+  promptCacheKey: true,
+  authHint: 'مفتاح Kimi Code مرفوض. أنشئ مفتاحاً من Kimi Code Console؛ مفتاح Kimi Open Platform لا يعمل مع هذا المسار.',
+}), {
+  label: 'Kimi K3 — API (REST)', family: 'openai', keyName: 'KIMI_API_KEY',
+  capabilities: { vision: true },
+  models: [
+    { value: 'k3', label: 'K3 — 256K/1M حسب الخطة' },
+  ],
+});
+
 // MiniMax — نقطة متوافقة مع OpenAI (base_url: https://api.minimax.io/v1). الافتراضي
 // M3 (نافذة 1M). أسماء النماذج بصيغة MiniMax-Mx الرسمية (فرق حالة الأحرف يسبب 400).
 register('minimax', openaiCompatible.make({

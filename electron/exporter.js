@@ -1,9 +1,10 @@
 /**
  * سطر 2.0 — تصدير المحادثة إلى Markdown (الدفعة 4.8 «مشاركة») — قراءة فقط
  *
- * القرص مصدر الحقيقة للمحرّكين (لا استخراج من DOM — هشّ): جلسات كلود عبر
+ * المصدر الدائم هو الحقيقة (لا استخراج من DOM — هشّ): جلسات كلود عبر
  * sessions.readFullSession (تحديد الملف بمعرّف الجلسة UUID — لا اشتقاق ترميز
- * اسم مجلد المشروع من cwd)، ومحادثات المحوّلات عبر chats.read بلا سقف العرض.
+ * اسم مجلد المشروع من cwd)، ومحادثات المحوّلات عبر chats.read بلا سقف العرض،
+ * وجلسات Kimi الأصلية عبر ACP الرسمي.
  *
  * الناتج Markdown خام: ترويسة وصفية ثم «👤 المستخدم / 🤖 النموذج» بالتناوب،
  * وأدوات المساعد سطر اقتباس موجز. نص النموذج Markdown أصلاً فيُمرَّر كما هو.
@@ -27,6 +28,11 @@ async function toMarkdown({ engine, sessionId, cwd }) {
   let realCwd = cwd || '';
   if (engine === 'sdk' || engine === 'cli') {
     const r = await sessions.readFullSession(sessionId);
+    if (r.error) return { ok: false, error: 'notfound' };
+    msgs = r.messages;
+    if (r.cwd) realCwd = r.cwd;
+  } else if (engine === 'kimi-code') {
+    const r = await require('./kimi').readSession(sessionId);
     if (r.error) return { ok: false, error: 'notfound' };
     msgs = r.messages;
     if (r.cwd) realCwd = r.cwd;

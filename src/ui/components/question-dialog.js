@@ -1,8 +1,8 @@
-// <satr-question-dialog> — أسئلة اختيار عربية (AskUserQuestion، محرك SDK).
+// <satr-question-dialog> — أسئلة عربية: اختيار للمحركات كلها ونص حر محدود لـ Codex.
 // كانت الأداة محجوبة (canUseTool سماح/رفض فقط)؛ أُثبت حيّاً أن SDK يقبل إرجاع updatedInput
 // يحمل الاختيار (scripts/ask-user-question-probe.js). العقد: ask({id, questions}) يعرض
-// 1–4 أسئلة، كل سؤال بخيارات (radio للأحادي، checkbox للمتعدد). الرد **مؤشرات فقط**
-// (selections:[{questionIndex, optionIndexes}]) عبر window.satr.answerQuestion — لا نص حر،
+// 1–4 أسئلة، كل سؤال بخيارات أو حقل نصي. الرد مؤشرات، أو text لحقل Codex فقط،
+// (selections:[{questionIndex, optionIndexes, text?}]) عبر window.satr.answerQuestion،
 // فتبني العملية الرئيسية updatedInput من input الأصلي (أمان). closeAll() للإيقاف/الانتهاء.
 // بيانات النموذج (question/label/description/preview) تُعرض بـ textContent حصراً (لا حقن).
 import { sheet } from '../lib/sheet.js';
@@ -35,6 +35,12 @@ const ownSheet = sheet(`
   }
   .q-opt:hover { border-color: var(--gold); }
   .q-opt input { margin-top: 3px; flex: none; accent-color: var(--gold); }
+  .q-input {
+    width: 100%; box-sizing: border-box; padding: var(--space-2h) var(--space-3);
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: var(--text);
+    unicode-bidi: plaintext;
+  }
+  .q-input:focus { border-color: var(--gold); outline: none; }
   .q-opt-body { flex: 1; min-width: 0; }
   .q-opt-label { color: var(--text); }
   .q-opt-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; unicode-bidi: plaintext; }
@@ -75,7 +81,7 @@ class SatrQuestionDialog extends HTMLElement {
     this._current = null;
     this._sending = false; // منع النقر المكرر أثناء انتظار الرد
     this._requestEpoch = 0; // يبطل أي رد IPC قديم بعد الإيقاف/انتهاء الدور
-    this._groups = []; // لكل سؤال: { multiSelect, inputs:[HTMLInputElement] }
+    this._groups = []; // لكل سؤال: { kind, multiSelect, inputs:[HTMLInputElement] }
     this._submit.addEventListener('click', () => this._send());
     this._cancel.addEventListener('click', () => this._doCancel());
     r.addEventListener('keydown', (event) => { if (event.key === 'Tab') this._trapFocus(event); });
@@ -95,13 +101,14 @@ class SatrQuestionDialog extends HTMLElement {
     this._current = null;
     this._sending = false;
     this._cancel.disabled = false;
+    this._list.textContent = '';
     this._setOpen(false);
   }
 
   _setOpen(on) {
     if (on) this.setAttribute('open', ''); else this.removeAttribute('open');
     this.dispatchEvent(new CustomEvent('perm-visible', { bubbles: true, detail: this.hasAttribute('open') }));
-    if (on) queueMicrotask(() => { const f = this.shadowRoot.querySelector('.q-opt input'); if (f) f.focus(); });
+    if (on) queueMicrotask(() => { const f = this.shadowRoot.querySelector('.q-options input'); if (f) f.focus(); });
   }
 
   _trapFocus(event) {
@@ -130,6 +137,22 @@ class SatrQuestionDialog extends HTMLElement {
       const text = document.createElement('div'); text.className = 'q-text'; text.textContent = q.question || ''; item.appendChild(text);
       const opts = document.createElement('div'); opts.className = 'q-options';
       const inputs = [];
+      let textInput = null;
+      if (q.kind === 'text') {
+        const input = document.createElement('input');
+        input.className = 'q-input';
+        input.type = q.secret ? 'password' : 'text';
+        input.dir = 'auto';
+        input.maxLength = 4000;
+        input.autocomplete = 'off';
+        input.addEventListener('input', () => this._syncSubmit());
+        opts.appendChild(input);
+        inputs.push(input);
+        item.appendChild(opts);
+        this._list.appendChild(item);
+        this._groups.push({ kind: 'text', multiSelect: false, inputs });
+        return;
+      }
       const options = Array.isArray(q.options) ? q.options : [];
       options.forEach((o, oi) => {
         const lab = document.createElement('label'); lab.className = 'q-opt';
@@ -137,7 +160,10 @@ class SatrQuestionDialog extends HTMLElement {
         input.type = q.multiSelect ? 'checkbox' : 'radio';
         input.name = 'q_' + qi; // عزل مجموعة الاختيار لكل سؤال
         input.value = String(oi);
-        input.addEventListener('change', () => this._syncSubmit());
+        input.addEventListener('change', () => {
+          if (input.checked && textInput) textInput.value = '';
+          this._syncSubmit();
+        });
         lab.appendChild(input);
         const body = document.createElement('div'); body.className = 'q-opt-body';
         const l = document.createElement('div'); l.className = 'q-opt-label'; l.textContent = o.label || ''; body.appendChild(l);
@@ -147,26 +173,47 @@ class SatrQuestionDialog extends HTMLElement {
         opts.appendChild(lab);
         inputs.push(input);
       });
+      if (q.kind === 'choiceOther') {
+        textInput = document.createElement('input');
+        textInput.className = 'q-input';
+        textInput.type = q.secret ? 'password' : 'text';
+        textInput.dir = 'auto';
+        textInput.maxLength = 4000;
+        textInput.autocomplete = 'off';
+        textInput.placeholder = 'أو اكتب إجابة أخرى';
+        textInput.addEventListener('input', () => {
+          if (textInput.value) for (const input of inputs) input.checked = false;
+          this._syncSubmit();
+        });
+        opts.appendChild(textInput);
+      }
       item.appendChild(opts);
       this._list.appendChild(item);
-      this._groups.push({ multiSelect: !!q.multiSelect, inputs });
+      this._groups.push({ kind: q.kind === 'choiceOther' ? 'choiceOther' : 'choice',
+        multiSelect: !!q.multiSelect, inputs, textInput });
     });
     this._syncSubmit();
   }
 
   // زر الإرسال مفعّل فقط حين يُجاب كل سؤال (اختيار واحد على الأقل لكلٍّ)
   _syncSubmit() {
-    const answeredAll = this._groups.every((g) => g.inputs.some((i) => i.checked));
+    const answeredAll = this._groups.every((g) => g.kind === 'text'
+      ? !!(g.inputs[0] && g.inputs[0].value.trim())
+      : g.inputs.some((i) => i.checked) || !!(g.textInput && g.textInput.value.trim()));
     this._submit.disabled = !answeredAll || !this._groups.length || this._sending;
   }
 
   async _send() {
     if (!this._current || this._sending) return;
-    const selections = this._groups.map((g, qi) => ({
-      questionIndex: qi,
-      optionIndexes: g.inputs.map((i, oi) => (i.checked ? oi : -1)).filter((i) => i >= 0),
-    }));
-    if (!selections.every((s) => s.optionIndexes.length)) return; // كل الأسئلة مُجابة (دفاعياً)
+    const selections = this._groups.map((g, qi) => g.kind === 'text'
+      ? { questionIndex: qi, optionIndexes: [], text: g.inputs[0].value }
+      : g.kind === 'choiceOther' && g.textInput && g.textInput.value.trim()
+        ? { questionIndex: qi, optionIndexes: [], text: g.textInput.value }
+        : {
+          questionIndex: qi,
+          optionIndexes: g.inputs.map((i, oi) => (i.checked ? oi : -1)).filter((i) => i >= 0),
+          });
+    if (!selections.every((selection) => selection.text || selection.optionIndexes.length)) return;
     await this._resolve(selections, '✓ أُرسلت إجابتك على سؤال النموذج', 'تعذّر إرسال الإجابة — حاول مرة أخرى.');
   }
 
@@ -190,6 +237,7 @@ class SatrQuestionDialog extends HTMLElement {
     this._cancel.disabled = false;
     if (ok) {
       this._current = null;
+      this._list.textContent = '';
       this._setOpen(false);
       this.dispatchEvent(new CustomEvent('notice', { detail: okNotice }));
       this._showNext();

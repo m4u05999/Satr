@@ -7,7 +7,8 @@
  * بإعطائه إعداده — إضافة مزوّد جديد = سطر تسجيل واحد (docs/ARCHITECTURE.md §4.2).
  *
  * make(config) → { start(input, cwd, emit) → { stop() } }  (نفس عقد المحوّلات).
- * config: { id, host, path, keyName, defaultModel, label, includeUsage, capabilities } — id هو معرّف مجلد الذاكرة
+ * config: { id, host, path, keyName, defaultModel, label, includeUsage, capabilities,
+ * reasoningKey, effortMap, promptCacheKey, authHint } — id هو معرّف مجلد الذاكرة
  * على القرص (~/.satr/chats/<id>/)؛ بدونه تبقى الذاكرة حيّة فقط (تُمسح بإعادة التشغيل).
  * خيارات إضافية (الدفعة 3 — مزوّدون محليون مثل Ollama):
  *   protocol: 'https' (افتراضي) أو 'http' (خوادم محلية) · port: منفذ مخصّص ·
@@ -22,8 +23,8 @@
  *
  * أمان: المفتاح في ترويسة Authorization (لا spawn/صدفة)، البرومبت في جسم JSON (لا حقن)،
  * والأدوات تنفّذ عبر مسارات files.js المؤمَّنة (داخل cwd حصراً).
- * الصور اختيارية فقط عند capabilities.vision؛ effort غير منطبق هنا لأن Chat Completions لا يملك
- * reasoning.effort القياسي، فلا نختلق reasoning_effort للمزوّدين المتوافقين.
+ * الصور اختيارية فقط عند capabilities.vision. جهد التفكير ومحتواه لا يُرسلان إلا لمزوّد
+ * يعلن عقدهما صراحةً عبر effortMap/reasoningKey؛ فلا نخترع حقولاً لبقية المتوافقين.
  */
 
 const https = require('https');
@@ -69,10 +70,20 @@ function make(config) {
   const transport = config.protocol === 'http' ? http : https;
   const port = config.port || undefined;
   const connectHint = config.connectHint || ''; // إرشاد عربي عند فشل الاتصال (خادم محلي غائب)
+  const authHint = config.authHint || ''; // إرشاد مزوّد محدد عند رفض المفتاح
   const includeUsage = config.includeUsage === true; // يُفعّل فقط لنقطة موثّقة كي لا نكسر مزوّداً محلياً
   const strictTools = !!(config.capabilities && config.capabilities.strictTools === true);
   const supportsVision = !!(config.capabilities && config.capabilities.vision === true);
+  const reasoningKey = typeof config.reasoningKey === 'string' && /^[a-z_]{1,64}$/.test(config.reasoningKey)
+    ? config.reasoningKey : '';
+  const effortMap = config.effortMap && typeof config.effortMap === 'object' ? config.effortMap : null;
   const histories = new Map(); // session_id -> رسائل بصيغة OpenAI (كاش حيّ فوق القرص)
+
+  function normalizeEffort(value) {
+    if (!effortMap || typeof value !== 'string') return null;
+    const mapped = effortMap[value];
+    return typeof mapped === 'string' && mapped ? mapped : null;
+  }
 
   // المفتاح: بيئة النظام أولاً ثم مخزن «سطر» (~/.satr/keys.json) — موثوق بلا وراثة بيئة
   function resolveKey() {
@@ -82,6 +93,7 @@ function make(config) {
 
   function start(input, cwd, emit) {
     const { prompt, sessionId, model, permissionMode } = input;
+    const reasoningEffort = normalizeEffort(input.effort);
     const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
     const skillPrompt = skillCatalog.catalogPrompt(skillContext);
     const memoryPrompt = memory.retrieve(cwd, prompt).text;
@@ -136,6 +148,7 @@ function make(config) {
     function requestOnce(messages, withTools) {
       return new Promise((resolve) => {
         let textBuf = '';
+        let reasoningBuf = '';
         let sseBuf = '';
         const calls = new Map(); // index -> { id, name, args } (الوسائط تصل مجزّأة)
         let settled = false;
@@ -145,6 +158,8 @@ function make(config) {
           ? [{ role: 'system', content: contextPrompt }].concat(messages)
           : messages;
         const bodyObj = { model: useModel, messages: requestMessages, stream: true };
+        if (config.promptCacheKey === true) bodyObj.prompt_cache_key = sid;
+        if (reasoningEffort) bodyObj.reasoning_effort = reasoningEffort;
         if (includeUsage) bodyObj.stream_options = { include_usage: true };
         if (withTools) bodyObj.tools = tools.defs({ strictTools });
         estimatedUsage.input_tokens += contextBudget.estimateTokens(bodyObj);
@@ -161,6 +176,9 @@ function make(config) {
           const choice = obj && obj.choices && obj.choices[0];
           if (!choice) return;
           const delta = choice.delta || {};
+          if (reasoningKey && typeof delta[reasoningKey] === 'string') {
+            reasoningBuf += delta[reasoningKey];
+          }
           if (typeof delta.content === 'string' && delta.content) {
             textBuf += delta.content;
             emit({ type: 'stream_text', text: delta.content });
@@ -192,6 +210,7 @@ function make(config) {
             res.on('end', () => {
               let msg = 'رمز HTTP ' + res.statusCode;
               try { const j = JSON.parse(errBody); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
+              if ((res.statusCode === 401 || res.statusCode === 403) && authHint) msg = authHint;
               done({ error: msg, status: res.statusCode });
             });
             return;
@@ -213,6 +232,7 @@ function make(config) {
             }
             done({
               text: textBuf,
+              reasoning: reasoningBuf,
               calls: [...calls.values()].filter((c) => c.id && c.name),
             });
           });
@@ -263,8 +283,8 @@ function make(config) {
         const r = await requestOnce(messages, toolsOk);
         if (aborted || r.error === '__aborted__') return;
         if (r.error) {
-          // رفض 4xx في أول طلب مع أدوات ⇐ الأرجح نموذج لا يدعمها — محاولة واحدة دونها
-          if (toolsOk && rounds === 0 && r.status >= 400 && r.status < 500) {
+          // رفض صيغة الطلب في أول جولة قد يعني أن النموذج لا يدعم الأدوات؛ لا نعيد أخطاء المصادقة.
+          if (toolsOk && rounds === 0 && (r.status === 400 || r.status === 422)) {
             toolsOk = false;
             continue;
           }
@@ -281,11 +301,14 @@ function make(config) {
           emit({ type: 'assistant', message: { content: blocks } });
 
           // سجل المحادثة بصيغة OpenAI الأصلية (يُحفظ كما هو في الذاكرة — 1.3)
-          messages.push({
+          const assistantMessage = {
             role: 'assistant',
             content: r.text || null,
             tool_calls: r.calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.args || '{}' } })),
-          });
+          };
+          // Kimi مع التفكير يرفض الجولة التالية إذا غاب reasoning_content عن رسالة نداء الأداة.
+          if (reasoningKey) assistantMessage[reasoningKey] = r.reasoning || '';
+          messages.push(assistantMessage);
           for (const c of r.calls) {
             if (aborted) return;
             const parsed = safeParse(c.args);
@@ -309,7 +332,9 @@ function make(config) {
 
         // دور مكتمل (نص نهائي، أو استُنفدت الجولات)
         if (r.text) {
-          messages.push({ role: 'assistant', content: r.text });
+          const assistantMessage = { role: 'assistant', content: r.text };
+          if (reasoningKey && r.reasoning) assistantMessage[reasoningKey] = r.reasoning;
+          messages.push(assistantMessage);
           emit({ type: 'assistant', message: { content: [{ type: 'text', text: r.text }] } });
         }
         const h = messages.slice();

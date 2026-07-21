@@ -8,7 +8,9 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
+const inject = require('../electron/inject');
 const files = require('../electron/files');
+const renderertrust = require('../electron/renderertrust');
 const tools = require('../electron/tools');
 
 async function permissionDetailModule() {
@@ -61,6 +63,48 @@ async function testViewerConflictGuard() {
   }
 }
 
+async function testLinkedPathContainment() {
+  const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'satr-viewer-link-'));
+  const project = path.join(temp, 'project');
+  const outside = path.join(temp, 'outside');
+  const linked = path.join(project, 'linked');
+  const relative = 'linked/secret.txt';
+  const original = 'خارج المشروع\n';
+  try {
+    await fsp.mkdir(project, { recursive: true });
+    await fsp.mkdir(outside, { recursive: true });
+    await fsp.writeFile(path.join(outside, 'secret.txt'), original, 'utf8');
+    await fsp.symlink(outside, linked, process.platform === 'win32' ? 'junction' : 'dir');
+
+    assert.deepStrictEqual(files.readText(project, relative), { ok: false, error: 'outside' });
+    const injected = inject.injectFiles('راجع @linked/secret.txt', project);
+    assert.strictEqual(injected.attached.length, 0);
+    assert(injected.skipped.some((item) => item.rel === relative && item.reason === 'outside'));
+    assert.deepStrictEqual(
+      tools.saveFromViewer(project, relative, 'تعديل مرفوض\n', files.contentVersion(original)),
+      { ok: false, error: 'outside' },
+    );
+    assert.strictEqual(await fsp.readFile(path.join(outside, 'secret.txt'), 'utf8'), original);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+function testRendererTrust() {
+  const trustedUrl = renderertrust.fileUrl(path.join(ROOT, 'src', 'index.html'));
+  const mainFrame = { url: trustedUrl };
+  const webContents = { mainFrame };
+  const mainWindow = { isDestroyed: () => false, webContents };
+  assert.strictEqual(renderertrust.isTrustedIpcEvent({ sender: webContents, senderFrame: mainFrame }, mainWindow, trustedUrl), true);
+  assert.strictEqual(renderertrust.isTrustedIpcEvent({ sender: webContents, senderFrame: { url: trustedUrl } }, mainWindow, trustedUrl), false);
+  assert.strictEqual(renderertrust.isTrustedIpcEvent({ sender: webContents, senderFrame: { url: 'https://example.com' } }, mainWindow, trustedUrl), false);
+  let prevented = false;
+  assert.strictEqual(renderertrust.allowNavigation({ preventDefault() { prevented = true; } }, trustedUrl, trustedUrl), true);
+  assert.strictEqual(prevented, false);
+  assert.strictEqual(renderertrust.allowNavigation({ preventDefault() { prevented = true; } }, 'https://example.com', trustedUrl), false);
+  assert.strictEqual(prevented, true);
+}
+
 async function testWiring() {
   const preload = await fsp.readFile(path.join(ROOT, 'electron', 'preload.js'), 'utf8');
   const main = await fsp.readFile(path.join(ROOT, 'electron', 'main.js'), 'utf8');
@@ -76,6 +120,8 @@ async function testWiring() {
 (async () => {
   await testPermissionDetail();
   await testViewerConflictGuard();
+  await testLinkedPathContainment();
+  testRendererTrust();
   await testWiring();
   console.log('viewer-security-test: ok');
 })().catch((error) => {

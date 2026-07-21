@@ -31,6 +31,8 @@ electron/agent.js    ← محرك Claude Agent SDK: بث جزئي + اعتراض
                         يرفض كلياً أي جزئية (سؤال ناقص/أحادي بعدة خيارات/مؤشر خارج النطاق). زر «إلغاء»
                         يرسل إجابة فارغة ⇒ deny (والواجهة تنتظر ok وتُبقي الحوار عند الفشل). الإدخال
                         الحر (Other) خارج النطاق — يطرحه النموذج نصّاً. السياقات المعزولة ترفضه fail-closed.
+                        محرك Codex يستخدم المكوّن نفسه ويدعم حقول `requestUserInput` النصية والسرّية
+                        وخيار «أخرى»؛ بينما يبقى عقد Claude/Kimi القائم مؤشرات فقط بلا تغيير.
                         الاختبار: test:askquestion (نقي، خصومي) + test:question-dialog (الحيّ) + probe الحيّ.
                         كما يوفّر withControlQuery: تشغيل عابر لاستدعاء «دوال التحكّم» في SDK
                         (mcpServerStatus/reconnectMcpServer/toggleMcpServer/getContextUsage) للوحتي
@@ -289,8 +291,8 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
 1. الواجهة تستدعي `window.satr.send({prompt, cwd, sessionId, model, permissionMode, engine, images, skills})`
    - `images` (المرحلة 4): مصفوفة `[{media_type, data}]` للصور الملصقة، `data` base64 خالص.
      تُنقّى في main.js (`sanitizeImages`: أنواع `image/png|jpeg|webp|gif`، ≤10م.ب base64، ≤6 صور).
-     المحركان الأصليان **sdk** و**codex** يدعمانها (agent.js يبني كتل نص+صورة، وcodex.js
-     يبني `inputItems` من نوع image)؛ المحركات غير المعلنة vision تتجاهلها والواجهة تنبّه.
+     المحركات الأصلية **sdk** و**codex** و**kimi-code** تدعمها (Kimi يرسل كتلة ACP
+     `image`)؛ المحركات غير المعلنة vision تتجاهلها والواجهة تنبّه.
      طلب بلا نص يُقبل إن رافقته صورة.
    - `skills` (لوحة /مهارات): `'all'` أو مصفوفة أسماء مفعّلة. تُنقّى في main.js
      (`sanitizeSkills` + `SAFE_SKILL`) وتُمرَّر لكل المحرّكات. SDK يمرّر مهارات `.claude`
@@ -319,14 +321,15 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
    - `effort` (⚙ — المرحلة 14.4): مستوى جهد التفكير `low|medium|high|xhigh|max` أو فارغ
      (الافتراضي). يُنقّى بـ `EFFORT_LEVELS` في main.js ويُمرَّر كخيار `effort` — الـ SDK
      يخفّضه صامتاً إن لم يدعمه النموذج. محرك **sdk** و**codex** (خارطة المنصّات الموجة 2):
-     codex.js يطبّعه إلى مفتاح `model_reasoning_effort` الرسمي (`max→xhigh` غير مقبول)
-     ويحقنه عبر `-c` عند spawn. المحوّلات لا تدعمه بعد.
+     codex.js يطبّعه إلى مفتاح `model_reasoning_effort` الرسمي، ويقبل `max` و`ultra` حين
+     يعلنهما `model/list`، ويحقنه عبر `-c` عند spawn. المحوّلات لا تدعمه بعد.
    - `extraDirs` (⚙ «مجلدات إضافية» — المرحلة 14.4): مصفوفة مسارات يصل إليها النموذج
      بجانب cwd. تُنقّى في main.js (`sanitizeExtraDirs`: مجلد موجود فعلاً، سقف 10)
      وتُمرَّر `additionalDirectories`. تُحفظ في localStorage (`satr_extra_dirs`). sdk فقط.
 2. حسب `engine` (قائمة «المحرك» في الواجهة، الافتراضي `sdk`؛ القائمة تُبنى ديناميكياً من
-   `satr:providers`): `sdk` خاص يذهب لـ agent.js، وأي `engine` آخر يمرّ عبر
-   **طبقة المحوّلات** `adapters.get(engine)` (main.js يُنقّي المدخلات ثم يستدعي `start`):
+   `satr:providers`): المحركات الأصلية `sdk` و`codex` و`kimi-code` تُوجّه صراحةً إلى
+   `agent.js` و`codex.js` و`kimi.js`، وما عداها يمر عبر **طبقة المحوّلات**
+   `adapters.get(engine)` (main.js يُنقّي المدخلات ثم يستدعي `start`):
    - **sdk** (المرحلة 2): `electron/agent.js` يستدعي `query()` من `@anthropic-ai/claude-agent-sdk`
      بإدخال بثّي (مولّد يبقى مفتوحاً حتى نهاية الدور — شرط عمل `interrupt()`)
      مع `includePartialMessages` و `canUseTool` و `resume/model/permissionMode/cwd`
@@ -335,6 +338,8 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
      - يُشغَّل بـ `detached: true` (ويندوز): مجموعة عمليات وكونسول خاصّان به، فأي
        حدث تحكّم كونسول (CTRL_C/CTRL_BREAK) من خادم تطوير طويل العمر يبقى محبوساً
        في شجرته ولا يصل «سطر». الإيقاف بـ `taskkill /T /F` (نزولاً فقط)
+   - **codex**: `electron/codex.js` عبر `codex app-server` وJSON-RPC، بجلساته وأذوناته.
+   - **kimi-code**: `electron/kimi.js` عبر `kimi acp` وJSON-RPC، باشتراك Kimi وجلساته.
    - **gemini / deepseek / qwen / …** (المرحلة 5): محوّلات REST (لا CLI) — انظر
      «طبقة المحوّلات والمزوّدين» أدناه. مقبضها في main.js هو `currentCliRun` (له `stop()`)
    - **عزل العمليات (حرج)**: العملية الرئيسية تتجاهل `SIGINT/SIGBREAK/SIGHUP` على
@@ -351,7 +356,7 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
    - `user`: نتائج الأدوات `tool_result` (لها `tool_use_id`, `is_error`)
    - `result`: النهائي — فيه `total_cost_usd`, `duration_ms`, `session_id`, `is_error`
    - `stream_text`: جزء نصي تدريجي `{text, phase?}` — يُعرض فوراً ويُستبدل بنص `assistant`
-     المكتمل؛ المحركان الأصليان يرسلان phase، والمحوّلات التي تغيب عنها تتراجع إلى الإجابة.
+     المكتمل؛ المحركات الأصلية ترسل phase، والمحوّلات التي تغيب عنها تتراجع إلى الإجابة.
    - `permission_request`: `{id, tool, input, requester?, turnEligible?, alwaysEligible?}` —
      تفتح مربعاً عربياً بطابور FIFO وعدّاد الطلبات المعلّقة وسياق الطالب best-effort.
      الرد عبر `window.satr.permission(id, allow, always, turn)`؛ موافقة الدور مجموعة محلية
@@ -399,7 +404,9 @@ result`)، فالواجهة لا تتغيّر.
 - **السجلّ** (`adapters/index.js`): `register(name, adapter, meta)` / `get(engine)` /
   `list()` (يعيد `{name, label, family, keyName}`). **قابل للحقن** فتضيف طبقة Enterprise
   مزوّدين دون لمس النواة (نقطة الربط §4.2 في ARCHITECTURE.md). المدمج: cli, gemini,
-  deepseek, qwen, minimax (M3 افتراضياً — `api.minimax.io/v1`، مفتاح `MINIMAX_API_KEY`).
+  openai, deepseek, qwen, kimi, minimax وollama. خيار `kimi` هو **Kimi API (REST)**
+  مباشرةً (`api.kimi.com/coding/v1`، النموذج `k3`، المفتاح `KIMI_API_KEY`) ولا يلتف
+  عبر Claude Code. وهو مستقل عن محرك الاشتراك الأصلي `kimi-code` الموثّق أدناه.
 - **`adapters/claude-cli.js`**: مسار `claude -p` المنقول من main.js (نفس detached+taskkill).
 - **`adapters/gemini.js`**: Gemini عبر **REST مباشر** (`https` مدمجة، بثّ SSE من
   `streamGenerateContent`) لا gemini-cli. **قرار مثبّت**: gemini-cli أُسقط لأنه غير موثوق
@@ -408,7 +415,12 @@ result`)، فالواجهة لا تتغيّر.
   لكل session_id (يُمرَّر كامل السجل كل دور).
 - **`adapters/openai-compatible.js`**: **مصنع** `make(config)` لأي endpoint متوافق مع OpenAI
   Chat Completions (بثّ `choices[].delta.content` + `[DONE]`). DeepSeek/Qwen/GLM/Kimi كلها
-  بنفس البروتوكول ⇒ إضافة مزوّد = سطر `register()` واحد. متحقَّق حيّاً بالبروتوكول.
+  بنفس البروتوكول ⇒ إضافة مزوّد = سطر `register()` واحد. يدعم اختيارياً `effortMap`
+  لإرسال `reasoning_effort` و`reasoningKey` لجمع حقل التفكير وإعادته في تاريخ رسائل
+  الأدوات فقط للمزوّد الذي يعلن العقد. يحتاج K3 ذلك لأن الجولة التالية تُرفض إن غاب
+  `reasoning_content` عن رسالة assistant التي تحمل `tool_calls`. لا يُعرض التفكير في
+  الواجهة. يدعم أيضاً `promptCacheKey` الاختياري؛ Kimi يرسله بقيمة session_id ثابتة عبر
+  كل جولات الدور والاستئناف لتحسين كاش Kimi Code. متحقَّق بخادم SSE محلي وجولتي طلب/أداة.
 - **حلقة الوكيل (الدفعات 2.1–2.4 — عائلتا openai وgemini)**: الطلب يعلن أدوات «سطر»
   (`electron/tools.js`)؛ النموذج يطلب أداة ⇒ المحوّل ينفّذها محلياً ويعيد النتيجة برسالة
   `role:"tool"` ويعاود الطلب (سقف 8 جولات/دور). البثّ للواجهة بنفس عقد أحداث SDK
@@ -428,7 +440,16 @@ result`)، فالواجهة لا تتغيّر.
   (functionDeclarations/functionCall/functionResponse — أداة بلا وسائط تُحذف parameters
   كلياً لأنه يرفض OBJECT فارغ الخصائص، والمعرّفات تُولَّد محلياً `gm_…` لأنه لا يصدرها)
   وبنفس طبقات الإذن وعقد الأحداث. إضافة مزوّد جديد لأي من العائلتين = يرث الوكيل كاملاً.
-- **حدود موثّقة**: نص فقط (لا صور في هذه المحوّلات — حصرية لمحرك SDK).
+- **Kimi K3 عبر REST (2026-07-20)**: نموذج واحد بمعرّف API ‏`k3`، وصور Base64 بعد تنقية
+  `main.js`، وجهد `low→low` و`medium|high→high` و`xhigh|max→max`؛ غياب الاختيار يترك
+  افتراضي الخدمة. نافذة السياق 256K أو 1M حسب خطة Kimi ولا يغيّرها سطر أو يتحايل عليها.
+  يجب أن يكون المفتاح من Kimi Code Console؛ مفاتيح Kimi Open Platform غير متبادلة معه.
+  تعرض الواجهة خيار `k3` واحداً، ويحوّل المحوّل رفض `401/403` إلى إرشاد عربي ولا يعيد
+  طلب المصادقة كأنه رفضٌ لعقد الأدوات.
+- **حدود موثّقة**: Kimi REST وOpenAI Responses يعلنان الصور؛ بقية المحوّلات النصية
+  تتجاهلها. كل محوّلات REST ترث أدوات الملفات/البحث/التنفيذ بإذن سطر، لكنها لا تملك
+  أدوات المتصفح. الاستمرار في REST يبقى سجل رسائل محلياً؛ الإيقاف قبل نهاية الدور لا
+  يستطيع حفظ جزء لم يؤكده API، لذلك المسار الموصى به للاشتراك والاستمرار هو `kimi-code`.
 - **الذاكرة (الدفعة 1.3)**: سجلّ المحادثة كاش حيّ (Map) فوق **قرص** (`electron/chats.js` —
   `~/.satr/chats/<provider>/<session>.json`) فتُستأنف المحادثة بعد إعادة تشغيل «سطر».
   مؤشر «آخر جلسة» على **القرص أيضاً** (`<provider>/last.txt` يكتبه `chats.save`) — **ليس
@@ -438,6 +459,105 @@ result`)، فالواجهة لا تتغيّر.
   والسجلّ يبقى للتنظيف بالأقدم). preload يكشفهما `lastChat/forgetChat`. sdk↔cli يتشاركان
   جلسات كلود كما كانا (لا مساس). المصنع openai-compatible يأخذ `id` في config هو اسم
   مجلد الذاكرة؛ بدونه تبقى الذاكرة حيّة فقط.
+
+### محرك Kimi Code الأصيل (ACP — 2.10.0)
+
+- **الفصل المقصود**: `electron/kimi.js` محرك خاص ثالث مثل `agent.js` و`codex.js`، باسم
+  `kimi-code` ووسم «Kimi Code — أصلي (ACP)». يشغّل `kimi acp` ويتكلم ACP v1 كـ JSON-RPC
+  مفصول بأسطر فوق stdio؛ لا يحلّل خرج TUI ولا يعتمد على `KIMI_API_KEY`. المصادقة من
+  اشتراك Kimi المحلي: مثبّت Windows الرسمي المستقل (المفضّل) أو
+  `@moonshot-ai/kimi-code` مع Node 22.19+، ثم `kimi login`. خيار `kimi` القديم
+  باقٍ بوسم «Kimi K3 — API (REST)» كاحتياط مستقل.
+- **استمرارية حقيقية**: التسلسل `initialize → session/new|session/resume → session/prompt`.
+  معرّف Kimi نفسه يصل إلى الواجهة عبر حدث `system`، والإيقاف يرسل notification
+  `session/cancel` وينتظر تفريغ الدور قبل إغلاق العملية؛ الرسالة التالية تستدعي
+  `session/resume` بنفس المعرّف. إن رد إصدار أقدم بـ`methodNotFound` يتراجع إلى
+  `session/load` مع كتمان بث التاريخ المعروض أصلاً. لذلك لا تضيع معرفة المهمة عند إيقاف
+  الدور كما كان يحدث لمسار REST قبل حفظ النتيجة.
+- **الجلسات والتصدير**: IPC المحدد `listKimiSessions/readKimiSession` يستعمل
+  `session/list` و`session/load` الرسميين عبر عملية ACP قصيرة؛ لا يفسّر بنية
+  `~/.kimi-code/sessions/**/wire.jsonl` الخاصة. لوحة `/جلسات` تعرض Kimi مع المجلد
+  والتاريخ، والاستئناف يعيد المحرك والمجلد والخيط. تصدير Markdown يقرأ المصدر نفسه.
+  وفاء العرض (2026-07-21): MAX_SESSIONS ‏80→200 (سقف صفحات 10) وMAX_MESSAGES ‏40→120،
+  و`readSession` يلتقط نداءات الأدوات من إعادة بث `session/load` كعناصر `tool_use`
+  (اسم معرّب + حالة نهائية، مدخلات منقاة) تعرضها الواجهة كسجل تنفيذ منجز؛ الفروقات
+  التاريخية غير ملتقطة (قرار نطاق).
+- **الأحداث**: `agent_message_chunk` → `stream_text/assistant`، و`tool_call*` →
+  `tool_use/tool_result`، و`plan` → `task_update`، و`usage_update.cost` → تكلفة النتيجة.
+  مدخلات الأدوات المنسوخة للأحداث مقصوصة، ويُحجب منها تكرارياً
+  أي حقل token/key/password/secret/cookie؛ سقف سطر ACP ‏4MiB وسقف نص نتيجة أداة 20KiB.
+  التفكير الداخلي لا يُعرض: جسّ 0.27.0 أثبت أن `agent_thought_chunk` يبث التفكير الحي فعلاً
+  عبر ACP وسطر يتجاهله حالياً — مرشح متابعة سريعة مستقبلاً، ليس منجزاً.
+- **تسميات عربية للأدوات**: خريطة `KIMI_TOOL_LABELS` + `toolLabel()` تغطي
+  Agent/AgentSwarm/Cron*/Task*/TodoList/أدوات الهدف/Bash/Edit وغيرها، وتُطبَّق عند
+  الانبعاث فقط — الحالة الداخلية والأذونات تبقى بالعنوان الخام. بطاقات الوكيل الفرعي
+  في `chat.js` تقبل «وكيل فرعي» و«سرب وكلاء».
+- **أوامر ACP المعلنة**: يلتقط `kimi.js` إشعار `available_commands_update` ويمرره كحدث
+  `system/available_commands` بـ `commands[{name,description}]`؛ الواجهة أضافت `/حالة`
+  `/مهام` `/مساعدة` (‏`engines:['kimi-code']`‏) تُرسل كنص خام مثل `/ضغط`.
+- **JSON-RPC ثنائي الاتجاه**: طلبات Kimi العكسية (`fs/*` و`session/request_permission`) تملك فضاء
+  معرّفات مستقلاً وقد يتطابق `id` فيها مع طلب صادر مثل `session/prompt`. لذلك يصنّف العميل الرسالة
+  ذات `method` كطلب عكسي أولاً، ولا يطابق `pending` إلا لرسالة الرد بلا `method`. إصلاح 2.9.8 يمنع
+  إنهاء الدور كاذباً بعد `Read` ويضمن بلوغ طلبات الأذونات اللاحقة؛ يغطيه اختبار اصطدام صريح وحيد.
+- **الأذونات**: `session/request_permission` يمر بمربع سطر العربي ويعيد optionId من
+  خيارات ACP الفعلية (`allow_once/allow_always/reject_*`). أوضاع plan/acceptEdits/
+  bypassPermissions تُطبّق في العميل، والموافقة الدائمة بعمر التطبيق. أوامر خادم
+  التطوير تُرفض وتوجّه إلى `run_in_background`، وفتح متصفح خارجي يُحجب لصالح معاينة
+  سطر إلا بطلب المستخدم الصريح ثم إذن منفصل.
+- **Filesystem fail-closed**: يعلن العميل `fs.readTextFile/writeTextFile` ولا يعلن
+  terminal reverse-RPC. كل `fs/*` يقبل مساراً مطلقاً حقيقياً داخل cwd فقط مع منع هروب
+  symlink؛ والاستثناء الوحيد ملف خطة Kimi النشط المطابق للجلسة تحت
+  `~/.kimi-code/sessions/wd_*/session_{id}/agents/main/plans/*.md` كي تعمل دورة
+  `Write → ExitPlanMode` بلا فتح بقية مجلد بيانات Kimi. القراءة/الكتابة ≤2MiB والقراءة
+  ≤2000 سطر/نداء. الكتابة تحتاج منحة تعديل فعالة حتى لو حاول الوكيل تخطي طلب الإذن،
+  وتصدر تعديلات المشروع `file_edit` بفرق ≤600 سطر ولقطة تراجع.
+- **أدوات سطر**: عند السماح بالمتصفح يبدأ خادم `codexmcp.js` المحلي نفسه برمز Bearer
+  عشوائي ويمرر إلى `session/new/resume` كـ MCP HTTP؛ بذلك يحصل Kimi على المعاينة، أدوات
+  المتصفح، الخلفية، التسليم البشري والبرومو بنفس بوابات Codex، ويضيف داخلياً أدوات
+  `load_skill/read_skill_resource` و`verification_config/verify_project` و
+  `update_task_ledger/propose_memory` بعقود `tools.js` نفسها. لا تأتي تعريفات MCP من
+  renderer أو المشروع. موجز
+  `envbrief` يعامله محركاً أصلياً ويحقن كـ ACP embedded resource بعد رسالة المستخدم،
+  ومعه كتالوج المهارات وذاكرة المشروع المقصوصة.
+- **حد upstream صريح**: إصدار Kimi ACP الحالي لا يوصل `terminal/*` العكسي؛ أوامر Bash
+  تنفذها عملية Kimi المحلية بعد إذن سطر وتظهر كأداة ونتيجة في المحادثة، لا كتبويب PTY.
+  لذلك يُرفض خادم التطوير المدمج ويُستخدم MCP `run_in_background` المرئي. عند دعم Kimi
+  terminal reverse-RPC مستقبلاً يمكن نقله إلى تبويب 🛠 بلا تغيير عقد الواجهة.
+- **حدود upstream مؤكدة بالجسّ الحقيقي على Kimi 0.27.0 (2026-07-21)**:
+  Steering مرفوض — `session/prompt` أثناء دور جارٍ يرد بـ
+  `-32600 "Cannot launch a new turn while another turn (ID 0) is active"`.
+  التفريع وundo للرسائل غير موجودين: `session/fork` و`session/undo` تردان
+  `-32601 Method not found`. و`/goal` `/plan` `/btw` `/swarm` غير معلنة كأوامر مائلة
+  عبر ACP — المعلن فقط: compact, status, usage, mcp, tasks, help (أدوات الهدف وcron
+  تعمل كأدوات نموذج أثناء الدور وتظهر بطاقاتها). وإطلاقات cron واستمرارات الهدف بين
+  الأدوار لا تصل لأن سطر يقتل عملية `kimi acp` بعد كل دور (cleanup في kimi.js) — يتطلب
+  معمارية keep-alive مستقبلية بعملية دائمة لكل جلسة. وeffort يبقى غير معلن
+  (thinking=on فقط ضمن configOptions).
+- **حالة الجاهزية**: `satr:kimiStatus` وpreload المحدد يعيدان installed + نوع اعتماد فقط،
+  بلا مسار ثنائي أو credential. `/كيمي-حالة` والتنبيه عند الاختيار يرشدان إلى التثبيت/
+  `kimi login`. لا تسجيل دخول أو تثبيت تلقائيان.
+- **تكافؤ المرحلة الرابعة**: ناتج `session/new|resume.configOptions` هو مصدر إعدادات الجلسة؛
+  اختيار `k3` يطابق القيمة المعلنة `kimi-code/k3` ويضبطها عبر `session/set_config_option` قبل
+  البرومبت. النماذج ديناميكية (2026-07-21): `kimi.listModels()` بنمط withProbe وcache دقيقتان
+  يقرأ خيار model من configOptions — Kimi 0.27.0 يعلن ثلاثة نماذج:
+  `kimi-code/kimi-for-coding` (K2.7 Coding)، و`kimi-code/kimi-for-coding-highspeed`
+  (K2.7 Coding Highspeed)، و`kimi-code/k3` (K3). IPC جديد `satr:kimiModels` وpreload
+  `window.satr.kimiModels()`، ومنتقي الواجهة يفضّل الديناميكية ويسقط إلى k3 الثابت، و
+  `SAFE_MODEL` في `main.js` صار يسمح بـ`/`. `/سياق` يفتح عملية ACP قصيرة، يستأنف الجلسة،
+  ينفذ أمر Kimi الرسمي `/usage` ويطبّع
+  `Context current/max/%` وعدادات input/output/cache إلى عقد لوحة السياق. `/ضغط` يرسل أمر
+  `/compact` الأصلي بلا موارد أو صور ملحقة، ويحوّل `Tokens before/after` إلى
+  `system/compact_boundary` مع بقاء sessionId نفسه. إصدار Kimi ACP 0.27.0 لا يعلن خيار effort
+  ضمن `configOptions` (يعلن `model/thinking/mode` فقط)، لذلك تعطل الواجهة effort لمحرك
+  `kimi-code` ولا تكتب `config.toml` العام ولا تتظاهر بتطبيق قيمة غير مدعومة. إن أعلن إصدار
+  لاحق خيار `effort|reasoning_effort` بقيم مطابقة فالمحرك يطبقه من العقد المعلن.
+- **التحقق**: `npm run test:kimi` يحاكي ACP ثنائي الاتجاه ويثبت new/prompt/permission/
+  question/cancel/resume، ودورة `Write → ExitPlanMode →` تعديل المشروع مع بقاء غير ملف
+  الخطة محجوباً خارج cwd، وfallback بلا تكرار التاريخ، حجب السر المتداخل، حصر المسار،
+  مهارات MCP وسرد/تحميل الجلسات، وضبط model، و`/usage`، و`/compact`، وعدم إرسال effort غير
+  المعلن. يدخل `test:full`، و
+  `test:envbrief` يثبت تكافؤ جرد MCP للمحركات الأصيلة الثلاثة. صفر اعتماديات جديدة.
+
 - **رؤية الملفات (الدفعة 1.1)**: `@مسار` في الرسالة يُحقن محتواه في البرومبت قبل
   `adapter.start` (عبر `electron/inject.js` — انظر خريطة الملفات أعلاه). للمحوّلات العمياء
   فقط (عائلة claude مستثناة)؛ صفر تغيير في المحوّلات نفسها.
@@ -546,7 +666,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   يُنفّذ تلقائياً. catalog metadata مسقوف بـ16KiB ونتيجة الأداة بـ48K محرفاً.
 - **المحرّكات**: Claude SDK يبقي runtime `.claude` الأصلي وplugin skills، ويخدم `.agents`
   بأداتي `load_skill` و`read_skill_resource` للقراءة فقط. Codex 0.144.1 يأخذ مدخلات skill
-  الأصلية في `turn/start`. Gemini وعائلة OpenAI-compatible تعلنان الأداتين ضمن الحلقة؛
+  الأصلية في `turn/start`. Kimi ACP يأخذ الأداتين عبر MCP المحلي مع نفس `skillContext`
+  المختار من الواجهة. Gemini وعائلة OpenAI-compatible تعلنان الأداتين ضمن الحلقة؛
   Claude CLI الاحتياطي يستقبل metadata ومسارات `.agents` في stdin من دون محتوى المهارة.
 - **الواجهة**: أمر `/مهارات` يفتح لوحة جانبية بمربعات اختيار. تُخزَّن **المهارات المعطّلة** في
   localStorage (`satr_disabled_skills`) لا المفعّلة، فيُفعَّل أي جديد تلقائياً. عند الإرسال:
@@ -572,7 +693,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `~/.satr/tasks/<engine>/<session_id>.json`؛ لا prompt ولا transcript. المعرّفات منقّاة
   كمكوّن مسار واحد، والسجل ≤50 مهمة، والدليل ≤6 بنود للمهمة، والملف ≤512KiB.
   الكتابة عبر ملف مؤقت ثم rename وأفضل جهد؛ فشل القرص لا يكسر الدور.
-- **المحرّكات**: Codex يطبّع `turn/plan/updated` المثبّت من schema v2. Claude SDK
+- **المحرّكات**: Codex يطبّع `turn/plan/updated` المثبّت من schema v2، وKimi ACP يطبّع
+  تحديث `plan` ويمكنه استعمال `update_task_ledger` عبر MCP. Claude SDK
   يطبّع أدوات `TodoWrite` و`TaskCreate` و`TaskUpdate` ورسائل النظام الحقيقية
   `task_started/task_updated/task_progress/task_notification` المثبتة من `sdk.d.ts`؛
   لا يعتمد على تخمين حدث غير موجود. المحوّلات تملك أداة `update_task_ledger` في حلقة الأدوات.
@@ -621,7 +743,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   والخروج والكتابة فوق ملف بلا `overwrite:true`. الإنشاء لا يشغّل شيئاً، ويبقى الملف مطلوباً
   داخل `HEAD` قبل غرفة قابلة للدمج.
 - **المحرّكات**: Claude SDK يملك خادم MCP مستقل `satr-verify` خارج `satr-terminal`؛
-  المحوّلات تملك الأداتين في `tools.js`. Codex لم يُعدّل: `main.js` يجمع تعديلاته مثل
+  Kimi ACP والمحوّلات يملكون الأداتين عبر `tools.js` (Kimi من MCP المحلي). Codex لم يُعدّل: `main.js` يجمع تعديلاته مثل
   غيره، وزر التحقق اليدوي يعيد ملخص النتيجة إلى دوره التالي مرة واحدة عبر
   `<satr_verification_result>` ثم يعلّمها مستهلكة.
 - **checkpoint**: يبدأ مع الدور ولا يظهر/يُحفظ حتى أول `file_edit`. يجمع ≤50 edit ID
@@ -649,8 +771,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   وPrivate Keys وBearer والقيم المسندة إلى password/secret تُرفض قبل القرص وقبل عرض المرشّحة.
 - **الاسترجاع**: فهرس كلمات/مسارات بلا dependency أو vector DB؛ الاستعلام أقصاه 8 كلمات،
   والحقن أقصاه 8 مداخل/6000 محرف. يُحقن كسياق غير تنفيذي في دور SDK وClaude CLI وGemini
-  والمحوّلات المتوافقة مع OpenAI. **ومحرك Codex** (أُغلق التأجيل): كتلة
-  `<satr_project_memory>` عنصرَ نصٍّ مستقلاً في `inputItems` قبل نص الدور، مستَرجعة من
+  والمحوّلات المتوافقة مع OpenAI. **ومحركا Codex وKimi Code الأصيلان**: كتلة
+  `<satr_project_memory>` تُحقن سياقاً مستقلاً قبل التنفيذ، مستَرجعة من
   prompt المستخدم الأصلي (لا effectivePrompt المعالج)؛ السياقات المعزولة
   (المراجع/العصف — `browserControl:false` الصريح، نفس بوابة TestSprite) لا ترثها.
   حارس عدم تراجع في `test:memory`.
@@ -1431,7 +1553,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   evaluate ذوا حمولة >1024 محرف أو تطابق `memory.hasSecret` يُعرضان منقّحين، وميزانية
   المهمة 40 فعلاً مؤثراً تُمدّد صراحةً 20 فعلاً. الموافقة الموسعة في طلب مركّب قد تثق
   بالـorigin فقط، ولا تحفظ إعفاء الفعل الحسّاس.
-  الأدوات المتكافئة في SDK/Codex: `browser_fill_form` (1..20 حقلاً غير سري؛ السر مرفوض؛
+  الأدوات المتكافئة في SDK/Codex/Kimi: `browser_fill_form` (1..20 حقلاً غير سري؛ السر مرفوض؛
   مراجعة مرئية لكل استدعاء بلا إرسال النموذج)،
   `browser_transfer_field` (نقل داخل الصفحة بلا خروج القيمة، أو عبر صفحتين بمعرّف
   `xfer_<32hex>` في مخزن العملية الرئيسية يُمسح بعد اللصق/الدور)، `browser_request_secret`
@@ -1598,7 +1720,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   - شريط 🎯 يضيف «اشرح/أصلح/حسّن»، ويلتقط العنصر تلقائياً ويرفق PNG عبر مسار صور
     المحرّكين الأصيلين؛ المحوّلات النصية تتراجع للوصف. outerHTML يبقى محتوى غير موثوقاً
     مقتطعاً. رأس المعاينة يعرض شارة خادم cwd خضراء، أو رمادية بزر تشغيل من سجل devservers.
-- **عدة التحقق الذاتي**: الأدوات المتكافئة في SDK/Codex هي `browser_evaluate` (act؛ تعبير
+- **عدة التحقق الذاتي**: الأدوات المتكافئة في SDK/Codex/Kimi هي `browser_evaluate` (act؛ تعبير
   ≤8000، CDP timeout، نتيجة ≤48K)، `browser_set_viewport` (read؛ 240..1920×240..1200
   ويعيد innerWidth الفعلي)، `browser_perf` (read؛ navigation/resources/طلبات فاشلة)، و
   `browser_back/browser_forward` (navigate مع target من سجل NavigationHistory). تدخل
@@ -1624,26 +1746,29 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   يبقى في رأس المعاينة، والإيقاف/انتهاء الدور/إغلاق التطبيق يوقف المسارات ويغلق نافذة
   المنتج. التنزيل محلي في Downloads باسم `satr-promo-segment-*` منقّى وفريد ولا يُرفع.
 - الأدوات المتكافئة: `promo_record_start({aspect,url?})` و`promo_record_stop()` أفعال
-  `neverAlways` في SDK وCodex، و`promo_list_segments()` قراءة. أدوات القيادة هي أدوات
+  `neverAlways` في SDK وCodex وKimi، و`promo_list_segments()` قراءة. أدوات القيادة هي أدوات
   المتصفح القائمة لأن `preview.js` يوجّهها مؤقتاً إلى نافذة المنتج؛ لا أدوات قيادة جديدة.
   IPC الواجهة محددة (`promoCaptureStart/Stop/Ready/Commit/Abort`)؛ `confirmed:true` لازم،
   وmain يرفض `sourceId` من renderer. تحقق Electron الحي: `ERR_FAILED=false`، stream واحد،
   `frameRate=30`، MediaRecorder‏ MP4/H.264 ذو `ftyp` وBlob غير فارغ، ثم إغلاق كامل.
 - **استوديو الإنتاج (ترقية م-5 — المرحلة 2)**: الأداة المتكافئة
   `promo_propose_storyboard({scenes})` تقبل 1–40 مشهداً، كل واحد `segment_path|asset`
-  محلياً داخل Downloads، و`caption/duration_ms/transition/music/voice` اختيارية. main
+  محلياً داخل Downloads، و`caption/duration_ms/transition/music/voice` اختيارية، ومعها
+  `trim_start_ms` و`fit` و`caption_position/style` ومستويات `clip/music/voice_volume`. main
   يرفض URL بعيداً، مساراً خارج Downloads، امتداداً غير وسائطياً، أو مدة خارج
   `250..120000ms`؛ الأداة تبث الاقتراح فقط ولا تعتمد أو تصيّر. إن توفرت أداة Higgsfield
   ‏`generate_audio` للوكيل، يولّد الموسيقى/التعليق بها ثم **ينزّل الملف أولاً** إلى
   Downloads ويشير إلى مساره المحلي؛ الاستوديو لا يحمّل URL بعيداً ولا يرفع أي أصل.
 - `<satr-promo-studio>` حوار Shadow بأنماط `adoptedStyleSheets` وtokens، ويُدار عبر
   `surfaceCoordinator` كي تُحجب WebContentsView الأصلية أثناءه. يعرض المشاهد ويتيح أزرار
-  إعادة الترتيب، قص المدة، تحرير العنوان العربي، تبديل الموسيقى والتعليق، حذف مشهد،
-  وإعادة تسجيله عبر مسار المرحلة 1. كل تعديل يسقط الاعتماد؛ زر «صيّر» لا يعمل حتى يضغط
+  إعادة الترتيب والتكرار، قص البداية والمدة، ملاءمة cover/contain، تحرير موضع ونمط العنوان
+  العربي، ضبط مستويات المقطع والموسيقى والتعليق، حذف مشهد، وإعادة تسجيله عبر مسار المرحلة 1.
+  كل تعديل يسقط الاعتماد؛ زر «صيّر» لا يعمل حتى يضغط
   المستخدم «اعتماد الخط الزمني» صراحةً (الوكيل يقترح ولا يقرر النتيجة النهائية).
 - المُصيّر صفري الاعتماديات في `promo-renderer.js`: `<video>`/`Image` تفك الأصول المحلية،
-  ويرسمها `canvas` بنسبة storyboard مع `cut` أو fade، ويطبع العنوان بخط IBM Plex Sans
-  Arabic واتجاه `rtl`. Web Audio يمزج صوت المقطع + music بخفض + voice كاملاً إلى
+  ويطبق قص البداية ثم يرسمها `canvas` بنسبة storyboard مع cover/contain و`cut` أو fade،
+  ويطبع العنوان بخط IBM Plex Sans Arabic واتجاه `rtl` في أعلى/وسط/أسفل بصندوق أو نمط بسيط.
+  Web Audio يمزج صوت المقطع + music + voice بمستويات كل مشهد إلى
   `MediaStreamDestination`؛ تُضم مساراته إلى `canvas.captureStream(30)` ثم MediaRecorder
   يخرج `satr-promo-final-*` إلى Downloads. التصيير **فوري بزمن الجدار**: 60 ثانية فيديو
   تستغرق نحو 60 ثانية، وتبقى نافذة الاستوديو مفتوحة خلاله.
@@ -1652,8 +1777,9 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   وffmpeg ممنوع كاعتمادية يحافظان على النواة المفتوحة صفريّة الاعتماديات؛ ترقية مستقبلية
   ممكنة باكتشاف ffmpeg اختياري مثبت لدى المستخدم، لا بشحنه ولا بجعله شرطاً.
 - تحقق `test:promo-studio` الحي تحت CSP الصارمة يولّد مقطعين، يغيّر ترتيبهما ومدتهما
-  وعنوانهما والموسيقى، يمر ببوابة الاعتماد وإعادة التسجيل، ويمزج WAV محلياً من `file:`
-  مع عنوان RTL ثم ينتج MP4 غير فارغ. `media-src 'self' blob:` هو التوسعة الوحيدة للقالب.
+  وعنوانهما والموسيقى، ويختبر القص وcontain والتكرار وموضع/نمط العنوان ومستويات الصوت،
+  ويمر ببوابة الاعتماد وإعادة التسجيل، ويمزج WAV محلياً من `file:` مع عنوان RTL ثم ينتج
+  MP4 غير فارغ. `media-src 'self' blob:` هو التوسعة الوحيدة للقالب.
 - **الحاوية mp4 مفضّلة (دفعة «mp4»)**: `pickRecMime()` يفاضل `video/mp4;codecs=avc1…`
   أولاً ثم webm عبر `MediaRecorder.isTypeSupported`، والنوع والامتداد يتبعان المُختار.
   التنزيل ليس صامتاً: `previewrecording.js` يعترض أسماء `satr-preview-*` و

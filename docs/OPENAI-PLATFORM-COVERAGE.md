@@ -1,14 +1,14 @@
 # منظومة OpenAI وتغطية «سطر» لها
 
-> **نوع الوثيقة:** تقرير بحثي لاتخاذ القرار، بلا تنفيذ.  
-> **تاريخ المسح:** 13 يوليو 2026.  
+> **نوع الوثيقة:** تقرير تغطية وقرار؛ نُفّذت المرحلة A الخاصة بـCodex.
+> **آخر تحديث:** 21 يوليو 2026.
 > **النطاق:** نماذج OpenAI الحديثة وواجهات المنصة، ثم مطابقتها مع `electron/codex.js` و`electron/adapters/openai-compatible.js`.
 
 ## الخلاصة التنفيذية
 
-1. المسار الأقوى في «سطر» هو **Codex الأصلي**: يدعم GPT‑5.6/5.5، الصور، جلسات مستمرة، أدوات الملفات والأوامر، وMCP للمعاينة. لكنه لا يمرر اختيار `reasoning effort`، ولا يعرض usage/cost/rate limits، ولا يتيح Structured Outputs أو Batch أو Realtime كقدرات تطبيقية.
+1. المسار الأقوى في «سطر» هو **Codex الأصلي**: يدعم GPT‑5.6/5.5، النماذج والجهد ديناميكياً، الصور، الجلسات الرسمية وعملياتها، usage/context/rate limits، أسئلة المستخدم، أذونات app-server، أدوات الملفات والأوامر، وMCP للمعاينة. لا يتيح Structured Outputs أو Batch أو Realtime لأنها أسطح OpenAI API منفصلة وليست فجوات في تكامل Codex CLI.
 2. `openai-compatible.js` ليس موصلاً إلى OpenAI حالياً؛ هو مصنع Chat Completions لمزوّدي DeepSeek/Qwen/MiniMax وغيرهم. يدعم بث النص وحلقة function calling محلية، لكنه نصي فقط، بلا strict schemas أو Structured Outputs أو reasoning effort أو Responses API.
-3. أعلى عائد بأقل جهد: **تمرير effort إلى Codex، التقاط usage، ثم إضافة vision وstrict-tools كقدرات اختيارية للمحوّلات**. هذه تحسينات محدودة لا تستدعي إعادة بناء.
+3. اكتملت دفعة Codex ذات العائد الأعلى: **effort capability-aware + usage/context/rate limits + model/account/thread APIs + طلبات الخادم الحديثة**. تبقى vision وstrict-tools تحسينات اختيارية للمحوّلات الأخرى.
 4. أعلى فجوة استراتيجية: لا يوجد مسار API مباشر إلى OpenAI Responses. إن أُريدت نماذج mini/nano وStructured Outputs وBatch والأدوات المستضافة، فالأصح إنشاء محوّل OpenAI متخصص بـResponses، لا تشويه المصنع العام المتوافق مع Chat Completions.
 5. Realtime ليس «نموذجاً آخر في المنتقي»؛ هو سطح منتج صوتي جديد يحتاج WebRTC/WebSocket، جلسة وأحداث صوت، أذونات ميكروفون، ومشغلاً صوتياً. يؤجل إلى مرحلة معمارية مستقلة.
 
@@ -231,9 +231,9 @@ OpenAI تقول إن Chat Completions ستبقى مدعومة، لكن Responses
 
 ### المرحلة A — صقل Codex القائم
 
-- effort capability-aware.
-- usage/rate/cached telemetry.
-- اختبارات schema للأحداث الحالية وعدم كسر أذونات app-server/MCP.
+- **مكتملة في 21 يوليو 2026:** effort capability-aware.
+- **مكتملة:** usage/context/rate/cached telemetry وحالة الحساب.
+- **مكتملة:** اختبارات عقد للـhandshake والأسئلة والمسارات والأذونات، مع اختبارات MCP وChromium.
 
 ### المرحلة B — صقل المصنع المتوافق
 
@@ -259,7 +259,7 @@ OpenAI تقول إن Chat Completions ستبقى مدعومة، لكن Responses
 - **لأعلى جودة API:** 5.6 Sol؛ **لأفضل توازن:** Terra؛ **للحجم والكلفة:** Luna.
 - **لا تستثمر في سلسلة o** كواجهة جديدة؛ هي توافق تاريخي بعد GPT‑5.
 - **لا تخلط Realtime بالمحادثة النصية:** هو محرك وسطح منتج مستقل.
-- **أول دفعة تنفيذ لاحقة:** effort + usage في Codex، ثم capability flags/vision/strict في المحوّل؛ لا تبدأ بـRealtime.
+- **أول دفعة تنفيذ لاحقة:** capability flags/vision/strict في المحوّل العام؛ لا تبدأ بـRealtime.
 
 ## المصادر الرسمية الأساسية
 

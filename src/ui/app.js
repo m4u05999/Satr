@@ -36,6 +36,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     });
   })();
   let sessionId = null, busy = false, currentBlock = null;
+  let kimiDeclaredCommands = []; // أوامر Kimi المعلنة عبر ACP في الجلسة الجارية (system/available_commands)
   let sessionCwd = null;     // المجلد الذي وُلدت فيه الجلسة الحالية (جلسات Claude Code مرتبطة بمجلدها)
   let lastSentPrompt = '';   // آخر طلب أُرسل — يُستعاد للمحرّر عند فشل استئناف جلسة ميتة
   let lastUserTurn = { prompt: '', images: [] }; // مصدر زر إعادة المحاولة (نص + صور كما أُرسلت)
@@ -48,7 +49,12 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (saved !== null) el.value = saved;
     el.addEventListener('change', () => localStorage.setItem('satr_' + id, el.value));
   });
-  const EFFORT_CYCLE = ['low', 'medium', 'high', 'xhigh', 'max', ''];
+  const EFFORT_CYCLE = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'minimal', ''];
+  const EFFORT_LABELS = {
+    '': 'الافتراضي', minimal: 'أدنى — لأقصر زمن استجابة', low: 'منخفض — أسرع وأرخص',
+    medium: 'متوسط', high: 'مرتفع', xhigh: 'مرتفع جداً', max: 'أقصى — للمهام المعقدة',
+    ultra: 'فائق — للوكلاء المتعددين',
+  };
   const PERMISSION_CYCLE = ['default', 'acceptEdits', 'plan', 'auto'];
   const PERMISSION_LABELS = {
     default: 'افتراضي', acceptEdits: 'قبول التعديلات', plan: 'تخطيط فقط', auto: 'تلقائي ذكي',
@@ -60,7 +66,16 @@ import { createUpdateToast } from './lib/update-toast.js';
   function syncAwareness() {
     const model = $('awarenessModel'), effort = $('awarenessEffort'), permission = $('awarenessPerm');
     if (model) model.textContent = 'model: ' + selectedValueLabel($('model'));
-    if (effort) effort.textContent = 'effort: ' + ($('effort').value || 'default');
+    const effortSupported = engineSupportsEffort($('engine').value);
+    $('effort').disabled = !effortSupported;
+    $('effort').title = effortSupported
+      ? 'كم يفكّر النموذج قبل الرد — الأعلى أدق وأبطأ وأكلف'
+      : 'Kimi ACP لا يعرّض إعداد جهد التفكير لكل جلسة';
+    if (effort) {
+      effort.disabled = !effortSupported;
+      effort.textContent = effortSupported ? 'effort: ' + ($('effort').value || 'default') : 'effort: ACP default';
+      effort.title = effortSupported ? 'تدوير جهد التفكير' : 'جهد التفكير غير متاح عبر Kimi ACP حالياً';
+    }
     if (permission) {
       const mode = $('perm').value || 'default';
       permission.textContent = 'الأذونات: ' + (PERMISSION_LABELS[mode] || mode);
@@ -145,9 +160,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     { value: '', label: 'الافتراضي' }, { value: 'claude-fable-5', label: 'Fable 5' },
     { value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' },
   ];
-  // نماذج Codex الحديثة (المرحلة 1): تُدرَج يدوياً لأن model/list في Codex قديم ولا
-  // يُظهر 5.6 (خلل موثّق openai/codex#31873) لكنها تعمل بتمرير -m صراحةً. مؤكَّدة حيّاً
-  // على اشتراك ChatGPT Plus بعد تحديث الـ CLI. لا نماذج قديمة (قرار المالك).
+  // احتياط حديث فقط؛ القائمة الفعلية وقدرات الجهد تصل من model/list الرسمي.
   const CODEX_MODELS = [
     { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (الأقوى)' },
     { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (متوازن)' },
@@ -155,12 +168,40 @@ import { createUpdateToast } from './lib/update-toast.js';
     { value: 'gpt-5.5', label: 'GPT-5.5' },
   ];
   let providersCache = [];
-  // محوّل «أعمى» (1.3): غير sdk/codex وليس من عائلة claude — له ذاكرة على القرص تُستأنف.
-  // sdk وcodex محرّكان أصيلان (أذونات حية) فليسا أعميين. فشل جلب المزوّدين ⇒ احتياطي بالاسم.
+  let codexDynamicModels = [];
+  async function refreshCodexModels() {
+    try {
+      const list = await window.satr.codexModels();
+      if (Array.isArray(list) && list.length) {
+        codexDynamicModels = list.map((model) => ({
+          value: model.id,
+          label: model.name,
+          description: model.description || '',
+          efforts: Array.isArray(model.efforts) ? model.efforts : [],
+          defaultEffort: model.defaultEffort || '',
+        }));
+      }
+    } catch (e) { /* يبقى الاحتياط الحديث */ }
+    if ($('engine').value === 'codex') rebuildModels();
+  }
+  // نماذج Kimi الديناميكية من ACP (satr:kimiModels). عند الفشل أو قبل وصولها تبقى
+  // القائمة الثابتة من publicInfo (k3) — لا كسر أبداً.
+  let kimiDynamicModels = [];
+  async function refreshKimiModels() {
+    try {
+      const list = await window.satr.kimiModels();
+      if (Array.isArray(list) && list.length) {
+        kimiDynamicModels = list.map((m) => ({ value: m.id, label: m.name }));
+      }
+    } catch (e) { /* يبقى الاحتياط الثابت */ }
+    if ($('engine').value === 'kimi-code') rebuildModels();
+  }
+  // محوّل «أعمى» (1.3): غير المحركات الأصيلة وليس من عائلة claude — له ذاكرة سطر على القرص.
+  // المحركات التي تعلن capabilities.native تملك جلساتها وأذوناتها الحية.
   function isBlindEngine(e) {
     if (e === 'sdk' || e === 'codex') return false;
     const p = providersCache.find((x) => x.name === e);
-    return p ? p.family !== 'claude' : (e !== 'cli');
+    return p ? p.family !== 'claude' && !(p.capabilities && p.capabilities.native) : (e !== 'cli');
   }
   // مجموعة مخزن الجلسات: يُصفَّر sessionId عند تغيّرها لأن المُعرّف لا يصلح عبر المخازن.
   // sdk وcli يتشاركان ~/.claude (نفس المجموعة)؛ codex مستقل (~/.codex)؛ وكل محوّل أعمى
@@ -185,18 +226,47 @@ import { createUpdateToast } from './lib/update-toast.js';
   }
   function modelsForEngine(engine) {
     if (engine === 'sdk') return CLAUDE_MODELS; // محرك SDK الخاص (خارج السجلّ)
-    if (engine === 'codex') return CODEX_MODELS; // محرك Codex الأصيل (خارج السجلّ)
+    if (engine === 'codex') return codexDynamicModels.length ? codexDynamicModels : CODEX_MODELS;
+    if (engine === 'kimi-code' && kimiDynamicModels.length) return kimiDynamicModels; // القائمة الرسمية من ACP
     const p = providersCache.find((x) => x.name === engine);
     return (p && p.models && p.models.length) ? p.models : [{ value: '', label: 'الافتراضي' }];
+  }
+  function engineSupportsVision(engine) {
+    if (engine === 'sdk' || engine === 'codex') return true;
+    const provider = providersCache.find((item) => item.name === engine);
+    return !!(provider && provider.capabilities && provider.capabilities.vision === true);
+  }
+  function engineSupportsEffort(engine) {
+    return engine !== 'kimi-code';
+  }
+  function rebuildEfforts() {
+    const effortSelect = $('effort');
+    const previous = effortSelect.value;
+    let values = EFFORT_CYCLE;
+    if ($('engine').value === 'codex' && codexDynamicModels.length) {
+      const model = codexDynamicModels.find((item) => item.value === $('model').value);
+      if (model && model.efforts.length) values = ['', ...model.efforts];
+    }
+    effortSelect.innerHTML = '';
+    for (const value of [...new Set(values)]) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = EFFORT_LABELS[value] || value;
+      effortSelect.appendChild(option);
+    }
+    if ([...effortSelect.options].some((option) => option.value === previous)) effortSelect.value = previous;
   }
   function rebuildModels() {
     const engine = $('engine').value, mSel = $('model');
     const saved = localStorage.getItem('satr_model_' + engine) || '';
     mSel.innerHTML = '';
     for (const m of modelsForEngine(engine)) {
-      const o = document.createElement('option'); o.value = m.value; o.textContent = m.label; mSel.appendChild(o);
+      const o = document.createElement('option'); o.value = m.value; o.textContent = m.label;
+      if (m.description) o.title = m.description;
+      mSel.appendChild(o);
     }
     if ([...mSel.options].some((o) => o.value === saved)) mSel.value = saved;
+    rebuildEfforts();
     syncAwareness();
   }
   async function loadProviders() {
@@ -209,13 +279,15 @@ import { createUpdateToast } from './lib/update-toast.js';
       sel.innerHTML = '';
       const add = (v, l) => { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.appendChild(o); };
       add('sdk', 'SDK — بث وأذونات حية'); // محرك SDK الخاص (ليس محوّلاً في السجلّ)
-      add('codex', 'Codex — OpenAI (بث وأذونات)'); // محرك Codex الأصيل (خاص ثانٍ)
+      add('codex', 'Codex — OpenAI (بث وأذونات)'); // fallback لمحرك أصيل إن تعذّر جلب قائمة المزودين
       for (const p of list) add(p.name, p.label || p.name);
       if ([...sel.options].some((o) => o.value === saved)) sel.value = saved;
     }
     rebuildModels();
     applyEngineCommands($('engine').value); // أوامر «/» للمحرك المستعاد (المرحلة 4)
     if ($('engine').value === 'codex') checkCodexReady(); // إرشاد إن كان Codex المستعاد غير جاهز
+    if ($('engine').value === 'codex') refreshCodexModels();
+    if ($('engine').value === 'kimi-code') { checkKimiReady(); refreshKimiModels(); }
     restoreAdapterSession(); // 1.3: استئناف محادثة المحوّل بعد إعادة التشغيل
     lastEngine = $('engine').value;
   }
@@ -226,6 +298,8 @@ import { createUpdateToast } from './lib/update-toast.js';
     rebuildModels();
     applyEngineCommands(e); // إخفاء أوامر Claude-الخاصة مع Codex (المرحلة 4)
     if (e === 'codex') checkCodexReady(); // إرشاد إن لم يكن Codex جاهزاً
+    if (e === 'codex') refreshCodexModels();
+    if (e === 'kimi-code') { checkKimiReady(); refreshKimiModels(); }
     // تصفير الجلسة عند تغيّر مخزن الجلسات: المُعرّف لا يصلح عبر المخازن (مُعرّف Claude في
     // Codex ⇒ thread/resume يفشل ويبدأ خيطاً جديداً؛ ومُعرّف Codex في Claude ⇒ «No
     // conversation found»). sdk↔cli يتشاركان ~/.claude فلا يُصفَّران. المحوّل الأعمى
@@ -243,6 +317,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   });
   $('model').addEventListener('change', () => {
     localStorage.setItem('satr_model_' + $('engine').value, $('model').value);
+    rebuildEfforts();
     syncAwareness();
   });
   loadProviders();
@@ -722,6 +797,12 @@ import { createUpdateToast } from './lib/update-toast.js';
       if (composerEl.commandsChanged) composerEl.commandsChanged(ev.commands);
       return;
     }
+    if (ev.type === 'system' && ev.subtype === 'available_commands') {
+      // أوامر Kimi المعلنة عبر ACP — الأساسي منها مغطى بأسماء عربية ثابتة في
+      // COMMANDS (/ضغط /سياق /حالة /مهام /مساعدة)؛ نخزّن القائمة الخام لأي استخدام لاحق.
+      kimiDeclaredCommands = Array.isArray(ev.commands) ? ev.commands : [];
+      return;
+    }
     const block = currentBlock;
     if (!block || block.done) return;
     if (ev.type === 'stream_text') {
@@ -773,8 +854,12 @@ import { createUpdateToast } from './lib/update-toast.js';
       else if (isClaudeAuthError(ev.text)) block.error(claudeAuthErrorMessage());
       else {
         const eng = $('engine').value;
-        const name = eng === 'codex' ? 'Codex' : 'claude';
-        block.error('فشل تشغيل أمر ' + name + ' — تأكد أنه مثبت ومسجّل دخوله.\n' + (ev.text || ''));
+        if (eng === 'sdk' || eng === 'cli' || eng === 'codex' || eng === 'kimi-code') {
+          const name = eng === 'codex' ? 'Codex' : eng === 'kimi-code' ? 'Kimi Code' : 'Claude Code';
+          block.error('فشل تشغيل أمر ' + name + ' — تأكد أنه مثبت ومسجّل دخوله.\n' + (ev.text || ''));
+        } else {
+          block.error(ev.text || ('تعذّر الاتصال بـ ' + engineLabel() + '.'));
+        }
       }
       block.showRetry();
       endRun();
@@ -872,10 +957,9 @@ import { createUpdateToast } from './lib/update-toast.js';
     const prompt = input.value.trim();
     const engine = $('engine').value;
     let images = composerEl.getImages ? composerEl.getImages() : [];
-    // الصور مدعومة في المحرّكين الأصيلين (SDK وCodex) — نماذج Codex تقبل الصور.
-    // المحوّلات العمياء (REST) لا تدعمها: ننبّه ونتجاهلها.
-    if (engine !== 'sdk' && engine !== 'codex' && images.length) {
-      addNotice('الصور مدعومة في محرّكي SDK وCodex فقط — لم تُرسَل الصور المرفقة');
+    // المحركات الأصلية تدعم الصور، ومحوّل REST لا يستقبلها إلا إذا أعلن vision.
+    if (!engineSupportsVision(engine) && images.length) {
+      addNotice('المحرك المختار لا يدعم الصور — لم تُرسَل الصور المرفقة');
       images = [];
     }
     if (!prompt && !images.length) return;
@@ -911,10 +995,10 @@ import { createUpdateToast } from './lib/update-toast.js';
       permissionMode: $('perm').value,
       engine,
       skills: skillsSel,
-      effort: $('effort').value,
+      effort: engineSupportsEffort(engine) ? $('effort').value : '',
       extraDirs: topbarEl.getExtraDirs ? topbarEl.getExtraDirs() : [],
       images: images.map((i) => ({ media_type: i.media_type, data: i.data })),
-      browserControl: browserControlOn, // تفويض صريح لأدوات المتصفح في محركي SDK وCodex
+      browserControl: browserControlOn, // تفويض صريح لأدوات المتصفح في المحركات الأصلية الداعمة
     });
     if (r && r.error) {
       currentBlock.error(r.message || r.error);
@@ -938,11 +1022,15 @@ import { createUpdateToast } from './lib/update-toast.js';
   }
 
   // ---------- ضغط المحادثة (/ضغط) ----------
-  // يرسل /compact عبر محرك SDK كدور عادي؛ النموذج يلخّص ويُصدر compact_boundary
-  // ثم result، والجلسة تبقى نفسها فتكمل المحادثة. (محرك SDK فقط — يلخّص فعلياً.)
+  // يرسل /compact كدور أصيل عبر Claude SDK أو أمر Kimi ACP الرسمي؛ كلاهما يبقي
+  // معرّف الجلسة نفسه ويصدر compact_boundary المطبّع لبطاقة النتيجة العربية.
   async function compactConversation() {
     if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل ضغط المحادثة'); return; }
     if (!sessionId) { addNotice('لا توجد محادثة لضغطها بعد — ابدأ بإرسال رسالة أولاً'); return; }
+    const activeEngine = $('engine').value;
+    if (activeEngine !== 'sdk' && activeEngine !== 'kimi-code') {
+      addNotice('ضغط المحادثة غير مدعوم لهذا المحرك'); return;
+    }
     const cwd = $('cwd').value.trim();
     addNotice('⏳ جارٍ ضغط المحادثة…');
     busy = true;
@@ -956,8 +1044,36 @@ import { createUpdateToast } from './lib/update-toast.js';
       sessionId,
       model: $('model').value,
       permissionMode: $('perm').value,
-      engine: 'sdk', // الضغط مدعوم في محرك SDK فقط
+      engine: activeEngine,
       skills: skillsSel,
+      effort: engineSupportsEffort(activeEngine) ? $('effort').value : '',
+      images: [],
+    });
+    if (r && r.error) { currentBlock.error(r.message || r.error); endRun(); }
+  }
+
+  // ---------- أوامر Kimi ACP الخام (/حالة /مهام /مساعدة) ----------
+  // نفس نمط /ضغط المثبّت: النص الخام (/status /tasks /help) يُرسل كدور عادي
+  // وKimi ينفّذ أمره المائل داخل الجلسة نفسها ويبثّ النتيجة كنص مساعد.
+  async function sendKimiCommand(raw) {
+    if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل تنفيذ الأمر'); return; }
+    if (!sessionId) { addNotice('لا توجد جلسة Kimi بعد — ابدأ بإرسال رسالة أولاً'); return; }
+    if ($('engine').value !== 'kimi-code') { addNotice('هذا الأمر خاص بمحرك Kimi Code'); return; }
+    const cwd = $('cwd').value.trim();
+    busy = true;
+    sendBtn.textContent = 'إيقاف';
+    sendBtn.classList.add('stop');
+    currentBlock = chatEl.newAssistantBlock(engineLabel());
+    const skillsSel = await computeSkillsPayload();
+    const r = await window.satr.send({
+      prompt: raw,
+      cwd,
+      sessionId,
+      model: $('model').value,
+      permissionMode: $('perm').value,
+      engine: 'kimi-code',
+      skills: skillsSel,
+      effort: engineSupportsEffort('kimi-code') ? $('effort').value : '',
       images: [],
     });
     if (r && r.error) { currentBlock.error(r.message || r.error); endRun(); }
@@ -972,8 +1088,8 @@ import { createUpdateToast } from './lib/update-toast.js';
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
     { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
     { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', sdkOnly: true, run: () => openMcp() },
-    { cmd: '/سياق',    en: '/context', desc: 'عرض امتلاء نافذة السياق وتوزيع الرموز',    sdkOnly: true, run: () => openContext() },
-    { cmd: '/ضغط',     en: '/compact', desc: 'ضغط المحادثة (تلخيصها) لتوفير السياق',     sdkOnly: true, run: () => compactConversation() },
+    { cmd: '/سياق',    en: '/context', desc: 'عرض امتلاء نافذة السياق وتوزيع الرموز',    engines: ['sdk', 'kimi-code'], run: () => openContext() },
+    { cmd: '/ضغط',     en: '/compact', desc: 'ضغط المحادثة (تلخيصها) لتوفير السياق',     engines: ['sdk', 'kimi-code'], run: () => compactConversation() },
     { cmd: '/فيبل',    en: '/fable',  desc: 'التبديل إلى نموذج Fable 5',            sdkOnly: true, run: () => setModel('claude-fable-5', 'Fable 5') },
     { cmd: '/أوبس',    en: '/opus',   desc: 'التبديل إلى نموذج Opus',               sdkOnly: true, run: () => setModel('opus', 'Opus') },
     { cmd: '/سونيت',   en: '/sonnet', desc: 'التبديل إلى نموذج Sonnet',             sdkOnly: true, run: () => setModel('sonnet', 'Sonnet') },
@@ -982,14 +1098,21 @@ import { createUpdateToast } from './lib/update-toast.js';
     { cmd: '/تنفيذ',   en: '/edit',   desc: 'قبول التعديلات تلقائياً',                run: () => setPerm('acceptEdits', 'قبول التعديلات تلقائياً') },
     { cmd: '/مجلد',    en: '/folder', desc: 'اختيار مجلد المشروع',                   run: () => $('pickFolder').click() },
     { cmd: '/كودكس-حالة', en: '/codex-status', desc: 'عرض حالة تثبيت Codex وتسجيل الدخول', run: () => showCodexStatus() },
+    { cmd: '/كيمي-حالة', en: '/kimi-status', desc: 'عرض حالة تثبيت Kimi Code وتسجيل الدخول', run: () => showKimiStatus() },
+    { cmd: '/حالة',   en: '/status', desc: 'عرض حالة جلسة Kimi Code الجارية',        engines: ['kimi-code'], run: () => sendKimiCommand('/status') },
+    { cmd: '/مهام',   en: '/tasks',  desc: 'عرض مهام Kimi الخلفية والمجدولة',         engines: ['kimi-code'], run: () => sendKimiCommand('/tasks') },
+    { cmd: '/مساعدة', en: '/help',   desc: 'عرض مساعدة Kimi Code وأوامره المائلة',    engines: ['kimi-code'], run: () => sendKimiCommand('/help') },
   ];
 
-  // قائمة أوامر «/» حسب المحرك: أوامر Claude-الخاصة (sdkOnly) تُخفى مع Codex (المرحلة 4)
-  // لأنها تنادي دوال تحكّم Claude SDK (موصلات/سياق/مهارات/وكلاء/ضغط) أو نماذج Claude.
+  // قائمة أوامر «/» حسب المحرك: بعض الأوامر Claude-خاصة، بينما /سياق و/ضغط
+  // مشتركان بين Claude SDK وKimi ACP ولا يظهران للمحركات الأخرى.
   function applyEngineCommands(engine) {
     const el = document.querySelector('satr-composer');
     if (!el) return;
-    const list = engine === 'codex' ? COMMANDS.filter((c) => !c.sdkOnly) : COMMANDS;
+    const list = COMMANDS.filter((command) => {
+      if (Array.isArray(command.engines)) return command.engines.includes(engine);
+      return !(engine === 'codex' || engine === 'kimi-code') || !command.sdkOnly;
+    });
     customElements.whenDefined('satr-composer').then(() => { if (el.setCommands) el.setCommands(list); });
   }
   // إرشاد مضمّن حين يُختار Codex وهو غير جاهز (لا يحجب الإطلاق — Claude بوابة الإطلاق).
@@ -1021,6 +1144,29 @@ import { createUpdateToast } from './lib/update-toast.js';
     } else {
       addNotice('⚠️ Codex مثبَّت ومسجَّل الدخول بطريقة غير معروفة.');
     }
+  }
+
+  // Kimi Code الأصيل يستخدم اشتراك Kimi عبر `kimi login`؛ مفتاح KIMI_API_KEY يخص خيار REST فقط.
+  async function checkKimiReady() {
+    let status = null;
+    try { status = await window.satr.kimiStatus(); } catch (e) { return; }
+    if (!status) return;
+    if (!status.installed) {
+      addNotice('⚠️ Kimi Code CLI غير مثبَّت. ثبّته من PowerShell:  irm https://code.kimi.com/kimi-code/install.ps1 | iex  ثم أعد تشغيل سطر.');
+    } else if (!status.auth || !status.auth.ok) {
+      addNotice('⚠️ Kimi Code غير مسجَّل الدخول. نفّذ في الطرفية:  kimi login  ثم أكمل دخول اشتراك Kimi.');
+    }
+  }
+
+  async function showKimiStatus() {
+    let status = null;
+    try { status = await window.satr.kimiStatus(); } catch (e) {
+      addNotice('✗ تعذّر التحقق من حالة Kimi Code'); return;
+    }
+    if (!status || !status.installed) addNotice('⚠️ Kimi Code CLI غير مثبَّت.');
+    else if (!status.auth || !status.auth.ok) addNotice('⚠️ Kimi Code CLI مثبَّت، لكنه غير مسجَّل الدخول. شغّل kimi login.');
+    else if (status.auth.method === 'oauth') addNotice('✓ Kimi Code جاهز عبر اشتراك Kimi (OAuth).');
+    else addNotice('✓ Kimi Code جاهز عبر مزوّد مضبوط محلياً.');
   }
 
   function setModel(v, label) {
@@ -1059,6 +1205,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     const s = e.detail;
     if (s.kind === 'chat') resumeChat(s);
     else if (s.kind === 'codex') resumeCodexSession(s);
+    else if (s.kind === 'kimi') resumeKimiSession(s);
     else resumeSession(s);
   });
   // تسمية مزوّد محادثة محوّل (الدفعة 4) — تبقى للقشرة (resumeChat يستخدمها)
@@ -1170,6 +1317,50 @@ import { createUpdateToast } from './lib/update-toast.js';
     loadTaskLedger('codex', s.id);
     loadCheckpoint('codex', s.id);
     addNotice('📂 استؤنفت جلسة Codex — أرسل رسالتك للمتابعة');
+    chatEl.scrollToEnd(true);
+    input.focus();
+  }
+
+  // جلسات Kimi الأصلية تُقرأ وتُستأنف عبر ACP؛ لا تعتمد على ذاكرة محوّل REST في ~/.satr.
+  async function resumeKimiSession(s) {
+    if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل استئناف جلسة أخرى'); return; }
+    const data = await window.satr.readKimiSession(s.id);
+    sessionsEl.close();
+    if (!data || data.error) { addNotice('✗ تعذّر فتح جلسة Kimi Code'); return; }
+    const sel = $('engine');
+    if (![...sel.options].some((option) => option.value === 'kimi-code')) {
+      addNotice('✗ محرك Kimi Code الأصيل غير متاح'); return;
+    }
+    sel.value = 'kimi-code';
+    localStorage.setItem('satr_engine', 'kimi-code');
+    rebuildModels();
+    applyEngineCommands('kimi-code');
+    lastEngine = 'kimi-code';
+    currentBlock = null;
+    if (composerEl.clearImages) composerEl.clearImages();
+    chatEl.clearThread();
+    resetSessionChanges();
+    if (data.cwd) {
+      $('cwd').value = data.cwd;
+      localStorage.setItem('satr_cwd', data.cwd);
+      $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    sessionCwd = $('cwd').value.trim();
+    if (data.total > data.messages.length) addNotice('عرض آخر ' + data.messages.length + ' من أصل ' + data.total + ' رسالة');
+    for (const message of (data.messages || [])) {
+      if (message.role === 'user') chatEl.addUserMsg(message.text);
+      else if (Array.isArray(message.content)) {
+        // تاريخ غنّي: كتل tool_use تُعرض كسجل تنفيذ منجز باسم الأداة وحالتها النهائية
+        const tools = message.content.filter((block) => block && block.type === 'tool_use')
+          .map((block) => ({ name: block.name, failed: block.status === 'failed' || block.status === 'cancelled' }));
+        if (tools.length) chatEl.addHistoryAssistant({ tools }, 'Kimi Code');
+      } else chatEl.addHistoryAssistant({ text: message.text }, 'Kimi Code');
+    }
+    sessionId = s.id;
+    $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8) + ' (Kimi مستأنفة)';
+    loadTaskLedger('kimi-code', s.id);
+    loadCheckpoint('kimi-code', s.id);
+    addNotice('📂 استؤنفت جلسة Kimi Code — أرسل رسالتك للمتابعة');
     chatEl.scrollToEnd(true);
     input.focus();
   }
@@ -1337,9 +1528,11 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (!button || typeof window.satr.contextUsage !== 'function') return;
     const requestedCwd = $('cwd').value.trim();
     const requestedSessionId = sessionId;
+    const requestedEngine = $('engine').value;
     try {
-      const result = await window.satr.contextUsage(requestedCwd, requestedSessionId);
-      if (requestedCwd !== $('cwd').value.trim() || requestedSessionId !== sessionId) return;
+      const result = await window.satr.contextUsage(requestedCwd, requestedSessionId, requestedEngine);
+      if (requestedCwd !== $('cwd').value.trim() || requestedSessionId !== sessionId
+          || requestedEngine !== $('engine').value) return;
       if (!result || !result.ok || !result.usage) { button.textContent = 'context: —%'; return; }
       const usage = result.usage;
       const total = Number(usage.totalTokens) || 0;
@@ -1355,7 +1548,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   }
   function openContext() {
     surfaceCoordinator.openPanel('context', document.activeElement,
-      () => contextEl.open($('cwd').value.trim(), sessionId, busy));
+      () => contextEl.open($('cwd').value.trim(), sessionId, busy, $('engine').value));
   }
   mcpEl.addEventListener('panel-refresh', openMcp);
   contextEl.addEventListener('panel-refresh', openContext);

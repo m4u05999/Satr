@@ -1,0 +1,829 @@
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { EventEmitter } = require('events');
+
+const kimi = require('../electron/kimi');
+
+const root = path.resolve(__dirname, '..');
+
+function waitFor(predicate, timeout) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      if (predicate()) { resolve(); return; }
+      if (Date.now() - started > (timeout || 2000)) { reject(new Error('timeout')); return; }
+      setTimeout(tick, 5);
+    };
+    tick();
+  });
+}
+
+class FakeProcess extends EventEmitter {
+  constructor(handler) {
+    super();
+    this.stdout = new EventEmitter();
+    this.stderr = new EventEmitter();
+    this.killed = false;
+    this.lines = [];
+    this.stdin = {
+      write: (line) => {
+        const message = JSON.parse(String(line).trim());
+        this.lines.push(message);
+        handler(message, this);
+        return true;
+      },
+      end: () => {},
+    };
+  }
+
+  send(message) {
+    setTimeout(() => this.stdout.emit('data', Buffer.from(JSON.stringify(message) + '\n')), 0);
+  }
+
+  kill() {
+    if (this.killed) return;
+    this.killed = true;
+    setTimeout(() => this.emit('exit', 0), 0);
+  }
+}
+
+function initializeResult(extra) {
+  return {
+    protocolVersion: 1,
+    agentCapabilities: {
+      loadSession: true,
+      promptCapabilities: { image: true, embeddedContext: true },
+      mcpCapabilities: { http: true },
+      sessionCapabilities: { resume: {}, list: {} },
+      ...(extra || {}),
+    },
+    authMethods: [{ id: 'login', name: 'Kimi Code' }],
+  };
+}
+
+async function testNativeTurnAndPermission() {
+  const events = [];
+  let processRef;
+  let promptId;
+  let permissionReply;
+  let mcpOptions;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    startMcp: async (options) => {
+      mcpOptions = options;
+      return { url: 'http://127.0.0.1:49152/mcp', token: 'test-token', stop: async () => {} };
+    },
+    spawn: () => {
+      processRef = new FakeProcess((message, proc) => {
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/new') {
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_session_1' } });
+        } else if (message.method === 'session/prompt') {
+          promptId = message.id;
+          const textBlock = message.params.prompt.find((item) => item.type === 'text');
+          assert.strictEqual(textBlock.text, 'عدّل الملف');
+          assert.ok(message.params.prompt.some((item) => item.type === 'resource'
+            && item.resource && item.resource.uri === 'satr://environment'));
+          proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_session_1', update: {
+              sessionUpdate: 'tool_call', toolCallId: 'call_edit_1', title: 'Edit', kind: 'edit',
+              status: 'pending', rawInput: {
+                path: 'sample.js', api_key: 'must-not-leak', nested: { authorization: 'must-not-leak-either' },
+              },
+            },
+          } });
+          proc.send({ jsonrpc: '2.0', id: 700, method: 'session/request_permission', params: {
+            sessionId: 'kimi_session_1', toolCall: { toolCallId: 'call_edit_1' },
+            options: [
+              { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+              { optionId: 'always', name: 'Always', kind: 'allow_always' },
+              { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+            ],
+          } });
+        } else if (message.id === 700 && message.result) {
+          permissionReply = message.result;
+          proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_session_1', update: {
+              sessionUpdate: 'tool_call_update', toolCallId: 'call_edit_1', status: 'completed',
+              content: [{ type: 'content', content: { type: 'text', text: 'تم التعديل' } }],
+            },
+          } });
+          proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_session_1', update: {
+              sessionUpdate: 'agent_message_chunk', messageId: 'answer_1',
+              content: { type: 'text', text: 'اكتمل العمل' },
+            },
+          } });
+          proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+        }
+      });
+      return processRef;
+    },
+  });
+
+  const handle = await engine.start({
+    prompt: 'عدّل الملف', sessionId: null, model: 'k3', permissionMode: 'default',
+    skills: ['satr-guide'], images: [], browserControl: null,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'permission_request'));
+  const permission = events.find((event) => event.type === 'permission_request');
+  assert.strictEqual(permission.input.api_key, '[secret]');
+  assert.strictEqual(permission.input.nested.authorization, '[secret]');
+  assert.strictEqual(handle.resolvePermission(permission.id, true, true), true);
+  await waitFor(() => events.some((event) => event.type === 'result'));
+
+  assert.deepStrictEqual(permissionReply, { outcome: { outcome: 'selected', optionId: 'always' } });
+  assert.ok(events.some((event) => event.type === 'system' && event.session_id === 'kimi_session_1'));
+  assert.ok(events.some((event) => event.type === 'assistant'
+    && event.message.content.some((item) => item.type === 'tool_use' && item.id === 'call_edit_1')));
+  assert.ok(events.some((event) => event.type === 'user'
+    && event.message.content.some((item) => item.type === 'tool_result' && !item.is_error)));
+  assert.ok(events.some((event) => event.type === 'assistant'
+    && event.message.content.some((item) => item.type === 'text' && item.text === 'اكتمل العمل')));
+  assert.ok(processRef.lines.some((message) => message.method === 'session/new'));
+  assert.ok(mcpOptions.extraTools.some((tool) => tool.name === 'load_skill'));
+  assert.ok(mcpOptions.extraTools.some((tool) => tool.name === 'verify_project' && tool.neverAlways));
+  const loaded = await mcpOptions.extraTools.find((tool) => tool.name === 'load_skill').handler({ name: 'satr-guide' });
+  assert.strictEqual(loaded.isError, false);
+  assert.ok(loaded.content[0].text.includes('سطر'));
+}
+
+async function testCancelThenResume() {
+  const events = [];
+  let processRef;
+  let promptId;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      processRef = new FakeProcess((message, proc) => {
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/resume') {
+          assert.strictEqual(message.params.sessionId, 'kimi_session_1');
+          proc.send({ jsonrpc: '2.0', id: message.id, result: {} });
+        } else if (message.method === 'session/prompt') promptId = message.id;
+        else if (message.method === 'session/cancel') {
+          assert.strictEqual(message.params.sessionId, 'kimi_session_1');
+          proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'cancelled' } });
+        }
+      });
+      return processRef;
+    },
+  });
+  const handle = await engine.start({
+    prompt: 'أكمل من حيث توقفت', sessionId: 'kimi_session_1', model: 'k3', permissionMode: 'default',
+    skills: [], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => processRef.lines.some((message) => message.method === 'session/prompt'));
+  await handle.stop();
+  assert.ok(processRef.lines.some((message) => message.method === 'session/resume'));
+  assert.ok(processRef.lines.some((message) => message.method === 'session/cancel'));
+  assert.ok(!processRef.lines.some((message) => message.method === 'session/new'));
+}
+
+async function testBidirectionalRpcIdCollision() {
+  const events = [];
+  let promptId;
+  let readReply;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      } else if (message.method === 'session/new') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_collision_1' } });
+      } else if (message.method === 'session/prompt') {
+        promptId = message.id;
+        proc.send({ jsonrpc: '2.0', id: promptId, method: 'fs/read_text_file', params: {
+          sessionId: 'kimi_collision_1', path: path.join(root, 'electron', 'kimi.js'),
+        } });
+      } else if (message.id === promptId && message.result && typeof message.result.content === 'string') {
+        readReply = message.result.content;
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_collision_1', update: {
+            sessionUpdate: 'agent_message_chunk', messageId: 'answer_collision',
+            content: { type: 'text', text: 'اكتملت القراءة' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  await engine.start({
+    prompt: 'اقرأ ثم أكمل', sessionId: null, model: 'k3', permissionMode: 'default',
+    skills: [], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'result'));
+  assert.ok(readReply.includes("const ENGINE_ID = 'kimi-code'"));
+  assert.ok(events.some((event) => JSON.stringify(event).includes('اكتملت القراءة')));
+  assert.ok(!events.some((event) => event.type === 'permission_request'));
+}
+
+async function testInteractiveQuestion() {
+  const events = [];
+  let questionReply;
+  let promptId;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_question_1' } });
+      } else if (message.method === 'session/prompt') {
+        promptId = message.id;
+        proc.send({ jsonrpc: '2.0', id: 701, method: 'session/request_permission', params: {
+          sessionId: 'kimi_question_1',
+          toolCall: {
+            toolCallId: 'ask_1', title: 'AskUserQuestion', kind: 'other', status: 'pending',
+            rawInput: { question: 'أي مسار تختار؟' },
+          },
+          options: [
+            { optionId: 'first', name: 'المسار الأول', kind: 'allow_once' },
+            { optionId: 'second', name: 'المسار الثاني', kind: 'allow_once' },
+          ],
+        } });
+      } else if (message.id === 701 && message.result) {
+        questionReply = message.result;
+        proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  const handle = await engine.start({
+    prompt: 'اسألني قبل الاختيار', sessionId: null, model: 'k3', permissionMode: 'default',
+    skills: [], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'question_request'));
+  const question = events.find((event) => event.type === 'question_request');
+  assert.strictEqual(question.questions[0].question, 'أي مسار تختار؟');
+  assert.strictEqual(handle.resolveQuestion(question.id, [{ questionIndex: 0, optionIndexes: [1] }]), true);
+  await waitFor(() => events.some((event) => event.type === 'result'));
+  assert.deepStrictEqual(questionReply, { outcome: { outcome: 'selected', optionId: 'second' } });
+}
+
+async function testLoadFallbackDoesNotReplayHistory() {
+  const events = [];
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult({ sessionCapabilities: { list: {} } }) });
+      } else if (message.method === 'session/resume') {
+        proc.send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } });
+      } else if (message.method === 'session/load') {
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_old_1', update: {
+            sessionUpdate: 'agent_message_chunk', messageId: 'old_answer',
+            content: { type: 'text', text: 'رد تاريخي يجب ألا يتكرر' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: message.id, result: {} });
+      } else if (message.method === 'session/prompt') {
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_old_1', update: {
+            sessionUpdate: 'agent_message_chunk', messageId: 'new_answer',
+            content: { type: 'text', text: 'رد جديد' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  await engine.start({
+    prompt: 'تابع', sessionId: 'kimi_old_1', model: 'k3', permissionMode: 'default',
+    skills: [], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'result'));
+  assert.ok(!events.some((event) => JSON.stringify(event).includes('رد تاريخي يجب ألا يتكرر')));
+  assert.ok(events.some((event) => JSON.stringify(event).includes('رد جديد')));
+}
+
+async function testPlanModeLifecycle() {
+  const events = [];
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-kimi-plan-'));
+  const project = path.join(sandbox, 'project');
+  const kimiRoot = path.join(sandbox, '.kimi-code');
+  const sessionId = 'kimi_plan_1';
+  const planDir = path.join(kimiRoot, 'sessions', 'wd_project_1234', 'session_' + sessionId, 'agents', 'main', 'plans');
+  const planPath = path.join(planDir, 'safe-plan.md');
+  const otherPlanDir = path.join(kimiRoot, 'sessions', 'wd_project_1234', 'session_other_session', 'agents', 'main', 'plans');
+  const otherPlanPath = path.join(otherPlanDir, 'other-plan.md');
+  const projectFile = path.join(project, 'implemented.txt');
+  const outsideFile = path.join(sandbox, 'outside.txt');
+  fs.mkdirSync(planDir, { recursive: true });
+  fs.mkdirSync(otherPlanDir, { recursive: true });
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(otherPlanPath, 'خطة جلسة أخرى', 'utf8');
+  fs.writeFileSync(outsideFile, 'محظور', 'utf8');
+  assert.strictEqual(kimi._internals.safePlanPath(kimiRoot, sessionId, otherPlanPath, true), null);
+
+  let promptId;
+  let planRead;
+  let outsideRejected = false;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    dataRoot: () => kimiRoot,
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId } });
+      } else if (message.method === 'session/prompt') {
+        promptId = message.id;
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId, update: {
+            sessionUpdate: 'tool_call', toolCallId: 'plan_write', title: 'Write', kind: 'edit',
+            status: 'pending', rawInput: { path: planPath },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: 801, method: 'session/request_permission', params: {
+          sessionId, toolCall: { toolCallId: 'plan_write' }, options: [
+            { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+          ],
+        } });
+      } else if (message.id === 801 && message.result) {
+        assert.strictEqual(message.result.outcome.optionId, 'once');
+        proc.send({ jsonrpc: '2.0', id: 802, method: 'fs/write_text_file', params: {
+          sessionId, path: planPath, content: '# الخطة\n\n1. نفّذ التعديل.',
+        } });
+      } else if (message.id === 802 && message.result) {
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId, update: {
+            sessionUpdate: 'tool_call', toolCallId: 'exit_plan', title: 'ExitPlanMode', kind: 'read',
+            status: 'pending', rawInput: {},
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: 803, method: 'fs/read_text_file', params: { sessionId, path: planPath } });
+      } else if (message.id === 803 && message.result) {
+        planRead = message.result.content;
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId, update: {
+            sessionUpdate: 'tool_call_update', toolCallId: 'exit_plan', status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text: 'تم اعتماد الخطة' } }],
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: 804, method: 'fs/read_text_file', params: { sessionId, path: outsideFile } });
+      } else if (message.id === 804 && message.error) {
+        outsideRejected = message.error.code === -32602;
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId, update: {
+            sessionUpdate: 'tool_call', toolCallId: 'project_edit', title: 'Edit', kind: 'edit',
+            status: 'pending', rawInput: { path: projectFile },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: 805, method: 'session/request_permission', params: {
+          sessionId, toolCall: { toolCallId: 'project_edit' }, options: [
+            { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+          ],
+        } });
+      } else if (message.id === 805 && message.result) {
+        assert.strictEqual(message.result.outcome.optionId, 'once');
+        proc.send({ jsonrpc: '2.0', id: 806, method: 'fs/write_text_file', params: {
+          sessionId, path: projectFile, content: 'اكتمل التنفيذ',
+        } });
+      } else if (message.id === 806 && message.result) {
+        proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  try {
+    await engine.start({
+      prompt: 'خطط ثم نفّذ', sessionId: null, model: 'k3', permissionMode: 'acceptEdits',
+      skills: [], images: [], browserControl: false,
+    }, project, (event) => events.push(event));
+    await waitFor(() => events.some((event) => event.type === 'result'));
+    assert.strictEqual(planRead, '# الخطة\n\n1. نفّذ التعديل.');
+    assert.strictEqual(fs.readFileSync(projectFile, 'utf8'), 'اكتمل التنفيذ');
+    assert.strictEqual(outsideRejected, true);
+    assert.ok(!events.some((event) => event.type === 'permission_request'));
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
+async function testSessionBrowser() {
+  const spawned = [];
+  const listRequests = [];
+  // 260 جلسة على 3 صفحات: تتجاوز السقف القديم (80) وتختبر القصّ الآمن عند السقف الجديد (200)
+  const allSessions = [];
+  for (let i = 0; i < 260; i++) {
+    allSessions.push({
+      sessionId: 'kimi_sess_' + String(i).padStart(4, '0'), cwd: root, title: 'جلسة رقم ' + i,
+      updatedAt: new Date(Date.parse('2026-07-20T00:00:00Z') + i * 1000).toISOString(),
+    });
+  }
+  allSessions[5].sessionId = 'kimi_history_1';
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      const proc = new FakeProcess((message, child) => {
+        if (message.method === 'initialize') child.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/list') {
+          listRequests.push(message.params || {});
+          const cursor = message.params && message.params.cursor;
+          const page = cursor === 'p2' ? 1 : cursor === 'p3' ? 2 : 0;
+          child.send({ jsonrpc: '2.0', id: message.id, result: {
+            sessions: allSessions.slice(page * 100, page * 100 + 100),
+            nextCursor: page < 2 ? 'p' + (page + 2) : undefined,
+          } });
+        }
+        else if (message.method === 'session/load') {
+          // إعادة بث تاريخية: نصوص متداخلة مع نداءي أداة (مكتمل وفاشل)
+          child.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_history_1', update: {
+              sessionUpdate: 'user_message_chunk', messageId: 'u1', content: { type: 'text', text: 'الطلب' },
+            },
+          } });
+          child.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_history_1', update: {
+              sessionUpdate: 'agent_message_chunk', messageId: 'a1', content: { type: 'text', text: 'الرد الأول' },
+            },
+          } });
+          child.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_history_1', update: {
+              sessionUpdate: 'tool_call', toolCallId: 'hist_bash_1', title: 'Bash', kind: 'execute',
+              status: 'in_progress', rawInput: { command: 'npm test' },
+            },
+          } });
+          child.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_history_1', update: {
+              sessionUpdate: 'tool_call_update', toolCallId: 'hist_bash_1', status: 'completed',
+              content: [{ type: 'content', content: { type: 'text', text: 'ok' } }],
+            },
+          } });
+          child.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_history_1', update: {
+              sessionUpdate: 'tool_call', toolCallId: 'hist_edit_1', title: 'Edit', kind: 'edit',
+              status: 'pending', rawInput: { path: 'a.js', api_key: 'must-not-leak' },
+            },
+          } });
+          child.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_history_1', update: {
+              sessionUpdate: 'tool_call_update', toolCallId: 'hist_edit_1', status: 'failed',
+            },
+          } });
+          child.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_history_1', update: {
+              sessionUpdate: 'agent_message_chunk', messageId: 'a2', content: { type: 'text', text: 'الرد الأخير' },
+            },
+          } });
+          child.send({ jsonrpc: '2.0', id: message.id, result: null });
+        }
+      });
+      spawned.push(proc);
+      return proc;
+    },
+  });
+
+  const listed = await engine.listSessions();
+  assert.strictEqual(listed.length, 200); // السقف الجديد مع قصّ آمن (كان 80)
+  assert.deepStrictEqual(listRequests.map((params) => params.cursor || ''), ['', 'p2']); // تصفح بالمؤشر
+  assert.strictEqual(listed[0].id, 'kimi_sess_0199'); // الأحدث ضمن أول 200 ملتقطة (قصّ آمن)
+  for (let i = 1; i < listed.length; i++) assert.ok(listed[i - 1].mtime >= listed[i].mtime);
+
+  const read = await engine.readSession('kimi_history_1');
+  assert.strictEqual(read.total, 5);
+  assert.deepStrictEqual(read.messages.map((item) => item.role),
+    ['user', 'assistant', 'assistant', 'assistant', 'assistant']); // الترتيب كما ورد
+  assert.strictEqual(read.messages[0].text, 'الطلب');
+  assert.strictEqual(read.messages[1].text, 'الرد الأول');
+  const bash = read.messages[2].content[0];
+  assert.strictEqual(bash.type, 'tool_use');
+  assert.strictEqual(bash.id, 'hist_bash_1');
+  assert.strictEqual(bash.name, 'تنفيذ أمر'); // التسمية العربية من KIMI_TOOL_LABELS
+  assert.strictEqual(bash.status, 'completed'); // الحالة النهائية من tool_call_update
+  const edit = read.messages[3].content[0];
+  assert.strictEqual(edit.type, 'tool_use');
+  assert.strictEqual(edit.name, 'تعديل ملف');
+  assert.strictEqual(edit.status, 'failed');
+  assert.strictEqual(edit.input.api_key, '[secret]'); // المدخل منقّى كما في البث الحي
+  assert.strictEqual(read.messages[4].text, 'الرد الأخير');
+  assert.ok(spawned.length >= 3, 'السرد والقراءة يستخدمان ACP رسمياً');
+}
+
+async function testModelCompactAndEffortContract() {
+  const events = [];
+  const configRequests = [];
+  let promptId;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') proc.send({ jsonrpc: '2.0', id: message.id, result: {
+        sessionId: 'kimi_compact_1',
+        configOptions: [
+          {
+            id: 'model', category: 'model', currentValue: 'kimi-code/kimi-for-coding',
+            options: [
+              { value: 'kimi-code/kimi-for-coding', name: 'K2.7 Coding' },
+              { value: 'kimi-code/kimi-for-coding-highspeed', name: 'K2.7 Coding Highspeed' },
+              { value: 'kimi-code/k3', name: 'K3' },
+            ],
+          },
+          { id: 'thinking', category: 'thought_level', currentValue: 'on', options: [{ value: 'on', name: 'On' }] },
+        ],
+      } });
+      else if (message.method === 'session/set_config_option') {
+        configRequests.push(message.params);
+        proc.send({ jsonrpc: '2.0', id: message.id, result: {} });
+      } else if (message.method === 'session/prompt') {
+        promptId = message.id;
+        assert.deepStrictEqual(message.params.prompt, [{ type: 'text', text: '/compact' }]);
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_compact_1', update: {
+            sessionUpdate: 'agent_message_chunk', messageId: 'compact_result',
+            content: { type: 'text', text: 'Compacting conversation context…\n' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_compact_1', update: {
+            sessionUpdate: 'agent_message_chunk', messageId: 'compact_result',
+            content: { type: 'text', text: 'Compaction completed.\n- Messages compacted: 8\n- Tokens before: 12,345\n- Tokens after: 2,345' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  await engine.start({
+    prompt: '/compact', sessionId: null, model: 'k3', effort: 'max',
+    permissionMode: 'default', skills: ['satr-guide'], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'result'));
+  assert.deepStrictEqual(configRequests, [{
+    sessionId: 'kimi_compact_1', configId: 'model', value: 'kimi-code/k3',
+  }]);
+  const boundary = events.find((event) => event.type === 'system' && event.subtype === 'compact_boundary');
+  assert.deepStrictEqual(boundary.compact_metadata, {
+    trigger: 'manual', pre_tokens: 12345, post_tokens: 2345, messages_compacted: 8,
+  });
+  assert.ok(!events.some((event) => event.type === 'stream_text'));
+  assert.ok(!events.some((event) => event.type === 'assistant'
+    && JSON.stringify(event).includes('Compaction completed')));
+}
+
+async function testContextUsageCommand() {
+  let promptSeen = false;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/resume') {
+        assert.strictEqual(message.params.sessionId, 'kimi_usage_1');
+        proc.send({ jsonrpc: '2.0', id: message.id, result: {} });
+      } else if (message.method === 'session/prompt') {
+        promptSeen = true;
+        assert.deepStrictEqual(message.params.prompt, [{ type: 'text', text: '/usage' }]);
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_usage_1', update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'Session usage:\n- Total: input 5,646, output 147, cache read 19,200, cache creation 0\n' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_usage_1', update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '- kimi-code/k3: input 5,646, output 147, cache read 19,200, cache creation 0\n- Context: 24,993 / 1,048,576 (2.4%)' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  const result = await engine.contextUsage(root, 'kimi_usage_1');
+  assert.strictEqual(promptSeen, true);
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.usage, {
+    totalTokens: 24993, maxTokens: 1048576, percentage: 2.4, model: 'kimi-code/k3',
+    categories: [
+      { name: 'مدخلات الجلسة', tokens: 5646, isDeferred: false },
+      { name: 'مخرجات الجلسة', tokens: 147, isDeferred: false },
+      { name: 'قراءة الذاكرة المخبأة', tokens: 19200, isDeferred: false },
+    ],
+  });
+  assert.deepStrictEqual(await engine.contextUsage(root, null), { ok: false, error: 'ابدأ جلسة Kimi أولاً' });
+}
+
+async function testToolLabelsAndAvailableCommands() {
+  const events = [];
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_labels_1' } });
+      } else if (message.method === 'session/prompt') {
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_labels_1', update: {
+            sessionUpdate: 'tool_call', toolCallId: 'cron_1', title: 'CronList', kind: 'other',
+            status: 'pending', rawInput: {},
+          },
+        } });
+        // عنوان التحديث نص حر من Kimi — يجب ألا يحل محل التسمية العربية الأولى
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_labels_1', update: {
+            sessionUpdate: 'tool_call_update', toolCallId: 'cron_1', title: 'Listing scheduled cron jobs',
+            status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'لا مهام' } }],
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_labels_1', update: {
+            sessionUpdate: 'tool_call', toolCallId: 'swarm_1', title: 'AgentSwarm', kind: 'other',
+            status: 'pending', rawInput: {},
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_labels_1', update: {
+            sessionUpdate: 'available_commands_update',
+            availableCommands: [
+              { name: 'compact', description: 'Compact the conversation' },
+              { name: 'status', description: 'Show session status' },
+              { name: 'tasks', description: 'List background tasks' },
+              { name: 'help', description: 'Show help' },
+              { name: 'usage', description: 'Show usage' },
+              { description: 'بلا اسم يُستبعد' },
+            ],
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  await engine.start({
+    prompt: 'اعرض المجدولات', sessionId: null, model: 'k3', permissionMode: 'default',
+    skills: [], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'result'));
+
+  const toolUse = (id) => events.find((event) => event.type === 'assistant'
+    && event.message.content.some((item) => item.type === 'tool_use' && item.id === id));
+  assert.strictEqual(toolUse('cron_1').message.content[0].name, 'عرض المهام المجدولة');
+  assert.strictEqual(toolUse('swarm_1').message.content[0].name, 'سرب وكلاء');
+
+  const declared = events.find((event) => event.type === 'system' && event.subtype === 'available_commands');
+  assert.ok(declared, 'يجب أن يُمرَّر available_commands_update للواجهة');
+  assert.deepStrictEqual(declared.commands.map((command) => command.name),
+    ['compact', 'status', 'tasks', 'help', 'usage']);
+  assert.strictEqual(declared.commands[1].description, 'Show session status');
+
+  assert.strictEqual(kimi._internals.toolLabel('Agent'), 'وكيل فرعي');
+  assert.strictEqual(kimi._internals.toolLabel('AskUserQuestion'), 'سؤال للمستخدم');
+  assert.strictEqual(kimi._internals.toolLabel('أداة غير معروفة'), 'أداة غير معروفة');
+}
+
+async function testListModelsFromAcp() {
+  let spawnCount = 0;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      spawnCount++;
+      return new FakeProcess((message, proc) => {
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/new') proc.send({ jsonrpc: '2.0', id: message.id, result: {
+          sessionId: 'kimi_probe_1',
+          configOptions: [
+            {
+              id: 'model', category: 'model', currentValue: 'kimi-code/kimi-for-coding',
+              options: [
+                { value: 'kimi-code/kimi-for-coding', name: 'K2.7 Coding' },
+                { value: 'kimi-code/kimi-for-coding-highspeed', name: 'K2.7 Coding Highspeed' },
+                { value: 'kimi-code/k3', name: 'K3' },
+              ],
+            },
+            { id: 'thinking', category: 'thought_level', currentValue: 'on', options: [{ value: 'on', name: 'On' }] },
+          ],
+        } });
+      });
+    },
+  });
+
+  const models = await engine.listModels();
+  assert.deepStrictEqual(models, [
+    { id: 'kimi-code/kimi-for-coding', name: 'K2.7 Coding' },
+    { id: 'kimi-code/kimi-for-coding-highspeed', name: 'K2.7 Coding Highspeed' },
+    { id: 'kimi-code/k3', name: 'K3' },
+  ]);
+  // الكشف القصير: الجلب الثاني خلال المهلة لا يفتح عملية `kimi acp` جديدة
+  assert.deepStrictEqual(await engine.listModels(), models);
+  assert.strictEqual(spawnCount, 1);
+  // غياب الثنائي أو أي فشل ⇒ قائمة فارغة دون رمي (تبقى الواجهة على الاحتياط الثابت)
+  const failing = kimi.create({ resolveKimiBin: () => null });
+  assert.deepStrictEqual(await failing.listModels(), []);
+}
+
+async function testFullModelValueApplied() {
+  const events = [];
+  const configRequests = [];
+  let promptId;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') proc.send({ jsonrpc: '2.0', id: message.id, result: {
+        sessionId: 'kimi_fullmodel_1',
+        configOptions: [
+          {
+            id: 'model', category: 'model', currentValue: 'kimi-code/k3',
+            options: [
+              { value: 'kimi-code/kimi-for-coding', name: 'K2.7 Coding' },
+              { value: 'kimi-code/kimi-for-coding-highspeed', name: 'K2.7 Coding Highspeed' },
+              { value: 'kimi-code/k3', name: 'K3' },
+            ],
+          },
+        ],
+      } });
+      else if (message.method === 'session/set_config_option') {
+        configRequests.push(message.params);
+        proc.send({ jsonrpc: '2.0', id: message.id, result: {} });
+      } else if (message.method === 'session/prompt') {
+        promptId = message.id;
+        proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  // القيمة الكاملة القادمة من القائمة الديناميكية تُطبَّق كما هي عبر set_config_option
+  await engine.start({
+    prompt: 'مرحباً', sessionId: null, model: 'kimi-code/kimi-for-coding',
+    permissionMode: 'default', skills: [], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'result'));
+  assert.deepStrictEqual(configRequests, [{
+    sessionId: 'kimi_fullmodel_1', configId: 'model', value: 'kimi-code/kimi-for-coding',
+  }]);
+}
+
+function testSecurityAndWiring() {
+  const info = kimi.publicInfo();
+  assert.strictEqual(info.name, 'kimi-code');
+  assert.strictEqual(info.capabilities.native, true);
+  assert.strictEqual(info.capabilities.contextUsage, true);
+  assert.strictEqual(info.capabilities.compact, true);
+  assert.strictEqual(info.capabilities.effort, false);
+  assert.strictEqual(info.keyName, '');
+  assert.deepStrictEqual(kimi._internals.selectedOutcome([
+    { optionId: 'yes', kind: 'allow_once' },
+  ], true, false), { outcome: 'selected', optionId: 'yes' });
+  assert.strictEqual(kimi._internals.safeWritablePath(root, path.resolve(root, '..', 'outside.txt')), null);
+
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.js'), 'utf8');
+  const app = fs.readFileSync(path.join(root, 'src', 'ui', 'app.js'), 'utf8');
+  const sessions = fs.readFileSync(path.join(root, 'src', 'ui', 'components', 'sessions-panel.js'), 'utf8');
+  assert.ok(main.includes("payload.engine === kimi.ENGINE_ID") && main.includes("kimi.start({"));
+  assert.ok(main.includes("ipcMain.handle('satr:kimiStatus'") && main.includes("satr:listKimiSessions"));
+  assert.ok(main.includes("ipcMain.handle('satr:kimiModels'") && preload.includes('kimiModels:'));
+  assert.ok(app.includes('refreshKimiModels') && app.includes('kimiDynamicModels'));
+  assert.ok(preload.includes('kimiStatus:') && preload.includes('readKimiSession:'));
+  assert.ok(app.includes("resumeKimiSession(s)") && app.includes("checkKimiReady()"));
+  assert.ok(main.includes('return kimi.contextUsage(dir, sid)'));
+  assert.ok(preload.includes("contextUsage: (cwd, sessionId, engine)"));
+  assert.ok(app.includes("engines: ['sdk', 'kimi-code']"));
+  assert.ok(sessions.includes("kind: 'kimi'") && sessions.includes('listKimiSessions'));
+  assert.ok(app.includes("ev.subtype === 'available_commands'") && app.includes('sendKimiCommand'));
+  assert.ok(app.includes("sendKimiCommand('/status')") && app.includes("sendKimiCommand('/tasks')")
+    && app.includes("sendKimiCommand('/help')"));
+}
+
+(async () => {
+  testSecurityAndWiring();
+  await testNativeTurnAndPermission();
+  await testBidirectionalRpcIdCollision();
+  await testCancelThenResume();
+  await testInteractiveQuestion();
+  await testPlanModeLifecycle();
+  await testLoadFallbackDoesNotReplayHistory();
+  await testSessionBrowser();
+  await testModelCompactAndEffortContract();
+  await testContextUsageCommand();
+  await testToolLabelsAndAvailableCommands();
+  await testListModelsFromAcp();
+  await testFullModelValueApplied();
+  console.log('✓ Kimi Code ACP مسجّل كمحرك أصيل مستقل عن REST');
+  console.log('✓ طلبات ACP العكسية تكمل حتى عند تطابق معرّفها مع معرّف session/prompt');
+  console.log('✓ الجلسة الجديدة والبث والأدوات والأذونات مطبّعة إلى عقد سطر');
+  console.log('✓ الإيقاف يرسل session/cancel والاستمرار يستخدم session/resume بنفس المعرّف');
+  console.log('✓ أسئلة Kimi التفاعلية تعبر عقد سطر وfallback التحميل لا يكرر التاريخ');
+  console.log('✓ دورة Write → ExitPlanMode → تنفيذ تعمل وملف الخطة وحده مستثنى خارج المشروع');
+  console.log('✓ /جلسات يستخدم session/list وsession/load الرسميين');
+  console.log('✓ سرد الجلسات يتصفح فوق 80 حتى سقف 200 وقراءتها تلتقط نداءات الأدوات بتسمياتها العربية وحالاتها');
+  console.log('✓ اختيار K3 يضبط model عبر ACP و/ضغط يعرض compact_boundary دون نص تقني خام');
+  console.log('✓ /سياق يقرأ /usage الرسمي، وجهد التفكير غير المعلن لا يُرسل إلى ACP');
+  console.log('✓ مسارات filesystem محصورة داخل مجلد المشروع ولا تتسرّب الأسرار للأحداث');
+  console.log('✓ أدوات Kimi الداخلية تظهر بتسميات عربية وأوامر ACP المعلنة تصل الواجهة');
+  console.log('✓ قائمة نماذج Kimi تُجلب من configOptions الرسمية وتُخزَّن مؤقتاً دون رمي عند الفشل');
+  console.log('✓ اختيار نموذج بقيمته الكاملة (kimi-code/…) يُطبَّق عبر set_config_option');
+})().catch((error) => {
+  console.error(error.stack || error);
+  process.exitCode = 1;
+});

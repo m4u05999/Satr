@@ -902,7 +902,7 @@ class SatrChat extends HTMLElement {
       addTool(id, name, inp, parentId) {
         const card = parentId ? agentCards[parentId] : null;
         // إطلاق وكيل فرعي من الخيط الرئيسي ⇐ بطاقة وكيل (لا رقاقة عادية)
-        if (!card && (name === 'Task' || name === 'Agent')) {
+        if (!card && (name === 'Task' || name === 'Agent' || name === 'وكيل فرعي' || name === 'سرب وكلاء')) {
           createAgentCard(id, inp);
           scrollDown();
           return;
@@ -1077,11 +1077,16 @@ class SatrChat extends HTMLElement {
       const body = document.createElement('div'); body.className = 'worklog-body';
       const section = document.createElement('section'); section.className = 'work-section tools-wrap';
       const tools = document.createElement('div'); tools.className = 'tools';
-      for (const name of toolNames.slice(0, 6)) {
+      for (const entry of toolNames.slice(0, 6)) {
+        // المدخل إمّا نص (اسم أداة منجزة) أو {name, failed} من تاريخ محرك أصيل
+        const name = typeof entry === 'string' ? entry : entry && entry.name;
+        if (!name) continue;
+        const failed = typeof entry === 'object' && !!entry.failed;
         const t = document.createElement('div');
-        t.className = 'tool done';
-        t.innerHTML = '<span class="name"></span><span class="state">✓</span>';
+        t.className = failed ? 'tool done error' : 'tool done';
+        t.innerHTML = '<span class="name"></span><span class="state"></span>';
         t.querySelector('.name').textContent = name;
+        t.querySelector('.state').textContent = failed ? '✗' : '✓';
         tools.appendChild(t);
       }
       if (toolNames.length > 6) {

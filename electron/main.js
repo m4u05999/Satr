@@ -3,7 +3,7 @@
  * مسؤولة عن: إنشاء النافذة، تشغيل Claude CLI، جسر IPC مع الواجهة
  */
 
-const { app, BrowserWindow, ipcMain, dialog, shell, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain: electronIpcMain, dialog, shell, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -36,13 +36,16 @@ const integration = require('./integration'); // تحقق تكاملي داخل 
 const merger = require('./merger'); // تطبيق patch بعد المراجعة والتحقق والموافقة — المرحلة 5
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
+const kimi = require('./kimi'); // محرك Kimi Code الأصيل عبر ACP — اشتراك + جلسات حقيقية
 const previewrecording = require('./previewrecording'); // تنزيل تسجيل المعاينة إلى Downloads + إشعار المسار
 const promocapture = require('./promocapture'); // نافذة التقاط المنتج المرئية + تسجيل 30fps في renderer
 const promostudio = require('./promostudio'); // storyboard محلي منقّى + حل أصول Downloads للاستوديو
 const testsprite = require('./testsprite'); // تكامل TestSprite MCP — مفتاح مشفّر، لا يظهر كمحرّك
 const claudeauth = require('./claudeauth');
 const adapters = require('./adapters');
-const SAFE_MODEL = /^[A-Za-z0-9.-]{1,64}$/;
+const renderertrust = require('./renderertrust');
+// الشرطة المائلة مسموحة لقيم نماذج ACP المُنطَّقة مثل kimi-code/k3 (تُمرَّر كوسيطة مستقلة لا في صدفة).
+const SAFE_MODEL = /^[A-Za-z0-9./-]{1,64}$/;
 
 // سياسة نماذج غرفة العمليات تُحل في الطبقة العليا فقط، منفصلة عن اختيار الدردشة.
 // لا تصل قيم البيئة إلى renderer ولا تقرؤها النوى المحايدة عن المحرك.
@@ -173,6 +176,8 @@ function unavailableReviewEngines(producerEngines) {
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 const APP_ICON = path.join(__dirname, '..', 'build', 'icon.ico'); // أيقونة النافذة وشريط المهام
+const UI_ENTRY = path.join(__dirname, '..', 'src', 'index.html');
+const TRUSTED_RENDERER_URL = renderertrust.fileUrl(UI_ENTRY);
 
 // هوية التطبيق على ويندوز: تضمن تجميع أيقونة شريط المهام تحت «سطر» بدل إلكترون
 // (مطابقة لـ appId في البناء) — يجب ضبطها قبل إنشاء النافذة.
@@ -181,6 +186,18 @@ if (IS_WIN) { try { app.setAppUserModelId('ai.satr.app'); } catch (e) {} }
 let mainWindow = null;
 let currentCliRun = null; // مقبض محوّل غير SDK الجاري (cli الاحتياطي وما يليه) — له stop()
 let currentRun = null;    // تشغيل Agent SDK الجاري (المسار الافتراضي) — له stop()+resolvePermission
+
+// كل قنوات IPC مخصّصة لوثيقة «سطر» المحلية وإطارها الرئيسي فقط؛ أي مصدر آخر يفشل مغلقاً.
+const ipcMain = {
+  handle(channel, listener) {
+    return electronIpcMain.handle(channel, (event, ...args) => {
+      if (!renderertrust.isTrustedIpcEvent(event, mainWindow, TRUSTED_RENDERER_URL)) {
+        return { ok: false, error: 'untrusted_sender' };
+      }
+      return listener(event, ...args);
+    });
+  },
+};
 
 // ---------- مناعة ضد إشارات تحكّم الكونسول (ويندوز) ----------
 // المشكلة: الأوامر الطويلة (خادم تطوير مثل `npm run dev`) تعمل ضمن شجرة عمليات
@@ -215,10 +232,11 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: false,
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
+  mainWindow.loadFile(UI_ENTRY);
 
   // تسجيل المعاينة يُنزّل Blob من renderer. نثبّت مساره داخل Downloads باسم منقّى، ثم
   // نبلغ الواجهة بالمسار الفعلي بعد اكتمال التنزيل؛ التنزيلات الأخرى لا يمسّها هذا الحارس.
@@ -259,9 +277,13 @@ function createWindow() {
 
   // الروابط الخارجية تفتح في المتصفح وليس داخل التطبيق
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) shell.openExternal(url);
+    try { if (new URL(url).protocol === 'https:') shell.openExternal(url); } catch {}
     return { action: 'deny' };
   });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    renderertrust.allowNavigation(event, url, TRUSTED_RENDERER_URL);
+  });
+  mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
 
   mainWindow.on('closed', () => {
     detachPreviewRecording();
@@ -271,8 +293,7 @@ function createWindow() {
     stopAll();
   });
 
-  // التحديث التلقائي (المرحلة 17): يُفحص بعد الإقلاع، ويبثّ أحداثه للواجهة عبر emit.
-  // لا يعمل إلا في النسخة المحزومة (updater.js يحرس app.isPackaged) فلا يعكّر npm start.
+  // التحديث التلقائي معطّل حتى يعلن بناء موقّع ذلك صراحةً؛ updater.js يحرس الشرطين.
   updater.initUpdater(app, emitToWindow, { edition: features.edition() });
 }
 
@@ -327,14 +348,54 @@ ipcMain.handle('satr:activityClear', (event, payload) => {
 });
 
 // قائمة مزوّدي المحرّكات (طبقة المزوّد §4.2) — لبناء قائمة «المحرك» ديناميكياً في الواجهة
-ipcMain.handle('satr:providers', () => ({ providers: adapters.list(), integrations: [testsprite.publicInfo()] }));
+ipcMain.handle('satr:providers', () => ({
+  providers: [kimi.publicInfo(), ...adapters.list()], integrations: [testsprite.publicInfo()],
+}));
 
 // حالة توفّر Codex (المرحلة 4): مثبَّت؟ ومسجَّل الدخول؟ — لإرشاد مضمّن حين يُختار المحرك
 // codex وهو غير جاهز (لا يحجب الإطلاق — Claude يبقى بوابة الإطلاق الوحيدة). force=true
 // يتجاوز تخزين resolveCodexBin ليلتقط تثبيتاً جرى بعد الإقلاع. لا يُعيد قيم الأسرار.
-ipcMain.handle('satr:codexStatus', () => {
+ipcMain.handle('satr:codexStatus', async () => {
   const bin = codex.resolveCodexBin(true);
-  return { installed: !!bin, auth: codex.authStatus() };
+  return { installed: !!bin, auth: bin ? await codex.accountStatus() : { ok: false, method: null } };
+});
+
+ipcMain.handle('satr:codexModels', async () => {
+  const models = await codex.listModels();
+  const efforts = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  return (Array.isArray(models) ? models : [])
+    .filter((item) => item && item.hidden !== true && SAFE_MODEL.test(item.id || '')
+      && (/^gpt-5\.6-/.test(item.id) || item.id === 'gpt-5.5'))
+    .map((item) => ({
+      id: item.id,
+      name: String(item.displayName || item.id).slice(0, 60),
+      description: String(item.description || '').slice(0, 240),
+      defaultEffort: efforts.has(item.defaultReasoningEffort) ? item.defaultReasoningEffort : null,
+      efforts: (Array.isArray(item.supportedReasoningEfforts) ? item.supportedReasoningEfforts : [])
+        .map((option) => option && option.reasoningEffort).filter((value) => efforts.has(value)),
+      vision: Array.isArray(item.inputModalities) && item.inputModalities.includes('image'),
+      isDefault: item.isDefault === true,
+    }))
+    .slice(0, 12);
+});
+
+ipcMain.handle('satr:codexRateLimits', () => codex.rateLimits());
+
+// Kimi Code الأصيل يعتمد CLI واشتراك Kimi المحليين، لا مفتاح KIMI_API_KEY في خزنة سطر.
+// لا نعيد مسار الثنائي أو محتوى credentials/config إلى renderer.
+ipcMain.handle('satr:kimiStatus', () => {
+  const bin = kimi.resolveKimiBin(true);
+  return { installed: !!bin, auth: kimi.authStatus() };
+});
+
+// نماذج Kimi المعلنة رسمياً عبر ACP (جسّ قصير مخزَّن دقيقتين في kimi.js). تُنقَّى هنا
+// أيضاً قبل عبورها إلى renderer: معرّف بصيغة SAFE_MODEL واسم معروض قصير وسقف 12 نموذجاً.
+ipcMain.handle('satr:kimiModels', async () => {
+  const models = await kimi.listModels();
+  return (Array.isArray(models) ? models : [])
+    .filter((item) => item && SAFE_MODEL.test(item.id || ''))
+    .map((item) => ({ id: item.id, name: String(item.name || item.id).slice(0, 60) }))
+    .slice(0, 12);
 });
 
 // ---------- مركز مفاتيح المزوّدين (§4.3 — مخزن الأسرار) ----------
@@ -431,7 +492,7 @@ const MCP_ACTIONS = new Set(['reconnect', 'enable', 'disable']);
 // أي شيء آخر = الافتراضي 'all'. مصفوفة فارغة تبقى فارغة (= لا مهارات مفعّلة).
 // مستويات جهد التفكير المقبولة (المرحلة 14.4) — القيمة تُمرَّر لخيار effort في SDK
 // (الـ SDK يخفّضها صامتاً إن لم يدعمها النموذج المختار)
-const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+const EFFORT_LEVELS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 
 // المجلدات الإضافية (المرحلة 14.4): مصفوفة مسارات — يُقبل الموجود كمجلد فقط، بسقف 10
 function sanitizeExtraDirs(arr) {
@@ -451,7 +512,7 @@ function sanitizeSkills(s) {
   return 'all';
 }
 
-// ---------- تنقية الصور الملصقة (محرك SDK فقط) ----------
+// ---------- تنقية الصور الملصقة (المحرّكات الأصلية والمزوّد المعلن vision فقط) ----------
 const ALLOWED_MEDIA = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_IMAGES = 6;
 const MAX_IMAGE_B64 = 10 * 1024 * 1024; // طول base64 لكل صورة (~7.5م.ب فعلية)
@@ -689,7 +750,8 @@ ipcMain.handle('satr:send', async (event, payload) => {
   stopAll(); // طلب جديد يلغي السابق
 
   const token = ++runSeq;
-  const runEngine = (payload.engine === 'codex' || adapters.get(payload.engine)) ? payload.engine : 'sdk';
+  const runEngine = (payload.engine === 'codex' || payload.engine === kimi.ENGINE_ID || adapters.get(payload.engine))
+    ? payload.engine : 'sdk';
   let activeSessionId = payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null;
   const browserBudget = browserBudgetFor(runEngine, activeSessionId);
   const priorVerification = activeSessionId ? checkpoints.consumeVerification(runEngine, activeSessionId) : '';
@@ -772,7 +834,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
         model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
         permissionMode: nonSdkPerm(payload.permissionMode), // auto→default (Codex لا يفهمه)
         skills: sanitizeSkills(payload.skills),
-        // الموجة 2: جهد التفكير — نفس تنقية SDK (EFFORT_LEVELS)؛ codex.js يطبّع max→xhigh
+        // الموجة 2: جهد التفكير — نفس تنقية SDK؛ Codex يمرّر max/ultra حين يدعمهما النموذج.
         effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
         // ثلاثي الحالة: true = تفويض كل أدوات المتصفح، null = الأدوات متاحة وتطلب إذناً،
         // false محجوز للسياقات المعزولة (مراجع/عصف) كي لا تُنشأ أدوات المعاينة أصلاً.
@@ -787,6 +849,29 @@ ipcMain.handle('satr:send', async (event, payload) => {
     }
   }
 
+  // Kimi Code الأصيل: ACP ثنائي الاتجاه، جلسات محفوظة لدى CLI، وأذونات حية مثل Codex.
+  // يبقى مزوّد `kimi` في adapters هو مسار REST الاحتياطي بمفتاح منفصل.
+  if (payload.engine === kimi.ENGINE_ID) {
+    try {
+      currentRun = await kimi.start({
+        prompt: enginePrompt,
+        images,
+        sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
+        model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : kimi.DEFAULT_MODEL,
+        permissionMode: nonSdkPerm(payload.permissionMode),
+        skills: sanitizeSkills(payload.skills),
+        effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
+        browserControl: payload.browserControl === true ? true : null,
+        trustedBrowserOrigins,
+        browserBudget,
+      }, cwd, emit);
+      return { started: true, engine: kimi.ENGINE_ID };
+    } catch (e) {
+      currentRun = null;
+      return { error: 'kimi_failed', message: 'تعذّر تشغيل محرك Kimi Code: ' + String((e && e.message) || e) };
+    }
+  }
+
   // المحرّكات غير SDK تمر عبر طبقة adapters (القاعدة 2: التنقية هنا في main.js)
   const adapter = adapters.get(payload.engine);
   if (adapter) {
@@ -798,7 +883,8 @@ ipcMain.handle('satr:send', async (event, payload) => {
     const inj = isBlind ? inject.injectFiles(enginePrompt, cwd) : { prompt: enginePrompt, attached: [], skipped: [] };
 
     // vision + effort للمحوّلات (الجولة المنسّقة): نمرّر الصور المُنقّاة للمزوّد المعلن
-    // vision فقط (يستهلكها openai-compatible/responses، وإلا تُتجاهل)، وeffort لمحوّل Responses.
+    // vision فقط (يستهلكها openai-compatible/responses، وإلا تُتجاهل)، وeffort للمحوّل
+    // الذي يعلن عقده (Responses أو Kimi عبر effortMap).
     // capabilities تأتي من meta في adapters.list() (يوسّعها مسار المحوّلات).
     const supportsVision = !!(meta && meta.capabilities && meta.capabilities.vision);
     const input = {
@@ -835,7 +921,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
       skills: sanitizeSkills(payload.skills),
       effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
       extraDirs: sanitizeExtraDirs(payload.extraDirs),
-      browserControl: payload.browserControl === true, // وضع تحكّم المتصفح (محرك SDK فقط)
+      browserControl: payload.browserControl === true, // وضع تحكّم المتصفح للمحرّك الأصلي الداعم
       trustedBrowserOrigins,
       browserBudget,
     }, cwd, emit);
@@ -1056,7 +1142,7 @@ ipcMain.handle('satr:permission', (event, p) => {
   return { ok };
 });
 
-// رد أسئلة AskUserQuestion (SDK فقط) — selections مؤشرات صحيحة محدودة حصراً (لا نص حر):
+// رد أسئلة النموذج: محركات الاختيار تستخدم المؤشرات، وCodex قد يضيف نصاً حراً محدوداً.
 // agent.js يبني updatedInput من input الأصلي المحفوظ، فالتنقية هنا طبقة أولى ثم فحص ثانٍ هناك.
 ipcMain.handle('satr:answerQuestion', (event, p) => {
   // selections فارغة = إلغاء صريح (⇒ deny في agent.js). >4 أسئلة يخالف العقد ⇒ رفض الحمولة.
@@ -1067,6 +1153,7 @@ ipcMain.handle('satr:answerQuestion', (event, p) => {
     questionIndex: Number.isInteger(s && s.questionIndex) ? s.questionIndex : -1,
     optionIndexes: Array.isArray(s && s.optionIndexes) && s.optionIndexes.length <= 4
       ? s.optionIndexes.map((i) => (Number.isInteger(i) ? i : -1)) : [-1],
+    text: typeof (s && s.text) === 'string' && Array.from(s.text).length <= 4000 ? s.text : null,
   }));
   let ok = false;
   if (currentRun && typeof currentRun.resolveQuestion === 'function') ok = currentRun.resolveQuestion(p.id, selections);
@@ -1103,7 +1190,9 @@ function undoAnyEdit(id) {
   const r2 = agentTools.undoEdit(id);
   if (r2 && r2.ok) return r2;
   const r3 = codex.undoEdit(id);
-  return (r3 && r3.ok) ? r3 : r;
+  if (r3 && r3.ok) return r3;
+  const r4 = kimi.undoEdit(id);
+  return (r4 && r4.ok) ? r4 : r;
 }
 ipcMain.handle('satr:undoEdit', (event, id) => {
   if (typeof id !== 'string' || !SAFE_EDIT_ID.test(id)) return { ok: false, error: 'bad_id' };
@@ -1140,6 +1229,14 @@ ipcMain.handle('satr:sessionMetaSet', (event, p) => {
 // جلسات Codex (تلميع المرحلة 4 — قراءة فقط، التحقق من المعرّف داخل codexsessions.js)
 ipcMain.handle('satr:listCodexSessions', () => codexSessions.listCodexSessions());
 ipcMain.handle('satr:readCodexSession', (event, p) => codexSessions.readCodexSession(p && p.id));
+ipcMain.handle('satr:nameCodexSession', (event, p) => codexSessions.setCodexSessionName(p && p.id, p && p.name));
+ipcMain.handle('satr:archiveCodexSession', (event, p) => codexSessions.archiveCodexSession(p && p.id));
+ipcMain.handle('satr:deleteCodexSession', (event, p) => codexSessions.deleteCodexSession(p && p.id));
+ipcMain.handle('satr:forkCodexSession', (event, p) => codexSessions.forkCodexSession(p && p.id));
+
+// جلسات Kimi تُقرأ عبر ACP الرسمي (`session/list` و`session/load`) لا بتحليل wire.jsonl.
+ipcMain.handle('satr:listKimiSessions', () => kimi.listSessions());
+ipcMain.handle('satr:readKimiSession', (event, p) => kimi.readSession(p && p.id));
 
 // ---------- سرد ملفات المشروع لمنصّة @ (قراءة فقط) ----------
 
@@ -1938,7 +2035,7 @@ ipcMain.handle('satr:mcpAction', (event, p) => {
   return agent.mcpAction(dir, p.name, p.action);
 });
 
-// ---------- استخدام نافذة السياق للوحة /سياق (عبر getContextUsage في SDK) ----------
+// ---------- استخدام نافذة السياق للوحة /سياق (Claude SDK أو أمر Kimi ACP الرسمي /usage) ----------
 
 // ---------- سرد الوكلاء الفرعيين للوحة /وكلاء (قراءة فقط — المرحلة 14.2) ----------
 
@@ -1957,6 +2054,7 @@ ipcMain.handle('satr:listCommands', (event, cwd) => {
 ipcMain.handle('satr:contextUsage', (event, p) => {
   const dir = typeof (p && p.cwd) === 'string' && p.cwd.trim() ? p.cwd.trim() : os.homedir();
   const sid = p && typeof p.sessionId === 'string' && SAFE_SESSION.test(p.sessionId) ? p.sessionId : null;
+  if (p && p.engine === kimi.ENGINE_ID) return kimi.contextUsage(dir, sid);
   return agent.contextUsage(dir, sid);
 });
 

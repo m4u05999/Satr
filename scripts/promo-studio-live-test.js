@@ -45,16 +45,18 @@ async function main() {
     window.__promoStudioReady.catch((error) => { throw new Error(error.message + ':' + JSON.stringify(window.__clipInfo)); }),
     new Promise((_, reject) => setTimeout(() => reject(new Error('live_timeout:' + window.__promoStudioStep)), 20000))
   ])`, true);
-  if (!result || result.scenes_rendered !== 2 || result.bytes < 1024 || result.caption_direction !== 'rtl'
+  if (!result || result.scenes_rendered !== 3 || result.bytes < 1024 || result.caption_direction !== 'rtl'
       || result.captions_rendered < 1 || result.audio_sources < 1 || !result.reordered
       || result.editedCaption !== 'عنوان عربي مُحرّر' || result.editedDuration !== 650
-      || !result.musicChanged || result.captureStarts !== 1
+      || !result.musicChanged || !result.duplicated || !result.advancedControls
+      || !result.totalLabel.includes('المدة الإجمالية') || result.trimmed_scenes < 1
+      || result.contained_scenes < 1 || result.mixed_audio_sources < 2 || result.captureStarts !== 1
       || !/media-src 'self' blob:/.test(result.csp) || !/^satr-promo-final-.*\.(mp4|webm)$/.test(result.filename)) {
     throw new Error('فشل اختبار الاستوديو: ' + JSON.stringify(result));
   }
   if (!win.isDestroyed()) win.destroy();
   for (const candidate of [musicPath, firstPath, secondPath]) { try { fs.unlinkSync(candidate); } catch (error) {} }
-  console.log('promo-studio-live: مقطعان + ترتيب/قص/نص + RTL + صوت + MediaRecorder = '
+  console.log('promo-studio-live: قص وملاءمة وتكرار وعنوان RTL ومزج صوتي + MediaRecorder = '
     + result.bytes + ' bytes (' + result.filename.split('.').pop() + ')');
 }
 

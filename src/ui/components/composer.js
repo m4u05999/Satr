@@ -27,14 +27,14 @@ class SatrComposer extends HTMLElement {
 // قائمتي / و@ + المسودة) — التغييرات الوحيدة: addNotice⇒notice وsend⇒emitSend
 // وCOMMANDS⇒commands المحقونة
 
-  // §5-د-3: زر إرفاق صورة من الجهاز — يعيد استخدام addImageFile ومسار الصور القائم (محرك SDK)
+  // §5-د-3: زر إرفاق صورة من الجهاز — القشرة تحسم دعم المحرك من capabilities.vision
   $('attachBtn').addEventListener('click', () => $('fileInput').click());
   $('fileInput').addEventListener('change', (e) => {
     for (const f of (e.target.files || [])) addImageFile(f);
     e.target.value = ''; // يسمح بإعادة اختيار الملف نفسه
   });
 
-  // ---------- لصق الصور من الحافظة (محرك SDK) ----------
+  // ---------- لصق الصور من الحافظة ----------
   let pendingImages = []; // {id, media_type, data(base64), dataUrl}
   const attachmentsBar = $('attachments');
   const ALLOWED_PASTE = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);

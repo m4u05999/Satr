@@ -47,10 +47,15 @@
       return { ok: false, error: 'disabled_in_harness' };
     },
     providers: async () => ({
-      providers: [],
+      providers: [{
+        name: 'kimi-code', label: 'Kimi Code — أصلي (ACP)', family: 'kimi-native', keyName: '',
+        capabilities: { native: true, vision: true, sessions: true, contextUsage: true, compact: true, effort: false },
+        models: [{ value: 'k3', label: 'K3 — عبر اشتراك Kimi Code' }],
+      }],
       integrations: [{ name: 'testsprite', label: 'TestSprite', keyName: 'TESTSPRITE_API_KEY', kind: 'integration' }],
     }),
     codexStatus: async () => ({ installed: true, loggedIn: true }),
+    kimiStatus: async () => ({ installed: true, auth: { ok: true, method: 'oauth' } }),
     keysList: async () => ({ names: [] }),
     keySet: async () => ({ ok: false, error: 'disabled_in_harness' }),
     keyDelete: async () => ({ ok: false, error: 'disabled_in_harness' }),
@@ -101,7 +106,10 @@
     researchStop: async () => ({ ok: true }),
     mcpStatus: async () => ({ ok: true, servers: [] }),
     mcpAction: async () => ({ ok: false, error: 'disabled_in_harness' }),
-    contextUsage: async () => ({ ok: true, usage: { percentage: 42, totalTokens: 42, maxTokens: 100, categories: [] } }),
+    contextUsage: async function contextUsage() {
+      remember('contextUsage', arguments);
+      return { ok: true, usage: { percentage: 42, totalTokens: 42, maxTokens: 100, categories: [] } };
+    },
     opsBrainstormLatest: async () => ({ ok: true, run: null }),
     opsPlanLatest: async () => ({ ok: true, run: null }),
     executionTeamLatest: async () => ({ ok: true, team: null }),

@@ -1,0 +1,53 @@
+# خطة مونتاج إعلان «سطر» (60ث) — قائمة القطع والأزمنة
+
+> مصدر الحقيقة للتجميع. أسماء الملفات أدناه هي **العقد**: سمِّ كل تسجيل باسمه المحدد
+> وضعه في `promo/footage/` ليعمل التجميع الآلي (scripts/promo-assemble — يُكتب بعد
+> توفر ffmpeg) بلا تعديل.
+
+## المقاطع المطلوبة
+
+| # | الملف | المصدر | المدة المستهدفة | المحتوى |
+|---|---|---|---|---|
+| 1 | `footage/01-hook.mp4` | تسجيل شاشة `?scene=hook` | 10.0ث | الكسر ← الالتئام ← سطرا التقديم |
+| 2 | `footage/02-title-otlob.mp4` | تسجيل `?scene=otlob&hold=1` | 2.0ث | عنوان «اطلب» |
+| 3 | `footage/03-ui-otlob.mp4` | تسجيل واجهة سطر (UI-SCENES §1) | 8.0ث | طلب عربي ⇒ الوكيل يبني |
+| 4 | `footage/04-title-3ayen.mp4` | تسجيل `?scene=3ayen&hold=1` | 2.0ث | عنوان «عايِن» |
+| 5 | `footage/05-ui-3ayen.mp4` | تسجيل واجهة سطر (UI-SCENES §2) | 8.0ث | المعاينة + تصحيح ذاتي |
+| 6 | `footage/06-title-sallem.mp4` | تسجيل `?scene=sallem&hold=1` | 2.0ث | عنوان «سلِّم 🤝» |
+| 7 | `footage/07-ui-sallem.mp4` | تسجيل واجهة سطر (UI-SCENES §3) | 8.0ث | التسليم البشري كاملاً |
+| 8 | `footage/08-watch.mp4` | تسجيل `?scene=watch` | 4.0ث | «وراقب كل شيء… بالعربية.» |
+| 9 | `footage/09-crescendo.mp4` | تسجيل `?scene=crescendo` | 5.5ث | تطلب/تفهم/تبني أي شيء |
+| 10 | `footage/10-cine-birds.mp4` | توليد Seedance (أسراب تخط سطراً) | 2.5ث (قص من 5) | تحت «تبني أي شيء» الممتدة |
+| 11 | `footage/11-cta.mp4` | تسجيل `?scene=cta&hold=1` | 8.0ث | اطلب. ⇒ العلامة والرابط |
+| — | `footage/12-cine-plane.mp4` | توليد Seedance (نافذة الطائرة) | احتياطي | بديل/إضافة للتصعيد |
+| — | `music.mp3` | مكتبة مجانية (انظر أدناه) | ≥62ث | synth-pop نشيط |
+
+الإجمالي التقريبي: ‏60.0ث (‏1+2+3+4+5+6+7+8+9+10+11).
+
+## قواعد التسجيل
+
+- الدقة 1920×1080، ملء الشاشة (F11 في المتصفح لمشاهد typography)، مؤشر الفأرة مخفي
+  في مشاهد الـ typography وظاهر في لقطات الواجهة.
+- مشاهد typography: افتح الرابط، انقر لإعادة التشغيل، سجّل من النقرة حتى ثبات المشهد —
+  القص الدقيق لاحقاً في التجميع (سجّل بهامش زائد أوله وآخره).
+- الخادم: `node scripts/promo-serve.js` ثم `http://127.0.0.1:4700/?scene=…`.
+
+## الموسيقى (خالية الحقوق — بديل توليدها المتعذر)
+
+المطلوب: synth-pop/electro نشيط ~120–128bpm بمدة ≥62ث، طاقة صاعدة، بلا غناء.
+مصدر مرشح (ترخيص Pixabay المجاني، بلا نسب إلزامي):
+- ‏https://pixabay.com/music/search/upbeat%20synth%20pop/
+- ‏https://pixabay.com/music/search/energetic%20electronic/
+نزّل المختار باسم `promo/footage/music.mp3`. (يوتيوب Audio Library بديل جيد أيضاً.)
+
+## أوامر التجميع المرجعية (بعد توفر ffmpeg — ستُنقل لسكربت)
+
+```
+# قص مقطع لمدة محددة من بدايته الفعلية (مثال: hook من الثانية 0.4 بطول 10)
+ffmpeg -ss 0.4 -i footage/01-hook.mp4 -t 10 -c:v libx264 -crf 18 -preset slow -an cut/01.mp4
+
+# دمج القائمة + الموسيقى مع خفوت النهاية
+ffmpeg -f concat -safe 0 -i concat.txt -i footage/music.mp3 \
+  -filter_complex "[1:a]atrim=0:60,afade=t=out:st=56:d=4[a]" \
+  -map 0:v -map "[a]" -c:v copy -c:a aac -shortest satr-promo-60s.mp4
+```

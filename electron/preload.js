@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('satr', {
   activityClear: (cwd, confirmed) => ipcRenderer.invoke('satr:activityClear', { cwd, confirmed }),
   providers: () => ipcRenderer.invoke('satr:providers'),
   codexStatus: () => ipcRenderer.invoke('satr:codexStatus'),
+  codexModels: () => ipcRenderer.invoke('satr:codexModels'),
+  codexRateLimits: () => ipcRenderer.invoke('satr:codexRateLimits'),
+  kimiStatus: () => ipcRenderer.invoke('satr:kimiStatus'),
+  kimiModels: () => ipcRenderer.invoke('satr:kimiModels'), // نماذج Kimi المعلنة عبر ACP (مُنقّاة في main)
   keysList: () => ipcRenderer.invoke('satr:keysList'),
   keySet: (name, value) => ipcRenderer.invoke('satr:keySet', { name, value }),
   keyDelete: (name) => ipcRenderer.invoke('satr:keyDelete', { name }),
@@ -24,6 +28,12 @@ contextBridge.exposeInMainWorld('satr', {
   sessionMetaSet: (sessionId, patch) => ipcRenderer.invoke('satr:sessionMetaSet', { ...(patch || {}), sessionId }),
   listCodexSessions: () => ipcRenderer.invoke('satr:listCodexSessions'),
   readCodexSession: (id) => ipcRenderer.invoke('satr:readCodexSession', { id }),
+  nameCodexSession: (id, name) => ipcRenderer.invoke('satr:nameCodexSession', { id, name }),
+  archiveCodexSession: (id) => ipcRenderer.invoke('satr:archiveCodexSession', { id }),
+  deleteCodexSession: (id) => ipcRenderer.invoke('satr:deleteCodexSession', { id }),
+  forkCodexSession: (id) => ipcRenderer.invoke('satr:forkCodexSession', { id }),
+  listKimiSessions: () => ipcRenderer.invoke('satr:listKimiSessions'),
+  readKimiSession: (id) => ipcRenderer.invoke('satr:readKimiSession', { id }),
   listFiles: (cwd) => ipcRenderer.invoke('satr:listFiles', cwd),
   readFile: (cwd, rel) => ipcRenderer.invoke('satr:readFile', { cwd, rel }), // عارض القراءة (1.2)
   writeFile: (cwd, rel, content, version) => ipcRenderer.invoke('satr:writeFile', { cwd, rel, content, version }), // تحرير خفيف في العارض (الدفعة 4)
@@ -95,7 +105,7 @@ contextBridge.exposeInMainWorld('satr', {
   listSkills: (cwd) => ipcRenderer.invoke('satr:listSkills', cwd),
   mcpStatus: (cwd) => ipcRenderer.invoke('satr:mcpStatus', cwd),
   mcpAction: (cwd, name, action) => ipcRenderer.invoke('satr:mcpAction', { cwd, name, action }),
-  contextUsage: (cwd, sessionId) => ipcRenderer.invoke('satr:contextUsage', { cwd, sessionId }),
+  contextUsage: (cwd, sessionId, engine) => ipcRenderer.invoke('satr:contextUsage', { cwd, sessionId, engine }),
   listCommands: (cwd) => ipcRenderer.invoke('satr:listCommands', cwd),
   listAgents: (cwd) => ipcRenderer.invoke('satr:listAgents', cwd),
   downloadUpdate: () => ipcRenderer.invoke('satr:downloadUpdate'),

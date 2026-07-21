@@ -32,7 +32,11 @@ const studioSheet = sheet(`
   .row label { display: flex; align-items: center; gap: var(--space-1); color: var(--text-dim); font-size: 11.5px; }
   .caption { width: 100%; min-width: 0; unicode-bidi: plaintext; }
   .duration { width: 92px; direction: ltr; text-align: left; font-family: var(--mono); }
+  .trim { width: 92px; direction: ltr; text-align: left; font-family: var(--mono); }
+  .fit, .position, .style { min-width: 92px; }
   .music { min-width: 150px; max-width: 260px; direction: ltr; }
+  .volume { width: 56px; direction: ltr; text-align: left; font-family: var(--mono); }
+  .volume-row input[type=range] { width: 110px; direction: ltr; }
   .scene-actions { margin-inline-start: auto; display: flex; gap: var(--space-1); }
   .scene-actions button { padding: var(--space-1) var(--space-2); }
   .preview { min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); overflow: hidden; padding: var(--space-3); }
@@ -85,12 +89,70 @@ function cloneStoryboard(value) {
     transition: scene.transition === 'fade' ? 'fade' : 'cut',
     music: typeof scene.music === 'string' ? scene.music : '',
     voice: typeof scene.voice === 'string' ? scene.voice : '',
+    trim_start_ms: Number.isInteger(scene.trim_start_ms) ? Math.max(0, Math.min(120000, scene.trim_start_ms)) : 0,
+    fit: scene.fit === 'contain' ? 'contain' : 'cover',
+    caption_position: ['top', 'center', 'bottom'].includes(scene.caption_position) ? scene.caption_position : 'bottom',
+    caption_style: scene.caption_style === 'minimal' ? 'minimal' : 'box',
+    clip_volume: typeof scene.clip_volume === 'number' && Number.isFinite(scene.clip_volume) && !Number.isNaN(scene.clip_volume)
+      ? Math.max(0, Math.min(1, scene.clip_volume)) : 1,
+    music_volume: typeof scene.music_volume === 'number' && Number.isFinite(scene.music_volume) && !Number.isNaN(scene.music_volume)
+      ? Math.max(0, Math.min(1, scene.music_volume)) : 0.34,
+    voice_volume: typeof scene.voice_volume === 'number' && Number.isFinite(scene.voice_volume) && !Number.isNaN(scene.voice_volume)
+      ? Math.max(0, Math.min(1, scene.voice_volume)) : 1,
   })).filter((scene) => scene.asset) : [];
   return { aspect, scenes };
 }
 
 function basename(value) {
   return String(value || '').split(/[\\/]/).pop() || '';
+}
+
+function formatDuration(totalMs) {
+  const totalSeconds = Math.round(totalMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0) return `${minutes} د ${seconds.toString().padStart(2, '0')} ث`;
+  return `${seconds} ث`;
+}
+
+function makeSelect(value, field, options) {
+  const select = document.createElement('select');
+  select.dataset.field = field;
+  select.className = field.replace(/_/g, '-');
+  for (const item of options) {
+    const option = document.createElement('option');
+    option.value = item.value;
+    option.textContent = item.label;
+    select.appendChild(option);
+  }
+  select.value = value;
+  return select;
+}
+
+function appendLabel(row, text, control, className) {
+  const label = document.createElement('label');
+  if (className) label.className = className;
+  label.append(document.createTextNode(text), control);
+  row.appendChild(label);
+  return label;
+}
+
+function makeNumber(value, field, className, min, max, step) {
+  const input = document.createElement('input');
+  input.type = 'number'; input.value = String(value); input.dataset.field = field; input.className = className;
+  input.min = String(min); input.max = String(max); input.step = String(step);
+  return input;
+}
+
+function makeVolume(value, field, labelText) {
+  const label = document.createElement('label');
+  label.className = 'volume-row'; label.appendChild(document.createTextNode(labelText));
+  const range = document.createElement('input');
+  range.type = 'range'; range.min = '0'; range.max = '1'; range.step = '0.01';
+  range.value = String(value); range.dataset.field = field;
+  const number = makeNumber(value, field, 'volume', 0, 1, 0.01);
+  label.append(range, number);
+  return label;
 }
 
 class SatrPromoStudio extends HTMLElement {
@@ -130,7 +192,10 @@ class SatrPromoStudio extends HTMLElement {
       if (event.type === 'capture_active' && this.rerecordIndex >= 0) { this.rerecording = true; this.renderTimeline(); }
       if (event.type === 'segment_saved' && this.rerecordIndex >= 0 && event.segment) {
         const scene = this.storyboard.scenes[this.rerecordIndex];
-        if (scene) { scene.asset = event.segment.path; scene.asset_type = 'video'; scene.duration_ms = event.segment.duration_ms || scene.duration_ms; }
+        if (scene) {
+          scene.asset = event.segment.path; scene.asset_type = 'video';
+          scene.duration_ms = event.segment.duration_ms || scene.duration_ms;
+        }
         this.rerecordIndex = -1;
         this.rerecording = false;
         this.changed();
@@ -188,44 +253,72 @@ class SatrPromoStudio extends HTMLElement {
     const timeline = root.getElementById('timeline');
     timeline.replaceChildren();
     const audioOptions = this.audioOptions();
+    const audioSelectOptions = [{ value: '', label: 'بدون' }]
+      .concat(audioOptions.map((value) => ({ value, label: basename(value) })));
     this.storyboard.scenes.forEach((scene, index) => {
       const card = document.createElement('article');
       card.className = 'scene'; card.dataset.index = String(index);
       const number = document.createElement('span'); number.className = 'scene-num'; number.textContent = String(index + 1);
       const main = document.createElement('div'); main.className = 'scene-main';
       const asset = document.createElement('div'); asset.className = 'asset'; asset.title = scene.asset; asset.textContent = basename(scene.asset);
-      const caption = document.createElement('input'); caption.className = 'caption'; caption.dataset.field = 'caption'; caption.value = scene.caption; caption.maxLength = 500; caption.placeholder = 'عنوان عربي فوق المشهد…';
-      const row = document.createElement('div'); row.className = 'row';
-      const durationLabel = document.createElement('label'); durationLabel.textContent = 'المدة ms';
-      const duration = document.createElement('input'); duration.className = 'duration'; duration.dataset.field = 'duration_ms'; duration.type = 'number'; duration.min = '250'; duration.max = '120000'; duration.step = '250'; duration.value = String(scene.duration_ms); durationLabel.appendChild(duration);
-      const transitionLabel = document.createElement('label'); transitionLabel.textContent = 'الانتقال';
-      const transition = document.createElement('select'); transition.dataset.field = 'transition';
-      for (const value of ['cut', 'fade']) { const option = document.createElement('option'); option.value = value; option.textContent = value === 'fade' ? 'تلاشي' : 'قطع'; transition.appendChild(option); }
-      transition.value = scene.transition; transitionLabel.appendChild(transition);
-      const musicLabel = document.createElement('label'); musicLabel.textContent = 'الموسيقى';
-      const music = document.createElement('select'); music.className = 'music'; music.dataset.field = 'music';
-      const none = document.createElement('option'); none.value = ''; none.textContent = 'بدون'; music.appendChild(none);
-      for (const value of audioOptions) { const option = document.createElement('option'); option.value = value; option.textContent = basename(value); music.appendChild(option); }
-      music.value = scene.music; musicLabel.appendChild(music);
-      const voiceLabel = document.createElement('label'); voiceLabel.textContent = 'التعليق';
-      const voice = document.createElement('select'); voice.className = 'music'; voice.dataset.field = 'voice';
-      const noVoice = document.createElement('option'); noVoice.value = ''; noVoice.textContent = 'بدون'; voice.appendChild(noVoice);
-      for (const value of audioOptions) { const option = document.createElement('option'); option.value = value; option.textContent = basename(value); voice.appendChild(option); }
-      voice.value = scene.voice; voiceLabel.appendChild(voice);
+      const caption = document.createElement('input');
+      caption.className = 'caption'; caption.dataset.field = 'caption'; caption.value = scene.caption;
+      caption.maxLength = 500; caption.placeholder = 'عنوان عربي فوق المشهد…';
+
+      const primary = document.createElement('div'); primary.className = 'row';
+      appendLabel(primary, 'المدة ms', makeNumber(scene.duration_ms, 'duration_ms', 'duration', 250, 120000, 250));
+      appendLabel(primary, 'الانتقال', makeSelect(scene.transition, 'transition', [
+        { value: 'cut', label: 'قطع' }, { value: 'fade', label: 'تلاشي' },
+      ]));
+      appendLabel(primary, 'الموسيقى', makeSelect(scene.music, 'music', audioSelectOptions), 'music-label');
+      appendLabel(primary, 'التعليق', makeSelect(scene.voice, 'voice', audioSelectOptions), 'music-label');
+
+      const visual = document.createElement('div'); visual.className = 'row';
+      appendLabel(visual, 'بداية القص ms', makeNumber(scene.trim_start_ms, 'trim_start_ms', 'trim', 0, 120000, 100));
+      appendLabel(visual, 'الملاءمة', makeSelect(scene.fit, 'fit', [
+        { value: 'cover', label: 'ملء الإطار' }, { value: 'contain', label: 'احتواء كامل' },
+      ]));
+      appendLabel(visual, 'موضع العنوان', makeSelect(scene.caption_position, 'caption_position', [
+        { value: 'top', label: 'أعلى' }, { value: 'center', label: 'وسط' }, { value: 'bottom', label: 'أسفل' },
+      ]));
+      appendLabel(visual, 'نمط العنوان', makeSelect(scene.caption_style, 'caption_style', [
+        { value: 'box', label: 'صندوق' }, { value: 'minimal', label: 'بسيط' },
+      ]));
+
+      const volumes = document.createElement('div'); volumes.className = 'row';
+      volumes.append(
+        makeVolume(scene.clip_volume, 'clip_volume', 'صوت المقطع'),
+        makeVolume(scene.music_volume, 'music_volume', 'الموسيقى'),
+        makeVolume(scene.voice_volume, 'voice_volume', 'التعليق'),
+      );
+
       const actions = document.createElement('div'); actions.className = 'scene-actions';
       for (const [action, label, title] of [['up', '↑', 'تحريك لأعلى'], ['down', '↓', 'تحريك لأسفل'],
+        ['duplicate', '⧉', 'تكرار المشهد'],
         ['rerecord', this.rerecording && this.rerecordIndex === index ? '⏹' : '⏺', this.rerecording && this.rerecordIndex === index ? 'إيقاف إعادة التسجيل' : 'إعادة تسجيل المشهد'],
         ['remove', '✕', 'حذف المشهد']]) {
-        const button = document.createElement('button'); button.type = 'button'; button.dataset.action = action; button.textContent = label; button.title = title; actions.appendChild(button);
+        const button = document.createElement('button');
+        button.type = 'button'; button.dataset.action = action; button.textContent = label; button.title = title;
+        actions.appendChild(button);
       }
-      row.append(durationLabel, transitionLabel, musicLabel, voiceLabel, actions);
-      main.append(asset, caption, row); card.append(number, main); timeline.appendChild(card);
+      primary.appendChild(actions);
+      main.append(asset, caption, primary, visual, volumes); card.append(number, main); timeline.appendChild(card);
+      card.querySelectorAll('button, input, select').forEach((control) => { control.disabled = this.rendering; });
     });
     root.getElementById('empty').hidden = this.storyboard.scenes.length > 0;
     root.getElementById('aspect').textContent = this.storyboard.aspect;
     const size = ASPECT_SIZE[this.storyboard.aspect];
     const canvas = root.getElementById('canvas'); canvas.width = size.width; canvas.height = size.height;
+    this.updateStatus();
     this.syncApproval();
+  }
+
+  updateStatus() {
+    if (this.rendering) return;
+    const total = this.storyboard.scenes.reduce((sum, scene) => sum + scene.duration_ms, 0);
+    this.shadowRoot.getElementById('status').textContent = this.storyboard.scenes.length
+      ? 'المدة الإجمالية: ' + formatDuration(total) + ' · عدّل الخط الزمني ثم اعتمده.'
+      : 'أضف مشهداً أو اطلب من الوكيل اقتراح storyboard.';
   }
 
   changed() {
@@ -246,10 +339,19 @@ class SatrPromoStudio extends HTMLElement {
     const card = event.target && event.target.closest('.scene');
     const index = card ? Number(card.dataset.index) : -1;
     const scene = this.storyboard.scenes[index];
-    if (!scene || !field) return;
+    if (!scene || !field || this.rendering) return;
     if (field === 'duration_ms') scene.duration_ms = Math.max(250, Math.min(120000, Math.round(Number(event.target.value) || 250)));
-    else scene[field] = String(event.target.value || '').slice(0, field === 'caption' ? 500 : 4096);
+    else if (field === 'trim_start_ms') scene.trim_start_ms = Math.max(0, Math.min(120000, Math.round(Number(event.target.value) || 0)));
+    else if (field === 'clip_volume' || field === 'music_volume' || field === 'voice_volume') {
+      scene[field] = Math.max(0, Math.min(1, Number(event.target.value) || 0));
+      card.querySelectorAll(`[data-field="${field}"]`).forEach((control) => {
+        if (control !== event.target) control.value = String(scene[field]);
+      });
+    } else if (field === 'caption') scene.caption = String(event.target.value || '').slice(0, 500);
+    else if (field === 'music' || field === 'voice') scene[field] = String(event.target.value || '').slice(0, 4096);
+    else scene[field] = String(event.target.value || '');
     this.approved = false;
+    this.updateStatus();
     this.syncApproval();
   }
 
@@ -257,11 +359,16 @@ class SatrPromoStudio extends HTMLElement {
     const button = event.target && event.target.closest('button[data-action]');
     const card = button && button.closest('.scene');
     const index = card ? Number(card.dataset.index) : -1;
-    if (!button || !this.storyboard.scenes[index]) return;
+    if (!button || !this.storyboard.scenes[index] || this.rendering) return;
     const action = button.dataset.action;
     if (action === 'up' && index > 0) [this.storyboard.scenes[index - 1], this.storyboard.scenes[index]] = [this.storyboard.scenes[index], this.storyboard.scenes[index - 1]];
     else if (action === 'down' && index + 1 < this.storyboard.scenes.length) [this.storyboard.scenes[index + 1], this.storyboard.scenes[index]] = [this.storyboard.scenes[index], this.storyboard.scenes[index + 1]];
-    else if (action === 'remove') this.storyboard.scenes.splice(index, 1);
+    else if (action === 'duplicate' && this.storyboard.scenes.length < 40) {
+      const copy = JSON.parse(JSON.stringify(this.storyboard.scenes[index]));
+      const base = String(copy.id || 'scene').slice(0, 60);
+      copy.id = base + '_copy_' + Date.now().toString(36);
+      this.storyboard.scenes.splice(index + 1, 0, copy);
+    } else if (action === 'remove') this.storyboard.scenes.splice(index, 1);
     else if (action === 'rerecord') {
       if (this.rerecording && this.rerecordIndex === index) {
         window.satr.promoCaptureStop().catch(() => {});
@@ -297,7 +404,7 @@ class SatrPromoStudio extends HTMLElement {
     if (!this.approved || this.rendering) throw new Error('approval_required');
     this.rendering = true;
     this.abortController = new AbortController();
-    this.syncApproval();
+    this.renderTimeline();
     const root = this.shadowRoot;
     const status = root.getElementById('status');
     const progress = root.getElementById('progress');
@@ -325,6 +432,7 @@ class SatrPromoStudio extends HTMLElement {
     } finally {
       this.rendering = false;
       this.abortController = null;
+      root.getElementById('timeline').querySelectorAll('button, input, select').forEach((control) => { control.disabled = false; });
       this.syncApproval();
     }
   }

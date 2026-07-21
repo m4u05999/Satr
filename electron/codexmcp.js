@@ -594,6 +594,16 @@ function buildTools(deps) {
       },
     },
   ];
+  // امتداد داخلي محدود لمحرك أصيل آخر (Kimi ACP): الأدوات الإضافية تُبنى داخل main
+  // ولا تقبل تعريفات من renderer أو من المشروع. الأسماء المكررة/غير الصالحة تُهمل.
+  const seen = new Set(tools.map((tool) => tool.name));
+  for (const tool of Array.isArray(deps.extraTools) ? deps.extraTools : []) {
+    if (!tool || typeof tool.name !== 'string' || !/^[a-z][a-z0-9_]{1,63}$/.test(tool.name)
+        || seen.has(tool.name) || typeof tool.handler !== 'function'
+        || !tool.inputSchema || typeof tool.inputSchema !== 'object') continue;
+    seen.add(tool.name);
+    tools.push(tool);
+  }
   return tools.map((tool) => ({
     ...tool,
     access: tool.access || 'browser',

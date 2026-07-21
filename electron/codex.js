@@ -34,6 +34,7 @@ const testspriteHarness = require('./testspriteharness');
 const envbrief = require('./envbrief');
 const execguard = require('./execguard');
 const browserpolicy = require('./browserpolicy');
+const { queryCodex } = require('./codexrpc');
 
 const IS_WIN = process.platform === 'win32';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة تراجع ولا نعرض فرقاً
@@ -156,8 +157,62 @@ function mapMode(mode) {
 const { isExternalBrowserLaunchCommand, promptRequestsExternalBrowser } = require('./browserguard');
 const browserorigin = require('./browserorigin');
 
-// ---------- الأدوات الموافَق عليها «دائماً» (لعمر التطبيق — نظير agent.js) ----------
-const alwaysAllowed = new Set();
+// ---------- الأدوات الموافَق عليها «دائماً» (معزولة لكل جلسة، ولعمر التطبيق فقط) ----------
+const sessionAllowed = new Map();
+const MAX_PERMISSION_SESSIONS = 100;
+
+function permissionSet(sessionId) {
+  if (!sessionId) return null;
+  let set = sessionAllowed.get(sessionId);
+  if (!set) {
+    set = new Set();
+    sessionAllowed.set(sessionId, set);
+    while (sessionAllowed.size > MAX_PERMISSION_SESSIONS) sessionAllowed.delete(sessionAllowed.keys().next().value);
+  }
+  return set;
+}
+
+async function accountStatus() {
+  const bin = resolveCodexBin();
+  if (!bin) return { ok: false, method: null };
+  try {
+    const result = await queryCodex(bin, 'account/read', { refreshToken: false });
+    const account = result && result.account;
+    if (!account) return { ok: result && result.requiresOpenaiAuth === false, method: null };
+    return {
+      ok: true,
+      method: account.type === 'apiKey' ? 'apikey' : account.type,
+      plan: account.type === 'chatgpt' ? account.planType || null : null,
+    };
+  } catch {
+    return authStatus();
+  }
+}
+
+async function listModels() {
+  const bin = resolveCodexBin();
+  if (!bin) return [];
+  try {
+    const result = await queryCodex(bin, 'model/list', { includeHidden: false, limit: 100 });
+    return Array.isArray(result && result.data) ? result.data : [];
+  } catch { return []; }
+}
+
+async function rateLimits() {
+  const bin = resolveCodexBin();
+  if (!bin) return null;
+  try { return await queryCodex(bin, 'account/rateLimits/read', null); }
+  catch { return null; }
+}
+
+function projectPath(cwd, filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) return null;
+  const root = path.resolve(cwd);
+  const absolute = path.resolve(root, filePath);
+  const relative = path.relative(root, absolute);
+  return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))
+    ? absolute : null;
+}
 
 function shouldAutoApproveMcp(access, browserControl, permissionMode, remembered, neverAlways, toolName, target, trustedSet, currentUrl, input, pageContext, budgetStatus) {
   if (permissionMode === 'bypassPermissions') return true;
@@ -220,7 +275,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         const forcePrompt = sensitive || browserpolicy.requiresExplicitApproval(toolName)
           || leakRisk || (budgetStatus.impacting && !budgetStatus.allowed);
         if (shouldAutoApproveMcp(access, browserControl, permissionMode,
-          alwaysAllowed.has(toolName), neverAlways, toolName, target, trustedBrowserOrigins, currentUrl,
+          remembered(toolName), neverAlways, toolName, target, trustedBrowserOrigins, currentUrl,
           policyInput, pageContext, budgetStatus)) {
           actionBudget.consume(toolName);
           resolve(true); return;
@@ -325,10 +380,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     } else emit({ type: 'stderr', text: testsprite.MISSING_KEY_MESSAGE });
   }
   // الموجة 2 (خارطة المنصّات): جهد التفكير. codex يقبل مفتاح config الرسمي
-  // model_reasoning_effort بقيم minimal|low|medium|high|xhigh («max» غير مقبول فنطبّعه
-  // إلى xhigh). نحقنه عبر -c عند spawn مثل بقية الإعدادات؛ لا --strict-config في الإطلاق
+  // model_reasoning_effort بقيم minimal|low|medium|high|xhigh|max|ultra حسب النموذج.
+  // نحقنه عبر -c عند spawn مثل بقية الإعدادات؛ لا --strict-config في الإطلاق
   // فقيمة غير معروفة تُتجاهَل بلا كسر. spawn لكل دور فيعكس اختيار الواجهة اللحظي.
-  const CODEX_EFFORT = { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'xhigh' };
+  const CODEX_EFFORT = { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max', ultra: 'ultra' };
   const eff = CODEX_EFFORT[effort];
   if (eff) appServerArgs.push('-c', 'model_reasoning_effort="' + eff + '"');
   const proc = spawn(bin, appServerArgs, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: spawnEnv });
@@ -339,11 +394,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   let reqId = 0;
   const replies = new Map();       // id طلبنا → {resolve, reject}
   const perms = new Map();         // id طلب الخادم (إذن) → {reqId, tool}
+  const pendingQuestions = new Map(); // سؤال app-server → محوّل إجابة الواجهة إلى رد البروتوكول
   const mcpPerms = new Map();      // إذن فعل متصفح MCP معلّق: permId → {resolve, tool}
   let mcpPermSeq = 0;
   const pendingHandoffs = new Map(); // تسليم بشري معلّق: id → {resolve} (browser_handoff)
   let handoffSeq = 0;
   let threadId = null;
+  let turnId = null;
+  let latestUsage = null;
+  let latestContextWindow = null;
+  let latestRateLimits = null;
   let finished = false;
   let stopping = false;
 
@@ -355,6 +415,17 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // itemId → [{ path, kind }]. تخدم غرضين: عرض المسارات في مربع الإذن (params
   // الإذن في v2 لا تحملها)، والتقاط لقطة «قبل» للتراجع في اللحظة الصحيحة (نظير PreToolUse).
   const fileChangeMeta = new Map();
+  const blockedFileChanges = new Set();
+
+  function remembered(toolName) {
+    const set = permissionSet(threadId || sessionId);
+    return !!set && set.has(toolName);
+  }
+
+  function remember(toolName) {
+    const set = permissionSet(threadId || sessionId);
+    if (set) set.add(toolName);
+  }
 
   function writeMsg(obj) {
     try { proc.stdin.write(JSON.stringify(obj) + '\n'); } catch { /* أُغلق */ }
@@ -367,6 +438,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     });
   }
   function respond(id, result) { writeMsg({ jsonrpc: '2.0', id, result }); }
+  function respondError(id, code, message) { writeMsg({ jsonrpc: '2.0', id, error: { code, message } }); }
 
   function normalizeAgentPhase(phase) {
     return phase === 'commentary' ? 'commentary' : 'final_answer';
@@ -408,8 +480,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
 
   // التقاط لقطة «قبل» لتغيير ملف — تُستدعى عند item/started (قبل تطبيق الرقعة).
   // add ⇒ before=null (التراجع=حذف). update/delete ⇒ before=محتوى القرص الحالي.
-  function captureSnapshot(callId, absPath, kind) {
+  function captureSnapshot(callId, filePath, kind) {
     try {
+      const absPath = projectPath(cwd, filePath);
+      if (!absPath) return false;
       let before = null, tooLarge = false;
       if (kind !== 'add') {
         try {
@@ -421,12 +495,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         } catch { before = null; } // غير موجود ⇒ يُعامل كجديد
       }
       rememberSnapshot(callId + '::' + absPath, { file_path: absPath, before, tooLarge });
+      return true;
     } catch { /* الالتقاط تحسين، لا يكسر الدور */ }
+    return false;
   }
 
   // بطاقة فرق من تغيير ملف Codex بعد تطبيقه (نقرأ «بعد» من القرص، و«قبل» من اللقطة).
-  function emitFileChange(callId, absPath, kind) {
+  function emitFileChange(callId, filePath, kind) {
     try {
+      const absPath = projectPath(cwd, filePath);
+      if (!absPath) return;
       const snap = editSnapshots.get(callId + '::' + absPath);
       if (snap && snap.tooLarge) return;
       const before = snap ? snap.before : null;
@@ -465,13 +543,189 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
 
   function onServerRequest(m) {
     const method = m.method || '';
+    const p = m.params || {};
+    if (method === 'item/tool/requestUserInput') {
+      const rawQuestions = Array.isArray(p.questions) ? p.questions : [];
+      const supported = rawQuestions.length >= 1 && rawQuestions.length <= 3
+        && rawQuestions.every((question) => !Array.isArray(question.options)
+          || (question.options.length >= 2 && question.options.length <= 6));
+      if (!supported) {
+        respond(m.id, { answers: {} });
+        emit({ type: 'stderr', text: 'طلب Codex أسئلة خارج الحدود المدعومة؛ أُلغي الطلب بأمان.' });
+        return;
+      }
+      const id = 'cxq_' + m.id + '_' + Math.random().toString(36).slice(2, 8);
+      const questions = rawQuestions.map((question) => ({
+        header: String(question.header || '').slice(0, 80),
+        question: String(question.question || '').slice(0, 1000),
+        kind: Array.isArray(question.options) ? (question.isOther ? 'choiceOther' : 'choice') : 'text',
+        secret: question.isSecret === true,
+        multiSelect: false,
+        options: (question.options || []).map((option) => ({
+          label: String(option.label || '').slice(0, 200),
+          description: String(option.description || '').slice(0, 600),
+        })),
+      }));
+      pendingQuestions.set(id, {
+        serverId: m.id,
+        answer(selections) {
+          const answers = {};
+          for (const selection of selections || []) {
+            const source = rawQuestions[selection.questionIndex];
+            if (!source) continue;
+            if (typeof selection.text === 'string' && selection.text) {
+              answers[source.id] = { answers: [selection.text] };
+            } else if (Array.isArray(source.options)) {
+              answers[source.id] = { answers: (selection.optionIndexes || [])
+                .map((index) => source.options[index] && source.options[index].label).filter(Boolean) };
+            }
+          }
+          respond(m.id, { answers });
+        },
+      });
+      emit({ type: 'question_request', id, questions });
+      return;
+    }
+    if (method === 'item/permissions/requestApproval') {
+      const permissionId = 'cxperm_' + m.id + '_' + Math.random().toString(36).slice(2, 8);
+      const requested = p.permissions && typeof p.permissions === 'object' ? p.permissions : {};
+      const paths = [];
+      const fileSystem = requested.fileSystem || {};
+      for (const name of ['read', 'write']) if (Array.isArray(fileSystem[name])) paths.push(...fileSystem[name]);
+      if (Array.isArray(fileSystem.entries)) {
+        for (const entry of fileSystem.entries) {
+          const item = entry && entry.path;
+          if (item && item.type === 'path') paths.push(item.path);
+          else if (item && item.type !== 'special') paths.push('');
+          else if (item && item.value && item.value.kind !== 'project_roots') paths.push('');
+          else if (item && item.value && item.value.subpath != null
+            && (typeof item.value.subpath !== 'string' || path.isAbsolute(item.value.subpath)
+              || !projectPath(cwd, item.value.subpath))) paths.push('');
+        }
+      }
+      const safe = paths.every((filePath) => filePath && projectPath(cwd, filePath));
+      perms.set(permissionId, {
+        serverId: m.id, tool: 'request_permissions',
+        decide(allow, always) {
+          respond(m.id, { permissions: allow && safe ? requested : {}, scope: allow && always ? 'session' : 'turn' });
+        },
+      });
+      emit({ type: 'permission_request', id: permissionId, tool: 'request_permissions',
+        input: { cwd: p.cwd || cwd, reason: p.reason || '', permissions: requested }, alwaysEligible: safe });
+      return;
+    }
+    if (method === 'mcpServer/elicitation/request') {
+      if (p.mode === 'form' && p.requestedSchema && p.requestedSchema.properties) {
+        const fields = Object.entries(p.requestedSchema.properties);
+        const normalized = fields.map(([name, schema]) => {
+          let options = [];
+          if (Array.isArray(schema.enum)) {
+            options = schema.enum.map((value, index) => ({ value,
+              label: Array.isArray(schema.enumNames) && schema.enumNames[index] || value }));
+          } else if (Array.isArray(schema.oneOf)) {
+            options = schema.oneOf.map((item) => ({ value: item.const, label: item.title || item.const }));
+          } else if (schema.type === 'array' && schema.items) {
+            const items = Array.isArray(schema.items.enum) ? schema.items.enum.map((value) => ({ value, label: value }))
+              : Array.isArray(schema.items.anyOf)
+                ? schema.items.anyOf.map((item) => ({ value: item.const, label: item.title || item.const })) : [];
+            options = items;
+          } else if (schema.type === 'boolean') {
+            options = [{ value: true, label: 'نعم' }, { value: false, label: 'لا' }];
+          }
+          const text = ['string', 'number', 'integer'].includes(schema.type);
+          return { name, schema, options, text, multi: schema.type === 'array' };
+        });
+        if (normalized.length && normalized.length <= 3
+          && normalized.every((field) => field.text || field.options.length >= 2)) {
+          const questionId = 'cxelicitq_' + m.id + '_' + Math.random().toString(36).slice(2, 8);
+          pendingQuestions.set(questionId, {
+            serverId: m.id,
+            answer(selections) {
+              if (!Array.isArray(selections) || !selections.length) {
+                respond(m.id, { action: 'decline', content: null });
+                return;
+              }
+              const content = {};
+              let valid = true;
+              for (const selection of selections) {
+                const field = normalized[selection.questionIndex];
+                if (!field) continue;
+                if (field.text && typeof selection.text === 'string') {
+                  const value = field.schema.type === 'string' ? selection.text : Number(selection.text);
+                  const lengthOk = field.schema.type !== 'string'
+                    || ((field.schema.minLength == null || value.length >= field.schema.minLength)
+                      && (field.schema.maxLength == null || value.length <= field.schema.maxLength));
+                  const numberOk = field.schema.type === 'integer' ? Number.isInteger(value)
+                    : field.schema.type === 'number' ? Number.isFinite(value) : true;
+                  const rangeOk = typeof value !== 'number'
+                    || ((field.schema.minimum == null || value >= field.schema.minimum)
+                      && (field.schema.maximum == null || value <= field.schema.maximum));
+                  if (lengthOk && numberOk && rangeOk) content[field.name] = value;
+                  else valid = false;
+                } else {
+                  const selected = (selection.optionIndexes || []).map((index) => field.options[index]).filter(Boolean);
+                  if (field.multi && selected.length) content[field.name] = selected.map((option) => option.value);
+                  else if (selected[0]) content[field.name] = selected[0].value;
+                  else valid = false;
+                }
+              }
+              respond(m.id, valid ? { action: 'accept', content } : { action: 'decline', content: null });
+            },
+          });
+          emit({ type: 'question_request', id: questionId, questions: normalized.map((field) => ({
+            header: String(field.schema.title || p.serverName || 'MCP').slice(0, 80),
+            question: String(field.schema.description || p.message || field.name).slice(0, 1000),
+            kind: field.text ? 'text' : 'choice',
+            secret: field.schema.format === 'password',
+            multiSelect: field.multi,
+            options: field.options.map((option) => ({ label: String(option.label), description: '' })),
+          })) });
+          return;
+        }
+        respond(m.id, { action: 'decline', content: null });
+        emit({ type: 'stderr', text: 'نموذج MCP يتطلب حقولاً حرة غير مدعومة؛ أُلغي بأمان.' });
+        return;
+      }
+      if (p.mode !== 'url') {
+        respond(m.id, { action: 'decline', content: null });
+        return;
+      }
+      const permissionId = 'cxelicit_' + m.id + '_' + Math.random().toString(36).slice(2, 8);
+      perms.set(permissionId, {
+        serverId: m.id, tool: 'mcp_elicitation',
+        decide(allow) {
+          if (allow && typeof p.url === 'string') emit({ type: 'preview_open', url: p.url });
+          respond(m.id, { action: allow ? 'accept' : 'decline', content: null });
+        },
+      });
+      emit({ type: 'permission_request', id: permissionId, tool: 'mcp_elicitation',
+        input: { server: p.serverName || '', mode: p.mode || '', message: p.message || '', url: p.url || '' },
+        alwaysEligible: false });
+      return;
+    }
+    if (method === 'item/tool/call') {
+      respond(m.id, { success: false, contentItems: [{ type: 'inputText', text: 'الأدوات الديناميكية غير مسجلة في سطر.' }] });
+      return;
+    }
     // أذونات تنفيذ الأوامر وتعديل الملفات — نبثّها كمربع إذن عربي وننتظر الرد
     if (method === 'item/commandExecution/requestApproval' || method === 'item/fileChange/requestApproval'
         || method === 'execCommandApproval' || method === 'applyPatchApproval') {
       const isFile = method.includes('fileChange') || method.includes('applyPatch');
-      const p = m.params || {};
       const toolName = isFile ? 'apply_patch' : 'Shell';
       const command = isFile ? '' : (Array.isArray(p.command) ? p.command.join(' ') : (p.command || ''));
+      const knownFilePaths = isFile
+        ? (fileChangeMeta.get(p.itemId) || []).map((change) => change.path)
+          .concat(Object.keys(p.fileChanges || p.changes || {})) : [];
+      const unsafeFileRequest = isFile && (
+        blockedFileChanges.has(p.itemId)
+        || (p.grantRoot && !projectPath(cwd, p.grantRoot))
+        || knownFilePaths.some((filePath) => !projectPath(cwd, filePath))
+      );
+      if (unsafeFileRequest) {
+        respond(m.id, { decision: 'decline' });
+        emit({ type: 'stderr', text: 'حُجب تعديل أو منح كتابة خارج جذر المشروع.' });
+        return;
+      }
       if (!isFile && execguard.isServerCommand(command)) {
         respond(m.id, { decision: 'decline' });
         emit({ type: 'stderr', text: execguard.buildRedirectMessage() });
@@ -490,7 +744,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       //  - أداة موافَق عليها «دائماً» لهذه الجلسة (عدا أمر متصفح خارجي — يسأل كل مرة).
       //  - وضع acceptEdits: التعديلات (apply_patch) تُقبل تلقائياً — الأوامر تبقى تسأل
       //    (مطابقة سلوك acceptEdits في Claude: Edit/Write تلقائية وBash يسأل).
-      if (!externalBrowser && (alwaysAllowed.has(toolName) || (permissionMode === 'acceptEdits' && isFile))) {
+      if (!externalBrowser && (remembered(toolName)
+        || (permissionMode === 'acceptEdits' && isFile && knownFilePaths.length > 0))) {
         respond(m.id, { decision: 'accept' });
         return;
       }
@@ -510,7 +765,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       return;
     }
     // طلبات أخرى من الخادم لا نتعامل معها الآن — ردّ فارغ حتى لا يعلّق
-    respond(m.id, {});
+    respondError(m.id, -32601, 'Server request not supported by Satr: ' + method);
   }
 
   function onNotification(method, p) {
@@ -518,6 +773,40 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       case 'thread/started': {
         threadId = (p.thread && p.thread.id) || threadId;
         if (threadId) emit({ type: 'system', subtype: 'init', session_id: threadId });
+        break;
+      }
+      case 'turn/started': {
+        turnId = p.turn && p.turn.id || turnId;
+        break;
+      }
+      case 'thread/tokenUsage/updated': {
+        const tokenUsage = p.tokenUsage || {};
+        const total = tokenUsage.total || {};
+        latestUsage = {
+          input: Number(total.inputTokens) || 0,
+          output: Number(total.outputTokens) || 0,
+          cached: Number(total.cachedInputTokens) || 0,
+          reasoning: Number(total.reasoningOutputTokens) || 0,
+          source: 'actual',
+        };
+        latestContextWindow = Number(tokenUsage.modelContextWindow) || null;
+        emit({ type: 'usage_update', usage: latestUsage, context_window: latestContextWindow });
+        break;
+      }
+      case 'account/rateLimits/updated': {
+        latestRateLimits = p.rateLimits || null;
+        emit({ type: 'rate_limits', rate_limits: latestRateLimits });
+        break;
+      }
+      case 'model/rerouted': {
+        emit({ type: 'stderr', text: 'حوّل Codex النموذج تلقائياً من ' + String(p.fromModel || 'النموذج المختار')
+          + ' إلى ' + String(p.toModel || 'نموذج بديل') + ' بسبب سياسة الخدمة.' });
+        break;
+      }
+      case 'model/verification': {
+        if (Array.isArray(p.verifications) && p.verifications.length) {
+          emitAssistantText('تحقق Codex من متطلبات الوصول الخاصة بهذا الدور.', 'commentary');
+        }
         break;
       }
       case 'item/agentMessage/delta': {
@@ -547,8 +836,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         if (it.type === 'fileChange' && Array.isArray(it.changes)) {
           const meta = [];
           for (const ch of it.changes) {
-            const abs = ch.path || '';
+            const abs = projectPath(cwd, ch.path || '');
             const kind = (ch.kind && ch.kind.type) || 'update';
+            if (!abs) {
+              blockedFileChanges.add(it.id);
+              emit({ type: 'stderr', text: 'حُجب مسار تعديل خارج جذر المشروع.' });
+              continue;
+            }
             meta.push({ path: abs, kind });
             if (abs) captureSnapshot(it.id, abs, kind);
           }
@@ -597,9 +891,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         }
         break;
       }
-      default:
-        // rate limits / token usage … لا تعنينا في المرحلة 1
-        break;
+      default: break;
     }
   }
 
@@ -626,6 +918,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         if (ch.path) emitFileChange(item.id, ch.path, ch.kind);
       }
       fileChangeMeta.delete(item.id);
+      blockedFileChanges.delete(item.id);
     } else if (t === 'mcpToolCall') {
       const output = mcpResultText(item);
       const isError = item.status === 'failed' || !!item.error;
@@ -645,8 +938,22 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         || (Array.isArray(item.content) ? item.content.map((c) => (c && (c.text || c.summary)) || '').filter(Boolean).join(' ') : '');
       r = String(r || '').trim();
       if (r) emitAssistantText('💭 ' + (r.length > 600 ? r.slice(0, 600) + '…' : r), 'commentary');
+    } else if (t === 'webSearch') {
+      emitToolCard(item.id, 'WebSearch', { query: item.query || '' }, item.action || 'اكتمل البحث', false);
+    } else if (t === 'imageView') {
+      emitToolCard(item.id, 'ImageView', { path: item.path || '' }, 'اكتملت معاينة الصورة', false);
+    } else if (t === 'dynamicToolCall') {
+      const output = Array.isArray(item.contentItems)
+        ? item.contentItems.map((part) => part && (part.text || part.imageUrl) || '').filter(Boolean).join('\n') : '';
+      emitToolCard(item.id, item.tool || 'DynamicTool', item.arguments || {}, output, item.success === false);
+    } else if (t === 'collabAgentToolCall') {
+      emitToolCard(item.id, 'Codex:' + (item.tool || 'collaboration'),
+        { model: item.model || '', receivers: item.receiverThreadIds || [] }, item.status || '', item.status === 'failed');
+    } else if (t === 'enteredReviewMode' || t === 'exitedReviewMode') {
+      emitAssistantText(t === 'enteredReviewMode' ? 'بدأ Codex وضع المراجعة.' : 'أنهى Codex وضع المراجعة.', 'commentary');
+    } else if (t === 'contextCompaction') {
+      emitAssistantText('ضغط Codex سياق المحادثة لمتابعة العمل.', 'commentary');
     }
-    // WebSearch/غيرها: نص الوكيل يكفي
   }
 
   function finishTurn(turn) {
@@ -664,6 +971,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       type: 'result', subtype: isError ? 'error' : 'success',
       is_error: isError, session_id: threadId,
       duration_ms: Date.now() - startedAt, total_cost_usd: null,
+      usage: latestUsage, context_window: latestContextWindow, rate_limits: latestRateLimits,
     });
     cleanup(0);
   }
@@ -673,8 +981,12 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     // ونمهله لحظة ليُفرّغ ملف الجلسة إلى القرص قبل القتل — وإلا قد يُبتر فيفشل
     // استئنافها لاحقاً (درس مثبّت: القتل الفوري بعد result يقطع تفريغ الجلسة).
     for (const [permId, info] of perms) {
-      try { respond(info.serverId, { decision: 'cancel' }); } catch {}
+      try { if (info.decide) info.decide(false, false); else respond(info.serverId, { decision: 'cancel' }); } catch {}
       perms.delete(permId);
+    }
+    for (const [questionId, info] of pendingQuestions) {
+      try { info.answer([]); } catch {}
+      pendingQuestions.delete(questionId);
     }
     // فكّ أي إذن فعل متصفح معلّق بالرفض (لا يعلّق نداء MCP بعد إنهاء الدور)
     for (const [permId, info] of mcpPerms) { try { info.resolve(false); } catch {} mcpPerms.delete(permId); }
@@ -732,6 +1044,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   (async () => {
     try {
       await request('initialize', { clientInfo: { name: 'satr', title: 'Satr', version: '1.0.0' } });
+      writeMsg({ method: 'initialized', params: {} });
   const { approvalPolicy, sandbox } = mapMode(permissionMode);
   const resolvedModel = model || DEFAULT_MODEL;
       // تعريف الوكيل ببيئته والنموذج المختار (نظير systemPrompt في agent.js). النماذج لا
@@ -776,7 +1089,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       }
       if (!inputItems.length) inputItems.push({ type: 'text', text: effectivePrompt || '', text_elements: [] });
       const turnParams = { threadId, input: inputItems, model: resolvedModel };
-      await request('turn/start', turnParams);
+      const startedTurn = await request('turn/start', turnParams);
+      turnId = startedTurn && startedTurn.turn && startedTurn.turn.id || turnId;
       // الأحداث تصل عبر notifications؛ الدور ينتهي بـ turn/completed
     } catch (e) {
       if (!finished) {
@@ -801,16 +1115,27 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         }
         if (allow && always && mcp.originTrust && mcp.origin && trustedBrowserOrigins instanceof Set) {
           trustedBrowserOrigins.add(mcp.origin);
-        } else if (allow && always && !mcp.neverAlways) alwaysAllowed.add(mcp.tool);
+        } else if (allow && always && !mcp.neverAlways) remember(mcp.tool);
         try { mcp.resolve(!!allow); } catch {}
         return true;
       }
       const info = perms.get(id);
       if (!info) return false;
       perms.delete(id);
-      if (allow && always) alwaysAllowed.add(info.tool);
+      if (info.decide) {
+        info.decide(!!allow, !!always);
+        return true;
+      }
+      if (allow && always) remember(info.tool);
       const decision = allow ? (always ? 'acceptForSession' : 'accept') : 'decline';
       respond(info.serverId, { decision });
+      return true;
+    },
+    resolveQuestion(id, selections) {
+      const info = pendingQuestions.get(id);
+      if (!info) return false;
+      pendingQuestions.delete(id);
+      try { info.answer(Array.isArray(selections) ? selections : []); } catch { return false; }
       return true;
     },
     // رد الواجهة على تسليم browser_handoff: done=true «استلمت» / false «إلغاء»
@@ -826,17 +1151,19 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       stopping = true;
       preview.clearSensitiveState();
       for (const [permId, info] of perms) {
-        try { respond(info.serverId, { decision: 'cancel' }); } catch {}
+        try { if (info.decide) info.decide(false, false); else respond(info.serverId, { decision: 'cancel' }); } catch {}
         perms.delete(permId);
       }
+      for (const [questionId, info] of pendingQuestions) { try { info.answer([]); } catch {} pendingQuestions.delete(questionId); }
       for (const [permId, info] of mcpPerms) { try { info.resolve(false); } catch {} mcpPerms.delete(permId); }
-      if (threadId) { try { await request('turn/interrupt', { threadId }); } catch {} }
+      if (threadId && turnId) { try { await request('turn/interrupt', { threadId, turnId }); } catch {} }
       cleanup(0);
     },
   };
 }
 
 module.exports = {
-  start, undoEdit, resolveCodexBin, authStatus, DEFAULT_MODEL,
+  start, undoEdit, resolveCodexBin, authStatus, accountStatus, listModels, rateLimits, DEFAULT_MODEL,
   isExternalBrowserLaunchCommand, shouldAutoApproveMcp,
+  _internals: { projectPath },
 };

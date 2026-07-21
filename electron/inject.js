@@ -44,19 +44,51 @@ function looksBinary(buf) {
   return false;
 }
 
-// يحلّ مساراً نسبياً داخل cwd حصراً — يعيد المسار المطلق أو null إن خرج عن الحدود
+const realpathSync = fs.realpathSync.native || fs.realpathSync;
+
+function isInside(base, candidate) {
+  const rel = path.relative(base, candidate);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+
+function nearestExisting(candidate) {
+  let current = candidate;
+  while (true) {
+    try { fs.lstatSync(current); return current; }
+    catch (error) {
+      if (!error || (error.code !== 'ENOENT' && error.code !== 'ENOTDIR')) return null;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+// يحلّ مساراً نسبياً داخل cwd بعد تتبّع symlink/junction — يعيد canonical path أو null
 function resolveInside(cwd, rel) {
-  if (typeof rel !== 'string' || !rel) return null;
+  if (typeof cwd !== 'string' || !cwd || typeof rel !== 'string' || !rel) return null;
   if (path.isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) return null; // لا مسارات مطلقة
   const norm = rel.replace(/\\/g, '/');
   if (norm.split('/').some((seg) => seg === '..')) return null; // لا صعود
   const abs = path.resolve(cwd, norm);
   const base = path.resolve(cwd);
-  // داخل المجلد حصراً (ويندوز غير حساس لحالة الأحرف)
-  const a = abs.toLowerCase();
-  const b = base.toLowerCase();
-  if (a !== b && !a.startsWith(b + path.sep)) return null;
-  return abs;
+  if (!isInside(base, abs)) return null;
+
+  let canonicalBase;
+  try {
+    canonicalBase = realpathSync(base);
+    if (!fs.statSync(canonicalBase).isDirectory()) return null;
+  } catch { return null; }
+
+  const existing = nearestExisting(abs);
+  if (!existing || !isInside(base, existing)) return null;
+  let canonicalExisting;
+  try { canonicalExisting = realpathSync(existing); } catch { return null; }
+  if (!isInside(canonicalBase, canonicalExisting)) return null;
+
+  const suffix = path.relative(existing, abs);
+  const canonicalCandidate = path.resolve(canonicalExisting, suffix);
+  return isInside(canonicalBase, canonicalCandidate) ? canonicalCandidate : null;
 }
 
 // سياج كود أطول من أي سلسلة ` داخل المحتوى (يمنع كسر الكتلة)

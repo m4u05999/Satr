@@ -91,9 +91,46 @@ async function main() {
     assert.strictEqual(toolResult.ok, true);
     assert(emitted && emitted.type === 'task_update' && emitted.source === 'adapter_tool');
 
+    // ردة فعل ضد تراجع: خطة Kimi التلقائية لا تستبدل سجلاً صريحاً.
+    const explicitLedger = tasks.apply({
+      schema_version: 1,
+      engine,
+      session_id: sessionId,
+      mode: 'replace',
+      source: 'adapter_tool',
+      tasks: [{ id: 'explicit-1', title: 'مهمة صريحة', status: 'in_progress' }],
+    }, options);
+    assert.strictEqual(explicitLedger.tasks.length, 1);
+    assert.strictEqual(explicitLedger.tasks[0].id, 'explicit-1');
+
+    const kimiOverwrite = tasks.apply({
+      schema_version: 1,
+      engine,
+      session_id: sessionId,
+      mode: 'replace',
+      source: 'kimi_plan',
+      tasks: [{ id: 'kimi-1', title: 'خطة تلقائية', status: 'pending' }],
+    }, options);
+    assert.strictEqual(kimiOverwrite.tasks.length, 1, 'خطة Kimi استبدلت السجل الصريح.');
+    assert.strictEqual(kimiOverwrite.tasks[0].id, 'explicit-1', 'خطة Kimi غيّرت المهمة الصريحة.');
+
+    // عندما لا يوجد سجل، خطة Kimi التلقائية تُنشئ سجلاً.
+    const kimiSession = 'kimi_only_session';
+    const kimiInitial = tasks.apply({
+      schema_version: 1,
+      engine,
+      session_id: kimiSession,
+      mode: 'replace',
+      source: 'kimi_plan',
+      tasks: [{ id: 'kimi-1', title: 'خطة تلقائية', status: 'pending' }],
+    }, options);
+    assert.strictEqual(kimiInitial.tasks.length, 1);
+    assert.strictEqual(kimiInitial.tasks[0].id, 'kimi-1');
+
     console.log('✓ task ledger schema and persistence');
     console.log('✓ task ledger merge, pause, and resume');
     console.log('✓ task ledger input boundaries and adapter tool');
+    console.log('✓ kimi_plan cannot replace explicit ledger and works from empty state');
   } finally {
     await fsp.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }

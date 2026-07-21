@@ -79,6 +79,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: إنشاء ورفع نسخة ZIP من المثبّت
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $exe = Get-ChildItem dist -Filter *.exe -File | Select-Object -First 1
+          if (-not $exe) { throw 'لم يُعثر على مثبّت exe في dist' }
+          $zip = Join-Path dist "Satr-Setup-$version.zip"
+          Compress-Archive -LiteralPath $exe.FullName -DestinationPath $zip -CompressionLevel Optimal -Force
+          gh release upload '${{ github.ref_name }}' $zip --clobber
+
       - name: التحقق من أصول التحديث
         shell: pwsh
         env:
@@ -93,6 +105,9 @@ jobs:
           }
           if (-not ($assets | Where-Object { $_ -like '*.blockmap' })) {
             throw 'لم يُرفع blockmap'
+          }
+          if (-not ($assets | Where-Object { $_ -like 'Satr-Setup-*.zip' })) {
+            throw 'لم تُرفع نسخة ZIP من المثبّت'
           }
 
       # electron-builder ينشئ مسودة افتراضياً؛ هذه الخطوة تحسب بصمة المثبّت،

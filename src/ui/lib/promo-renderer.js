@@ -1,6 +1,7 @@
 import { pickRecMime } from './media-recorder.js';
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const level = (value, fallback) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
 
 function once(target, event, timeoutMs = 15000, label = 'media') {
   return new Promise((resolve, reject) => {
@@ -26,8 +27,15 @@ async function loadVisual(scene) {
   video.src = scene.src;
   video.load();
   if (video.readyState < 2) await once(video, 'loadeddata', 15000, 'video');
+  const duration = Number.isFinite(video.duration) ? video.duration : 0;
+  const requested = Math.max(0, Number(scene.trim_start_ms) || 0) / 1000;
+  const startTime = duration > 0 ? Math.min(requested, Math.max(0, duration - 0.1)) : 0;
+  if (startTime > 0.001) {
+    video.currentTime = startTime;
+    await once(video, 'seeked', 15000, 'seek');
+  }
   return {
-    kind: 'video', element: video, width: video.videoWidth, height: video.videoHeight,
+    kind: 'video', element: video, width: video.videoWidth, height: video.videoHeight, startTime,
     cleanup() { try { video.pause(); } catch (error) {} video.removeAttribute('src'); video.load(); },
   };
 }
@@ -53,6 +61,17 @@ function drawCover(context, element, sourceWidth, sourceHeight, width, height, a
   context.restore();
 }
 
+function drawContain(context, element, sourceWidth, sourceHeight, width, height, alpha = 1) {
+  if (!sourceWidth || !sourceHeight) return;
+  const scale = Math.min(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  context.save();
+  context.globalAlpha = alpha;
+  context.drawImage(element, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+  context.restore();
+}
+
 function wrapCaption(context, caption, maxWidth) {
   const words = String(caption || '').split(/\s+/).filter(Boolean);
   const lines = [];
@@ -66,7 +85,7 @@ function wrapCaption(context, caption, maxWidth) {
   return lines.slice(0, 3);
 }
 
-export function drawCaption(context, caption, width, height, colors) {
+export function drawCaption(context, caption, width, height, colors, position = 'bottom', style = 'box') {
   if (!caption) return 0;
   const fontSize = Math.max(30, Math.round(height * 0.052));
   const lineHeight = Math.round(fontSize * 1.45);
@@ -81,9 +100,16 @@ export function drawCaption(context, caption, width, height, colors) {
   const boxHeight = lines.length * lineHeight + padding * 2;
   const boxWidth = Math.min(width * 0.88, Math.max(...lines.map((line) => context.measureText(line).width)) + padding * 2);
   const x = width - Math.round(width * 0.06);
-  const y = height - Math.round(height * 0.07) - boxHeight;
-  context.fillStyle = colors.captionBackground;
-  context.fillRect(x - boxWidth, y, boxWidth, boxHeight);
+  const y = position === 'top' ? Math.round(height * 0.07)
+    : position === 'center' ? Math.round((height - boxHeight) / 2)
+      : height - Math.round(height * 0.07) - boxHeight;
+  if (style !== 'minimal') {
+    context.fillStyle = colors.captionBackground;
+    context.fillRect(x - boxWidth, y, boxWidth, boxHeight);
+  } else {
+    context.shadowColor = colors.captionBackground;
+    context.shadowBlur = Math.max(4, Math.round(fontSize * 0.18));
+  }
   context.fillStyle = colors.captionText;
   lines.forEach((line, index) => context.fillText(line, x - padding, y + padding + lineHeight * (index + 0.5)));
   context.restore();
@@ -123,82 +149,93 @@ export async function renderStoryboard(options) {
   recorder.start(1000);
   let captionsRendered = 0;
   let audioSources = 0;
+  let trimmedScenes = 0;
+  let containedScenes = 0;
   const totalMs = scenes.reduce((sum, scene) => sum + scene.duration_ms, 0);
   let completedMs = 0;
   try {
     for (let index = 0; index < scenes.length; index += 1) {
       if (settings.signal && settings.signal.aborted) throw new Error('render_cancelled');
       const scene = scenes[index];
-      const visual = await loadVisual(scene);
-      const music = await loadAudio(scene.musicSrc);
-      const voice = await loadAudio(scene.voiceSrc);
+      let visual = null;
+      let music = null;
+      let voice = null;
       const nodes = [];
-      if (visual.kind === 'video') {
-        const source = audioContext.createMediaElementSource(visual.element);
-        const gain = audioContext.createGain();
-        gain.gain.value = 1;
-        source.connect(gain).connect(mix);
-        nodes.push(source, gain);
-        audioSources += 1;
-        visual.element.currentTime = 0;
-        await visual.element.play();
-      }
-      if (music) {
-        const source = audioContext.createMediaElementSource(music);
-        const gain = audioContext.createGain();
-        gain.gain.value = 0.34;
-        source.connect(gain).connect(mix);
-        nodes.push(source, gain);
-        audioSources += 1;
-        music.currentTime = 0;
-        await music.play();
-      }
-      if (voice) {
-        const source = audioContext.createMediaElementSource(voice);
-        const gain = audioContext.createGain();
-        gain.gain.value = 1;
-        source.connect(gain).connect(mix);
-        nodes.push(source, gain);
-        audioSources += 1;
-        voice.currentTime = 0;
-        await voice.play();
-      }
-      const startedAt = performance.now();
-      while (true) {
-        if (settings.signal && settings.signal.aborted) throw new Error('render_cancelled');
-        const elapsed = performance.now() - startedAt;
-        if (elapsed >= scene.duration_ms) break;
-        context.fillStyle = colors.background;
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        drawCover(context, visual.element, visual.width, visual.height, canvas.width, canvas.height);
-        if (scene.transition === 'fade') {
-          const edge = Math.min(500, scene.duration_ms / 3);
-          const opacity = elapsed < edge ? 1 - elapsed / edge
-            : elapsed > scene.duration_ms - edge ? 1 - (scene.duration_ms - elapsed) / edge : 0;
-          if (opacity > 0) {
-            context.save(); context.globalAlpha = opacity; context.fillStyle = colors.background;
-            context.fillRect(0, 0, canvas.width, canvas.height); context.restore();
+      try {
+        visual = await loadVisual(scene);
+        music = await loadAudio(scene.musicSrc);
+        voice = await loadAudio(scene.voiceSrc);
+        if (visual.kind === 'video') {
+          const source = audioContext.createMediaElementSource(visual.element);
+          const gain = audioContext.createGain();
+          gain.gain.value = level(scene.clip_volume, 1);
+          source.connect(gain).connect(mix);
+          nodes.push(source, gain);
+          audioSources += 1;
+          await visual.element.play();
+        }
+        if (music) {
+          const source = audioContext.createMediaElementSource(music);
+          const gain = audioContext.createGain();
+          gain.gain.value = level(scene.music_volume, 0.34);
+          source.connect(gain).connect(mix);
+          nodes.push(source, gain);
+          audioSources += 1;
+          music.currentTime = 0;
+          await music.play();
+        }
+        if (voice) {
+          const source = audioContext.createMediaElementSource(voice);
+          const gain = audioContext.createGain();
+          gain.gain.value = level(scene.voice_volume, 1);
+          source.connect(gain).connect(mix);
+          nodes.push(source, gain);
+          audioSources += 1;
+          voice.currentTime = 0;
+          await voice.play();
+        }
+        if (Number(scene.trim_start_ms) > 0) trimmedScenes += 1;
+        if (scene.fit === 'contain') containedScenes += 1;
+        const startedAt = performance.now();
+        while (true) {
+          if (settings.signal && settings.signal.aborted) throw new Error('render_cancelled');
+          const elapsed = performance.now() - startedAt;
+          if (elapsed >= scene.duration_ms) break;
+          context.fillStyle = colors.background;
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          const draw = scene.fit === 'contain' ? drawContain : drawCover;
+          draw(context, visual.element, visual.width, visual.height, canvas.width, canvas.height);
+          if (scene.transition === 'fade') {
+            const edge = Math.min(500, scene.duration_ms / 3);
+            const opacity = elapsed < edge ? 1 - elapsed / edge
+              : elapsed > scene.duration_ms - edge ? 1 - (scene.duration_ms - elapsed) / edge : 0;
+            if (opacity > 0) {
+              context.save(); context.globalAlpha = opacity; context.fillStyle = colors.background;
+              context.fillRect(0, 0, canvas.width, canvas.height); context.restore();
+            }
           }
+          if (drawCaption(context, scene.caption, canvas.width, canvas.height, colors,
+            scene.caption_position, scene.caption_style)) captionsRendered += 1;
+          if (typeof settings.onProgress === 'function') {
+            settings.onProgress({ index, elapsed_ms: Math.min(totalMs, completedMs + elapsed), total_ms: totalMs });
+          }
+          await new Promise((resolve) => requestAnimationFrame(resolve));
         }
-        if (drawCaption(context, scene.caption, canvas.width, canvas.height, colors)) captionsRendered += 1;
-        if (typeof settings.onProgress === 'function') {
-          settings.onProgress({ index, elapsed_ms: Math.min(totalMs, completedMs + elapsed), total_ms: totalMs });
-        }
-        await new Promise((resolve) => requestAnimationFrame(resolve));
+        completedMs += scene.duration_ms;
+      } finally {
+        if (visual) visual.cleanup();
+        if (music) { music.pause(); music.removeAttribute('src'); music.load(); }
+        if (voice) { voice.pause(); voice.removeAttribute('src'); voice.load(); }
+        for (const node of nodes) { try { node.disconnect(); } catch (error) {} }
       }
-      completedMs += scene.duration_ms;
-      if (visual.kind === 'video') visual.element.pause();
-      if (music) { music.pause(); music.removeAttribute('src'); music.load(); }
-      if (voice) { voice.pause(); voice.removeAttribute('src'); voice.load(); }
-      for (const node of nodes) { try { node.disconnect(); } catch (error) {} }
-      visual.cleanup();
     }
     await wait(120);
     await mediaStop(recorder);
     const blob = new Blob(chunks, { type: format.container });
     if (!blob.size) throw new Error('empty_render');
     return { blob, format, duration_ms: totalMs, scenes_rendered: scenes.length,
-      captions_rendered: captionsRendered, caption_direction: 'rtl', audio_sources: audioSources };
+      captions_rendered: captionsRendered, caption_direction: 'rtl', audio_sources: audioSources,
+      trimmed_scenes: trimmedScenes, contained_scenes: containedScenes, mixed_audio_sources: audioSources };
   } catch (error) {
     if (recorder.state !== 'inactive') await mediaStop(recorder);
     throw error;

@@ -32,6 +32,18 @@ const proposed = controller.propose({ scenes: [
 ] });
 assert(proposed.ok && proposed.storyboard.aspect === '9:16' && proposed.storyboard.scenes.length === 2);
 assert.strictEqual(proposed.storyboard.scenes[1].asset_type, 'image');
+assert.deepStrictEqual({
+  trim_start_ms: proposed.storyboard.scenes[0].trim_start_ms,
+  fit: proposed.storyboard.scenes[0].fit,
+  caption_position: proposed.storyboard.scenes[0].caption_position,
+  caption_style: proposed.storyboard.scenes[0].caption_style,
+  clip_volume: proposed.storyboard.scenes[0].clip_volume,
+  music_volume: proposed.storyboard.scenes[0].music_volume,
+  voice_volume: proposed.storyboard.scenes[0].voice_volume,
+}, {
+  trim_start_ms: 0, fit: 'cover', caption_position: 'bottom', caption_style: 'box',
+  clip_volume: 1, music_volume: 0.34, voice_volume: 1,
+});
 assert(events.some((event) => event.type === 'storyboard_proposed' && event.storyboard.scenes.length === 2));
 assert(controller.assetUrl(clip).ok && controller.assetUrl(clip).url.startsWith('file:'));
 assert.deepStrictEqual(controller.assetUrl(path.join(downloads, 'unknown.mp4')), { ok: false, error: 'not_in_storyboard' });
@@ -40,9 +52,48 @@ assert.strictEqual(controller.propose({ scenes: [{ segment_path: clip, music: pa
 assert.strictEqual(controller.propose({ scenes: [{ segment_path: clip, voice: path.resolve(downloads, '..', 'outside.wav') }] }).error, 'bad_voice');
 assert.strictEqual(controller.propose({ scenes: [{ segment_path: clip, duration_ms: 121000 }] }).error, 'bad_duration');
 
+const advanced = controller.propose({ scenes: [{
+  id: 'advanced_scene', segment_path: clip, duration_ms: 1000, trim_start_ms: 450,
+  fit: 'contain', caption_position: 'top', caption_style: 'minimal',
+  clip_volume: 0.7, music_volume: 0.2, voice_volume: 0.85,
+}] });
+assert(advanced.ok);
+assert.deepStrictEqual({
+  id: advanced.storyboard.scenes[0].id,
+  trim_start_ms: advanced.storyboard.scenes[0].trim_start_ms,
+  fit: advanced.storyboard.scenes[0].fit,
+  caption_position: advanced.storyboard.scenes[0].caption_position,
+  caption_style: advanced.storyboard.scenes[0].caption_style,
+  clip_volume: advanced.storyboard.scenes[0].clip_volume,
+  music_volume: advanced.storyboard.scenes[0].music_volume,
+  voice_volume: advanced.storyboard.scenes[0].voice_volume,
+}, {
+  id: 'advanced_scene', trim_start_ms: 450, fit: 'contain', caption_position: 'top',
+  caption_style: 'minimal', clip_volume: 0.7, music_volume: 0.2, voice_volume: 0.85,
+});
+
+const cleaned = controller.propose({ scenes: [{
+  segment_path: clip, duration_ms: 1000, trim_start_ms: -1, fit: 'stretch',
+  caption_position: 'side', caption_style: 'outline', clip_volume: 'loud',
+  music_volume: NaN, voice_volume: Infinity,
+}] });
+assert(cleaned.ok);
+assert.deepStrictEqual({
+  trim_start_ms: cleaned.storyboard.scenes[0].trim_start_ms,
+  fit: cleaned.storyboard.scenes[0].fit,
+  caption_position: cleaned.storyboard.scenes[0].caption_position,
+  caption_style: cleaned.storyboard.scenes[0].caption_style,
+  clip_volume: cleaned.storyboard.scenes[0].clip_volume,
+  music_volume: cleaned.storyboard.scenes[0].music_volume,
+  voice_volume: cleaned.storyboard.scenes[0].voice_volume,
+}, {
+  trim_start_ms: 0, fit: 'cover', caption_position: 'bottom', caption_style: 'box',
+  clip_volume: 1, music_volume: 0.34, voice_volume: 1,
+});
+
 const finalName = 'satr-promo-final-2026-07-19-15-20-30.mp4';
 assert(recording.SAFE_PROMO_FINAL_NAME.test(finalName));
 assert.strictEqual(recording.recordingSavePath(downloads, finalName, () => false), path.join(downloads, finalName));
 assert.strictEqual(recording.recordingSavePath(downloads, '../' + finalName, () => false), null);
 
-console.log('promostudio: نجح — storyboard محلي، حدود المشاهد، منع الخروج من Downloads، وحفظ نهائي فريد.');
+console.log('promostudio: نجح — الحقول الاحترافية والتوافق الخلفي وحدود Downloads وحفظ نهائي فريد.');

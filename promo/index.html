@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>سطر — مشاهد الإعلان (typography)</title>
+<!--
+  مشغّل مشاهد الـ typography لإعلان «سطر» (60ث — بنية مرجع Google AI Mode).
+  ملف مستقل خارج حزمة التطبيق (نمط site/) — يُسجَّل منه الفيديو مباشرة.
+  الاختيار: ?scene=hook|otlob|3ayen|sallem|watch|crescendo|cta|all
+  إعادة التشغيل: نقرة على أي مكان. HUD أزرار المشاهد: ?hud=1
+  الهوية: tokens سطر الداكنة (bg #111110 · ذهبي #D9A441) + IBM Plex Sans Arabic.
+-->
+<link rel="stylesheet" href="vendor/fonts.css">
+<style>
+  :root {
+    --bg: #111110; --bg-deep: #0d0d0c; --surface: #191918; --border: #3b3a37;
+    --text: #eeeeec; --text-dim: #b5b3ad; --gold: #D9A441; --gold-strong: #E5B655;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: var(--bg); overflow: hidden; }
+  body { font-family: 'IBM Plex Sans Arabic', system-ui, sans-serif; color: var(--text); }
+  .stage { position: fixed; inset: 0; display: grid; place-items: center; }
+  .scene { position: absolute; inset: 0; display: grid; place-items: center; visibility: hidden; }
+  .scene.on { visibility: visible; }
+
+  /* ---------- hook: الطرفية المكسورة ثم الالتئام ---------- */
+  #hook .term {
+    width: min(72vw, 1100px); aspect-ratio: 16/7; background: var(--bg-deep);
+    border: 1px solid var(--border); border-radius: 14px; padding: 3.2vh 2.6vw;
+    box-shadow: 0 30px 80px rgba(0,0,0,.5); position: relative;
+  }
+  #hook .term .dots { display: flex; gap: 8px; margin-bottom: 3.4vh; }
+  #hook .term .dots i { width: 11px; height: 11px; border-radius: 50%; background: var(--border); }
+  #hook .broken {
+    direction: ltr; unicode-bidi: bidi-override; text-align: left;
+    font-size: clamp(22px, 3.2vw, 44px); color: var(--text-dim); letter-spacing: .04em;
+    white-space: nowrap; overflow: hidden;
+  }
+  #hook .broken span { display: inline-block; }
+  #hook .cursor { display: inline-block; width: .55em; height: 1.15em; background: var(--text-dim);
+    vertical-align: text-bottom; margin-inline-start: 4px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  #hook .healed {
+    /* flex أفقي لا grid — وإلا تراصّت الكلمات صفوفاً عمودية (خلل مرصود باللقطة) */
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    gap: .32em; font-size: clamp(40px, 6.5vw, 96px); font-weight: 700; color: var(--gold);
+    text-shadow: 0 0 40px rgba(217,164,65,.35); opacity: 0; white-space: nowrap;
+  }
+  #hook .healed span { display: inline-block; }
+  #hook .lines { position: absolute; inset: 0; display: grid; place-items: center; }
+  #hook .lines .l { position: absolute; font-size: clamp(34px, 5vw, 76px); font-weight: 700; opacity: 0; white-space: nowrap; }
+  .goldw { color: var(--gold); text-shadow: 0 0 34px rgba(217,164,65,.35); }
+
+  /* ---------- عناوين الحالات: كلمة واحدة تصفع ---------- */
+  .titleScene .w {
+    font-size: clamp(80px, 14vw, 220px); font-weight: 700; color: var(--gold);
+    text-shadow: 0 0 60px rgba(217,164,65,.30); opacity: 0; will-change: transform, filter;
+  }
+  .titleScene .sub { position: absolute; bottom: 18vh; font-size: clamp(16px, 1.6vw, 24px);
+    color: var(--text-dim); opacity: 0; }
+
+  /* ---------- راقب ---------- */
+  #watch .l1, #watch .l2 { font-size: clamp(40px, 6vw, 92px); font-weight: 700; opacity: 0; white-space: nowrap; }
+  #watch .wrap { display: grid; gap: 2vh; justify-items: center; }
+
+  /* ---------- التصعيد ---------- */
+  #crescendo .l { position: absolute; font-size: clamp(44px, 7vw, 110px); font-weight: 700; opacity: 0; white-space: nowrap; }
+  #crescendo .big { font-size: clamp(60px, 9.5vw, 150px); }
+
+  /* ---------- CTA ---------- */
+  #cta .pre { position: absolute; font-size: clamp(34px, 5vw, 76px); font-weight: 500; color: var(--text); opacity: 0; }
+  #cta .ask { position: absolute; font-size: clamp(100px, 17vw, 260px); font-weight: 700; color: var(--gold);
+    text-shadow: 0 0 80px rgba(217,164,65,.40); opacity: 0; }
+  #cta .brand { position: absolute; display: grid; justify-items: center; gap: 2.4vh; opacity: 0; }
+  #cta .brand .mark { font-size: clamp(70px, 11vw, 170px); font-weight: 700; color: var(--text); line-height: 1; }
+  #cta .brand .mark b { color: var(--gold); font-weight: 700; }
+  #cta .brand .rule { width: 0; height: 4px; background: var(--gold); border-radius: 2px; }
+  #cta .brand .url { direction: ltr; font-size: clamp(16px, 1.7vw, 26px); color: var(--text-dim); letter-spacing: .02em; }
+
+  /* HUD للمعاينة فقط (?hud=1) */
+  #hud { position: fixed; top: 12px; inset-inline-start: 12px; z-index: 9; display: none; gap: 6px; flex-wrap: wrap; }
+  #hud button { background: var(--surface); color: var(--text-dim); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 12px; font-family: inherit; font-size: 13px; cursor: pointer; }
+  #hud button:hover { border-color: var(--gold); color: var(--text); }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- م1–3: الـ hook — سطر مكسور في طرفية يلتئم إلى الشعار ثم سطرا التقديم -->
+  <section class="scene" id="hook">
+    <div class="term">
+      <div class="dots"><i></i><i></i><i></i></div>
+      <div class="broken" id="brokenLine"></div>
+    </div>
+    <div class="healed" id="healedLine"></div>
+    <div class="lines">
+      <div class="l" id="hl1">هذا هو <span class="goldw">البرمجة بالعربية</span></div>
+      <div class="l" id="hl2">بوكلاء <span class="goldw">ذكاء</span> حقيقيين</div>
+    </div>
+  </section>
+
+  <!-- عناوين الحالات الثلاث -->
+  <section class="scene titleScene" id="otlob"><div class="w">اطلب</div></section>
+  <section class="scene titleScene" id="a3ayen"><div class="w">عايِن</div></section>
+  <section class="scene titleScene" id="sallem"><div class="w">سلِّم 🤝</div></section>
+
+  <!-- م7: راقب -->
+  <section class="scene" id="watch">
+    <div class="wrap">
+      <div class="l1">وراقب كل شيء…</div>
+      <div class="l2 goldw">بالعربية.</div>
+    </div>
+  </section>
+
+  <!-- التصعيد -->
+  <section class="scene" id="crescendo">
+    <div class="l" id="c1">تقدر <span class="goldw">تطلب</span></div>
+    <div class="l" id="c2">تقدر <span class="goldw">تفهم</span></div>
+    <div class="l big" id="c3">تبني <span class="goldw">أي شيء</span></div>
+  </section>
+
+  <!-- CTA -->
+  <section class="scene" id="cta">
+    <div class="pre" id="ctaPre">كل ما عليك أن…</div>
+    <div class="ask" id="ctaAsk">اطلب.</div>
+    <div class="brand" id="ctaBrand">
+      <div class="mark"><b>سطر</b></div>
+      <div class="rule" id="ctaRule"></div>
+      <div class="url">m4u05999.github.io/Satr</div>
+    </div>
+  </section>
+
+</div>
+<div id="hud"></div>
+
+<script src="vendor/gsap.min.js"></script>
+<script>
+'use strict';
+/* مشاهد الإعلان — GSAP timelines. كل مشهد دالة تعيد timeline مستقلاً. */
+const $ = (s) => document.querySelector(s);
+const params = new URLSearchParams(location.search);
+/* ?hold=1: يوقف خروج المشهد الأخير (للفحص البصري ولضبط نقطة القطع عند المونتاج) */
+const HOLD = params.get('hold') === '1';
+
+/* السطر الذي «يلتئم»: النص السليم، ونصنع منه الشكل المكسور كما تكسره الطرفيات
+   فعلاً — حروف معزولة (ZWNJ يمنع الوصل) بترتيب معكوس واتجاه LTR قسري. */
+const HEALED = 'السطر الذي يلتئم';
+function buildBroken() {
+  const host = $('#brokenLine');
+  const chars = Array.from(HEALED).reverse();
+  for (const ch of chars) {
+    const s = document.createElement('span');
+    s.textContent = ch === ' ' ? ' ' : ch + '\u200C';
+    host.appendChild(s);
+  }
+  const cur = document.createElement('span');
+  cur.className = 'cursor';
+  host.appendChild(cur);
+}
+function buildHealed() {
+  const host = $('#healedLine');
+  for (const w of HEALED.split(' ')) {
+    const s = document.createElement('span');
+    s.textContent = w;
+    host.appendChild(s);
+    host.appendChild(document.createTextNode(' '));
+  }
+}
+buildBroken(); buildHealed();
+
+function show(id) {
+  document.querySelectorAll('.scene').forEach((sc) => sc.classList.remove('on'));
+  $(id).classList.add('on');
+}
+
+/* م1–3 (10ث): كسر ← التئام ← سطرا التقديم */
+function tlHook() {
+  show('#hook');
+  const tl = gsap.timeline();
+  const spans = document.querySelectorAll('#brokenLine span:not(.cursor)');
+  const words = document.querySelectorAll('#healedLine span');
+  tl.set(spans, { opacity: 0 })
+    /* «كتابة» الحروف المكسورة تباعاً */
+    .to(spans, { opacity: 1, duration: .04, stagger: .09, ease: 'none' })
+    .to({}, { duration: .7 })
+    /* التشظي: الحروف تهتز ثم تتناثر */
+    .to(spans, { x: () => gsap.utils.random(-30, 30), duration: .12, repeat: 3, yoyo: true }, 'shake')
+    .to(spans, {
+      x: () => gsap.utils.random(-320, 320), y: () => gsap.utils.random(-180, 180),
+      rotation: () => gsap.utils.random(-90, 90), opacity: 0, duration: .8, ease: 'power2.in', stagger: .015,
+    }, 'scatter')
+    .to('#hook .term', { opacity: 0, scale: .96, duration: .6 }, 'scatter+=.3')
+    /* الالتئام: الكلمات تتقارب من الجهتين إلى المركز */
+    .set('#healedLine', { opacity: 1 })
+    .fromTo(words,
+      { opacity: 0, x: (i) => (i % 2 ? -140 : 140), filter: 'blur(8px)' },
+      { opacity: 1, x: 0, filter: 'blur(0px)', duration: .9, ease: 'power3.out', stagger: .12 }, 'scatter+=.7')
+    .to({}, { duration: 1.2 })
+    .to('#healedLine', { opacity: 0, y: -40, duration: .5 })
+    /* سطرا التقديم */
+    .fromTo('#hl1', { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: .6, ease: 'power3.out' })
+    .to('#hl1', { opacity: 0, y: -40, duration: .45 }, '+=1.15')
+    .fromTo('#hl2', { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: .6, ease: 'power3.out' })
+    .to({}, { duration: 1.3 });
+  return tl;
+}
+
+/* عنوان حالة (2ث): صفعة دخول بنمط المرجع */
+function tlTitle(id, sub) {
+  show(id);
+  const w = id + ' .w';
+  const tl = gsap.timeline();
+  tl.fromTo(w, { opacity: 0, scale: 1.35, filter: 'blur(14px)' },
+    { opacity: 1, scale: 1, filter: 'blur(0px)', duration: .5, ease: 'power4.out' })
+    .to({}, { duration: 1.3 });
+  if (!HOLD) tl.to(w, { opacity: 0, scale: .92, duration: .25, ease: 'power2.in' });
+  return tl;
+}
+
+/* راقب (4ث) */
+function tlWatch() {
+  show('#watch');
+  const tl = gsap.timeline();
+  tl.fromTo('#watch .l1', { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: .6, ease: 'power3.out' })
+    .fromTo('#watch .l2', { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: .6, ease: 'power3.out' }, '+=.5')
+    .to({}, { duration: 1.6 })
+    .to('#watch .wrap', { opacity: 0, duration: .4 });
+  return tl;
+}
+
+/* التصعيد (8ث) */
+function tlCrescendo() {
+  show('#crescendo');
+  const tl = gsap.timeline();
+  const stepIn = (el) => [{ opacity: 0, y: 46 }, { opacity: 1, y: 0, duration: .5, ease: 'power3.out' }];
+  tl.fromTo('#c1', ...stepIn('#c1')).to('#c1', { opacity: 0, y: -46, duration: .35 }, '+=1.2')
+    .fromTo('#c2', ...stepIn('#c2')).to('#c2', { opacity: 0, y: -46, duration: .35 }, '+=1.2')
+    .fromTo('#c3', { opacity: 0, scale: .8 }, { opacity: 1, scale: 1, duration: .7, ease: 'power4.out' })
+    .to('#c3 .goldw', { textShadow: '0 0 110px rgba(217,164,65,.75)', duration: .8, repeat: 1, yoyo: true })
+    .to({}, { duration: .8 });
+  return tl;
+}
+
+/* CTA (8ث): كل ما عليك أن… ← اطلب. ← العلامة والخط الذي يلتئم */
+function tlCta() {
+  show('#cta');
+  const tl = gsap.timeline();
+  tl.fromTo('#ctaPre', { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: .6, ease: 'power3.out' })
+    .to('#ctaPre', { opacity: 0, duration: .35 }, '+=1.2')
+    .fromTo('#ctaAsk', { opacity: 0, scale: 1.4, filter: 'blur(16px)' },
+      { opacity: 1, scale: 1, filter: 'blur(0px)', duration: .6, ease: 'power4.out' })
+    .to('#ctaAsk', { opacity: 0, scale: .95, duration: .4 }, '+=1.8')
+    .fromTo('#ctaBrand', { opacity: 0 }, { opacity: 1, duration: .6 })
+    /* «السطر» يرسم نفسه تحت العلامة — motif الالتئام */
+    .to('#ctaRule', { width: 'min(28vw, 420px)', duration: .9, ease: 'power2.inOut' }, '-=.2')
+    .to({}, { duration: 2.2 });
+  return tl;
+}
+
+const SCENES = {
+  hook: tlHook,
+  otlob: () => tlTitle('#otlob'),
+  '3ayen': () => tlTitle('#a3ayen'),
+  sallem: () => tlTitle('#sallem'),
+  watch: tlWatch,
+  crescendo: tlCrescendo,
+  cta: tlCta,
+};
+
+let current = null;
+function play(name) {
+  if (current) { current.kill(); current = null; }
+  gsap.set('.scene, .scene *', { clearProps: 'all' });
+  /* إعادة ضبط المبنيين ديناميكياً */
+  $('#brokenLine').textContent = ''; $('#healedLine').textContent = '';
+  buildBroken(); buildHealed();
+  $('#healedLine').style.opacity = '0';
+  const fn = SCENES[name];
+  if (!fn) return;
+  if (name === 'all') return;
+  current = fn();
+}
+
+/* ---------- وضع التصيير الحتمي (?render=1) — يستهلكه scripts/promo-render.js ----------
+   نجمّد ticker الـ GSAP فلا يتقدم الزمن تلقائياً؛ scripts/promo-render.js يبني المشهد
+   ثم يطلب time(t) لكل إطار ويلتقط لقطة. القيم العشوائية (تشظّي الـ hook) تُبنى مرة عند
+   الإنشاء وتثبت عبر seek — فالتصيير حتمي داخل التشغيلة الواحدة (نمط site-shots المجمّد). */
+const RENDER = params.get('render') === '1';
+if (RENDER) {
+  gsap.ticker.lagSmoothing(0);   // لا تعويض إطارات — الزمن يدوي بالكامل
+  gsap.ticker.sleep();           // أوقف حلقة rAF
+}
+window.__promo = {
+  build(name) {
+    if (current) { current.kill(); current = null; }
+    gsap.set('.scene, .scene *', { clearProps: 'all' });
+    $('#brokenLine').textContent = ''; $('#healedLine').textContent = '';
+    buildBroken(); buildHealed();
+    $('#healedLine').style.opacity = '0';
+    const fn = SCENES[name];
+    if (!fn) return 0;
+    current = fn();
+    current.pause(0);
+    return current.duration();
+  },
+  seek(t) {
+    if (!current) return false;
+    current.time(t, false); // suppressEvents=false ⇒ يطبّق set()s على حدود القطع
+    gsap.ticker.tick();     // يجبر تدفّق التحديث إلى DOM قبل اللقطة
+    return true;
+  },
+};
+function playAll() {
+  const order = ['hook', 'otlob', '3ayen', 'sallem', 'watch', 'crescendo', 'cta'];
+  let i = 0;
+  const next = () => {
+    if (i >= order.length) return;
+    play(order[i]);
+    current.eventCallback('onComplete', () => { i += 1; next(); });
+  };
+  next();
+}
+
+const wanted = params.get('scene') || 'hook';
+if (params.get('hud') === '1') {
+  const hud = $('#hud'); hud.style.display = 'flex';
+  for (const name of [...Object.keys(SCENES), 'all']) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.addEventListener('click', () => (name === 'all' ? playAll() : play(name)));
+    hud.appendChild(b);
+  }
+}
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#hud')) return;
+  if (wanted === 'all') playAll(); else play(wanted);
+});
+window.addEventListener('load', () => {
+  document.fonts.ready.then(() => {
+    /* التصيير: لا تشغيل تلقائي — promo-render.js يقود المشهد إطاراً بإطار */
+    if (RENDER) { window.__promoReady = true; return; }
+    /* وضع تجميد للفحص البصري: ?pause=broken يعرض السطر المكسور ساكناً بلا تشغيل */
+    if (params.get('pause') === 'broken') {
+      show('#hook');
+      gsap.set('#brokenLine span', { opacity: 1 });
+      return;
+    }
+    if (wanted === 'all') playAll(); else play(wanted);
+  });
+});
+</script>
+</body>
+</html>

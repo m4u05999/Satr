@@ -1,5 +1,5 @@
 // <satr-context-panel> — لوحة «/سياق»: امتلاء نافذة السياق وتوزيع الرموز (تفكيك ت-3).
-// العقد: open(cwd, sessionId, busy) — حالة الجلسة/الانشغال ملك القشرة وتُمرَّر لحظة
+// العقد: open(cwd, sessionId, busy, engine) — حالة الجلسة/الانشغال ملك القشرة وتُمرَّر لحظة
 // الفتح (لا يقرؤها المكوّن)؛ close() يغلق؛ حدث «panel-refresh» من زر تحديث كي تعيد
 // القشرة الفتح بحالة طازجة (busy/sessionId يتغيّران واللوحة مفتوحة). نقل حرفي (ت-3).
 // أشرطة النسب عبر CSSOM (style.width من JS) — مسموح تحت CSP (المحظور السمات المضمّنة).
@@ -48,10 +48,17 @@ class SatrContextPanel extends HTMLElement {
 
   close() { this.removeAttribute('open'); }
 
-  async open(cwd, sessionId, busy) {
+  async open(cwd, sessionId, busy, engine) {
     this.setAttribute('open', '');
     this._list.innerHTML = '<div class="hint">جارٍ الحساب…</div>';
-    const r = await window.satr.contextUsage(cwd || '', sessionId);
+    if (engine === 'kimi-code' && busy) {
+      this._list.textContent = '';
+      const hint = document.createElement('div'); hint.className = 'hint';
+      hint.textContent = 'انتظر انتهاء طلب Kimi الجاري ثم حدّث السياق.';
+      this._list.appendChild(hint);
+      return;
+    }
+    const r = await window.satr.contextUsage(cwd || '', sessionId, engine || 'sdk');
     this._list.innerHTML = '';
     if (!r || !r.ok) {
       const h = document.createElement('div'); h.className = 'hint';

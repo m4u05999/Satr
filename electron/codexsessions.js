@@ -10,6 +10,7 @@
 const path = require('path');
 const os = require('os');
 const fsp = require('fs/promises');
+const { queryCodex } = require('./codexrpc');
 
 const SESSIONS_ROOT = path.join(os.homedir(), '.codex', 'sessions');
 // معرّف الخيط UUID-like (أرقام/حروف hex وشرطات) — مكوّن واحد بلا فواصل مسار
@@ -70,7 +71,7 @@ function eventMessage(e) {
 }
 
 // قائمة جلسات Codex، الأحدث أولاً — رأس كل ملف فقط لالتقاط العنوان والـ cwd
-async function listCodexSessions() {
+async function listCodexSessionsLegacy() {
   let files = [];
   try { files = await walkJsonl(SESSIONS_ROOT); } catch { return []; }
   if (!files.length) return [];
@@ -119,7 +120,7 @@ async function listCodexSessions() {
 
 // قراءة جلسة Codex بمعرّفها: cwd + آخر رسائلها للعرض. البحث بمطابقة لاحقة اسم الملف
 // (rollout-…-<id>.jsonl) مع تحقّق أن المسار داخل مجلد الجلسات (حزام أمان فوق safeId).
-async function readCodexSession(id) {
+async function readCodexSessionLegacy(id) {
   if (!safeId(id)) return { error: 'bad_args' };
   let files = [];
   try { files = await walkJsonl(SESSIONS_ROOT); } catch { return { error: 'not_found' }; }
@@ -142,4 +143,109 @@ async function readCodexSession(id) {
   return { cwd, total: messages.length, messages: messages.slice(-MAX_MESSAGES) };
 }
 
-module.exports = { listCodexSessions, readCodexSession };
+function codexBin() {
+  try { return require('./codex').resolveCodexBin(); } catch { return null; }
+}
+
+async function rpc(method, params) {
+  const bin = codexBin();
+  if (!bin) throw new Error('codex_unavailable');
+  return queryCodex(bin, method, params, { timeoutMs: 10000 });
+}
+
+function userInputText(content) {
+  if (!Array.isArray(content)) return '';
+  return content.map((item) => {
+    if (!item) return '';
+    if (item.type === 'text') return item.text || '';
+    if (item.type === 'skill') return '/' + (item.name || 'skill');
+    if (item.type === 'mention') return '@' + (item.name || 'file');
+    if (item.type === 'image' || item.type === 'localImage') return '[صورة]';
+    return '';
+  }).filter(Boolean).join(' ').trim();
+}
+
+async function listCodexSessions() {
+  try {
+    const result = await rpc('thread/list', {
+      limit: MAX_SESSIONS,
+      archived: false,
+      sortKey: 'updated_at',
+      sortDirection: 'desc',
+    });
+    const data = Array.isArray(result && result.data) ? result.data : [];
+    return data.filter((thread) => thread && safeId(thread.id)).map((thread) => ({
+      id: thread.id,
+      cwd: typeof thread.cwd === 'string' ? thread.cwd : '',
+      title: String(thread.name || thread.preview || 'جلسة Codex').replace(/\s+/g, ' ').slice(0, 90),
+      mtime: (Number(thread.recencyAt || thread.updatedAt || thread.createdAt) || 0) * 1000,
+      size: 0,
+      status: typeof thread.status === 'string' ? thread.status : null,
+    }));
+  } catch {
+    return listCodexSessionsLegacy();
+  }
+}
+
+async function readCodexSession(id) {
+  if (!safeId(id)) return { error: 'bad_args' };
+  try {
+    const result = await rpc('thread/read', { threadId: id, includeTurns: true });
+    const thread = result && result.thread;
+    if (!thread || !Array.isArray(thread.turns)) return { error: 'not_found' };
+    const messages = [];
+    for (const turn of thread.turns) {
+      for (const item of Array.isArray(turn && turn.items) ? turn.items : []) {
+        if (item.type === 'userMessage') {
+          const text = userInputText(item.content);
+          if (text) messages.push({ role: 'user', text });
+        } else if (item.type === 'agentMessage' && item.text) {
+          messages.push({ role: 'assistant', text: item.text });
+        }
+      }
+    }
+    return {
+      cwd: typeof thread.cwd === 'string' ? thread.cwd : '',
+      total: messages.length,
+      messages: messages.slice(-MAX_MESSAGES),
+    };
+  } catch {
+    return readCodexSessionLegacy(id);
+  }
+}
+
+async function setCodexSessionName(id, name) {
+  if (!safeId(id) || typeof name !== 'string' || name.length > 120) return { ok: false, error: 'bad_args' };
+  try { await rpc('thread/name/set', { threadId: id, name: name.trim() }); return { ok: true }; }
+  catch { return { ok: false, error: 'codex_unavailable' }; }
+}
+
+async function archiveCodexSession(id) {
+  if (!safeId(id)) return { ok: false, error: 'bad_args' };
+  try { await rpc('thread/archive', { threadId: id }); return { ok: true }; }
+  catch { return { ok: false, error: 'codex_unavailable' }; }
+}
+
+async function deleteCodexSession(id) {
+  if (!safeId(id)) return { ok: false, error: 'bad_args' };
+  try { await rpc('thread/delete', { threadId: id }); return { ok: true }; }
+  catch { return { ok: false, error: 'codex_unavailable' }; }
+}
+
+async function forkCodexSession(id) {
+  if (!safeId(id)) return { ok: false, error: 'bad_args' };
+  try {
+    const result = await rpc('thread/fork', { threadId: id, excludeTurns: true });
+    const threadId = result && result.thread && result.thread.id;
+    return threadId && safeId(threadId) ? { ok: true, id: threadId } : { ok: false, error: 'invalid_response' };
+  } catch { return { ok: false, error: 'codex_unavailable' }; }
+}
+
+module.exports = {
+  listCodexSessions,
+  readCodexSession,
+  setCodexSessionName,
+  archiveCodexSession,
+  deleteCodexSession,
+  forkCodexSession,
+};

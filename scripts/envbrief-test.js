@@ -5,12 +5,16 @@ const fs = require('fs');
 const path = require('path');
 const envbrief = require('../electron/envbrief');
 const codexmcp = require('../electron/codexmcp');
+const kimi = require('../electron/kimi');
 const tools = require('../electron/tools');
 
 const root = path.resolve(__dirname, '..');
 const agentSource = fs.readFileSync(path.join(root, 'electron', 'agent.js'), 'utf8');
 const sdkActual = Array.from(agentSource.matchAll(/sdk\.tool\(\s*['"]([^'"]+)['"]/g), (match) => match[1]);
 const codexActual = codexmcp.buildTools({ preview: {} }).map((tool) => tool.name);
+const kimiActual = codexmcp.buildTools({
+  preview: {}, extraTools: kimi._internals.buildSatrMcpTools(root, { enabled: [] }, () => {}),
+}).map((tool) => tool.name);
 const adapterActual = tools.defs().map((def) => def.function.name);
 
 function sameNames(actual, declared, engine) {
@@ -27,9 +31,10 @@ function sameNames(actual, declared, engine) {
 
 sameNames(sdkActual, envbrief.toolNames('sdk'), 'sdk');
 sameNames(codexActual, envbrief.toolNames('codex'), 'codex');
+sameNames(kimiActual, envbrief.toolNames('kimi-code'), 'kimi-code');
 sameNames(adapterActual, envbrief.toolNames('adapter'), 'adapter');
 
-for (const engine of ['sdk', 'codex']) {
+for (const engine of ['sdk', 'codex', 'kimi-code']) {
   const brief = envbrief.build(engine, 'test-model');
   assert(brief.includes('نطاق خارجي جديد') && brief.includes('localhost موثوق دائماً'), 'موجز ' + engine + ' لا يشرح سياسة النطاقات الموثوقة');
   assert(brief.includes('browser_set_viewport') && brief.includes('دليلاً'), 'موجز ' + engine + ' لا يفرض تحقق التجاوب بدليل');
@@ -44,7 +49,7 @@ for (const engine of ['sdk', 'codex']) {
 }
 
 for (const file of [
-  'electron/agent.js', 'electron/codex.js',
+  'electron/agent.js', 'electron/codex.js', 'electron/kimi.js',
   'electron/adapters/openai-compatible.js', 'electron/adapters/gemini.js',
 ]) {
   assert(fs.readFileSync(path.join(root, file), 'utf8').includes('envbrief.build('), file + ' لا يستهلك envbrief');

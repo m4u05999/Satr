@@ -61,11 +61,13 @@
           <label for="effort">جهد التفكير</label>
           <select id="effort" title="كم يفكّر النموذج قبل الرد — الأعلى أدق وأبطأ وأكلف (يُخفَّض صامتاً إن لم يدعمه النموذج)">
             <option value="">الافتراضي</option>
+            <option value="minimal">أدنى — لأقصر زمن استجابة</option>
             <option value="low">منخفض — أسرع وأرخص</option>
             <option value="medium">متوسط</option>
             <option value="high">مرتفع</option>
             <option value="xhigh">مرتفع جداً</option>
             <option value="max">أقصى — للمهام المعقدة</option>
+            <option value="ultra">فائق — للوكلاء المتعددين</option>
           </select>
         </div>
         <div class="field">
@@ -153,7 +155,7 @@
     </select>
     <span class="ct-label">النموذج</span>
     <select id="model" title="النموذج"><option value="">الافتراضي</option></select>
-    <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (محرك SDK)">📎 إرفاق</button>
+    <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (للمحركات الداعمة للصور)">📎 إرفاق</button>
     <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
   </div>
   <div id="awarenessBar" class="awareness-bar" aria-label="حالة الدور الحالية">
@@ -169,7 +171,7 @@
     <div id="slashMenu" role="listbox"></div>
     <div id="fileMenu" role="listbox"></div>
     <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1" spellcheck="true"></textarea>
-    <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح: امنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح فقط — محرك SDK)">🖱️ متصفح</button>
+    <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح: امنح المحرك الأصلي صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح فقط)">🖱️ متصفح</button>
     <button id="send">إرسال</button>
   </div>
   <div class="statusline">
@@ -205,7 +207,7 @@
 <!-- مربع الأذونات العربي: مكوّن Web Component (تفكيك ت-8) — الطابور والرد داخله -->
 <satr-perm-dialog role="dialog" aria-modal="true" aria-label="طلب إذن لاستخدام أداة"></satr-perm-dialog>
 
-<!-- أسئلة الاختيار العربية (AskUserQuestion، محرك SDK): مكوّن مستقل، الرد بمؤشرات فقط -->
+<!-- أسئلة الاختيار العربية (SDK وKimi ACP): مكوّن مستقل، الرد بمؤشرات فقط -->
 <satr-question-dialog></satr-question-dialog>
 
 <!-- لوحة /جلسات: مكوّن Web Component (تفكيك ت-4) — الاستئناف حدث session-resume للقشرة -->

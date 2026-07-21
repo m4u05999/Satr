@@ -81,14 +81,33 @@ window.__promoStudioReady = (async () => {
   root.querySelector('.scene[data-index="0"] button[data-action="down"]').click();
   const duration = root.querySelector('.scene[data-index="0"] .duration');
   duration.value = '650'; duration.dispatchEvent(new Event('change', { bubbles: true }));
+  const trim = root.querySelector('.scene[data-index="0"] .trim');
+  trim.value = '100'; trim.dispatchEvent(new Event('change', { bubbles: true }));
+  const fit = root.querySelector('.scene[data-index="0"] .fit');
+  fit.value = 'contain'; fit.dispatchEvent(new Event('change', { bubbles: true }));
+  const position = root.querySelector('.scene[data-index="0"] .caption-position');
+  position.value = 'top'; position.dispatchEvent(new Event('change', { bubbles: true }));
+  const style = root.querySelector('.scene[data-index="0"] .caption-style');
+  style.value = 'minimal'; style.dispatchEvent(new Event('change', { bubbles: true }));
+  for (const [field, value] of [['clip_volume', '0.7'], ['music_volume', '0.2'], ['voice_volume', '0.8']]) {
+    const control = root.querySelector(`.scene[data-index="0"] input[type="number"][data-field="${field}"]`);
+    control.value = value; control.dispatchEvent(new Event('change', { bubbles: true }));
+  }
   const musicSelect = root.querySelector('.scene[data-index="0"] .music');
   musicSelect.value = ''; musicSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  root.querySelector('.scene[data-index="0"] button[data-action="duplicate"]').click();
+  const totalLabel = root.getElementById('status').textContent;
   root.querySelector('.scene[data-index="0"] button[data-action="rerecord"]').click();
   const edited = studio.getStoryboard();
-  if (edited.scenes[0].asset !== paths.second || edited.scenes[1].caption !== 'عنوان عربي مُحرّر'
+  if (edited.scenes.length !== 3 || edited.scenes[0].asset !== paths.second || edited.scenes[2].caption !== 'عنوان عربي مُحرّر'
       || edited.scenes[0].duration_ms !== 650 || edited.scenes[0].music !== '' || captureStarts !== 1) {
     throw new Error('timeline_edit_failed');
   }
+  const duplicated = edited.scenes[1].id !== edited.scenes[0].id && edited.scenes[1].id.includes('_copy_');
+  const advancedControls = edited.scenes[0].trim_start_ms === 100 && edited.scenes[0].fit === 'contain'
+    && edited.scenes[0].caption_position === 'top' && edited.scenes[0].caption_style === 'minimal'
+    && edited.scenes[0].clip_volume === 0.7 && edited.scenes[0].music_volume === 0.2
+    && edited.scenes[0].voice_volume === 0.8;
   if (!root.getElementById('render').disabled) throw new Error('approval_gate_failed');
   root.getElementById('approve').click();
   if (root.getElementById('render').disabled) throw new Error('approval_gate_failed');
@@ -100,9 +119,12 @@ window.__promoStudioReady = (async () => {
   window.__promoStudioResult = {
     ...result,
     reordered: edited.scenes[0].asset === paths.second,
-    editedCaption: edited.scenes[1].caption,
+    editedCaption: edited.scenes[2].caption,
     editedDuration: edited.scenes[0].duration_ms,
     musicChanged: edited.scenes[0].music === '',
+    duplicated,
+    advancedControls,
+    totalLabel,
     captureStarts,
     csp: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content,
   };

@@ -113,6 +113,45 @@ async function main() {
     await waitFor(win, "document.getElementById('awarenessContext').textContent.includes('42%')", 'تحديث مؤشر السياق');
     assert.strictEqual(await evaluate(win, "document.querySelector('satr-context-panel').hasAttribute('open')"), true);
 
+    await evaluate(win, `(() => {
+      const engine = document.getElementById('engine');
+      engine.value = 'kimi-code';
+      engine.dispatchEvent(new Event('change', { bubbles: true }));
+      const input = document.getElementById('input');
+      input.value = '/';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await waitFor(win,
+      "document.getElementById('slashMenu').classList.contains('open')",
+      'قائمة أوامر Kimi');
+    const kimiParity = await evaluate(win, `(() => {
+      const commands = [...document.getElementById('slashMenu').querySelectorAll('.slash-item')]
+        .map((item) => item.dataset.command);
+      document.getElementById('awarenessContext').click();
+      return {
+        model: document.getElementById('model').value,
+        effortDisabled: document.getElementById('effort').disabled,
+        awarenessDisabled: document.getElementById('awarenessEffort').disabled,
+        awarenessText: document.getElementById('awarenessEffort').textContent,
+        commands,
+      };
+    })()`);
+    assert.strictEqual(kimiParity.model, 'k3');
+    assert.strictEqual(kimiParity.effortDisabled, true);
+    assert.strictEqual(kimiParity.awarenessDisabled, true);
+    assert(kimiParity.awarenessText.includes('ACP default'));
+    assert(kimiParity.commands.includes('/سياق') && kimiParity.commands.includes('/ضغط'));
+    assert(!kimiParity.commands.includes('/مهارات'));
+    await waitFor(win,
+      "window.__SATR_TESTSPRITE_HARNESS__.calls.some((call) => call.name === 'contextUsage' && call.args[2] === 'kimi-code')",
+      'توجيه سياق Kimi');
+    await evaluate(win, `(() => {
+      const engine = document.getElementById('engine');
+      engine.value = 'sdk';
+      engine.dispatchEvent(new Event('change', { bubbles: true }));
+      const input = document.getElementById('input'); input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+
     const draftState = await evaluate(win, `(() => {
       const first = 'C:\\\\مشروع\\\\أ';
       const second = 'C:\\\\مشروع\\\\ب';
@@ -309,7 +348,7 @@ async function main() {
     });
 
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console/CSP: ' + consoleErrors.join(' | '));
-    console.log('daily-loop-ui: نجح — الوعي، التعديل/الإعادة، المسودات، البحث، التغييرات، الجلسات، الإيقاف والاختصارات؛ صفر CSP/console.');
+    console.log('daily-loop-ui: نجح — الوعي وتكافؤ Kimi، التعديل/الإعادة، المسودات، البحث، التغييرات، الجلسات، الإيقاف والاختصارات؛ صفر CSP/console.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
     await new Promise((resolve) => server.close(resolve));

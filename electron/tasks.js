@@ -195,6 +195,14 @@ function apply(update, options) {
   if (!incoming.length && update.mode !== 'replace') return null;
   const previous = readFile(file);
   const mode = MODES.has(update.mode) ? update.mode : 'merge';
+  const source = cleanText(update.source, 64) || 'engine';
+
+  // خطة Kimi التلقائية (source: kimi_plan) لا تستبدل سجلاً صريحاً أنشأه
+  // المستخدم أو أداة update_task_ledger (أي مصدر غير kimi_plan).
+  if (mode === 'replace' && source === 'kimi_plan' && previous && previous.source !== 'kimi_plan') {
+    return publicLedger(previous);
+  }
+
   const nextTasks = mode === 'replace' ? incoming : mergeTasks(previous ? previous.tasks : [], incoming);
   const ledger = {
     schema_version: SCHEMA_VERSION,
@@ -202,7 +210,7 @@ function apply(update, options) {
     session_id: sessionId,
     revision: (previous ? previous.revision : 0) + 1,
     state: deriveState(nextTasks, previous && previous.state),
-    source: cleanText(update.source, 64) || 'engine',
+    source,
     updated_at: Date.now(),
     tasks: nextTasks,
   };

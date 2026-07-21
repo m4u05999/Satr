@@ -13,6 +13,12 @@ const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.webm', '.mp4']);
 const TRANSITIONS = new Set(['cut', 'fade']);
+const FITS = new Set(['cover', 'contain']);
+const CAPTION_POSITIONS = new Set(['top', 'center', 'bottom']);
+const CAPTION_STYLES = new Set(['box', 'minimal']);
+const DEFAULT_CLIP_VOLUME = 1;
+const DEFAULT_MUSIC_VOLUME = 0.34;
+const DEFAULT_VOICE_VOLUME = 1;
 
 function localAsset(downloadsPath, candidate, extensions, exists = fs.existsSync, realpath) {
   if (typeof candidate !== 'string' || candidate.length > 4096 || !path.isAbsolute(candidate)
@@ -25,6 +31,27 @@ function localAsset(downloadsPath, candidate, extensions, exists = fs.existsSync
     const canonicalAsset = realpath(resolved);
     return promocapture.isInsideDownloads(canonicalRoot, canonicalAsset) ? canonicalAsset : '';
   } catch { return ''; }
+}
+
+function isSafeId(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,96}$/.test(value);
+}
+
+function cleanInt(value, min, max, defaultValue) {
+  if (!Number.isInteger(value)) return defaultValue;
+  if (!Number.isFinite(value) || Number.isNaN(value)) return defaultValue;
+  if (value < min || value > max) return defaultValue;
+  return value;
+}
+
+function cleanFloat(value, min, max, defaultValue) {
+  if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) return defaultValue;
+  if (value < min || value > max) return defaultValue;
+  return value;
+}
+
+function cleanEnum(value, allowed, defaultValue) {
+  return allowed.has(value) ? value : defaultValue;
 }
 
 function sanitizeStoryboard(input, options) {
@@ -51,8 +78,16 @@ function sanitizeStoryboard(input, options) {
     }
     const caption = typeof raw.caption === 'string' ? raw.caption.trim().slice(0, MAX_CAPTION) : '';
     const transition = TRANSITIONS.has(raw.transition) ? raw.transition : 'cut';
+    const id = isSafeId(raw.id) ? raw.id : ('scene_' + String(index + 1));
+    const trimStartMs = cleanInt(raw.trim_start_ms, 0, MAX_DURATION_MS, 0);
+    const fit = cleanEnum(raw.fit, FITS, 'cover');
+    const captionPosition = cleanEnum(raw.caption_position, CAPTION_POSITIONS, 'bottom');
+    const captionStyle = cleanEnum(raw.caption_style, CAPTION_STYLES, 'box');
+    const clipVolume = cleanFloat(raw.clip_volume, 0, 1, DEFAULT_CLIP_VOLUME);
+    const musicVolume = cleanFloat(raw.music_volume, 0, 1, DEFAULT_MUSIC_VOLUME);
+    const voiceVolume = cleanFloat(raw.voice_volume, 0, 1, DEFAULT_VOICE_VOLUME);
     scenes.push({
-      id: 'scene_' + String(index + 1),
+      id,
       asset,
       asset_type: IMAGE_EXTENSIONS.has(path.extname(asset).toLowerCase()) ? 'image' : 'video',
       caption,
@@ -60,6 +95,13 @@ function sanitizeStoryboard(input, options) {
       transition,
       music,
       voice,
+      trim_start_ms: trimStartMs,
+      fit,
+      caption_position: captionPosition,
+      caption_style: captionStyle,
+      clip_volume: clipVolume,
+      music_volume: musicVolume,
+      voice_volume: voiceVolume,
     });
   }
   let aspect = promocapture.sanitizeAspect(input && input.aspect);
@@ -116,6 +158,8 @@ const singleton = create();
 module.exports = {
   MAX_SCENES, MAX_CAPTION, MIN_DURATION_MS, MAX_DURATION_MS,
   VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, AUDIO_EXTENSIONS, TRANSITIONS,
+  FITS, CAPTION_POSITIONS, CAPTION_STYLES,
+  DEFAULT_CLIP_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME,
   localAsset, sanitizeStoryboard, create,
   configure: (...args) => singleton.configure(...args),
   propose: (...args) => singleton.propose(...args),

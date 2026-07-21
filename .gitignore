@@ -32,3 +32,9 @@ desktop.ini
 
 # checkout خاص اختياري للتطوير المحلي؛ كود Enterprise لا يدخل مستودع Community
 /enterprise/
+
+# مخرجات فيديو البرومو المولّدة محلياً — تُعاد صناعتها من مصادر promo/ ولا تدخل Git
+/promo/**/*.mp4
+/promo/**/*.mp3
+/promo/frames/
+/promo/.frames/

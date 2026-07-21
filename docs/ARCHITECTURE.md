@@ -33,7 +33,9 @@ satr/
 ├── electron/            ← النواة (Community) — العملية الرئيسية (MIT)
 │   ├── main.js          (النافذة، توجيه المحرّكات، IPC)
 │   ├── agent.js         (محرك Claude SDK — خاص)
-│   ├── adapters/        (طبقة المحرّكات/المزوّدين: claude-cli, gemini(REST), Ollama, index.js)
+│   ├── codex.js         (محرك Codex الأصيل عبر app-server)
+│   ├── kimi.js          (محرك Kimi Code الأصيل عبر ACP)
+│   ├── adapters/        (طبقة المحرّكات/المزوّدين: claude-cli, REST/OpenAI-compatible, Ollama)
 │   ├── keys.js          (مخزن أسرار «سطر» — بذرة إعدادات Enterprise)
 │   ├── features.js      (طبقة feature-flags + المُحمِّل الشرطي — تُضاف في §5)
 │   └── … (term, diff, sessions, files, skills, agents, bgprocs, updater)
@@ -143,15 +145,21 @@ Enterprise يسجّل معالجات IPC إضافية عبر `ee.registerIpc(ipc
 
 ---
 
-## 8) الحالة الراهنة (2026-07-17)
+## 8) الحالة الراهنة (2026-07-20)
 
-- ✅ طبقة `adapters/` موجودة (claude-cli, gemini REST) — أول نقطة ربط.
+- ✅ طبقة `adapters/` موجودة (claude-cli، Gemini REST، OpenAI Responses،
+  DeepSeek/Qwen/Kimi API/MiniMax عبر OpenAI-compatible، وOllama المحلي).
+- ✅ `electron/kimi.js`: محرك `Kimi Code` أصيل مستقل عبر ACP v1 واشتراك OAuth؛ جلسات
+  `new/resume/list/load`، أذونات ثنائية الاتجاه، filesystem محصور، وأدوات المعاينة/
+  الخلفية/البرومو + مهارات سطر والتحقق وسجل المهام والذاكرة عبر MCP المحلي.
 - ✅ `keys.js` (مخزن أسرار) — بذرة الإعدادات.
 - ✅ `features.js` (feature-flags + المُحمِّل الشرطي §4.1/§4.4) — **مُنجز** (§5-ج). مُهيّأ في
   main.js، IPC `satr:features` + preload، متحقَّق: النواة تعمل بلا `enterprise/`، وتحمّله إن وُجد.
 - ✅ تعميم طبقة المزوّد بـ `register()` — **مُنجز** (§5-أ): سجلّ قابل للحقن + `list()` +
-  مصنع `openai-compatible.js` (متحقَّق حيّاً عبر نقطة Gemini المتوافقة) + تسجيل DeepSeek/Qwen
-  + IPC `satr:providers`. إضافة مزوّد جديد = سطر `register()` واحد.
+  مصنع `openai-compatible.js` + تسجيل DeepSeek/Qwen/Kimi/MiniMax + IPC `satr:providers`.
+  يدعم المصنع عقود التفكير الخاصة اختيارياً؛ خيار Kimi API يحفظ `reasoning_content` عبر
+  tool calls ويطبّق جهد التفكير و`prompt_cache_key` الثابت للجلسة دون تغيير بقية المزوّدين.
+  إضافة مزوّد جديد = تسجيل واحد.
 - ✅ ربط قائمة «المحرك» في الواجهة بـ `satr:providers` (ديناميكياً) — مُنجز (§5-أ-تكملة UI).
 - ✅ تفكيك الواجهة لمكوّنات (§5-د) — **مُنجز (2026-07-11)**: 14 دفعة ت-0…ت-13 اكتملت
   كلها (الخطة والسجل بالدروس في `docs/COMPONENTS-PLAN.md`). النتيجة: 14 مكوّن Web

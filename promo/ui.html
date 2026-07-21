@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>سطر — لقطات الواجهة (محاكاة للإعلان)</title>
+<!--
+  نماذج واجهة «سطر» للإعلان (لقطات: اطلب/عايِن/سلّم) — تحاكي مكوّنات الواجهة الإنتاجية
+  بلوحة ألوانها وخطها (نمط site-shots.html)، وتُحرَّك بـ GSAP وتُصيَّر إطارياً مثل
+  مشاهد الـ typography (promo-render.js يقودها بـ ?render=1). ليست التطبيق الحقيقي —
+  محاكاة بصرية عالية الدقة تندمج بنفس جودة 1080p60.
+  المشاهد: ?scene=otlob | 3ayen | sallem  (+ ?render=1 للتصيير، ?hud=1 للمعاينة)
+-->
+<link rel="stylesheet" href="vendor/fonts.css">
+<style>
+  :root {
+    --bg: #111110; --bg-deep: #0d0d0c; --surface: #191918; --surface-2: #212020;
+    --border: #3b3a37; --border-dim: #2a2927; --text: #eeeeec; --text-dim: #b5b3ad; --text-faint: #7c7a75;
+    --gold: #D9A441; --gold-strong: #E5B655; --gold-soft: rgba(217,164,65,.12); --gold-border: rgba(217,164,65,.35);
+    --green: #71d083; --green-soft: rgba(113,208,131,.12); --green-border: rgba(113,208,131,.4);
+    --red: #ec5d5e; --red-soft: rgba(236,93,94,.1);
+    --user-surface: rgba(217,164,65,.09); --answer-surface: rgba(217,164,65,.055);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: var(--bg); overflow: hidden; }
+  body { font-family: 'IBM Plex Sans Arabic', system-ui, sans-serif; color: var(--text); font-size: 17px; }
+  .app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+
+  /* الشريط العلوي */
+  .top { height: 56px; flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 0 22px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .top .brand { color: var(--gold); font-weight: 700; font-size: 22px; margin-inline-start: auto; }
+  .top .chip { color: var(--text-dim); border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 12px; font-size: 13px; background: var(--bg); }
+  .top .chip.g { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+
+  /* الصف الأوسط: محادثة (يمين) + معاينة (يسار) */
+  .mid { flex: 1; display: flex; min-height: 0; }
+  .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 26px 30px; gap: 16px; overflow: hidden; }
+  .preview { width: 46%; flex: none; background: var(--bg-deep); border-inline-start: 1px solid var(--border);
+    display: flex; flex-direction: column; opacity: 0; }
+  .single .preview { display: none; }
+  .single .chat { padding: 34px 60px; }
+
+  /* فقاعات المحادثة */
+  .msg { display: flex; flex-direction: column; opacity: 0; }
+  .msg .who { font-size: 12.5px; color: var(--text-faint); margin-bottom: 5px; }
+  .msg.user { align-items: flex-start; }
+  .msg.user .who { color: var(--gold-strong); }
+  .bubble { max-width: 82%; padding: 12px 18px; line-height: 1.7; }
+  .msg.user .bubble { background: var(--user-surface); border-inline-start: 2px solid var(--gold-border);
+    border-radius: 12px 3px 12px 12px; }
+  .msg.bot .bubble { background: linear-gradient(135deg, var(--answer-surface), var(--surface));
+    border-inline-start: 2px solid var(--gold); border-radius: 3px 12px 12px 3px; color: var(--text-dim); }
+  .cursor-bar { display: inline-block; width: 2px; height: 1.15em; background: var(--gold);
+    vertical-align: -2px; margin-inline-start: 2px; }
+
+  /* بطاقات الأدوات */
+  .tool { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border-dim);
+    border-radius: 8px; padding: 9px 14px; font-size: 14px; color: var(--text-dim); opacity: 0; max-width: 82%; }
+  .tool .ic { color: var(--gold); font-size: 15px; }
+  .tool .nm { color: var(--text); font-family: var(--mono, 'Cascadia Code', monospace); direction: ltr; }
+  .tool .ok { margin-inline-start: auto; color: var(--green); font-weight: 700; }
+  .tool.run .ok { color: var(--gold); }
+
+  /* بطاقة diff */
+  .diff { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; max-width: 82%; opacity: 0; }
+  .diff .dh { display: flex; align-items: center; gap: 10px; padding: 9px 14px; background: var(--surface);
+    border-bottom: 1px solid var(--border-dim); font-size: 13px; }
+  .diff .dh .p { direction: ltr; font-family: var(--mono, monospace); color: var(--text-dim); }
+  .diff .dh .st { margin-inline-start: auto; direction: ltr; }
+  .diff .dh .add { color: var(--green); } .diff .dh .del { color: var(--red); }
+  .diff .db { background: var(--bg-deep); padding: 8px 0; direction: ltr; text-align: left;
+    font-family: var(--mono, 'Cascadia Code', monospace); font-size: 13px; line-height: 1.7; }
+  .diff .db .ln { padding: 0 14px; white-space: pre; }
+  .diff .db .ln.a { background: var(--green-soft); color: var(--green); }
+  .diff .db .ln.d { background: var(--red-soft); color: var(--red); }
+  .diff .db .ln.c { color: var(--text-faint); }
+
+  /* سجل المهام */
+  .tasks { border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; max-width: 82%; opacity: 0;
+    background: var(--surface); }
+  .tasks .t { display: flex; align-items: center; gap: 9px; font-size: 14px; padding: 3px 0; color: var(--text-dim); }
+  .tasks .t .b { width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid var(--border); flex: none; }
+  .tasks .t.done .b { background: var(--green); border-color: var(--green); }
+  .tasks .t.done { color: var(--text); }
+  .tasks .t.run .b { border-color: var(--gold); background: var(--gold-soft); }
+
+  /* رأس المعاينة + محتواها */
+  .pv-head { height: 46px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+    background: var(--surface); border-bottom: 1px solid var(--border); }
+  .pv-head .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--border); }
+  .pv-head .url { flex: 1; direction: ltr; text-align: left; font-family: var(--mono, monospace); font-size: 12px;
+    color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; }
+  .pv-body { flex: 1; position: relative; overflow: hidden; background: #fff; }
+
+  /* صفحة متجر القهوة المبنية داخل المعاينة (محتوى فاتح) */
+  .shop { position: absolute; inset: 0; color: #2a1c10; opacity: 0; }
+  .shop .hero { height: 58%; background: linear-gradient(135deg,#3a2415,#7a4a1e); position: relative; overflow: hidden; }
+  .shop .hero .h1 { position: absolute; inset-inline-start: 40px; bottom: 42px; color: #f4e3c8; font-size: 40px; font-weight: 700; }
+  .shop .hero .h2 { position: absolute; inset-inline-start: 40px; bottom: 20px; color: #d9b98a; font-size: 16px; }
+  .shop .hero .cta { position: absolute; inset-inline-end: 40px; bottom: 30px; background: #D9A441; color: #2a1c10;
+    padding: 12px 26px; border-radius: 30px; font-weight: 700; font-size: 15px; }
+  .shop .grid { display: flex; gap: 18px; padding: 26px 40px; }
+  .shop .card { flex: 1; background: #f6efe4; border-radius: 12px; padding: 16px; }
+  .shop .card .ph { height: 80px; background: #e2cfaa; border-radius: 8px; margin-bottom: 10px; }
+  .shop .card .nm { color: #3a2415; font-weight: 700; font-size: 15px; }
+  .shop .card .pr { color: #8a5a24; font-size: 14px; margin-top: 4px; }
+
+  /* شريط التسليم البشري 🤝 (نظير preview-panel) */
+  .handoff { position: absolute; inset-inline: 0; top: 0; display: flex; align-items: center; gap: 14px;
+    padding: 14px 18px; background: var(--gold-soft); border-bottom: 1px solid var(--gold-border);
+    backdrop-filter: blur(3px); transform: translateY(-100%); z-index: 3; }
+  .handoff .ic { font-size: 22px; }
+  .handoff .tx { flex: 1; font-size: 15px; color: var(--text); }
+  .handoff .tx b { color: var(--gold-strong); }
+  .handoff .done { background: var(--gold); color: #1a1206; border: none; font-weight: 700;
+    border-radius: 8px; padding: 9px 22px; font-size: 14px; }
+  .handoff .cancel { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 8px; padding: 9px 16px; font-size: 14px; }
+
+  /* نموذج تسجيل الدخول (محتوى المعاينة في مشهد سلّم) — صفحة تجريبية آمنة */
+  .login { position: absolute; inset: 0; background: var(--bg); display: grid; place-items: center; opacity: 0; }
+  .login .box { width: 340px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 30px 28px; display: grid; gap: 14px; }
+  .login .box h3 { color: var(--text); font-size: 20px; text-align: center; }
+  .login .box .fld { display: grid; gap: 5px; }
+  .login .box label { font-size: 13px; color: var(--text-dim); }
+  .login .box .inp { height: 42px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 0 12px; display: flex; align-items: center; direction: ltr; color: var(--text); font-size: 15px; }
+  .login .box .inp .car { width: 2px; height: 20px; background: var(--gold); }
+  .login .box .sub { height: 44px; background: var(--gold); color: #1a1206; border-radius: 8px; font-weight: 700;
+    display: grid; place-items: center; font-size: 16px; }
+  .cur-fake { position: absolute; width: 18px; height: 24px; z-index: 5; opacity: 0; pointer-events: none;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+
+  #hud { position: fixed; top: 8px; inset-inline-start: 8px; z-index: 9; display: none; gap: 6px; }
+  #hud button { background: var(--surface); color: var(--text-dim); border: 1px solid var(--border);
+    border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="top">
+    <span class="chip">🖥️</span><span class="chip">🌐</span><span class="chip g" id="engineChip">SDK · Opus</span>
+    <span class="chip">جلسة جديدة</span>
+    <span class="brand">سطر</span>
+  </div>
+  <div class="mid" id="mid">
+    <div class="chat" id="chat"></div>
+    <div class="preview" id="preview">
+      <div class="pv-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="url" id="pvUrl">http://localhost:3000</span></div>
+      <div class="pv-body" id="pvBody">
+        <div class="shop" id="shop">
+          <div class="hero"><div class="h1">قهوة مختصة</div><div class="h2">محمّصة طازجة كل صباح</div><div class="cta">اطلب الآن</div></div>
+          <div class="grid">
+            <div class="card"><div class="ph"></div><div class="nm">إثيوبي يرغاتشيف</div><div class="pr">45 ريال</div></div>
+            <div class="card"><div class="ph"></div><div class="nm">كولومبي سوبريمو</div><div class="pr">38 ريال</div></div>
+            <div class="card"><div class="ph"></div><div class="nm">يمني مطري</div><div class="pr">60 ريال</div></div>
+          </div>
+        </div>
+        <div class="login" id="login">
+          <div class="box">
+            <h3>تسجيل الدخول</h3>
+            <div class="fld"><label>البريد الإلكتروني</label><div class="inp" id="fEmail"></div></div>
+            <div class="fld"><label>كلمة المرور</label><div class="inp" id="fPass"></div></div>
+            <div class="sub">دخول</div>
+          </div>
+        </div>
+        <div class="handoff" id="handoff">
+          <span class="ic">🤝</span>
+          <span class="tx"><b>الوكيل يسلّمك القيادة:</b> سجّل دخولك ثم اضغط «استلمت»</span>
+          <button class="done" id="hoDone">استلمت ✓</button>
+          <button class="cancel">إلغاء</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<svg class="cur-fake" id="cursor" viewBox="0 0 18 24"><path d="M1 1l16 10-7 1.5 4 8-3 1.5-4-8-6 4z" fill="#fff" stroke="#000" stroke-width="1"/></svg>
+<div id="hud"></div>
+
+<script src="vendor/gsap.min.js"></script>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const params = new URLSearchParams(location.search);
+const RENDER = params.get('render') === '1';
+if (RENDER) { gsap.ticker.lagSmoothing(0); gsap.ticker.sleep(); }
+
+function typeInto(el, text, startAt) {
+  // يعيد دالة تُستدعى بزمن نسبي؛ نبنيها كـ tween على كائن يحمل عدّاد الأحرف
+  const state = { n: 0 };
+  const cursor = '<span class="cursor-bar"></span>';
+  return { state, text, el, render() { el.innerHTML = text.slice(0, Math.round(state.n)) + cursor; } };
+}
+
+/* مشهد «اطلب» (8ث): كتابة طلب عربي ⇒ بطاقات أدوات ⇒ diff ⇒ سجل مهام */
+function sceneOtlob() {
+  document.body.className = 'single';
+  const chat = $('#chat'); chat.innerHTML = '';
+  const userMsg = mk('div', 'msg user', '<div class="who">أنت</div><div class="bubble" id="uText"></div>');
+  const bot = mk('div', 'msg bot', '<div class="who">🤖 سطر · Claude</div><div class="bubble">أبني صفحة الهبوط الآن…</div>');
+  const t1 = mk('div', 'tool', '<span class="ic">✏️</span><span class="nm">write_file</span> index.html <span class="ok">✓</span>');
+  const t2 = mk('div', 'tool', '<span class="ic">✏️</span><span class="nm">write_file</span> styles.css <span class="ok">✓</span>');
+  const diff = mk('div', 'diff', '<div class="dh"><span class="ic" style="color:var(--gold)">📄</span><span class="p">index.html</span><span class="st"><span class="add">+34</span> <span class="del">−0</span></span></div>'
+    + '<div class="db"><div class="ln a">+ &lt;section class="hero"&gt;</div><div class="ln a">+   &lt;h1&gt;قهوة مختصة&lt;/h1&gt;</div><div class="ln a">+   &lt;button&gt;اطلب الآن&lt;/button&gt;</div><div class="ln c">  &lt;/section&gt;</div></div>');
+  const tasks = mk('div', 'tasks', '<div class="t done"><span class="b"></span>هيكل الصفحة</div><div class="t done"><span class="b"></span>قسم البطل والعنوان</div><div class="t run"><span class="b"></span>شبكة المنتجات</div>');
+  [userMsg, bot, t1, t2, diff, tasks].forEach((n) => chat.appendChild(n));
+
+  const uText = $('#uText');
+  const typer = typeInto(uText, 'ابنِ لي صفحة هبوط أنيقة لمتجر قهوة مختصة باللون الذهبي');
+  const tl = gsap.timeline();
+  tl.set(userMsg, { opacity: 1 })
+    .to(typer.state, { n: typer.text.length, duration: 2.0, ease: 'none', onUpdate: typer.render, onComplete: () => uText.innerHTML = typer.text }, 0)
+    .fromTo(bot, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: .4 }, 2.3)
+    .fromTo(t1, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: .35 }, 2.9)
+    .fromTo(t2, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: .35 }, 3.4)
+    .fromTo(diff, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: .45 }, 4.0)
+    .fromTo(tasks, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: .45 }, 5.2)
+    .to({}, { duration: 1.6 });
+  return tl;
+}
+
+/* مشهد «عايِن» (8ث): المعاينة تفتح، الوكيل يفحص console ويصلح، الصفحة تتحدث */
+function sceneAyen() {
+  document.body.className = '';
+  const chat = $('#chat'); chat.innerHTML = '';
+  const bot1 = mk('div', 'msg bot', '<div class="who">🤖 سطر · Claude</div><div class="bubble">أفتح المعاينة وأفحص الصفحة…</div>');
+  const t1 = mk('div', 'tool', '<span class="ic">🌐</span><span class="nm">open_preview</span> <span class="ok">✓</span>');
+  const t2 = mk('div', 'tool', '<span class="ic">📸</span><span class="nm">browser_snapshot</span> <span class="ok">✓</span>');
+  const t3 = mk('div', 'tool run', '<span class="ic">🐞</span><span class="nm">browser_console</span> <span class="ok">1 خطأ</span>');
+  const bot2 = mk('div', 'msg bot', '<div class="who">🤖 سطر · Claude</div><div class="bubble">وجدت زرّاً بلا نص — أصلحته، وتحدّثت المعاينة.</div>');
+  const t4 = mk('div', 'tool', '<span class="ic">✏️</span><span class="nm">edit_file</span> index.html <span class="ok">✓</span>');
+  [bot1, t1, t2, t3, bot2, t4].forEach((n) => chat.appendChild(n));
+
+  const prev = $('#preview'), shop = $('#shop'), cta = shop.querySelector('.cta');
+  const tl = gsap.timeline();
+  tl.fromTo(bot1, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: .4 }, 0)
+    .fromTo(t1, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: .3 }, .5)
+    .to(prev, { opacity: 1, duration: .5 }, .7)
+    .to(shop, { opacity: 1, duration: .5 }, 1.0)
+    .fromTo(t2, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: .3 }, 1.8)
+    .fromTo(t3, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: .3 }, 2.4)
+    /* «الخطأ»: زر بلا نص ⇒ يومض أحمر */
+    .set(cta, { color: 'transparent', background: '#b03a3a' }, 2.7)
+    .to(cta, { opacity: .4, duration: .25, repeat: 3, yoyo: true }, 2.8)
+    .fromTo(bot2, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: .4 }, 3.9)
+    .fromTo(t4, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: .3 }, 4.5)
+    /* الإصلاح + تحديث تلقائي: نصّ الزر يعود ذهبياً مع ومضة تحديث */
+    .to(shop, { opacity: .3, duration: .2 }, 5.1)
+    .set(cta, { color: '#2a1c10', background: '#D9A441' }, 5.3)
+    .to(shop, { opacity: 1, duration: .3 }, 5.3)
+    .to(cta, { scale: 1.08, duration: .3, repeat: 1, yoyo: true, transformOrigin: 'center' }, 5.7)
+    .to({}, { duration: 1.6 });
+  return tl;
+}
+
+/* مشهد «سلّم» (8ث): المعاينة على صفحة دخول، شريط 🤝 ينزل، كتابة يدوية، استلمت، استئناف */
+function sceneSallem() {
+  document.body.className = '';
+  const chat = $('#chat'); chat.innerHTML = '';
+  const bot1 = mk('div', 'msg bot', '<div class="who">🤖 سطر · Claude</div><div class="bubble">هذه الخطوة تحتاج تسجيل دخولك — أسلّمك القيادة.</div>');
+  const t1 = mk('div', 'tool run', '<span class="ic">🤝</span><span class="nm">browser_handoff</span> <span class="ok">بانتظارك</span>');
+  const bot2 = mk('div', 'msg bot', '<div class="who">🤖 سطر · Claude</div><div class="bubble">استلمتُ — أكمل من حيث توقفت.</div>');
+  [bot1, t1, bot2].forEach((n) => chat.appendChild(n));
+
+  const prev = $('#preview'), shop = $('#shop'), login = $('#login'), handoff = $('#handoff');
+  const email = $('#fEmail'), pass = $('#fPass'), cursor = $('#cursor'), doneBtn = $('#hoDone');
+  $('#pvUrl').textContent = 'https://demo.example.com/login';
+  gsap.set([email, pass], { innerHTML: '' });
+  gsap.set(shop, { opacity: 0 });
+  const emailText = 'demo@example.com', passText = '••••••••';
+
+  const es = { n: 0 }, ps = { n: 0 };
+  const tl = gsap.timeline();
+  tl.set(prev, { opacity: 1 })
+    .set(login, { opacity: 1 })
+    .fromTo(bot1, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: .4 }, .2)
+    .fromTo(t1, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: .3 }, .7)
+    /* الشريط ينزل */
+    .to(handoff, { y: '0%', duration: .5, ease: 'power3.out' }, 1.1)
+    /* المؤشر يتحرك للحقل ويكتب البريد يدوياً */
+    .set(cursor, { opacity: 1, left: 1140, top: 470 }, 1.8)
+    .to(cursor, { left: 1150, top: 452, duration: .5, ease: 'power2.inOut' }, 1.9)
+    .to(es, { n: emailText.length, duration: 1.1, ease: 'none',
+      onUpdate: () => email.innerHTML = emailText.slice(0, Math.round(es.n)) + '<span class="car"></span>' }, 2.4)
+    .to(cursor, { top: 512, duration: .4, ease: 'power2.inOut' }, 3.6)
+    .to(ps, { n: passText.length, duration: .8, ease: 'none',
+      onUpdate: () => pass.innerHTML = passText.slice(0, Math.round(ps.n)) + '<span class="car"></span>' }, 4.0)
+    /* المؤشر يذهب لزر «استلمت» وينقره */
+    .to(cursor, { left: 470, top: 210, duration: .6, ease: 'power2.inOut' }, 5.0)
+    .to(doneBtn, { scale: .92, duration: .12, yoyo: true, repeat: 1, transformOrigin: 'center' }, 5.65)
+    .set(cursor, { opacity: 0 }, 5.9)
+    /* الشريط يرتفع، الوكيل يستأنف */
+    .to(handoff, { y: '-100%', duration: .4, ease: 'power2.in' }, 5.9)
+    .to(login, { opacity: 0, duration: .3 }, 6.2)
+    .to(shop, { opacity: 1, duration: .4 }, 6.5)
+    .set($('#pvUrl'), { textContent: 'https://demo.example.com/dashboard' }, 6.5)
+    .fromTo(bot2, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: .4 }, 6.6)
+    .to({}, { duration: 1.2 });
+  return tl;
+}
+
+function mk(tag, cls, html) { const e = document.createElement(tag); e.className = cls; e.innerHTML = html; return e; }
+
+const SCENES = { otlob: sceneOtlob, '3ayen': sceneAyen, sallem: sceneSallem };
+let current = null;
+function build(name) {
+  if (current) { current.kill(); current = null; }
+  gsap.set('#cursor', { opacity: 0 });
+  const fn = SCENES[name]; if (!fn) return 0;
+  current = fn();
+  return current;
+}
+window.__promo = {
+  build(name) { const tl = build(name); if (!tl) return 0; tl.pause(0); return tl.duration(); },
+  seek(t) { if (!current) return false; current.time(t, false); gsap.ticker.tick(); return true; },
+};
+
+const wanted = params.get('scene') || 'otlob';
+if (params.get('hud') === '1') {
+  const hud = $('#hud'); hud.style.display = 'flex';
+  for (const n of Object.keys(SCENES)) {
+    const b = document.createElement('button'); b.textContent = n;
+    b.addEventListener('click', () => { const tl = build(n); if (tl) tl.restart(); });
+    hud.appendChild(b);
+  }
+}
+window.addEventListener('load', () => {
+  document.fonts.ready.then(() => {
+    if (RENDER) { window.__promoReady = true; return; }
+    const tl = build(wanted); if (tl) tl.play(0);
+  });
+});
+document.addEventListener('click', (e) => { if (e.target.closest('#hud')) return; const tl = build(wanted); if (tl) tl.restart(); });
+</script>
+</body>
+</html>

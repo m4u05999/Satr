@@ -7,8 +7,8 @@
  * القرارات المثبّتة:
  *  - **لا يعمل إلا في النسخة المحزومة** (app.isPackaged): في التطوير لا معنى للتحديث،
  *    وelectron-updater يرمي بلا dev-app-update.yml — فنتخطّاه صامتاً في npm start.
- *  - **بلا توقيع رقمي**: تحقق حيّ من التوثيق — ويندوز NSIS يحدّث بلا شهادة (بعكس ماك).
- *    مثبّتنا per-user (oneClick:false, perMachine:false) فلا حاجة صلاحيات مدير.
+ *  - **التوقيع شرط تشغيل**: قناة التحديث معطّلة افتراضياً، ولا تُفعّل إلا إذا صرّح البناء
+ *    بأنه موقّع. موافقة المستخدم على التنزيل لا تعوّض التحقق من هوية الناشر.
  *  - **موافقة صريحة في كل خطوة** (قرار المالك 2026-07-12): لا تنزيل ولا تثبيت تلقائيان.
  *    autoDownload=false ⇒ نُشعر «تتوفّر نسخة» وننتظر «نزّل الآن» (downloadUpdate).
  *    autoInstallOnAppQuit=false ⇒ إغلاق التطبيق لا يثبّت شيئاً؛ التثبيت حصراً بزرّ
@@ -20,12 +20,12 @@ let autoUpdater = null;
 
 // يُهيّأ من main.js بدالة بثّ للواجهة (obj → satr:event) — نفس نمط بقية المحرّكات
 function shouldEnableUpdates(app, options = {}) {
-  return !!(app && app.isPackaged) && options.edition !== 'enterprise';
+  return !!(app && app.isPackaged) && options.edition !== 'enterprise' && options.signed === true;
 }
 
 function initUpdater(app, emit, options = {}) {
   // التطوير: لا تحديث (لا نسخة محزومة). التخطي صامت كي لا يعكّر npm start.
-  // Enterprise لا يرث قناة GitHub العامة؛ قناته الخاصة تُضاف بعقد مستقل لاحقاً.
+  // Enterprise لا يرث قناة GitHub العامة، والبناء غير الموقّع لا يحمّل تحديثات تنفيذية.
   if (!shouldEnableUpdates(app, options)) return;
 
   try {
