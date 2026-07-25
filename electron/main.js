@@ -465,6 +465,16 @@ ipcMain.handle('satr:kimiModels', async () => {
     .slice(0, 12);
 });
 
+// مساعد تسجيل الدخول: يشغّل `kimi login` في طرفية النموذج المرئية دون أتمتة إدخال.
+// لا يُمرَّر أي credential من الواجهة — المستخدم يُكمل الخطوات يدوياً في التبويب.
+ipcMain.handle('satr:kimiLogin', async (event, cwd) => {
+  const bin = kimi.resolveKimiBin(true);
+  if (!bin) return { ok: false, error: 'not_installed' };
+  const dir = kimi._internals.loginCwd(cwd);
+  const started = termjobs.startJob(dir, kimi._internals.loginCommand(bin), 'تسجيل دخول Kimi Code');
+  return started.ok ? { ok: true, id: started.id } : { ok: false, error: started.error };
+});
+
 // ---------- مركز مفاتيح المزوّدين (§4.3 — مخزن الأسرار) ----------
 // 🔒 أمان: الأسماء المقبولة محصورة بمفاتيح المزوّدين المسجّلين فقط، والقيم لا تُعاد
 // للواجهة أبداً (satr:keysList يعيد الأسماء المضبوطة فقط). التكاملات المسجّلة وحدها قد
@@ -1395,6 +1405,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
         permissionMode: nonSdkPerm(payload.permissionMode),
         skills: sanitizeSkills(payload.skills),
         effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
+        thinking: payload.thinking === 'on' ? 'on' : null,
         browserControl: payload.browserControl === true ? true : null,
         trustedBrowserOrigins,
         browserBudget,

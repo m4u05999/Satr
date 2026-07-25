@@ -408,6 +408,64 @@ async function testPlanModeLifecycle() {
   }
 }
 
+async function testReadTextFileLineLimit() {
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-kimi-read-'));
+  const longFile = path.join(sandbox, 'long.txt');
+  const hugeFile = path.join(sandbox, 'huge.txt');
+  const lastLine = 'السطر الأخير 2500';
+  const lines = Array.from({ length: 2499 }, (_, i) => 'سطر ' + (i + 1));
+  lines.push(lastLine);
+  fs.writeFileSync(longFile, lines.join('\n'), 'utf8');
+  fs.writeFileSync(hugeFile, 'x'.repeat(2 * 1024 * 1024 + 1), 'utf8');
+
+  const events = [];
+  let promptId;
+  let longContent;
+  let hugeRejected;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      } else if (message.method === 'session/new') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_readlimit_1' } });
+      } else if (message.method === 'session/prompt') {
+        promptId = message.id;
+        proc.send({ jsonrpc: '2.0', id: 900, method: 'fs/read_text_file', params: {
+          sessionId: 'kimi_readlimit_1', path: longFile,
+        } });
+      } else if (message.id === 900 && message.result) {
+        longContent = message.result.content;
+        proc.send({ jsonrpc: '2.0', id: 901, method: 'fs/read_text_file', params: {
+          sessionId: 'kimi_readlimit_1', path: hugeFile,
+        } });
+      } else if (message.id === 901 && message.error) {
+        hugeRejected = message.error.code === -32602;
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_readlimit_1', update: {
+            sessionUpdate: 'agent_message_chunk', messageId: 'answer_read',
+            content: { type: 'text', text: 'تمت القراءة' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  try {
+    await engine.start({
+      prompt: 'اقرأ الملف', sessionId: null, model: 'k3', permissionMode: 'default',
+      skills: [], images: [], browserControl: false,
+    }, sandbox, (event) => events.push(event));
+    await waitFor(() => events.some((event) => event.type === 'result'));
+    assert.ok(longContent && longContent.includes(lastLine), 'يجب قراءة ملف 2500 سطر كاملاً حتى السطر الأخير');
+    assert.strictEqual(longContent.split('\n').length, 2500, 'يجب أن يحتوي الرد على 2500 سطر');
+    assert.strictEqual(hugeRejected, true, 'يجب رفض الملف الأكبر من 2MiB');
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
 async function testSessionBrowser() {
   const spawned = [];
   const listRequests = [];
@@ -721,6 +779,157 @@ async function testListModelsFromAcp() {
   assert.deepStrictEqual(await failing.listModels(), []);
 }
 
+async function testThinkingStream() {
+  const events = [];
+  let promptId;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_thought_1' } });
+      } else if (message.method === 'session/prompt') {
+        promptId = message.id;
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_thought_1', update: {
+            sessionUpdate: 'agent_thought_chunk', messageId: 'think_1',
+            content: { type: 'text', text: 'أولاً، سأحسب ' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_thought_1', update: {
+            sessionUpdate: 'agent_thought_chunk', messageId: 'think_1',
+            content: { type: 'text', text: 'المجموع بعناية. السر المتداخل: sk-live-1234567890abcdef.' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_thought_1', update: {
+            sessionUpdate: 'agent_message_chunk', messageId: 'answer_1',
+            content: { type: 'text', text: 'الإجابة: 68' },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  await engine.start({
+    prompt: 'احسب 23+45', sessionId: null, model: 'k3', permissionMode: 'default',
+    skills: [], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'result'));
+
+  const commentaryStream = events.filter((event) => event.type === 'stream_text' && event.phase === 'commentary');
+  assert.ok(commentaryStream.length >= 2, 'يجب أن يبثّ التفكير كـ stream_text بـ phase commentary');
+  const joined = commentaryStream.map((event) => event.text).join('');
+  assert.ok(joined.includes('أولاً'), 'يجب أن يحتوي التفكير على النص الأصلي');
+  assert.ok(!joined.includes('sk-live-1234567890abcdef'), 'يجب حجب السر من التفكير المبثوث');
+  assert.ok(joined.includes('[secret]'), 'يجب أن يظهر السر المحجوب بوضوح');
+
+  const assistantText = events.filter((event) => event.type === 'assistant' && event.message && Array.isArray(event.message.content));
+  const commentaryBlock = assistantText.flatMap((event) => event.message.content)
+    .find((block) => block.type === 'text' && block.phase === 'commentary');
+  assert.ok(commentaryBlock, 'يجب أن تُدمج كتلة التفكير في رسالة assistant بـ phase commentary');
+  assert.ok(!commentaryBlock.text.includes('sk-live'), 'يجب حجب السر من التفكير المدمج');
+
+  const finalBlock = assistantText.flatMap((event) => event.message.content)
+    .find((block) => block.type === 'text' && block.phase === 'final_answer');
+  assert.ok(finalBlock && finalBlock.text.includes('68'), 'يجب أن يبقى الإجابة النهائية final_answer');
+}
+
+async function testThinkingTruncation() {
+  const events = [];
+  let promptId;
+  const longThought = 'كلمة '.repeat(15000); // ~90000 حرف — يتجاوز MAX_TOOL_TEXT
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_thought_long_1' } });
+      } else if (message.method === 'session/prompt') {
+        promptId = message.id;
+        proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'kimi_thought_long_1', update: {
+            sessionUpdate: 'agent_thought_chunk', messageId: 'think_long',
+            content: { type: 'text', text: longThought },
+          },
+        } });
+        proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  await engine.start({
+    prompt: 'فكّر كثيراً', sessionId: null, model: 'k3', permissionMode: 'default',
+    skills: [], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'result'));
+
+  const commentary = events.find((event) => event.type === 'assistant'
+    && event.message.content.some((block) => block.phase === 'commentary'));
+  assert.ok(commentary, 'التفكير الطويل يجب أن يظهر ككتلة commentary');
+  const text = commentary.message.content.find((block) => block.phase === 'commentary').text;
+  assert.ok(text.length <= 20001, 'يجب قصّ التفكير عند سقف MAX_TOOL_TEXT');
+  assert.ok(text.includes('…'), 'يجب أن يحتوي النص المقصوص على علامة القص');
+}
+
+async function testThinkingConfigOption() {
+  const events = [];
+  const configRequests = [];
+  let promptId;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') proc.send({ jsonrpc: '2.0', id: message.id, result: {
+        sessionId: 'kimi_thinking_cfg_1',
+        configOptions: [
+          { id: 'model', category: 'model', currentValue: 'k3', options: [{ value: 'k3', name: 'K3' }] },
+          { id: 'thinking', category: 'thought_level', currentValue: 'off', options: [{ value: 'on', name: 'On' }] },
+        ],
+      } });
+      else if (message.method === 'session/set_config_option') {
+        configRequests.push(message.params);
+        proc.send({ jsonrpc: '2.0', id: message.id, result: {} });
+      } else if (message.method === 'session/prompt') {
+        promptId = message.id;
+        proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  await engine.start({
+    prompt: 'فكّر', sessionId: null, model: 'k3', thinking: 'on',
+    permissionMode: 'default', skills: [], images: [], browserControl: false,
+  }, root, (event) => events.push(event));
+  await waitFor(() => events.some((event) => event.type === 'result'));
+  assert.deepStrictEqual(configRequests, [{
+    sessionId: 'kimi_thinking_cfg_1', configId: 'thinking', value: 'on',
+  }]);
+}
+
+function testKimiLoginCommandAndCwd() {
+  const { loginCommand, loginCwd } = kimi._internals;
+  const cmd = loginCommand('C:\\Users\\User\\.kimi-code\\bin\\kimi.exe');
+  assert.ok(cmd.startsWith('& "'), 'يجب أن يبدأ الأمر بمعامل الاستدعاء PowerShell');
+  assert.ok(cmd.endsWith('" login'), 'يجب أن ينتهي الأمر بـ " login');
+  assert.ok(cmd.includes('kimi.exe'), 'يجب أن يحتوي الأمر على مسار الثنائي');
+
+  const homedir = os.homedir();
+  assert.strictEqual(loginCwd(''), homedir);
+  assert.strictEqual(loginCwd('   '), homedir);
+  assert.strictEqual(loginCwd(null), homedir);
+  assert.strictEqual(loginCwd(path.join(root, 'nonexistent-folder-xyz')), homedir);
+
+  const existing = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-kimi-login-'));
+  try {
+    assert.strictEqual(loginCwd(existing), existing);
+  } finally {
+    fs.rmdirSync(existing);
+  }
+}
+
 async function testFullModelValueApplied() {
   const events = [];
   const configRequests = [];
@@ -795,8 +1004,13 @@ function testSecurityAndWiring() {
   assert.ok(app.includes("engines: ['sdk', 'kimi-code']"));
   assert.ok(sessions.includes("kind: 'kimi'") && sessions.includes('listKimiSessions'));
   assert.ok(app.includes("ev.subtype === 'available_commands'") && app.includes('sendKimiCommand'));
-  assert.ok(app.includes("sendKimiCommand('/status')") && app.includes("sendKimiCommand('/tasks')")
-    && app.includes("sendKimiCommand('/help')"));
+  assert.ok(app.includes('kimiDeclaredCommands') && app.includes('buildKimiCommands') && app.includes('KIMI_CMD_EXCLUDE'));
+  assert.ok(!app.includes("sendKimiCommand('/status')") && !app.includes("sendKimiCommand('/tasks')")
+    && !app.includes("sendKimiCommand('/help')"));
+  assert.ok(app.includes('awarenessThinking') && app.includes('THINKING_CYCLE'));
+  assert.ok(main.includes("thinking: payload.thinking === 'on' ? 'on' : null"));
+  assert.ok(main.includes('kimi._internals.loginCommand(bin)') && main.includes('kimi._internals.loginCwd(cwd)'));
+  assert.ok(preload.includes('kimiLogin:'));
 }
 
 (async () => {
@@ -806,6 +1020,7 @@ function testSecurityAndWiring() {
   await testCancelThenResume();
   await testInteractiveQuestion();
   await testPlanModeLifecycle();
+  await testReadTextFileLineLimit();
   await testLoadFallbackDoesNotReplayHistory();
   await testSessionBrowser();
   await testModelCompactAndEffortContract();
@@ -813,12 +1028,17 @@ function testSecurityAndWiring() {
   await testToolLabelsAndAvailableCommands();
   await testListModelsFromAcp();
   await testFullModelValueApplied();
+  await testThinkingStream();
+  await testThinkingTruncation();
+  await testThinkingConfigOption();
+  testKimiLoginCommandAndCwd();
   console.log('✓ Kimi Code ACP مسجّل كمحرك أصيل مستقل عن REST');
   console.log('✓ طلبات ACP العكسية تكمل حتى عند تطابق معرّفها مع معرّف session/prompt');
   console.log('✓ الجلسة الجديدة والبث والأدوات والأذونات مطبّعة إلى عقد سطر');
   console.log('✓ الإيقاف يرسل session/cancel والاستمرار يستخدم session/resume بنفس المعرّف');
   console.log('✓ أسئلة Kimi التفاعلية تعبر عقد سطر وfallback التحميل لا يكرر التاريخ');
   console.log('✓ دورة Write → ExitPlanMode → تنفيذ تعمل وملف الخطة وحده مستثنى خارج المشروع');
+  console.log('✓ fs/read_text_file يقرأ 2500 سطر كاملاً ويرفض الملفات الأكبر من 2MiB');
   console.log('✓ /جلسات يستخدم session/list وsession/load الرسميين');
   console.log('✓ سرد الجلسات يتصفح فوق 80 حتى سقف 200 وقراءتها تلتقط نداءات الأدوات بتسمياتها العربية وحالاتها');
   console.log('✓ اختيار K3 يضبط model عبر ACP و/ضغط يعرض compact_boundary دون نص تقني خام');
@@ -828,6 +1048,9 @@ function testSecurityAndWiring() {
   console.log('✓ قائمة نماذج Kimi تُجلب من configOptions الرسمية وتُخزَّن مؤقتاً دون رمي عند الفشل');
   console.log('✓ اختيار نموذج بقيمته الكاملة (kimi-code/…) يُطبَّق عبر set_config_option');
   console.log('✓ غلاف ACP لأدوات MCP المدمجة يمر مرة واحدة دون إعفاء أداة خارجية');
+  console.log('✓ التفكير الحي من Kimi ACP يُبثّ كـ stream_text/commentary ويُدمج في رسالة assistant');
+  console.log('✓ التفكير الطويل يُقص عند سقف MAX_TOOL_TEXT والأسرار المحجوبة لا تتسرّب إليه');
+  console.log('✓ خيار التفكير المعلن في configOptions يُطبَّق عبر session/set_config_option دون لمس config.toml');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

@@ -481,7 +481,9 @@ class SatrChat extends HTMLElement {
   function addNotice(text) {
     hideEmpty();
     const n = document.createElement('div');
-    n.className = 'notice'; n.textContent = text;
+    n.className = 'notice';
+    if (text instanceof Node) n.appendChild(text);
+    else n.textContent = text;
     thread.appendChild(n); scrollDown();
   }
 

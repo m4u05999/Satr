@@ -167,10 +167,14 @@ function spawnKimi(bin, args, options, spawnImpl) {
 }
 
 function scrubError(value) {
-  return String(value || '')
+  return scrubStreamText(value, 4000);
+}
+
+function scrubStreamText(value, max) {
+  const text = String(value || '')
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[secret]')
-    .replace(/(api[_-]?key|token|authorization|password|secret)\s*[:=]\s*[^\s,;]+/ig, '$1=[secret]')
-    .slice(0, 4000);
+    .replace(/(api[_-]?key|token|authorization|password|secret)\s*[:=]\s*[^\s,;]+/ig, '$1=[secret]');
+  return max && text.length > max ? text.slice(0, max) + '…' : text;
 }
 
 function configOptionValues(option) {
@@ -550,6 +554,8 @@ function create(deps) {
     const completedTools = new Set();
     const messages = new Map();
     const messageOrder = [];
+    const commentaryMessages = new Map();
+    const commentaryOrder = [];
     const emittedDiffs = new Set();
     let permissionSeq = 0;
     let handoffSeq = 0;
@@ -628,6 +634,13 @@ function create(deps) {
     }
 
     function emitAssistantMessages() {
+      // التفكير الحي يُعرض في قسم «سجل التفكير» منفصل عن الإجابة، ولا يُدرَج في تصدير Markdown.
+      for (const id of commentaryOrder) {
+        const text = commentaryMessages.get(id);
+        if (!text || !text.trim()) continue;
+        emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text, phase: 'commentary' }] } });
+      }
+      commentaryMessages.clear(); commentaryOrder.length = 0;
       for (const id of messageOrder) {
         const text = messages.get(id);
         if (!text || !text.trim()) continue;
@@ -773,7 +786,7 @@ function create(deps) {
           if (!stat.isFile() || stat.size > MAX_FILE_BYTES) { channel.respondError(message.id, -32602, 'الملف غير صالح أو كبير'); return; }
           const all = fs.readFileSync(target, 'utf8').split('\n');
           const line = Number.isInteger(params.line) && params.line > 0 ? params.line - 1 : 0;
-          const limit = Number.isInteger(params.limit) && params.limit > 0 ? Math.min(params.limit, 2000) : 2000;
+          const limit = Number.isInteger(params.limit) && params.limit > 0 ? Math.min(params.limit, 20000) : 20000;
           channel.respond(message.id, { content: all.slice(line, line + limit).join('\n') });
           return;
         }
@@ -808,6 +821,15 @@ function create(deps) {
           const text = String(update.content.text || '');
           messages.set(id, (messages.get(id) || '') + text);
           if (text && !compactCommand) emit({ type: 'stream_text', text, phase: 'final_answer' });
+        } else if (update.sessionUpdate === 'agent_thought_chunk' && update.content && update.content.type === 'text') {
+          // تطبيع التفكير الحي ليعرض في قسم «سرد حي» منفصل عن الإجابة النهائية، تماماً كما
+          // يُعالج SDK محرك Claude كتلة thinking → commentary.
+          const id = update.messageId || '_thought';
+          if (!commentaryMessages.has(id)) commentaryOrder.push(id);
+          const text = String(update.content.text || '');
+          const scrubbed = scrubStreamText(text, MAX_TOOL_TEXT);
+          commentaryMessages.set(id, (commentaryMessages.get(id) || '') + scrubbed);
+          if (scrubbed && !compactCommand) emit({ type: 'stream_text', text: scrubbed, phase: 'commentary' });
         } else if (update.sessionUpdate === 'tool_call') {
           emitToolStart(update);
           finishTool(update);
@@ -904,6 +926,11 @@ function create(deps) {
 
     (async () => {
       try {
+        // terminal reverse-RPC: يبقى معطّلاً حالياً لأن Kimi 0.27.0 لا يعلنه. إن أعلنه
+        // إصدار لاحق في agentCapabilities.terminalCapabilities.reverseRpc، نُعلن قدرة
+        // العميل terminal: true ونوجّه طلبات terminal/* إلى تبويبات pty المرئية عبر
+        // termjobs/term.js (نفس مسار run_in_terminal). هذا capability-gated ولا يُفعّل
+        // أبداً دون إعلان صريح من الوكيل.
         const initialized = await rpc.request('initialize', {
           protocolVersion: 1,
           clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false },
@@ -911,6 +938,9 @@ function create(deps) {
         }, 15000);
         if (!initialized || initialized.protocolVersion !== 1) throw new Error('إصدار ACP غير مدعوم');
         const capabilities = initialized.agentCapabilities || {};
+        const terminalReverseRpc = !!(capabilities.terminalCapabilities && capabilities.terminalCapabilities.reverseRpc);
+        // إن أعلن Kimi دعم terminal reverse-RPC، نُفعّل البوابة ونوجّه الأوامر إلى pty.
+        // الآن: العميل لا يُعلن terminal، لذا لن تصل طلبات terminal/* أصلاً.
         const mcpServers = mcpHost && capabilities.mcpCapabilities && capabilities.mcpCapabilities.http
           ? [{
             type: 'http', name: 'satr', url: mcpHost.url,
@@ -964,6 +994,13 @@ function create(deps) {
           await rpc.request('session/set_config_option', {
             sessionId, configId: effortOption.id, value: effortValue,
           }, 15000);
+        }
+        // خيار التفكير الحي: نطبّقه فقط إن أعلنه ACP فعلاً (Kimi 0.27.0 يعلنه 'on' فقط).
+        // لا نكتب config.toml العام أبداً — session/set_config_option فقط.
+        const thinkingOption = configOptions.find((item) => item && item.id === 'thinking');
+        const thinkingValue = configValue(thinkingOption, input.thinking, false);
+        if (thinkingValue && thinkingValue !== thinkingOption.currentValue) {
+          await rpc.request('session/set_config_option', { sessionId, configId: 'thinking', value: thinkingValue }, 15000);
         }
         // Plan mode عقد ACP لا مجرد منع أذونات: نضبط config الفعلي إن أعلن Kimi خيار mode=plan.
         if (permissionMode === 'plan') {
@@ -1245,6 +1282,20 @@ function create(deps) {
 
 const runtime = create();
 
+// مساعد تسجيل الدخول: يُبنى الأمر بصيغة PowerShell الآمنة ويُنقّى cwd إلى مجلد موجود.
+function loginCommand(bin) {
+  return '& "' + bin + '" login';
+}
+
+function loginCwd(cwd) {
+  const raw = typeof cwd === 'string' ? cwd.trim() : '';
+  if (!raw) return os.homedir();
+  try {
+    if (fs.statSync(raw).isDirectory()) return raw;
+  } catch { /* يسقط إلى homedir */ }
+  return os.homedir();
+}
+
 module.exports = {
   ENGINE_ID, DEFAULT_MODEL, SAFE_SESSION, publicInfo, resolveKimiBin, authStatus, undoEdit,
   start: runtime.start, listSessions: runtime.listSessions, readSession: runtime.readSession,
@@ -1253,6 +1304,6 @@ module.exports = {
   _internals: {
     inside, safeExistingPath, safeWritablePath, safePlanPath, selectedOutcome, spawnKimi, scrubError,
     buildSatrMcpTools, configOptionValues, configValue, parseUsageText, parseCompactionText,
-    toolLabel, isEmbeddedMcpTool,
+    toolLabel, isEmbeddedMcpTool, loginCommand, loginCwd,
   },
 };

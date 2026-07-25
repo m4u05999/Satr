@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('satr', {
   codexRateLimits: () => ipcRenderer.invoke('satr:codexRateLimits'),
   kimiStatus: () => ipcRenderer.invoke('satr:kimiStatus'),
   kimiModels: () => ipcRenderer.invoke('satr:kimiModels'), // نماذج Kimi المعلنة عبر ACP (مُنقّاة في main)
+  kimiLogin: (cwd) => ipcRenderer.invoke('satr:kimiLogin', cwd), // يشغّل `kimi login` في طرفية مرئية دون أتمتة إدخال
   keysList: () => ipcRenderer.invoke('satr:keysList'),
   keySet: (name, value) => ipcRenderer.invoke('satr:keySet', { name, value }),
   keyDelete: (name) => ipcRenderer.invoke('satr:keyDelete', { name }),

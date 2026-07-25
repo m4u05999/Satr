@@ -53,6 +53,10 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (saved !== null) el.value = saved;
     el.addEventListener('change', () => localStorage.setItem('satr_' + id, el.value));
   });
+  // مفتاح thinking الخاص بـ Kimi Code: يُعلنه ACP أحياناً (Kimi 0.27.0 يعلن 'on' فقط).
+  let thinkingValue = localStorage.getItem('satr_thinking') || '';
+  const THINKING_CYCLE = ['on', ''];
+  const THINKING_LABELS = { 'on': 'مفعّل', '': 'ACP default' };
   const EFFORT_CYCLE = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'minimal', ''];
   const EFFORT_LABELS = {
     '': 'الافتراضي', minimal: 'أدنى — لأقصر زمن استجابة', low: 'منخفض — أسرع وأرخص',
@@ -68,17 +72,27 @@ import { createUpdateToast } from './lib/update-toast.js';
     return select.value || 'default';
   }
   function syncAwareness() {
-    const model = $('awarenessModel'), effort = $('awarenessEffort'), permission = $('awarenessPerm');
+    const model = $('awarenessModel'), effort = $('awarenessEffort'), thinking = $('awarenessThinking'), permission = $('awarenessPerm');
     if (model) model.textContent = 'model: ' + selectedValueLabel($('model'));
-    const effortSupported = engineSupportsEffort($('engine').value);
+    const engine = $('engine').value;
+    const effortSupported = engineSupportsEffort(engine);
     $('effort').disabled = !effortSupported;
     $('effort').title = effortSupported
       ? 'كم يفكّر النموذج قبل الرد — الأعلى أدق وأبطأ وأكلف'
       : 'Kimi ACP لا يعرّض إعداد جهد التفكير لكل جلسة';
     if (effort) {
+      effort.hidden = engine === 'kimi-code';
       effort.disabled = !effortSupported;
       effort.textContent = effortSupported ? 'effort: ' + ($('effort').value || 'default') : 'effort: ACP default';
       effort.title = effortSupported ? 'تدوير جهد التفكير' : 'جهد التفكير غير متاح عبر Kimi ACP حالياً';
+    }
+    if (thinking) {
+      const thinkingVisible = engine === 'kimi-code';
+      thinking.hidden = !thinkingVisible;
+      if (thinkingVisible) {
+        thinking.textContent = 'thinking: ' + (THINKING_LABELS[thinkingValue] || thinkingValue || 'ACP default');
+        thinking.title = 'تفعيل/تعطيل التفكير الحي (Kimi Code)';
+      }
     }
     if (permission) {
       const mode = $('perm').value || 'default';
@@ -100,6 +114,12 @@ import { createUpdateToast } from './lib/update-toast.js';
     } else select.click();
   });
   $('awarenessEffort').addEventListener('click', () => cycleSelect($('effort'), EFFORT_CYCLE));
+  $('awarenessThinking').addEventListener('click', () => {
+    const index = THINKING_CYCLE.indexOf(thinkingValue);
+    thinkingValue = THINKING_CYCLE[(index + 1 + THINKING_CYCLE.length) % THINKING_CYCLE.length];
+    try { localStorage.setItem('satr_thinking', thinkingValue); } catch (e) {}
+    syncAwareness();
+  });
   $('awarenessPerm').addEventListener('click', () => cycleSelect($('perm'), PERMISSION_CYCLE));
   $('awarenessContext').addEventListener('click', () => openContext());
   $('effort').addEventListener('change', syncAwareness);
@@ -919,9 +939,10 @@ import { createUpdateToast } from './lib/update-toast.js';
       return;
     }
     if (ev.type === 'system' && ev.subtype === 'available_commands') {
-      // أوامر Kimi المعلنة عبر ACP — الأساسي منها مغطى بأسماء عربية ثابتة في
-      // COMMANDS (/ضغط /سياق /حالة /مهام /مساعدة)؛ نخزّن القائمة الخام لأي استخدام لاحق.
+      // أوامر Kimi المعلنة عبر ACP — تُعرض ديناميكياً في قائمة «/» مع الحفاظ على
+      // الأوامر العربية الأصلية (/ضغط /سياق) واستبعاد ما يكررها من قائمة Kimi.
       kimiDeclaredCommands = Array.isArray(ev.commands) ? ev.commands : [];
+      applyEngineCommands($('engine').value);
       return;
     }
     if (ev.type === 'user'
@@ -1132,6 +1153,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       engine,
       skills: skillsSel,
       effort: engineSupportsEffort(engine) ? $('effort').value : '',
+      thinking: engine === 'kimi-code' ? thinkingValue : '',
       extraDirs: topbarEl.getExtraDirs ? topbarEl.getExtraDirs() : [],
       images: images.map((i) => ({ media_type: i.media_type, data: i.data })),
       browserControl: browserControlOn, // تفويض صريح لأدوات المتصفح في المحركات الأصلية الداعمة
@@ -1212,6 +1234,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       engine: 'kimi-code',
       skills: skillsSel,
       effort: engineSupportsEffort('kimi-code') ? $('effort').value : '',
+      thinking: thinkingValue,
       images: [],
     });
     if (r && r.error) { currentBlock.error(r.message || r.error); endRun(); }
@@ -1237,20 +1260,36 @@ import { createUpdateToast } from './lib/update-toast.js';
     { cmd: '/مجلد',    en: '/folder', desc: 'اختيار مجلد المشروع',                   run: () => $('pickFolder').click() },
     { cmd: '/كودكس-حالة', en: '/codex-status', desc: 'عرض حالة تثبيت Codex وتسجيل الدخول', run: () => showCodexStatus() },
     { cmd: '/كيمي-حالة', en: '/kimi-status', desc: 'عرض حالة تثبيت Kimi Code وتسجيل الدخول', run: () => showKimiStatus() },
-    { cmd: '/حالة',   en: '/status', desc: 'عرض حالة جلسة Kimi Code الجارية',        engines: ['kimi-code'], run: () => sendKimiCommand('/status') },
-    { cmd: '/مهام',   en: '/tasks',  desc: 'عرض مهام Kimi الخلفية والمجدولة',         engines: ['kimi-code'], run: () => sendKimiCommand('/tasks') },
-    { cmd: '/مساعدة', en: '/help',   desc: 'عرض مساعدة Kimi Code وأوامره المائلة',    engines: ['kimi-code'], run: () => sendKimiCommand('/help') },
+    // أوامر Kimi Code المائلة (/status /tasks /help…) تُعلن ديناميكياً عبر ACP
+    // (system/available_commands) وتُضاف لقائمة «/» عوضاً عن تثبيتها هنا.
   ];
 
+  // أوامر Kimi Code المعلنة ديناميكياً عبر ACP. نستبعد ما له نسخة عربية أصلية أفضل
+  // في «سطر» (/ضغط = compact، /سياق = usage/context) ونُبقي الباقي كما أعلنه Kimi.
+  const KIMI_CMD_EXCLUDE = new Set(['compact', 'context', 'usage']);
+  function buildKimiCommands() {
+    return (kimiDeclaredCommands || [])
+      .filter((command) => command && command.name && !KIMI_CMD_EXCLUDE.has(command.name))
+      .map((command) => ({
+        cmd: '/' + command.name,
+        en: '',
+        desc: String(command.description || command.name).slice(0, 200),
+        engines: ['kimi-code'],
+        run: () => sendKimiCommand('/' + command.name),
+      }));
+  }
+
   // قائمة أوامر «/» حسب المحرك: بعض الأوامر Claude-خاصة، بينما /سياق و/ضغط
-  // مشتركان بين Claude SDK وKimi ACP ولا يظهران للمحركات الأخرى.
+  // مشتركان بين Claude SDK وKimi ACP ولا يظهران للمحركات الأخرى. أوامر Kimi
+  // المائلة تأتي ديناميكياً من available_commands_update وتُلحق بالقائمة.
   function applyEngineCommands(engine) {
     const el = document.querySelector('satr-composer');
     if (!el) return;
-    const list = COMMANDS.filter((command) => {
+    let list = COMMANDS.filter((command) => {
       if (Array.isArray(command.engines)) return command.engines.includes(engine);
       return !(engine === 'codex' || engine === 'kimi-code') || !command.sdkOnly;
     });
+    if (engine === 'kimi-code') list = list.concat(buildKimiCommands());
     customElements.whenDefined('satr-composer').then(() => { if (el.setCommands) el.setCommands(list); });
   }
   // إرشاد مضمّن حين يُختار Codex وهو غير جاهز (لا يحجب الإطلاق — Claude بوابة الإطلاق).
@@ -1284,7 +1323,27 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
   }
 
-  // Kimi Code الأصيل يستخدم اشتراك Kimi عبر `kimi login`؛ مفتاح KIMI_API_KEY يخص خيار REST فقط.
+  // Kimi Code الأصيل يستخدم اشتراك Kimي عبر `kimi login`؛ مفتاح KIMI_API_KEY يخص خيار REST فقط.
+  function addKimiLoginNotice(message) {
+    const container = document.createElement('span');
+    const text = document.createElement('span');
+    text.textContent = message + ' ';
+    container.appendChild(text);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'سجّل الدخول';
+    btn.className = 'notice-action';
+    btn.addEventListener('click', async () => {
+      try {
+        const result = await window.satr.kimiLogin($('cwd').value.trim());
+        if (result && result.ok) addNotice('✓ فُتحت طرفية تسجيل الدخول — أكمل الخطوات في تبويب 🖥️ ثم أعد المحاولة.');
+        else addNotice('✗ تعذّر فتح طرفية تسجيل الدخول: ' + (result && result.error || 'خطأ غير معروف'));
+      } catch (e) { addNotice('✗ تعذّر فتح طرفية تسجيل الدخول'); }
+    });
+    container.appendChild(btn);
+    chatEl.addNotice(container);
+  }
+
   async function checkKimiReady() {
     let status = null;
     try { status = await window.satr.kimiStatus(); } catch (e) { return; }
@@ -1292,7 +1351,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (!status.installed) {
       addNotice('⚠️ Kimi Code CLI غير مثبَّت. ثبّته من PowerShell:  irm https://code.kimi.com/kimi-code/install.ps1 | iex  ثم أعد تشغيل سطر.');
     } else if (!status.auth || !status.auth.ok) {
-      addNotice('⚠️ Kimi Code غير مسجَّل الدخول. نفّذ في الطرفية:  kimi login  ثم أكمل دخول اشتراك Kimi.');
+      addKimiLoginNotice('⚠️ Kimi Code غير مسجَّل الدخول.');
     }
   }
 
@@ -1302,7 +1361,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       addNotice('✗ تعذّر التحقق من حالة Kimi Code'); return;
     }
     if (!status || !status.installed) addNotice('⚠️ Kimi Code CLI غير مثبَّت.');
-    else if (!status.auth || !status.auth.ok) addNotice('⚠️ Kimi Code CLI مثبَّت، لكنه غير مسجَّل الدخول. شغّل kimi login.');
+    else if (!status.auth || !status.auth.ok) addKimiLoginNotice('⚠️ Kimi Code CLI مثبَّت، لكنه غير مسجَّل الدخول.');
     else if (status.auth.method === 'oauth') addNotice('✓ Kimi Code جاهز عبر اشتراك Kimi (OAuth).');
     else addNotice('✓ Kimi Code جاهز عبر مزوّد مضبوط محلياً.');
   }
