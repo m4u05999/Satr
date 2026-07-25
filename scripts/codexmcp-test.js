@@ -14,12 +14,13 @@ const codex = require('../electron/codex');
 // preview مزيّف يحاكي عقد electron/preview.js دون WebContentsView
 const preview = {
   _fillCalls: 0,
+  _clickCalls: 0,
   isHttpUrl: (u) => /^https?:\/\//.test(String(u)),
   navigate: () => ({ ok: true }),
   currentUrl: () => 'https://untrusted.example/page',
   navigationTarget: (direction) => direction === 'back' ? 'https://previous.example/' : 'https://next.example/',
   readPage: async () => ({ ok: true, page: { title: 'صفحة', url: 'http://localhost:3000/', headings: ['h1: مرحبا'], links: [], buttons: ['إرسال'], inputs: [], bodyText: 'محتوى' } }),
-  snapshot: async () => ({ ok: true, snap: { title: 'ص', url: 'http://x', elements: ['[e1] button "إرسال"'], count: 1, truncated: false } }),
+  snapshot: async () => ({ ok: true, snap: { title: 'ص', url: 'http://x', elements: ['[s3:e1] button "إرسال"'], count: 1, truncated: false } }),
   getConsole: () => ({ ok: true, logs: [{ level: 'error', message: 'oops', line: 4, source: 'app.js' }], netErrors: [] }),
   getNetwork: () => ({ ok: true, requests: [{ method: 'GET', url: 'http://x/api', status: 404, type: 'xhr', fromCache: false }], netErrors: [] }),
   screenshot: async () => ({ ok: true, base64: Buffer.from('PNG').toString('base64') }),
@@ -28,14 +29,16 @@ const preview = {
   waitFor: async () => ({ ok: true, found: true }),
   scroll: async () => ({ ok: true, scrollY: 120, moved: 120, max: 2000 }),
   hover: async () => ({ ok: true, tag: 'a' }),
-  clickElement: async () => ({ ok: true, tag: 'button', text: 'إرسال', navigated: false, dom_changed: true }),
-  typeText: async () => ({ ok: true, tag: 'input', navigated: false, dom_changed: true }),
+  clickElement: async () => { preview._clickCalls += 1; return { ok: true, tag: 'button', text: 'إرسال', navigated: false, dom_changed: true }; },
+  typeText: async () => ({ ok: true, tag: 'input', navigated: false, dom_changed: true,
+    delta: ['+ [s3:e2] button "التالي"'], delta_truncated: true }),
   selectOption: async () => ({ ok: true, label: 'الأول', navigated: false, dom_changed: true }),
   pressKey: async () => ({ ok: true, key: 'Enter', navigated: false, dom_changed: false, note: 'لم يتغيّر شيء' }),
   browserActionContext: async (tool, input) => ({
     currentUrl: 'https://untrusted.example/page', targetUrl: 'https://untrusted.example/page',
     elementText: input && input.ref === 'delete-button' ? 'Delete' : '', tag: 'button',
   }),
+  browserInputError: (_tool, input) => JSON.stringify(input || {}).includes('s1:e') ? 'stale_ref' : null,
   fillForm: async (fields) => { preview._fillCalls += 1; return { ok: true, filled: Array.isArray(fields) ? fields.length : 0 }; },
   transferField: async (from, to) => from && !to
     ? { ok: true, stored: true, transfer_id: 'xfer_0123456789abcdef0123456789abcdef', value: 'sk-proj-abcdefghijklmnopqrstuvwxyz' }
@@ -86,9 +89,9 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   ok(codex.isExternalBrowserLaunchCommand('msedge.exe https://example.com'), 'سياسة Codex تحجب تشغيل متصفح صريح');
   ok(!codex.isExternalBrowserLaunchCommand('npm run dev'), 'سياسة Codex لا تحجب خادم التطوير');
   ok(!codex.isExternalBrowserLaunchCommand('rg chrome electron'), 'سياسة Codex لا تحجب بحثاً نصياً عن متصفح');
-  const cleaned = codexmcp._internals.permissionInput({ text: 'x'.repeat(5000), ref: 'e7', injected: 'no' });
-  ok(cleaned.text.length === 4000 && cleaned.ref === 'e7' && !Object.hasOwn(cleaned, 'injected'), 'تفاصيل إذن المتصفح منقّاة ومحدودة');
-  const cleanedFields = codexmcp._internals.permissionInput({ fields: [{ ref: 'e1', value: 'smtp-relay.brevo.com', injected: 'no' }] });
+  const cleaned = codexmcp._internals.permissionInput({ text: 'x'.repeat(5000), ref: 's3:e7', injected: 'no' });
+  ok(cleaned.text.length === 4000 && cleaned.ref === 's3:e7' && !Object.hasOwn(cleaned, 'injected'), 'تفاصيل إذن المتصفح منقّاة ومحدودة');
+  const cleanedFields = codexmcp._internals.permissionInput({ fields: [{ ref: 's3:e1', value: 'smtp-relay.brevo.com', injected: 'no' }] });
   ok(cleanedFields.fields[0].value === 'smtp-relay.brevo.com' && !Object.hasOwn(cleanedFields.fields[0], 'injected'), 'حقول إذن fill_form مرئية ومنقّاة');
   const allowAll = async () => true;
   const srv = await codexmcp.start({ preview, requestPermission: allowAll });
@@ -170,10 +173,19 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
     asked.push(tool); askedMeta.push({ tool, input, access, neverAlways, target, currentUrl, pageContext, rawInput }); return decision;
   };
 
-  // (أ) رفض ⇒ browser_click لا يُنفَّذ ويعيد خطأ إذن
-  let srv3 = await codexmcp.start({ preview, requestPermission: gate(false) });
-  let rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_click', arguments: { ref: 'e5' } } });
+  // ref من جيل سابق يُرفض قبل بوابة الإذن وقبل استدعاء أداة DOM.
+  preview._clickCalls = 0;
+  let srv3 = await codexmcp.start({ preview, requestPermission: gate(true) });
+  let rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_click', arguments: { ref: 's1:e5' } } });
   let jj = JSON.parse(rr.body);
+  ok(jj.result.isError && /لقطة قديمة/.test(jj.result.content[0].text) && !asked.includes('browser_click') && preview._clickCalls === 0,
+    'stale_ref يُرفض قبل الإذن وقبل لمس DOM');
+  await srv3.stop();
+
+  // (أ) رفض ⇒ browser_click لا يُنفَّذ ويعيد خطأ إذن
+  srv3 = await codexmcp.start({ preview, requestPermission: gate(false) });
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_click', arguments: { ref: 'e5' } } });
+  jj = JSON.parse(rr.body);
   ok(asked.includes('browser_click') && jj.result.isError && /رُفض الإذن/.test(jj.result.content[0].text), 'رفض الإذن ⇒ browser_click لا يُنفَّذ');
   await srv3.stop();
 
@@ -184,6 +196,8 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   jj = JSON.parse(rr.body);
   ok(asked.includes('browser_type') && !jj.result.isError && /كُتب النص/.test(jj.result.content[0].text), 'قبول الإذن ⇒ browser_type يُنفَّذ');
   ok(/dom_changed=true/.test(jj.result.content[0].text), 'نتيجة الفعل تعيد دليل dom_changed للنموذج');
+  ok(/تغيّر DOM المختصر/.test(jj.result.content[0].text) && /s3:e2/.test(jj.result.content[0].text), 'نتيجة الفعل تمرّر DOM delta والـref الجديدة للنموذج');
+  ok(/قُصّ تغيّر DOM/.test(jj.result.content[0].text), 'نتيجة الفعل تطلب snapshot عند قصّ DOM delta');
   ok(askedMeta.some((item) => item.tool === 'browser_type' && item.target === 'https://untrusted.example/page'), 'codexmcp يمرّر هدف الصفحة الحالية لبوابة الفعل');
   ok(askedMeta.some((item) => item.tool === 'browser_type' && item.currentUrl === 'https://untrusted.example/page'), 'codexmcp يمرّر origin الصفحة الحالية أيضاً');
 

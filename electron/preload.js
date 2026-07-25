@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('satr', {
   activityList: (cwd) => ipcRenderer.invoke('satr:activityList', { cwd }),
   activityClear: (cwd, confirmed) => ipcRenderer.invoke('satr:activityClear', { cwd, confirmed }),
   providers: () => ipcRenderer.invoke('satr:providers'),
+  claudeModels: () => ipcRenderer.invoke('satr:claudeModels'),
+  claudeAccount: () => ipcRenderer.invoke('satr:claudeAccount'),
   codexStatus: () => ipcRenderer.invoke('satr:codexStatus'),
   codexModels: () => ipcRenderer.invoke('satr:codexModels'),
   codexRateLimits: () => ipcRenderer.invoke('satr:codexRateLimits'),
@@ -26,6 +28,12 @@ contextBridge.exposeInMainWorld('satr', {
   readSession: (project, id) => ipcRenderer.invoke('satr:readSession', { project, id }),
   sessionMetaList: () => ipcRenderer.invoke('satr:sessionMetaList'),
   sessionMetaSet: (sessionId, patch) => ipcRenderer.invoke('satr:sessionMetaSet', { ...(patch || {}), sessionId }),
+  sessionFork: (sessionId, upToMessageId, title) => ipcRenderer.invoke('satr:sessionFork', {
+    sessionId, upToMessageId, title,
+  }),
+  rewindFiles: (cwd, sessionId, userMessageId, dryRun, confirmed, previewToken) => ipcRenderer.invoke('satr:rewindFiles', {
+    cwd, sessionId, userMessageId, dryRun, confirmed, previewToken,
+  }),
   listCodexSessions: () => ipcRenderer.invoke('satr:listCodexSessions'),
   readCodexSession: (id) => ipcRenderer.invoke('satr:readCodexSession', { id }),
   nameCodexSession: (id, name) => ipcRenderer.invoke('satr:nameCodexSession', { id, name }),

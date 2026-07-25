@@ -24,6 +24,58 @@ let viewportOverride = null; // مقاس طلبه الوكيل للتحقق ال
 let externalTargetProvider = null; // نافذة التقاط المنتج المرئية أثناء تسجيل البرومو
 const wiredWebContents = new WeakSet();
 
+let snapshotSequence = 0;
+let activeSnapshotGeneration = 0;
+let activeSnapshotOwnerId = null;
+let activeSnapshotNextIndex = 0;
+let activeSnapshotTextBytes = 0;
+const SNAPSHOT_REF_RE = /^s([1-9][0-9]*):e([1-9][0-9]*)$/;
+const LEGACY_SNAPSHOT_REF_RE = /^e[1-9][0-9]*$/;
+
+function nextSnapshotGeneration(wc) {
+  snapshotSequence = snapshotSequence >= Number.MAX_SAFE_INTEGER ? 1 : snapshotSequence + 1;
+  activeSnapshotGeneration = snapshotSequence;
+  activeSnapshotOwnerId = wc && Number.isInteger(wc.id) ? wc.id : null;
+  activeSnapshotNextIndex = 0;
+  activeSnapshotTextBytes = 0;
+  return activeSnapshotGeneration;
+}
+
+function invalidateSnapshotRefs(wc) {
+  if (!wc || activeSnapshotOwnerId === wc.id) {
+    activeSnapshotGeneration = 0;
+    activeSnapshotOwnerId = null;
+    activeSnapshotNextIndex = 0;
+    activeSnapshotTextBytes = 0;
+  }
+}
+
+function locatorError(value, wc) {
+  const locator = typeof value === 'string' ? value.trim() : '';
+  if (LEGACY_SNAPSHOT_REF_RE.test(locator)) return 'stale_ref';
+  const match = SNAPSHOT_REF_RE.exec(locator);
+  if (!match) return null;
+  const target = wc || currentWC();
+  return target && target.id === activeSnapshotOwnerId && Number(match[1]) === activeSnapshotGeneration
+    ? null : 'stale_ref';
+}
+
+function browserInputError(name, input, wc) {
+  const bare = String(name || '').replace(/^mcp__satr-terminal__/, '');
+  const data = input && typeof input === 'object' ? input : {};
+  const refs = [];
+  if (['browser_click', 'browser_type', 'browser_select_option', 'browser_hover', 'browser_screenshot_element'].includes(bare)) {
+    refs.push(data.ref || data.selector);
+  } else if (bare === 'browser_fill_form' && Array.isArray(data.fields)) {
+    for (const field of data.fields) refs.push(field && (field.ref || field.selector));
+  } else if (bare === 'browser_transfer_field') {
+    refs.push(data.from_ref, data.to_ref);
+  } else if (bare === 'browser_request_secret') {
+    refs.push(data.field_ref || data.ref || data.selector);
+  }
+  return refs.some((ref) => locatorError(ref, wc) === 'stale_ref') ? 'stale_ref' : null;
+}
+
 const PARTITION = 'persist:preview';
 
 // ---------- التقاط الـ console وأخطاء الشبكة (البند 1 — «الوكيل يرى أخطاء التشغيل») ----------
@@ -236,6 +288,7 @@ function wireEvents(wc) {
   });
   // تصفير السجلّ عند تنقّل الإطار الرئيسي لصفحة جديدة (لا للتنقّل داخل الصفحة) — يعكس الحالية
   wc.on('did-start-navigation', (e, url, isInPlace, isMainFrame) => {
+    if (isMainFrame) invalidateSnapshotRefs(wc);
     if (isMainFrame && !isInPlace) { resetLogs(); emit({ type: 'console_clear' }); }
   });
   // فشل التحميل الرئيسي فقط (-3 = أُجهض بتنقل جديد — ليس خطأ)
@@ -268,6 +321,7 @@ function ensureView(win, send) {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
       partition: PARTITION,
       // لا preload — الصفحة المعروضة لا ترى أي واجهة لـ «سطر»
     },
@@ -523,6 +577,7 @@ function externalWC() {
 }
 
 function setExternalTargetProvider(provider, send) {
+  invalidateSnapshotRefs();
   externalTargetProvider = typeof provider === 'function' ? provider : null;
   if (typeof send === 'function') sender = send;
   const wc = externalWC();
@@ -538,6 +593,7 @@ function setExternalTargetProvider(provider, send) {
 
 function attachExternalWebContents(wc) {
   if (!wc || wc.isDestroyed()) return { ok: false, error: 'closed' };
+  invalidateSnapshotRefs();
   wirePermissions();
   wireNetwork();
   wireDownloads();
@@ -567,7 +623,7 @@ function navigationTarget(direction) {
 // هدف الفعل الأمني: النقر على رابط/زر إرسال يُنسب إلى وجهة الرابط أو form action لا
 // إلى الصفحة الحالية فقط، كي لا يقفز فعل معفى من origin موثوق إلى origin جديد بصمت.
 const ACTION_TARGET_FN = `function(name,loc){
-  function resolve(l){if(l==='__active__')return document.activeElement;l=String(l||'');if(/^e[0-9]+$/.test(l))return document.querySelector('[data-satr-ref="'+l+'"]');return l?document.querySelector(l):document.activeElement;}
+  function resolve(l){if(l==='__active__')return document.activeElement;l=String(l||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l))return document.querySelector('[data-satr-ref="'+l+'"]');return l?document.querySelector(l):document.activeElement;}
   var el;try{el=resolve(loc);}catch(e){return null;}if(!el)return location.href;
   if(name==='browser_click'){
     var anchor=el.closest&&el.closest('a[href]');if(anchor&&anchor.href)return anchor.href;
@@ -579,7 +635,7 @@ const ACTION_TARGET_FN = `function(name,loc){
   return location.href;
 }`;
 const ACTION_CONTEXT_FN = `function(name,input){
-  function resolve(loc){if(loc==='__active__')return document.activeElement;loc=String(loc||'');if(/^e[0-9]+$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):document.activeElement;}
+  function resolve(loc){if(loc==='__active__')return document.activeElement;loc=String(loc||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):document.activeElement;}
   var bare=String(name||'').replace(/^mcp__satr-terminal__/,''),data=input&&typeof input==='object'?input:{},el=null;
   try{el=resolve(bare==='browser_press_key'?'__active__':data.ref||data.selector||'');}catch(e){return {currentUrl:location.href,badSelector:true};}
   var form=el&&(el.form||(el.closest&&el.closest('form'))),target=location.href,formAction='',formMethod='';
@@ -588,7 +644,7 @@ const ACTION_CONTEXT_FN = `function(name,input){
   var type=el&&el.getAttribute?String(el.getAttribute('type')||'').toLowerCase():'',tag=el&&el.tagName?el.tagName.toLowerCase():'';
   var text='';try{text=((el&&el.textContent)||'').replace(/\\s+/g,' ').trim().slice(0,160);}catch(e){}
   var aria='';try{aria=String((el&&el.getAttribute&&el.getAttribute('aria-label'))||'').replace(/\\s+/g,' ').trim().slice(0,160);}catch(e){}
-  var isSubmit=!!el&&(type==='submit'||(tag==='button'&&(!type||type==='submit'))||(el.getAttribute&&el.getAttribute('role')==='button'&&/submit/i.test(aria||text)));
+  var isSubmit=!!el&&((!!form&&(type==='submit'||(tag==='button'&&(!type||type==='submit'))))||(el.getAttribute&&el.getAttribute('role')==='button'&&/submit/i.test(aria||text)));
   var cross=false;try{cross=!!form&&formMethod==='post'&&new URL(formAction,location.href).origin!==location.origin;}catch(e){}
   return {currentUrl:location.href,targetUrl:target,tag:tag,type:type,elementText:text,ariaLabel:aria,inForm:!!form,isSubmit:isSubmit,formAction:formAction,formMethod:formMethod,crossOriginPost:cross};
 }`;
@@ -597,6 +653,8 @@ async function browserActionContext(name, input) {
   if (handoffActive) return null;
   const wc = currentWC();
   if (!wc) return null;
+  const inputError = browserInputError(name, input, wc);
+  if (inputError) return { currentUrl: wc.getURL(), targetUrl: wc.getURL(), error: inputError };
   try {
     return await wc.executeJavaScript('(' + ACTION_CONTEXT_FN + ')(' + JSON.stringify(String(name || '')) + ',' + JSON.stringify(input || {}) + ')', true);
   } catch { return { currentUrl: wc.getURL() }; }
@@ -605,6 +663,7 @@ async function browserTarget(name, input) {
   if (handoffActive) return null;
   const wc = currentWC();
   if (!wc) return null;
+  if (browserInputError(name, input, wc)) return wc.getURL();
   const bare = String(name || '').replace(/^mcp__satr-terminal__/, '');
   if (bare !== 'browser_click' && bare !== 'browser_press_key') return wc.getURL();
   const locator = bare === 'browser_press_key' ? '__active__' : input && input.ref;
@@ -670,12 +729,13 @@ function getNetwork() {
 
 // ---------- لقطة شجرة الوصول بمُعرّفات ثابتة (ترقية أفعال المتصفح 2026-07-12) ----------
 // نمط Playwright MCP / browser-use المعتمد صناعياً: بدل أن يخمّن النموذج مُحدِّد CSS من
-// outerHTML (هشّ)، يأخذ **لقطة مدمجة** لكل عنصر تفاعلي فيها `role "name" [ref=eN]`، ثم
-// يتصرّف بـ ref حتمياً (browser_click/type يقبلان ref). نسِم كل عنصر بـ data-satr-ref="eN"
-// فيُحلّ الفعل عبر [data-satr-ref="eN"] بلا تخمين. **الـ ref يصير قديماً بعد أي تنقّل/تغيّر
-// DOM** (القاعدة الصناعية المثبّتة) — يُعاد أخذ اللقطة بعد كل فعل. كفاءة رموز: ~مئات مقابل
+// outerHTML (هشّ)، يأخذ **لقطة مدمجة** لكل عنصر تفاعلي فيها `role "name" [ref=sN:eN]`، ثم
+// يتصرّف بـ ref حتمياً (browser_click/type يقبلان ref). نسِم كل عنصر بـ data-satr-ref="sN:eN"
+// فيُحلّ الفعل عبر [data-satr-ref="sN:eN"] بلا تخمين. التنقّل أو اللقطة التالية يبطلان الجيل؛
+// أما التغيّر الموضعي فيعيد DOM delta محدودة وقد يمنح refs جديدة متزايدة صالحة ضمن الجيل نفسه.
+// كفاءة رموز: ~مئات مقابل
 // آلاف للـDOM الخام. صفر اعتماديات، بلا preload (يطابق عزل العرض) — كله executeJavaScript.
-const SNAPSHOT_SCRIPT = `(function(){
+const SNAPSHOT_FN = `function(generation){
   function vis(el){
     if (!el || el.nodeType !== 1) return false;
     var s; try { s = getComputedStyle(el); } catch(e){ return false; }
@@ -722,29 +782,37 @@ const SNAPSHOT_SCRIPT = `(function(){
   var SEL = 'a[href],button,input:not([type=hidden]),textarea,select,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=switch],[role=combobox],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
   try { Array.prototype.forEach.call(document.querySelectorAll('[data-satr-ref]'), function(e){ e.removeAttribute('data-satr-ref'); }); } catch(e){}
   var els; try { els = Array.prototype.slice.call(document.querySelectorAll(SEL)); } catch(e){ els = []; }
-  var out = [], n = 0, CAP = 200;
+  var out = [], n = 0, CAP = 200, prefix = 's' + generation + ':e';
   for (var i = 0; i < els.length && out.length < CAP; i++) {
     var el = els[i];
     if (!vis(el)) continue;
-    var ref = 'e' + (++n);
+    var ref = prefix + (++n);
     try { el.setAttribute('data-satr-ref', ref); } catch(e){ continue; }
     var nm = name(el);
     var line = '[' + ref + '] ' + role(el) + (nm ? ' "' + nm.replace(/"/g, "'") + '"' : '');
     if (el.disabled) line += ' (معطّل)';
     out.push(line);
   }
-  return { title: document.title, url: location.href, count: out.length, elements: out, truncated: out.length >= CAP };
-})()`;
+  return { title: document.title, url: location.href, generation: generation, count: out.length, elements: out, truncated: out.length >= CAP };
+}`;
 
 async function snapshot() {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
+  const generation = nextSnapshotGeneration(wc);
   try {
-    const data = await wc.executeJavaScript(SNAPSHOT_SCRIPT, true);
+    const data = await wc.executeJavaScript('(' + SNAPSHOT_FN + ')(' + generation + ')', true);
+    if (activeSnapshotGeneration === generation && activeSnapshotOwnerId === wc.id) {
+      activeSnapshotNextIndex = Math.max(0, Number(data && data.count) || 0);
+      activeSnapshotTextBytes = Buffer.byteLength(((data && data.elements) || []).join('\n'), 'utf8');
+    }
     return { ok: true, snap: data };
-  } catch (e) { return { error: 'snapshot_failed' }; }
+  } catch (e) {
+    if (activeSnapshotGeneration === generation) invalidateSnapshotRefs(wc);
+    return { error: 'snapshot_failed' };
+  }
 }
 
 // انتظار ظهور نص أو عنصر (selector) في الصفحة بمهلة — للصفحات الديناميكية (SPA/بعد فعل).
@@ -808,7 +876,7 @@ async function screenshot() {
 // لقطة عنصر واحد بـ ref/selector (البند 4): فحص بصري مركّز أرخص رموزاً من الصفحة كاملة.
 // يمرّر العنصر لنافذة العرض ثم يعيد مستطيله (إحداثيات viewport = DIP عند zoom=1) لـ capturePage.
 const RECT_FN = `function(loc){
-  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
   var el; try { el = resolve(loc); } catch(e){ return {err:'bad_selector'}; }
   if (!el) return {err:'not_found'};
   try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
@@ -821,6 +889,8 @@ async function screenshotElement(locator, options) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
+  const inputError = locatorError(locator, wc);
+  if (inputError) return { error: inputError };
   await waitReady(wc);
   try {
     const rect = await wc.executeJavaScript('(' + RECT_FN + ')(' + JSON.stringify(String(locator)) + ')', true);
@@ -878,15 +948,15 @@ async function screenshotFull() {
 }
 
 // ---------- أدوات الفعل في المعاينة (م-4 + ترقية ref 2026-07-12 — خلف إذن إلزامي) ----------
-// الهدف (loc) إمّا **ref حتمي** من browser_snapshot (مثل e5 ⇒ [data-satr-ref="e5"]) أو
+// الهدف (loc) إمّا **ref حتمي** من browser_snapshot (مثل s3:e5 ⇒ [data-satr-ref="s3:e5"]) أو
 // مُحدِّد CSS (تراجع للتوافق مع م-4). يُهرَّب بـ JSON.stringify — لا حقن.
 // **الأمان (حرج)**: أدوات agent.js تمرّ بـ canUseTool مثل Bash — مربع الإذن العربي كل
 // مرة، bypassPermissions وحده يعفيها (لا acceptEdits). الإذن اليدوي لكل فعل أقوى من
 // قائمة نطاقات (يعفي فعلاً لا نطاقاً) فلم تلزم. الكتابة عبر native value setter
 // ليلتقطها React/Vue (input/change events)، والنقر el.click() بعد scrollIntoView.
-// resolve: ref (^e\\d+$) ⇒ سمة data-satr-ref؛ غيره ⇒ querySelector (قد يرمي ⇒ bad_selector).
+// resolve: ref (^sN:eN$) ⇒ سمة data-satr-ref؛ غيره ⇒ querySelector (قد يرمي ⇒ bad_selector).
 const FLASH_FN = `function(loc){
-  function resolve(l){ if(l==='__active__') return document.activeElement; if(l==='__page__') return document.documentElement; l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  function resolve(l){ if(l==='__active__') return document.activeElement; if(l==='__page__') return document.documentElement; l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
   var el; try { el=resolve(loc); } catch(e){ return {ok:false,reason:'bad_selector'}; }
   if(!el) return {ok:false,reason:'not_found'};
   try { if(loc!=='__page__') el.scrollIntoView({block:'center',inline:'center'}); } catch(e){}
@@ -898,16 +968,63 @@ const FLASH_FN = `function(loc){
   document.documentElement.appendChild(box); setTimeout(function(){box.style.opacity='0';},850); setTimeout(function(){box.remove();},1250);
   return {ok:true};
 }`;
-const PROBE_BEGIN = `(function(){
-  try{if(window.__satrActionProbe&&window.__satrActionProbe.ob)window.__satrActionProbe.ob.disconnect();}catch(e){}
-  var p={count:0,url:location.href};p.ob=new MutationObserver(function(records){records.forEach(function(r){
+const PROBE_BEGIN_FN = `function(opt){
+  function clean(s){return String(s||'').replace(/\\s+/g,' ').trim();}
+  function esc(s){try{return(window.CSS&&CSS.escape)?CSS.escape(s):String(s);}catch(e){return String(s);}}
+  function vis(el){if(!el||el.nodeType!==1)return false;var s;try{s=getComputedStyle(el);}catch(e){return false;}if(!s||s.display==='none'||s.visibility==='hidden'||parseFloat(s.opacity)===0)return false;var r=el.getBoundingClientRect();return r.width>=1&&r.height>=1;}
+  function name(el){var n=el.getAttribute&&el.getAttribute('aria-label');if(n&&clean(n))return clean(n);var lb=el.getAttribute&&el.getAttribute('aria-labelledby');if(lb){var t='';lb.split(/\\s+/).forEach(function(id){var e=document.getElementById(id);if(e)t+=' '+(e.textContent||'');});if(clean(t))return clean(t);}var tag=el.tagName.toLowerCase();if(tag==='input'){var ph=el.getAttribute('placeholder');if(ph)return clean(ph);if(el.id){var l;try{l=document.querySelector('label[for="'+esc(el.id)+'"]');}catch(e){}if(l&&clean(l.textContent))return clean(l.textContent);}var nm=el.getAttribute('name');if(nm)return clean(nm);return '';}if(tag==='img')return clean(el.getAttribute('alt'));if(tag==='textarea')return clean(el.getAttribute('placeholder')||el.getAttribute('name'));if(tag==='select')return clean(el.getAttribute('name')||el.getAttribute('aria-label'));return clean(el.textContent).slice(0,120);}
+  function role(el){var r=el.getAttribute&&el.getAttribute('role');if(r)return clean(r);var tag=el.tagName.toLowerCase();if(tag==='a'&&el.hasAttribute('href'))return'link';if(tag==='button')return'button';if(tag==='select')return'combobox';if(tag==='textarea')return'textbox';if(tag==='input'){var t=(el.getAttribute('type')||'text').toLowerCase();if(t==='submit'||t==='button'||t==='reset')return'button';if(t==='checkbox')return'checkbox';if(t==='radio')return'radio';return'textbox';}if(/^h[1-6]$/.test(tag))return'heading';return tag;}
+  var SEL='a[href],button,input:not([type=hidden]),textarea,select,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=switch],[role=combobox],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
+  try{var old=window.__satrActionProbe;if(old){if(old.ob)old.ob.disconnect();removeEventListener('hashchange',old.nav);removeEventListener('popstate',old.nav);if(old.timer)clearTimeout(old.timer);if(old.resolve)old.resolve(old.payload?old.payload():{count:old.count||0,url:location.href});}}catch(e){}
+  var generation=Math.max(0,Number(opt&&opt.generation)||0),prefix=generation?'s'+generation+':e':'',nextIndex=Math.max(0,Number(opt&&opt.nextIndex)||0);
+  var p={count:0,url:location.href,generation:generation,nextIndex:nextIndex,delta:[],deltaChars:0,deltaTruncated:false,seen:{},resolve:null,timer:null};
+  p.payload=function(){return{count:p.count||0,url:location.href,generation:p.generation,nextIndex:p.nextIndex,delta:p.delta.slice(),deltaTruncated:!!p.deltaTruncated};};
+  p.add=function(kind,el,ref){if(!ref||p.seen[kind+ref])return;p.seen[kind+ref]=1;var nm=name(el),line=kind+' ['+ref+'] '+role(el)+(nm?' "'+nm.replace(/"/g,"'")+'"':'');if(el.disabled)line+=' (معطّل)';if(p.delta.length>=40||p.deltaChars+line.length>4000){p.deltaTruncated=true;return;}p.delta.push(line);p.deltaChars+=line.length+1;};
+  p.notify=function(){if(!p.resolve)return;var done=p.resolve;p.resolve=null;if(p.timer)clearTimeout(p.timer);p.timer=null;done(p.payload());};p.nav=function(){p.notify();};
+  function refs(node){var out=[];if(!node||node.nodeType!==1)return out;if(node.hasAttribute&&node.hasAttribute('data-satr-ref'))out.push(node);try{out=out.concat([].slice.call(node.querySelectorAll('[data-satr-ref]')));}catch(e){}return out;}
+  function interactives(node){var out=[];if(!node||node.nodeType!==1)return out;try{if(node.matches(SEL))out.push(node);out=out.concat([].slice.call(node.querySelectorAll(SEL)));}catch(e){}return out;}
+  function activeRef(el){var ref=el&&el.getAttribute&&el.getAttribute('data-satr-ref');return ref&&prefix&&ref.indexOf(prefix)===0?ref:'';}
+  p.ob=new MutationObserver(function(records){records.forEach(function(r){
+    if(r.type==='attributes'&&r.attributeName==='data-satr-ref')return;
     var t=r.target&&r.target.nodeType===1?r.target:r.target&&r.target.parentElement;
     if(t&&((t.matches&&t.matches('[data-satr-agent-flash]'))||(t.closest&&t.closest('[data-satr-agent-flash]'))))return;
-    var n=[].slice.call(r.addedNodes||[]).concat([].slice.call(r.removedNodes||[]));
-    if(n.length&&n.every(function(x){return x.nodeType===1&&x.matches&&x.matches('[data-satr-agent-flash]');}))return;p.count++;
-  });});p.ob.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true});window.__satrActionProbe=p;return {url:p.url};
-})()`;
-const PROBE_END = `(function(){var p=window.__satrActionProbe;if(!p)return {count:0,url:location.href};try{p.ob.disconnect();}catch(e){}window.__satrActionProbe=null;return {count:p.count||0,url:location.href};})()`;
+    var nodes=[].slice.call(r.addedNodes||[]).concat([].slice.call(r.removedNodes||[]));
+    if(nodes.length&&nodes.every(function(x){return x.nodeType===1&&x.matches&&x.matches('[data-satr-agent-flash]');}))return;
+    p.count++;
+    [].slice.call(r.removedNodes||[]).forEach(function(node){refs(node).forEach(function(el){var ref=activeRef(el);if(ref)p.add('-',el,ref);});});
+    [].slice.call(r.addedNodes||[]).forEach(function(node){interactives(node).forEach(function(el){if(!vis(el))return;var ref=activeRef(el),kind='~';if(!ref&&generation){ref=prefix+(++p.nextIndex);try{el.setAttribute('data-satr-ref',ref);}catch(e){return;}kind='+';}if(ref)p.add(kind,el,ref);});});
+    if(!r.addedNodes||!r.addedNodes.length){var changed=t&&t.closest?t.closest('[data-satr-ref]'):null,changedRef=activeRef(changed);if(changedRef)p.add('~',changed,changedRef);}
+  });if(p.count)p.notify();});
+  p.ob.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true});addEventListener('hashchange',p.nav);addEventListener('popstate',p.nav);window.__satrActionProbe=p;return{url:p.url,generation:p.generation,nextIndex:p.nextIndex};
+}`;
+const ACTION_OBSERVE_TIMEOUT_MS = 360;
+const PROBE_WAIT = `(function(ms){var p=window.__satrActionProbe;if(!p)return Promise.resolve({count:0,url:location.href,delta:[]});if(p.count>0||location.href!==p.url)return Promise.resolve(p.payload());return new Promise(function(resolve){p.resolve=resolve;p.timer=setTimeout(function(){if(p.resolve===resolve)p.resolve=null;p.timer=null;resolve(p.payload());},ms);});})(${ACTION_OBSERVE_TIMEOUT_MS})`;
+const PROBE_END = `(function(){var p=window.__satrActionProbe;if(!p)return {count:0,url:location.href,delta:[]};try{p.ob.disconnect();removeEventListener('hashchange',p.nav);removeEventListener('popstate',p.nav);}catch(e){}if(p.timer)clearTimeout(p.timer);var payload=p.payload();if(p.resolve){var done=p.resolve;p.resolve=null;done(payload);}window.__satrActionProbe=null;return payload;})()`;
+
+function actionProbeExpression(wc) {
+  const active = wc && wc.id === activeSnapshotOwnerId && activeSnapshotGeneration > 0;
+  const input = { generation: active ? activeSnapshotGeneration : 0, nextIndex: active ? activeSnapshotNextIndex : 0 };
+  return '(' + PROBE_BEGIN_FN + ')(' + JSON.stringify(input) + ')';
+}
+
+function boundActionDelta(lines, alreadyTruncated) {
+  const source = Array.isArray(lines) ? lines.map((line) => String(line || '').slice(0, 500)).filter(Boolean) : [];
+  source.sort((left, right) => {
+    const rank = (line) => line.startsWith('+ ') ? 0 : line.startsWith('~ ') ? 1 : 2;
+    return rank(left) - rank(right);
+  });
+  const byteLimit = Math.min(1600, Math.floor(activeSnapshotTextBytes * 0.25));
+  const delta = [];
+  let used = 0;
+  let truncated = !!alreadyTruncated;
+  for (const line of source) {
+    const bytes = Buffer.byteLength((delta.length ? '\n' : '') + line, 'utf8');
+    if (used + bytes > byteLimit) { truncated = true; break; }
+    delta.push(line);
+    used += bytes;
+  }
+  return { delta, truncated };
+}
 
 async function flashLocator(wc, locator) {
   try { return await wc.executeJavaScript('(' + FLASH_FN + ')(' + JSON.stringify(String(locator)) + ')', true); }
@@ -915,32 +1032,67 @@ async function flashLocator(wc, locator) {
 }
 
 async function observedResult(wc, beforeUrl, actionResult) {
-  await new Promise((resolve) => setTimeout(resolve, 360));
-  let probe = { count: 0, url: wc.getURL() };
-  try { probe = await wc.executeJavaScript(PROBE_END, true) || probe; } catch {}
-  const navigated = wc.getURL() !== beforeUrl || probe.url !== beforeUrl;
+  let observedCount = 0;
+  let observedUrl = beforeUrl;
+  let observedProbe = null;
+  if (!actionResult.changed) {
+    try {
+      const pageWait = wc.executeJavaScript(PROBE_WAIT, true).catch(() => null);
+      let mainTimer;
+      const mainWait = new Promise((resolve) => { mainTimer = setTimeout(() => resolve(null), ACTION_OBSERVE_TIMEOUT_MS); });
+      const signaled = await Promise.race([pageWait, mainWait]);
+      clearTimeout(mainTimer);
+      if (signaled) {
+        observedCount = Number(signaled.count) || 0;
+        observedUrl = signaled.url || observedUrl;
+        observedProbe = signaled;
+      }
+    } catch {}
+  }
+  let probe = observedProbe || { count: observedCount, url: observedUrl, delta: [] };
+  try {
+    const ended = await wc.executeJavaScript(PROBE_END, true);
+    if (ended) probe = { ...ended, count: Math.max(observedCount, Number(ended.count) || 0), url: ended.url || observedUrl };
+  } catch {}
+  let currentUrl = observedUrl;
+  try { currentUrl = wc.getURL(); } catch {}
+  const navigated = currentUrl !== beforeUrl || probe.url !== beforeUrl;
   const domChanged = !!actionResult.changed || Number(probe.count) > 0;
+  let delta = [];
+  let deltaTruncated = false;
+  if (!navigated && wc.id === activeSnapshotOwnerId && Number(probe.generation) === activeSnapshotGeneration) {
+    activeSnapshotNextIndex = Math.max(activeSnapshotNextIndex, Number(probe.nextIndex) || 0);
+    const bounded = boundActionDelta(probe.delta, probe.deltaTruncated);
+    delta = bounded.delta;
+    deltaTruncated = bounded.truncated;
+  }
   return {
     ...actionResult, ok: true, navigated, dom_changed: domChanged,
+    delta: delta.length ? delta : undefined,
+    delta_truncated: deltaTruncated || undefined,
     note: !navigated && !domChanged ? 'لم يُرصد تغيير في DOM أو التنقّل؛ تحقّق بلقطة جديدة.' : undefined,
   };
 }
 
 async function observeScript(wc, expression) {
   const beforeUrl = wc.getURL();
-  try { await wc.executeJavaScript(PROBE_BEGIN, true); } catch {}
+  try { await wc.executeJavaScript(actionProbeExpression(wc), true); } catch {}
   try {
     const result = await wc.executeJavaScript(expression, true);
-    if (!result || !result.ok) return { error: (result && result.reason) || 'action_failed' };
+    if (!result || !result.ok) {
+      try { await wc.executeJavaScript(PROBE_END, true); } catch {}
+      return { error: (result && result.reason) || 'action_failed' };
+    }
     return observedResult(wc, beforeUrl, result);
   } catch {
     if (wc.getURL() !== beforeUrl) return { ok: true, navigated: true, dom_changed: false, note: 'انتقلت الصفحة أثناء الفعل.' };
+    try { await wc.executeJavaScript(PROBE_END, true); } catch {}
     return { error: 'action_failed' };
   }
 }
 
 const CLICK_FN = `function(loc){
-  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
   var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
   if (!el) return {ok:false, reason:'not_found'};
   try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
@@ -948,7 +1100,7 @@ const CLICK_FN = `function(loc){
   return {ok:true, tag: el.tagName.toLowerCase(), text: (el.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80)};
 }`;
 const TYPE_FN = `function(loc, text){
-  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
   var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
   if (!el) return {ok:false, reason:'not_found'};
   var before = '';
@@ -982,6 +1134,8 @@ async function clickElement(locator) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
+  const inputError = locatorError(locator, wc);
+  if (inputError) return { error: inputError };
   await waitReady(wc);
   const flashed = await flashLocator(wc, locator);
   if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
@@ -993,6 +1147,8 @@ async function typeText(locator, text) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
+  const inputError = locatorError(locator, wc);
+  if (inputError) return { error: inputError };
   await waitReady(wc);
   const flashed = await flashLocator(wc, locator);
   if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
@@ -1006,7 +1162,7 @@ async function typeText(locator, text) {
 // في الصفحة نفسها لا تخرج القيمة حتى للعملية الرئيسية، وبين صفحتين تحفظ مؤقتاً تحت
 // معرّف مبهم ثم تُمسح بعد اللصق/نهاية المهمة. لا نتيجة أو حدث يحمل القيمة.
 const FILL_FIELDS_FN = `function(fields){
-  function resolve(loc){loc=String(loc||'');if(/^e[0-9]+$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):null;}
+  function resolve(loc){loc=String(loc||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):null;}
   function writable(el){return !!el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable);}
   function set(el,value){el.focus();if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}else{el.textContent=value;el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));}}
   var resolved=[];for(var i=0;i<fields.length;i++){var el;try{el=resolve(fields[i].ref);}catch(e){return {ok:false,reason:'bad_selector',index:i};}if(!el)return {ok:false,reason:'not_found',index:i};if(!writable(el))return {ok:false,reason:'not_editable',index:i};resolved.push(el);}
@@ -1014,13 +1170,13 @@ const FILL_FIELDS_FN = `function(fields){
   return {ok:true,filled:resolved.length};
 }`;
 const TRANSFER_SAME_FN = `function(fromLoc,toLoc){
-  function resolve(loc){loc=String(loc||'');if(/^e[0-9]+$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):null;}
+  function resolve(loc){loc=String(loc||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):null;}
   function read(el){if(el.tagName==='INPUT'||el.tagName==='TEXTAREA')return el.value;if(el.isContentEditable)return el.textContent||'';return null;}
   function write(el,value){if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true;}if(el.isContentEditable){el.textContent=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));return true;}return false;}
   var from,to;try{from=resolve(fromLoc);to=resolve(toLoc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!from||!to)return {ok:false,reason:'not_found'};var value=read(from);if(value===null)return {ok:false,reason:'not_readable'};from.setAttribute('data-satr-secret-field','1');if(!write(to,value))return {ok:false,reason:'not_editable'};return {ok:true,moved:true};
 }`;
-const TRANSFER_READ_FN = `function(loc){function resolve(v){v=String(v||'');if(/^e[0-9]+$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):null);if(value===null)return {ok:false,reason:'not_readable'};el.setAttribute('data-satr-secret-field','1');return {ok:true,value:String(value)};}`;
-const TRANSFER_WRITE_FN = `function(loc,value){function resolve(v){v=String(v||'');if(/^e[0-9]+$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return {ok:true,moved:true};}if(el.isContentEditable){el.textContent=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));return {ok:true,moved:true};}return {ok:false,reason:'not_editable'};}`;
+const TRANSFER_READ_FN = `function(loc){function resolve(v){v=String(v||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):null);if(value===null)return {ok:false,reason:'not_readable'};el.setAttribute('data-satr-secret-field','1');return {ok:true,value:String(value)};}`;
+const TRANSFER_WRITE_FN = `function(loc,value){function resolve(v){v=String(v||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return {ok:true,moved:true};}if(el.isContentEditable){el.textContent=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));return {ok:true,moved:true};}return {ok:false,reason:'not_editable'};}`;
 
 function cleanLocator(value) {
   const text = typeof value === 'string' ? value.trim() : '';
@@ -1039,6 +1195,8 @@ async function fillForm(fields) {
     const value = typeof (field && field.value) === 'string' ? field.value : '';
     total += value.length;
     if (!ref || value.length > 4000 || total > 16000) return { error: 'bad_fields' };
+    const inputError = locatorError(ref, wc);
+    if (inputError) return { error: inputError, index: cleaned.length };
     if (memory.hasSecret(value)) return { error: 'secret' };
     cleaned.push({ ref, value });
   }
@@ -1057,6 +1215,8 @@ async function transferField(fromLocator, toLocator, transferId) {
   const toRef = cleanLocator(toLocator);
   const token = typeof transferId === 'string' && /^xfer_[a-f0-9]{32}$/.test(transferId) ? transferId : '';
   if ((!fromRef || !toRef) && !(fromRef && !toRef && !token) && !(!fromRef && toRef && token)) return { error: 'bad_input' };
+  const inputError = locatorError(fromRef, wc) || locatorError(toRef, wc);
+  if (inputError) return { error: inputError };
   await waitReady(wc);
   sensitiveOperation = true;
   try {
@@ -1089,8 +1249,8 @@ async function transferField(fromLocator, toLocator, transferId) {
   }
 }
 
-const SECRET_MARK_FN = `function(loc){function resolve(v){v=String(v||'');if(/^e[0-9]+$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};if(!(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable))return {ok:false,reason:'not_editable'};try{el.scrollIntoView({block:'center',inline:'center'});el.focus();el.setAttribute('data-satr-secret-field','1');var old=document.querySelector('[data-satr-secret-request]');if(old)old.remove();var r=el.getBoundingClientRect(),box=document.createElement('div');box.setAttribute('data-satr-secret-request','1');box.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;border:3px solid #D9A441;border-radius:5px;box-shadow:0 0 0 4px rgba(217,164,65,.22);';box.style.left=Math.max(0,r.left)+'px';box.style.top=Math.max(0,r.top)+'px';box.style.width=Math.max(1,r.width)+'px';box.style.height=Math.max(1,r.height)+'px';document.documentElement.appendChild(box);}catch(e){}return {ok:true};}`;
-const SECRET_DONE_FN = `function(loc){function resolve(v){v=String(v||'');if(/^e[0-9]+$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el=null;try{el=resolve(loc);}catch(e){}var box=document.querySelector('[data-satr-secret-request]');if(box)box.remove();if(!el)return {ok:false,filled:false};var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):'');el.setAttribute('data-satr-secret-field','1');return {ok:true,filled:String(value||'').length>0};}`;
+const SECRET_MARK_FN = `function(loc){function resolve(v){v=String(v||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};if(!(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable))return {ok:false,reason:'not_editable'};try{el.scrollIntoView({block:'center',inline:'center'});el.focus();el.setAttribute('data-satr-secret-field','1');var old=document.querySelector('[data-satr-secret-request]');if(old)old.remove();var r=el.getBoundingClientRect(),box=document.createElement('div');box.setAttribute('data-satr-secret-request','1');box.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;border:3px solid #D9A441;border-radius:5px;box-shadow:0 0 0 4px rgba(217,164,65,.22);';box.style.left=Math.max(0,r.left)+'px';box.style.top=Math.max(0,r.top)+'px';box.style.width=Math.max(1,r.width)+'px';box.style.height=Math.max(1,r.height)+'px';document.documentElement.appendChild(box);}catch(e){}return {ok:true};}`;
+const SECRET_DONE_FN = `function(loc){function resolve(v){v=String(v||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el=null;try{el=resolve(loc);}catch(e){}var box=document.querySelector('[data-satr-secret-request]');if(box)box.remove();if(!el)return {ok:false,filled:false};var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):'');el.setAttribute('data-satr-secret-field','1');return {ok:true,filled:String(value||'').length>0};}`;
 
 async function requestSecret(locator, reason) {
   const wc = currentWC();
@@ -1098,6 +1258,8 @@ async function requestSecret(locator, reason) {
   const why = typeof reason === 'string' ? reason.replace(/[\u0000-\u001F\u007F]+/g, ' ').trim().slice(0, 300) : '';
   if (!wc) return { error: 'closed' };
   if (!ref || !why || memory.hasSecret(why)) return { error: 'bad_input' };
+  const inputError = locatorError(ref, wc);
+  if (inputError) return { error: inputError };
   if (secretRequest || handoffActive) return { error: 'active' };
   const state = startHandoff();
   if (!state.ok) return { error: state.error };
@@ -1152,7 +1314,7 @@ function clearSensitiveState() {
 // sendInputEvent (أحداث مفاتيح حقيقية موثوقة — تُرسل للعرض المعزول وحده، فتُطلق سلوك
 // النموذج الأصلي مثل إرسال النموذج بـ Enter، بعكس الحدث المُصطنع غير الموثوق).
 const SELECT_FN = `function(loc, val){
-  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
   var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
   if (!el) return {ok:false, reason:'not_found'};
   if (el.tagName !== 'SELECT') return {ok:false, reason:'not_select'};
@@ -1167,7 +1329,7 @@ const SELECT_FN = `function(loc, val){
   return {ok:true, label: (match.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80), changed: el.value !== before};
 }`;
 const HOVER_FN = `function(loc){
-  function resolve(l){ l=String(l); if(/^e[0-9]+$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
   var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
   if (!el) return {ok:false, reason:'not_found'};
   try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
@@ -1195,6 +1357,8 @@ async function selectOption(locator, value) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
+  const inputError = locatorError(locator, wc);
+  if (inputError) return { error: inputError };
   await waitReady(wc);
   const flashed = await flashLocator(wc, locator);
   if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
@@ -1207,6 +1371,8 @@ async function hover(locator) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
+  const inputError = locatorError(locator, wc);
+  if (inputError) return { error: inputError };
   await waitReady(wc);
   const flashed = await flashLocator(wc, locator);
   if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
@@ -1245,7 +1411,7 @@ async function pressKey(key) {
   if (!code) return { error: 'bad_key' };
   await flashLocator(wc, '__active__');
   const beforeUrl = wc.getURL();
-  try { await wc.executeJavaScript(PROBE_BEGIN, true); } catch {}
+  try { await wc.executeJavaScript(actionProbeExpression(wc), true); } catch {}
   try {
     wc.focus();
     wc.sendInputEvent({ type: 'keyDown', keyCode: code });
@@ -1373,6 +1539,7 @@ function emitAgentActivity(tool) {
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
 function close() {
   clearSensitiveState();
+  invalidateSnapshotRefs();
   if (!view) return { ok: true };
   try { if (hostWin && !hostWin.isDestroyed()) hostWin.contentView.removeChildView(view); } catch (e) {}
   try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {}
@@ -1390,7 +1557,7 @@ module.exports = {
   getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText,
   selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
   fillForm, transferField, requestSecret, resolveSecretRequest, clearSecretTransfers, clearSensitiveState,
-  currentUrl, navigationTarget, browserTarget, browserActionContext, captureFrame, emitAgentActivity, startHandoff, endHandoff,
+  currentUrl, navigationTarget, browserTarget, browserActionContext, browserInputError, captureFrame, emitAgentActivity, startHandoff, endHandoff,
   isHandoffActive, close, destroy, isHttpUrl, setExternalTargetProvider, attachExternalWebContents,
-  _internals: { safeDownloadName, uniqueDownloadPath, effectiveBounds, isLocalHttpsUrl },
+  _internals: { safeDownloadName, uniqueDownloadPath, effectiveBounds, isLocalHttpsUrl, locatorError },
 };

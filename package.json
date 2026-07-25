@@ -1,7 +1,7 @@
 {
   "name": "satr",
   "productName": "Satr",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "description": "سطر — تطبيق سطح مكتب عربي لأدوات الذكاء الاصطناعي في سطر الأوامر (Claude Code وغيرها) بدعم RTL كامل",
   "main": "electron/main.js",
   "author": "Moxa",
@@ -39,6 +39,10 @@
     "test:slash-menu": "electron scripts/slash-menu-test.js",
     "test:terminal-tabs": "electron scripts/terminal-tabs-test.js",
     "test:codex-executor-probe": "node scripts/codex-executor-probe.js",
+    "test:codex-subagent-live": "node scripts/codex-subagent-live-probe.js",
+    "test:browser-loop-probe": "electron scripts/browser-loop-live-probe.js",
+    "test:browser-loop-sdk-probe": "electron scripts/browser-loop-sdk-probe.js",
+    "test:browser-loop-kimi-probe": "electron scripts/browser-loop-kimi-probe.js",
     "test:codexmcp": "node scripts/codexmcp-test.js",
     "test:codex-contract": "node scripts/codex-contract-test.js",
     "test:kimi": "node scripts/kimi-test.js",
@@ -60,6 +64,8 @@
     "test:promocapture-live": "electron scripts/promocapture-live-test.js",
     "test:promo-studio": "node scripts/promostudio-test.js && electron scripts/promo-studio-live-test.js",
     "test:claude-auth": "node scripts/claude-auth-test.js",
+    "test:fork-rewind": "node scripts/fork-rewind-test.js",
+    "test:claude-models": "node scripts/claude-models-test.js",
     "test:testsprite": "node scripts/testsprite-integration-test.js",
     "testsprite:harness": "node scripts/testsprite-harness.js",
     "test:testsprite-harness": "node scripts/testsprite-harness-test.js",
@@ -113,6 +119,7 @@
       "electron/**/*",
       "src/**/*",
       ".agents/skills/satr-guide/**/*",
+      ".agents/skills/satr-diverge/**/*",
       "!enterprise/**",
       "!**/@anthropic-ai/claude-agent-sdk-win32-x64/**",
       "!**/@anthropic-ai/claude-agent-sdk-*/**",
@@ -121,7 +128,8 @@
       "!**/node_modules/node-pty/{src,deps,third_party}/**"
     ],
     "asarUnpack": [
-      ".agents/skills/satr-guide/**/*"
+      ".agents/skills/satr-guide/**/*",
+      ".agents/skills/satr-diverge/**/*"
     ],
     "win": {
       "icon": "build/icon.ico",

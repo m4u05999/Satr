@@ -25,7 +25,7 @@ function startServer() {
         <label>Host <input id="host"></label><label>Port <input id="port"></label>
         <label>Secret <input id="target"></label><label>Manual <input id="manual"></label>
         <button id="submit" type="submit">Deploy</button>
-      </form><a id="ordinary" href="/source">View source</a>
+      </form><button id="ordinary-button">Toggle details</button><a id="ordinary" href="/source">View source</a>
       <script>
         setInterval(function () {
           var field = document.getElementById('manual');
@@ -96,6 +96,8 @@ async function main() {
 
     const submitContext = await preview.browserActionContext('browser_click', { ref: '#submit' });
     assert(submitContext.isSubmit && submitContext.crossOriginPost && browserpolicy.isSensitiveAction('browser_click', {}, submitContext), 'submit عبر أصل لم يُصنّف حساساً');
+    const ordinaryButtonContext = await preview.browserActionContext('browser_click', { ref: '#ordinary-button' });
+    assert(!ordinaryButtonContext.isSubmit && !browserpolicy.isSensitiveAction('browser_click', {}, ordinaryButtonContext), 'زر عادي خارج form صُنّف إرسالاً حساساً');
     const linkContext = await preview.browserActionContext('browser_click', { ref: '#ordinary' });
     assert(!browserpolicy.isSensitiveAction('browser_click', {}, linkContext), 'الرابط العادي صُنّف حساساً');
 

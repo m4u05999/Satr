@@ -7,6 +7,7 @@ const { app, BrowserWindow, ipcMain: electronIpcMain, dialog, shell, desktopCapt
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { createHash, randomUUID } = require('crypto');
 const { spawn } = require('child_process');
 
 const sessions = require('./sessions');
@@ -20,6 +21,7 @@ const skills = require('./skills');
 const tasks = require('./tasks');
 const verify = require('./verify');
 const checkpoints = require('./checkpoints');
+const sdkrewinds = require('./sdkrewinds');
 const memory = require('./memory');
 const opsroom = require('./opsroom');
 const opsroomindex = require('./opsroomindex');
@@ -46,6 +48,66 @@ const adapters = require('./adapters');
 const renderertrust = require('./renderertrust');
 // الشرطة المائلة مسموحة لقيم نماذج ACP المُنطَّقة مثل kimi-code/k3 (تُمرَّر كوسيطة مستقلة لا في صدفة).
 const SAFE_MODEL = /^[A-Za-z0-9./-]{1,64}$/;
+
+function cleanClaudePublicText(value, maxLength) {
+  if (typeof value !== 'string') return '';
+  return Array.from(value
+    .replace(/[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim())
+    .slice(0, maxLength)
+    .join('');
+}
+
+function sanitizeClaudeModelsResult(result) {
+  if (!result || result.ok !== true || !Array.isArray(result.models)) return { ok: false, models: [] };
+  const seen = new Set();
+  const models = [];
+  for (const item of result.models) {
+    const value = cleanClaudePublicText(item && item.value, 64);
+    if (!SAFE_MODEL.test(value) || seen.has(value)) continue;
+    const label = cleanClaudePublicText(item && item.displayName, 80) || value;
+    const description = cleanClaudePublicText(item && item.description, 240);
+    seen.add(value);
+    models.push({ value, label, description });
+    if (models.length >= 12) break;
+  }
+  return { ok: true, models };
+}
+
+function sanitizeClaudeAccountResult(result) {
+  if (!result || result.ok !== true || !result.account || typeof result.account !== 'object') {
+    return { ok: false };
+  }
+  const account = { ok: true };
+  const limits = { email: 320, organization: 160, subscriptionType: 80 };
+  for (const field of Object.keys(limits)) {
+    const value = cleanClaudePublicText(result.account[field], limits[field]);
+    if (value) account[field] = value;
+  }
+  return account;
+}
+
+function sanitizeClaudeFallbackModel(value, primaryModel) {
+  if (typeof value !== 'string' || !SAFE_MODEL.test(value) || value === primaryModel) return null;
+  return value;
+}
+
+async function handleClaudeModelsRequest(agentImpl = agent) {
+  try {
+    return sanitizeClaudeModelsResult(await agentImpl.claudeModels(os.homedir()));
+  } catch {
+    return { ok: false, models: [] };
+  }
+}
+
+async function handleClaudeAccountRequest(agentImpl = agent) {
+  try {
+    return sanitizeClaudeAccountResult(await agentImpl.claudeAccount(os.homedir()));
+  } catch {
+    return { ok: false };
+  }
+}
 
 // سياسة نماذج غرفة العمليات تُحل في الطبقة العليا فقط، منفصلة عن اختيار الدردشة.
 // لا تصل قيم البيئة إلى renderer ولا تقرؤها النوى المحايدة عن المحرك.
@@ -85,7 +147,7 @@ function resolveOpsRoomRunner(engine) {
   const resolved = resolveOpsRoomModel(engine);
   if (!resolved.ok) return null;
   if (engine === 'sdk') {
-    return { engine, model: resolved.model, start: (input, cwd, emit) => agent.start(input, cwd, emit) };
+    return { engine, model: resolved.model, start: (input, cwd, emit) => agent.start(input, cwd, emit, { mode: 'ops-room' }) };
   }
   if (engine === 'codex') {
     return { engine, model: resolved.model, start: (input, cwd, emit) => codex.start(input, cwd, emit) };
@@ -101,7 +163,7 @@ const sdkExecutionRunner = Object.freeze({
     const resolved = resolveOpsRoomModel('sdk');
     return resolved.ok ? resolved.model : null;
   },
-  start: (input, cwd, emit) => agent.start(input, cwd, emit),
+  start: (input, cwd, emit) => agent.start(input, cwd, emit, { mode: 'ops-room' }),
 });
 const sdkPlannerRunner = Object.freeze({
   engine: 'sdk',
@@ -290,6 +352,7 @@ function createWindow() {
     mainWindow = null;
     preview.destroy(); // عرض المعاينة ابن النافذة — تدمير صريح احتياطاً
     promocapture.stopAll().catch(() => {});
+    cancelPendingSendRequest();
     stopAll();
   });
 
@@ -359,6 +422,10 @@ ipcMain.handle('satr:codexStatus', async () => {
   const bin = codex.resolveCodexBin(true);
   return { installed: !!bin, auth: bin ? await codex.accountStatus() : { ok: false, method: null } };
 });
+
+// بيانات Claude العامة فقط؛ دوال التنقية أعلاه تبني عقداً مسموحاً ولا تمرّر حقول SDK الأخرى.
+ipcMain.handle('satr:claudeModels', () => handleClaudeModelsRequest());
+ipcMain.handle('satr:claudeAccount', () => handleClaudeAccountRequest());
 
 ipcMain.handle('satr:codexModels', async () => {
   const models = await codex.listModels();
@@ -478,6 +545,7 @@ ipcMain.handle('satr:pickFolder', async () => {
 // ---------- إرسال طلب إلى Claude Code ----------
 
 const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
+const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_SKILL = /^[A-Za-z0-9_:.-]{1,64}$/; // اسم مهارة أو plugin:skill
 // وضع الأذونات + بوابة auto (الموجة 4) — المنطق النقي في autogate.js (قابل للاختبار
 // مستقلاً). PERMISSION_MODES يشمل 'auto'؛ nonSdkPerm يُسقط auto لـ default لغير SDK.
@@ -535,16 +603,35 @@ function sanitizeImages(arr) {
 function stopAll() {
   preview.clearSensitiveState();
   promocapture.stopAll().catch(() => {});
+  const stops = [];
+  const existingSdkStop = sdkStoppingPromise;
+  if (existingSdkStop) stops.push(existingSdkStop);
+  if (!existingSdkStop && sdkStartingPromise) {
+    const starting = sdkStartingPromise;
+    const stopping = Promise.resolve(starting).then(async (run) => {
+      if (!run) return;
+      if (currentRun === run) currentRun = null;
+      await stopSdkRun(run);
+    }).catch(() => {});
+    stops.push(trackSdkStop(stopping));
+  }
   if (currentCliRun) {
     const h = currentCliRun;
     currentCliRun = null;
-    h.stop().catch(() => {});
+    stops.push(Promise.resolve().then(() => h.stop()).catch(() => {}));
   }
   if (currentRun) {
     const run = currentRun;
     currentRun = null;
-    run.stop().catch(() => {});
+    const isSdkRun = sdkRunInFlight;
+    const stopping = isSdkRun
+      ? stopSdkRun(run).catch(() => {})
+      : Promise.resolve().then(() => run.stop()).catch(() => {});
+    if (isSdkRun) {
+      stops.push(trackSdkStop(stopping));
+    } else stops.push(stopping);
   }
+  return Promise.allSettled(stops);
 }
 
 function notifyObservers(obj, meta) {
@@ -703,6 +790,432 @@ function activeTaskRef(engine, sessionId) {
   return active.length === 1 ? { id: active[0].id, title: active[0].title } : null;
 }
 
+let sdkSessionControlBusy = false;
+let sendRequestBusy = false;
+let sendRequestEpoch = 0;
+let sdkRunInFlight = false;
+let sdkStartingPromise = null;
+let sdkStoppingPromise = null;
+const rewindPreviews = new Map();
+const REWIND_PREVIEW_TTL_MS = 2 * 60 * 1000;
+const MAX_REWIND_PREVIEWS = 100;
+const MAX_REWIND_FINGERPRINT_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_REWIND_FINGERPRINT_TOTAL_BYTES = 64 * 1024 * 1024;
+const SDK_STOP_GRACE_MS = 5000;
+const SDK_FORCE_CLOSE_GRACE_MS = 1000;
+
+function markSdkRunInFlight(value) {
+  sdkRunInFlight = value === true;
+}
+
+function cancelPendingSendRequest() {
+  sendRequestEpoch++;
+}
+
+async function settleSdkPromise(promise, timeoutMs) {
+  let timeout = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).then(() => true, () => true),
+      new Promise((resolve) => { timeout = setTimeout(() => resolve(false), timeoutMs); }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function stopSdkRun(run) {
+  if (!run || typeof run.stop !== 'function') return;
+  const stopSettled = await settleSdkPromise(
+    Promise.resolve().then(() => run.stop()),
+    SDK_STOP_GRACE_MS,
+  );
+  if (!stopSettled && typeof run.forceClose === 'function') {
+    try { run.forceClose(); } catch {}
+  }
+  if (!run.done || typeof run.done.then !== 'function') return;
+  const doneSettled = await settleSdkPromise(
+    run.done,
+    stopSettled ? SDK_STOP_GRACE_MS : SDK_FORCE_CLOSE_GRACE_MS,
+  );
+  if (!doneSettled && typeof run.forceClose === 'function') {
+    try { run.forceClose(); } catch {}
+    await settleSdkPromise(run.done, SDK_FORCE_CLOSE_GRACE_MS);
+  }
+}
+
+function trackSdkStop(stopping) {
+  let tracked;
+  tracked = Promise.resolve(stopping).finally(() => {
+    markSdkRunInFlight(false);
+    if (sdkStoppingPromise === tracked) sdkStoppingPromise = null;
+  });
+  sdkStoppingPromise = tracked;
+  return tracked;
+}
+
+async function runSdkSessionControl(operation) {
+  if (sendRequestBusy || sdkRunInFlight || sdkStartingPromise || sdkStoppingPromise) {
+    return { ok: false, error: 'session_run_busy', message: 'انتظر انتهاء دور Claude الجاري قبل التفريع أو استرجاع الملفات.' };
+  }
+  if (sdkSessionControlBusy) {
+    return { ok: false, error: 'session_control_busy', message: 'توجد عملية تفريع أو استرجاع ملفات قيد التنفيذ؛ انتظر اكتمالها.' };
+  }
+  sdkSessionControlBusy = true;
+  try {
+    return await operation();
+  } finally {
+    sdkSessionControlBusy = false;
+  }
+}
+
+function pruneRewindPreviews(now = Date.now()) {
+  for (const [token, preview] of rewindPreviews) {
+    if (!preview || now - preview.createdAt > REWIND_PREVIEW_TTL_MS) rewindPreviews.delete(token);
+  }
+  while (rewindPreviews.size > MAX_REWIND_PREVIEWS) {
+    rewindPreviews.delete(rewindPreviews.keys().next().value);
+  }
+}
+
+function rememberRewindPreview(cwd, sessionId, userMessageId, digest) {
+  pruneRewindPreviews();
+  const token = randomUUID();
+  rewindPreviews.set(token, { cwd, sessionId, userMessageId, digest, createdAt: Date.now() });
+  pruneRewindPreviews();
+  return token;
+}
+
+function takeRewindPreview(token, cwd, sessionId, userMessageId) {
+  pruneRewindPreviews();
+  if (!SAFE_UUID.test(String(token || ''))) return null;
+  const preview = rewindPreviews.get(token);
+  rewindPreviews.delete(token);
+  if (!preview || preview.cwd !== cwd || preview.sessionId !== sessionId || preview.userMessageId !== userMessageId) return null;
+  return preview;
+}
+
+function validProjectDirectory(value) {
+  if (typeof value !== 'string' || !value.trim() || value.length > 4096) return null;
+  const resolved = path.resolve(value.trim());
+  try {
+    return fs.statSync(resolved).isDirectory() ? fs.realpathSync(resolved) : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeRewindFiles(cwd, entries) {
+  if (!Array.isArray(entries)) {
+    return {
+      filesChanged: [], allFiles: [], fileCount: 0, outsideCount: 0,
+      invalidCount: 1, symlinkCount: 0, tooMany: false,
+    };
+  }
+  const seen = new Set();
+  const output = [];
+  const allFiles = [];
+  let outsideCount = 0;
+  let invalidCount = 0;
+  let symlinkCount = 0;
+  const tooMany = entries.length > 500;
+  for (const entry of entries.slice(0, 500)) {
+    if (typeof entry !== 'string'
+      || !entry.trim()
+      || entry.length > 4096
+      || /[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(entry)) {
+      invalidCount++;
+      continue;
+    }
+    let absolute;
+    try {
+      absolute = path.isAbsolute(entry) ? path.resolve(entry) : path.resolve(cwd, entry);
+      const relative = path.relative(cwd, absolute);
+      if (!relative) {
+        invalidCount++;
+        continue;
+      }
+      if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+        outsideCount++;
+        continue;
+      }
+      let cursor = cwd;
+      let blockedBySymlink = false;
+      let invalidPath = false;
+      for (const segment of relative.split(path.sep)) {
+        cursor = path.join(cursor, segment);
+        try {
+          if (fs.lstatSync(cursor).isSymbolicLink()) {
+            blockedBySymlink = true;
+            break;
+          }
+        } catch (error) {
+          if (error && error.code === 'ENOENT') break;
+          invalidPath = true;
+          break;
+        }
+      }
+      if (blockedBySymlink) {
+        symlinkCount++;
+        continue;
+      }
+      if (invalidPath) {
+        invalidCount++;
+        continue;
+      }
+    } catch {
+      invalidCount++;
+      continue;
+    }
+    const display = path.relative(cwd, absolute).split(path.sep).join('/');
+    const key = path.sep === '\\' ? display.toLowerCase() : display;
+    if (!seen.has(key)) {
+      seen.add(key);
+      allFiles.push(display);
+      if (output.length < 100) output.push(display);
+    }
+  }
+  return {
+    filesChanged: output,
+    allFiles,
+    fileCount: seen.size,
+    outsideCount,
+    invalidCount,
+    symlinkCount,
+    tooMany,
+  };
+}
+
+function safeRewindCount(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 1000000000 ? value : 0;
+}
+
+function fingerprintRewindFiles(cwd, files) {
+  const fingerprints = [];
+  let totalBytes = 0;
+  for (const relative of files) {
+    const absolute = path.resolve(cwd, relative);
+    let stat;
+    try {
+      stat = fs.lstatSync(absolute);
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        fingerprints.push([relative, 'missing']);
+        continue;
+      }
+      return { ok: false, error: 'fingerprint_failed' };
+    }
+    if (stat.isSymbolicLink()) return { ok: false, error: 'symlink_path' };
+    if (!stat.isFile()) return { ok: false, error: 'invalid_file_type' };
+    if (stat.size > MAX_REWIND_FINGERPRINT_FILE_BYTES
+      || totalBytes + stat.size > MAX_REWIND_FINGERPRINT_TOTAL_BYTES) {
+      return { ok: false, error: 'fingerprint_limit' };
+    }
+    let content;
+    try {
+      content = fs.readFileSync(absolute);
+    } catch {
+      return { ok: false, error: 'fingerprint_failed' };
+    }
+    if (content.length > MAX_REWIND_FINGERPRINT_FILE_BYTES
+      || totalBytes + content.length > MAX_REWIND_FINGERPRINT_TOTAL_BYTES) {
+      return { ok: false, error: 'fingerprint_limit' };
+    }
+    totalBytes += content.length;
+    fingerprints.push([
+      relative,
+      'file',
+      content.length,
+      Math.floor(stat.mtimeMs),
+      createHash('sha256').update(content).digest('hex'),
+    ]);
+  }
+  return { ok: true, fingerprints };
+}
+
+function normalizeRewindPreview(cwd, result) {
+  if (!result || result.ok !== true) {
+    return { ok: false, error: 'sdk_unavailable', message: 'تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.' };
+  }
+  const safeFiles = safeRewindFiles(cwd, result.filesChanged);
+  const response = {
+    ok: true,
+    canRewind: result.canRewind === true,
+    filesChanged: safeFiles.filesChanged,
+    fileCount: safeFiles.fileCount,
+    insertions: safeRewindCount(result.insertions),
+    deletions: safeRewindCount(result.deletions),
+  };
+  if (safeFiles.invalidCount > 0) {
+    return { ok: false, error: 'sdk_invalid_response', message: 'أعاد Claude قائمة ملفات غير صالحة؛ أُلغي الاسترجاع احترازياً.' };
+  }
+  if (safeFiles.tooMany) {
+    return { ...response, canRewind: false, error: 'too_many_files', message: 'تشمل نقطة الاسترجاع أكثر من 500 ملف؛ أُلغي التنفيذ احترازياً.' };
+  }
+  if (safeFiles.symlinkCount > 0) {
+    return { ...response, canRewind: false, error: 'symlink_path', message: 'تشمل نقطة الاسترجاع رابطاً رمزياً أو junction؛ أُلغي التنفيذ احترازياً.' };
+  }
+  if (safeFiles.outsideCount > 0) {
+    return {
+      ...response,
+      canRewind: false,
+      error: 'outside_cwd',
+      outsideCount: safeFiles.outsideCount,
+      message: 'تشمل نقطة الاسترجاع ملفات خارج مجلد المشروع؛ أُلغي التنفيذ احترازياً.',
+    };
+  }
+  if (!response.canRewind) {
+    response.message = 'لا تتوفر نقطة استرجاع لهذه الرسالة في جلسة Claude الحالية.';
+    return response;
+  }
+  const fingerprint = fingerprintRewindFiles(cwd, safeFiles.allFiles);
+  if (!fingerprint.ok) {
+    const labels = {
+      symlink_path: 'تشمل نقطة الاسترجاع رابطاً رمزياً أو junction؛ أُلغي التنفيذ احترازياً.',
+      invalid_file_type: 'تشمل نقطة الاسترجاع مساراً ليس ملفاً عادياً؛ أُلغي التنفيذ احترازياً.',
+      fingerprint_limit: 'تعذّر بصم ملفات المعاينة ضمن سقف الأمان (16 MiB للملف و64 MiB إجمالاً)؛ أُلغي التنفيذ.',
+      fingerprint_failed: 'تعذّرت بصمة محتوى ملفات المعاينة؛ أُلغي التنفيذ احترازياً.',
+    };
+    return {
+      ...response,
+      canRewind: false,
+      error: fingerprint.error,
+      message: labels[fingerprint.error] || labels.fingerprint_failed,
+    };
+  }
+  response._previewDigest = createHash('sha256').update(JSON.stringify({
+    files: safeFiles.allFiles.slice().sort(),
+    fingerprints: fingerprint.fingerprints.slice().sort((left, right) => (
+      left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0
+    )),
+    fileCount: response.fileCount,
+    insertions: response.insertions,
+    deletions: response.deletions,
+    canRewind: response.canRewind,
+  })).digest('hex');
+  return response;
+}
+
+function publicRewindPreview(preview) {
+  if (!preview || typeof preview !== 'object') return preview;
+  const { _previewDigest, ...safe } = preview;
+  return safe;
+}
+
+async function handleSessionForkRequest(payload, sessionAgent = agent) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { ok: false, error: 'invalid_payload', message: 'بيانات طلب التفريع غير صالحة.' };
+  }
+  const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+  if (!SAFE_UUID.test(sessionId)) {
+    return { ok: false, error: 'invalid_session', message: 'معرّف جلسة Claude غير صالح.' };
+  }
+  let upToMessageId;
+  if (payload.upToMessageId !== undefined) {
+    if (typeof payload.upToMessageId !== 'string' || !SAFE_UUID.test(payload.upToMessageId)) {
+      return { ok: false, error: 'invalid_message', message: 'معرّف رسالة المستخدم غير صالح.' };
+    }
+    upToMessageId = payload.upToMessageId;
+  }
+  if (payload.title !== undefined && (typeof payload.title !== 'string' || payload.title.length > 512)) {
+    return { ok: false, error: 'invalid_title', message: 'عنوان الفرع غير صالح.' };
+  }
+  const rawTitle = typeof payload.title === 'string'
+    ? payload.title.replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
+    : payload.title;
+  const title = sessionmeta.cleanTitle(rawTitle);
+  try {
+    const result = await sessionAgent.forkSession(sessionId, upToMessageId, title || undefined);
+    if (!result || result.ok !== true) {
+      return { ok: false, error: 'sdk_unavailable', message: 'تعذّر تفريع جلسة Claude؛ بقيت الجلسة الحالية كما هي.' };
+    }
+    if (!SAFE_UUID.test(String(result.sessionId || ''))) {
+      return { ok: false, error: 'sdk_invalid_response', message: 'أعاد Claude معرّف فرع غير صالح؛ بقيت الجلسة الحالية كما هي.' };
+    }
+    return { ok: true, sessionId: result.sessionId };
+  } catch {
+    return { ok: false, error: 'sdk_unavailable', message: 'تعذّر تفريع جلسة Claude؛ بقيت الجلسة الحالية كما هي.' };
+  }
+}
+
+async function handleRewindFilesRequest(payload, sessionAgent = agent) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { ok: false, error: 'invalid_payload', message: 'بيانات طلب الاسترجاع غير صالحة.' };
+  }
+  const cwd = validProjectDirectory(payload.cwd);
+  if (!cwd) return { ok: false, error: 'bad_cwd', message: 'مجلد المشروع غير صالح للاسترجاع.' };
+  if (typeof payload.sessionId !== 'string' || !SAFE_UUID.test(payload.sessionId)) {
+    return { ok: false, error: 'invalid_session', message: 'معرّف جلسة Claude غير صالح.' };
+  }
+  if (typeof payload.userMessageId !== 'string' || !SAFE_UUID.test(payload.userMessageId)) {
+    return { ok: false, error: 'invalid_message', message: 'معرّف رسالة المستخدم غير صالح.' };
+  }
+  if (typeof payload.dryRun !== 'boolean') {
+    return { ok: false, error: 'invalid_dry_run', message: 'وضع معاينة الاسترجاع غير صالح.' };
+  }
+  if (!payload.dryRun && payload.confirmed !== true) {
+    return { ok: false, error: 'confirmation_required', message: 'يلزم تأكيد الاسترجاع بعد عرض إحصاءات المعاينة.' };
+  }
+  let acceptedPreview = null;
+  if (!payload.dryRun) {
+    acceptedPreview = takeRewindPreview(
+      payload.previewToken,
+      cwd,
+      payload.sessionId,
+      payload.userMessageId,
+    );
+    if (!acceptedPreview) {
+      return { ok: false, error: 'preview_required', message: 'انتهت معاينة الاسترجاع أو لم تعد صالحة؛ أعد المعاينة والتأكيد.' };
+    }
+  }
+  try {
+    const previewResult = await sessionAgent.rewindFiles(
+      cwd,
+      payload.sessionId,
+      payload.userMessageId,
+      true,
+    );
+    const preview = normalizeRewindPreview(cwd, previewResult);
+    if (payload.dryRun) {
+      const response = publicRewindPreview(preview);
+      if (preview.ok && preview.canRewind && preview._previewDigest) {
+        response.previewToken = rememberRewindPreview(
+          cwd, payload.sessionId, payload.userMessageId, preview._previewDigest,
+        );
+      }
+      return response;
+    }
+    if (!preview.ok || !preview.canRewind) return publicRewindPreview(preview);
+    if (!preview._previewDigest || preview._previewDigest !== acceptedPreview.digest) {
+      return { ok: false, error: 'preview_changed', message: 'تغيّرت معاينة استرجاع ملفات Claude؛ راجع الإحصاءات الجديدة ثم أكّد مرة أخرى.' };
+    }
+    const finalPreview = normalizeRewindPreview(cwd, previewResult);
+    if (!finalPreview.ok || !finalPreview.canRewind) return publicRewindPreview(finalPreview);
+    if (finalPreview._previewDigest !== acceptedPreview.digest) {
+      return { ok: false, error: 'preview_changed', message: 'تغيّرت معاينة استرجاع ملفات Claude؛ راجع الإحصاءات الجديدة ثم أكّد مرة أخرى.' };
+    }
+    const staleCheckpoint = checkpoints.latest('sdk', payload.sessionId);
+    const staleCheckpointId = staleCheckpoint && sdkrewinds.SAFE_CHECKPOINT.test(String(staleCheckpoint.id || ''))
+      ? staleCheckpoint.id : '';
+    if (staleCheckpointId) {
+      const marked = sdkrewinds.mark(payload.sessionId, staleCheckpointId);
+      if (!marked || marked.ok !== true) {
+        return { ok: false, error: 'marker_write_failed', message: 'تعذّر حفظ حاجز checkpoint بأمان؛ أُلغي الاسترجاع قبل تغيير الملفات.' };
+      }
+    }
+    const result = await sessionAgent.rewindFiles(cwd, payload.sessionId, payload.userMessageId, false);
+    if (!result || result.ok !== true || result.canRewind !== true) {
+      return { ok: false, error: 'sdk_unavailable', message: 'تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.' };
+    }
+    return {
+      ...publicRewindPreview(finalPreview),
+      ...(staleCheckpointId ? { suppressedCheckpointId: staleCheckpointId } : {}),
+    };
+  } catch {
+    return { ok: false, error: 'sdk_unavailable', message: 'تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.' };
+  }
+}
+
 function publishVerification({ engine, sessionId, runId, checkpointId, taskTitle, result }) {
   const checkpoint = runId
     ? checkpoints.recordVerification(runId, result)
@@ -734,11 +1247,21 @@ function publishVerification({ engine, sessionId, runId, checkpointId, taskTitle
   return { event, checkpoint, ledger };
 }
 
-ipcMain.handle('satr:send', async (event, payload) => {
+ipcMain.handle('satr:sessionFork', async (event, payload) => runSdkSessionControl(
+  () => handleSessionForkRequest(payload),
+));
+ipcMain.handle('satr:rewindFiles', async (event, payload) => runSdkSessionControl(
+  () => handleRewindFilesRequest(payload),
+));
+
+async function handleSendRequest(event, payload, requestEpoch) {
   const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : '';
   const images = sanitizeImages(payload.images);
   // يُسمح بطلب بلا نص إن رافقته صورة («صف هذه الصورة» مثلاً)
   if (!prompt && !images.length) return { error: 'empty_prompt' };
+  if (sdkSessionControlBusy) {
+    return { error: 'session_control_busy', message: 'انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل إرسال طلب جديد.' };
+  }
 
   let cwd = typeof payload.cwd === 'string' && payload.cwd.trim() ? payload.cwd.trim() : os.homedir();
   try {
@@ -747,7 +1270,13 @@ ipcMain.handle('satr:send', async (event, payload) => {
     return { error: 'bad_cwd', message: 'مجلد المشروع غير موجود: ' + cwd };
   }
 
-  stopAll(); // طلب جديد يلغي السابق
+  await stopAll(); // طلب جديد ينتظر إغلاق السابق فعلياً قبل البدء
+  if (requestEpoch !== sendRequestEpoch) {
+    return { error: 'stopped', message: 'أوقف المستخدم الطلب قبل بدء تشغيله.' };
+  }
+  if (sdkSessionControlBusy) {
+    return { error: 'session_control_busy', message: 'انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل إرسال طلب جديد.' };
+  }
 
   const token = ++runSeq;
   const runEngine = (payload.engine === 'codex' || payload.engine === kimi.ENGINE_ID || adapters.get(payload.engine))
@@ -762,6 +1291,10 @@ ipcMain.handle('satr:send', async (event, payload) => {
   checkpoints.begin({ runId, engine: runEngine, sessionId: activeSessionId, cwd });
   const emit = (obj) => {
     if (token !== runSeq || !obj || typeof obj !== 'object') return;
+    if (obj.type === 'user' && obj.uuid !== undefined) {
+      if (!SAFE_UUID.test(String(obj.uuid || '')) || !SAFE_UUID.test(String(obj.session_id || ''))) return;
+      obj = { ...obj, uuid: String(obj.uuid), session_id: String(obj.session_id) };
+    }
     if (obj.type === 'system' && SAFE_SESSION.test(obj.session_id || '')) {
       activeSessionId = obj.session_id;
       browserBudgets.set(runEngine + ':session:' + activeSessionId, browserBudget);
@@ -793,6 +1326,7 @@ ipcMain.handle('satr:send', async (event, payload) => {
       return;
     }
     if (obj.type === 'file_edit') {
+      if (runEngine === 'sdk' && activeSessionId) sdkrewinds.clear(activeSessionId);
       const checkpoint = checkpoints.addEdit(runId, obj, activeSessionId ? activeTaskRef(runEngine, activeSessionId) : null);
       emitToWindow(obj);
       if (checkpoint) emitToWindow(checkpoint);
@@ -912,11 +1446,15 @@ ipcMain.handle('satr:send', async (event, payload) => {
 
   // المسار الافتراضي: Agent SDK — نفس التحقق الصارم من المدخلات
   try {
-    currentRun = await agent.start({
+    markSdkRunInFlight(true);
+    const primaryModel = payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null;
+    const fallbackModel = sanitizeClaudeFallbackModel(payload.fallbackModel, primaryModel);
+    const starting = agent.start({
       prompt: enginePrompt,
       images,
       sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
-      model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
+      model: primaryModel,
+      fallbackModel,
       permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
       skills: sanitizeSkills(payload.skills),
       effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
@@ -925,15 +1463,46 @@ ipcMain.handle('satr:send', async (event, payload) => {
       trustedBrowserOrigins,
       browserBudget,
     }, cwd, emit);
+    sdkStartingPromise = starting;
+    let sdkRun;
+    try {
+      sdkRun = await starting;
+    } finally {
+      if (sdkStartingPromise === starting) sdkStartingPromise = null;
+    }
+    currentRun = sdkRun;
+    if (sdkRun && sdkRun.done && typeof sdkRun.done.finally === 'function') {
+      sdkRun.done.finally(() => {
+        if (currentRun === sdkRun) {
+          currentRun = null;
+          markSdkRunInFlight(false);
+        }
+      }).catch(() => {});
+    }
     return { started: true, engine: 'sdk' };
   } catch (e) {
+    markSdkRunInFlight(false);
     currentRun = null;
     return { error: 'sdk_failed', message: 'تعذّر تشغيل محرك SDK: ' + String((e && e.message) || e) };
   }
+}
+
+ipcMain.handle('satr:send', async (event, payload) => {
+  if (sendRequestBusy) {
+    return { error: 'send_busy', message: 'انتظر اكتمال بدء الطلب السابق قبل إرسال طلب جديد.' };
+  }
+  sendRequestBusy = true;
+  const requestEpoch = sendRequestEpoch;
+  try {
+    return await handleSendRequest(event, payload, requestEpoch);
+  } finally {
+    sendRequestBusy = false;
+  }
 });
 
-ipcMain.handle('satr:stop', () => {
-  stopAll();
+ipcMain.handle('satr:stop', async () => {
+  cancelPendingSendRequest();
+  await stopAll();
   return { ok: true };
 });
 
@@ -1827,7 +2396,13 @@ ipcMain.handle('satr:verifyConfigCreate', (event, payload) => {
 ipcMain.handle('satr:checkpointLatest', (event, payload) => {
   const p = payload || {};
   if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')) return null;
-  return checkpoints.latest(p.engine, p.sessionId);
+  const latest = checkpoints.latest(p.engine, p.sessionId);
+  if (p.engine === 'sdk') {
+    const marker = sdkrewinds.get(p.sessionId);
+    if (marker && (!latest || marker.checkpointId === latest.id)) return null;
+    if (marker && latest && marker.checkpointId !== latest.id) sdkrewinds.clear(p.sessionId);
+  }
+  return latest;
 });
 
 ipcMain.handle('satr:checkpointRestore', async (event, payload) => {
@@ -1835,6 +2410,10 @@ ipcMain.handle('satr:checkpointRestore', async (event, payload) => {
   if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')
       || !SAFE_CHECKPOINT_ID.test(p.checkpointId || '') || typeof p.cwd !== 'string' || !p.cwd.trim()) {
     return { ok: false, error: 'bad_input' };
+  }
+  const rewindMarker = p.engine === 'sdk' ? sdkrewinds.get(p.sessionId) : null;
+  if (rewindMarker && rewindMarker.checkpointId === p.checkpointId) {
+    return { ok: false, error: 'superseded_by_sdk_rewind' };
   }
   try { if (!fs.statSync(p.cwd).isDirectory()) throw new Error(); }
   catch { return { ok: false, error: 'bad_cwd' }; }
@@ -1850,6 +2429,10 @@ ipcMain.handle('satr:verifyCheckpoint', async (event, payload) => {
   if (!SAFE_ENGINE.test(p.engine || '') || !SAFE_SESSION.test(p.sessionId || '')
       || !SAFE_CHECKPOINT_ID.test(p.checkpointId || '') || typeof p.cwd !== 'string' || !p.cwd.trim()) {
     return { ok: false, error: 'bad_input' };
+  }
+  const rewindMarker = p.engine === 'sdk' ? sdkrewinds.get(p.sessionId) : null;
+  if (rewindMarker && rewindMarker.checkpointId === p.checkpointId) {
+    return { ok: false, error: 'superseded_by_sdk_rewind' };
   }
   try { if (!fs.statSync(p.cwd).isDirectory()) throw new Error(); }
   catch { return { ok: false, error: 'bad_cwd' }; }
@@ -2079,7 +2662,8 @@ let shutdownCleanup = null;
 let shutdownClean = false;
 
 async function cleanupBeforeQuit() {
-  stopAll();
+  cancelPendingSendRequest();
+  await stopAll();
   await Promise.allSettled([
     orchestrator.stopAll(), opsBrainstorm.stopAll(), opsPlanner.stopAll(), executor.stopAll(),
     executionTeam.stopAll(), reviewer.stopAll(), integration.stopAll(), promocapture.stopAll(),

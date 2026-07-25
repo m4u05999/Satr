@@ -331,10 +331,60 @@ class SatrChat extends HTMLElement {
     whoEl.appendChild(b);
   }
 
-  function addUserMsg(text, images) {
+  const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  function bindUserMessageElement(message, messageId, sessionId, cwd) {
+    if (!message || !SAFE_UUID.test(String(messageId || '')) || !SAFE_UUID.test(String(sessionId || ''))) return false;
+    message.dataset.sdkMessageId = messageId;
+    message.dataset.sdkSessionId = sessionId;
+    message.dataset.sdkCwd = typeof cwd === 'string' ? cwd : '';
+    message.dataset.sdkUserPending = 'false';
+    for (const button of message.querySelectorAll('.msg-user-fork, .msg-user-rewind')) {
+      button.disabled = false;
+      button.hidden = false;
+    }
+    return true;
+  }
+
+  function bindLatestUserMessage(messageId, sessionId, cwd) {
+    const pending = [...thread.querySelectorAll('.msg.user[data-sdk-user-pending=true]')].pop();
+    return bindUserMessageElement(pending, messageId, sessionId, cwd);
+  }
+
+  function invalidateSdkUserMessages() {
+    for (const message of thread.querySelectorAll('.msg.user')) {
+      delete message.dataset.sdkMessageId;
+      delete message.dataset.sdkSessionId;
+      message.dataset.sdkUserPending = 'false';
+      for (const button of message.querySelectorAll('.msg-user-fork, .msg-user-rewind')) {
+        button.disabled = true;
+        button.hidden = true;
+      }
+    }
+  }
+
+  function trimAfterSdkUserMessage(messageId) {
+    if (!SAFE_UUID.test(String(messageId || ''))) return false;
+    const message = [...thread.querySelectorAll('.msg.user')]
+      .find((entry) => entry.dataset.sdkMessageId === messageId);
+    if (!message) return false;
+    if (!searchBar.hidden) closeThreadSearch();
+    let next = message.nextSibling;
+    while (next) {
+      const current = next;
+      next = next.nextSibling;
+      current.remove();
+    }
+    resetUsageSummary();
+    scrollDown(true);
+    return true;
+  }
+
+  function addUserMsg(text, images, meta) {
     hideEmpty();
     const w = document.createElement('div');
     w.className = 'msg user';
+    w.dataset.sdkUserPending = meta && meta.awaitingSdkIdentity === true ? 'true' : 'false';
     const who = document.createElement('div'); who.className = 'who';
     const label = document.createElement('span'); label.textContent = 'أنت'; who.appendChild(label);
     const ops = document.createElement('button'); ops.type = 'button'; ops.className = 'msg-ops-room';
@@ -359,7 +409,40 @@ class SatrChat extends HTMLElement {
         detail: { text: text || '', images: Array.isArray(images) ? images.slice() : [] },
       }));
     });
-    who.appendChild(ops); who.appendChild(edit); w.appendChild(who);
+    const fork = document.createElement('button'); fork.type = 'button'; fork.className = 'msg-user-fork';
+    fork.textContent = '🌿 فرّع من هنا'; fork.title = 'أنشئ جلسة Claude جديدة من هذه الرسالة';
+    fork.setAttribute('aria-label', 'فرّع جلسة Claude من هذه الرسالة');
+    fork.disabled = true; fork.hidden = true;
+    fork.addEventListener('click', () => {
+      if (fork.disabled) return;
+      component.dispatchEvent(new CustomEvent('user-fork', {
+        bubbles: true,
+        detail: {
+          text: text || '',
+          images: Array.isArray(images) ? images.slice() : [],
+          sessionId: w.dataset.sdkSessionId || '',
+          messageId: w.dataset.sdkMessageId || '',
+          cwd: w.dataset.sdkCwd || '',
+        },
+      }));
+    });
+    const rewind = document.createElement('button'); rewind.type = 'button'; rewind.className = 'msg-user-rewind';
+    rewind.textContent = '↩ استرجع الملفات'; rewind.title = 'عاين تغييرات الملفات منذ هذه الرسالة ثم أكّد الاسترجاع';
+    rewind.setAttribute('aria-label', 'استرجع ملفات Claude إلى حالة هذه الرسالة');
+    rewind.disabled = true; rewind.hidden = true;
+    rewind.addEventListener('click', () => {
+      if (rewind.disabled) return;
+      component.dispatchEvent(new CustomEvent('user-rewind', {
+        bubbles: true,
+        detail: {
+          source: rewind,
+          sessionId: w.dataset.sdkSessionId || '',
+          messageId: w.dataset.sdkMessageId || '',
+          cwd: w.dataset.sdkCwd || '',
+        },
+      }));
+    });
+    who.appendChild(ops); who.appendChild(edit); who.appendChild(fork); who.appendChild(rewind); w.appendChild(who);
     if (text) {
       const b = document.createElement('div');
       b.className = 'bubble'; b.textContent = text;
@@ -379,7 +462,9 @@ class SatrChat extends HTMLElement {
       }
       w.appendChild(ic);
     }
-    thread.appendChild(w); scrollDown(true); // إرسال المستخدم يعيد الالتصاق دائماً
+    thread.appendChild(w);
+    if (meta && meta.messageId) bindUserMessageElement(w, meta.messageId, meta.sessionId, meta.cwd);
+    scrollDown(true); // إرسال المستخدم يعيد الالتصاق دائماً
   }
 
   // بطاقة فرق مستقلة عن الدور (حفظ من عارض القراءة — الدفعة 4): نفس buildDiff
@@ -1149,6 +1234,9 @@ class SatrChat extends HTMLElement {
 
     // ---------- الواجهة العامة (تستهلكها القشرة) ----------
     this.addUserMsg = addUserMsg;
+    this.bindLatestUserMessage = bindLatestUserMessage;
+    this.invalidateSdkUserMessages = invalidateSdkUserMessages;
+    this.trimAfterSdkUserMessage = trimAfterSdkUserMessage;
     this.addNotice = addNotice;
     this.addNoticeBefore = addNoticeBefore;
     this.addActionNotice = addActionNotice;

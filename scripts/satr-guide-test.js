@@ -41,8 +41,9 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
     const builtinCatalog = skills.discoverSkills(project, { home, builtinRoot });
     const builtinGuide = builtinCatalog.find((s) => s.name === 'satr-guide');
     ok(!!builtinGuide && builtinGuide.source === 'builtin', 'المشروع الفارغ يكتشف satr-guide من المصدر المضمّن');
-    ok(builtinCatalog.length === 1 && !builtinCatalog.some((s) => s.name === 'tafqeet'),
-      'المصدر المضمّن مقصور على satr-guide ولا يشحن مثال tafqeet');
+    ok(builtinCatalog.map((s) => s.name).join(',') === 'satr-diverge,satr-guide'
+      && !builtinCatalog.some((s) => s.name === 'tafqeet'),
+    'المصدر المضمّن مقصور على مهارتي سطر الرسميتين ولا يشحن مثال tafqeet');
 
     const overrideDir = path.join(project, '.agents', 'skills', 'satr-guide');
     fs.mkdirSync(overrideDir, { recursive: true });
@@ -59,10 +60,13 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
       'تخصيص المشروع يغلب satr-guide المضمّنة بالاسم نفسه');
 
     const bundlePattern = '.agents/skills/satr-guide/**/*';
-    ok(packageJson.build.files.includes(bundlePattern) && !packageJson.build.files.some((p) => /tafqeet/.test(p)),
-      'build.files يحزم satr-guide وحدها دون tafqeet');
-    ok(Array.isArray(packageJson.build.asarUnpack) && packageJson.build.asarUnpack.includes(bundlePattern),
-      'asarUnpack يطابق نمط satr-guide المضمّنة');
+    const divergePattern = '.agents/skills/satr-diverge/**/*';
+    ok(packageJson.build.files.includes(bundlePattern) && packageJson.build.files.includes(divergePattern)
+      && !packageJson.build.files.some((p) => /tafqeet/.test(p)),
+    'build.files يحزم مهارتي سطر الرسميتين دون tafqeet');
+    ok(Array.isArray(packageJson.build.asarUnpack) && packageJson.build.asarUnpack.includes(bundlePattern)
+      && packageJson.build.asarUnpack.includes(divergePattern),
+    'asarUnpack يطابق نمطي المهارتين المضمّنتين');
     const bundledFiles = fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile());
     const bundledBytes = bundledFiles.reduce((total, entry) => total + fs.statSync(path.join(dir, entry.name)).size, 0);
     ok(bundledFiles.length === 3 && bundledFiles.every((entry) => entry.name.endsWith('.md')) && bundledBytes < 32 * 1024,

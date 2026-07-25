@@ -49,7 +49,13 @@ function imageResult(base64) {
 }
 function actionProof(prefix, result) {
   const proof = 'navigated=' + !!result.navigated + ' · dom_changed=' + !!result.dom_changed;
-  return prefix + '\n' + proof + (result.note ? '\nملاحظة: ' + result.note : '');
+  const lines = [prefix, proof];
+  if (Array.isArray(result.delta) && result.delta.length) {
+    lines.push('[تغيّر DOM المختصر — refs الجديدة صالحة ضمن الجيل الحالي]', result.delta.join('\n'));
+  }
+  if (result.delta_truncated) lines.push('ملاحظة: قُصّ تغيّر DOM؛ خذ browser_snapshot قبل متابعة غير مغطاة بالـ refs الظاهرة.');
+  if (result.note) lines.push('ملاحظة: ' + result.note);
+  return lines.join('\n');
 }
 
 // أخطاء أدوات المعاينة الموحّدة → رسالة عربية (نظير التغليف في agent.js)
@@ -57,6 +63,7 @@ function whyClosed(err, extra) {
   // أثناء التسليم البشري كل دوال preview.js الوكيلية تعيد {error:'handoff'} — رسالة موحّدة
   if (err === 'handoff') return HANDOFF_BLOCKED;
   if (err === 'closed') return 'المعاينة غير مفتوحة — استخدم open_preview أولاً.';
+  if (err === 'stale_ref') return 'المرجع من لقطة قديمة — خذ browser_snapshot جديدة واستعمل ref منها.';
   return (extra || 'تعذّرت العملية') + ' (' + (err || 'خطأ') + ').';
 }
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
@@ -149,7 +156,8 @@ function buildTools(deps) {
     {
       name: 'browser_snapshot',
       description: 'خذ لقطة بنيوية للعناصر التفاعلية في الصفحة المعروضة: كل عنصر بصيغة '
-        + '[ref] role "name" — طريقتك لمعرفة ما يمكن قراءته/التفاعل معه. قراءة فقط.',
+        + '[ref] role "name"، مثل [s3:e5]. خذها بعد التنقّل أو عندما لا يعيد الفعل ref المطلوبة '
+        + 'في تغيّر DOM المختصر؛ كل لقطة جديدة تُبطل refs الأقدم. قراءة فقط.',
       inputSchema: { type: 'object', properties: {} },
       handler: async () => {
         const r = await preview.snapshot();
@@ -224,7 +232,7 @@ function buildTools(deps) {
       name: 'browser_screenshot_element',
       description: 'التقط لقطة بصرية لعنصر واحد في الصفحة المعروضة (بـ ref من browser_snapshot أو '
         + 'مُحدِّد CSS) لتفحص مظهره عن قرب — أوفر من لقطة الصفحة كاملة. قراءة فقط.',
-      inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'ref (مثل e6) أو مُحدِّد CSS' } }, required: ['ref'] },
+      inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'ref (مثل s3:e6) أو مُحدِّد CSS' } }, required: ['ref'] },
       handler: async (args) => {
         const r = await preview.screenshotElement(String((args && args.ref) || ''));
         if (!r || !r.ok) {
@@ -285,9 +293,10 @@ function buildTools(deps) {
     // ---------- أفعال تُغيّر الصفحة — خلف مربع الإذن العربي (guard) ----------
     {
       name: 'browser_click',
-      description: 'انقر عنصراً في الصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل e5 — '
-        + 'حتمي ومُفضَّل) أو مُحدِّد CSS. أعد أخذ اللقطة بعد النقر (الـ ref يتغيّر).',
-      inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'ref (مثل e5) أو مُحدِّد CSS' } }, required: ['ref'] },
+      description: 'انقر عنصراً في الصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل s3:e5 — '
+        + 'حتمي ومُفضَّل) أو مُحدِّد CSS. إن أعادت النتيجة ref جديدة داخل «تغيّر DOM المختصر» '
+        + 'فيمكن متابعتها بلا لقطة؛ خذ لقطة بعد التنقّل أو غياب ref المطلوبة أو قصّ التغيّر.',
+      inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'ref (مثل s3:e5) أو مُحدِّد CSS' } }, required: ['ref'] },
       handler: async (args) => {
         const r = await preview.clickElement(String((args && args.ref) || ''));
         if (!r || !r.ok) {
@@ -300,10 +309,10 @@ function buildTools(deps) {
     },
     {
       name: 'browser_type',
-      description: 'اكتب نصاً في حقل إدخال بالصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل e7) '
+      description: 'اكتب نصاً في حقل إدخال بالصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل s3:e7) '
         + 'أو مُحدِّد CSS، مع النص. لملء النماذج بعد browser_snapshot.',
       inputSchema: { type: 'object', properties: {
-        ref: { type: 'string', description: 'ref (مثل e7) أو مُحدِّد CSS' },
+        ref: { type: 'string', description: 'ref (مثل s3:e7) أو مُحدِّد CSS' },
         text: { type: 'string', description: 'النص المراد كتابته' },
       }, required: ['ref', 'text'] },
       handler: async (args) => {
@@ -322,7 +331,7 @@ function buildTools(deps) {
       description: 'اختر خياراً من قائمة منسدلة <select>. مرّر ref (من browser_snapshot) أو مُحدِّد CSS، '
         + 'مع value الخيار أو نصّه الظاهر.',
       inputSchema: { type: 'object', properties: {
-        ref: { type: 'string', description: 'ref (مثل e9) أو مُحدِّد CSS' },
+        ref: { type: 'string', description: 'ref (مثل s3:e9) أو مُحدِّد CSS' },
         value: { type: 'string', description: 'قيمة الخيار أو نصّه الظاهر' },
       }, required: ['ref', 'value'] },
       handler: async (args) => {
@@ -663,6 +672,9 @@ function start(deps) {
         if (browserpolicy.hasVisibleSecret(tool.name, input)) {
           return rpcOk(id, textResult('رُفض تمرير السر كنص. استخدم browser_transfer_field أو browser_request_secret.', true));
         }
+        const inputError = typeof preview.browserInputError === 'function'
+          ? preview.browserInputError(tool.name, input) : null;
+        if (inputError) return rpcOk(id, textResult(whyClosed(inputError), true));
         let allowed = tool.access === 'read';
         if (!allowed && requestPermission) {
           const currentUrl = typeof preview.currentUrl === 'function' ? preview.currentUrl() : null;

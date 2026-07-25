@@ -775,6 +775,10 @@ function testSecurityAndWiring() {
     { optionId: 'yes', kind: 'allow_once' },
   ], true, false), { outcome: 'selected', optionId: 'yes' });
   assert.strictEqual(kimi._internals.safeWritablePath(root, path.resolve(root, '..', 'outside.txt')), null);
+  assert.strictEqual(kimi._internals.isEmbeddedMcpTool({ title: 'mcp__satr__browser_click' }, {}), true);
+  assert.strictEqual(kimi._internals.isEmbeddedMcpTool({ title: 'mcp__satr__browser_click' }, null), false);
+  assert.strictEqual(kimi._internals.isEmbeddedMcpTool({ title: 'browser_click' }, {}), false);
+  assert.strictEqual(kimi._internals.isEmbeddedMcpTool({ title: 'mcp__external__browser_click' }, {}), false);
 
   const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.js'), 'utf8');
@@ -823,6 +827,7 @@ function testSecurityAndWiring() {
   console.log('✓ أدوات Kimi الداخلية تظهر بتسميات عربية وأوامر ACP المعلنة تصل الواجهة');
   console.log('✓ قائمة نماذج Kimi تُجلب من configOptions الرسمية وتُخزَّن مؤقتاً دون رمي عند الفشل');
   console.log('✓ اختيار نموذج بقيمته الكاملة (kimi-code/…) يُطبَّق عبر set_config_option');
+  console.log('✓ غلاف ACP لأدوات MCP المدمجة يمر مرة واحدة دون إعفاء أداة خارجية');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

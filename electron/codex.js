@@ -214,6 +214,20 @@ function projectPath(cwd, filePath) {
     ? absolute : null;
 }
 
+function isInternalMcpApprovalElicitation(params) {
+  if (!params) return false;
+  const schema = params && params.requestedSchema;
+  const meta = params && params._meta;
+  const properties = schema && schema.properties;
+  return params.serverName === 'satr_preview'
+    && params.mode === 'form'
+    && meta && meta.codex_approval_kind === 'mcp_tool_call'
+    && schema && schema.type === 'object'
+    && properties && typeof properties === 'object' && !Array.isArray(properties)
+    && Object.keys(properties).length === 0
+    && (!Array.isArray(schema.required) || schema.required.length === 0);
+}
+
 function shouldAutoApproveMcp(access, browserControl, permissionMode, remembered, neverAlways, toolName, target, trustedSet, currentUrl, input, pageContext, budgetStatus) {
   if (permissionMode === 'bypassPermissions') return true;
   if (browserpolicy.isSensitiveAction(toolName, input, pageContext)
@@ -444,6 +458,25 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     return phase === 'commentary' ? 'commentary' : 'final_answer';
   }
 
+  // app-server يضاعف إشعارات خيط الجذر وخيوط الوكلاء الفرعيين على الاتصال نفسه.
+  // من دون هذا المرشح قد تُعرض رسالة طفل كإجابة الجذر، والأسوأ أن turn/completed
+  // للطفل ينهي تشغيل «سطر» كله قبل أن يجمع الجذر بقية النتائج.
+  function notificationThreadId(params) {
+    return params && (params.threadId || (params.thread && params.thread.id)) || null;
+  }
+  function notificationTurnId(params) {
+    return params && (params.turnId || (params.turn && params.turn.id)) || null;
+  }
+  function belongsToRootThread(params) {
+    const incomingThreadId = notificationThreadId(params);
+    return !incomingThreadId || !threadId || incomingThreadId === threadId;
+  }
+  function belongsToRootTurn(params) {
+    if (!belongsToRootThread(params)) return false;
+    const incomingTurnId = notificationTurnId(params);
+    return !incomingTurnId || !turnId || incomingTurnId === turnId;
+  }
+
   // تُصدر رسالة assistant نصية مكتملة بمرحلتها (تستبدل بثّ stream_text المناظر في الواجهة)
   function emitAssistantText(text, phase) {
     if (!text) return;
@@ -615,6 +648,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       return;
     }
     if (method === 'mcpServer/elicitation/request') {
+      // هذه موافقة Codex الخارجية فقط؛ بوابة codexmcp الداخلية تبقى صاحبة قرار الأمان الفعلي.
+      if (isInternalMcpApprovalElicitation(p)) {
+        respond(m.id, { action: 'accept', content: {} });
+        return;
+      }
       if (p.mode === 'form' && p.requestedSchema && p.requestedSchema.properties) {
         const fields = Object.entries(p.requestedSchema.properties);
         const normalized = fields.map(([name, schema]) => {
@@ -771,15 +809,18 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   function onNotification(method, p) {
     switch (method) {
       case 'thread/started': {
-        threadId = (p.thread && p.thread.id) || threadId;
+        if (!belongsToRootThread(p)) break;
+        threadId = notificationThreadId(p) || threadId;
         if (threadId) emit({ type: 'system', subtype: 'init', session_id: threadId });
         break;
       }
       case 'turn/started': {
+        if (!belongsToRootTurn(p)) break;
         turnId = p.turn && p.turn.id || turnId;
         break;
       }
       case 'thread/tokenUsage/updated': {
+        if (!belongsToRootTurn(p)) break;
         const tokenUsage = p.tokenUsage || {};
         const total = tokenUsage.total || {};
         latestUsage = {
@@ -799,17 +840,20 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         break;
       }
       case 'model/rerouted': {
+        if (!belongsToRootTurn(p)) break;
         emit({ type: 'stderr', text: 'حوّل Codex النموذج تلقائياً من ' + String(p.fromModel || 'النموذج المختار')
           + ' إلى ' + String(p.toModel || 'نموذج بديل') + ' بسبب سياسة الخدمة.' });
         break;
       }
       case 'model/verification': {
+        if (!belongsToRootTurn(p)) break;
         if (Array.isArray(p.verifications) && p.verifications.length) {
           emitAssistantText('تحقق Codex من متطلبات الوصول الخاصة بهذا الدور.', 'commentary');
         }
         break;
       }
       case 'item/agentMessage/delta': {
+        if (!belongsToRootTurn(p)) break;
         if (p.delta) {
           const itemId = p.itemId || '_';
           const phase = normalizeAgentPhase(p.phase || agentPhase.get(itemId));
@@ -820,6 +864,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         break;
       }
       case 'item/started': {
+        if (!belongsToRootTurn(p)) break;
         // بداية عنصر: لعناصر تغيير الملفات نلتقط لقطة «قبل» الآن (قبل تطبيق الرقعة —
         // اللحظة الصحيحة للتراجع، نظير PreToolUse) ونخزّن مساراتها لمربع الإذن.
         const it = p.item || {};
@@ -851,6 +896,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         break;
       }
       case 'turn/plan/updated': {
+        if (!belongsToRootTurn(p)) break;
         // عقد Codex v2 المثبّت بالـschema: plan[{step,status pending|inProgress|completed}].
         // التفكير يبقى transcript؛ الخطة تُطبّع كحالة task_update كاملة قابلة للحفظ والقياس.
         if (Array.isArray(p.plan)) emit({
@@ -872,14 +918,17 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         break;
       }
       case 'item/completed': {
+        if (!belongsToRootTurn(p)) break;
         onItemCompleted(p.item || {});
         break;
       }
       case 'turn/completed': {
+        if (!belongsToRootTurn(p)) break;
         finishTurn(p.turn || {});
         break;
       }
       case 'turn/failed': {
+        if (!belongsToRootTurn(p)) break;
         finishTurn(p.turn || { status: 'failed', error: p.error });
         break;
       }
@@ -1165,5 +1214,5 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
 module.exports = {
   start, undoEdit, resolveCodexBin, authStatus, accountStatus, listModels, rateLimits, DEFAULT_MODEL,
   isExternalBrowserLaunchCommand, shouldAutoApproveMcp,
-  _internals: { projectPath },
+  _internals: { projectPath, isInternalMcpApprovalElicitation },
 };

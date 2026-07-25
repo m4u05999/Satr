@@ -35,7 +35,11 @@ import { createUpdateToast } from './lib/update-toast.js';
       applyTheme(next);
     });
   })();
+  const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const SAFE_CHECKPOINT_ID = /^cp-[A-Za-z0-9-]{3,80}$/;
   let sessionId = null, busy = false, currentBlock = null;
+  let sessionControlBusy = false;
+  let sessionResumeBusy = false;
   let kimiDeclaredCommands = []; // أوامر Kimi المعلنة عبر ACP في الجلسة الجارية (system/available_commands)
   let sessionCwd = null;     // المجلد الذي وُلدت فيه الجلسة الحالية (جلسات Claude Code مرتبطة بمجلدها)
   let lastSentPrompt = '';   // آخر طلب أُرسل — يُستعاد للمحرّر عند فشل استئناف جلسة ميتة
@@ -135,6 +139,44 @@ import { createUpdateToast } from './lib/update-toast.js';
     setTimeout(() => { b.style.display = 'none'; }, 12000);
   });
 
+  let claudeAccountRequest = null;
+  async function fetchClaudeAccount() {
+    if (claudeAccountRequest) return claudeAccountRequest;
+    const request = (async () => {
+      try {
+        const account = await window.satr.claudeAccount();
+        return account && account.ok === true ? account : null;
+      } catch (e) {
+        return null;
+      }
+    })();
+    claudeAccountRequest = request;
+    try {
+      return await request;
+    } finally {
+      if (claudeAccountRequest === request) claudeAccountRequest = null;
+    }
+  }
+  function renderClaudeAccount(account) {
+    const ready = !!account;
+    const state = $('claudeAccountState');
+    state.textContent = ready ? 'متصل' : 'تعذّر التحديث';
+    state.classList.toggle('set', ready);
+    $('claudeAccountEmail').textContent = ready && account.email ? account.email : '—';
+    $('claudeAccountOrganization').textContent = ready && account.organization ? account.organization : '—';
+    $('claudeAccountSubscription').textContent = ready && account.subscriptionType ? account.subscriptionType : '—';
+  }
+  async function refreshClaudeAccountView() {
+    const state = $('claudeAccountState');
+    state.textContent = 'جارٍ التحديث…';
+    state.classList.remove('set');
+    renderClaudeAccount(await fetchClaudeAccount());
+  }
+  let gateBannerTimer = null;
+  function hideGateBannerAfter(banner, delay) {
+    if (gateBannerTimer) clearTimeout(gateBannerTimer);
+    gateBannerTimer = setTimeout(() => { banner.style.display = 'none'; }, delay);
+  }
   // ---------- بوابة أول التشغيل: انتقلت لمكوّن <satr-gate> (تفكيك ت-8) ----------
   // المكوّن يفحص ويرسم ويعيد الفحص ذاتياً (يبدأ عند اتصاله)؛ عند الجهوز يخفي نفسه
   // ويُصدر «gate-ready {version}» — القشرة ترفع حجب الإرسال وتعرض شريط النجاح
@@ -147,11 +189,25 @@ import { createUpdateToast } from './lib/update-toast.js';
       // «سطر» يعتمد المثبّت العالمي عمداً). يبقى ظاهراً أطول ليلحظه المستخدم.
       b.className = 'note';
       b.textContent = '⚠️ Claude Code ' + (d.version || '') + ' — للنماذج الأحدث (Sonnet 5 فأعلى) حدّث: npm i -g @anthropic-ai/claude-code';
-      setTimeout(() => { b.style.display = 'none'; }, 12000);
+      hideGateBannerAfter(b, 12000);
     } else {
       b.className = 'ok'; b.textContent = '✓ Claude Code جاهز — ' + (d.version || '');
-      setTimeout(() => { b.style.display = 'none'; }, 4000);
+      hideGateBannerAfter(b, 4000);
     }
+    refreshClaudeModels();
+    fetchClaudeAccount().then((account) => {
+      if (!account || !account.email) return;
+      b.style.display = '';
+      if (d.outdated) {
+        b.className = 'note';
+        b.textContent = '⚠️ Claude Code ' + (d.version || '') + ' — للنماذج الأحدث (Sonnet 5 فأعلى) حدّث: npm i -g @anthropic-ai/claude-code · مسجّل الدخول: ' + account.email;
+        hideGateBannerAfter(b, 12000);
+      } else {
+        b.className = 'ok';
+        b.textContent = '✓ مسجّل الدخول: ' + account.email;
+        hideGateBannerAfter(b, 4000);
+      }
+    });
   });
 
   // بناء قائمة «المحرك» ديناميكياً من طبقة المزوّد (satr:providers): sdk (خاص) + المحوّلات.
@@ -168,6 +224,46 @@ import { createUpdateToast } from './lib/update-toast.js';
     { value: 'gpt-5.5', label: 'GPT-5.5' },
   ];
   let providersCache = [];
+  let claudeDynamicModels = [];
+  async function refreshClaudeModels() {
+    try {
+      const result = await window.satr.claudeModels();
+      const list = result && result.ok === true && Array.isArray(result.models) ? result.models : [];
+      if (list.length) {
+        claudeDynamicModels = list.map((model) => ({
+          value: model.value,
+          label: model.label,
+          description: model.description || '',
+        }));
+      }
+    } catch (e) { /* تبقى قائمة Claude الثابتة */ }
+    rebuildFallbackModels();
+    if ($('engine').value === 'sdk') rebuildModels();
+  }
+  function rebuildFallbackModels() {
+    const select = $('fallbackModel');
+    const saved = localStorage.getItem('satr_fallback_model') || '';
+    const source = claudeDynamicModels.length ? claudeDynamicModels : CLAUDE_MODELS;
+    select.innerHTML = '';
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'بلا';
+    select.appendChild(none);
+    const seen = new Set(['']);
+    for (const model of source) {
+      if (!model.value || seen.has(model.value)) continue;
+      seen.add(model.value);
+      const option = document.createElement('option');
+      option.value = model.value;
+      option.textContent = model.label;
+      if (model.description) option.title = model.description;
+      select.appendChild(option);
+    }
+    if ([...select.options].some((option) => option.value === saved)) select.value = saved;
+  }
+  $('fallbackModel').addEventListener('change', () => {
+    localStorage.setItem('satr_fallback_model', $('fallbackModel').value);
+  });
   let codexDynamicModels = [];
   async function refreshCodexModels() {
     try {
@@ -225,7 +321,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
   }
   function modelsForEngine(engine) {
-    if (engine === 'sdk') return CLAUDE_MODELS; // محرك SDK الخاص (خارج السجلّ)
+    if (engine === 'sdk') return claudeDynamicModels.length ? claudeDynamicModels : CLAUDE_MODELS; // فشل SDK ⇒ الثابتة
     if (engine === 'codex') return codexDynamicModels.length ? codexDynamicModels : CODEX_MODELS;
     if (engine === 'kimi-code' && kimiDynamicModels.length) return kimiDynamicModels; // القائمة الرسمية من ACP
     const p = providersCache.find((x) => x.name === engine);
@@ -286,6 +382,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     rebuildModels();
     applyEngineCommands($('engine').value); // أوامر «/» للمحرك المستعاد (المرحلة 4)
     if ($('engine').value === 'codex') checkCodexReady(); // إرشاد إن كان Codex المستعاد غير جاهز
+    if ($('engine').value === 'sdk' && !gated) refreshClaudeModels();
     if ($('engine').value === 'codex') refreshCodexModels();
     if ($('engine').value === 'kimi-code') { checkKimiReady(); refreshKimiModels(); }
     restoreAdapterSession(); // 1.3: استئناف محادثة المحوّل بعد إعادة التشغيل
@@ -293,11 +390,19 @@ import { createUpdateToast } from './lib/update-toast.js';
   }
   let lastEngine = null; // لتمييز مغادرة محوّل أعمى عند التبديل
   $('engine').addEventListener('change', async () => {
+    if (sessionControlBusy || sessionResumeBusy) {
+      const previous = lastEngine || 'sdk';
+      $('engine').value = previous;
+      localStorage.setItem('satr_engine', previous);
+      addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل تبديل المحرك.');
+      return;
+    }
     const e = $('engine').value;
     localStorage.setItem('satr_engine', e);
     rebuildModels();
     applyEngineCommands(e); // إخفاء أوامر Claude-الخاصة مع Codex (المرحلة 4)
     if (e === 'codex') checkCodexReady(); // إرشاد إن لم يكن Codex جاهزاً
+    if (e === 'sdk' && !gated) refreshClaudeModels();
     if (e === 'codex') refreshCodexModels();
     if (e === 'kimi-code') { checkKimiReady(); refreshKimiModels(); }
     // تصفير الجلسة عند تغيّر مخزن الجلسات: المُعرّف لا يصلح عبر المخازن (مُعرّف Claude في
@@ -324,6 +429,9 @@ import { createUpdateToast } from './lib/update-toast.js';
 
   // ---------- مدير المفاتيح + زر اختيار المجلد: انتقلا لمكوّن <satr-topbar> (تفكيك ت-11) ----------
   const topbarEl = document.querySelector('satr-topbar');
+  $('settingsBtn').addEventListener('click', () => {
+    queueMicrotask(() => { if (!$('settingsPop').hidden) refreshClaudeAccountView(); });
+  });
   const sessionChanges = new Map();
   function sessionChangesPayload() {
     return [...sessionChanges.entries()].map(([rel, change]) => ({ rel, ...change }));
@@ -542,6 +650,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (!engine || !sid) { chatEl.clearTaskLedger(); return; }
     try {
       const ledger = await window.satr.taskLedger(engine, sid);
+      if ($('engine').value !== engine || sessionId !== sid) return;
       if (ledger && ledger.session_id === sid) chatEl.showTaskLedger(ledger);
       else chatEl.clearTaskLedger();
     } catch (e) { /* أفضل جهد: فشل ledger لا يمنع استئناف المحادثة */ }
@@ -551,8 +660,18 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (!engine || !sid) { chatEl.clearCheckpoint(); return; }
     try {
       const checkpoint = await window.satr.checkpointLatest(engine, sid);
-      if (checkpoint && checkpoint.session_id === sid) chatEl.showCheckpoint(checkpoint);
-      else chatEl.clearCheckpoint();
+      if ($('engine').value !== engine || sessionId !== sid) return;
+      const suppressionKey = engine === 'sdk' && SAFE_UUID.test(String(sid || ''))
+        ? 'satr_sdk_rewind_checkpoint_' + sid : '';
+      const suppressedId = suppressionKey ? localStorage.getItem(suppressionKey) : '';
+      if (checkpoint && checkpoint.session_id === sid) {
+        if (suppressedId && checkpoint.id === suppressedId) {
+          chatEl.clearCheckpoint();
+          return;
+        }
+        if (suppressionKey && suppressedId && checkpoint.id !== suppressedId) localStorage.removeItem(suppressionKey);
+        chatEl.showCheckpoint(checkpoint);
+      } else chatEl.clearCheckpoint();
     } catch (e) { /* metadata checkpoint أفضل جهد ولا تمنع استئناف المحادثة */ }
   }
 
@@ -575,6 +694,7 @@ import { createUpdateToast } from './lib/update-toast.js';
 
   chatEl.addEventListener('checkpoint-verify', async (event) => {
     const detail = event.detail || {};
+    if (sessionControlBusy || sessionResumeBusy) { addNotice('انتظر اكتمال عملية الجلسة قبل تشغيل التحقق'); return; }
     if (busy) { addNotice('أوقف الدور الجاري قبل تشغيل تحقق checkpoint سابق'); return; }
     try {
       const result = await window.satr.verifyCheckpoint(
@@ -589,6 +709,7 @@ import { createUpdateToast } from './lib/update-toast.js';
 
   chatEl.addEventListener('checkpoint-restore', async (event) => {
     const detail = event.detail || {};
+    if (sessionControlBusy || sessionResumeBusy) { addNotice('انتظر اكتمال عملية الجلسة قبل استعادة checkpoint'); return; }
     if (busy) { addNotice('أوقف الدور الجاري قبل استعادة checkpoint'); return; }
     if (!confirm('استعادة هذا checkpoint ستعكس تعديلات الدور بالترتيب العكسي. هل تريد المتابعة؟')) return;
     try {
@@ -803,6 +924,14 @@ import { createUpdateToast } from './lib/update-toast.js';
       kimiDeclaredCommands = Array.isArray(ev.commands) ? ev.commands : [];
       return;
     }
+    if (ev.type === 'user'
+      && !ev.isReplay && !ev.isSynthetic && ev.parent_tool_use_id == null && !ev.tool_use_result
+      && ev.message && ev.message.role === 'user'
+      && SAFE_UUID.test(String(ev.uuid || '')) && SAFE_UUID.test(String(ev.session_id || ''))) {
+      if (chatEl.bindLatestUserMessage) {
+        chatEl.bindLatestUserMessage(ev.uuid, ev.session_id, sessionCwd || $('cwd').value.trim());
+      }
+    }
     const block = currentBlock;
     if (!block || block.done) return;
     if (ev.type === 'stream_text') {
@@ -948,6 +1077,10 @@ import { createUpdateToast } from './lib/update-toast.js';
   // ---------- الإرسال ----------
   async function send() {
     if (gated) return; // المحادثة محجوبة حتى تجتاز بوابة أول التشغيل
+    if (sessionControlBusy || sessionResumeBusy) {
+      addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل إرسال طلب جديد.');
+      return;
+    }
     if (busy) {
       if (currentBlock && !currentBlock.done) { currentBlock.stopped(); currentBlock.showRetry(); }
       await window.satr.stop();
@@ -977,7 +1110,9 @@ import { createUpdateToast } from './lib/update-toast.js';
     input.value = '';
     if (composerEl.afterSend) composerEl.afterSend(); // تمدد + مسودة + إغلاق القائمتين
     if (composerEl.clearImages) composerEl.clearImages();
-    chatEl.addUserMsg(prompt, images.map((i) => i.dataUrl));
+    chatEl.addUserMsg(prompt, images.map((i) => i.dataUrl), {
+      awaitingSdkIdentity: engine === 'sdk',
+    });
 
     busy = true;
     previewDirty = false; // م-1-ج: بداية دور جديد — لا تعديل بعد
@@ -992,6 +1127,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       cwd: $('cwd').value.trim(),
       sessionId,
       model: $('model').value,
+      fallbackModel: engine === 'sdk' ? $('fallbackModel').value : '',
       permissionMode: $('perm').value,
       engine,
       skills: skillsSel,
@@ -1025,6 +1161,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   // يرسل /compact كدور أصيل عبر Claude SDK أو أمر Kimi ACP الرسمي؛ كلاهما يبقي
   // معرّف الجلسة نفسه ويصدر compact_boundary المطبّع لبطاقة النتيجة العربية.
   async function compactConversation() {
+    if (sessionControlBusy || sessionResumeBusy) { addNotice('انتظر اكتمال عملية الجلسة قبل ضغط المحادثة'); return; }
     if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل ضغط المحادثة'); return; }
     if (!sessionId) { addNotice('لا توجد محادثة لضغطها بعد — ابدأ بإرسال رسالة أولاً'); return; }
     const activeEngine = $('engine').value;
@@ -1056,6 +1193,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   // نفس نمط /ضغط المثبّت: النص الخام (/status /tasks /help) يُرسل كدور عادي
   // وKimi ينفّذ أمره المائل داخل الجلسة نفسها ويبثّ النتيجة كنص مساعد.
   async function sendKimiCommand(raw) {
+    if (sessionControlBusy || sessionResumeBusy) { addNotice('انتظر اكتمال عملية الجلسة قبل تنفيذ الأمر'); return; }
     if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل تنفيذ الأمر'); return; }
     if (!sessionId) { addNotice('لا توجد جلسة Kimi بعد — ابدأ بإرسال رسالة أولاً'); return; }
     if ($('engine').value !== 'kimi-code') { addNotice('هذا الأمر خاص بمحرك Kimi Code'); return; }
@@ -1179,7 +1317,12 @@ import { createUpdateToast } from './lib/update-toast.js';
     $('perm').dispatchEvent(new Event('change', { bubbles: true }));
     addNotice('✓ ' + label);
   }
-  function newSession() {
+  function newSession(options) {
+    const fromResume = options && options.fromResume === true;
+    if (sessionControlBusy || (sessionResumeBusy && !fromResume)) {
+      addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل بدء جلسة جديدة.');
+      return false;
+    }
     // 1.3: «جلسة جديدة» على محوّل أعمى تنسى مؤشر الاستئناف على القرص (سجلّه يبقى للتنظيف)
     const engNow = $('engine').value;
     if (isBlindEngine(engNow)) { try { window.satr.forgetChat(engNow); } catch (e) {} }
@@ -1191,6 +1334,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (previewEl.resetTaskTrace) previewEl.resetTaskTrace();
     // إطفاء تلقائي لوضع تحكّم المتصفح: لا نحمل صلاحية قيادة تلقائية لمهمة جديدة صامتاً
     if (browserControlOn) { setBrowserControl(false, false); addNotice('🖱️ أُوقف وضع تحكّم المتصفح تلقائياً مع الجلسة الجديدة.'); }
+    return true;
   }
   $('newSession').addEventListener('click', newSession);
 
@@ -1201,12 +1345,23 @@ import { createUpdateToast } from './lib/update-toast.js';
   function openSessions() {
     surfaceCoordinator.openPanel('sessions', document.activeElement, () => sessionsEl.open(providersCache));
   }
-  sessionsEl.addEventListener('session-resume', (e) => {
+  sessionsEl.addEventListener('session-resume', async (e) => {
+    if (sessionControlBusy || sessionResumeBusy || busy) {
+      addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل فتح جلسة أخرى.');
+      return;
+    }
     const s = e.detail;
-    if (s.kind === 'chat') resumeChat(s);
-    else if (s.kind === 'codex') resumeCodexSession(s);
-    else if (s.kind === 'kimi') resumeKimiSession(s);
-    else resumeSession(s);
+    sessionResumeBusy = true;
+    try {
+      if (s.kind === 'chat') await resumeChat(s);
+      else if (s.kind === 'codex') await resumeCodexSession(s);
+      else if (s.kind === 'kimi') await resumeKimiSession(s);
+      else await resumeSession(s);
+    } catch {
+      addNotice('✗ تعذّر فتح الجلسة المطلوبة.');
+    } finally {
+      sessionResumeBusy = false;
+    }
   });
   // تسمية مزوّد محادثة محوّل (الدفعة 4) — تبقى للقشرة (resumeChat يستخدمها)
   function providerLabel(name) {
@@ -1258,7 +1413,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     const data = await window.satr.readSession(s.project, s.id);
     sessionsEl.close();
     if (!data || data.error) { addNotice('✗ تعذّر فتح الجلسة'); return; }
-    newSession();
+    if (!newSession({ fromResume: true })) return;
     sessionId = s.id; // الرسالة القادمة ستُرسل بـ --resume على هذه الجلسة
     $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8);
     if (data.cwd) {
@@ -1272,7 +1427,13 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (data.total > data.messages.length)
       addNotice('عرض آخر ' + data.messages.length + ' من أصل ' + data.total + ' رسالة');
     for (const msg of data.messages) {
-      if (msg.role === 'user') chatEl.addUserMsg(msg.text);
+      if (msg.role === 'user') {
+        chatEl.addUserMsg(msg.text, null, $('engine').value === 'sdk' ? {
+          messageId: msg.messageId,
+          sessionId: s.id,
+          cwd: sessionCwd,
+        } : undefined);
+      }
       else chatEl.addHistoryAssistant(msg);
     }
     addNotice('✓ استؤنفت الجلسة — أكمل من حيث توقفت');
@@ -1575,6 +1736,204 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (composerEl.restoreTurn) composerEl.restoreTurn(detail.text || '', detail.images || []);
     else input.value = detail.text || '';
     addNotice('✏️ أُعيدت الرسالة إلى المحرّر. الإرسال الجديد لا يرجع سياق الخادم ولا يفرّع الجلسة.');
+  });
+  function captureSessionControlEpoch(detail) {
+    const cwd = $('cwd').value.trim();
+    const sourceCwd = typeof detail.cwd === 'string' && detail.cwd
+      ? detail.cwd
+      : sessionCwd || cwd;
+    if (sourceCwd !== cwd || (sessionCwd && sourceCwd !== sessionCwd)) return null;
+    return { engine: $('engine').value, sessionId, cwd };
+  }
+  function sessionControlEpochIsCurrent(epoch) {
+    return !!epoch
+      && $('engine').value === epoch.engine
+      && sessionId === epoch.sessionId
+      && $('cwd').value.trim() === epoch.cwd
+      && (!sessionCwd || sessionCwd === epoch.cwd);
+  }
+  function composerRevision() {
+    const images = composerEl.getImages ? composerEl.getImages() : [];
+    return JSON.stringify([
+      input.value,
+      images.map((image) => [image && image.id, image && image.media_type, image && image.data && image.data.length]),
+    ]);
+  }
+  chatEl.addEventListener('user-fork', async (event) => {
+    const detail = event.detail || {};
+    if (busy || sessionControlBusy || sessionResumeBusy) {
+      addNotice('انتظر انتهاء الطلب الجاري قبل تفريع الجلسة.');
+      return;
+    }
+    if ($('engine').value !== 'sdk') {
+      addNotice('تفريع الرسائل متاح لمحرك Claude SDK فقط.');
+      return;
+    }
+    if (!SAFE_UUID.test(String(detail.sessionId || ''))
+      || !SAFE_UUID.test(String(detail.messageId || ''))
+      || detail.sessionId !== sessionId) {
+      addNotice('تعذّر التفريع: معرّف الرسالة أو الجلسة قديم أو غير صالح.');
+      return;
+    }
+    const epoch = captureSessionControlEpoch(detail);
+    if (!epoch) {
+      addNotice('تعذّر التفريع: تغيّر مجلد الجلسة منذ وصول هذه الرسالة.');
+      return;
+    }
+    const cwdInput = $('cwd');
+    const cwdWasDisabled = cwdInput.disabled;
+    const draftRevision = composerRevision();
+    sessionControlBusy = true;
+    cwdInput.disabled = true;
+    try {
+      const compactText = typeof detail.text === 'string' ? detail.text.replace(/\s+/g, ' ').trim() : '';
+      const result = await window.satr.sessionFork(
+        detail.sessionId,
+        detail.messageId,
+        compactText ? 'فرع: ' + compactText.slice(0, 68) : 'فرع Claude',
+      );
+      if (!result || !result.ok || !SAFE_UUID.test(String(result.sessionId || ''))) {
+        addNotice('✕ ' + (result && result.message || 'تعذّر تفريع جلسة Claude؛ بقيت الجلسة الحالية كما هي.'));
+        return;
+      }
+      if (!sessionControlEpochIsCurrent(epoch)) {
+        addNotice('🌿 أُنشئ الفرع، لكن تغيّر سياق الواجهة قبل فتحه. يمكنك فتحه من /جلسات.');
+        return;
+      }
+      sessionId = result.sessionId;
+      sessionCwd = epoch.cwd;
+      currentBlock = null;
+      $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8) + ' (فرع)';
+      const trimmed = chatEl.trimAfterSdkUserMessage
+        ? chatEl.trimAfterSdkUserMessage(detail.messageId) : false;
+      if (!trimmed) {
+        chatEl.clearThread();
+        addNotice('أُنشئ الفرع، لكن تعذّر مطابقة موضع الرسالة محلياً؛ أُخفي سجل الأصل ويمكن فتح الفرع من /جلسات.');
+      }
+      if (chatEl.invalidateSdkUserMessages) chatEl.invalidateSdkUserMessages();
+      chatEl.clearTaskLedger();
+      chatEl.clearCheckpoint();
+      resetSessionChanges();
+      if (previewEl.resetTaskTrace) previewEl.resetTaskTrace();
+      if (composerRevision() === draftRevision) {
+        if (composerEl.restoreTurn) composerEl.restoreTurn(detail.text || '', detail.images || []);
+        else input.value = detail.text || '';
+        addNotice('🌿 أُنشئ فرع Claude جديد من هذه الرسالة. أُعيد النص إلى المؤلف ولم يُرسل تلقائياً.');
+      } else {
+        addNotice('🌿 أُنشئ فرع Claude الجديد، واحتُفظ بالمسودة الأحدث في المؤلف بلا استبدال.');
+      }
+      input.focus();
+    } catch {
+      addNotice('✕ تعذّر التأكد من اكتمال تفريع جلسة Claude؛ راجع /جلسات قبل إعادة المحاولة.');
+    } finally {
+      sessionControlBusy = false;
+      cwdInput.disabled = cwdWasDisabled;
+    }
+  });
+  chatEl.addEventListener('user-rewind', async (event) => {
+    const detail = event.detail || {};
+    if (busy || sessionControlBusy || sessionResumeBusy) {
+      addNotice('انتظر انتهاء الطلب الجاري قبل استرجاع الملفات.');
+      return;
+    }
+    if ($('engine').value !== 'sdk') {
+      addNotice('استرجاع ملفات الرسالة متاح لمحرك Claude SDK فقط.');
+      return;
+    }
+    if (!SAFE_UUID.test(String(detail.sessionId || ''))
+      || !SAFE_UUID.test(String(detail.messageId || ''))
+      || detail.sessionId !== sessionId) {
+      addNotice('تعذّر الاسترجاع: معرّف الرسالة أو الجلسة قديم أو غير صالح.');
+      return;
+    }
+    const epoch = captureSessionControlEpoch(detail);
+    if (!epoch) {
+      addNotice('تعذّر الاسترجاع: تغيّر مجلد الجلسة منذ وصول هذه الرسالة.');
+      return;
+    }
+    const rewindCwd = epoch.cwd;
+    const cwdInput = $('cwd');
+    const cwdWasDisabled = cwdInput.disabled;
+    sessionControlBusy = true;
+    cwdInput.disabled = true;
+    try {
+      const preview = await window.satr.rewindFiles(
+        rewindCwd,
+        detail.sessionId,
+        detail.messageId,
+        true,
+        false,
+      );
+      if (!sessionControlEpochIsCurrent(epoch)) {
+        addNotice('أُلغيت العملية لأن سياق الجلسة تغيّر أثناء المعاينة.');
+        return;
+      }
+      if (!preview || !preview.ok) {
+        addNotice('✕ ' + (preview && preview.message || 'تعذّر التأكد من معاينة استرجاع ملفات Claude؛ راجع تغييرات الملفات.'));
+        return;
+      }
+      if (!preview.canRewind) {
+        addNotice(preview.message || 'لا تتوفر نقطة استرجاع لهذه الرسالة في جلسة Claude الحالية.');
+        return;
+      }
+      if (!SAFE_UUID.test(String(preview.previewToken || ''))) {
+        addNotice('✕ لم تُصدر معاينة Claude رمز تأكيد صالحاً؛ أُلغي الاسترجاع احترازياً.');
+        return;
+      }
+      const fileCount = Number(preview.fileCount) || 0;
+      const items = [
+        'الملفات المتأثرة: ' + fileCount,
+        'إحصاءات المعاينة: +' + (Number(preview.insertions) || 0) + ' / −' + (Number(preview.deletions) || 0),
+        ...(Array.isArray(preview.filesChanged)
+          ? preview.filesChanged.slice(0, 8).map((file) => 'ملف: \u2066' + file + '\u2069')
+          : []),
+      ];
+      const confirmed = await surfaceCoordinator.confirm({
+        source: detail.source || event.target,
+        title: 'تأكيد استرجاع ملفات Claude',
+        confirmLabel: 'استرجع الملفات',
+        description: 'هذه معاينة جافة أولاً. عند التأكيد سيعيد Claude الملفات المتتبعة إلى حالتها عند رسالة المستخدم المحددة.',
+        items,
+      });
+      if (!confirmed) return;
+      if (!sessionControlEpochIsCurrent(epoch)) {
+        addNotice('أُلغي الاسترجاع لأن سياق الجلسة تغيّر قبل التأكيد.');
+        return;
+      }
+      const result = await window.satr.rewindFiles(
+        rewindCwd,
+        detail.sessionId,
+        detail.messageId,
+        false,
+        true,
+        preview.previewToken,
+      );
+      if (!sessionControlEpochIsCurrent(epoch)) {
+        addNotice('اكتمل طلب الاسترجاع بعد تغيّر سياق الواجهة؛ راجع تغييرات الملفات قبل المتابعة.');
+        return;
+      }
+      if (!result || !result.ok || !result.canRewind) {
+        addNotice('✕ ' + (result && result.message || 'تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.'));
+        return;
+      }
+      if (SAFE_CHECKPOINT_ID.test(String(result.suppressedCheckpointId || ''))) {
+        try {
+          localStorage.setItem(
+            'satr_sdk_rewind_checkpoint_' + epoch.sessionId,
+            result.suppressedCheckpointId,
+          );
+        } catch (e) { /* main يحتفظ بالحاجز الدائم؛ التخزين المحلي دفاع إضافي فقط */ }
+      }
+      resetSessionChanges();
+      chatEl.clearCheckpoint();
+      addNotice('↩ استُرجعت ملفات Claude إلى حالة الرسالة المحددة (' + (Number(result.fileCount) || 0) + ' ملف).');
+      if (previewEl.reloadIfLive) previewEl.reloadIfLive();
+    } catch {
+      addNotice('✕ تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.');
+    } finally {
+      sessionControlBusy = false;
+      cwdInput.disabled = cwdWasDisabled;
+    }
   });
   chatEl.addEventListener('retry-request', () => {
     if (busy || (!lastUserTurn.prompt && !lastUserTurn.images.length)) return;

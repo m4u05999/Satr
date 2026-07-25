@@ -37,6 +37,8 @@ const SUITE = [
   'test:promocapture-live',
   'test:promo-studio',
   'test:claude-auth',
+  'test:fork-rewind',
+  'test:claude-models',
   'test:testsprite-ready',
   'test:viewer-security',
   'test:askquestion',
@@ -58,7 +60,7 @@ const SUITE = [
 
 const failures = [];
 console.log(`full-suite: بدء ${SUITE.length} مجموعة اختبار قطعية/حية بالتسلسل.`);
-console.log('مستبعدان عمداً: test:codex-executor-probe (حي خارجي) وeval:agent:baseline (يكتب وثيقة baseline).');
+console.log('مستبعدة عمداً: test:codex-executor-probe وtest:browser-loop-probe وtest:browser-loop-sdk-probe وtest:browser-loop-kimi-probe (حية خارجية)، وeval:agent:baseline (يكتب وثيقة baseline).');
 
 for (let index = 0; index < SUITE.length; index++) {
   const name = SUITE[index];

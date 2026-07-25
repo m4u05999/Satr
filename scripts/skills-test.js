@@ -9,6 +9,7 @@ const path = require('path');
 
 const skills = require('../electron/skills');
 const tools = require('../electron/tools');
+const ROOT = path.resolve(__dirname, '..');
 
 async function runLiveProbe(engineName, project) {
   const marker = 'SATR_SKILL_LIVE_OK_7F3A';
@@ -67,6 +68,60 @@ async function write(root, relative, content) {
   await fsp.writeFile(file, content, 'utf8');
 }
 
+async function assertSatrDiverge(discoveryOptions) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  assert(manifest.build.files.includes('.agents/skills/satr-diverge/**/*'));
+  assert(manifest.build.asarUnpack.includes('.agents/skills/satr-diverge/**/*'));
+
+  const catalog = skills.discoverSkills(ROOT, discoveryOptions);
+  const skill = catalog.find((item) => item.name === 'satr-diverge');
+  assert(skill, 'مهارة satr-diverge المضمّنة غير مكتشفة');
+  assert.strictEqual(skill.source, 'project');
+  assert.strictEqual(skill.format, 'standard');
+  assert(skill.description.includes('فروعاً معزولة'));
+
+  const selected = skills.resolveSelection(ROOT, ['satr-diverge'], discoveryOptions);
+  const loaded = skills.loadSkill(selected, 'satr-diverge');
+  assert.strictEqual(loaded.ok, true);
+  assert(loaded.instructions.includes('## المراحل السبع'));
+  assert(loaded.instructions.includes('## شرط العزل'));
+  assert(loaded.instructions.includes('## حاجز اكتمال المجموعات'));
+  assert(loaded.instructions.includes('لا تُنهِ دور الجذر'));
+  assert(loaded.instructions.includes('launched/completed/failed/missing'));
+  const resources = loaded.resources.map((item) => item.path);
+  assert(resources.includes('LICENSE'));
+  assert(resources.includes('agents/openai.yaml'));
+  assert(resources.includes('references/engine-adapters.md'));
+  assert(resources.includes('references/evaluation.md'));
+  assert(resources.includes('references/frames.md'));
+  assert(resources.includes('references/scoring.md'));
+  assert(resources.includes('references/upstream.md'));
+  assert(!resources.some((item) => item.startsWith('scripts/')));
+
+  const adapter = skills.readResource(selected, 'satr-diverge', 'references/engine-adapters.md');
+  assert.strictEqual(adapter.ok, true);
+  assert(adapter.content.includes('## Claude Code'));
+  assert(adapter.content.includes('## Codex'));
+  assert(adapter.content.includes('## Kimi Code عبر ACP'));
+  assert(adapter.content.includes('استدعاء واحد لـ `wait_agent` **ليس حاجزاً**'));
+  assert(adapter.content.includes('`diverge_f1` و`diverge_f2` و`diverge_f3`'));
+  assert(adapter.content.includes('لا تُنهِ دور الجذر ولا تعرض خرج طفل واحد'));
+  assert(adapter.content.includes('بقاء `/root` وحده قبل استلام خرج فرع يعني `missing`'));
+
+  const evaluation = skills.readResource(selected, 'satr-diverge', 'references/evaluation.md');
+  assert.strictEqual(evaluation.ok, true);
+  assert(evaluation.content.includes('branch_completion_ratio'));
+  assert(evaluation.content.includes('عرض JSON فرع منفرد كتقرير نهائي'));
+
+  const toolLoaded = await tools.run('load_skill', ROOT, { name: 'satr-diverge' }, { skillContext: selected });
+  assert.strictEqual(toolLoaded.ok, true);
+  assert(toolLoaded.content.includes('## المراحل السبع'));
+  const codex = skills.codexInputs(selected);
+  assert.deepStrictEqual(codex.map((item) => item.name), ['satr-diverge']);
+  assert(codex.every((item) => path.isAbsolute(item.path)));
+  console.log('✓ satr-diverge packaging and portable contract for Claude, Codex, and Kimi');
+}
+
 async function main() {
   const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'satr-skills-test-'));
   const project = path.join(temp, 'project');
@@ -93,12 +148,20 @@ async function main() {
     await write(home, '.agents/skills/global/SKILL.md', [
       '---', 'name: global', 'description: |', '  مهارة مستخدم قياسية', '  بوصف متعدد الأسطر', '---', 'GLOBAL_MARKER', '',
     ].join('\n'));
+    await write(discoveryOptions.builtinRoot, 'satr-diverge/SKILL.md', [
+      '---', 'name: satr-diverge', 'description: مهارة سطر مضمّنة', '---', 'BUILTIN_DIVERGE_MARKER', '',
+    ].join('\n'));
+    await write(discoveryOptions.builtinRoot, 'untrusted/SKILL.md', [
+      '---', 'name: untrusted', 'description: يجب ألا تُكتشف من المضمّنات', '---', 'UNTRUSTED_MARKER', '',
+    ].join('\n'));
 
     const catalog = skills.discoverSkills(project, discoveryOptions);
-    assert.deepStrictEqual(catalog.map((skill) => skill.name), ['global', 'legacy', 'portable']);
+    assert.deepStrictEqual(catalog.map((skill) => skill.name), ['global', 'legacy', 'portable', 'satr-diverge']);
     const portable = catalog.find((skill) => skill.name === 'portable');
     assert.strictEqual(portable.format, 'standard');
     assert.strictEqual(portable.source, 'project');
+    assert.strictEqual(catalog.find((skill) => skill.name === 'satr-diverge').source, 'builtin');
+    assert(!catalog.some((skill) => skill.name === 'untrusted'));
     assert(catalog.find((skill) => skill.name === 'global').description.includes('بوصف متعدد الأسطر'));
 
     const selected = skills.resolveSelection(project, ['portable', 'legacy'], discoveryOptions);
@@ -142,6 +205,7 @@ async function main() {
     console.log('✓ skills catalog precedence');
     console.log('✓ progressive disclosure and resource boundaries');
     console.log('✓ portable tools and Codex skill inputs');
+    await assertSatrDiverge(discoveryOptions);
     if (process.argv.includes('--live-codex')) await runLiveProbe('codex', project);
     if (process.argv.includes('--live-sdk')) await runLiveProbe('sdk', project);
   } finally {

@@ -80,6 +80,18 @@
             <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
           </select>
         </div>
+        <div class="field">
+          <label for="fallbackModel">نموذج احتياطي عند انشغال النموذج</label>
+          <select id="fallbackModel" title="يستخدمه Claude تلقائياً إذا كان النموذج الأساسي محمّلاً فوق طاقته">
+            <option value="">بلا</option>
+          </select>
+        </div>
+        <div class="settings-keys" id="claudeAccountSection">
+          <div class="dirs-head"><span>حساب Claude</span><span id="claudeAccountState" class="key-status">يُحدّث عند فتح الإعدادات</span></div>
+          <div class="dirs-head"><span>البريد</span><span id="claudeAccountEmail" class="key-status claude-account-value" dir="ltr">—</span></div>
+          <div class="dirs-head"><span>المنظمة</span><span id="claudeAccountOrganization" class="key-status claude-account-value" dir="auto">—</span></div>
+          <div class="dirs-head"><span>نوع الاشتراك</span><span id="claudeAccountSubscription" class="key-status claude-account-value" dir="ltr">—</span></div>
+        </div>
         <!-- مجلدات إضافية (المرحلة 14.4): تُمنح للنموذج وصولاً بجانب مجلد المشروع -->
         <div class="settings-dirs">
           <div class="dirs-head">

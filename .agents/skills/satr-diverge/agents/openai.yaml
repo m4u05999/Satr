@@ -1,0 +1,6 @@
+interface:
+  display_name: "سطر: تفكير متباعد"
+  short_description: "قرار متعدد الفروع مع نقد وأدلة"
+  default_prompt: "استخدم $satr-diverge لاستكشاف هذا القرار عبر فروع معزولة ونقد مدعوم بأدلة."
+policy:
+  allow_implicit_invocation: true

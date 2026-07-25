@@ -14,6 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const { execSync } = require('child_process');
 
 const { computeDiff } = require('./diff');
@@ -32,6 +33,8 @@ const testspriteHarness = require('./testspriteharness');
 const envbrief = require('./envbrief');
 
 const IS_WIN = process.platform === 'win32';
+const CLAUDE_METADATA_TTL_MS = 2 * 60 * 1000;
+const SAFE_CLAUDE_MODEL = /^[A-Za-z0-9./-]{1,64}$/;
 
 // أدوات تعديل الملفات التي نعرض لها فرقاً (Diff) — المرحلة 3
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
@@ -60,6 +63,19 @@ const NEVER_TURN_TOOLS = new Set([
 ]);
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة ولا نعرض فرقاً (أداء وذاكرة)
 const MAX_SKILL_TOOL_CHARS = 48 * 1024;
+const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_USER_MESSAGE_CHECKPOINTS = 200;
+const lastUserMessageBySession = new Map();
+
+function rememberUserMessage(sessionId, userMessageId) {
+  if (!SAFE_UUID.test(String(sessionId || '')) || !SAFE_UUID.test(String(userMessageId || ''))) return false;
+  lastUserMessageBySession.delete(sessionId);
+  lastUserMessageBySession.set(sessionId, userMessageId);
+  while (lastUserMessageBySession.size > MAX_USER_MESSAGE_CHECKPOINTS) {
+    lastUserMessageBySession.delete(lastUserMessageBySession.keys().next().value);
+  }
+  return true;
+}
 
 // لقطات الملفات قبل التعديل — تعيش بعد انتهاء التشغيل ليعمل «تراجع» لاحقاً.
 // المفتاح tool_use_id (فريد عالمياً)، والقيمة { file_path, before } حيث
@@ -185,10 +201,17 @@ const execguard = require('./execguard');
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
+const STALE_REF_MESSAGE = 'المرجع من لقطة قديمة — خذ browser_snapshot جديدة واستعمل ref منها.';
 
 function browserActionProof(prefix, result) {
   const proof = 'navigated=' + !!result.navigated + ' · dom_changed=' + !!result.dom_changed;
-  return prefix + '\n' + proof + (result.note ? '\nملاحظة: ' + result.note : '');
+  const lines = [prefix, proof];
+  if (Array.isArray(result.delta) && result.delta.length) {
+    lines.push('[تغيّر DOM المختصر — refs الجديدة صالحة ضمن الجيل الحالي]', result.delta.join('\n'));
+  }
+  if (result.delta_truncated) lines.push('ملاحظة: قُصّ تغيّر DOM؛ خذ browser_snapshot قبل متابعة غير مغطاة بالـ refs الظاهرة.');
+  if (result.note) lines.push('ملاحظة: ' + result.note);
+  return lines.join('\n');
 }
 
 // تطبيع أدوات Todo/Task ورسائل Agent الفعلية في SDK إلى عقد task_update الموحّد.
@@ -421,9 +444,11 @@ function buildQuestionAnswer(originalInput, selections) {
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
  */
-async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, extraDirs, browserControl, trustedBrowserOrigins, browserBudget }, cwd, emit, internalPolicy) {
+async function start({ prompt, images, sessionId, model, fallbackModel, permissionMode, skills, effort, extraDirs, browserControl, trustedBrowserOrigins, browserBudget }, cwd, emit, internalPolicy) {
   const policyMode = internalPolicy && internalPolicy.mode;
   const isolatedPolicy = policyMode === 'text-only' || policyMode === 'read-only-planner';
+  const promptUserMessageId = randomUUID();
+  let promptUserEventEmitted = false;
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
   const portableSkillPrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true });
   const memoryPrompt = isolatedPolicy ? '' : memory.retrieve(cwd, prompt).text;
@@ -462,6 +487,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   async function* promptStream() {
     yield {
       type: 'user',
+      uuid: promptUserMessageId,
       message: { role: 'user', content: buildContent() },
       parent_tool_use_id: null,
       session_id: '',
@@ -618,6 +644,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         if (browserpolicy.hasVisibleSecret(toolName, input)) {
           return { behavior: 'deny', message: 'رُفض تمرير السر كنص. استخدم browser_transfer_field أو browser_request_secret.' };
         }
+        const inputError = typeof preview.browserInputError === 'function'
+          ? preview.browserInputError(toolName, input) : null;
+        if (inputError === 'stale_ref') return { behavior: 'deny', message: STALE_REF_MESSAGE };
         if (permissionMode === 'bypassPermissions') return { behavior: 'allow', updatedInput: input };
         const currentUrl = typeof preview.currentUrl === 'function' ? preview.currentUrl() : null;
         const bare = String(toolName || '').replace(/^mcp__satr-terminal__/, '');
@@ -709,8 +738,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // استخدام claude المثبّت عالمياً (لا نحزم ثنائياً ثانياً في المثبّت)
   const bin = resolveClaudeBin();
   if (bin) options.pathToClaudeCodeExecutable = bin;
+  if (!internalPolicy) options.enableFileCheckpointing = true;
   if (sessionId) options.resume = sessionId;
   if (model) options.model = model;
+  applyClaudeFallbackModel(options, model, fallbackModel, internalPolicy);
   if (permissionMode && permissionMode !== 'default') options.permissionMode = permissionMode;
   if (policyMode === 'text-only') {
     options.tools = [];
@@ -1049,12 +1080,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'browser_screenshot_element',
       'التقط لقطة بصرية لعنصر واحد في الصفحة المعروضة (بـ ref من browser_snapshot أو ' +
       'مُحدِّد CSS) لتفحص مظهره عن قرب — أوفر من لقطة الصفحة كاملة.',
-      { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل e6) أو مُحدِّد CSS') },
+      { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل s3:e6) أو مُحدِّد CSS') },
       async (args) => {
         const r = await preview.screenshotElement(String((args && args.ref) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
             : r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_visible' ? 'العنصر غير ظاهر (بلا أبعاد).'
             : 'تعذّر التقاط اللقطة (' + ((r && r.error) || 'خطأ') + ').';
@@ -1069,14 +1101,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     const clickTool = sdk.tool(
       'browser_click',
       'انقر عنصراً في الصفحة المعروضة بالمعاينة المدمجة. مرّر **ref** من browser_snapshot ' +
-      '(مثل e5 — حتمي ومُفضَّل)، أو مُحدِّد CSS. استعمله للأزرار والروابط بعد أخذ لقطة ' +
-      'بـ browser_snapshot. أعد أخذ اللقطة بعد النقر (الـ ref يتغيّر مع تغيّر الصفحة).',
-      { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل e5) أو مُحدِّد CSS') },
+      '(مثل s3:e5 — حتمي ومُفضَّل)، أو مُحدِّد CSS. استعمله للأزرار والروابط بعد أخذ لقطة ' +
+      'بـ browser_snapshot. إن أعادت النتيجة ref جديدة داخل «تغيّر DOM المختصر» فيمكن متابعة ' +
+      'التفاعل بها بلا لقطة؛ خذ لقطة جديدة بعد التنقّل أو عند غياب ref المطلوبة أو قصّ التغيّر.',
+      { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل s3:e5) أو مُحدِّد CSS') },
       async (args) => {
         const r = await preview.clickElement(String((args && args.ref) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
             : r && r.error === 'not_found' ? 'لم يُعثر على عنصر بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.'
             : 'تعذّر النقر (' + ((r && r.error) || 'خطأ') + ').';
@@ -1087,10 +1121,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     );
     const typeTool = sdk.tool(
       'browser_type',
-      'اكتب نصاً في حقل إدخال بالصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل e7) ' +
+      'اكتب نصاً في حقل إدخال بالصفحة المعروضة. مرّر **ref** من browser_snapshot (مثل s3:e7) ' +
       'أو مُحدِّد CSS، مع النص. استعمله لملء النماذج بعد browser_snapshot.',
       {
-        ref: z.string().describe('مُعرّف الحقل من browser_snapshot (مثل e7) أو مُحدِّد CSS'),
+        ref: z.string().describe('مُعرّف الحقل من browser_snapshot (مثل s3:e7) أو مُحدِّد CSS'),
         text: z.string().describe('النص المراد كتابته في الحقل'),
       },
       async (args) => {
@@ -1098,6 +1132,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         if (!r || !r.ok) {
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
             : r && r.error === 'not_found' ? 'لم يُعثر على حقل بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_editable' ? 'العنصر ليس حقل إدخال قابلاً للكتابة.'
             : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.'
@@ -1108,14 +1143,14 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       }
     );
     // أداة browser_snapshot (ترقية أفعال المتصفح): لقطة شجرة الوصول بمُعرّفات ثابتة —
-    // النموذج يرى كل عنصر تفاعلي بصيغة `role "name" [ref=eN]` فيتصرّف بـ ref حتمياً بدل
+    // النموذج يرى كل عنصر تفاعلي بصيغة `role "name" [ref=sN:eN]` فيتصرّف بـ ref حتمياً بدل
     // تخمين مُحدِّد CSS (نمط Playwright MCP الصناعي). قراءة فقط. الـ ref يقدم بعد التنقّل.
     const snapshotTool = sdk.tool(
       'browser_snapshot',
       'خذ لقطة بنيوية للعناصر التفاعلية في الصفحة المعروضة بالمعاينة: كل عنصر بصيغة ' +
-      '[ref] role "name". استعمل الـ ref مع browser_click/browser_type للتفاعل الحتمي. ' +
-      'هذه طريقتك الأساسية لمعرفة ما يمكن النقر عليه أو الكتابة فيه — أعد أخذها بعد كل فعل ' +
-      'أو تنقّل (المُعرّفات تتغيّر).',
+      '[ref] role "name" مثل [s3:e5]. استعمل الـ ref مع browser_click/browser_type للتفاعل الحتمي. ' +
+      'هذه طريقتك الأساسية لمعرفة ما يمكن النقر عليه أو الكتابة فيه. خذها بعد التنقّل أو عندما ' +
+      'لا يعيد الفعل ref المطلوبة في تغيّر DOM المختصر؛ كل لقطة جديدة تُبطل refs الأقدم.',
       {},
       async () => {
         const r = await preview.snapshot();
@@ -1187,7 +1222,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'اختر خياراً من قائمة منسدلة <select> في الصفحة المعروضة. مرّر ref (من ' +
       'browser_snapshot) أو مُحدِّد CSS، مع value الخيار أو نصّه الظاهر.',
       {
-        ref: z.string().describe('مُعرّف القائمة من browser_snapshot (مثل e9) أو مُحدِّد CSS'),
+        ref: z.string().describe('مُعرّف القائمة من browser_snapshot (مثل s3:e9) أو مُحدِّد CSS'),
         value: z.string().describe('قيمة الخيار (value) أو نصّه الظاهر'),
       },
       async (args) => {
@@ -1195,6 +1230,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         if (!r || !r.ok) {
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
             : r && r.error === 'not_found' ? 'لم يُعثر على القائمة — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_select' ? 'العنصر ليس قائمة منسدلة <select>.'
             : r && r.error === 'no_option' ? 'لا خيار بهذه القيمة/النص في القائمة.'
@@ -1244,12 +1280,13 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       'browser_hover',
       'حوّم المؤشر فوق عنصر في الصفحة المعروضة لإظهار قائمة/محتوى يظهر عند التحويم. ' +
       'مرّر ref (من browser_snapshot) أو مُحدِّد CSS.',
-      { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل e4) أو مُحدِّد CSS') },
+      { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل s3:e4) أو مُحدِّد CSS') },
       async (args) => {
         const r = await preview.hover(String((args && args.ref) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
+            : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
             : r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.'
             : 'تعذّر التحويم (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
@@ -1325,6 +1362,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           const why = r && r.error === 'secret'
             ? 'رُفضت قيمة سرّية. استخدم browser_transfer_field أو browser_request_secret.'
             : r && r.error === 'handoff' ? HANDOFF_BLOCKED
+            : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
             : 'تعذّرت تعبئة النموذج (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
         }
@@ -1341,7 +1379,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       },
       async (args) => {
         const r = await preview.transferField(args && args.from_ref, args && args.to_ref, args && args.transfer_id);
-        if (!r || !r.ok) return { content: [{ type: 'text', text: 'تعذّر نقل القيمة السرّية (' + ((r && r.error) || 'خطأ') + ').' }], isError: true };
+        if (!r || !r.ok) return { content: [{ type: 'text', text: r && r.error === 'stale_ref' ? STALE_REF_MESSAGE : 'تعذّر نقل القيمة السرّية (' + ((r && r.error) || 'خطأ') + ').' }], isError: true };
         if (r.stored) return { content: [{ type: 'text', text: JSON.stringify({ ok: true, stored: true, transfer_id: r.transfer_id }) }] };
         return { content: [{ type: 'text', text: JSON.stringify({ ok: true, moved: true }) }] };
       }
@@ -1358,6 +1396,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         if (!r || !r.ok) {
           const why = r && r.error === 'cancelled' ? 'ألغى المستخدم إدخال السر.'
             : r && r.error === 'empty' ? 'ضغط المستخدم «تم» لكن الحقل بقي فارغاً.'
+            : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
             : 'تعذّر طلب السر (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
         }
@@ -1531,9 +1570,25 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   const q = query({ prompt: promptStream(), options });
 
   // حلقة الاستهلاك تعمل في الخلفية؛ الأحداث تصل الواجهة تباعاً
-  (async () => {
+  const done = (async () => {
     try {
       for await (const msg of q) {
+        const inputAlreadyEmitted = promptUserEventEmitted;
+        const matchingPromptUser = msg && msg.type === 'user' && msg.uuid === promptUserMessageId;
+        const observedSessionId = SAFE_UUID.test(String(msg && msg.session_id || '')) ? msg.session_id : '';
+        if (!internalPolicy && !promptUserEventEmitted && observedSessionId) {
+          rememberUserMessage(observedSessionId, promptUserMessageId);
+          if (!matchingPromptUser) {
+            emit({
+              type: 'user',
+              message: { role: 'user', content: '' },
+              parent_tool_use_id: null,
+              uuid: promptUserMessageId,
+              session_id: observedSessionId,
+            });
+          }
+          promptUserEventEmitted = true;
+        }
         emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingTaskCreates);
         if (msg.type === 'stream_event') {
           const phaseEvent = phaseEventFromStreamEvent(msg.event);
@@ -1541,7 +1596,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         } else if (msg.type === 'assistant') {
           emit(annotateAssistantMessage(msg));
         } else if (msg.type === 'system' || msg.type === 'user') {
-          emit(msg);
+          if (!(matchingPromptUser && (inputAlreadyEmitted || internalPolicy))) emit(msg);
         } else if (msg.type === 'result') {
           emit(msg);
           turnAllowed.clear();
@@ -1581,6 +1636,12 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   })();
 
   return {
+    // يحسم بعد انتهاء استهلاك Query والتنظيف، لا عند وصول proc_done فقط.
+    done,
+    forceClose() {
+      closeInput();
+      try { q.close(); } catch { /* إغلاق احترازي بعد مهلة main */ }
+    },
     // رد الواجهة على طلب إذن
     resolvePermission(id, allow, always, turn) {
       const p = pending.get(id);
@@ -1657,31 +1718,210 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
 /**
  * تشغيل عابر لاستدعاء «دوال التحكّم» (control methods) في SDK ثم الإغلاق فوراً.
  * لا يرسل رسالة مستخدم — مولّد الإدخال ينتظر فقط ليبقي عملية claude حيّة، فتعمل
- * قناة التحكّم وتُحَل دوال مثل mcpServerStatus/getContextUsage. يُغلق دائماً في
- * finally (close + q.close()). يُستخدم للوحتي /موصلات و /سياق — مستقل عن الدور.
+ * قناة التحكّم وتُحَل دوال مثل mcpServerStatus/getContextUsage. يُغلق الإدخال ثم ينتظر
+ * انتهاء استهلاك Query قبل q.close() (مع مهلة احترازية). يُستخدم للوحتي /موصلات و /سياق.
  * sessionId اختياري: تمريره يستأنف الجلسة (يلزم لقياس سياق المحادثة الفعلي).
  */
-async function withControlQuery(cwd, sessionId, fn) {
+async function withControlQuery(cwd, sessionId, fn, controlOptions) {
   const { query } = await loadSdk();
   let close;
   const closed = new Promise((resolve) => { close = resolve; });
   async function* input() { await closed; } // لا يُنتِج رسالة — فقط يُبقي العملية حيّة
   const options = { cwd, settingSources: ['user', 'project', 'local'] };
+  if (controlOptions && controlOptions.enableFileCheckpointing === true) {
+    options.enableFileCheckpointing = true;
+  }
   const bin = resolveClaudeBin();
   if (bin) options.pathToClaudeCodeExecutable = bin;
   if (sessionId) options.resume = sessionId;
   const q = query({ prompt: input(), options });
   // استهلاك المولّد في الخلفية لتشغيل العملية (دوال التحكّم تحتاج قناة حيّة)
-  (async () => { try { for await (const _ of q) { /* تجاهل */ } } catch { /* أُغلق */ } })();
+  const consumed = (async () => {
+    try { for await (const _ of q) { /* تجاهل */ } } catch { /* أُغلق */ }
+  })();
   try {
     return await fn(q);
   } finally {
     close();
-    try { q.close(); } catch { /* قد يكون أُغلق أصلاً */ }
+    let timeout = null;
+    try {
+      await Promise.race([
+        consumed,
+        new Promise((resolve) => { timeout = setTimeout(resolve, 5000); }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      try { q.close(); } catch { /* قد يكون أُغلق أصلاً */ }
+    }
   }
 }
 
-// حالة خوادم MCP (الموصّلات) — قراءة فقط للوحة /موصلات
+function applyClaudeFallbackModel(options, primaryModel, fallbackModel, internalPolicy) {
+  if (!options || typeof options !== 'object' || internalPolicy) return false;
+  if (typeof fallbackModel !== 'string' || !SAFE_CLAUDE_MODEL.test(fallbackModel)) return false;
+  if (fallbackModel === primaryModel) return false;
+  options.fallbackModel = fallbackModel;
+  return true;
+}
+
+function createClaudeMetadataClient(dependencies) {
+  const controlQuery = dependencies && dependencies.controlQuery || withControlQuery;
+  const now = dependencies && dependencies.now || Date.now;
+  const ttlMs = dependencies && Number.isFinite(dependencies.ttlMs)
+    ? Math.max(0, dependencies.ttlMs) : CLAUDE_METADATA_TTL_MS;
+  let cached = null;
+  let inFlight = null;
+
+  async function load(cwd) {
+    const current = now();
+    if (cached && current < cached.expiresAt) return cached.value;
+    if (inFlight) return inFlight;
+    inFlight = (async () => {
+      let value;
+      try {
+        value = await controlQuery(cwd, null, async (q) => {
+          if (!q || typeof q.supportedModels !== 'function' || typeof q.accountInfo !== 'function') {
+            throw new Error('claude_metadata_not_supported');
+          }
+          const [models, account] = await Promise.all([q.supportedModels(), q.accountInfo()]);
+          const publicModels = (Array.isArray(models) ? models : []).map((item) => ({
+            value: item && item.value,
+            displayName: item && item.displayName,
+            description: item && item.description,
+          }));
+          const publicAccount = {};
+          for (const field of ['email', 'organization', 'subscriptionType']) {
+            if (account && typeof account[field] === 'string') publicAccount[field] = account[field];
+          }
+          return { ok: true, models: publicModels, account: publicAccount };
+        });
+      } catch {
+        value = {
+          ok: false,
+          error: 'claude_metadata_unavailable',
+          message: 'تعذّر قراءة نماذج وحساب Claude من الإصدار الحالي؛ ستبقى القيم المحلية الافتراضية.',
+        };
+      }
+      cached = { value, expiresAt: now() + ttlMs };
+      return value;
+    })().finally(() => { inFlight = null; });
+    return inFlight;
+  }
+
+  return {
+    async models(cwd) {
+      const result = await load(cwd);
+      return result.ok ? { ok: true, models: result.models } : result;
+    },
+    async account(cwd) {
+      const result = await load(cwd);
+      return result.ok ? { ok: true, account: result.account } : result;
+    },
+  };
+}
+
+const claudeMetadataClient = createClaudeMetadataClient();
+
+async function claudeModels(cwd) {
+  return claudeMetadataClient.models(cwd);
+}
+
+async function claudeAccount(cwd) {
+  return claudeMetadataClient.account(cwd);
+}
+
+function cleanForkTitle(value) {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
+function safeCount(value) {
+  return Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function createSessionControls(deps) {
+  const sdkLoader = deps && deps.loadSdk || loadSdk;
+  const controlQuery = deps && deps.withControlQuery || withControlQuery;
+
+  return {
+    async fork(sessionId, upToMessageId, title) {
+      try {
+        if (!SAFE_UUID.test(String(sessionId || ''))) {
+          return { ok: false, error: 'invalid_session', message: 'معرّف جلسة Claude غير صالح.' };
+        }
+        if (upToMessageId && !SAFE_UUID.test(String(upToMessageId))) {
+          return { ok: false, error: 'invalid_message', message: 'معرّف رسالة المستخدم غير صالح.' };
+        }
+        if (title !== undefined && (typeof title !== 'string' || title.length > 512)) {
+          return { ok: false, error: 'invalid_title', message: 'عنوان الفرع غير صالح.' };
+        }
+        const sdk = await sdkLoader();
+        if (!sdk || typeof sdk.forkSession !== 'function') {
+          return { ok: false, error: 'sdk_unavailable', message: 'إصدار Claude Code الحالي لا يدعم تفريع الجلسات.' };
+        }
+        const options = {};
+        if (upToMessageId) options.upToMessageId = upToMessageId;
+        const safeTitle = cleanForkTitle(title);
+        if (safeTitle) options.title = safeTitle;
+        const result = await sdk.forkSession(sessionId, options);
+        if (!SAFE_UUID.test(String(result && result.sessionId || ''))) {
+          return { ok: false, error: 'sdk_invalid_response', message: 'أعاد Claude معرّف فرع غير صالح؛ بقيت الجلسة الحالية كما هي.' };
+        }
+        return { ok: true, sessionId: result.sessionId };
+      } catch {
+        return { ok: false, error: 'sdk_unavailable', message: 'تعذّر تفريع جلسة Claude في هذا الإصدار؛ بقيت الجلسة الحالية كما هي.' };
+      }
+    },
+
+    async rewind(cwd, sessionId, userMessageId, dryRun) {
+      try {
+        if (!SAFE_UUID.test(String(sessionId || '')) || !SAFE_UUID.test(String(userMessageId || ''))) {
+          return { ok: false, error: 'invalid_uuid', message: 'معرّف الجلسة أو الرسالة غير صالح.' };
+        }
+        const result = await controlQuery(cwd, sessionId, async (queryHandle) => {
+          if (!queryHandle || typeof queryHandle.rewindFiles !== 'function') {
+            throw new Error('rewind_not_supported');
+          }
+          return queryHandle.rewindFiles(userMessageId, { dryRun: dryRun === true });
+        }, { enableFileCheckpointing: true });
+        if (result && result.canRewind === true && !Array.isArray(result.filesChanged)) {
+          return { ok: false, error: 'sdk_invalid_response', message: 'لم يُعد Claude قائمة ملفات صالحة للمعاينة؛ أُلغي الاسترجاع احترازياً.' };
+        }
+        const filesChanged = Array.isArray(result && result.filesChanged)
+          ? result.filesChanged.slice(0, 501)
+          : [];
+        const response = {
+          ok: true,
+          canRewind: result && result.canRewind === true,
+          filesChanged,
+        };
+        const insertions = safeCount(result && result.insertions);
+        const deletions = safeCount(result && result.deletions);
+        if (insertions !== undefined) response.insertions = insertions;
+        if (deletions !== undefined) response.deletions = deletions;
+        if (!response.canRewind) response.message = 'لا تتوفر نقطة استرجاع لهذه الرسالة في جلسة Claude الحالية.';
+        return response;
+      } catch {
+        return { ok: false, error: 'sdk_unavailable', message: 'تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.' };
+      }
+    },
+  };
+}
+
+const sessionControls = createSessionControls();
+
+async function forkSession(sessionId, upToMessageId, title) {
+  return sessionControls.fork(sessionId, upToMessageId, title);
+}
+
+async function rewindFiles(cwd, sessionId, userMessageId, dryRun) {
+  return sessionControls.rewind(cwd, sessionId, userMessageId, dryRun);
+}
+
 async function mcpStatus(cwd) {
   try {
     const list = await withControlQuery(cwd, null, (q) => q.mcpServerStatus());
@@ -1739,4 +1979,21 @@ async function listCommands(cwd) {
   }
 }
 
-module.exports = { start, undoEdit, mcpStatus, mcpAction, contextUsage, listCommands, resolveClaudeBin, sanitizeQuestions, buildQuestionAnswer };
+module.exports = {
+  start,
+  claudeModels,
+  claudeAccount,
+  createClaudeMetadataClient,
+  applyClaudeFallbackModel,
+  undoEdit,
+  forkSession,
+  rewindFiles,
+  mcpStatus,
+  mcpAction,
+  contextUsage,
+  listCommands,
+  resolveClaudeBin,
+  sanitizeQuestions,
+  buildQuestionAnswer,
+  createSessionControls,
+};

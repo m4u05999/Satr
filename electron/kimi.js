@@ -37,6 +37,7 @@ const SATR_TOOL_NAMES = Object.freeze([
   'verification_config', 'verify_project', 'update_task_ledger',
   'propose_memory', 'load_skill', 'read_skill_resource',
 ]);
+const EMBEDDED_MCP_TOOL_NAMES = new Set(codexmcp.buildTools({ preview }).map((tool) => tool.name));
 // تسميات عربية لأدوات Kimi الداخلية المعروفة (قاعدة «العربية أولاً»). تُطبَّق على
 // العنوان الأولي لـ tool_call فقط؛ عناوين tool_call_update الحرة (مثل «Listing
 // scheduled cron jobs») نص حر من Kimi وتُعرض كما هي.
@@ -69,6 +70,13 @@ const KIMI_TOOL_LABELS = Object.freeze({
 
 function toolLabel(title) {
   return KIMI_TOOL_LABELS[title] || title;
+}
+
+function isEmbeddedMcpTool(tool, mcpHost) {
+  if (!mcpHost || !tool) return false;
+  const title = String(tool.title || '');
+  const prefix = 'mcp__satr__';
+  return title.startsWith(prefix) && EMBEDDED_MCP_TOOL_NAMES.has(title.slice(prefix.length));
 }
 const IS_WIN = process.platform === 'win32';
 const APP_VERSION = (() => {
@@ -685,6 +693,12 @@ function create(deps) {
       const command = kind === 'execute' ? executeCommand(tool) : '';
       const planWrite = mutationKind(kind)
         && !!safePlanPath(resolveDataRoot(), sessionId, tool.rawInput && tool.rawInput.path, false);
+      // Kimi يضيف بوابة ACP خارجية حول أداة MCP المدمجة. نقبل الغلاف فقط؛ معالج
+      // codexmcp الداخلي يبقى صاحب قرار النطاق والفعل الحساس والميزانية (لا تجاوز أذونات).
+      if (isEmbeddedMcpTool(tool, mcpHost)) {
+        rpc.respond(serverId, { outcome: selectedOutcome(optionsList, true, false) });
+        return true;
+      }
       if (command && execguard.isServerCommand(command)) {
         rpc.respond(serverId, { outcome: selectedOutcome(optionsList, false, false) });
         emit({ type: 'stderr', text: execguard.buildRedirectMessage() });
@@ -1239,6 +1253,6 @@ module.exports = {
   _internals: {
     inside, safeExistingPath, safeWritablePath, safePlanPath, selectedOutcome, spawnKimi, scrubError,
     buildSatrMcpTools, configOptionValues, configValue, parseUsageText, parseCompactionText,
-    toolLabel,
+    toolLabel, isEmbeddedMcpTool,
   },
 };

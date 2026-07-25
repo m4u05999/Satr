@@ -10,6 +10,7 @@ const fsp = require('fs/promises');
 
 const PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
 const SAFE_NAME = /^[A-Za-z0-9._-]{1,180}$/; // مكوّن مسار واحد — بلا فواصل مسار إطلاقاً
+const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HEAD_BYTES = 64 * 1024;  // عند بناء القائمة نقرأ رأس الملف فقط (العنوان يظهر مبكراً)
 const MAX_SESSIONS = 100;
 const MAX_MESSAGES = 40;       // أقصى عدد رسائل تُعاد عند فتح جلسة للعرض
@@ -130,7 +131,9 @@ function buildMessages(raw) {
     if (typeof e.cwd === 'string' && e.cwd) cwd = e.cwd; // آخر cwd في الملف هو الأحدث
     const u = userText(e);
     if (u !== null) {
-      messages.push({ role: 'user', text: u });
+      const message = { role: 'user', text: u };
+      if (typeof e.uuid === 'string' && SAFE_UUID.test(e.uuid)) message.messageId = e.uuid;
+      messages.push(message);
       continue;
     }
     const a = assistantParts(e);
