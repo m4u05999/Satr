@@ -59,6 +59,8 @@
     "test:browser-platform-live": "electron scripts/browser-platform-live-test.js",
     "test:execguard": "node scripts/execguard-test.js",
     "test:termjobs": "node scripts/termjobs-test.js",
+    "test:termjobs-done": "node scripts/termjobs-done-test.js",
+    "test:secretscrub": "node scripts/secretscrub-test.js",
     "test:envbrief": "node scripts/envbrief-test.js",
     "test:background-ui-live": "electron scripts/background-ui-live-test.js",
     "test:browser-member-live": "electron scripts/browser-member-live-test.js",

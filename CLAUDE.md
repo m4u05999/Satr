@@ -139,6 +139,11 @@ electron/autogate.js ← بوابة وضع «تلقائي ذكي» (auto — خ�
                        بلا تبعيات (نمط diff.js) يستهلكه agent.js وmain.js. AUTO_SAFE_TOOLS
                        (whitelist للآمن fail-safe) + autoNeedsPrompt + decideAutoApproval (سياسة
                        canUseTool المستخرجة المُختبَرة) + nonSdkPerm. اختبار scripts/autogate.test.js
+electron/secretscrub.js ← بوابة حجب الأسرار المشتركة (K5): موديول نقي بلا اعتماديات
+                       (نمط diff.js) — النمطان القائمان sk- وkey=value + JWT/Bearer/PEM/
+                       AWS/GitHub/Slack، وتحفظ إلزامي ضد الإيجابيات الكاذبة (SHA/UUID/
+                       مسارات/حزم). يستهلكه kimi.js (scrubStreamText) وtermjobs.js
+                       (scrubDoneTail). اختبار scripts/secretscrub-test.js
 electron/browserguard.js ← حارس المتصفح الخارجي (دفعة «تحكم الوكيل الكامل» 2026-07-18):
                        موديول نقي بلا تبعيات (نمط autogate.js) مشترك بين المحرّكين.
                        isExternalBrowserLaunchCommand (استُخرجت من codex.js — نسخة واحدة)
@@ -400,6 +405,11 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
      تُقتل كل العمليات المتتبَّعة عند إغلاق «سطر» (`window-all-closed`/`before-quit`).
    - `bg_term`: `{id,label,shell,cwd}` لمهمة pty معمّرة؛ مستقل عن token الدور. الواجهة
      تتبنّاها كتبويب `🛠 <label>` وتضيفها إلى شريط «قيد التشغيل» مع إظهار/إيقاف.
+   - `bg_term_done` (K4): `{id,label,exitCode,tail}` يُبث عند خروج مهمة pty معمّرة.
+     `exitCode` رقم أو null (قتل/انهيار بلا رمز) · `label` منقّى ≤48 محرفاً كما
+     عند البدء · `tail` نص منقّى: إزالة ANSI ومحارف التحكم، حجب أسرار ببوابة K2،
+     قص ≤8000 محرف مع لاحقة `…` عند القص. يبقى خارج سجل المحادثة حتى ينقر المستخدم
+     «أرسل الخرج للوكيل» فيُرسل دوراً عادياً بالذيل موسوماً غير موثوق.
    - `system`/`compact_boundary` (SDK فقط، أمر /ضغط): `{compact_metadata:{trigger, pre_tokens,
      post_tokens, …}}` — يصدر عند ضغط المحادثة، تعرضه الواجهة كبطاقة «ضُغطت المحادثة: X ← Y رمز».
      الجلسة تبقى نفسها (session_id) فتكمل المحادثة بالملخّص.
@@ -1012,9 +1022,13 @@ result`)، فالواجهة لا تتغيّر.
   `-32601 Method not found`. و`/goal` `/plan` `/btw` `/swarm` غير معلنة كأوامر مائلة
   عبر ACP — المعلن فقط: compact, status, usage, mcp, tasks, help (أدوات الهدف وcron
   تعمل كأدوات نموذج أثناء الدور وتظهر بطاقاتها). وإطلاقات cron واستمرارات الهدف بين
-  الأدوار كانت لا تصل لأن سطر كان يقتل عملية `kimi acp` بعد كل دور — حُلّت بمعمارية
-  keep-alive ‏(K2، البند التالي) فصارت تصل كإشعارات `kimi_keepalive_event`. وeffort
-  يبقى غير معلن (thinking=on فقط ضمن configOptions).
+  الأدوار كانت لا تصل لأن سطر كان يقتل عملية `kimi acp` بعد كل دور — K2 أبقى القناة
+  حية وجهّز جسر `kimi_keepalive_event`، لكن المسابير الحية (K3-ب لـ cron وK5-ب للهدف،
+  2026-07-27) رصدت أن Kimi 0.27.0 لا يبث إطلاق cron ولا استمرار الهدف على قناة
+  الجلسة أصلاً: القناة بقيت حية في السجل 150 ثانية بلا أي حدث متأخر في كلتيهما.
+  حدّ upstream موثّق في `docs/KIMI-CAPABILITIES.md`؛ الجسر مفعّل ومختبَر بإشعارات
+  مصطنعة ويعمل فور بثّ Kimi. وeffort يبقى غير معلن
+  (thinking=on فقط ضمن configOptions).
 - **Keep-alive (K2 — 2026-07-25)**: قناة ACP (العملية + RPC + خادم MCP) تبقى حية بعد
   end_turn في سجل `electron/kimi-keepalive.js` (نسخة لكل `create()`), وتُستأجر للدور
   التالي على `sessionId` و`cwd` نفسيهما فلا تتكرر initialize/session-new ولا يُرسل
@@ -1029,7 +1043,10 @@ result`)، فالواجهة لا تتغيّر.
   شريط bg_procs فقط: عناصر `ks_<sessionId>` مدمجة مع عمليات الخلفية عبر
   `emitBgProcsMerged` في main.js، و`satr:killBgProc` يوجّه البادئة `ks_` إلى
   `kimi.keepalive.kill`. `applyConfigOptions` يعيد تطبيق model/effort/thinking/mode
-  على القناة المستأجرة من configOptions المخزّنة.
+  على القناة المستأجرة من configOptions المخزّنة. وسياق المهارات مرجع حيّ
+  `shared.skillContextRef` يُحدَّث كل دور (K3-أ): إغلاقات `extraTools` تحلّه وقت
+  النداء فيرى الدور المستأجر اختياره الحالي ولا يتسرّب اختيار دور البناء — زال بذلك
+  قيد K2 الموثق («أدوات MCP تبقى بسياق الدور الأول»).
 - **عقد `kimi_keepalive_event` (schema)**: نشاط الوكيل بين الأدوار (cron/هدف) يصل على
   قناة حية بلا دور نشط فيُبثّ للواجهة إشعاراً مؤقتاً — لا يُدرج في سجل المحادثة —
   بعد مروره ببوابة الحجب والقص نفسها المطبقة على أحداث الدور (قرار القائد أ).
@@ -1078,7 +1095,8 @@ result`)، فالواجهة لا تتغيّر.
   وتحويل `available_commands_update` إلى أوامر «/» ديناميكية، وضبط `thinking` عند إعلانه،
   ورفض terminal reverse-RPC عند عدم إعلانه، وK2: استئجار القناة بلا spawn/initialize/
   session-new ثانية ولا cancel عند end_turn، والأحداث المتأخرة المحجوبة خارج سجل
-  المحادثة، وstop يبقي الجلسة حية، وطرد الأقدم خمولاً عند سقف عمليتين.
+  المحادثة، وstop يبقي الجلسة حية، وطرد الأقدم خمولاً عند سقف عمليتين، والدور
+  المستأجر يرى مهارات اختياره عبر المرجع الحي (K3-أ) بلا تسرّب من دور البناء.
   `npm run test:kimi-keepalive` يغطي وحدة السجل (تسجيل/سقف/خمول 15 دقيقة/استئجار/
   قتل مع دور نشط/killAll/تجميع وحجب وقص الأحداث المتأخرة). كلاهما يدخل `test:full`،
   و`test:envbrief` يثبت تكافؤ جرد MCP للمحركات الأصيلة الثلاثة. صفر اعتماديات جديدة.
@@ -1725,6 +1743,14 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   «دائماً»، ووضع تحكم المتصفح لا يعفي التشغيل أو الإيقاف في Codex.
 - `term.js` يخزن آخر 256KiB من خرج كل pty من نفس `onData`. `satr:termList` +
   `satr:termReadBuffer` يعيدان تبنّي التبويبات بعد reload من دون قتل العمليات.
+- **«أكمل بالوكيل» (K4 — 2026-07-27)**: عند خروج مهمة محدودة يلتقط `term.js` ذيلها
+  الخام (≤32KiB من المخزن الدائري) **قبل** حذف الطرفية ويرفقه بحدث `exit`؛ و`termjobs`
+  ينقّيه (إزالة ANSI ومحارف التحكم، حجب أسرار ببوابة `secretscrub` المشتركة (K5)، قص ≤8000 محرف
+  بعلامة `…`) ويبث `bg_term_done` عبر notifier القائم — بلا IPC جديد. الواجهة تعرض
+  إشعار فعل `addActionNotice` (✅ لكود 0 وإلا ⚠️) والنقر يرسل دوراً عادياً بالذيل
+  موسوماً `<untrusted_terminal_output>` — لا إرسال تلقائي، النقرة هي الموافقة.
+  الخوادم الحية لا `exit` لها فلا يصلها الحدث. `npm run test:termjobs-done` يغطي
+  الالتقاط والحجب والقص والخوادم الحية وثبات الأنواع.
 - `execguard.js` يرفض تشغيل خادم معروف أو `run_in_background=true` عبر Bash/
   run_in_terminal قبل alwaysAllowed، ويرشد الأداة الصحيحة. `bgprocs` يبقى شبكة أمان.
 

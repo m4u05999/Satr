@@ -151,9 +151,12 @@ function startTerm(cwd, cols, rows, meta) {
   });
   proc.onExit(({ exitCode }) => {
     // خروج الصدفة (exit أو انهيار): أزِل الطرفية وأخبر الواجهة لتعرض «انتهت الجلسة»
+    // K4: الذيل الخام (≤32KiB من المخزن الدائري) يُلتقط ويُرفق بالحدث **قبل** حذف
+    // المخزن — مهام termjobs المحدودة تنقّيه وتبثّه bg_term_done فلا يضيع خرجها.
+    const tail = entry.buffer.subarray(Math.max(0, entry.buffer.length - 32768)).toString('utf8');
     terminals.delete(id);
     captureQueues.delete(id);
-    emit({ type: 'exit', id, exitCode });
+    emit({ type: 'exit', id, exitCode, tail });
   });
 
   return { ok: true, id, shell };
