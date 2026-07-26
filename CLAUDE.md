@@ -139,6 +139,11 @@ electron/autogate.js ← بوابة وضع «تلقائي ذكي» (auto — خ�
                        بلا تبعيات (نمط diff.js) يستهلكه agent.js وmain.js. AUTO_SAFE_TOOLS
                        (whitelist للآمن fail-safe) + autoNeedsPrompt + decideAutoApproval (سياسة
                        canUseTool المستخرجة المُختبَرة) + nonSdkPerm. اختبار scripts/autogate.test.js
+electron/secretscrub.js ← بوابة حجب الأسرار المشتركة (K5): موديول نقي بلا اعتماديات
+                       (نمط diff.js) — النمطان القائمان sk- وkey=value + JWT/Bearer/PEM/
+                       AWS/GitHub/Slack، وتحفظ إلزامي ضد الإيجابيات الكاذبة (SHA/UUID/
+                       مسارات/حزم). يستهلكه kimi.js (scrubStreamText) وtermjobs.js
+                       (scrubDoneTail). اختبار scripts/secretscrub-test.js
 electron/browserguard.js ← حارس المتصفح الخارجي (دفعة «تحكم الوكيل الكامل» 2026-07-18):
                        موديول نقي بلا تبعيات (نمط autogate.js) مشترك بين المحرّكين.
                        isExternalBrowserLaunchCommand (استُخرجت من codex.js — نسخة واحدة)
@@ -794,10 +799,11 @@ result`)، فالواجهة لا تتغيّر.
   عبر ACP — المعلن فقط: compact, status, usage, mcp, tasks, help (أدوات الهدف وcron
   تعمل كأدوات نموذج أثناء الدور وتظهر بطاقاتها). وإطلاقات cron واستمرارات الهدف بين
   الأدوار كانت لا تصل لأن سطر كان يقتل عملية `kimi acp` بعد كل دور — K2 أبقى القناة
-  حية وجهّز جسر `kimi_keepalive_event`، لكن المسبار الحي (K3-ب، 2026-07-27) رصد أن
-  Kimi 0.27.0 لا يبث إطلاق cron على قناة الجلسة أصلاً: القناة بقيت حية في السجل
-  150 ثانية بلا أي حدث متأخر. حدّ upstream موثّق في `docs/KIMI-CAPABILITIES.md`؛
-  الجسر مفعّل ومختبَر بإشعارات مصطنعة ويعمل فور بثّ Kimi. وeffort يبقى غير معلن
+  حية وجهّز جسر `kimi_keepalive_event`، لكن المسابير الحية (K3-ب لـ cron وK5-ب للهدف،
+  2026-07-27) رصدت أن Kimi 0.27.0 لا يبث إطلاق cron ولا استمرار الهدف على قناة
+  الجلسة أصلاً: القناة بقيت حية في السجل 150 ثانية بلا أي حدث متأخر في كلتيهما.
+  حدّ upstream موثّق في `docs/KIMI-CAPABILITIES.md`؛ الجسر مفعّل ومختبَر بإشعارات
+  مصطنعة ويعمل فور بثّ Kimi. وeffort يبقى غير معلن
   (thinking=on فقط ضمن configOptions).
 - **Keep-alive (K2 — 2026-07-25)**: قناة ACP (العملية + RPC + خادم MCP) تبقى حية بعد
   end_turn في سجل `electron/kimi-keepalive.js` (نسخة لكل `create()`), وتُستأجر للدور
@@ -1515,7 +1521,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `satr:termReadBuffer` يعيدان تبنّي التبويبات بعد reload من دون قتل العمليات.
 - **«أكمل بالوكيل» (K4 — 2026-07-27)**: عند خروج مهمة محدودة يلتقط `term.js` ذيلها
   الخام (≤32KiB من المخزن الدائري) **قبل** حذف الطرفية ويرفقه بحدث `exit`؛ و`termjobs`
-  ينقّيه (إزالة ANSI ومحارف التحكم، حجب أسرار ببوابة أحداث K2 نفسها، قص ≤8000 محرف
+  ينقّيه (إزالة ANSI ومحارف التحكم، حجب أسرار ببوابة `secretscrub` المشتركة (K5)، قص ≤8000 محرف
   بعلامة `…`) ويبث `bg_term_done` عبر notifier القائم — بلا IPC جديد. الواجهة تعرض
   إشعار فعل `addActionNotice` (✅ لكود 0 وإلا ⚠️) والنقر يرسل دوراً عادياً بالذيل
   موسوماً `<untrusted_terminal_output>` — لا إرسال تلقائي، النقرة هي الموافقة.

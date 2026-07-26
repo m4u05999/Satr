@@ -25,6 +25,7 @@ const skillCatalog = require('./skills');
 const agentTools = require('./tools');
 const { isExternalBrowserLaunchCommand, promptRequestsExternalBrowser } = require('./browserguard');
 const keepaliveFactory = require('./kimi-keepalive');
+const { scrubSecrets } = require('./secretscrub');
 
 const ENGINE_ID = 'kimi-code';
 const DEFAULT_MODEL = 'k3';
@@ -172,9 +173,9 @@ function scrubError(value) {
 }
 
 function scrubStreamText(value, max) {
-  const text = String(value || '')
-    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[secret]')
-    .replace(/(api[_-]?key|token|authorization|password|secret)\s*[:=]\s*[^\s,;]+/ig, '$1=[secret]');
+  // K5-أ: الحجب عبر البوابة المشتركة secretscrub (JWT/Bearer/PEM/AWS/GitHub/Slack
+  // فوق النمطين القائمين)، والقص يبقى هنا مسؤولية المستهلك.
+  const text = scrubSecrets(value);
   return max && text.length > max ? text.slice(0, max) + '…' : text;
 }
 

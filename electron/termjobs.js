@@ -3,6 +3,7 @@
 const path = require('path');
 const term = require('./term');
 const devservers = require('./devservers');
+const { scrubSecrets } = require('./secretscrub');
 
 const MAX_JOBS = 4;
 const MAX_DONE_TAIL = 8000; // سقف ذيل المهمة المنتهية في حدث bg_term_done (K4)
@@ -15,8 +16,8 @@ function sanitizeLabel(label) {
   return Array.from(clean || 'مهمة خلفية').slice(0, 48).join('');
 }
 
-// تنقية ذيل مهمة منتهية (K4): إزالة ANSI ومحارف التحكم، حجب الأسرار بنفس بوابة
-// أحداث K2 (نمط scrubStreamText في kimi.js)، ثم قص ≤8000 محرف بعلامة مقصوص.
+// تنقية ذيل مهمة منتهية (K4): إزالة ANSI ومحارف التحكم محلياً، ثم حجب الأسرار
+// عبر البوابة المشتركة secretscrub (K5-أ)، ثم قص ≤8000 محرف بعلامة مقصوص.
 function scrubDoneTail(raw) {
   const text = String(raw || '')
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
@@ -24,9 +25,7 @@ function scrubDoneTail(raw) {
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
     .replace(/\r/g, '')
     .trim();
-  const scrubbed = text
-    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[secret]')
-    .replace(/(api[_-]?key|token|authorization|password|secret)\s*[:=]\s*[^\s,;]+/ig, '$1=[secret]');
+  const scrubbed = scrubSecrets(text);
   return scrubbed.length > MAX_DONE_TAIL ? scrubbed.slice(0, MAX_DONE_TAIL) + '…' : scrubbed;
 }
 
