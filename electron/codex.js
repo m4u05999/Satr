@@ -205,6 +205,25 @@ async function rateLimits() {
   catch { return null; }
 }
 
+// ---------- تنقية نص التوجيه أثناء الدور (C1) ----------
+// دالة نقية يستهلكها main.js عند بوابة satr:steer (نمط nonSdkPerm في autogate.js:
+// المنطق قابل للاختبار وحده، ونقطة الفرض تبقى في العملية الرئيسية). تُبنى فئة محارف
+// التحكم/Bidi من نقاط الترميز نصّاً كي لا يحمل المصدر بايتات تحكم خام.
+const MAX_STEER_CHARS = 32000;
+const STEER_STRIP = new RegExp('[' + [
+  '\\u0000-\\u0008', '\\u000b', '\\u000c', '\\u000e-\\u001f', '\\u007f',
+  '\\u061c', '\\u200e', '\\u200f', '\\u202a-\\u202e', '\\u2066-\\u2069',
+].join('') + ']', 'g');
+
+function sanitizeSteerText(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw
+    .replace(/\r\n?/g, '\n')
+    .replace(STEER_STRIP, ' ')
+    .slice(0, MAX_STEER_CHARS)
+    .trim();
+}
+
 function projectPath(cwd, filePath) {
   if (typeof filePath !== 'string' || !filePath.trim()) return null;
   const root = path.resolve(cwd);
@@ -1187,6 +1206,30 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       try { info.answer(Array.isArray(selections) ? selections : []); } catch { return false; }
       return true;
     },
+    // ---------- التوجيه أثناء الدور (turn/steer — الدفعة C1) ----------
+    // عقد v2 من الـschema المولّد: {threadId, expectedTurnId, input:[UserInput]} → {turnId}.
+    // expectedTurnId شرط مسبق إلزامي لا تحسيناً: يفشل الطلب إن لم يطابق الدور النشط، فلا
+    // يتسرّب توجيه إلى دور لاحق. مثبّت حيّاً (scripts/codex-steer-probe.js على codex-cli
+    // 0.144.3): التوجيه الناجح يعيد **معرّف الدور نفسه** (لا ينشئ دوراً جديداً) فمرشّح
+    // belongsToRootTurn يبقى صحيحاً بلا تعديل؛ وعدم المطابقة يردّ -32600، وبعد
+    // turn/completed يردّ -32600 «no active turn to steer».
+    // أمان: رسالة خطأ upstream تحمل معرّف الدور النشط الفعلي، فلا نمرّرها للواجهة —
+    // نعيد رموزاً ثابتة فقط.
+    async steer(text) {
+      const body = typeof text === 'string' ? text.trim() : '';
+      if (!body) return { ok: false, error: 'empty' };
+      if (finished || stopping || !threadId || !turnId) return { ok: false, error: 'no_active_turn' };
+      try {
+        const r = await request('turn/steer', {
+          threadId,
+          expectedTurnId: turnId,
+          input: [{ type: 'text', text: body, text_elements: [] }],
+        });
+        return { ok: true, turnId: r && typeof r.turnId === 'string' ? r.turnId : turnId };
+      } catch (e) {
+        return { ok: false, error: 'rejected' };
+      }
+    },
     // رد الواجهة على تسليم browser_handoff: done=true «استلمت» / false «إلغاء»
     resolveHandoff(id, done) {
       const h = pendingHandoffs.get(id);
@@ -1214,5 +1257,6 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
 module.exports = {
   start, undoEdit, resolveCodexBin, authStatus, accountStatus, listModels, rateLimits, DEFAULT_MODEL,
   isExternalBrowserLaunchCommand, shouldAutoApproveMcp,
+  sanitizeSteerText, MAX_STEER_CHARS, // C1: تنقية نص turn/steer (يستهلكها main.js)
   _internals: { projectPath, isInternalMcpApprovalElicitation },
 };

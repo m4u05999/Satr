@@ -1031,6 +1031,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   function endRun() {
     if (currentBlock) currentBlock.done = true;
     busy = false;
+    runningEngine = ''; // C1: لا دور جارٍ ⇒ لا توجيه
     sendBtn.textContent = 'إرسال';
     sendBtn.classList.remove('stop');
     closePermDialog();
@@ -1110,6 +1111,43 @@ import { createUpdateToast } from './lib/update-toast.js';
     btn.addEventListener('click', () => setBrowserControl(!browserControlOn, true));
   })();
 
+  // ---------- C1: التوجيه أثناء الدور (Codex — turn/steer) ----------
+  // محرك Codex وحده يقبل حقن نص في دور جارٍ (مثبّت بالمسبار). أثناء انشغاله لا يُقفل
+  // المؤلّف: كتابة نص تحوّل زرّ الإرسال إلى «↪ وجّه»، والحقل الفارغ يبقيه «إيقاف»
+  // فلا يضيع فعل الإيقاف ولا يحتاج زرّاً ثالثاً. بقية المحركات بلا تغيير سلوكي.
+  // المحرك الجاري فعلاً (لا منتقي الواجهة — قد يبدّله المستخدم أثناء دور جارٍ)
+  let runningEngine = '';
+  function steerEligible() {
+    return busy && runningEngine === 'codex' && !!input.value.trim();
+  }
+  function refreshSteerButton() {
+    if (!busy) return; // حالة عدم الانشغال تتكفّل بها endRun/send
+    if (steerEligible()) { sendBtn.textContent = '↪ وجّه'; sendBtn.classList.remove('stop'); }
+    else { sendBtn.textContent = 'إيقاف'; sendBtn.classList.add('stop'); }
+  }
+  input.addEventListener('input', refreshSteerButton);
+
+  async function steerTurn() {
+    const text = input.value.trim();
+    if (!text) return;
+    const r = await window.satr.steer(text);
+    if (!r || !r.ok) {
+      const why = {
+        unsupported: 'التوجيه أثناء الدور متاح لمحرك Codex فقط',
+        no_active_turn: 'انتهى الدور — أرسل رسالة جديدة بدل التوجيه',
+        empty: 'لا نص للتوجيه',
+        bad_input: 'تعذّر قبول نص التوجيه',
+      };
+      addNotice('⚠️ ' + (why[r && r.error] || 'تعذّر توجيه الدور الجاري'));
+      refreshSteerButton();
+      return;
+    }
+    input.value = '';
+    if (composerEl.afterSend) composerEl.afterSend();
+    chatEl.addUserMsg(text, [], { steer: true });
+    refreshSteerButton();
+  }
+
   // ---------- الإرسال ----------
   async function send() {
     if (gated) return; // المحادثة محجوبة حتى تجتاز بوابة أول التشغيل
@@ -1117,6 +1155,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل إرسال طلب جديد.');
       return;
     }
+    if (busy && steerEligible()) { await steerTurn(); return; } // C1: وجّه بدل الإيقاف
     if (busy) {
       if (currentBlock && !currentBlock.done) { currentBlock.stopped(); currentBlock.showRetry(); }
       await window.satr.stop();
@@ -1151,6 +1190,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     });
 
     busy = true;
+    runningEngine = engine; // C1: مرجع التوجيه أثناء الدور
     previewDirty = false; // م-1-ج: بداية دور جديد — لا تعديل بعد
     sendBtn.textContent = 'إيقاف';
     sendBtn.classList.add('stop');

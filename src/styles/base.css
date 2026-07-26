@@ -256,6 +256,9 @@
   .msg.user.superseded { opacity: .58; }
   .msg.user.superseded .bubble { text-decoration: line-through; text-decoration-thickness: 1px; }
   .msg-superseded { color: var(--text-dim); font-size: 10.5px; }
+  /* C1 — توجيه أثناء الدور (Codex): وسم رسالة حُقنت في دور جارٍ */
+  .msg-steer { color: var(--gold); font-size: 10.5px; }
+  .msg.user.steer .bubble { border-inline-start-style: dashed; }
   .msg.user .bubble {
     background: var(--chat-user-surface); border: 0; border-inline-start: 2px solid var(--gold-border);
     /* 3px زاوية هوية الفقاعة (قرار مالك — لا تُقرَّب)؛ البقية على السلّم حرفياً */
