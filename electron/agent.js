@@ -27,6 +27,7 @@ const promostudio = require('./promostudio'); // اقتراح storyboard محل�
 const skillCatalog = require('./skills'); // .agents قياسي + .claude توافق؛ تحميل تدريجي
 const verify = require('./verify'); // تحقق صريح مستقل عن أدوات المتصفح
 const memory = require('./memory'); // ذاكرة مشروع شخصية بموافقة صريحة
+const claudeElicitation = require('./elicitation'); // إدخال موصّلات MCP غير السري بحوار عربي fail-closed
 const keys = require('./keys');
 const testsprite = require('./testsprite');
 const testspriteHarness = require('./testspriteharness');
@@ -440,6 +441,22 @@ function buildQuestionAnswer(originalInput, selections) {
   return { ...originalInput, questions: qs, answers };
 }
 
+function isUnsupportedElicitationResult(message) {
+  if (!message || message.type !== 'user' || !message.message || !Array.isArray(message.message.content)) {
+    return false;
+  }
+  return message.message.content.some((block) => {
+    if (!block || block.type !== 'tool_result') return false;
+    const parts = typeof block.content === 'string'
+      ? [block.content]
+      : Array.isArray(block.content)
+        ? block.content
+          .filter((part) => part && part.type === 'text' && typeof part.text === 'string')
+          .map((part) => part.text)
+        : [];
+    return parts.some((text) => /Client does not support (?:form|url) elicitation\.?/i.test(text));
+  });
+}
 /**
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
@@ -449,6 +466,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const isolatedPolicy = policyMode === 'text-only' || policyMode === 'read-only-planner';
   const promptUserMessageId = randomUUID();
   let promptUserEventEmitted = false;
+  let unsupportedElicitationNotified = false;
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
   const portableSkillPrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true });
   const memoryPrompt = isolatedPolicy ? '' : memory.retrieve(cwd, prompt).text;
@@ -457,6 +475,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
   const turnAllowed = new Set(); // موافقات مؤقتة لهذا الدور فقط؛ تُصفّر عند result/stop
   const pendingQuestions = new Map(); // id → { resolve, input } لأسئلة AskUserQuestion المعلّقة
+  const elicitationController = claudeElicitation.createElicitationController({ emit });
   const pendingHandoffs = new Map(); // id → { resolve } لتسليمات browser_handoff بانتظار «استلمت»
   const actionBudget = browserBudget && typeof browserBudget.check === 'function'
     ? browserBudget : browserpolicy.createActionBudget();
@@ -739,6 +758,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const bin = resolveClaudeBin();
   if (bin) options.pathToClaudeCodeExecutable = bin;
   if (!internalPolicy) options.enableFileCheckpointing = true;
+  applyClaudeElicitation(options, elicitationController.handle, internalPolicy);
   if (sessionId) options.resume = sessionId;
   if (model) options.model = model;
   applyClaudeFallbackModel(options, model, fallbackModel, internalPolicy);
@@ -1589,6 +1609,10 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           }
           promptUserEventEmitted = true;
         }
+        if (!internalPolicy && !unsupportedElicitationNotified && isUnsupportedElicitationResult(msg)) {
+          unsupportedElicitationNotified = true;
+          emit({ type: 'stderr', text: 'لا يدعم إصدار Claude Code المستخدم طلب إدخال الموصّلات. حدّث Claude Code أو أكمل المصادقة عبر /mcp.' });
+        }
         emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingTaskCreates);
         if (msg.type === 'stream_event') {
           const phaseEvent = phaseEventFromStreamEvent(msg.event);
@@ -1619,6 +1643,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         host.close().catch(() => {});
       }
       if (testspriteRequested) testsprite.scrubConfig(cwd);
+      elicitationController.declineAll();
       for (const [id, p] of pending) {
         pending.delete(id);
         p.resolve({ behavior: 'deny', message: 'انتهى التشغيل' });
@@ -1676,6 +1701,15 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         : { behavior: 'deny', message: 'لم يُختَر جواب صالح' });
       return true;
     },
+    // رد الواجهة على طلب إدخال موصّل MCP. agent يحفظ schema/URL الأصليين ولا يثق
+    // بالواجهة؛ content يُعاد فحصه ويُترجم من الأسماء المنقّاة إلى مفاتيح SDK الأصلية.
+    resolveElicitation(id, action, content) {
+      return elicitationController.resolve(id, action, content);
+    },
+    // تستخدمه main.js لفتح URL المعلّق الموثوق فقط؛ الواجهة لا ترسل URL إطلاقاً.
+    peekElicitation(id) {
+      return elicitationController.peek(id);
+    },
     // رد الواجهة على تسليم browser_handoff: done=true «استلمت» / false «إلغاء».
     // نهاية التسليم (endHandoff + تصفير السجلات + حدث handoff_end) في متابعة الأداة نفسها.
     resolveHandoff(id, done) {
@@ -1696,6 +1730,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         testspriteHarnessHost = null;
         host.close().catch(() => {});
       }
+      elicitationController.declineAll();
       for (const [id, p] of pending) {
         pending.delete(id);
         p.resolve({ behavior: 'deny', message: 'أوقف المستخدم الطلب' });
@@ -1754,6 +1789,12 @@ async function withControlQuery(cwd, sessionId, fn, controlOptions) {
       try { q.close(); } catch { /* قد يكون أُغلق أصلاً */ }
     }
   }
+}
+
+function applyClaudeElicitation(options, handler, internalPolicy) {
+  if (!options || typeof options !== 'object' || internalPolicy || typeof handler !== 'function') return false;
+  options.onElicitation = handler;
+  return true;
 }
 
 function applyClaudeFallbackModel(options, primaryModel, fallbackModel, internalPolicy) {
@@ -1985,6 +2026,7 @@ module.exports = {
   claudeAccount,
   createClaudeMetadataClient,
   applyClaudeFallbackModel,
+  applyClaudeElicitation,
   undoEdit,
   forkSession,
   rewindFiles,
@@ -1993,6 +2035,7 @@ module.exports = {
   contextUsage,
   listCommands,
   resolveClaudeBin,
+  isUnsupportedElicitationResult,
   sanitizeQuestions,
   buildQuestionAnswer,
   createSessionControls,

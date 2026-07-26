@@ -39,6 +39,7 @@ const SUITE = [
   'test:claude-auth',
   'test:fork-rewind',
   'test:claude-models',
+  'test:elicitation',
   'test:testsprite-ready',
   'test:viewer-security',
   'test:askquestion',

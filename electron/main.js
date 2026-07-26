@@ -23,6 +23,7 @@ const verify = require('./verify');
 const checkpoints = require('./checkpoints');
 const sdkrewinds = require('./sdkrewinds');
 const memory = require('./memory');
+const claudeElicitation = require('./elicitation');
 const opsroom = require('./opsroom');
 const opsroomindex = require('./opsroomindex');
 const opsartifacts = require('./opsartifacts');
@@ -652,7 +653,11 @@ function notifyObservers(obj, meta) {
 function emitToWindow(obj) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:event', obj);
   // Community يسجل metadata مختصرة، وEnterprise يلتقط التدقيق/الاستهلاك عبر مجراه.
-  notifyObservers(obj, { engine: lastEngine });
+  // URL طلب المصادقة يصل للحوار فقط ولا يدخل سجل المراقبة (قد يحمل state/query حساسة).
+  const observed = obj && obj.type === 'elicitation_request'
+    ? { type: obj.type, id: obj.id, server: obj.server, mode: obj.mode, fields: obj.fields }
+    : obj;
+  notifyObservers(observed, { engine: lastEngine });
 }
 
 const opsRoomTransitions = new Set();
@@ -1738,6 +1743,69 @@ ipcMain.handle('satr:answerQuestion', (event, p) => {
   let ok = false;
   if (currentRun && typeof currentRun.resolveQuestion === 'function') ok = currentRun.resolveQuestion(p.id, selections);
   return { ok };
+});
+
+const elicitationOpening = new Set();
+
+// رد حوار إدخال موصّل Claude. ID/action/content تُنقّى هنا ثم يعيد agent.js فحص
+// الأسماء والقيم مقابل schema الأصلي. URL لا يأتي من renderer إطلاقاً: نقرأه من الطلب
+// المعلّق، نفتحه فقط بعد نقرة المستخدم، ثم نعيد accept إلى SDK إن نجح الفتح.
+ipcMain.handle('satr:elicitationDone', async (event, payload) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok: false };
+  const payloadKeys = Object.keys(payload);
+  if (payloadKeys.some((key) => key !== 'id' && key !== 'action' && key !== 'content')) return { ok: false };
+  if (typeof payload.id !== 'string' || !claudeElicitation.SAFE_ID.test(payload.id)) return { ok: false };
+  if (payload.action !== 'accept' && payload.action !== 'decline') return { ok: false };
+  const run = currentRun;
+  if (!run || typeof run.peekElicitation !== 'function' || typeof run.resolveElicitation !== 'function') {
+    return { ok: false };
+  }
+  const pendingRequest = run.peekElicitation(payload.id);
+  if (!pendingRequest) return { ok: false };
+  const hasContent = Object.prototype.hasOwnProperty.call(payload, 'content');
+  const publicReply = (result) => {
+    if (result && typeof result === 'object') {
+      const reply = { ok: result.ok === true };
+      if (result.declined === true) reply.declined = true;
+      if (typeof result.error === 'string') reply.error = result.error.slice(0, 80);
+      return reply;
+    }
+    return { ok: result === true };
+  };
+
+  if (payload.action === 'decline') {
+    if (hasContent) return { ok: false };
+    return publicReply(run.resolveElicitation(payload.id, 'decline'));
+  }
+  if (pendingRequest.mode === 'url') {
+    if (hasContent) return { ok: false };
+    const url = claudeElicitation.safeUrl(pendingRequest.url);
+    if (!url) {
+      run.resolveElicitation(payload.id, 'decline');
+      return { ok: false, error: 'bad_url' };
+    }
+    if (elicitationOpening.has(payload.id)) return { ok: false, error: 'in_flight' };
+    elicitationOpening.add(payload.id);
+    try {
+      await shell.openExternal(url);
+      return publicReply(run.resolveElicitation(payload.id, 'accept'));
+    } catch {
+      return { ok: false, error: 'open_failed' };
+    } finally {
+      elicitationOpening.delete(payload.id);
+    }
+  }
+  if (pendingRequest.mode !== 'form' || !hasContent) return { ok: false };
+  const cleaned = claudeElicitation.sanitizeRendererContent(payload.content);
+  if (!cleaned.ok) {
+    if (cleaned.error === 'secret') {
+      emitToWindow({ type: 'stderr', text: claudeElicitation.SECRET_REJECTION_MESSAGE });
+      run.resolveElicitation(payload.id, 'decline');
+      return { ok: true, declined: true, error: 'secret' };
+    }
+    return { ok: false, error: cleaned.error };
+  }
+  return publicReply(run.resolveElicitation(payload.id, 'accept', cleaned.content));
 });
 
 // رد الواجهة على التسليم البشري browser_handoff (زرا «استلمت»/«إلغاء» في شريط لوحة

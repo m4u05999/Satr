@@ -630,6 +630,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   surfaceCoordinator.register('ops-dialog', opsDialogEl, 'dialog');
   surfaceCoordinator.register('permission-dialog', document.querySelector('satr-perm-dialog'), 'dialog');
   surfaceCoordinator.register('question-dialog', document.querySelector('satr-question-dialog'), 'dialog');
+  surfaceCoordinator.register('elicitation-dialog', document.querySelector('satr-elicitation-dialog'), 'dialog');
   surfaceCoordinator.register('verify-config-dialog', verifyConfigEl, 'dialog');
   surfaceCoordinator.register('promo-studio', promoStudioEl, 'dialog');
 
@@ -825,6 +826,11 @@ import { createUpdateToast } from './lib/update-toast.js';
     // أسئلة الاختيار (AskUserQuestion) — تُعالج دائماً أيضاً (تنتظر رد المستخدم أثناء الدور)
     if (ev.type === 'question_request') {
       questionEl.ask({ id: ev.id, questions: ev.questions });
+      return;
+    }
+    // طلب إدخال موصّل Claude (دفعة C): schema منقّى في agent، وURL لا يفتح تلقائياً.
+    if (ev.type === 'elicitation_request') {
+      elicitationEl.ask({ id: ev.id, server: ev.server, mode: ev.mode, fields: ev.fields, url: ev.url });
       return;
     }
     // التسليم البشري (browser_handoff): الوكيل سلّم قيادة المعاينة — شريط 🤝 في اللوحة
@@ -1029,6 +1035,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     sendBtn.classList.remove('stop');
     closePermDialog();
     closeQuestionDialog();
+    closeElicitationDialog();
     // شريط التسليم البشري لا يعيش بعد الدور (المحرك فكّ الانتظار بالإلغاء عند الإيقاف)
     if (previewEl && previewEl.hideHandoff) previewEl.hideHandoff();
     if (previewEl && previewEl.hideSecretRequest) previewEl.hideSecretRequest();
@@ -1063,6 +1070,14 @@ import { createUpdateToast } from './lib/update-toast.js';
     surfaceCoordinator.setDialog('question-dialog', !!e.detail);
   });
   function closeQuestionDialog() { if (questionEl.closeAll) questionEl.closeAll(); }
+
+  // ---------- إدخال موصّلات Claude: <satr-elicitation-dialog> (دفعة C) ----------
+  const elicitationEl = document.querySelector('satr-elicitation-dialog');
+  elicitationEl.addEventListener('notice', (event) => addNotice(event.detail));
+  elicitationEl.addEventListener('perm-visible', (event) => {
+    surfaceCoordinator.setDialog('elicitation-dialog', !!event.detail);
+  });
+  function closeElicitationDialog() { if (elicitationEl.closeAll) elicitationEl.closeAll(); }
 
   // ---------- وضع تحكّم المتصفح (نمط Comet) ----------
   // زرّ بجوار الإرسال يمنح الوكيل صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح

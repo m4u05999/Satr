@@ -380,6 +380,12 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
      تفتح مربعاً عربياً بطابور FIFO وعدّاد الطلبات المعلّقة وسياق الطالب best-effort.
      الرد عبر `window.satr.permission(id, allow, always, turn)`؛ موافقة الدور مجموعة محلية
      في agent.js تُصفّر عند result/stop ولا تشمل exec/الإيقاف، و«دائماً» تبقى لعمر التطبيق.
+   - `elicitation_request` (محرك SDK العادي فقط):
+     `{id,server,mode:'form'|'url',fields:[{name,label?}],url?}` — `id` يطابق
+     `^el_[a-f0-9]{32}$`، و`url` لا يوجد إلا في وضع URL. يفتح حوار موصّل عربي؛ أسماء
+     الحقول وأوصافها منقّاة فقط، ولا تعبر رسالة MCP أو schema الخام. نسخة Community/
+     Enterprise observer تحذف `url` كي لا تدخل query/state في سجل التدقيق. الرد المحدد
+     الوحيد `window.satr.elicitationDone(id,action,content?)` موثّق في عقد دفعة C أدناه.
    - `file_edit` (المحرّكات ذات أدوات كتابة): `{id, tool, rel, isNew, added, removed, lines, truncated}`
      — يصدر بعد نجاح تعديل/كتابة، وتعرضه الواجهة كبطاقة
      فرق قابلة للطيّ. `id` هو `tool_use_id` (يربط الفرق بنفس الأداة). الرد على «تراجع»
@@ -525,6 +531,62 @@ rollback. أما محرك sdk فيضيف بجواره فعلاً مستقلاً 
   `test:full`. آخر تحقق للدفعة نجح فيه `npm run test:claude-models`، ثم نجحت حزمة
   `npm run test:full` كاملة `50/50`، ونجح `npm run eval:agent` مستقلاً `12/12`.
   يبقى المسبار الحي خارج `test:full` عمداً مثل بقية مسابير SDK.
+
+### إدخال موصّلات Claude (دفعة C — 2026-07-26)
+
+- **مصدر الحقيقة والمسبار أولاً**: استُخدم نوعا `OnElicitation` و`ElicitationRequest`
+  المثبتان في `@anthropic-ai/claude-agent-sdk/sdk.d.ts` فقط، بلا واجهة alpha أو
+  EXPERIMENTAL. شُغّل `scripts/elicitation-probe.js` حياً على Claude Agent SDK
+  `0.3.176` وMCP SDK `1.29.0` وClaude Code `2.1.220` والنموذج `sonnet`. خادم stdio
+  اصطناعي نفّذ form ثم URL: وصل إلى `onElicitation` **4 استدعاءات** (`1` form و`3`
+  URL مكررة للطلب نفسه). حمل form حقلين، وحمل الطلبان المفاتيح التسعة
+  `serverName/message/mode/url/elicitationId/requestedSchema/title/displayName/description`؛
+  كانت الإشارة غير مجهضة، وأعاد المعالج `accept` للوضعين.
+- **السلوك الافتراضي المثبت**: عند حذف `onElicitation` لم يقع أي callback (`0`)، وأعاد
+  form ‏`action:'decline'`. طلب URL الافتراضي انتهى بنتيجة أداة `isError:false` طولها
+  `139` محرفاً، تذكر الرفض ولا تذكر الرابط أو القبول. في السيناريو المعالَج أعاد URL
+  بعد `accept` نتيجة أداة `isError:true` طولها `60` محرفاً بلا ذكر للرابط/القبول/الرفض؛
+  فتح صفحة المصادقة لا يعني أن الخادم تلقّى إشارة اكتمال، وتبقى متابعة المصادقة من عقد
+  الموصّل upstream.
+- **حدود النقل المثبتة**: `createSdkMcpServer` داخل العملية لم يعلن قدرة form للعميل،
+  فأعاد حرفياً `Client does not support form elicitation.` قبل بلوغ callback. واستدعاء
+  `server.elicitInput({mode:'url'})` المباشر عبر stdio أعاد النظير الخاص بـURL. لذلك يثبت
+  المسبار form عبر stdio، ويثبت URL بالخطأ القياسي `UrlElicitationRequiredError` ذي الرمز
+  `-32042`. كما أعاد CLI callback طلب URL نفسه ثلاث مرات؛ يحتفظ الإنتاج بحالة واحدة حسب
+  هوية `serverName` الخام داخلياً مع `elicitationId`، ويبث حواراً واحداً ويشارك قراره
+  بين الاستدعاءات. اختلاف URL مع المفتاح نفسه يُرفض، وAbort لنسخة مكررة يحسم تلك النسخة
+  فقط ولا يحوّل قرار الطلب المشترك إلى قبول أو رفض.
+- **النطاق والتدهور**: `agent.js` يمرر `options.onElicitation` للتشغيل العادي فقط؛ أي
+  `internalPolicy` (السياقات المعزولة وعوامل غرفة العمليات) لا يحمل الخيار، فيبقى رفض SDK
+  الافتراضي fail-closed. الإلغاء وإشارة abort والإيقاف والتنظيف بعد نهاية الدور تحسم كل
+  انتظار بـ`decline`. إن أعاد CLI أقدم خطأ عدم دعم form/URL المعروف، يضيف التشغيل العادي
+  إشعاراً عربياً ثابتاً مرة واحدة يطلب التحديث أو `/mcp`، ولا يكسر الدور أو يعيد نص خطأ
+  upstream داخل ذلك الإشعار.
+- **التنقية وحارس الأسرار**: `electron/elicitation.js` يقبل form نصياً فقط، من `1` إلى
+  `20` حقلاً، ويزيل محارف التحكم C0/C1 وBidi ويقص `server≤160` واسم الحقل `≤160`
+  ووسمه `≤400` بنقاط Unicode. أي اسم/عنوان/وصف للحقل أو سياق form العلوي يطابق
+  `memory.hasSecret` أو أنماط `password/passwd/pwd/passphrase/token/key/secret/credential`
+  (camelCase/acronym والأسماء الشائعة المدمجة مشمولة) يرفض الطلب كاملاً برسالة عربية
+  ثابتة توجه إلى `/mcp` في Claude Code أو `browser_handoff`. تُعاد القيم بعد التنقية إلى
+  مفاتيح schema الأصلية داخلياً فقط؛ أي قيمة يلتقطها `memory.hasSecret` تحسم الرفض، ولا
+  تُبث أو تُسجّل أو تعاد في IPC.
+- **عقد IPC والـURL**: `satr:elicitationDone`
+  `{id,action:'accept'|'decline',content?}` يقبل كائناً بقائمة سماح فقط؛ `id` بالنمط الصارم
+  أعلاه، وform يقبل كائن نصوص `≤20` حقلاً و`≤2000` محرف Unicode لكل قيمة. decline وURL
+  يمنعان `content`. الواجهة لا ترسل URL إطلاقاً؛ `main.js` يقرأ URL المعلّق من مقبض الدور،
+  يعيد التحقق منه (HTTPS، أو HTTP loopback فقط، وبلا username/password)، ولا يستدعي
+  `shell.openExternal` إلا بعد زر «افتح في متصفح النظام». URL متجاوز `2048` نقطة
+  Unicode يُرفض قبل التحليل ولا يُقص دلالياً، وقفل ID يمنع فتحين متزامنين. فشل الفتح
+  يبقي الطلب معلقاً للمحاولة أو الإلغاء، ولا يعود الرابط أو المحتوى في الاستجابة.
+- **الواجهة والتحقق**: `<satr-elicitation-dialog>` يحاكي طابور حوار الأسئلة داخل Shadow
+  DOM وبـ`adoptedStyleSheets` فقط. يعرض العربية وقيم server/field/URL ‏LTR، والرابط نص
+  غير قابل للنقر ولا يفتح تلقائياً. يحافظ renderer على اسم الحقل المنقّى نفسه بلا قص
+  UTF-16 ثانٍ، ويمحو قيم inputs فور أي حسم ناجح. الإلغاء وEscape يرسلان decline،
+  ونهاية الدور تغلق العرض بعد أن يكون المحرك قد حسم الانتظار. `npm run test:elicitation` يغطي schema الحدث، التنقية
+  fail-closed، رفض حقول/قيم الأسرار، سقوف IPC، الفتح الصريح، حذف URL من المراقبين، دمج
+  callbacks المتكررة، abort/stop، عزل كل `internalPolicy`، ورسالة CLI الأقدم؛ وهو مسجل
+  داخل `test:full`. آخر تشغيل مستقل له نجح، ونجح `npm run eval:agent` بـ`12/12`؛ لم تُشغّل
+  الحزمة الكاملة محلياً التزاماً بتنسيق الجولة، ويبقى المسبار الحي خارجها عمداً.
 
 ### استمرارية الجلسة
 
@@ -1279,9 +1341,10 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   في تشغيل عابر (`withControlQuery` في agent.js). الحالات: `connected`/`pending`/`needs-auth`/
   `failed`/`disabled`. الإجراءات عبر `satr:mcpAction {cwd, name, action}` حيث action ∈
   `{reconnect, enable, disable}` (تُنقّى بـ `SAFE_MCP_NAME` و `MCP_ACTIONS` في main.js) →
-  `reconnectMcpServer`/`toggleMcpServer`. **حدّ معروف**: الـ SDK لا يقود مصادقة OAuth في المتصفح،
-  فموصّل `needs-auth` يُصادَق عليه من Claude Code (الأمر `/mcp`) ثم «تحديث»؛ «إعادة الاتصال»
-  أفضل جهد. الإجراءات تحدّث اللوحة لتكشف الحالة الفعلية.
+  `reconnectMcpServer`/`toggleMcpServer`. **حدّ معروف**: أفعال لوحة الحالة نفسها لا تبدأ
+  مصادقة OAuth. إن أطلق الموصّل أثناء أداة طلب URL قياسياً، يعرض سطر حوار دفعة C ويفتحه
+  بعد تأكيد صريح؛ وإلا يُصادَق على `needs-auth` من Claude Code بالأمر `/mcp` ثم «تحديث».
+  «إعادة الاتصال» أفضل جهد، والإجراءات تحدّث اللوحة لتكشف الحالة الفعلية.
 - **`/سياق` (context)**: لوحة تعرض امتلاء نافذة السياق. IPC `satr:contextUsage {cwd, sessionId}`
   → `{ok, usage}` عبر `query().getContextUsage()` (يستأنف الجلسة إن وُجد sessionId ليعكس رموز
   المحادثة الفعلية، وإلا السياق الأساس). `usage` فيه `totalTokens`/`maxTokens`/`percentage`/

@@ -121,6 +121,7 @@ contextBridge.exposeInMainWorld('satr', {
   restartUpdate: () => ipcRenderer.invoke('satr:restartUpdate'),
   permission: (id, allow, always, turn) => ipcRenderer.invoke('satr:permission', { id, allow, always, turn }),
   answerQuestion: (id, selections) => ipcRenderer.invoke('satr:answerQuestion', { id, selections }), // AskUserQuestion (SDK)
+  elicitationDone: (id, action, content) => ipcRenderer.invoke('satr:elicitationDone', { id, action, ...(content === undefined ? {} : { content }) }), // إدخال موصّلات Claude غير السري
   handoffDone: (id, done) => ipcRenderer.invoke('satr:handoffDone', { id, done }), // التسليم البشري browser_handoff (استلمت/إلغاء)
   secretDone: (id, done) => ipcRenderer.invoke('satr:secretDone', { id, done }), // إدخال سر داخل حقل المعاينة بلا إعادة قيمته
   undoEdit: (id) => ipcRenderer.invoke('satr:undoEdit', id),
