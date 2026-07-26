@@ -65,11 +65,12 @@ class SatrMcpPanel extends HTMLElement {
 
   _notice(text) { this.dispatchEvent(new CustomEvent('notice', { detail: text })); }
 
-  async open(cwd) {
+  async open(cwd, engine) {
     this._cwd = cwd || '';
+    this._engine = engine || 'sdk'; // C3: Codex له خوادمه وإجراءاته الخاصة
     this.setAttribute('open', '');
     this._list.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
-    const r = await window.satr.mcpStatus(this._cwd);
+    const r = await window.satr.mcpStatus(this._cwd, this._engine);
     if (!r || !r.ok) {
       this._list.innerHTML = '';
       const h = document.createElement('div'); h.className = 'hint';
@@ -116,16 +117,23 @@ class SatrMcpPanel extends HTMLElement {
       hint.textContent = 'الخطأ: ' + s.error;
       box.appendChild(hint);
     }
+    const isCodex = this._engine === 'codex';
     if (s.status === 'needs-auth') {
       const hint = document.createElement('div'); hint.className = 'mcp-hint';
-      hint.textContent = 'يحتاج تسجيل دخول — صادق عليه من Claude Code (الأمر /mcp) ثم اضغط «تحديث». ' +
-        'زر «إعادة الاتصال» هنا أفضل جهد ولا يفتح نافذة الدخول.';
+      hint.textContent = isCodex
+        ? 'يحتاج تسجيل دخول — اضغط «سجّل الدخول» ليفتح «سطر» صفحة المصادقة في متصفح النظام بعد تأكيدك.'
+        : 'يحتاج تسجيل دخول — صادق عليه من Claude Code (الأمر /mcp) ثم اضغط «تحديث». '
+          + 'زر «إعادة الاتصال» هنا أفضل جهد ولا يفتح نافذة الدخول.';
       box.appendChild(hint);
     }
 
-    // الإجراءات: تفعيل إن كان معطّلاً، وإلا إعادة اتصال + تعطيل
     const actions = document.createElement('div'); actions.className = 'mcp-actions';
-    if (s.status === 'disabled') {
+    if (isCodex) {
+      // C3: Codex يعلن إعادة تحميل الإعداد فقط — التفعيل/التعطيل يستلزمان الكتابة في
+      // ~/.codex/config.toml و«سطر» لا يلمسه، فلا نعرض زرّاً يوهم بقدرة غير موجودة.
+      actions.appendChild(this._btn('إعادة تحميل الإعداد', s.name, 'reconnect', actions));
+      if (s.canLogin) actions.appendChild(this._loginBtn(s.name, actions));
+    } else if (s.status === 'disabled') {
       actions.appendChild(this._btn('تفعيل', s.name, 'enable', actions));
     } else {
       actions.appendChild(this._btn('إعادة الاتصال', s.name, 'reconnect', actions));
@@ -135,18 +143,50 @@ class SatrMcpPanel extends HTMLElement {
     return box;
   }
 
+  // C3 — تسجيل دخول موصّل Codex: الواجهة لا ترى رابط المصادقة إطلاقاً. البدء يعيد
+  // معرّف طلب فقط، ولا يُفتح المتصفح إلا بعد تأكيد صريح من المستخدم؛ الإلغاء يُسقط
+  // الطلب المعلّق في العملية الرئيسية.
+  _loginBtn(name, container) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = 'سجّل الدخول';
+    b.addEventListener('click', async () => {
+      container.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+      b.textContent = 'جارٍ…';
+      const started = await window.satr.mcpOauthStart(this._cwd, name);
+      if (!started || !started.ok) {
+        this._notice('✗ تعذّر بدء تسجيل الدخول على ' + name + (started && started.error ? ' — ' + started.error : ''));
+        this.open(this._cwd, this._engine);
+        return;
+      }
+      const approved = window.confirm('سيفتح «سطر» صفحة مصادقة الموصّل «' + name
+        + '» في متصفح النظام. أكمل تسجيل الدخول هناك ثم عُد.\n\nهل تفتحها الآن؟');
+      if (!approved) {
+        await window.satr.mcpOauthCancel(started.id);
+        this._notice('أُلغي تسجيل الدخول على ' + name);
+        this.open(this._cwd, this._engine);
+        return;
+      }
+      b.textContent = 'بانتظار المتصفح…';
+      const done = await window.satr.mcpOauthOpen(started.id);
+      if (done && done.ok && done.success) this._notice('✓ اكتمل تسجيل الدخول على ' + name);
+      else if (done && done.ok) this._notice('✗ لم يكتمل تسجيل الدخول على ' + name);
+      else this._notice('✗ تعذّر إكمال تسجيل الدخول على ' + name + (done && done.error ? ' — ' + done.error : ''));
+      this.open(this._cwd, this._engine);
+    });
+    return b;
+  }
+
   _btn(label, name, action, container) {
     const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
     b.addEventListener('click', async () => {
       container.querySelectorAll('button').forEach((x) => { x.disabled = true; });
       b.textContent = 'جارٍ…';
-      const r = await window.satr.mcpAction(this._cwd, name, action);
+      const r = await window.satr.mcpAction(this._cwd, name, action, this._engine);
       if (r && r.ok) {
         this._notice('✓ ' + label + ': ' + name);
       } else {
         this._notice('✗ تعذّر «' + label + '» على ' + name + (r && r.error ? ' — ' + r.error : ''));
       }
-      this.open(this._cwd); // تحديث اللوحة ليكشف الحالة الفعلية بعد الإجراء
+      this.open(this._cwd, this._engine); // تحديث اللوحة ليكشف الحالة الفعلية بعد الإجراء
     });
     return b;
   }

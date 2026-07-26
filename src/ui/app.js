@@ -1313,7 +1313,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     { cmd: '/بحث',     en: '/research', desc: 'تشغيل 1–3 باحثين للقراءة فقط وإعادة خلاصة ومصادر', sdkOnly: true, run: () => openResearch() },
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
     { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
-    { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', sdkOnly: true, run: () => openMcp() },
+    { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', engines: ['sdk', 'codex'], run: () => openMcp() },
     { cmd: '/سياق',    en: '/context', desc: 'عرض امتلاء نافذة السياق وتوزيع الرموز',    engines: ['sdk', 'kimi-code', 'codex'], run: () => openContext() },
     { cmd: '/ضغط',     en: '/compact', desc: 'ضغط المحادثة (تلخيصها) لتوفير السياق',     engines: ['sdk', 'kimi-code', 'codex'], run: () => compactConversation() },
     { cmd: '/فيبل',    en: '/fable',  desc: 'التبديل إلى نموذج Fable 5',            sdkOnly: true, run: () => setModel('claude-fable-5', 'Fable 5') },
@@ -1829,7 +1829,9 @@ import { createUpdateToast } from './lib/update-toast.js';
     } catch (error) { button.textContent = 'context: —%'; }
   }
   function openMcp() {
-    surfaceCoordinator.openPanel('mcp', document.activeElement, () => mcpEl.open($('cwd').value.trim()));
+    // C3: المحرك يُمرَّر لحظة الفتح — Codex له خوادمه وإجراءاته الخاصة
+    surfaceCoordinator.openPanel('mcp', document.activeElement,
+      () => mcpEl.open($('cwd').value.trim(), $('engine').value));
   }
   function openContext() {
     surfaceCoordinator.openPanel('context', document.activeElement,
