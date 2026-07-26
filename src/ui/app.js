@@ -1251,7 +1251,8 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (busy) { addNotice('انتظر انتهاء الطلب الجاري قبل ضغط المحادثة'); return; }
     if (!sessionId) { addNotice('لا توجد محادثة لضغطها بعد — ابدأ بإرسال رسالة أولاً'); return; }
     const activeEngine = $('engine').value;
-    if (activeEngine !== 'sdk' && activeEngine !== 'kimi-code') {
+    // C2: Codex انضم — codex.js يحوّل «/compact» إلى thread/compact/start بدل دور نصّي
+    if (activeEngine !== 'sdk' && activeEngine !== 'kimi-code' && activeEngine !== 'codex') {
       addNotice('ضغط المحادثة غير مدعوم لهذا المحرك'); return;
     }
     const cwd = $('cwd').value.trim();
@@ -1313,8 +1314,8 @@ import { createUpdateToast } from './lib/update-toast.js';
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
     { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
     { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', sdkOnly: true, run: () => openMcp() },
-    { cmd: '/سياق',    en: '/context', desc: 'عرض امتلاء نافذة السياق وتوزيع الرموز',    engines: ['sdk', 'kimi-code'], run: () => openContext() },
-    { cmd: '/ضغط',     en: '/compact', desc: 'ضغط المحادثة (تلخيصها) لتوفير السياق',     engines: ['sdk', 'kimi-code'], run: () => compactConversation() },
+    { cmd: '/سياق',    en: '/context', desc: 'عرض امتلاء نافذة السياق وتوزيع الرموز',    engines: ['sdk', 'kimi-code', 'codex'], run: () => openContext() },
+    { cmd: '/ضغط',     en: '/compact', desc: 'ضغط المحادثة (تلخيصها) لتوفير السياق',     engines: ['sdk', 'kimi-code', 'codex'], run: () => compactConversation() },
     { cmd: '/فيبل',    en: '/fable',  desc: 'التبديل إلى نموذج Fable 5',            sdkOnly: true, run: () => setModel('claude-fable-5', 'Fable 5') },
     { cmd: '/أوبس',    en: '/opus',   desc: 'التبديل إلى نموذج Opus',               sdkOnly: true, run: () => setModel('opus', 'Opus') },
     { cmd: '/سونيت',   en: '/sonnet', desc: 'التبديل إلى نموذج Sonnet',             sdkOnly: true, run: () => setModel('sonnet', 'Sonnet') },

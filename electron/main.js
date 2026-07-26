@@ -2743,6 +2743,8 @@ ipcMain.handle('satr:contextUsage', (event, p) => {
   const dir = typeof (p && p.cwd) === 'string' && p.cwd.trim() ? p.cwd.trim() : os.homedir();
   const sid = p && typeof p.sessionId === 'string' && SAFE_SESSION.test(p.sessionId) ? p.sessionId : null;
   if (p && p.engine === kimi.ENGINE_ID) return kimi.contextUsage(dir, sid);
+  // C2: Codex — لقطة آخر thread/tokenUsage/updated المحفوظة في codex.js (لا IPC جديد)
+  if (p && p.engine === 'codex') return codex.contextUsage(dir, sid);
   return agent.contextUsage(dir, sid);
 });
 

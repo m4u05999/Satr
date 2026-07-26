@@ -224,6 +224,53 @@ function sanitizeSteerText(raw) {
     .trim();
 }
 
+// ---------- لقطة سياق آخر قياس لكل خيط (C2 — /سياق) ----------
+// **حدّ upstream مثبّت بالمسبار**: `model/list` لا يعلن نافذة سياق إطلاقاً (7 نماذج،
+// صفر حقل contextWindow/maxTokens)، والمصدر الوحيد لها ولإشغالها هو إشعار
+// `thread/tokenUsage/updated` الحيّ أثناء دور. لذا نحتفظ بآخر لقطة لكل خيط في ذاكرة
+// العملية — لا مخزن قرص جديد ولا اعتمادية؛ وغيابها (إقلاع جديد أو جلسة بلا دور بعد)
+// يعطي رسالة عربية هادئة بدل رقم مختلق.
+// نستعمل `last` لا `total`: `total` تراكمي عبر الخيط فيكبر أبداً ولا يعكس الإشغال.
+const contextSnapshots = new Map();
+const MAX_CONTEXT_SNAPSHOTS = 100;
+const CONTEXT_UNAVAILABLE = 'لم يصل قياس سياق من Codex بعد — أرسل رسالة في هذه الجلسة ثم حدّث اللوحة.';
+const COMPACT_COMMAND = '/compact';
+
+function rememberContext(id, snap) {
+  if (!id || !snap) return;
+  contextSnapshots.set(id, snap);
+  while (contextSnapshots.size > MAX_CONTEXT_SNAPSHOTS) {
+    contextSnapshots.delete(contextSnapshots.keys().next().value);
+  }
+}
+
+// يطبّع اللقطة إلى عقد لوحة /سياق القائم (totalTokens/maxTokens/percentage/model/
+// categories) — بلا IPC جديد: main.js يوجّه satr:contextUsage بفرع engine.
+function contextUsage(cwd, sessionId) {
+  const snap = sessionId ? contextSnapshots.get(sessionId) : null;
+  if (!snap || !snap.contextWindow) return { ok: false, error: CONTEXT_UNAVAILABLE };
+  const total = Math.max(0, Number(snap.totalTokens) || 0);
+  const max = Math.max(0, Number(snap.contextWindow) || 0);
+  const cat = (name, tokens) => ({ name, tokens: Math.max(0, Number(tokens) || 0), isDeferred: false });
+  return {
+    ok: true,
+    usage: {
+      totalTokens: total,
+      maxTokens: max,
+      percentage: max ? Math.round((total / max) * 100) : 0,
+      model: snap.model || '',
+      // الفئتان الأخيرتان مجموعتان فرعيتان (المخبّأ من الإدخال، والتفكير من الإخراج) —
+      // الاسم يوضّح ذلك كي لا يُقرأ الشريط جمعاً مضاعفاً.
+      categories: [
+        cat('الإدخال', snap.inputTokens),
+        cat('الإخراج', snap.outputTokens),
+        cat('منها مخبّأ', snap.cachedInputTokens),
+        cat('منه تفكير', snap.reasoningTokens),
+      ].filter((item) => item.tokens > 0),
+    },
+  };
+}
+
 function projectPath(cwd, filePath) {
   if (typeof filePath !== 'string' || !filePath.trim()) return null;
   const root = path.resolve(cwd);
@@ -439,6 +486,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   let latestRateLimits = null;
   let finished = false;
   let stopping = false;
+  let compacting = false;      // C2: هذا التشغيل ضغط سياق لا دور نصّي
+  let compactionSeen = false;  // وصل عنصر contextCompaction المؤكِّد للاكتمال
 
   // تراكم نصّ رسالة الوكيل الحالية (نبثّه deltas ثم نُصدر assistant مكتملاً)
   const agentText = new Map();     // itemId → نص متراكم
@@ -850,6 +899,19 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           source: 'actual',
         };
         latestContextWindow = Number(tokenUsage.modelContextWindow) || null;
+        // C2: لقطة سياق للوحة /سياق — من `last` (آخر طلب) لا `total` التراكمي.
+        // نسجّل ما يعلنه upstream كما هو بلا تأويل، ونتخطى الإشعار بلا نافذة سياق.
+        const last = tokenUsage.last || {};
+        if (latestContextWindow) rememberContext(threadId, {
+          totalTokens: Number(last.totalTokens) || 0,
+          inputTokens: Number(last.inputTokens) || 0,
+          outputTokens: Number(last.outputTokens) || 0,
+          cachedInputTokens: Number(last.cachedInputTokens) || 0,
+          reasoningTokens: Number(last.reasoningOutputTokens) || 0,
+          contextWindow: latestContextWindow,
+          model: model || DEFAULT_MODEL,
+          at: Date.now(),
+        });
         emit({ type: 'usage_update', usage: latestUsage, context_window: latestContextWindow });
         break;
       }
@@ -1020,7 +1082,18 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     } else if (t === 'enteredReviewMode' || t === 'exitedReviewMode') {
       emitAssistantText(t === 'enteredReviewMode' ? 'بدأ Codex وضع المراجعة.' : 'أنهى Codex وضع المراجعة.', 'commentary');
     } else if (t === 'contextCompaction') {
-      emitAssistantText('ضغط Codex سياق المحادثة لمتابعة العمل.', 'commentary');
+      // C2 — إشارة اكتمال الضغط المثبّتة بالمسبار: `thread/compacted` (الموسومة
+      // Deprecated في الـschema) لم تصل قط؛ الواصل فعلاً هو عنصر contextCompaction
+      // بحمولة {id, type} فقط — **بلا أرقام رموز قبل/بعد** (حدّ upstream موثّق).
+      if (compacting) {
+        compactionSeen = true;
+        // بطاقة الواجهة القائمة تعرض الأرقام فقط إن كان pre_tokens رقماً، فغيابها
+        // يعطي «🗜 ضُغطت المحادثة» صادقة بلا رقم مختلق ولا تغيير في المكوّن.
+        emit({
+          type: 'system', subtype: 'compact_boundary', session_id: threadId,
+          compact_metadata: { trigger: 'manual' },
+        });
+      } else emitAssistantText('ضغط Codex سياق المحادثة لمتابعة العمل.', 'commentary');
     }
   }
 
@@ -1034,6 +1107,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       let human = String(errMsg);
       try { const j = JSON.parse(human); if (j && j.detail) human = j.detail; } catch {}
       emitAssistantText('⚠️ تعذّر إكمال الدور: ' + human, 'final_answer');
+    }
+    // C2: ضغط انتهى دوره بلا عنصر contextCompaction ⇒ لا ندّعي نجاحاً ببطاقة ضغط
+    if (compacting && !compactionSeen && !isError) {
+      emitAssistantText('⚠️ لم يؤكّد Codex اكتمال ضغط المحادثة. المحادثة مستمرة كما هي.', 'final_answer');
     }
     emit({
       type: 'result', subtype: isError ? 'error' : 'success',
@@ -1137,6 +1214,24 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         threadId = r && r.thread && r.thread.id;
       }
       if (threadId) emit({ type: 'system', subtype: 'init', session_id: threadId });
+      // ---------- C2: ضغط سياق Codex (/ضغط) ----------
+      // «/compact» ليس نصّ دور عند Codex بل استدعاء `thread/compact/start {threadId}`
+      // (نمط kimi.js المثبّت: الأمر المائل يُعالَج داخل المحرك). لا مهارات ولا ذاكرة
+      // ولا صور تُحقن — لا مدخل نصّياً أصلاً. الاكتمال يصل كعنصر contextCompaction ثم
+      // turn/completed، فيتولّاهما onNotification ويبقى session_id نفسه.
+      if (typeof prompt === 'string' && prompt.trim() === COMPACT_COMMAND) {
+        compacting = true;
+        try {
+          await request('thread/compact/start', { threadId });
+        } catch (e) {
+          // تدهور رشيق: إصدار لا يعلن الطريقة (‏-32601) أو يرفضها ⇒ رسالة عربية ثابتة
+          // بلا نص خطأ upstream الخام.
+          compacting = false;
+          emitAssistantText('⚠️ إصدار Codex المثبّت لا يدعم ضغط المحادثة من «سطر».', 'final_answer');
+          finishTurn({ status: 'completed' });
+        }
+        return;
+      }
       // مدخلات الدور: نصّ + صور (نماذج Codex تقبل الصور — تحقّق حيّ). الصور base64
       // تُمرَّر كـ data-URL (لا حاجة لملف مؤقت — كلا الشكلين image/localImage يعمل).
       const inputItems = [];
@@ -1258,5 +1353,6 @@ module.exports = {
   start, undoEdit, resolveCodexBin, authStatus, accountStatus, listModels, rateLimits, DEFAULT_MODEL,
   isExternalBrowserLaunchCommand, shouldAutoApproveMcp,
   sanitizeSteerText, MAX_STEER_CHARS, // C1: تنقية نص turn/steer (يستهلكها main.js)
+  contextUsage, COMPACT_COMMAND,      // C2: لوحة /سياق وأمر /ضغط
   _internals: { projectPath, isInternalMcpApprovalElicitation },
 };
