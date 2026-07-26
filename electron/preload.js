@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('satr', {
   codexStatus: () => ipcRenderer.invoke('satr:codexStatus'),
   codexModels: () => ipcRenderer.invoke('satr:codexModels'),
   codexRateLimits: () => ipcRenderer.invoke('satr:codexRateLimits'),
+  // C4: حساب Codex واستهلاكه — الرابط لا يعبر هنا؛ الفتح بمعرّف الطلب فقط
+  codexUsage: () => ipcRenderer.invoke('satr:codexUsage'),
+  codexLimits: () => ipcRenderer.invoke('satr:codexLimits'),
+  codexLoginStart: () => ipcRenderer.invoke('satr:codexLoginStart'),
+  codexLoginOpen: (id) => ipcRenderer.invoke('satr:codexLoginOpen', { id }),
+  codexLoginCancel: (id) => ipcRenderer.invoke('satr:codexLoginCancel', { id }),
   kimiStatus: () => ipcRenderer.invoke('satr:kimiStatus'),
   kimiModels: () => ipcRenderer.invoke('satr:kimiModels'), // نماذج Kimi المعلنة عبر ACP (مُنقّاة في main)
   kimiLogin: (cwd) => ipcRenderer.invoke('satr:kimiLogin', cwd), // يشغّل `kimi login` في طرفية مرئية دون أتمتة إدخال

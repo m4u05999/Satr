@@ -25,6 +25,7 @@ const SUITE = [
   'test:codex-steer',
   'test:codex-compact',
   'test:codex-mcp-panel',
+  'test:codex-account',
   'test:kimi',
   'test:kimi-keepalive',
   'test:browserguard',
