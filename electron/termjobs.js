@@ -5,6 +5,7 @@ const term = require('./term');
 const devservers = require('./devservers');
 
 const MAX_JOBS = 4;
+const MAX_DONE_TAIL = 8000; // سقف ذيل المهمة المنتهية في حدث bg_term_done (K4)
 const jobs = new Map();
 let notify = () => {};
 
@@ -12,6 +13,21 @@ function setNotifier(fn) { notify = typeof fn === 'function' ? fn : () => {}; }
 function sanitizeLabel(label) {
   const clean = String(label || 'مهمة خلفية').replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
   return Array.from(clean || 'مهمة خلفية').slice(0, 48).join('');
+}
+
+// تنقية ذيل مهمة منتهية (K4): إزالة ANSI ومحارف التحكم، حجب الأسرار بنفس بوابة
+// أحداث K2 (نمط scrubStreamText في kimi.js)، ثم قص ≤8000 محرف بعلامة مقصوص.
+function scrubDoneTail(raw) {
+  const text = String(raw || '')
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
+    .replace(/\r/g, '')
+    .trim();
+  const scrubbed = text
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[secret]')
+    .replace(/(api[_-]?key|token|authorization|password|secret)\s*[:=]\s*[^\s,;]+/ig, '$1=[secret]');
+  return scrubbed.length > MAX_DONE_TAIL ? scrubbed.slice(0, MAX_DONE_TAIL) + '…' : scrubbed;
 }
 
 function publicJob(job) {
@@ -64,8 +80,15 @@ term.subscribe((event) => {
   if (event.type === 'exit') {
     jobs.delete(job.id);
     if (job.recordDevServer) devservers.forgetOutput(job.id);
+    // K4 «أكمل بالوكيل»: مهمة محدودة انتهت — ابثّ ذيلها منقّى فتعرض الواجهة إشعار
+    // فعل. الخوادم الطويلة لا exit لها فلا يصلها هذا الحدث أصلاً.
+    notify({
+      type: 'bg_term_done', id: job.id, label: job.label,
+      exitCode: Number.isInteger(event.exitCode) ? event.exitCode : null,
+      tail: scrubDoneTail(event.tail),
+    });
     if (job.onExit) Promise.resolve(job.onExit({ id: job.id, exitCode: event.exitCode })).catch(() => {});
   }
 });
 
-module.exports = { MAX_JOBS, setNotifier, sanitizeLabel, startJob, list, info, stop };
+module.exports = { MAX_JOBS, MAX_DONE_TAIL, setNotifier, sanitizeLabel, scrubDoneTail, startJob, list, info, stop };

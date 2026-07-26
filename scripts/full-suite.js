@@ -31,6 +31,7 @@ const SUITE = [
   'test:browser-platform-live',
   'test:execguard',
   'test:termjobs',
+  'test:termjobs-done',
   'test:envbrief',
   'test:satr-guide',
   'test:handoff-bar-live',
