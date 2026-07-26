@@ -121,6 +121,7 @@ contextBridge.exposeInMainWorld('satr', {
   restartUpdate: () => ipcRenderer.invoke('satr:restartUpdate'),
   permission: (id, allow, always, turn) => ipcRenderer.invoke('satr:permission', { id, allow, always, turn }),
   answerQuestion: (id, selections) => ipcRenderer.invoke('satr:answerQuestion', { id, selections }), // AskUserQuestion (SDK)
+  steer: (text) => ipcRenderer.invoke('satr:steer', { text }), // C1: توجيه الدور الجاري (Codex — turn/steer)
   handoffDone: (id, done) => ipcRenderer.invoke('satr:handoffDone', { id, done }), // التسليم البشري browser_handoff (استلمت/إلغاء)
   secretDone: (id, done) => ipcRenderer.invoke('satr:secretDone', { id, done }), // إدخال سر داخل حقل المعاينة بلا إعادة قيمته
   undoEdit: (id) => ipcRenderer.invoke('satr:undoEdit', id),

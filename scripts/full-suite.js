@@ -22,6 +22,7 @@ const SUITE = [
   'test:opsroom-all',
   'test:codexmcp',
   'test:codex-contract',
+  'test:codex-steer',
   'test:kimi',
   'test:browserguard',
   'test:browserorigin',

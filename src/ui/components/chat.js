@@ -442,7 +442,19 @@ class SatrChat extends HTMLElement {
         },
       }));
     });
-    who.appendChild(ops); who.appendChild(edit); who.appendChild(fork); who.appendChild(rewind); w.appendChild(who);
+    // C1 — توجيه أثناء الدور (Codex): رسالة حُقنت داخل دور جارٍ لا دور مستقل. تُوسم
+    // صراحةً ولا تحمل أفعال الرسالة العادية (تحرير/تفريع/استرجاع/غرفة العمليات تعمل
+    // على حدود الأدوار، والتوجيه ليس حدّاً).
+    if (meta && meta.steer === true) {
+      const steerBadge = document.createElement('span');
+      steerBadge.className = 'msg-steer';
+      steerBadge.textContent = '↪ توجيه أثناء الدور';
+      who.appendChild(steerBadge);
+      w.classList.add('steer');
+    } else {
+      who.appendChild(ops); who.appendChild(edit); who.appendChild(fork); who.appendChild(rewind);
+    }
+    w.appendChild(who);
     if (text) {
       const b = document.createElement('div');
       b.className = 'bubble'; b.textContent = text;

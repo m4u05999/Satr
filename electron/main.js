@@ -1722,6 +1722,23 @@ ipcMain.handle('satr:permission', (event, p) => {
   return { ok };
 });
 
+// ---------- C1: التوجيه أثناء الدور (turn/steer) — محرك Codex حصراً ----------
+// «سطر» لا يوقف الدور ليضيف تعليمة: النص يُحقن في الدور الجاري نفسه. المحركات الأخرى
+// لا تملك العقد (Kimi ACP يرفض دوراً ثانياً بـ-32600، وSDK بلا steer) ⇒ unsupported.
+// التنقية تُفرض هنا (القاعدة 2) عبر codex.sanitizeSteerText النقية — نمط nonSdkPerm في
+// autogate.js: المنطق مختبَر وحده والفرض في العملية الرئيسية (نص فقط، محارف التحكم
+// وBidi تُزال، وسقف صريح). ولا يمرّ خطأ upstream الخام (رسالته تحمل معرّف الدور النشط
+// الفعلي) — الرموز المعادة ثابتة.
+ipcMain.handle('satr:steer', async (event, p) => {
+  if (!p || typeof p.text !== 'string') return { ok: false, error: 'bad_input' };
+  const text = codex.sanitizeSteerText(p.text);
+  if (!text) return { ok: false, error: 'empty' };
+  if (lastEngine !== 'codex') return { ok: false, error: 'unsupported' };
+  if (!currentRun || typeof currentRun.steer !== 'function') return { ok: false, error: 'no_active_turn' };
+  const r = await currentRun.steer(text);
+  return r && r.ok === true ? { ok: true } : { ok: false, error: (r && r.error) || 'rejected' };
+});
+
 // رد أسئلة النموذج: محركات الاختيار تستخدم المؤشرات، وCodex قد يضيف نصاً حراً محدوداً.
 // agent.js يبني updatedInput من input الأصلي المحفوظ، فالتنقية هنا طبقة أولى ثم فحص ثانٍ هناك.
 ipcMain.handle('satr:answerQuestion', (event, p) => {
