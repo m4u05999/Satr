@@ -24,6 +24,7 @@ const preview = require('./preview');
 const skillCatalog = require('./skills');
 const agentTools = require('./tools');
 const { isExternalBrowserLaunchCommand, promptRequestsExternalBrowser } = require('./browserguard');
+const keepaliveFactory = require('./kimi-keepalive');
 
 const ENGINE_ID = 'kimi-code';
 const DEFAULT_MODEL = 'k3';
@@ -95,7 +96,7 @@ function publicInfo() {
     keyName: '',
     capabilities: {
       native: true, vision: true, sessions: true, browser: true,
-      contextUsage: true, compact: true, effort: false,
+      contextUsage: true, compact: true, effort: false, keepalive: true,
     },
     models: [{ value: DEFAULT_MODEL, label: 'K3 — عبر اشتراك Kimi Code' }],
   };
@@ -527,6 +528,15 @@ function create(deps) {
   const resolveBin = options.resolveKimiBin || resolveKimiBin;
   const resolveDataRoot = options.dataRoot || dataRoot;
   const mcpFactory = options.startMcp || codexmcp.start;
+  // K2 keep-alive: سجل قنوات ACP الحية لهذه النسخة من المحرك (سقف 2، خمول 15 دقيقة).
+  // الحجب والقص يُحقنان هنا حتى تمر الأحداث المتأخرة ببوابة أحداث الدور نفسها.
+  const keepalive = options.keepalive || keepaliveFactory.create({
+    maxLive: options.keepaliveMaxLive,
+    idleMs: options.keepaliveIdleMs,
+    scrub: scrubStreamText,
+    toolText,
+    toolLabel,
+  });
 
   async function start(input, cwd, emit) {
     const bin = resolveBin();
@@ -572,65 +582,57 @@ function create(deps) {
     const compactCommand = /^\/compact(?:\s|$)/i.test(String(input.prompt || '').trim());
     const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
 
-    if (browserControl !== false) try {
+    // K2 keep-alive: استئجار قناة حية للجلسة (نفس cwd) أو إنشاء قناة جديدة.
+    // أي فشل هنا يسقط إلى «عملية لكل دور» — السلوك الحالي بلا كسر للدور.
+    let lease = null;
+    if (input.sessionId && SAFE_SESSION.test(input.sessionId)) {
+      try { lease = keepalive.acquire(input.sessionId); } catch { lease = null; }
+      if (lease && !samePath(lease.cwd, path.resolve(cwd))) lease = null;
+    }
+    // shared.turn يحمل ربط الدور النشط على القناة؛ يصفَّر عند انتهاء الدور وتبقى
+    // القناة حية. كل بثّ قناوي (MCP، stderr، جسر RPC) يمر عبره كي لا يعلق emit
+    // دورٍ ميت في معالجات طويلة العمر.
+    const shared = lease ? lease.shared : { turn: null };
+    const emitShared = (event) => { const t = shared.turn; if (t && t.emit) t.emit(event); };
+    const channelRef = { sessionId: lease ? lease.sessionId : null };
+    // القناة المستأجرة مسجّلة أصلاً؛ القناة الجديدة تُسجَّل بعد نجاح session setup.
+    let keepAliveActive = !!lease;
+
+    if (lease) {
+      mcpHost = lease.mcpHost;
+    } else if (browserControl !== false) try {
       mcpHost = await mcpFactory({
         preview,
         cwd,
-        extraTools: buildSatrMcpTools(cwd, skillContext, emit),
-        openPreview: (url) => emit({ type: 'preview_open', url }),
+        extraTools: buildSatrMcpTools(cwd, skillContext, emitShared),
+        openPreview: (url) => emitShared({ type: 'preview_open', url }),
         onActivity: (method, tool) => {
           if (method === 'tools/call' && tool) try { preview.emitAgentActivity(tool); } catch { /* تحسين */ }
         },
-        requestPermission: (toolName, displayInput, access, neverAlways, target, currentUrl, pageContext, rawInput) => new Promise((resolve) => {
-          const policyInput = rawInput && typeof rawInput === 'object' ? rawInput : displayInput;
-          const budgetStatus = actionBudget.check(toolName);
-          const forcePrompt = browserpolicy.isSensitiveAction(toolName, policyInput, pageContext)
-            || browserpolicy.requiresExplicitApproval(toolName)
-            || browserpolicy.hasLeakRisk(browserpolicy.leakValueForTool(toolName, policyInput))
-            || budgetStatus.impacting && !budgetStatus.allowed;
-          if (shouldAutoApproveMcp(access, browserControl, permissionMode, alwaysAllowed.has('mcp:' + toolName),
-            neverAlways, toolName, target, trustedOrigins, currentUrl, policyInput, pageContext, budgetStatus)) {
-            actionBudget.consume(toolName); resolve(true); return;
-          }
-          const id = 'kmmcp_' + (++permissionSeq) + '_' + Math.random().toString(36).slice(2, 6);
-          const browserClass = browserorigin.classifyBrowserTool(toolName);
-          const targetTrusted = browserorigin.isTrusted(target, trustedOrigins);
-          const currentTrusted = browserorigin.isTrusted(currentUrl, trustedOrigins);
-          const trustTarget = targetTrusted && browserClass === 'act' && !currentTrusted ? currentUrl : target;
-          const origin = browserorigin.originOf(trustTarget);
-          const originTrust = browserControl === true
-            && (browserClass === 'navigate' || browserClass === 'act')
-            && (!targetTrusted || browserClass === 'act' && !currentTrusted);
-          pendingMcpPermissions.set(id, {
-            resolve, toolName, neverAlways: !!neverAlways || forcePrompt, originTrust, origin,
-            budgetAction: budgetStatus.impacting, budgetExtend: budgetStatus.impacting && !budgetStatus.allowed,
-          });
-          const policyDetail = browserpolicy.permissionDetail(toolName, policyInput, pageContext, budgetStatus);
-          emit({
-            type: 'permission_request', id, tool: toolName, input: displayInput || {},
-            detail: [originTrust ? browserorigin.trustPrompt(toolName, trustTarget) : '', policyDetail].filter(Boolean).join('\n\n'),
-            turnEligible: false, alwaysEligible: originTrust ? !!origin : (!neverAlways && !forcePrompt),
-            alwaysLabel: originTrust ? 'ثق بالنطاق لهذه الجلسة' : '', originTrust,
-          });
-        }),
+        // الإذن والتسليم حالة دورية: يُفوَّضان إلى الدور النشط على القناة، ويُرفضان بلا دور.
+        requestPermission: (...args) => {
+          const t = shared.turn;
+          return t && t.requestMcpPermission ? t.requestMcpPermission(...args) : Promise.resolve(false);
+        },
         requestHandoff: (reason, meta) => {
-          const id = 'ho_km_' + (++handoffSeq) + '_' + Math.random().toString(36).slice(2, 6);
-          return new Promise((resolve) => {
-            pendingHandoffs.set(id, { resolve });
-            emit({ type: 'handoff_request', id, reason, mode: meta && meta.mode === 'step' ? 'step' : 'full' });
-          }).then((done) => { emit({ type: 'handoff_end', id }); return done; });
+          const t = shared.turn;
+          return t && t.requestMcpHandoff ? t.requestMcpHandoff(reason, meta) : Promise.resolve(false);
         },
       });
     } catch { mcpHost = null; }
 
     let proc;
-    try {
-      proc = spawnKimi(bin, ['acp'], { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: process.env, windowsHide: true }, spawnImpl);
-    } catch (error) {
-      if (mcpHost) await mcpHost.stop().catch(() => {});
-      emit({ type: 'spawn_error', text: 'تعذّر تشغيل Kimi Code: ' + scrubError(error && error.message) });
-      emit({ type: 'proc_done', code: 1 });
-      return noOpHandle();
+    if (lease) {
+      proc = lease.proc;
+    } else {
+      try {
+        proc = spawnKimi(bin, ['acp'], { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: process.env, windowsHide: true }, spawnImpl);
+      } catch (error) {
+        if (mcpHost) await mcpHost.stop().catch(() => {});
+        emit({ type: 'spawn_error', text: 'تعذّر تشغيل Kimi Code: ' + scrubError(error && error.message) });
+        emit({ type: 'proc_done', code: 1 });
+        return noOpHandle();
+      }
     }
 
     function emitAssistantMessages() {
@@ -740,12 +742,52 @@ function create(deps) {
       return false;
     }
 
-    let rpc;
-    rpc = createRpc(proc, {
-      onProtocolError(error) {
-        if (!finished) emit({ type: 'stderr', text: 'خطأ في قناة Kimi ACP: ' + scrubError(error.message) });
-      },
-      onRequest(message, channel) {
+    // إذن أداة MCP المدمجة — منطق دوري يُفوَّض إليه من خادم MCP طويل العمر (K2).
+    function requestMcpPermission(toolName, displayInput, access, neverAlways, target, currentUrl, pageContext, rawInput) {
+      return new Promise((resolve) => {
+        const policyInput = rawInput && typeof rawInput === 'object' ? rawInput : displayInput;
+        const budgetStatus = actionBudget.check(toolName);
+        const forcePrompt = browserpolicy.isSensitiveAction(toolName, policyInput, pageContext)
+          || browserpolicy.requiresExplicitApproval(toolName)
+          || browserpolicy.hasLeakRisk(browserpolicy.leakValueForTool(toolName, policyInput))
+          || budgetStatus.impacting && !budgetStatus.allowed;
+        if (shouldAutoApproveMcp(access, browserControl, permissionMode, alwaysAllowed.has('mcp:' + toolName),
+          neverAlways, toolName, target, trustedOrigins, currentUrl, policyInput, pageContext, budgetStatus)) {
+          actionBudget.consume(toolName); resolve(true); return;
+        }
+        const id = 'kmmcp_' + (++permissionSeq) + '_' + Math.random().toString(36).slice(2, 6);
+        const browserClass = browserorigin.classifyBrowserTool(toolName);
+        const targetTrusted = browserorigin.isTrusted(target, trustedOrigins);
+        const currentTrusted = browserorigin.isTrusted(currentUrl, trustedOrigins);
+        const trustTarget = targetTrusted && browserClass === 'act' && !currentTrusted ? currentUrl : target;
+        const origin = browserorigin.originOf(trustTarget);
+        const originTrust = browserControl === true
+          && (browserClass === 'navigate' || browserClass === 'act')
+          && (!targetTrusted || browserClass === 'act' && !currentTrusted);
+        pendingMcpPermissions.set(id, {
+          resolve, toolName, neverAlways: !!neverAlways || forcePrompt, originTrust, origin,
+          budgetAction: budgetStatus.impacting, budgetExtend: budgetStatus.impacting && !budgetStatus.allowed,
+        });
+        const policyDetail = browserpolicy.permissionDetail(toolName, policyInput, pageContext, budgetStatus);
+        emit({
+          type: 'permission_request', id, tool: toolName, input: displayInput || {},
+          detail: [originTrust ? browserorigin.trustPrompt(toolName, trustTarget) : '', policyDetail].filter(Boolean).join('\n\n'),
+          turnEligible: false, alwaysEligible: originTrust ? !!origin : (!neverAlways && !forcePrompt),
+          alwaysLabel: originTrust ? 'ثق بالنطاق لهذه الجلسة' : '', originTrust,
+        });
+      });
+    }
+
+    function requestMcpHandoff(reason, meta) {
+      const id = 'ho_km_' + (++handoffSeq) + '_' + Math.random().toString(36).slice(2, 6);
+      return new Promise((resolve) => {
+        pendingHandoffs.set(id, { resolve });
+        emit({ type: 'handoff_request', id, reason, mode: meta && meta.mode === 'step' ? 'step' : 'full' });
+      }).then((done) => { emit({ type: 'handoff_end', id }); return done; });
+    }
+
+    // معالجا القناة لأحداث هذا الدور — يُسجَّلان في shared.turn ويُفصلان عند انتهائه.
+    function handleServerRequest(message, channel) {
         const params = message.params || {};
         if (message.method === 'session/request_permission') {
           const known = params.toolCall && params.toolCall.toolCallId ? toolCalls.get(params.toolCall.toolCallId) : null;
@@ -809,8 +851,9 @@ function create(deps) {
           return;
         }
         channel.respondError(message.id, -32601, 'طريقة ACP غير مدعومة في سطر');
-      },
-      onNotification(method, params) {
+    }
+
+    function handleSessionNotification(method, params) {
         if (method !== 'session/update') return;
         // session/load يعيد بث التاريخ قبل إكمال الدور؛ الجلسة موجودة أصلاً في واجهة سطر.
         if (replayingSession) return;
@@ -863,10 +906,41 @@ function create(deps) {
             })).filter((command) => command.name),
           });
         }
-      },
-    });
+    }
 
-    async function cleanup(code) {
+    // جسر القناة (K2): يفوّض إلى الدور النشط في shared.turn؛ وبلا دور تُرفض طلبات
+    // الوكيل بلطف وتُعالج إشعاراته كأحداث متأخرة تُبث كإشعارات مؤقتة للواجهة.
+    let rpc;
+    if (lease) {
+      rpc = lease.rpc;
+    } else {
+      rpc = createRpc(proc, {
+        onProtocolError(error) {
+          const t = shared.turn;
+          if (t && t.emit) t.emit({ type: 'stderr', text: 'خطأ في قناة Kimi ACP: ' + scrubError(error.message) });
+        },
+        onRequest(message, channel) {
+          const reqSid = message.params && typeof message.params.sessionId === 'string' ? message.params.sessionId : null;
+          if (reqSid) keepalive.touchSession(reqSid);
+          const t = shared.turn;
+          if (t && t.onRequest) { t.onRequest(message, channel); return; }
+          if (message.method === 'session/request_permission') {
+            channel.respond(message.id, { outcome: { outcome: 'cancelled' } });
+            return;
+          }
+          channel.respondError(message.id, -32603, 'لا يوجد دور نشط على جلسة Kimi');
+        },
+        onNotification(method, params) {
+          const sid = params && typeof params.sessionId === 'string' ? params.sessionId : null;
+          if (sid) keepalive.touchSession(sid);
+          const t = shared.turn;
+          if (t && t.onNotification) { t.onNotification(method, params); return; }
+          if (sid) keepalive.handleLateNotificationBySession(sid, method, params);
+        },
+      });
+    }
+
+    function cancelPending() {
       for (const item of pendingPermissions.values()) {
         try { rpc.respond(item.serverId, { outcome: { outcome: 'cancelled' } }); } catch { /* إغلاق */ }
       }
@@ -882,7 +956,23 @@ function create(deps) {
         emit({ type: 'handoff_end', id });
       }
       pendingHandoffs.clear();
+    }
+
+    // K2: نهاية دور طبيعية — تُلغى المعلقات ويُفصل الدور عن القناة وتبقى حية في السجل.
+    async function releaseTurn(code) {
+      cancelPending();
       preview.clearSensitiveState();
+      shared.turn = null;
+      if (channelRef.sessionId) keepalive.touchSession(channelRef.sessionId);
+      if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
+    }
+
+    // تدمير كامل للقناة (أخطاء التهيئة/العملية أو سقوط رشيق بلا تسجيل) = السلوك القديم.
+    async function destroyChannel(code) {
+      cancelPending();
+      preview.clearSensitiveState();
+      shared.turn = null;
+      if (channelRef.sessionId) keepalive.remove(channelRef.sessionId);
       rpc.close();
       try { proc.stdin.end(); } catch { /* مغلق */ }
       setTimeout(() => { try { proc.kill(); } catch { /* منتهٍ */ } }, 500);
@@ -907,107 +997,175 @@ function create(deps) {
         session_id: sessionId, duration_ms: Date.now() - startedAt,
         total_cost_usd: usage && usage.cost && usage.cost.currency === 'USD' ? usage.cost.amount : null,
       });
-      cleanup(isError ? 1 : 0);
+      // K2: لا session/cancel ولا قتل عند نهاية الدور — القناة تعود للسجل حية.
+      if (keepAliveActive) releaseTurn(isError ? 1 : 0);
+      else destroyChannel(isError ? 1 : 0);
     }
 
-    proc.stderr.on('data', (chunk) => {
-      const text = scrubError(chunk.toString('utf8'));
-      if (text && !/debug|trace|polling|token refresh/i.test(text)) emit({ type: 'stderr', text });
-    });
-    proc.on('error', (error) => {
-      if (!finished) emit({ type: 'spawn_error', text: 'تعذّر تشغيل Kimi Code: ' + scrubError(error && error.message) });
-      finished = true; cleanup(1);
-    });
-    proc.on('exit', (code) => {
-      rpc.close(new Error('Kimi exited'));
-      if (!finished && !stopping) emit({ type: 'spawn_error', text: 'أُنهيت عملية Kimi Code (كود ' + code + ')' });
-      if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
-    });
+    // ربط هذا الدور بالقناة: يقرأه جسر RPC ومعالجات العملية وخادم MCP طويل العمر.
+    const turnHandle = {
+      emit,
+      onRequest: handleServerRequest,
+      onNotification: handleSessionNotification,
+      requestMcpPermission,
+      requestMcpHandoff,
+      // يستدعيه سجل keep-alive عند قتل جلسة عليها دور نشط: يلغي الدور وينهيه في الواجهة.
+      async abortTurn() {
+        if (finished) return;
+        stopping = true;
+        cancelPending();
+        if (sessionId) try { rpc.notify('session/cancel', { sessionId }); } catch { /* أُغلقت */ }
+        await Promise.race([
+          promptRequest ? promptRequest.catch(() => null) : Promise.resolve(),
+          new Promise((resolve) => setTimeout(resolve, 1200)),
+        ]);
+        if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: 0 }); }
+      },
+      onProcError(error) {
+        if (!finished) emit({ type: 'spawn_error', text: 'تعذّر تشغيل Kimi Code: ' + scrubError(error && error.message) });
+        finished = true;
+        destroyChannel(1);
+      },
+      onProcExit(code) {
+        if (!finished && !stopping) emit({ type: 'spawn_error', text: 'أُنهيت عملية Kimi Code (كود ' + code + ')' });
+        if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
+        shared.turn = null;
+      },
+    };
+    shared.turn = turnHandle;
+
+    // معالجات العملية تُسجَّل مرة واحدة عند إنشاء القناة وتفوّض دوماً إلى الدور النشط.
+    if (!lease) {
+      proc.stderr.on('data', (chunk) => {
+        const text = scrubError(chunk.toString('utf8'));
+        if (text && !/debug|trace|polling|token refresh/i.test(text)) emitShared({ type: 'stderr', text });
+      });
+      proc.on('error', (error) => {
+        if (channelRef.sessionId) keepalive.remove(channelRef.sessionId);
+        const t = shared.turn;
+        if (t && t.onProcError) t.onProcError(error);
+      });
+      proc.on('exit', (code) => {
+        rpc.close(new Error('Kimi exited'));
+        if (channelRef.sessionId) keepalive.remove(channelRef.sessionId);
+        const t = shared.turn;
+        if (t && t.onProcExit) t.onProcExit(code);
+      });
+    }
+
+    // خيارات ACP هي المصدر الوحيد لإعداد الجلسة. لا نمرّر قيماً لا يعلنها Kimi.
+    // مستخرجة لتعمل في المسارين: جلسة جديدة (configOptions طازجة) أو مستأجرة (المخزّنة).
+    async function applyConfigOptions(configOptions) {
+      const modelOption = configOptions.find((item) => item && item.id === 'model');
+      const modelValue = configValue(modelOption, input.model || DEFAULT_MODEL, true);
+      if (modelValue && modelValue !== modelOption.currentValue) {
+        await rpc.request('session/set_config_option', { sessionId, configId: 'model', value: modelValue }, 15000);
+        modelOption.currentValue = modelValue;
+      }
+      const effortOption = configOptions.find((item) => item && (
+        item.id === 'effort' || item.id === 'reasoning_effort' || item.category === 'thought_level'
+      ));
+      const effortValue = configValue(effortOption, input.effort, false);
+      if (effortValue && effortValue !== effortOption.currentValue) {
+        await rpc.request('session/set_config_option', {
+          sessionId, configId: effortOption.id, value: effortValue,
+        }, 15000);
+        effortOption.currentValue = effortValue;
+      }
+      // خيار التفكير الحي: نطبّقه فقط إن أعلنه ACP فعلاً (Kimi 0.27.0 يعلنه 'on' فقط).
+      // لا نكتب config.toml العام أبداً — session/set_config_option فقط.
+      const thinkingOption = configOptions.find((item) => item && item.id === 'thinking');
+      const thinkingValue = configValue(thinkingOption, input.thinking, false);
+      if (thinkingValue && thinkingValue !== thinkingOption.currentValue) {
+        await rpc.request('session/set_config_option', { sessionId, configId: 'thinking', value: thinkingValue }, 15000);
+        thinkingOption.currentValue = thinkingValue;
+      }
+      // Plan mode عقد ACP لا مجرد منع أذونات: نضبط config الفعلي إن أعلن Kimi خيار mode=plan.
+      if (permissionMode === 'plan') {
+        const mode = configOptions.find((item) => item && item.id === 'mode');
+        if (configValue(mode, 'plan', false)) {
+          await rpc.request('session/set_config_option', { sessionId, configId: 'mode', value: 'plan' }, 15000);
+        }
+      }
+    }
+
+    let promptCaps = null; // قدرات البرومبت المعلنة — تُخزَّن مع القناة لتعمل الأدوار المستأجرة
 
     (async () => {
       try {
-        // terminal reverse-RPC: يبقى معطّلاً حالياً لأن Kimi 0.27.0 لا يعلنه. إن أعلنه
-        // إصدار لاحق في agentCapabilities.terminalCapabilities.reverseRpc، نُعلن قدرة
-        // العميل terminal: true ونوجّه طلبات terminal/* إلى تبويبات pty المرئية عبر
-        // termjobs/term.js (نفس مسار run_in_terminal). هذا capability-gated ولا يُفعّل
-        // أبداً دون إعلان صريح من الوكيل.
-        const initialized = await rpc.request('initialize', {
-          protocolVersion: 1,
-          clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false },
-          clientInfo: { name: 'satr', title: 'سطر', version: APP_VERSION },
-        }, 15000);
-        if (!initialized || initialized.protocolVersion !== 1) throw new Error('إصدار ACP غير مدعوم');
-        const capabilities = initialized.agentCapabilities || {};
-        const terminalReverseRpc = !!(capabilities.terminalCapabilities && capabilities.terminalCapabilities.reverseRpc);
-        // إن أعلن Kimi دعم terminal reverse-RPC، نُفعّل البوابة ونوجّه الأوامر إلى pty.
-        // الآن: العميل لا يُعلن terminal، لذا لن تصل طلبات terminal/* أصلاً.
-        const mcpServers = mcpHost && capabilities.mcpCapabilities && capabilities.mcpCapabilities.http
-          ? [{
-            type: 'http', name: 'satr', url: mcpHost.url,
-            headers: [{ name: 'Authorization', value: 'Bearer ' + mcpHost.token }],
-          }] : [];
-        if (mcpHost && !mcpServers.length) { const host = mcpHost; mcpHost = null; await host.stop().catch(() => {}); }
-        const lifecycle = { cwd: path.resolve(cwd), mcpServers };
-        let sessionResult;
-        if (input.sessionId && SAFE_SESSION.test(input.sessionId)) {
-          try {
+        if (lease) {
+          // قناة مستأجرة (K2): الجلسة حية أصلاً — لا initialize ولا session/new.
+          sessionId = lease.sessionId;
+          promptCaps = lease.promptCapabilities || {};
+          emit({ type: 'system', subtype: 'init', session_id: sessionId, model: input.model || DEFAULT_MODEL });
+          await applyConfigOptions(Array.isArray(lease.configOptions) ? lease.configOptions : []);
+        } else {
+          // terminal reverse-RPC: يبقى معطّلاً حالياً لأن Kimi 0.27.0 لا يعلنه. إن أعلنه
+          // إصدار لاحق في agentCapabilities.terminalCapabilities.reverseRpc، نُعلن قدرة
+          // العميل terminal: true ونوجّه طلبات terminal/* إلى تبويبات pty المرئية عبر
+          // termjobs/term.js (نفس مسار run_in_terminal). هذا capability-gated ولا يُفعّل
+          // أبداً دون إعلان صريح من الوكيل.
+          const initialized = await rpc.request('initialize', {
+            protocolVersion: 1,
+            clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false },
+            clientInfo: { name: 'satr', title: 'سطر', version: APP_VERSION },
+          }, 15000);
+          if (!initialized || initialized.protocolVersion !== 1) throw new Error('إصدار ACP غير مدعوم');
+          const capabilities = initialized.agentCapabilities || {};
+          promptCaps = capabilities.promptCapabilities || {};
+          const terminalReverseRpc = !!(capabilities.terminalCapabilities && capabilities.terminalCapabilities.reverseRpc);
+          // إن أعلن Kimi دعم terminal reverse-RPC، نُفعّل البوابة ونوجّه الأوامر إلى pty.
+          // الآن: العميل لا يُعلن terminal، لذا لن تصل طلبات terminal/* أصلاً.
+          const mcpServers = mcpHost && capabilities.mcpCapabilities && capabilities.mcpCapabilities.http
+            ? [{
+              type: 'http', name: 'satr', url: mcpHost.url,
+              headers: [{ name: 'Authorization', value: 'Bearer ' + mcpHost.token }],
+            }] : [];
+          if (mcpHost && !mcpServers.length) { const host = mcpHost; mcpHost = null; await host.stop().catch(() => {}); }
+          const lifecycle = { cwd: path.resolve(cwd), mcpServers };
+          let sessionResult;
+          if (input.sessionId && SAFE_SESSION.test(input.sessionId)) {
             try {
-              sessionResult = await rpc.request('session/resume', {
-                ...lifecycle, sessionId: input.sessionId,
-              }, 30000);
-            } catch (resumeError) {
-              if (resumeError && resumeError.code !== -32601) throw resumeError;
-              replayingSession = true;
               try {
-                sessionResult = await rpc.request('session/load', {
+                sessionResult = await rpc.request('session/resume', {
                   ...lifecycle, sessionId: input.sessionId,
                 }, 30000);
-              } finally {
-                replayingSession = false;
+              } catch (resumeError) {
+                if (resumeError && resumeError.code !== -32601) throw resumeError;
+                replayingSession = true;
+                try {
+                  sessionResult = await rpc.request('session/load', {
+                    ...lifecycle, sessionId: input.sessionId,
+                  }, 30000);
+                } finally {
+                  replayingSession = false;
+                }
               }
+              sessionId = input.sessionId;
+            } catch {
+              emit({ type: 'stderr', text: 'تعذّر استئناف جلسة Kimi Code — بدأت جلسة جديدة.' });
             }
-            sessionId = input.sessionId;
-          } catch {
-            emit({ type: 'stderr', text: 'تعذّر استئناف جلسة Kimi Code — بدأت جلسة جديدة.' });
           }
-        }
-        if (!sessionId) {
-          sessionResult = await rpc.request('session/new', lifecycle, 30000);
-          sessionId = sessionResult && sessionResult.sessionId;
-        }
-        if (!sessionId || !SAFE_SESSION.test(sessionId)) throw new Error('معرّف جلسة Kimi غير صالح');
-        emit({ type: 'system', subtype: 'init', session_id: sessionId, model: input.model || DEFAULT_MODEL });
+          if (!sessionId) {
+            sessionResult = await rpc.request('session/new', lifecycle, 30000);
+            sessionId = sessionResult && sessionResult.sessionId;
+          }
+          if (!sessionId || !SAFE_SESSION.test(sessionId)) throw new Error('معرّف جلسة Kimi غير صالح');
+          channelRef.sessionId = sessionId;
+          emit({ type: 'system', subtype: 'init', session_id: sessionId, model: input.model || DEFAULT_MODEL });
 
-        // خيارات ACP هي المصدر الوحيد لإعداد الجلسة. لا نمرّر قيماً لا يعلنها Kimi.
-        const configOptions = sessionResult && Array.isArray(sessionResult.configOptions)
-          ? sessionResult.configOptions : [];
-        const modelOption = configOptions.find((item) => item && item.id === 'model');
-        const modelValue = configValue(modelOption, input.model || DEFAULT_MODEL, true);
-        if (modelValue && modelValue !== modelOption.currentValue) {
-          await rpc.request('session/set_config_option', { sessionId, configId: 'model', value: modelValue }, 15000);
-        }
-        const effortOption = configOptions.find((item) => item && (
-          item.id === 'effort' || item.id === 'reasoning_effort' || item.category === 'thought_level'
-        ));
-        const effortValue = configValue(effortOption, input.effort, false);
-        if (effortValue && effortValue !== effortOption.currentValue) {
-          await rpc.request('session/set_config_option', {
-            sessionId, configId: effortOption.id, value: effortValue,
-          }, 15000);
-        }
-        // خيار التفكير الحي: نطبّقه فقط إن أعلنه ACP فعلاً (Kimi 0.27.0 يعلنه 'on' فقط).
-        // لا نكتب config.toml العام أبداً — session/set_config_option فقط.
-        const thinkingOption = configOptions.find((item) => item && item.id === 'thinking');
-        const thinkingValue = configValue(thinkingOption, input.thinking, false);
-        if (thinkingValue && thinkingValue !== thinkingOption.currentValue) {
-          await rpc.request('session/set_config_option', { sessionId, configId: 'thinking', value: thinkingValue }, 15000);
-        }
-        // Plan mode عقد ACP لا مجرد منع أذونات: نضبط config الفعلي إن أعلن Kimi خيار mode=plan.
-        if (permissionMode === 'plan') {
-          const mode = configOptions.find((item) => item && item.id === 'mode');
-          if (configValue(mode, 'plan', false)) {
-            await rpc.request('session/set_config_option', { sessionId, configId: 'mode', value: 'plan' }, 15000);
-          }
+          const configOptions = sessionResult && Array.isArray(sessionResult.configOptions)
+            ? sessionResult.configOptions : [];
+          await applyConfigOptions(configOptions);
+
+          // تسجيل القناة في سجل keep-alive (K2). إن رفض السجل (سقف ممتلئ بأدوار نشطة)
+          // يكمل الدور كعملية لكل دور ويُدمَّر عند نهايته — سقوط رشيق بلا كسر.
+          keepAliveActive = await keepalive.register({
+            sessionId, proc, rpc, shared, mcpHost,
+            cwd: path.resolve(cwd), model: input.model || DEFAULT_MODEL,
+            configOptions, promptCapabilities: promptCaps,
+            startedAt: Date.now(), lastActivityAt: Date.now(),
+          });
         }
 
         const prompt = [{ type: 'text', text: input.prompt || '' }];
@@ -1017,19 +1175,22 @@ function create(deps) {
         if (skillPrompt) resources.push({ uri: 'satr://skills', text: skillPrompt });
         const memoryPrompt = browserControl === false ? '' : memory.retrieve(cwd, input.prompt || '').text;
         if (memoryPrompt) resources.push({ uri: 'satr://memory', text: memoryPrompt });
-        if (!compactCommand && capabilities.promptCapabilities && capabilities.promptCapabilities.embeddedContext) {
+        if (!compactCommand && promptCaps && promptCaps.embeddedContext) {
           for (const resource of resources) prompt.push({
             type: 'resource', resource: { uri: resource.uri, mimeType: 'text/plain', text: resource.text },
           });
         }
-        if (!compactCommand && Array.isArray(input.images) && capabilities.promptCapabilities && capabilities.promptCapabilities.image) {
+        if (!compactCommand && Array.isArray(input.images) && promptCaps && promptCaps.image) {
           for (const image of input.images) if (image && image.data && image.media_type) {
             prompt.push({ type: 'image', data: image.data, mimeType: image.media_type });
           }
         }
         promptRequest = rpc.request('session/prompt', { sessionId, prompt });
         promptRequest.then(finishTurn).catch((error) => {
-          if (stopping) { cleanup(0); return; }
+          if (stopping) {
+            if (keepAliveActive) releaseTurn(0); else destroyChannel(0);
+            return;
+          }
           if (!finished) {
             finished = true;
             emitAssistantMessages();
@@ -1039,7 +1200,7 @@ function create(deps) {
             emit({ type: 'spawn_error', text: message });
             emit({ type: 'result', subtype: 'error', is_error: true, session_id: sessionId, duration_ms: Date.now() - startedAt });
           }
-          cleanup(1);
+          destroyChannel(1);
         });
       } catch (error) {
         if (!finished) {
@@ -1050,7 +1211,7 @@ function create(deps) {
           emit({ type: 'spawn_error', text: message });
           emit({ type: 'result', subtype: 'error', is_error: true, session_id: sessionId, duration_ms: Date.now() - startedAt });
         }
-        cleanup(1);
+        destroyChannel(1);
       }
     })();
 
@@ -1094,20 +1255,18 @@ function create(deps) {
         return true;
       },
       async stop() {
+        // إيقاف الدور فقط (K2 — قرار القائد 2): يُلغي الدور الجاري عبر session/cancel
+        // ويحرّره، والجلسة تبقى حية في سجل keep-alive؛ القتل الكامل من شريط bg_procs.
         if (stopping) return;
         stopping = true;
-        for (const item of pendingPermissions.values()) rpc.respond(item.serverId, { outcome: { outcome: 'cancelled' } });
-        pendingPermissions.clear();
-        for (const item of pendingQuestions.values()) rpc.respond(item.serverId, { outcome: { outcome: 'cancelled' } });
-        pendingQuestions.clear();
-        for (const item of pendingMcpPermissions.values()) { try { item.resolve(false); } catch { /* أُغلق */ } }
-        pendingMcpPermissions.clear();
-        if (sessionId) rpc.notify('session/cancel', { sessionId });
+        cancelPending();
+        if (sessionId) try { rpc.notify('session/cancel', { sessionId }); } catch { /* أُغلقت */ }
         await Promise.race([
           promptRequest ? promptRequest.catch(() => null) : Promise.resolve(),
           new Promise((resolve) => setTimeout(resolve, 1200)),
         ]);
-        await cleanup(0);
+        if (keepAliveActive) await releaseTurn(0);
+        else await destroyChannel(0);
       },
     };
   }
@@ -1277,7 +1436,7 @@ function create(deps) {
     } catch { return []; }
   }
 
-  return { start, listSessions, readSession, contextUsage, listModels };
+  return { start, listSessions, readSession, contextUsage, listModels, keepalive };
 }
 
 const runtime = create();
@@ -1300,6 +1459,7 @@ module.exports = {
   ENGINE_ID, DEFAULT_MODEL, SAFE_SESSION, publicInfo, resolveKimiBin, authStatus, undoEdit,
   start: runtime.start, listSessions: runtime.listSessions, readSession: runtime.readSession,
   contextUsage: runtime.contextUsage, listModels: runtime.listModels,
+  keepalive: runtime.keepalive,
   create,
   _internals: {
     inside, safeExistingPath, safeWritablePath, safePlanPath, selectedOutcome, spawnKimi, scrubError,

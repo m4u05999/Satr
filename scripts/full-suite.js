@@ -24,6 +24,7 @@ const SUITE = [
   'test:codex-contract',
   'test:codex-steer',
   'test:kimi',
+  'test:kimi-keepalive',
   'test:browserguard',
   'test:browserorigin',
   'test:browserpolicy',

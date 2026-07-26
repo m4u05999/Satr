@@ -466,6 +466,199 @@ async function testReadTextFileLineLimit() {
   }
 }
 
+async function testKeepaliveReusesChannel() {
+  const events1 = [];
+  const events2 = [];
+  let processRef;
+  let spawnCount = 0;
+  let initializeCount = 0;
+  let sessionNewCount = 0;
+  let turn = 0;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      spawnCount++;
+      processRef = new FakeProcess((message, proc) => {
+        if (message.method === 'initialize') {
+          initializeCount++;
+          proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        } else if (message.method === 'session/new') {
+          sessionNewCount++;
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_keep_1' } });
+        } else if (message.method === 'session/prompt') {
+          turn++;
+          const text = turn === 1 ? 'نهاية الدور الأول' : 'نهاية الدور الثاني';
+          proc.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_keep_1', update: {
+              sessionUpdate: 'agent_message_chunk', messageId: 'm' + turn,
+              content: { type: 'text', text },
+            },
+          } });
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+        }
+      });
+      return processRef;
+    },
+  });
+
+  try {
+    await engine.start({
+      prompt: 'الدور الأول', sessionId: null, model: 'k3', permissionMode: 'default',
+      skills: [], images: [], browserControl: false,
+    }, root, (event) => events1.push(event));
+    await waitFor(() => events1.some((event) => event.type === 'result'));
+    assert.ok(engine.keepalive.list().some((item) => item.id === 'ks_kimi_keep_1'), 'الجلسة تُسجَّل حية بعد الدور الأول');
+    assert.strictEqual(processRef.killed, false, 'العملية لا تُقتل عند end_turn (K2)');
+
+    await engine.start({
+      prompt: 'الدور الثاني', sessionId: 'kimi_keep_1', model: 'k3', permissionMode: 'default',
+      skills: [], images: [], browserControl: false,
+    }, root, (event) => events2.push(event));
+    await waitFor(() => events2.some((event) => event.type === 'result'));
+    assert.strictEqual(spawnCount, 1, 'الدور الثاني يستأجر القناة — لا spawn جديد');
+    assert.strictEqual(initializeCount, 1, 'لا initialize ثانية على قناة مستأجرة');
+    assert.strictEqual(sessionNewCount, 1, 'لا session/new ثانية على قناة مستأجرة');
+    assert.ok(events2.some((event) => event.type === 'system' && event.subtype === 'init' && event.session_id === 'kimi_keep_1'));
+    assert.ok(events2.some((event) => JSON.stringify(event).includes('نهاية الدور الثاني')));
+    assert.ok(!processRef.lines.some((message) => message.method === 'session/cancel'),
+      'لا session/cancel عند نهاية الدور (قرار القائد 3)');
+  } finally {
+    await engine.keepalive.killAll();
+  }
+}
+
+async function testKeepaliveLateEvents() {
+  const events = [];
+  const lateEvents = [];
+  let processRef;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      processRef = new FakeProcess((message, proc) => {
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/new') {
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_late_1' } });
+        } else if (message.method === 'session/prompt') {
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+        }
+      });
+      return processRef;
+    },
+  });
+  engine.keepalive.setLateEventSink((evt) => lateEvents.push(evt));
+
+  try {
+    await engine.start({
+      prompt: 'دور ثم نشاط متأخر', sessionId: null, model: 'k3', permissionMode: 'default',
+      skills: [], images: [], browserControl: false,
+    }, root, (event) => events.push(event));
+    await waitFor(() => events.some((event) => event.type === 'result'));
+
+    // بعد انتهاء الدور: نشاط الوكيل (cron مثلاً) يصل كإشعار محجوب — لا في سجل المحادثة
+    processRef.send({ jsonrpc: '2.0', method: 'session/update', params: {
+      sessionId: 'kimi_late_1', update: {
+        sessionUpdate: 'agent_message_chunk', messageId: 'late_m1',
+        content: { type: 'text', text: 'مهمة مجدولة اكتملت: sk-live-1234567890abcdef' },
+      },
+    } });
+    await waitFor(() => lateEvents.length >= 1, 3000);
+    const late = lateEvents[0];
+    assert.strictEqual(late.type, 'kimi_keepalive_event');
+    assert.strictEqual(late.sessionId, 'kimi_late_1');
+    assert.strictEqual(late.kind, 'message');
+    assert.ok(!late.text.includes('sk-live'), 'السر محجوب في الحدث المتأخر');
+    assert.ok(late.text.includes('[secret]'));
+    assert.ok(!events.some((event) => JSON.stringify(event).includes('مهمة مجدولة اكتملت')),
+      'الحدث المتأخر لا يدخل سجل الدور');
+  } finally {
+    await engine.keepalive.killAll();
+  }
+}
+
+async function testKeepaliveStopKeepsSession() {
+  const events = [];
+  let processRef;
+  let promptId;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      processRef = new FakeProcess((message, proc) => {
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/new') {
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_stop_1' } });
+        } else if (message.method === 'session/prompt') {
+          promptId = message.id; // لا رد فوري: الدور يبقى جارياً حتى يُلغى
+        } else if (message.method === 'session/cancel') {
+          proc.send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'cancelled' } });
+        }
+      });
+      return processRef;
+    },
+  });
+
+  try {
+    const handle = await engine.start({
+      prompt: 'دور طويل', sessionId: null, model: 'k3', permissionMode: 'default',
+      skills: [], images: [], browserControl: false,
+    }, root, (event) => events.push(event));
+    await waitFor(() => processRef.lines.some((message) => message.method === 'session/prompt'));
+    await handle.stop();
+    assert.ok(processRef.lines.some((message) => message.method === 'session/cancel'),
+      'إيقاف الدور يرسل session/cancel');
+    assert.strictEqual(processRef.killed, false, 'إيقاف الدور لا يقتل العملية (قرار القائد 2)');
+    assert.ok(events.some((event) => event.type === 'proc_done'));
+    assert.ok(engine.keepalive.list().some((item) => item.id === 'ks_kimi_stop_1'),
+      'الجلسة تبقى في السجل بعد إيقاف الدور');
+    const killed = await engine.keepalive.kill('kimi_stop_1');
+    assert.strictEqual(killed.ok, true);
+    assert.strictEqual(engine.keepalive.list().length, 0, 'القتل الكامل من السجل يزيل الجلسة');
+  } finally {
+    await engine.keepalive.killAll();
+  }
+}
+
+async function testKeepaliveEvictsOldest() {
+  let spawnCount = 0;
+  let sessionSeq = 0;
+  const procs = [];
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      spawnCount++;
+      const proc = new FakeProcess((message, child) => {
+        if (message.method === 'initialize') child.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/new') {
+          sessionSeq++;
+          child.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_evict_' + sessionSeq } });
+        } else if (message.method === 'session/prompt') {
+          child.send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+        }
+      });
+      procs.push(proc);
+      return proc;
+    },
+  });
+
+  try {
+    for (let i = 0; i < 3; i++) {
+      const events = [];
+      await engine.start({
+        prompt: 'دور ' + (i + 1), sessionId: null, model: 'k3', permissionMode: 'default',
+        skills: [], images: [], browserControl: false,
+      }, root, (event) => events.push(event));
+      await waitFor(() => events.some((event) => event.type === 'result'));
+    }
+    assert.strictEqual(spawnCount, 3);
+    const ids = engine.keepalive.list().map((item) => item.id);
+    assert.strictEqual(ids.length, 2, 'السجل يبقي عمليتين حيتين كحد أقصى');
+    assert.ok(ids.includes('ks_kimi_evict_2') && ids.includes('ks_kimi_evict_3'));
+    await waitFor(() => procs[0].killed, 3000);
+    assert.strictEqual(procs[0].killed, true, 'الأقدم خمولاً يُقتل عند الطرد');
+  } finally {
+    await engine.keepalive.killAll();
+  }
+}
+
 async function testSessionBrowser() {
   const spawned = [];
   const listRequests = [];
@@ -1021,6 +1214,10 @@ function testSecurityAndWiring() {
   await testInteractiveQuestion();
   await testPlanModeLifecycle();
   await testReadTextFileLineLimit();
+  await testKeepaliveReusesChannel();
+  await testKeepaliveLateEvents();
+  await testKeepaliveStopKeepsSession();
+  await testKeepaliveEvictsOldest();
   await testLoadFallbackDoesNotReplayHistory();
   await testSessionBrowser();
   await testModelCompactAndEffortContract();
@@ -1039,6 +1236,10 @@ function testSecurityAndWiring() {
   console.log('✓ أسئلة Kimi التفاعلية تعبر عقد سطر وfallback التحميل لا يكرر التاريخ');
   console.log('✓ دورة Write → ExitPlanMode → تنفيذ تعمل وملف الخطة وحده مستثنى خارج المشروع');
   console.log('✓ fs/read_text_file يقرأ 2500 سطر كاملاً ويرفض الملفات الأكبر من 2MiB');
+  console.log('✓ K2 keep-alive: الدور الثاني يستأجر القناة بلا spawn/initialize/session-new ولا cancel عند end_turn');
+  console.log('✓ K2: الأحداث المتأخرة بين الأدوار تصل kimi_keepalive_event محجوبة ولا تدخل سجل المحادثة');
+  console.log('✓ K2: إيقاف الدور يرسل session/cancel ويبقي الجلسة حية، والقتل الكامل من السجل فقط');
+  console.log('✓ K2: سقف عمليتين حيتين يطرد الأقدم خمولاً عبر المحرك');
   console.log('✓ /جلسات يستخدم session/list وsession/load الرسميين');
   console.log('✓ سرد الجلسات يتصفح فوق 80 حتى سقف 200 وقراءتها تلتقط نداءات الأدوات بتسمياتها العربية وحالاتها');
   console.log('✓ اختيار K3 يضبط model عبر ACP و/ضغط يعرض compact_boundary دون نص تقني خام');

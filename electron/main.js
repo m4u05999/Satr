@@ -789,7 +789,14 @@ function emitOpsPreview(roomId, teamId, obj) {
 let lastEngine = 'sdk';
 
 // تتبّع عمليات الخلفية: يُبثّ مباشرةً (لا عبر token الدور) لأنه يعيش بعد انتهاء الدور
-bgprocs.setNotifier((procs) => emitToWindow({ type: 'bg_procs', procs }));
+// K2: جلسات Kimi ACP الحية (keep-alive) تُدمج في الشريط نفسه، وأحداثها المتأخرة
+// بين الأدوار تصل الواجهة كإشعارات kimi_keepalive_event (محجوبة الأسرار في المحرك).
+function emitBgProcsMerged() {
+  emitToWindow({ type: 'bg_procs', procs: bgprocs.list().concat(kimi.keepalive.list()) });
+}
+bgprocs.setNotifier(emitBgProcsMerged);
+kimi.keepalive.setNotifier(emitBgProcsMerged);
+kimi.keepalive.setLateEventSink((evt) => emitToWindow(evt));
 termjobs.setNotifier((event) => emitToWindow(event));
 
 // رقم تسلسلي للتشغيل: أحداث متأخرة من تشغيل أُلغي (proc_done مثلاً)
@@ -1699,8 +1706,10 @@ ipcMain.handle('satr:devServerRestart', (event, p) => {
 // ---------- عمليات الخلفية المعمّرة (خوادم التطوير ونحوها) ----------
 // مستقلة عن الدور: تُسرد وتُقتل حتى بعد انتهاء التشغيل واختفاء زرّ الإيقاف.
 const SAFE_BG_ID = /^bg_[0-9]{1,12}$/;
-ipcMain.handle('satr:listBgProcs', () => bgprocs.list());
+const SAFE_KS_ID = /^ks_[A-Za-z0-9_-]{1,128}$/; // جلسة Kimi حية في سجل keep-alive (K2)
+ipcMain.handle('satr:listBgProcs', () => bgprocs.list().concat(kimi.keepalive.list()));
 ipcMain.handle('satr:killBgProc', (event, id) => {
+  if (typeof id === 'string' && SAFE_KS_ID.test(id)) return kimi.keepalive.kill(id.slice(3));
   if (typeof id !== 'string' || !SAFE_BG_ID.test(id)) return { ok: false, error: 'bad_id' };
   return bgprocs.kill(id);
 });
@@ -2766,6 +2775,7 @@ async function cleanupBeforeQuit() {
   ]);
   if (integration.latestPreview()) await integration.stopAll();
   bgprocs.killAll();
+  await kimi.keepalive.killAll(); // K2: لا تبقى عمليات kimi acp يتيمة بعد إغلاق سطر
   term.killAll();
 }
 

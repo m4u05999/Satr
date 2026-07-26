@@ -719,8 +719,10 @@ result`)، فالواجهة لا تتغيّر.
   باقٍ بوسم «Kimi K3 — API (REST)» كاحتياط مستقل.
 - **استمرارية حقيقية**: التسلسل `initialize → session/new|session/resume → session/prompt`.
   معرّف Kimi نفسه يصل إلى الواجهة عبر حدث `system`، والإيقاف يرسل notification
-  `session/cancel` وينتظر تفريغ الدور قبل إغلاق العملية؛ الرسالة التالية تستدعي
-  `session/resume` بنفس المعرّف. إن رد إصدار أقدم بـ`methodNotFound` يتراجع إلى
+  `session/cancel` وينتظر تفريغ الدور ثم يحرّره **دون قتل العملية** (K2)؛ الرسالة التالية
+  على الجلسة نفسها تستأجر القناة الحية من سجل keep-alive (لا spawn ولا initialize ولا
+  session/new)، وإن غابت عن السجل تستدعي `session/resume` بنفس المعرّف. إن رد إصدار
+  أقدم بـ`methodNotFound` يتراجع إلى
   `session/load` مع كتمان بث التاريخ المعروض أصلاً. لذلك لا تضيع معرفة المهمة عند إيقاف
   الدور كما كان يحدث لمسار REST قبل حفظ النتيجة.
 - **الجلسات والتصدير**: IPC المحدد `listKimiSessions/readKimiSession` يستعمل
@@ -786,9 +788,34 @@ result`)، فالواجهة لا تتغيّر.
   `-32601 Method not found`. و`/goal` `/plan` `/btw` `/swarm` غير معلنة كأوامر مائلة
   عبر ACP — المعلن فقط: compact, status, usage, mcp, tasks, help (أدوات الهدف وcron
   تعمل كأدوات نموذج أثناء الدور وتظهر بطاقاتها). وإطلاقات cron واستمرارات الهدف بين
-  الأدوار لا تصل لأن سطر يقتل عملية `kimi acp` بعد كل دور (cleanup في kimi.js) — يتطلب
-  معمارية keep-alive مستقبلية بعملية دائمة لكل جلسة. وeffort يبقى غير معلن
-  (thinking=on فقط ضمن configOptions).
+  الأدوار كانت لا تصل لأن سطر كان يقتل عملية `kimi acp` بعد كل دور — حُلّت بمعمارية
+  keep-alive ‏(K2، البند التالي) فصارت تصل كإشعارات `kimi_keepalive_event`. وeffort
+  يبقى غير معلن (thinking=on فقط ضمن configOptions).
+- **Keep-alive (K2 — 2026-07-25)**: قناة ACP (العملية + RPC + خادم MCP) تبقى حية بعد
+  end_turn في سجل `electron/kimi-keepalive.js` (نسخة لكل `create()`), وتُستأجر للدور
+  التالي على `sessionId` و`cwd` نفسيهما فلا تتكرر initialize/session-new ولا يُرسل
+  `session/cancel` عند نهاية الدور. الضمانات غير قابلة للتفاوض: **سقف عمليتين حيتين**
+  (الثالثة تطرد الأقدم خمولاً بلا دور نشط؛ وامتلاء السقف بأدوار نشطة يرفض التسجيل
+  فيكمل الدور كعملية لكل دور تُدمَّر عند نهايتها — سقوط رشيق)، **خمول 15 دقيقة**
+  يقتل القنوات الخاملة (فحص كل 60 ثانية بمؤقّت unref)، **لا أيتام**: `killAll` في
+  `cleanupBeforeQuit` ومعالج `exit` يزيل المدخل من السجل. ربط الدور بالقناة قابل
+  للتبديل عبر `shared.turn` (جسر RPC ومعالجات العملية وخادم MCP يفوّضون إلى الدور
+  النشط فقط)، فلا يعلق emit دورٍ ميت في معالجات طويلة العمر، وطلبات الوكيل بلا دور
+  نشط تُرفض بلطف (الأذونات تُلغى). زر إيقاف الدور يبقي الجلسة حية؛ القتل الكامل من
+  شريط bg_procs فقط: عناصر `ks_<sessionId>` مدمجة مع عمليات الخلفية عبر
+  `emitBgProcsMerged` في main.js، و`satr:killBgProc` يوجّه البادئة `ks_` إلى
+  `kimi.keepalive.kill`. `applyConfigOptions` يعيد تطبيق model/effort/thinking/mode
+  على القناة المستأجرة من configOptions المخزّنة.
+- **عقد `kimi_keepalive_event` (schema)**: نشاط الوكيل بين الأدوار (cron/هدف) يصل على
+  قناة حية بلا دور نشط فيُبثّ للواجهة إشعاراً مؤقتاً — لا يُدرج في سجل المحادثة —
+  بعد مروره ببوابة الحجب والقص نفسها المطبقة على أحداث الدور (قرار القائد أ).
+  الحقول والسقوف: `type` ثابت `kimi_keepalive_event` · `sessionId` مطابق
+  `SAFE_SESSION` ‏(≤128) · `kind` ∈ `message|thought|tool|plan` · `text` محجوب
+  الأسرار ومقصوص ≤4000 حرف بعلامة `…` · `tool` (لـ kind=tool فقط) ≤120 · `status`
+  (لـ kind=tool فقط) ∈ `completed|failed|cancelled` · `at` ‏epoch ms. نصوص
+  message/thought المجزّأة تُجمَّع حسب `messageId` وتُبث بعد سكون 800ms؛ تحديثات
+  الأدوات غير المنهية (pending/in_progress) وusage/available_commands لا تُترجم
+  إشعارات. الواجهة (`app.js`) تعرضها عبر `showTransientNotice` بلا أي حالة محادثة.
 - **خيار thinking**: إن أعلن `configOptions` خيار `thinking` (Kimi 0.27.0 يعلنه `on`) يظهر
   مفتاح صغير في شريط الوعي لمحرك `kimi-code` (مكان الجهد المعطّل) ويُطبَّق القيمة عبر
   `session/set_config_option` دون كتابة `config.toml` العام. غياب الإعلان = لا مفتاح ولا
@@ -825,8 +852,12 @@ result`)، فالواجهة لا تتغيّر.
   مهارات MCP وسرد/تحميل الجلسات، وضبط model، و`/usage`، و`/compact`، وعدم إرسال effort غير
   المعلن، و`agent_thought_chunk` → `stream_text/commentary` مع الدمج والقص وحجب السر،
   وتحويل `available_commands_update` إلى أوامر «/» ديناميكية، وضبط `thinking` عند إعلانه،
-  ورفض terminal reverse-RPC عند عدم إعلانه. يدخل `test:full`، و
-  `test:envbrief` يثبت تكافؤ جرد MCP للمحركات الأصيلة الثلاثة. صفر اعتماديات جديدة.
+  ورفض terminal reverse-RPC عند عدم إعلانه، وK2: استئجار القناة بلا spawn/initialize/
+  session-new ثانية ولا cancel عند end_turn، والأحداث المتأخرة المحجوبة خارج سجل
+  المحادثة، وstop يبقي الجلسة حية، وطرد الأقدم خمولاً عند سقف عمليتين.
+  `npm run test:kimi-keepalive` يغطي وحدة السجل (تسجيل/سقف/خمول 15 دقيقة/استئجار/
+  قتل مع دور نشط/killAll/تجميع وحجب وقص الأحداث المتأخرة). كلاهما يدخل `test:full`،
+  و`test:envbrief` يثبت تكافؤ جرد MCP للمحركات الأصيلة الثلاثة. صفر اعتماديات جديدة.
 
 - **رؤية الملفات (الدفعة 1.1)**: `@مسار` في الرسالة يُحقن محتواه في البرومبت قبل
   `adapter.start` (عبر `electron/inject.js` — انظر خريطة الملفات أعلاه). للمحوّلات العمياء
