@@ -1267,7 +1267,9 @@ function testSecurityAndWiring() {
   assert.ok(app.includes("resumeKimiSession(s)") && app.includes("checkKimiReady()"));
   assert.ok(main.includes('return kimi.contextUsage(dir, sid)'));
   assert.ok(preload.includes("contextUsage: (cwd, sessionId, engine)"));
-  assert.ok(app.includes("engines: ['sdk', 'kimi-code']"));
+  // المطلوب: بقاء kimi-code في قائمة محرّكات /سياق و/ضغط. القائمة تتسع بمحرّكات
+  // أخرى (codex انضم في دفعة C2)، فلا نثبّت عناصرها حرفياً — نثبّت الشرط وحده.
+  assert.ok(/engines: \['sdk', 'kimi-code'(?:, '[a-z-]+')*\]/.test(app));
   assert.ok(sessions.includes("kind: 'kimi'") && sessions.includes('listKimiSessions'));
   assert.ok(app.includes("ev.subtype === 'available_commands'") && app.includes('sendKimiCommand'));
   assert.ok(app.includes('kimiDeclaredCommands') && app.includes('buildKimiCommands') && app.includes('KIMI_CMD_EXCLUDE'));

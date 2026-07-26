@@ -28,11 +28,22 @@ function assertStaticContract() {
     'app.js لا يوجّه handoff_request إلى preview-panel.');
   assert(/ev\.type === 'handoff_end'[\s\S]{0,180}previewEl\.hideHandoff/.test(appSource),
     'app.js لا يخفي الشريط عند handoff_end.');
-  const endRunStart = appSource.indexOf('function endRun()');
-  const endRunEnd = appSource.indexOf('\n  }', endRunStart);
-  assert(endRunStart !== -1 && endRunEnd !== -1
-    && appSource.slice(endRunStart, endRunEnd).includes('previewEl.hideHandoff'),
-  'endRun لا يخفي شريط التسليم.');
+  // مسار تحرير الدور يخفي الشريط. دفعة D استخرجت جسمه إلى releaseRunControls التي
+  // يستدعيها endRun، فنتحقق من الدالة الحاملة للإخفاء ومن استدعائها معاً — لا من
+  // موضع السطر داخل endRun حرفياً.
+  const releaseName = appSource.includes('function releaseRunControls()') ? 'releaseRunControls' : 'endRun';
+  const releaseStart = appSource.indexOf('function ' + releaseName + '()');
+  const releaseEnd = appSource.indexOf('\n  }', releaseStart);
+  assert(releaseStart !== -1 && releaseEnd !== -1
+    && appSource.slice(releaseStart, releaseEnd).includes('previewEl.hideHandoff'),
+  'مسار تحرير الدور لا يخفي شريط التسليم.');
+  if (releaseName !== 'endRun') {
+    const endRunStart = appSource.indexOf('function endRun()');
+    const endRunEnd = appSource.indexOf('\n  }', endRunStart);
+    assert(endRunStart !== -1 && endRunEnd !== -1
+      && appSource.slice(endRunStart, endRunEnd).includes(releaseName + '()'),
+    'endRun لا يستدعي مسار تحرير الدور.');
+  }
   assert(panelSource.includes('window.satr.handoffDone(id, done)'), 'المكوّن لا يرد عبر handoffDone بعقد boolean.');
   assert(panelSource.includes('window.satr.secretDone(id, done)'), 'المكوّن لا يرد عبر secretDone بعقد boolean.');
   assert.strictEqual(packageJson.scripts['test:handoff-bar-live'], 'electron scripts/handoff-bar-live-test.js');
