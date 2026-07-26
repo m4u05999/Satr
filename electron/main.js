@@ -2814,8 +2814,11 @@ ipcMain.handle('satr:listSkills', (event, cwd) => {
 // ---------- حالة موصّلات MCP للوحة /موصلات (عبر دوال تحكّم SDK) ----------
 // عرض الحالة قراءة فقط؛ الإجراءات (reconnect/enable/disable) أفضل جهد ولا تقود OAuth.
 
-ipcMain.handle('satr:mcpStatus', (event, cwd) => {
-  const dir = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : os.homedir();
+// C3: الحمولة صارت كائناً {cwd, engine} — النص المجرّد يبقى مقبولاً كتوافق.
+ipcMain.handle('satr:mcpStatus', (event, p) => {
+  const raw = p && typeof p === 'object' ? p.cwd : p;
+  const dir = typeof raw === 'string' && raw.trim() ? raw.trim() : os.homedir();
+  if (p && typeof p === 'object' && p.engine === 'codex') return codex.mcpStatus(dir);
   return agent.mcpStatus(dir);
 });
 
@@ -2824,7 +2827,53 @@ ipcMain.handle('satr:mcpAction', (event, p) => {
     return { ok: false, error: 'bad_name' };
   if (!MCP_ACTIONS.has(p.action)) return { ok: false, error: 'bad_action' };
   const dir = typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd.trim() : os.homedir();
+  // C3: Codex يعلن إعادة تحميل الإعداد فقط (config/mcpServer/reload). التفعيل/التعطيل
+  // يستلزمان الكتابة في ~/.codex/config.toml — و«سطر» لا يلمسه ⇒ unsupported صريحة.
+  if (p.engine === 'codex') {
+    if (p.action !== 'reconnect') return { ok: false, error: 'unsupported' };
+    return codex.mcpReload(dir);
+  }
   return agent.mcpAction(dir, p.name, p.action);
+});
+
+// ---------- C3: تسجيل دخول OAuth لموصّل Codex ----------
+// **الرابط لا يعبر IPC إطلاقاً**: البدء يعيد معرّفاً فقط، والفتح يقرأ الرابط من الطلب
+// المعلّق داخل codex.js ويتحقق منه ثم يفتحه في متصفح النظام بعد نقرة المستخدم
+// (نمط حوار elicitation ‏URL). ولا يُخزَّن أي token في «سطر» — المصادقة داخل Codex.
+const SAFE_MCP_OAUTH_ID = /^cxoauth_[0-9]{1,9}_[a-z0-9]{1,8}$/;
+const mcpOauthOpening = new Set();
+
+ipcMain.handle('satr:mcpOauthStart', async (event, p) => {
+  if (!p || typeof p.name !== 'string' || !SAFE_MCP_NAME.test(p.name))
+    return { ok: false, error: 'bad_name' };
+  const dir = typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd.trim() : os.homedir();
+  const started = await codex.mcpOauthStart(dir, p.name);
+  // قائمة سماح صارمة على المُعاد — لا تسريب رابط أو حقول داخلية
+  if (!started || !started.ok) return { ok: false, error: (started && started.error) || 'failed' };
+  return { ok: true, id: started.id, name: started.name };
+});
+
+ipcMain.handle('satr:mcpOauthOpen', async (event, p) => {
+  if (!p || typeof p.id !== 'string' || !SAFE_MCP_OAUTH_ID.test(p.id)) return { ok: false, error: 'bad_id' };
+  const url = codex.mcpOauthUrl(p.id);   // منقّى داخلياً بـsafeOauthUrl
+  if (!url) { codex.mcpOauthCancel(p.id); return { ok: false, error: 'bad_url' }; }
+  if (mcpOauthOpening.has(p.id)) return { ok: false, error: 'in_flight' };
+  mcpOauthOpening.add(p.id);
+  try {
+    await shell.openExternal(url);
+  } catch {
+    mcpOauthOpening.delete(p.id);
+    return { ok: false, error: 'open_failed' }; // يبقى الطلب معلّقاً لإعادة المحاولة
+  }
+  try {
+    const done = await codex.mcpOauthAwait(p.id);
+    return done && done.ok ? { ok: true, success: done.success === true } : { ok: false, error: (done && done.error) || 'failed' };
+  } finally { mcpOauthOpening.delete(p.id); }
+});
+
+ipcMain.handle('satr:mcpOauthCancel', (event, p) => {
+  if (!p || typeof p.id !== 'string' || !SAFE_MCP_OAUTH_ID.test(p.id)) return { ok: false, error: 'bad_id' };
+  return codex.mcpOauthCancel(p.id);
 });
 
 // ---------- استخدام نافذة السياق للوحة /سياق (Claude SDK أو أمر Kimi ACP الرسمي /usage) ----------
@@ -2847,6 +2896,8 @@ ipcMain.handle('satr:contextUsage', (event, p) => {
   const dir = typeof (p && p.cwd) === 'string' && p.cwd.trim() ? p.cwd.trim() : os.homedir();
   const sid = p && typeof p.sessionId === 'string' && SAFE_SESSION.test(p.sessionId) ? p.sessionId : null;
   if (p && p.engine === kimi.ENGINE_ID) return kimi.contextUsage(dir, sid);
+  // C2: Codex — لقطة آخر thread/tokenUsage/updated المحفوظة في codex.js (لا IPC جديد)
+  if (p && p.engine === 'codex') return codex.contextUsage(dir, sid);
   return agent.contextUsage(dir, sid);
 });
 

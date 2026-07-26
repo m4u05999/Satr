@@ -224,6 +224,306 @@ function sanitizeSteerText(raw) {
     .trim();
 }
 
+// ---------- لقطة سياق آخر قياس لكل خيط (C2 — /سياق) ----------
+// **حدّ upstream مثبّت بالمسبار**: `model/list` لا يعلن نافذة سياق إطلاقاً (7 نماذج،
+// صفر حقل contextWindow/maxTokens)، والمصدر الوحيد لها ولإشغالها هو إشعار
+// `thread/tokenUsage/updated` الحيّ أثناء دور. لذا نحتفظ بآخر لقطة لكل خيط في ذاكرة
+// العملية — لا مخزن قرص جديد ولا اعتمادية؛ وغيابها (إقلاع جديد أو جلسة بلا دور بعد)
+// يعطي رسالة عربية هادئة بدل رقم مختلق.
+// نستعمل `last` لا `total`: `total` تراكمي عبر الخيط فيكبر أبداً ولا يعكس الإشغال.
+const contextSnapshots = new Map();
+const MAX_CONTEXT_SNAPSHOTS = 100;
+const CONTEXT_UNAVAILABLE = 'لم يصل قياس سياق من Codex بعد — أرسل رسالة في هذه الجلسة ثم حدّث اللوحة.';
+const COMPACT_COMMAND = '/compact';
+
+function rememberContext(id, snap) {
+  if (!id || !snap) return;
+  contextSnapshots.set(id, snap);
+  while (contextSnapshots.size > MAX_CONTEXT_SNAPSHOTS) {
+    contextSnapshots.delete(contextSnapshots.keys().next().value);
+  }
+}
+
+// يطبّع اللقطة إلى عقد لوحة /سياق القائم (totalTokens/maxTokens/percentage/model/
+// categories) — بلا IPC جديد: main.js يوجّه satr:contextUsage بفرع engine.
+function contextUsage(cwd, sessionId) {
+  const snap = sessionId ? contextSnapshots.get(sessionId) : null;
+  if (!snap || !snap.contextWindow) return { ok: false, error: CONTEXT_UNAVAILABLE };
+  const total = Math.max(0, Number(snap.totalTokens) || 0);
+  const max = Math.max(0, Number(snap.contextWindow) || 0);
+  const cat = (name, tokens) => ({ name, tokens: Math.max(0, Number(tokens) || 0), isDeferred: false });
+  return {
+    ok: true,
+    usage: {
+      totalTokens: total,
+      maxTokens: max,
+      percentage: max ? Math.round((total / max) * 100) : 0,
+      model: snap.model || '',
+      // الفئتان الأخيرتان مجموعتان فرعيتان (المخبّأ من الإدخال، والتفكير من الإخراج) —
+      // الاسم يوضّح ذلك كي لا يُقرأ الشريط جمعاً مضاعفاً.
+      categories: [
+        cat('الإدخال', snap.inputTokens),
+        cat('الإخراج', snap.outputTokens),
+        cat('منها مخبّأ', snap.cachedInputTokens),
+        cat('منه تفكير', snap.reasoningTokens),
+      ].filter((item) => item.tokens > 0),
+    },
+  };
+}
+
+// ---------- لوحة موصّلات Codex (‏/موصلات — C3) ----------
+// الطرق كلها من الـschema المولّد من الثنائي: mcpServerStatus/list ·
+// config/mcpServer/reload (params = null) · mcpServer/oauth/login، وإشعارا
+// mcpServer/startupStatus/updated وmcpServer/oauthLogin/completed.
+//
+// **حدود upstream مثبّتة بالمسبار (codex-cli 0.144.3)**:
+//  1) `McpServerStatus` **لا يحمل حقل status إطلاقاً** — مفاتيحه المرصودة:
+//     authStatus,name,resourceTemplates,resources,serverInfo,tools. فحالة الاتصال
+//     الحقيقية تأتي **حصراً** من إشعارات mcpServer/startupStatus/updated.
+//  2) تلك الإشعارات **لا تصل قبل بدء خيط**: صفر إشعار خلال 20ث بعد initialize، ثم
+//     10 إشعارات فور thread/start (5 starting ثم ready/failed). لذلك نبدأ خيطاً
+//     عابراً للقراءة فقط ثم نغلق العملية.
+//  3) `tools` يعود **null دائماً** في هذا الإصدار (جُرّب detail الافتراضي وfull
+//     وtoolsAndAuthOnly وبعد بدء خيط) ⇒ لا نعرض عدد أدوات لـCodex. `resources` يعمل.
+const MCP_PROBE_STARTUP_MS = 9000;   // نافذة انتظار إشعارات الإقلاع بعد بدء الخيط
+const MCP_PROBE_TIMEOUT_MS = 45000;  // سقف عمر الجسّ كله
+const MCP_OAUTH_TTL_MS = 5 * 60 * 1000;
+const MCP_MAX_ERROR_CHARS = 300;
+const MCP_STARTUP_STATE = { ready: 'connected', starting: 'pending', failed: 'failed', cancelled: 'failed' };
+
+// نص خطأ خادم MCP قد يحمل رابطاً أو رمزاً؛ ننقّيه ونحجبه إن طابق حارس الأسرار المشترك.
+function sanitizeMcpError(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return '';
+  const text = raw.replace(STEER_STRIP, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  try { if (memory.hasSecret(text)) return 'حُجب نص الخطأ لاحتوائه بيانات حسّاسة.'; }
+  catch { /* الحارس تحسين لا يكسر اللوحة */ }
+  return text.length > MCP_MAX_ERROR_CHARS ? text.slice(0, MCP_MAX_ERROR_CHARS) + '…' : text;
+}
+
+// جلسة app-server عابرة تسمع الإشعارات (نمط withProbe): queryCodex أحادية الطلب ولا
+// تعرض الإشعارات، وهذه اللوحة تحتاجها. تُغلق العملية دائماً في finally.
+function openTransient(bin, cwd, onNotification) {
+  const proc = spawn(bin, ['app-server'], { cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: process.env });
+  const replies = new Map();
+  let reqId = 0;
+  let buf = '';
+  proc.stdout.setEncoding('utf8');
+  proc.stdout.on('data', (chunk) => {
+    buf += chunk;
+    if (buf.length > 8 * 1024 * 1024) { buf = ''; return; }
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+      if (!line.trim()) continue;
+      let msg; try { msg = JSON.parse(line); } catch { continue; }
+      if (msg.id != null && replies.has(msg.id)) {
+        const pending = replies.get(msg.id); replies.delete(msg.id);
+        if (msg.error) pending.reject(new Error(msg.error.message || 'rpc_error'));
+        else pending.resolve(msg.result);
+        continue;
+      }
+      if (msg.id != null && msg.method) {
+        try { proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'unsupported' } }) + '\n'); } catch {}
+        continue;
+      }
+      if (msg.method && onNotification) { try { onNotification(msg.method, msg.params || {}); } catch {} }
+    }
+  });
+  proc.stderr.on('data', () => {});
+  proc.on('error', () => { for (const [, p] of replies) p.reject(new Error('codex_spawn_failed')); replies.clear(); });
+  proc.on('exit', () => { for (const [, p] of replies) p.reject(new Error('codex_rpc_closed')); replies.clear(); });
+  const write = (obj) => { try { proc.stdin.write(JSON.stringify(obj) + '\n'); } catch {} };
+  return {
+    request(method, params) {
+      const id = ++reqId;
+      return new Promise((resolve, reject) => {
+        replies.set(id, { resolve, reject });
+        write({ jsonrpc: '2.0', id, method, params: params === undefined ? {} : params });
+      });
+    },
+    notify(method, params) { write({ method, params: params || {} }); },
+    close() { try { proc.stdin.end(); } catch {} setTimeout(() => { try { proc.kill(); } catch {} }, 200); },
+  };
+}
+
+async function mcpStatus(cwd) {
+  const bin = resolveCodexBin();
+  if (!bin) return { ok: false, error: 'لم يُعثر على Codex CLI' };
+  const dir = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : os.homedir();
+  const startup = new Map(); // name → {status, error, failureReason}
+  let session = null;
+  const guard = setTimeout(() => { if (session) session.close(); }, MCP_PROBE_TIMEOUT_MS);
+  try {
+    session = openTransient(bin, dir, (method, params) => {
+      if (method !== 'mcpServer/startupStatus/updated') return;
+      const name = typeof params.name === 'string' ? params.name : '';
+      if (!name) return;
+      startup.set(name, {
+        status: params.status,
+        failureReason: params.failureReason || null,
+        error: sanitizeMcpError(params.error),
+      });
+    });
+    await session.request('initialize', { clientInfo: { name: 'satr', title: 'Satr', version: '1.0.0' } });
+    session.notify('initialized', {});
+    // خيط عابر للقراءة فقط: الإشعارات لا تصل قبله (حدّ upstream 2 أعلاه)
+    try {
+      await session.request('thread/start', {
+        cwd: dir, approvalPolicy: 'on-request', sandbox: 'read-only',
+        persistExtendedHistory: false, experimentalRawEvents: false,
+      });
+      await new Promise((resolve) => setTimeout(resolve, MCP_PROBE_STARTUP_MS));
+    } catch { /* تعذّر بدء الخيط ⇒ نكتفي بجرد authStatus */ }
+    const listed = await session.request('mcpServerStatus/list', {});
+    const rows = listed && Array.isArray(listed.data) ? listed.data : [];
+    const servers = rows
+      // خادم المعاينة الداخلي تفصيل تنفيذي لا موصّل مستخدم — يُستثنى من العرض
+      .filter((s) => s && typeof s.name === 'string' && s.name !== 'satr_preview')
+      .map((s) => {
+        const boot = startup.get(s.name) || null;
+        const authStatus = typeof s.authStatus === 'string' ? s.authStatus : '';
+        let status = boot ? (MCP_STARTUP_STATE[boot.status] || 'pending') : 'pending';
+        if (boot && boot.status === 'failed' && boot.failureReason === 'reauthenticationRequired') status = 'needs-auth';
+        if (authStatus === 'notLoggedIn') status = 'needs-auth';
+        return {
+          name: s.name,
+          status,
+          authStatus,
+          // قابلية تسجيل الدخول من اللوحة: العقد يعلن oAuth/notLoggedIn فقط
+          canLogin: authStatus === 'notLoggedIn' || authStatus === 'oAuth',
+          resources: Array.isArray(s.resources) ? s.resources.length : 0,
+          // tools يعود null دائماً في هذا الإصدار ⇒ لا ندّعي عدداً
+          tools: Array.isArray(s.tools) ? s.tools.map((t) => ({ name: String((t && t.name) || '') })) : null,
+          serverInfo: s.serverInfo && typeof s.serverInfo === 'object'
+            ? { version: String(s.serverInfo.version || '').slice(0, 40) } : null,
+          error: boot ? boot.error : '',
+        };
+      });
+    return { ok: true, servers };
+  } catch (e) {
+    return { ok: false, error: 'تعذّر قراءة حالة موصّلات Codex' };
+  } finally {
+    clearTimeout(guard);
+    if (session) session.close();
+  }
+}
+
+// إعادة تحميل إعداد الخوادم — الطريقة المعلنة الوحيدة (params = null في الـschema).
+// «سطر» لا يكتب config.toml، لذلك التفعيل/التعطيل غير مدعومين لـCodex عمداً.
+async function mcpReload(cwd) {
+  const bin = resolveCodexBin();
+  if (!bin) return { ok: false, error: 'لم يُعثر على Codex CLI' };
+  const dir = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : os.homedir();
+  let session = null;
+  try {
+    session = openTransient(bin, dir, null);
+    await session.request('initialize', { clientInfo: { name: 'satr', title: 'Satr', version: '1.0.0' } });
+    session.notify('initialized', {});
+    await session.request('config/mcpServer/reload', null);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: 'تعذّر إعادة تحميل إعداد الموصّلات' };
+  } finally {
+    if (session) session.close();
+  }
+}
+
+// ---------- تسجيل دخول OAuth لخادم MCP ----------
+// **الرابط لا يعبر IPC ولا يُبثّ**: يبقى هنا في العملية الرئيسية، وmain.js يقرأه من
+// الطلب المعلّق ويفتحه بـshell.openExternal بعد نقرة المستخدم (نمط حوار elicitation
+// ‏URL). ولا يُخزَّن أي token في «سطر» — المصادقة كلها داخل Codex.
+const pendingMcpOauth = new Map();
+let mcpOauthSeq = 0;
+
+function dropMcpOauth(id) {
+  const entry = pendingMcpOauth.get(id);
+  if (!entry) return;
+  pendingMcpOauth.delete(id);
+  clearTimeout(entry.timer);
+  try { entry.session.close(); } catch {}
+}
+
+async function mcpOauthStart(cwd, name) {
+  const bin = resolveCodexBin();
+  if (!bin) return { ok: false, error: 'لم يُعثر على Codex CLI' };
+  const dir = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : os.homedir();
+  let session = null;
+  try {
+    const entry = { name, url: '', session: null, timer: null, settle: null, outcome: null };
+    session = openTransient(bin, dir, (method, params) => {
+      if (method !== 'mcpServer/oauthLogin/completed') return;
+      if (typeof params.name === 'string' && params.name !== name) return;
+      entry.outcome = { success: params.success === true, error: sanitizeMcpError(params.error) };
+      if (entry.settle) { const fn = entry.settle; entry.settle = null; fn(entry.outcome); }
+    });
+    entry.session = session;
+    await session.request('initialize', { clientInfo: { name: 'satr', title: 'Satr', version: '1.0.0' } });
+    session.notify('initialized', {});
+    const result = await session.request('mcpServer/oauth/login', { name });
+    const url = result && typeof result.authorizationUrl === 'string' ? result.authorizationUrl : '';
+    if (!url) { session.close(); return { ok: false, error: 'لم يُعِد Codex رابط مصادقة لهذا الخادم' }; }
+    entry.url = url;
+    const id = 'cxoauth_' + (++mcpOauthSeq) + '_' + Math.random().toString(36).slice(2, 8);
+    entry.timer = setTimeout(() => dropMcpOauth(id), MCP_OAUTH_TTL_MS);
+    pendingMcpOauth.set(id, entry);
+    return { ok: true, id, name };
+  } catch (e) {
+    if (session) session.close();
+    return { ok: false, error: 'تعذّر بدء تسجيل الدخول لهذا الموصّل' };
+  }
+}
+
+// تحقق رابط المصادقة — القواعد نفسها المعتمدة لحوار elicitation ‏URL: HTTPS، أو HTTP
+// على loopback فقط، بلا username/password، بلا فراغ أو محارف تحكم/Bidi، وبسقف طول.
+// دالة نقية يستهلكها main.js قبل shell.openExternal (نمط sanitizeSteerText في C1).
+const MAX_OAUTH_URL = 2048;
+function safeOauthUrl(value) {
+  if (typeof value !== 'string') return '';
+  if (STEER_STRIP.test(value)) { STEER_STRIP.lastIndex = 0; return ''; }
+  STEER_STRIP.lastIndex = 0;
+  const raw = value.trim();
+  if (!raw || /\s/.test(raw) || Array.from(raw).length > MAX_OAUTH_URL) return '';
+  try {
+    const parsed = new URL(raw);
+    if (parsed.username || parsed.password) return '';
+    const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]';
+    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) return '';
+    return Array.from(parsed.href).length <= MAX_OAUTH_URL ? parsed.href : '';
+  } catch { return ''; }
+}
+
+// main.js وحده يستدعيها ليقرأ الرابط ويتحقق منه قبل shell.openExternal — لا تُبثّ.
+// العقد: نص صالح أو null — رابط upstream غير الآمن يُسقَط إلى null fail-closed.
+function mcpOauthUrl(id) {
+  const entry = pendingMcpOauth.get(id);
+  return entry ? (safeOauthUrl(entry.url) || null) : null;
+}
+
+// ينتظر إشعار الاكتمال بعد فتح الرابط؛ المهلة تُنهي الانتظار بلا ادّعاء نجاح.
+function mcpOauthAwait(id, timeoutMs) {
+  const entry = pendingMcpOauth.get(id);
+  if (!entry) return Promise.resolve({ ok: false, error: 'انتهت صلاحية طلب تسجيل الدخول' });
+  if (entry.outcome) {
+    const outcome = entry.outcome;
+    dropMcpOauth(id);
+    return Promise.resolve({ ok: true, success: outcome.success, error: outcome.error });
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      entry.settle = null;
+      resolve({ ok: false, error: 'لم يصل تأكيد اكتمال تسجيل الدخول بعد' });
+    }, Number.isInteger(timeoutMs) ? timeoutMs : 120000);
+    entry.settle = (outcome) => {
+      clearTimeout(timer);
+      dropMcpOauth(id);
+      resolve({ ok: true, success: outcome.success, error: outcome.error });
+    };
+  });
+}
+
+function mcpOauthCancel(id) { dropMcpOauth(id); return { ok: true }; }
+
 function projectPath(cwd, filePath) {
   if (typeof filePath !== 'string' || !filePath.trim()) return null;
   const root = path.resolve(cwd);
@@ -439,6 +739,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   let latestRateLimits = null;
   let finished = false;
   let stopping = false;
+  let compacting = false;      // C2: هذا التشغيل ضغط سياق لا دور نصّي
+  let compactionSeen = false;  // وصل عنصر contextCompaction المؤكِّد للاكتمال
 
   // تراكم نصّ رسالة الوكيل الحالية (نبثّه deltas ثم نُصدر assistant مكتملاً)
   const agentText = new Map();     // itemId → نص متراكم
@@ -850,6 +1152,19 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           source: 'actual',
         };
         latestContextWindow = Number(tokenUsage.modelContextWindow) || null;
+        // C2: لقطة سياق للوحة /سياق — من `last` (آخر طلب) لا `total` التراكمي.
+        // نسجّل ما يعلنه upstream كما هو بلا تأويل، ونتخطى الإشعار بلا نافذة سياق.
+        const last = tokenUsage.last || {};
+        if (latestContextWindow) rememberContext(threadId, {
+          totalTokens: Number(last.totalTokens) || 0,
+          inputTokens: Number(last.inputTokens) || 0,
+          outputTokens: Number(last.outputTokens) || 0,
+          cachedInputTokens: Number(last.cachedInputTokens) || 0,
+          reasoningTokens: Number(last.reasoningOutputTokens) || 0,
+          contextWindow: latestContextWindow,
+          model: model || DEFAULT_MODEL,
+          at: Date.now(),
+        });
         emit({ type: 'usage_update', usage: latestUsage, context_window: latestContextWindow });
         break;
       }
@@ -1020,7 +1335,18 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     } else if (t === 'enteredReviewMode' || t === 'exitedReviewMode') {
       emitAssistantText(t === 'enteredReviewMode' ? 'بدأ Codex وضع المراجعة.' : 'أنهى Codex وضع المراجعة.', 'commentary');
     } else if (t === 'contextCompaction') {
-      emitAssistantText('ضغط Codex سياق المحادثة لمتابعة العمل.', 'commentary');
+      // C2 — إشارة اكتمال الضغط المثبّتة بالمسبار: `thread/compacted` (الموسومة
+      // Deprecated في الـschema) لم تصل قط؛ الواصل فعلاً هو عنصر contextCompaction
+      // بحمولة {id, type} فقط — **بلا أرقام رموز قبل/بعد** (حدّ upstream موثّق).
+      if (compacting) {
+        compactionSeen = true;
+        // بطاقة الواجهة القائمة تعرض الأرقام فقط إن كان pre_tokens رقماً، فغيابها
+        // يعطي «🗜 ضُغطت المحادثة» صادقة بلا رقم مختلق ولا تغيير في المكوّن.
+        emit({
+          type: 'system', subtype: 'compact_boundary', session_id: threadId,
+          compact_metadata: { trigger: 'manual' },
+        });
+      } else emitAssistantText('ضغط Codex سياق المحادثة لمتابعة العمل.', 'commentary');
     }
   }
 
@@ -1034,6 +1360,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       let human = String(errMsg);
       try { const j = JSON.parse(human); if (j && j.detail) human = j.detail; } catch {}
       emitAssistantText('⚠️ تعذّر إكمال الدور: ' + human, 'final_answer');
+    }
+    // C2: ضغط انتهى دوره بلا عنصر contextCompaction ⇒ لا ندّعي نجاحاً ببطاقة ضغط
+    if (compacting && !compactionSeen && !isError) {
+      emitAssistantText('⚠️ لم يؤكّد Codex اكتمال ضغط المحادثة. المحادثة مستمرة كما هي.', 'final_answer');
     }
     emit({
       type: 'result', subtype: isError ? 'error' : 'success',
@@ -1137,6 +1467,24 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         threadId = r && r.thread && r.thread.id;
       }
       if (threadId) emit({ type: 'system', subtype: 'init', session_id: threadId });
+      // ---------- C2: ضغط سياق Codex (/ضغط) ----------
+      // «/compact» ليس نصّ دور عند Codex بل استدعاء `thread/compact/start {threadId}`
+      // (نمط kimi.js المثبّت: الأمر المائل يُعالَج داخل المحرك). لا مهارات ولا ذاكرة
+      // ولا صور تُحقن — لا مدخل نصّياً أصلاً. الاكتمال يصل كعنصر contextCompaction ثم
+      // turn/completed، فيتولّاهما onNotification ويبقى session_id نفسه.
+      if (typeof prompt === 'string' && prompt.trim() === COMPACT_COMMAND) {
+        compacting = true;
+        try {
+          await request('thread/compact/start', { threadId });
+        } catch (e) {
+          // تدهور رشيق: إصدار لا يعلن الطريقة (‏-32601) أو يرفضها ⇒ رسالة عربية ثابتة
+          // بلا نص خطأ upstream الخام.
+          compacting = false;
+          emitAssistantText('⚠️ إصدار Codex المثبّت لا يدعم ضغط المحادثة من «سطر».', 'final_answer');
+          finishTurn({ status: 'completed' });
+        }
+        return;
+      }
       // مدخلات الدور: نصّ + صور (نماذج Codex تقبل الصور — تحقّق حيّ). الصور base64
       // تُمرَّر كـ data-URL (لا حاجة لملف مؤقت — كلا الشكلين image/localImage يعمل).
       const inputItems = [];
@@ -1258,5 +1606,9 @@ module.exports = {
   start, undoEdit, resolveCodexBin, authStatus, accountStatus, listModels, rateLimits, DEFAULT_MODEL,
   isExternalBrowserLaunchCommand, shouldAutoApproveMcp,
   sanitizeSteerText, MAX_STEER_CHARS, // C1: تنقية نص turn/steer (يستهلكها main.js)
+  contextUsage, COMPACT_COMMAND,      // C2: لوحة /سياق وأمر /ضغط
+  // C3: لوحة /موصلات — mcpOauthUrl لـmain.js وحدها (الرابط لا يعبر IPC)
+  mcpStatus, mcpReload, mcpOauthStart, mcpOauthUrl, mcpOauthAwait, mcpOauthCancel,
+  safeOauthUrl, sanitizeMcpError,
   _internals: { projectPath, isInternalMcpApprovalElicitation },
 };

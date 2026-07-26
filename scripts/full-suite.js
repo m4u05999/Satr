@@ -23,6 +23,8 @@ const SUITE = [
   'test:codexmcp',
   'test:codex-contract',
   'test:codex-steer',
+  'test:codex-compact',
+  'test:codex-mcp-panel',
   'test:kimi',
   'test:kimi-keepalive',
   'test:browserguard',
