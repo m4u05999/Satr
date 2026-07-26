@@ -15,6 +15,16 @@ const notices = [];
 termjobs.setNotifier((event) => notices.push(event));
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+// تنظيف المجلد المؤقت: موت عمليات pty على ويندوز يتأخر عن تحرير مقابض الملفات،
+// فيرمي rmSync الفوري EPERM (فشل بيئي مثبت 2026-07-26). إعادة المحاولة تكفي عادةً،
+// وفشلها النهائي تحذير لا فشل اختبار — نظافة المؤقت ليست عقد termjobs.
+function cleanupTemp() {
+  try {
+    fs.rmSync(temp, { recursive: true, force: true, maxRetries: 15, retryDelay: 200 });
+  } catch (error) {
+    console.warn('termjobs: تعذّر تنظيف المجلد المؤقت (غير مُفشل): ' + (error && error.message));
+  }
+}
 async function waitFor(fn, label, timeout = 12000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -80,12 +90,12 @@ async function waitFor(fn, label, timeout = 12000) {
   term.writeTerm(model.id, 'exit\r');
   await waitFor(() => !term.listTerms().some((item) => item.id === model.id), 'خروج طرفية الالتقاط طبيعياً');
   term.killAll();
-  fs.rmSync(temp, { recursive: true, force: true });
+  cleanupTemp();
   console.log('termjobs: نجح — pty حي، buffer، termList، السقوف، label، وقفل FIFO.');
   process.exit(0);
 })().catch((error) => {
   term.killAll();
-  try { fs.rmSync(temp, { recursive: true, force: true }); } catch (e) {}
+  cleanupTemp();
   console.error('termjobs:', error && error.stack ? error.stack : error);
   process.exit(1);
 });

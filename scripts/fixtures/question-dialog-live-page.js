@@ -18,11 +18,18 @@ window.addEventListener('securitypolicyviolation', (e) => {
   violations.push({ directive: e.effectiveDirective, blockedURI: e.blockedURI });
 });
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
+// المكوّن يرسم DOM متزامناً (لا rAF داخله)، فالإطارات هنا مهلة تسوية فقط. تحت حمل
+// GPU تجوع rAF في النافذة المخفية فيعلّق الاختبار (فشل بيئي مثبت 2026-07-26)؛
+// مهلة الاحتياط تكافئ الانتظار بلا إسقاط أي تحقق لاحق.
 function frames(n = 2) {
   return new Promise((resolve) => {
+    let done = false;
+    let fallback = null;
+    const finish = () => { if (!done) { done = true; clearTimeout(fallback); resolve(); } };
     let left = n;
-    const step = () => (--left <= 0 ? resolve() : requestAnimationFrame(step));
+    const step = () => (--left <= 0 ? finish() : requestAnimationFrame(step));
     requestAnimationFrame(step);
+    fallback = setTimeout(finish, 300 + n * 100);
   });
 }
 
