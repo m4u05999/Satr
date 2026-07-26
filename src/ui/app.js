@@ -855,6 +855,15 @@ import { createUpdateToast } from './lib/update-toast.js';
       if (composerEl.setBgProcs) composerEl.setBgProcs(ev.procs);
       return;
     }
+    // أحداث Kimi المتأخرة بين الأدوار (K2 keep-alive): إشعار مؤقت فقط — لا تُدرج
+    // في سجل المحادثة (قرار القائد 4)، والنص محجوب الأسرار ومقصوص من المحرك أصلاً.
+    if (ev.type === 'kimi_keepalive_event') {
+      const sid = typeof ev.sessionId === 'string' ? ev.sessionId.slice(0, 12) : '';
+      const kindAr = { message: 'رسالة', thought: 'تفكير', tool: 'أداة', plan: 'خطة' }[ev.kind] || 'حدث';
+      const text = typeof ev.text === 'string' ? ev.text.replace(/\s+/g, ' ').trim().slice(0, 160) : '';
+      showTransientNotice('🔔 Kimi (' + sid + '…) — ' + kindAr + (text ? ': ' + text : ''));
+      return;
+    }
     // طرفية النموذج (16.2): أداة run_in_terminal أنشأت pty — نتبنّاه كتبويب مرئي.
     // مستقل عن الدور (قد يصل قبل currentBlock) فيُعالَج قبل حارس الكتلة.
     if (ev.type === 'model_term' && ev.id) {
