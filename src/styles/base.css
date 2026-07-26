@@ -369,6 +369,19 @@
   .tool .state { flex: none; margin-left: auto; }
   .tool.done .state { color: var(--green); }
   .tool.done.error .state { color: var(--red); }
+  /* الدفعة D: أفعال مهمة SDK تبقى داخل بطاقة الأداة ولا تدخل شريط عمليات الخلفية. */
+  .sdk-background-move, .sdk-task-stop {
+    flex: none; padding: 2px var(--space-2); font: 11px var(--font);
+    direction: rtl; unicode-bidi: isolate; white-space: nowrap;
+  }
+  .sdk-background-move { color: var(--gold); border-color: var(--gold-border); }
+  .sdk-task-stop { color: var(--red); }
+  .tool.sdk-backgrounded .state, .agent-card.sdk-backgrounded .state {
+    color: var(--gold); direction: rtl; unicode-bidi: isolate; white-space: nowrap;
+  }
+  .tool.sdk-background-finished .state, .agent-card.sdk-background-finished .state {
+    direction: rtl; unicode-bidi: isolate; white-space: nowrap;
+  }
   .tool.browser-shot { align-items: flex-start; flex-wrap: wrap; }
   .tool .shot-thumb { flex-basis: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-1); cursor: zoom-in; }
   .tool .shot-thumb img { display: block; width: auto; max-width: 100%; max-height: 160px; margin: auto; border-radius: var(--radius-sm); }

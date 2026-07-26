@@ -42,6 +42,7 @@ const SUITE = [
   'test:fork-rewind',
   'test:claude-models',
   'test:elicitation',
+  'test:sdk-background',
   'test:testsprite-ready',
   'test:viewer-security',
   'test:askquestion',

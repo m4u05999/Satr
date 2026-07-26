@@ -95,6 +95,161 @@ class SatrChat extends HTMLElement {
       seenUsageResults = new WeakSet();
       renderUsageSummary();
     }
+    // الدفعة D: سجل عرض محلي لبطاقات SDK فقط؛ لا يتصل بـ composer/bgprocs/termjobs.
+    const SDK_BACKGROUND_DELAY_MS = 15000;
+    const SAFE_SDK_TOOL_USE_ID = /^toolu_[A-Za-z0-9]{16,64}$/;
+    const SAFE_SDK_TASK_ID = /^[a-z0-9]{6,64}$/;
+    const sdkToolsByUseId = new Map();
+    const sdkToolsByTaskId = new Map();
+
+    function clearSdkToolRegistry() {
+      for (const entry of sdkToolsByUseId.values()) {
+        if (entry.timer) clearTimeout(entry.timer);
+      }
+      sdkToolsByUseId.clear();
+      sdkToolsByTaskId.clear();
+    }
+
+    function hasSdkBackgroundTasks() {
+      return Array.from(sdkToolsByUseId.values()).some((entry) =>
+        !entry.finished && (entry.moving || entry.backgrounded));
+    }
+
+    function removeSdkActions(entry) {
+      if (entry.moveButton) { entry.moveButton.remove(); entry.moveButton = null; }
+      if (entry.stopButton) { entry.stopButton.remove(); entry.stopButton = null; }
+    }
+
+    function finishSdkToolEntry(entry, isError) {
+      if (!entry || entry.finished) return;
+      if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+      entry.finished = true;
+      entry.moving = false;
+      entry.backgrounded = false;
+      removeSdkActions(entry);
+      entry.el.classList.remove('sdk-moving', 'sdk-backgrounded');
+      entry.el.classList.add('done');
+      entry.stateEl.textContent = isError ? '✗' : '✓';
+      if (isError) entry.el.classList.add('error');
+    }
+
+    function registerSdkTool(toolUseId, element, stateElement, detailElement, isSdk) {
+      if (!isSdk || !SAFE_SDK_TOOL_USE_ID.test(String(toolUseId || ''))) return;
+      const old = sdkToolsByUseId.get(toolUseId);
+      if (old && old.timer) clearTimeout(old.timer);
+      const entry = {
+        toolUseId, el: element, stateEl: stateElement, detailEl: detailElement,
+        timer: null, moveButton: null, stopButton: null, taskId: '',
+        moving: false, backgrounded: false, finished: false, toolResult: null,
+      };
+      sdkToolsByUseId.set(toolUseId, entry);
+      entry.timer = setTimeout(() => {
+        entry.timer = null;
+        if (entry.finished || entry.backgrounded || entry.moving || !entry.el.isConnected) return;
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'sdk-background-move';
+        button.textContent = '⏳ انقله للخلفية';
+        button.title = 'انقل أداة Claude الجارية إلى مهمة SDK خلفية';
+        button.addEventListener('click', () => {
+          if (entry.finished || entry.backgrounded || entry.moving) return;
+          entry.moving = true;
+          entry.el.classList.add('sdk-moving');
+          button.disabled = true;
+          button.textContent = 'جارٍ النقل…';
+          component.dispatchEvent(new CustomEvent('sdk-background-request', {
+            bubbles: true, detail: { toolUseId: entry.toolUseId },
+          }));
+        });
+        entry.moveButton = button;
+        const host = entry.el.classList.contains('agent-card')
+          ? entry.el.querySelector('.agent-head') : entry.el;
+        host.insertBefore(button, entry.stateEl);
+      }, SDK_BACKGROUND_DELAY_MS);
+    }
+
+    function attachSdkStopButton(entry) {
+      if (!entry || !SAFE_SDK_TASK_ID.test(entry.taskId) || entry.stopButton || entry.finished) return;
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'sdk-task-stop';
+      button.textContent = '⏹ إيقاف'; button.title = 'أوقف مهمة Claude الخلفية';
+      button.addEventListener('click', () => {
+        if (entry.finished || button.disabled) return;
+        button.disabled = true;
+        entry.stateEl.textContent = 'جارٍ الإيقاف…';
+        component.dispatchEvent(new CustomEvent('sdk-stop-task-request', {
+          bubbles: true, detail: { taskId: entry.taskId },
+        }));
+      });
+      entry.stopButton = button;
+      const host = entry.el.classList.contains('agent-card')
+        ? entry.el.querySelector('.agent-head') : entry.el;
+      host.insertBefore(button, entry.stateEl);
+    }
+
+    function bindSdkTask(toolUseId, taskId) {
+      const entry = sdkToolsByUseId.get(toolUseId);
+      if (!entry || entry.finished || !SAFE_SDK_TASK_ID.test(String(taskId || ''))) return false;
+      entry.taskId = taskId;
+      sdkToolsByTaskId.set(taskId, entry);
+      attachSdkStopButton(entry);
+      return true;
+    }
+
+    function markSdkBackground(toolUseId, taskId) {
+      const entry = sdkToolsByUseId.get(toolUseId);
+      if (!entry || entry.finished) return false;
+      if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+      entry.moving = false;
+      entry.backgrounded = true;
+      entry.el.classList.remove('done', 'error', 'sdk-moving');
+      entry.el.classList.add('sdk-backgrounded');
+      if (entry.moveButton) { entry.moveButton.remove(); entry.moveButton = null; }
+      entry.stateEl.textContent = 'يعمل في الخلفية';
+      bindSdkTask(toolUseId, taskId);
+      return true;
+    }
+
+    function failSdkBackground(toolUseId) {
+      const entry = sdkToolsByUseId.get(toolUseId);
+      if (!entry || entry.finished) return false;
+      entry.moving = false;
+      entry.el.classList.remove('sdk-moving');
+      if (entry.toolResult) finishSdkToolEntry(entry, entry.toolResult.isError);
+      else if (entry.moveButton) {
+        entry.moveButton.disabled = false;
+        entry.moveButton.textContent = '⏳ انقله للخلفية';
+        entry.stateEl.textContent = '⋯';
+      }
+      return true;
+    }
+
+    function failSdkTaskStop(taskId) {
+      const entry = sdkToolsByTaskId.get(taskId);
+      if (!entry || !entry.stopButton || entry.finished) return false;
+      entry.stopButton.disabled = false;
+      entry.stateEl.textContent = 'يعمل في الخلفية';
+      return true;
+    }
+
+    function updateSdkTask(event) {
+      if (!event || !['completed', 'failed', 'stopped'].includes(event.status)) return false;
+      const entry = sdkToolsByUseId.get(event.toolUseId) || sdkToolsByTaskId.get(event.taskId);
+      if (!entry) return false;
+      if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+      entry.finished = true;
+      entry.moving = false;
+      entry.backgrounded = false;
+      removeSdkActions(entry);
+      entry.el.classList.remove('sdk-moving', 'sdk-backgrounded', 'error');
+      entry.el.classList.add('done', 'sdk-background-finished');
+      if (event.status === 'completed') entry.stateEl.textContent = '✓ اكتملت المهمة الخلفية';
+      else if (event.status === 'failed') {
+        entry.el.classList.add('error');
+        entry.stateEl.textContent = '✗ فشلت المهمة الخلفية';
+      } else entry.stateEl.textContent = '■ أُوقفت المهمة الخلفية';
+      if (event.summary && entry.detailEl) entry.detailEl.textContent = event.summary;
+      return true;
+    }
 
 // ما يلي منقول حرفياً من القشرة (المراحل 2–4 + دفعة UX) — بلا أي تغيير سلوك
   // ---------- ماركداون مدمج آمن (بدون مكتبات خارجية) ----------
@@ -949,7 +1104,7 @@ class SatrChat extends HTMLElement {
     }
 
     // إنشاء بطاقة وكيل فرعي عند استدعاء أداة الإطلاق (Task/Agent)
-    function createAgentCard(id, inp) {
+    function createAgentCard(id, inp, isSdk) {
       const card = document.createElement('div');
       card.className = 'agent-card';
       const head = document.createElement('div');
@@ -968,6 +1123,7 @@ class SatrChat extends HTMLElement {
       revealActivity('ينسّق وكيلاً فرعياً');
       agentCards[id] = { el: card, tools: nested, text, buf: '' };
       if (id) toolEls[id] = card; // toolDone يعلّم البطاقة ✓/✗ عبر .state داخلها
+      registerSdkTool(id, card, head.querySelector('.state'), head.querySelector('.adesc'), isSdk);
     }
 
     return {
@@ -998,11 +1154,11 @@ class SatrChat extends HTMLElement {
           renderPhase(normalized);
         } // خنق إعادة الرسم لكل مرحلة على حدة
       },
-      addTool(id, name, inp, parentId) {
+      addTool(id, name, inp, parentId, isSdk) {
         const card = parentId ? agentCards[parentId] : null;
         // إطلاق وكيل فرعي من الخيط الرئيسي ⇐ بطاقة وكيل (لا رقاقة عادية)
         if (!card && (name === 'Task' || name === 'Agent' || name === 'وكيل فرعي' || name === 'سرب وكلاء')) {
-          createAgentCard(id, inp);
+          createAgentCard(id, inp, isSdk);
           scrollDown();
           return;
         }
@@ -1012,6 +1168,7 @@ class SatrChat extends HTMLElement {
         el.querySelector('.name').textContent = name;
         el.querySelector('.detail').textContent = toolDetail(inp);
         if (id) toolEls[id] = el;
+        registerSdkTool(id, el, el.querySelector('.state'), el.querySelector('.detail'), isSdk);
         toolCount++;
         toolsLabel.textContent = 'الإجراءات (' + toolCount + ')';
         if (card) {
@@ -1029,9 +1186,18 @@ class SatrChat extends HTMLElement {
       toolDone(id, isError) {
         const el = toolEls[id];
         if (!el) return;
-        el.classList.add('done');
-        el.querySelector('.state').textContent = isError ? '✗' : '✓';
-        if (isError) el.classList.add('error');
+        const sdkEntry = sdkToolsByUseId.get(id);
+        if (sdkEntry) {
+          if (sdkEntry.finished) return;
+          if (sdkEntry.timer) { clearTimeout(sdkEntry.timer); sdkEntry.timer = null; }
+          sdkEntry.toolResult = { isError: !!isError };
+          if (sdkEntry.moving || sdkEntry.backgrounded) return;
+          finishSdkToolEntry(sdkEntry, !!isError);
+        } else {
+          el.classList.add('done');
+          el.querySelector('.state').textContent = isError ? '✗' : '✓';
+          if (isError) el.classList.add('error');
+        }
         workTitle.textContent = isError ? 'واجه عائقاً ويتابع' : 'يتابع العمل';
       },
       addScreenshot(dataUrl, kind) {
@@ -1232,6 +1398,7 @@ class SatrChat extends HTMLElement {
     checkpointSession = null;
     resetUsageSummary();
     opsEntryIds.clear();
+    clearSdkToolRegistry();
     thread.innerHTML = '<div class="empty" id="empty"><div class="big">سطر</div><p>جلسة جديدة — اكتب طلبك الأول.</p></div>';
   }
   // تفريغ الخيط لاستئناف محادثة محوّل (نظير reset دون حالة الفراغ — التاريخ سيُبنى فوراً)
@@ -1243,6 +1410,7 @@ class SatrChat extends HTMLElement {
     checkpointSession = null;
     resetUsageSummary();
     opsEntryIds.clear();
+    clearSdkToolRegistry();
     thread.innerHTML = '';
   }
 
@@ -1263,6 +1431,12 @@ class SatrChat extends HTMLElement {
     this.showVerification = showVerification;
     this.clearCheckpoint = clearCheckpoint;
     this.newAssistantBlock = newAssistantBlock;
+    this.markSdkBackground = markSdkBackground;
+    this.bindSdkTask = bindSdkTask;
+    this.failSdkBackground = failSdkBackground;
+    this.failSdkTaskStop = failSdkTaskStop;
+    this.updateSdkTask = updateSdkTask;
+    this.hasSdkBackgroundTasks = hasSdkBackgroundTasks;
     this.reset = reset;
     this.clearThread = clearThread;
     this.scrollToEnd = scrollDown;

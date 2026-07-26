@@ -410,11 +410,13 @@ import { createUpdateToast } from './lib/update-toast.js';
   }
   let lastEngine = null; // لتمييز مغادرة محوّل أعمى عند التبديل
   $('engine').addEventListener('change', async () => {
-    if (sessionControlBusy || sessionResumeBusy) {
+    if (sessionControlBusy || sessionResumeBusy || hasSdkBackgroundSessionLock()) {
       const previous = lastEngine || 'sdk';
       $('engine').value = previous;
       localStorage.setItem('satr_engine', previous);
-      addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل تبديل المحرك.');
+      addNotice(hasSdkBackgroundSessionLock()
+        ? 'أوقف مهمة Claude الخلفية أو انتظر اكتمالها قبل تبديل المحرك.'
+        : 'انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل تبديل المحرك.');
       return;
     }
     const e = $('engine').value;
@@ -713,6 +715,39 @@ import { createUpdateToast } from './lib/update-toast.js';
     } catch (e) { addNotice('تعذّر تغيير حالة سجل المهام'); }
   });
 
+  // الدفعة D: تحكم بطاقات SDK محلياً؛ لا تمر هذه المهام إلى شريط bg_procs أو termjobs.
+  chatEl.addEventListener('sdk-background-request', async (event) => {
+    const toolUseId = event.detail && event.detail.toolUseId;
+    try {
+      const result = await window.satr.backgroundTask(toolUseId);
+      if (result && result.ok) {
+        chatEl.markSdkBackground(toolUseId, result.taskId);
+        addNotice('⏳ نُقلت أداة Claude إلى الخلفية؛ سيصل إشعار عند اكتمالها.');
+      } else {
+        chatEl.failSdkBackground(toolUseId);
+        addNotice((result && result.message) || 'تعذّر نقل هذه الأداة إلى الخلفية.');
+      }
+    } catch (e) {
+      chatEl.failSdkBackground(toolUseId);
+      addNotice('تعذّر نقل هذه الأداة إلى الخلفية.');
+    }
+  });
+
+  chatEl.addEventListener('sdk-stop-task-request', async (event) => {
+    const taskId = event.detail && event.detail.taskId;
+    try {
+      const result = await window.satr.stopSdkTask(taskId);
+      if (result && result.ok) addNotice('⏹ طُلب إيقاف مهمة Claude الخلفية.');
+      else {
+        chatEl.failSdkTaskStop(taskId);
+        addNotice((result && result.message) || 'تعذّر إيقاف مهمة Claude الخلفية.');
+      }
+    } catch (e) {
+      chatEl.failSdkTaskStop(taskId);
+      addNotice('تعذّر إيقاف مهمة Claude الخلفية.');
+    }
+  });
+
   chatEl.addEventListener('checkpoint-verify', async (event) => {
     const detail = event.detail || {};
     if (sessionControlBusy || sessionResumeBusy) { addNotice('انتظر اكتمال عملية الجلسة قبل تشغيل التحقق'); return; }
@@ -898,7 +933,17 @@ import { createUpdateToast } from './lib/update-toast.js';
       return;
     }
     if (ev.type === 'task_update') {
+      // قد يصل snapshot من Query SDK قديمة؛ لا يستبدل Ledger جلسة أو محرك آخر.
+      if (ev.engine !== $('engine').value || !sessionId || ev.session_id !== sessionId) return;
       chatEl.showTaskLedger(ev);
+      return;
+    }
+    if (ev.type === 'sdk_task_started') {
+      chatEl.bindSdkTask(ev.toolUseId, ev.taskId);
+      return;
+    }
+    if (ev.type === 'sdk_task_notification') {
+      chatEl.updateSdkTask(ev);
       return;
     }
     if (ev.type === 'checkpoint_update') {
@@ -985,7 +1030,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       for (const c of ev.message.content) {
         if (c.type === 'text' && c.text && c.text.trim()) block.addText(c.text, ev.parent_tool_use_id, c.phase || ev.phase);
         else if (c.type === 'tool_use') {
-          block.addTool(c.id, c.name, c.input, ev.parent_tool_use_id);
+          block.addTool(c.id, c.name, c.input, ev.parent_tool_use_id, runningEngine === 'sdk');
           // مؤشّر «الوكيل يقود المتصفح» (الخيار 2): يتجاهل ما ليس أداة متصفح داخل المكوّن
           if (previewEl.flashAgentActivity) previewEl.flashAgentActivity(c.name);
         }
@@ -999,6 +1044,10 @@ import { createUpdateToast } from './lib/update-toast.js';
       recordSessionChange(ev);
       previewDirty = true; // م-1-ج: عُدّل ملف في هذا الدور ⇒ المعاينة تحتاج تحديثاً عند انتهائه
     } else if (ev.type === 'result') {
+      // backgroundTasks قد يولد نتيجتي SDK؛ نحاسب وننهي العرض على الأولى فقط.
+      if (block.resultHandled) return;
+      block.resultHandled = true;
+      const completedEngine = runningEngine;
       if (ev.session_id) {
         sessionId = ev.session_id;
         $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8);
@@ -1014,6 +1063,8 @@ import { createUpdateToast } from './lib/update-toast.js';
       // م-1-ج: تحديث المعاينة تلقائياً بعد دور عدّل ملفات (المكوّن يقرّر فعلياً حسب وضعه)
       if (previewDirty) { previewDirty = false; if (previewEl.reloadIfLive) previewEl.reloadIfLive(); }
       chatEl.notifyTurnDone(!!ev.is_error);
+      // Query قد يبقى حياً لإشعار مهمة SDK، لكن دور المستخدم انتهى ويجب تحرير المؤلف الآن.
+      if (completedEngine === 'sdk') releaseRunControls();
     } else if (ev.type === 'spawn_error') {
       if (deadSessionRecovery(ev.text)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
       else if (isClaudeAuthError(ev.text)) block.error(claudeAuthErrorMessage());
@@ -1037,8 +1088,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   // ---------- شريط عمليات الخلفية: انتقل لمكوّن <satr-composer> (تفكيك ت-10) ----------
   // المكوّن يملك العرض والقتل والاسترجاع عند الإقلاع؛ حدث bg_procs يصله عبر setBgProcs.
 
-  function endRun() {
-    if (currentBlock) currentBlock.done = true;
+  function releaseRunControls() {
     busy = false;
     runningEngine = ''; // C1: لا دور جارٍ ⇒ لا توجيه
     sendBtn.textContent = 'إرسال';
@@ -1050,6 +1100,11 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (previewEl && previewEl.hideHandoff) previewEl.hideHandoff();
     if (previewEl && previewEl.hideSecretRequest) previewEl.hideSecretRequest();
     input.focus();
+  }
+
+  function endRun() {
+    if (currentBlock) currentBlock.done = true;
+    releaseRunControls();
   }
 
   // ---------- مربع الأذونات: انتقل لمكوّن <satr-perm-dialog> (تفكيك ت-8) ----------
@@ -1440,10 +1495,19 @@ import { createUpdateToast } from './lib/update-toast.js';
     $('perm').dispatchEvent(new Event('change', { bubbles: true }));
     addNotice('✓ ' + label);
   }
+  function hasSdkBackgroundSessionLock() {
+    return !!(chatEl.hasSdkBackgroundTasks && chatEl.hasSdkBackgroundTasks());
+  }
+
   function newSession(options) {
     const fromResume = options && options.fromResume === true;
     if (sessionControlBusy || (sessionResumeBusy && !fromResume)) {
       addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل بدء جلسة جديدة.');
+      return false;
+    }
+    // الدفعة D: لا نمسح البطاقة الوحيدة التي تملك زر إيقاف Query الخلفية.
+    if (hasSdkBackgroundSessionLock()) {
+      addNotice('أوقف مهمة Claude الخلفية أو انتظر اكتمالها قبل مسح هذه الجلسة.');
       return false;
     }
     // 1.3: «جلسة جديدة» على محوّل أعمى تنسى مؤشر الاستئناف على القرص (سجلّه يبقى للتنظيف)
@@ -1471,6 +1535,10 @@ import { createUpdateToast } from './lib/update-toast.js';
   sessionsEl.addEventListener('session-resume', async (e) => {
     if (sessionControlBusy || sessionResumeBusy || busy) {
       addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل فتح جلسة أخرى.');
+      return;
+    }
+    if (hasSdkBackgroundSessionLock()) {
+      addNotice('أوقف مهمة Claude الخلفية أو انتظر اكتمالها قبل فتح جلسة أخرى.');
       return;
     }
     const s = e.detail;

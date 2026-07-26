@@ -611,7 +611,7 @@ function sanitizeImages(arr) {
 }
 
 // إيقاف أي تشغيل جارٍ أياً كان محركه (محوّل غير SDK أو تشغيل SDK)
-function stopAll() {
+function stopAll(includeSdkBackground = true) {
   preview.clearSensitiveState();
   promocapture.stopAll().catch(() => {});
   const stops = [];
@@ -642,6 +642,12 @@ function stopAll() {
       stops.push(trackSdkStop(stopping));
     } else stops.push(stopping);
   }
+  if (includeSdkBackground && sdkBackgroundRuns.size) {
+    const runs = Array.from(sdkBackgroundRuns);
+    for (const run of runs) forgetSdkBackgroundRun(run);
+    const stopping = Promise.allSettled(runs.map((run) => stopSdkRun(run)));
+    stops.push(trackSdkStop(stopping));
+  }
   return Promise.allSettled(stops);
 }
 
@@ -650,14 +656,14 @@ function notifyObservers(obj, meta) {
   try { features.notify(obj, meta); } catch (e) { /* عزل Enterprise */ }
 }
 
-function emitToWindow(obj) {
+function emitToWindow(obj, engineOverride) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:event', obj);
   // Community يسجل metadata مختصرة، وEnterprise يلتقط التدقيق/الاستهلاك عبر مجراه.
   // URL طلب المصادقة يصل للحوار فقط ولا يدخل سجل المراقبة (قد يحمل state/query حساسة).
   const observed = obj && obj.type === 'elicitation_request'
     ? { type: obj.type, id: obj.id, server: obj.server, mode: obj.mode, fields: obj.fields }
     : obj;
-  notifyObservers(observed, { engine: lastEngine });
+  notifyObservers(observed, { engine: engineOverride || lastEngine });
 }
 
 const opsRoomTransitions = new Set();
@@ -818,6 +824,17 @@ let sendRequestEpoch = 0;
 let sdkRunInFlight = false;
 let sdkStartingPromise = null;
 let sdkStoppingPromise = null;
+// الدفعة D: Queries انتهى دورها وبقيت لها مهام SDK؛ سجل مستقل لا يندمج مع bgprocs/termjobs.
+const sdkBackgroundRuns = new Set();
+const sdkTaskOwners = new Map();
+
+function forgetSdkBackgroundRun(run) {
+  sdkBackgroundRuns.delete(run);
+  for (const [taskId, owner] of sdkTaskOwners) {
+    if (owner === run) sdkTaskOwners.delete(taskId);
+  }
+}
+
 const rewindPreviews = new Map();
 const REWIND_PREVIEW_TTL_MS = 2 * 60 * 1000;
 const MAX_REWIND_PREVIEWS = 100;
@@ -877,8 +894,8 @@ function trackSdkStop(stopping) {
 }
 
 async function runSdkSessionControl(operation) {
-  if (sendRequestBusy || sdkRunInFlight || sdkStartingPromise || sdkStoppingPromise) {
-    return { ok: false, error: 'session_run_busy', message: 'انتظر انتهاء دور Claude الجاري قبل التفريع أو استرجاع الملفات.' };
+  if (sendRequestBusy || sdkRunInFlight || sdkStartingPromise || sdkStoppingPromise || sdkBackgroundRuns.size) {
+    return { ok: false, error: 'session_run_busy', message: 'انتظر انتهاء دور Claude أو مهمته الخلفية قبل التفريع أو استرجاع الملفات.' };
   }
   if (sdkSessionControlBusy) {
     return { ok: false, error: 'session_control_busy', message: 'توجد عملية تفريع أو استرجاع ملفات قيد التنفيذ؛ انتظر اكتمالها.' };
@@ -1292,7 +1309,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
     return { error: 'bad_cwd', message: 'مجلد المشروع غير موجود: ' + cwd };
   }
 
-  await stopAll(); // طلب جديد ينتظر إغلاق السابق فعلياً قبل البدء
+  await stopAll(false); // ينهي الدور التفاعلي السابق ويحافظ على Queries ذات مهام SDK الخلفية
   if (requestEpoch !== sendRequestEpoch) {
     return { error: 'stopped', message: 'أوقف المستخدم الطلب قبل بدء تشغيله.' };
   }
@@ -1311,8 +1328,30 @@ async function handleSendRequest(event, payload, requestEpoch) {
     : prompt;
   const runId = 'run-' + token;
   checkpoints.begin({ runId, engine: runEngine, sessionId: activeSessionId, cwd });
+  let sdkRunForEmit = null;
   const emit = (obj) => {
-    if (token !== runSeq || !obj || typeof obj !== 'object') return;
+    if (!obj || typeof obj !== 'object') return;
+    const lateSdkBackgroundEvent = token !== runSeq && runEngine === 'sdk'
+      && sdkRunForEmit && sdkBackgroundRuns.has(sdkRunForEmit)
+      && (obj.type === 'sdk_task_notification' || obj.type === 'sdk_task_started'
+        || (obj.type === 'task_update' && obj.source === 'claude_agent'));
+    if (token !== runSeq && !lateSdkBackgroundEvent) return;
+    if (obj.type === 'result' && runEngine === 'sdk' && sdkRunForEmit
+        && typeof sdkRunForEmit.hasSdkBackgroundTasks === 'function'
+        && sdkRunForEmit.hasSdkBackgroundTasks()) {
+      sdkBackgroundRuns.add(sdkRunForEmit);
+      if (currentRun === sdkRunForEmit) currentRun = null;
+      markSdkRunInFlight(false);
+    }
+    if (obj.type === 'sdk_task_started' && sdkRunForEmit
+        && typeof sdkRunForEmit.ownsSdkTask === 'function'
+        && sdkRunForEmit.ownsSdkTask(String(obj.taskId || ''))) {
+      sdkTaskOwners.set(String(obj.taskId), sdkRunForEmit);
+    }
+    if (obj.type === 'sdk_task_notification' && sdkRunForEmit) {
+      const owner = sdkTaskOwners.get(String(obj.taskId || ''));
+      if (owner === sdkRunForEmit) sdkTaskOwners.delete(String(obj.taskId));
+    }
     if (obj.type === 'user' && obj.uuid !== undefined) {
       if (!SAFE_UUID.test(String(obj.uuid || '')) || !SAFE_UUID.test(String(obj.session_id || ''))) return;
       obj = { ...obj, uuid: String(obj.uuid), session_id: String(obj.session_id) };
@@ -1326,7 +1365,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
       const eventSessionId = SAFE_SESSION.test(obj.session_id || '') ? obj.session_id : activeSessionId;
       if (!eventSessionId) return;
       const ledger = tasks.apply({ ...obj, engine: runEngine, session_id: eventSessionId });
-      if (ledger) emitToWindow(ledger);
+      if (ledger) emitToWindow(ledger, lateSdkBackgroundEvent ? runEngine : undefined);
       return;
     }
     if (obj.type === 'memory_candidate') {
@@ -1370,7 +1409,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
       if (checkpoint) emitToWindow(checkpoint);
       promocapture.stopAll().catch(() => {});
     }
-    emitToWindow(obj);
+    emitToWindow(obj, lateSdkBackgroundEvent ? runEngine : undefined);
   };
 
   // مجرى المراقبة (§4.7): حدث وصفي ببداية الدور — للتدقيق (من طلب ماذا وأين)
@@ -1494,8 +1533,10 @@ async function handleSendRequest(event, payload, requestEpoch) {
       if (sdkStartingPromise === starting) sdkStartingPromise = null;
     }
     currentRun = sdkRun;
+    sdkRunForEmit = sdkRun;
     if (sdkRun && sdkRun.done && typeof sdkRun.done.finally === 'function') {
       sdkRun.done.finally(() => {
+        forgetSdkBackgroundRun(sdkRun);
         if (currentRun === sdkRun) {
           currentRun = null;
           markSdkRunInFlight(false);
@@ -1525,9 +1566,72 @@ ipcMain.handle('satr:send', async (event, payload) => {
 
 ipcMain.handle('satr:stop', async () => {
   cancelPendingSendRequest();
-  await stopAll();
+  await stopAll(false);
   return { ok: true };
 });
+
+// ---------- مهام Claude SDK الخلفية (الدفعة D) ----------
+// منفصلة صراحةً عن termjobs/bgprocs/Kimi keep-alive؛ لا سجل PID/PTTY ولا شريط مشترك.
+const SAFE_SDK_TOOL_USE_ID = /^toolu_[A-Za-z0-9]{16,64}$/;
+const SAFE_SDK_TASK_ID = /^[a-z0-9]{6,64}$/;
+const SDK_CONTROL_ERRORS = new Set(['bad_id', 'unsupported', 'no_active_turn', 'not_found']);
+
+function sanitizeSdkControlPayload(payload, field, pattern) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '';
+  const keys = Object.keys(payload);
+  if (keys.length !== 1 || keys[0] !== field) return '';
+  const value = payload[field];
+  return typeof value === 'string' && pattern.test(value) ? value : '';
+}
+
+function publicSdkControlResult(result, includeTaskId) {
+  if (result && result.ok === true) {
+    const response = { ok: true };
+    if (includeTaskId && SAFE_SDK_TASK_ID.test(String(result.taskId || ''))) response.taskId = result.taskId;
+    return response;
+  }
+  const error = result && SDK_CONTROL_ERRORS.has(result.error) ? result.error : 'unsupported';
+  const response = { ok: false, error };
+  const message = cleanClaudePublicText(result && result.message, 240);
+  if (message && !memory.hasSecret(message)) response.message = message;
+  return response;
+}
+
+async function handleSdkBackgroundTaskRequest(payload) {
+  const toolUseId = sanitizeSdkControlPayload(payload, 'toolUseId', SAFE_SDK_TOOL_USE_ID);
+  if (!toolUseId) return { ok: false, error: 'bad_input' };
+  if (lastEngine !== 'sdk') return { ok: false, error: 'unsupported' };
+  const run = currentRun;
+  if (!run || typeof run.moveToBackground !== 'function') return { ok: false, error: 'no_active_turn' };
+  try {
+    const result = publicSdkControlResult(await run.moveToBackground(toolUseId), true);
+    if (result.ok && result.taskId && typeof run.ownsSdkTask === 'function' && run.ownsSdkTask(result.taskId)) {
+      sdkTaskOwners.set(result.taskId, run);
+    }
+    return result;
+  } catch {
+    return { ok: false, error: 'unsupported', message: 'تعذّر نقل الأداة إلى الخلفية.' };
+  }
+}
+
+async function handleStopSdkTaskRequest(payload) {
+  const taskId = sanitizeSdkControlPayload(payload, 'taskId', SAFE_SDK_TASK_ID);
+  if (!taskId) return { ok: false, error: 'bad_input' };
+  let run = sdkTaskOwners.get(taskId) || null;
+  if (!run) {
+    if (lastEngine !== 'sdk') return { ok: false, error: 'unsupported' };
+    run = currentRun;
+  }
+  if (!run || typeof run.stopSdkTask !== 'function') return { ok: false, error: 'no_active_turn' };
+  try {
+    return publicSdkControlResult(await run.stopSdkTask(taskId), false);
+  } catch {
+    return { ok: false, error: 'unsupported', message: 'تعذّر إيقاف مهمة Claude الخلفية.' };
+  }
+}
+
+ipcMain.handle('satr:backgroundTask', (event, payload) => handleSdkBackgroundTaskRequest(payload));
+ipcMain.handle('satr:stopSdkTask', (event, payload) => handleStopSdkTaskRequest(payload));
 
 // ---------- الطرفية العربية المدمجة (المرحلة 8) ----------
 // أحداث الطرفية عالية الإنتاجية تمرّ بقناة مستقلة satr:term (لا satr:event) —

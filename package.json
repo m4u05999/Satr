@@ -70,6 +70,7 @@
     "test:fork-rewind": "node scripts/fork-rewind-test.js",
     "test:claude-models": "node scripts/claude-models-test.js",
     "test:elicitation": "node scripts/elicitation-test.js",
+    "test:sdk-background": "node scripts/sdk-background-test.js",
     "test:testsprite": "node scripts/testsprite-integration-test.js",
     "testsprite:harness": "node scripts/testsprite-harness.js",
     "test:testsprite-harness": "node scripts/testsprite-harness-test.js",

@@ -36,6 +36,10 @@ const envbrief = require('./envbrief');
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_METADATA_TTL_MS = 2 * 60 * 1000;
 const SAFE_CLAUDE_MODEL = /^[A-Za-z0-9./-]{1,64}$/;
+// الدفعة D: البوادئ والمحارف مثبتة بالمسبار؛ النطاقات المحدودة تتوافق مع تغيّر أطوال CLI.
+const SAFE_SDK_TOOL_USE_ID = /^toolu_[A-Za-z0-9]{16,64}$/;
+const SAFE_SDK_TASK_ID = /^[a-z0-9]{6,64}$/;
+const SDK_TASK_NOTIFICATION_STATUSES = new Set(['completed', 'failed', 'stopped']);
 
 // أدوات تعديل الملفات التي نعرض لها فرقاً (Diff) — المرحلة 3
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
@@ -224,7 +228,224 @@ function taskStatusFromClaude(status) {
   return 'pending';
 }
 
-function emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingCreates) {
+function cleanSdkTaskText(value, maxLength) {
+  if (typeof value !== 'string') return '';
+  return Array.from(value
+    .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim())
+    .slice(0, maxLength)
+    .join('');
+}
+
+function safeSdkTaskText(value, maxLength) {
+  const text = cleanSdkTaskText(value, maxLength);
+  return text && !memory.hasSecret(text) ? text : '';
+}
+
+// قناة آمنة خاصة ببطاقة مهمة SDK الخلفية. لا نعيد output_file أو usage أو UUID،
+// ونسقط summary كاملة إن التقط حارس الذاكرة اعتماداً محتملاً.
+function sdkTaskNotificationEvent(message, toolUseId) {
+  if (!message || message.type !== 'system' || message.subtype !== 'task_notification') return null;
+  const taskId = String(message.task_id || '');
+  const rawToolUseId = String(message.tool_use_id || '');
+  if (toolUseId && rawToolUseId && rawToolUseId !== String(toolUseId)) return null;
+  const observedToolUseId = String(toolUseId || rawToolUseId);
+  if (!SAFE_SDK_TASK_ID.test(taskId) || !SAFE_SDK_TOOL_USE_ID.test(observedToolUseId)) return null;
+  if (!SDK_TASK_NOTIFICATION_STATUSES.has(message.status)) return null;
+  const event = {
+    type: 'sdk_task_notification',
+    taskId,
+    toolUseId: observedToolUseId,
+    status: message.status,
+  };
+  const summary = safeSdkTaskText(message.summary, 300);
+  if (summary) event.summary = summary;
+  return event;
+}
+
+function sdkTaskStartedEvent(toolUseId, taskId) {
+  if (!SAFE_SDK_TOOL_USE_ID.test(String(toolUseId || '')) || !SAFE_SDK_TASK_ID.test(String(taskId || ''))) return null;
+  return { type: 'sdk_task_started', toolUseId: String(toolUseId), taskId: String(taskId) };
+}
+
+function createSdkBackgroundController({ query, emit, closeInput, isolated }) {
+  const taskIdByToolUse = new Map();
+  const toolUseByTaskId = new Map();
+  const taskTitleById = new Map();
+  const moveStates = new Map(); // tool_use_id → { status, taskId, notification, promise }
+  let active = true;
+  let resultSeen = false;
+  let observedSessionId = '';
+
+  function finishInputIfIdle() {
+    if (resultSeen && moveStates.size === 0 && typeof closeInput === 'function') closeInput();
+  }
+
+  function rememberTask(toolUseId, taskId) {
+    if (!SAFE_SDK_TOOL_USE_ID.test(toolUseId) || !SAFE_SDK_TASK_ID.test(taskId)) return;
+    taskIdByToolUse.set(toolUseId, taskId);
+    toolUseByTaskId.set(taskId, toolUseId);
+    const state = moveStates.get(toolUseId);
+    if (!state) return;
+    const missingBefore = !state.taskId;
+    state.taskId = taskId;
+    if (missingBefore && state.status === 'backgrounded' && !state.taskMappingEmitted) {
+      state.taskMappingEmitted = true;
+      const event = sdkTaskStartedEvent(toolUseId, taskId);
+      if (event && typeof emit === 'function') emit(event);
+    }
+  }
+
+  function finalizeTask(toolUseId, message) {
+    const state = moveStates.get(toolUseId);
+    if (!state) return;
+    const event = sdkTaskNotificationEvent(message, toolUseId);
+    if (!event || state.taskId && state.taskId !== event.taskId) return;
+    if (typeof emit === 'function') emit(event);
+    moveStates.delete(toolUseId);
+    const taskId = state.taskId || String(message && message.task_id || '');
+    taskIdByToolUse.delete(toolUseId);
+    if (SAFE_SDK_TASK_ID.test(taskId)) toolUseByTaskId.delete(taskId);
+    finishInputIfIdle();
+  }
+
+  function observe(message) {
+    if (!message || typeof message !== 'object') return;
+    const sessionId = String(message.session_id || '');
+    if (SAFE_UUID.test(sessionId)) observedSessionId = sessionId;
+    const toolUseId = String(message.tool_use_id || '');
+    const taskId = String(message.task_id || '');
+    const cleanedTitle = safeSdkTaskText(message.description, 300);
+    if (SAFE_SDK_TASK_ID.test(taskId) && cleanedTitle) taskTitleById.set(taskId, cleanedTitle);
+    rememberTask(toolUseId, taskId);
+    if (message.type !== 'system' || message.subtype !== 'task_notification') return;
+    const resolvedToolUseId = SAFE_SDK_TOOL_USE_ID.test(toolUseId)
+      ? toolUseId : toolUseByTaskId.get(taskId) || '';
+    const state = moveStates.get(resolvedToolUseId);
+    if (!state) return;
+    // قد يسبق إشعار قصير جداً حسم Promise التحكم؛ نخزنه حتى نعرف أن النقل نجح فعلاً.
+    if (state.status === 'moving') {
+      state.notification = message;
+      return;
+    }
+    finalizeTask(resolvedToolUseId, message);
+  }
+
+  async function performMove(toolUseId, state) {
+    try {
+      const moved = await query.backgroundTasks(toolUseId);
+      if (!active || moveStates.get(toolUseId) !== state) {
+        return { ok: false, error: 'no_active_turn', message: 'لا يوجد دور Claude نشط.' };
+      }
+      if (moved !== true) {
+        moveStates.delete(toolUseId);
+        finishInputIfIdle();
+        return { ok: false, error: 'not_found', message: 'لم تعد هذه الأداة قيد التنفيذ في الواجهة الأمامية.' };
+      }
+      state.status = 'backgrounded';
+      state.taskId = state.taskId || taskIdByToolUse.get(toolUseId) || '';
+      const taskId = state.taskId;
+      if (state.notification) finalizeTask(toolUseId, state.notification);
+      return SAFE_SDK_TASK_ID.test(taskId) ? { ok: true, taskId } : { ok: true };
+    } catch {
+      if (moveStates.get(toolUseId) === state) moveStates.delete(toolUseId);
+      finishInputIfIdle();
+      return { ok: false, error: 'unsupported', message: 'تعذّر نقل الأداة؛ قد يكون Claude Code المستخدم أقدم من الميزة.' };
+    }
+  }
+
+  async function moveToBackground(toolUseId) {
+    if (typeof toolUseId !== 'string' || !SAFE_SDK_TOOL_USE_ID.test(toolUseId)) {
+      return { ok: false, error: 'bad_id', message: 'معرّف أداة Claude غير صالح.' };
+    }
+    if (isolated) return { ok: false, error: 'unsupported', message: 'النقل إلى الخلفية غير متاح في هذا السياق المعزول.' };
+    if (!active) return { ok: false, error: 'no_active_turn', message: 'لا يوجد دور Claude نشط.' };
+    if (!query || typeof query.backgroundTasks !== 'function') {
+      return { ok: false, error: 'unsupported', message: 'إصدار Claude Code المستخدم لا يدعم نقل الأدوات إلى الخلفية.' };
+    }
+    const existing = moveStates.get(toolUseId);
+    if (existing) return existing.promise;
+    // نسجل الحالة قبل استدعاء SDK كي لا يسبق إشعار سريع جداً حسم Promise التحكم.
+    const state = {
+      status: 'moving', taskId: taskIdByToolUse.get(toolUseId) || '', notification: null,
+      promise: null, taskMappingEmitted: false,
+    };
+    moveStates.set(toolUseId, state);
+    state.promise = performMove(toolUseId, state);
+    return state.promise;
+  }
+
+  async function stopSdkTask(taskId) {
+    if (typeof taskId !== 'string' || !SAFE_SDK_TASK_ID.test(taskId)) {
+      return { ok: false, error: 'bad_id', message: 'معرّف مهمة Claude غير صالح.' };
+    }
+    if (isolated) return { ok: false, error: 'unsupported', message: 'إيقاف مهمة خلفية غير متاح في هذا السياق المعزول.' };
+    if (!active) return { ok: false, error: 'no_active_turn', message: 'لا يوجد دور Claude نشط.' };
+    const toolUseId = toolUseByTaskId.get(taskId) || '';
+    const state = moveStates.get(toolUseId);
+    if (!state || state.status !== 'backgrounded') {
+      return { ok: false, error: 'not_found', message: 'لم تُسجّل هذه المهمة ضمن مهام Claude الخلفية.' };
+    }
+    if (!query || typeof query.stopTask !== 'function') {
+      return { ok: false, error: 'unsupported', message: 'إصدار Claude Code المستخدم لا يدعم إيقاف المهمة الخلفية.' };
+    }
+    try {
+      await query.stopTask(taskId);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'unsupported', message: 'تعذّر إيقاف المهمة؛ قد يكون Claude Code المستخدم أقدم من الميزة.' };
+    }
+  }
+
+  function finish(status = 'failed') {
+    if (!active) return;
+    active = false;
+    const finalStatus = SDK_TASK_NOTIFICATION_STATUSES.has(status) ? status : 'failed';
+    const summary = finalStatus === 'stopped'
+      ? 'أُوقفت مهمة Claude الخلفية مع إيقاف الدور.'
+      : 'انتهى تشغيل Claude قبل وصول إشعار المهمة الخلفية.';
+    if (typeof emit === 'function') {
+      for (const [toolUseId, state] of moveStates) {
+        const taskId = String(state.taskId || '');
+        const event = { type: 'sdk_task_notification', toolUseId, status: finalStatus, summary };
+        if (SAFE_SDK_TASK_ID.test(taskId)) event.taskId = taskId;
+        emit(event);
+        if (observedSessionId && SAFE_SDK_TASK_ID.test(taskId)) {
+          emit({
+            type: 'task_update', schema_version: 1, session_id: observedSessionId,
+            mode: 'merge', source: 'claude_agent', tasks: [{
+              id: taskId,
+              title: taskTitleById.get(taskId) || ('مهمة Claude ' + taskId),
+              status: 'blocked', owner: 'Claude', evidence: [{ text: summary, kind: 'result' }],
+            }],
+          });
+        }
+      }
+    }
+    moveStates.clear();
+    taskIdByToolUse.clear();
+    toolUseByTaskId.clear();
+    taskTitleById.clear();
+  }
+
+  return {
+    observe,
+    moveToBackground,
+    stopSdkTask,
+    markResult() { resultSeen = true; finishInputIfIdle(); },
+    finish,
+    pendingCount: () => moveStates.size,
+    hasSdkBackgroundTasks: () => moveStates.size > 0,
+    ownsSdkTask(taskId) {
+      const toolUseId = toolUseByTaskId.get(String(taskId || '')) || '';
+      const state = moveStates.get(toolUseId);
+      return !!state && state.status === 'backgrounded';
+    },
+  };
+}
+
+function emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingCreates, startedTaskIds) {
   const sessionId = msg && msg.session_id;
   if (!sessionId) return;
   const send = (mode, source, taskList) => emit({
@@ -281,36 +502,47 @@ function emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingCreates) {
 
   if (msg.type !== 'system' || !msg.task_id) return;
   const id = String(msg.task_id);
+  const fallbackTitle = SAFE_SDK_TASK_ID.test(id) ? ('مهمة وكيل ' + id) : 'مهمة وكيل Claude';
+  const knownTitle = () => safeSdkTaskText(taskTitles.get(id), 300) || fallbackTitle;
   if (msg.subtype === 'task_started') {
-    const title = msg.description || ('مهمة وكيل ' + id);
+    startedTaskIds.add(id);
+    const title = safeSdkTaskText(msg.description, 300) || fallbackTitle;
+    const owner = safeSdkTaskText(msg.subagent_type, 80) || 'Claude';
     taskTitles.set(id, title);
     taskStatuses.set(id, 'in_progress');
-    send('merge', 'claude_agent', [{ id, title, status: 'in_progress', owner: msg.subagent_type || 'Claude', evidence: [] }]);
+    send('merge', 'claude_agent', [{ id, title, status: 'in_progress', owner, evidence: [] }]);
   } else if (msg.subtype === 'task_updated') {
     const patch = msg.patch || {};
-    const title = patch.description || taskTitles.get(id) || ('مهمة وكيل ' + id);
+    const title = safeSdkTaskText(patch.description, 300) || knownTitle();
+    const error = safeSdkTaskText(patch.error, 300);
     const status = patch.status ? taskStatusFromClaude(patch.status) : (taskStatuses.get(id) || 'pending');
     taskTitles.set(id, title);
     taskStatuses.set(id, status);
     send('merge', 'claude_agent', [{
       id, title, status, owner: '',
-      evidence: patch.error ? [{ text: String(patch.error), kind: 'error' }] : [],
+      evidence: error ? [{ text: error, kind: 'error' }] : [],
     }]);
   } else if (msg.subtype === 'task_progress') {
-    const title = msg.description || taskTitles.get(id) || ('مهمة وكيل ' + id);
+    const title = safeSdkTaskText(msg.description, 300) || knownTitle();
+    const summary = safeSdkTaskText(msg.summary, 300);
+    const owner = safeSdkTaskText(msg.subagent_type, 80) || 'Claude';
     taskTitles.set(id, title);
     taskStatuses.set(id, 'in_progress');
     send('merge', 'claude_agent', [{
-      id, title, status: 'in_progress', owner: msg.subagent_type || 'Claude',
-      evidence: msg.summary ? [{ text: String(msg.summary), kind: 'progress' }] : [],
+      id, title, status: 'in_progress', owner,
+      evidence: summary ? [{ text: summary, kind: 'progress' }] : [],
     }]);
   } else if (msg.subtype === 'task_notification') {
-    const title = taskTitles.get(id) || msg.summary || ('مهمة وكيل ' + id);
+    // Query مستأنفة متزامنة قد تعيد stopped كاذبة لمهمة بدأت في Query السابقة؛
+    // لا نحدّث Ledger إلا لمهمة رأينا بدايتها/إنشاءها في هذا المجرى نفسه.
+    if (!startedTaskIds.has(id)) return;
+    const summary = safeSdkTaskText(msg.summary, 300);
+    const title = knownTitle();
     const status = taskStatusFromClaude(msg.status);
     taskStatuses.set(id, status);
     send('merge', 'claude_agent', [{
       id, title, status, owner: 'Claude',
-      evidence: msg.summary ? [{ text: String(msg.summary), kind: 'result' }] : [],
+      evidence: summary ? [{ text: summary, kind: 'result' }] : [],
     }]);
   }
 }
@@ -484,6 +716,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const taskTitles = new Map(); // task_id → عنوان؛ يربط رسائل Claude الجزئية بلا افتراضات
   const taskStatuses = new Map(); // task_id → حالة؛ تحديث owner وحده لا يعيدها pending
   const pendingTaskCreates = new Map(); // tool_use_id لـTaskCreate → input حتى تصل نتيجته ذات id
+  const startedClaudeTaskIds = new Set(); // task_started المرصودة في Query نفسها؛ يحجب إشعار الاستئناف الكاذب
   let effectivePrompt = prompt;
   let testspriteHarnessHost = null;
   let testspriteProgressWatcher = null;
@@ -1588,6 +1821,12 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   }
 
   const q = query({ prompt: promptStream(), options });
+  const sdkBackgroundController = createSdkBackgroundController({
+    query: q,
+    emit,
+    closeInput,
+    isolated: !!internalPolicy,
+  });
 
   // حلقة الاستهلاك تعمل في الخلفية؛ الأحداث تصل الواجهة تباعاً
   const done = (async () => {
@@ -1613,18 +1852,22 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           unsupportedElicitationNotified = true;
           emit({ type: 'stderr', text: 'لا يدعم إصدار Claude Code المستخدم طلب إدخال الموصّلات. حدّث Claude Code أو أكمل المصادقة عبر /mcp.' });
         }
-        emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingTaskCreates);
+        emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingTaskCreates, startedClaudeTaskIds);
+        sdkBackgroundController.observe(msg);
         if (msg.type === 'stream_event') {
           const phaseEvent = phaseEventFromStreamEvent(msg.event);
           if (phaseEvent) emit(phaseEvent);
         } else if (msg.type === 'assistant') {
           emit(annotateAssistantMessage(msg));
         } else if (msg.type === 'system' || msg.type === 'user') {
-          if (!(matchingPromptUser && (inputAlreadyEmitted || internalPolicy))) emit(msg);
+          // task_notification الخام يحمل output_file/usage/UUID؛ استُهلك أعلاه إلى
+          // task_update والحدث المنقّى، فلا يعبر الغلاف الخام إلى renderer أو المراقبين.
+          const rawTaskNotification = msg.type === 'system' && msg.subtype === 'task_notification';
+          if (!rawTaskNotification && !(matchingPromptUser && (inputAlreadyEmitted || internalPolicy))) emit(msg);
         } else if (msg.type === 'result') {
           emit(msg);
           turnAllowed.clear();
-          closeInput(); // انتهى الدور — إغلاق قناة الإدخال ينهي التشغيل
+          sdkBackgroundController.markResult(); // تبقى القناة حية إن كانت مهمة SDK خلفية تنتظر task_notification
         }
         // أنواع أخرى (status/progress…) لا تعنينا حالياً
       }
@@ -1633,6 +1876,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       emit({ type: 'spawn_error', text: String((e && e.message) || e) });
       emit({ type: 'proc_done', code: 1 });
     } finally {
+      sdkBackgroundController.finish('failed');
       closeInput();
       turnAllowed.clear();
       preview.clearSecretTransfers();
@@ -1664,8 +1908,22 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     // يحسم بعد انتهاء استهلاك Query والتنظيف، لا عند وصول proc_done فقط.
     done,
     forceClose() {
+      sdkBackgroundController.finish('failed');
       closeInput();
       try { q.close(); } catch { /* إغلاق احترازي بعد مهلة main */ }
+    },
+    // الدفعة D: تحكم Query الجاري فقط؛ لا يُستعمل في السياقات المعزولة ولا مع Query عابر.
+    moveToBackground(toolUseId) {
+      return sdkBackgroundController.moveToBackground(toolUseId);
+    },
+    stopSdkTask(taskId) {
+      return sdkBackgroundController.stopSdkTask(taskId);
+    },
+    hasSdkBackgroundTasks() {
+      return sdkBackgroundController.hasSdkBackgroundTasks();
+    },
+    ownsSdkTask(taskId) {
+      return sdkBackgroundController.ownsSdkTask(taskId);
     },
     // رد الواجهة على طلب إذن
     resolvePermission(id, allow, always, turn) {
@@ -1721,6 +1979,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     },
     // إيقاف حقيقي: مقاطعة النموذج + إنهاء الإدخال + رفض الأذونات والأسئلة المعلقة
     async stop() {
+      sdkBackgroundController.finish('stopped');
       turnAllowed.clear();
       preview.clearSensitiveState();
       if (testspriteRequested) testsprite.scrubConfig(cwd);
@@ -2025,6 +2284,12 @@ module.exports = {
   claudeModels,
   claudeAccount,
   createClaudeMetadataClient,
+  createSdkBackgroundController,
+  emitClaudeTasks,
+  sdkTaskNotificationEvent,
+  sdkTaskStartedEvent,
+  SAFE_SDK_TOOL_USE_ID,
+  SAFE_SDK_TASK_ID,
   applyClaudeFallbackModel,
   applyClaudeElicitation,
   undoEdit,
