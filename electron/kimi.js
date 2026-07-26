@@ -413,8 +413,14 @@ function buildSatrMcpTools(cwd, skillContext, emit) {
       access: name === 'verify_project' ? 'exec' : 'read',
       neverAlways: name === 'verify_project',
       handler: async (args) => {
+        // K3-أ: على قنوات keep-alive يصل skillContext مرجعاً حياً { current } يُحدَّث
+        // كل دور، فيرى الدور المستأجر اختياره الحالي لا اختيار دور بناء القناة.
+        // الاستخدامات الثابتة تمرر الكائن العادي كما هو (توافق خلفي).
+        const activeSkillContext = skillContext && typeof skillContext === 'object'
+          && Object.prototype.hasOwnProperty.call(skillContext, 'current')
+          ? skillContext.current : skillContext;
         const result = await agentTools.run(name, cwd, args || {}, {
-          emit, id: 'kmmcp_tool_' + (++callSeq), skillContext, engine: ENGINE_ID,
+          emit, id: 'kmmcp_tool_' + (++callSeq), skillContext: activeSkillContext, engine: ENGINE_ID,
         });
         return {
           content: [{ type: 'text', text: String(result && result.content || '') }],
@@ -597,6 +603,10 @@ function create(deps) {
     const channelRef = { sessionId: lease ? lease.sessionId : null };
     // القناة المستأجرة مسجّلة أصلاً؛ القناة الجديدة تُسجَّل بعد نجاح session setup.
     let keepAliveActive = !!lease;
+    // K3-أ: مرجع حي لسياق المهارات على القناة المشتركة — يُحدَّث في كل دور (أول أو
+    // مستأجَر) فتقرأ إغلاقات extraTools طويلة العمر سياق الدور النشط لا دور البناء.
+    if (shared.skillContextRef) shared.skillContextRef.current = skillContext;
+    else shared.skillContextRef = { current: skillContext };
 
     if (lease) {
       mcpHost = lease.mcpHost;
@@ -604,7 +614,7 @@ function create(deps) {
       mcpHost = await mcpFactory({
         preview,
         cwd,
-        extraTools: buildSatrMcpTools(cwd, skillContext, emitShared),
+        extraTools: buildSatrMcpTools(cwd, shared.skillContextRef, emitShared),
         openPreview: (url) => emitShared({ type: 'preview_open', url }),
         onActivity: (method, tool) => {
           if (method === 'tools/call' && tool) try { preview.emitAgentActivity(tool); } catch { /* تحسين */ }

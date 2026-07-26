@@ -7,6 +7,7 @@ const path = require('path');
 const { EventEmitter } = require('events');
 
 const kimi = require('../electron/kimi');
+const skillCatalog = require('../electron/skills');
 
 const root = path.resolve(__dirname, '..');
 
@@ -659,6 +660,78 @@ async function testKeepaliveEvictsOldest() {
   }
 }
 
+// K3-أ: المرجع الحي لسياق المهارات — إغلاقات extraTools تقرأ سياق الدور الحالي.
+async function testSkillContextLiveRef() {
+  const ref = { current: skillCatalog.resolveSelection(root, ['satr-guide']) };
+  const tools = kimi._internals.buildSatrMcpTools(root, ref, () => {});
+  const loadSkill = tools.find((tool) => tool.name === 'load_skill');
+
+  const guide = await loadSkill.handler({ name: 'satr-guide' });
+  assert.strictEqual(guide.isError, false, 'المهارة المفعّلة في السياق الحالي تُحمَّل');
+  const tafqeetEarly = await loadSkill.handler({ name: 'tafqeet' });
+  assert.strictEqual(tafqeetEarly.isError, true, 'مهارة خارج الاختيار تُرفض قبل التحديث');
+
+  // تحديث المرجع (كما يفعل الاستئجار): السياق الجديد يُرى والقديم لا يتسرّب
+  ref.current = skillCatalog.resolveSelection(root, ['tafqeet']);
+  const tafqeet = await loadSkill.handler({ name: 'tafqeet' });
+  assert.strictEqual(tafqeet.isError, false, 'المرجع المحدَّث يرى اختيار الدور الجديد');
+  const guideLate = await loadSkill.handler({ name: 'satr-guide' });
+  assert.strictEqual(guideLate.isError, true, 'اختيار الدور القديم لا يتسرّب بعد التحديث');
+
+  // توافق خلفي: كائن سياق عادي (بلا current) يعمل كما كان
+  const staticTools = kimi._internals.buildSatrMcpTools(root, skillCatalog.resolveSelection(root, ['satr-guide']), () => {});
+  const staticLoad = staticTools.find((tool) => tool.name === 'load_skill');
+  const staticGuide = await staticLoad.handler({ name: 'satr-guide' });
+  assert.strictEqual(staticGuide.isError, false, 'الكائن العادي يبقى مدعوماً');
+}
+
+// K3-أ عبر المحرك: الدور المستأجر يرى مهارات اختياره رغم أن أدوات MCP بُنيت في الدور الأول.
+async function testKeepaliveLeasedTurnSeesCurrentSkills() {
+  const events1 = [];
+  const events2 = [];
+  let capturedTools = null;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    startMcp: async (options) => {
+      if (!capturedTools) capturedTools = options.extraTools;
+      return { url: 'http://127.0.0.1:49152/mcp', token: 'test-token', stop: async () => {} };
+    },
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_skills_1' } });
+      } else if (message.method === 'session/prompt') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+      }
+    }),
+  });
+
+  try {
+    await engine.start({
+      prompt: 'الدور الأول', sessionId: null, model: 'k3', permissionMode: 'default',
+      skills: ['satr-guide'], images: [], browserControl: true,
+    }, root, (event) => events1.push(event));
+    await waitFor(() => events1.some((event) => event.type === 'result'));
+    assert.ok(capturedTools, 'أدوات MCP بُنيت في الدور الأول');
+    const loadSkill = capturedTools.find((tool) => tool.name === 'load_skill');
+    assert.strictEqual((await loadSkill.handler({ name: 'satr-guide' })).isError, false);
+    assert.strictEqual((await loadSkill.handler({ name: 'tafqeet' })).isError, true);
+
+    // دور ثانٍ مستأجر باختيار مختلف: نفس القناة وأدواتها لكن بسياق الدور الجديد
+    await engine.start({
+      prompt: 'الدور الثاني', sessionId: 'kimi_skills_1', model: 'k3', permissionMode: 'default',
+      skills: ['tafqeet'], images: [], browserControl: true,
+    }, root, (event) => events2.push(event));
+    await waitFor(() => events2.some((event) => event.type === 'result'));
+    assert.strictEqual((await loadSkill.handler({ name: 'tafqeet' })).isError, false,
+      'الدور المستأجر يرى مهارات اختياره الحالي');
+    assert.strictEqual((await loadSkill.handler({ name: 'satr-guide' })).isError, true,
+      'اختيار الدور الأول لا يتسرّب إلى الدور المستأجر');
+  } finally {
+    await engine.keepalive.killAll();
+  }
+}
+
 async function testSessionBrowser() {
   const spawned = [];
   const listRequests = [];
@@ -1218,6 +1291,8 @@ function testSecurityAndWiring() {
   await testKeepaliveLateEvents();
   await testKeepaliveStopKeepsSession();
   await testKeepaliveEvictsOldest();
+  await testSkillContextLiveRef();
+  await testKeepaliveLeasedTurnSeesCurrentSkills();
   await testLoadFallbackDoesNotReplayHistory();
   await testSessionBrowser();
   await testModelCompactAndEffortContract();
@@ -1240,6 +1315,8 @@ function testSecurityAndWiring() {
   console.log('✓ K2: الأحداث المتأخرة بين الأدوار تصل kimi_keepalive_event محجوبة ولا تدخل سجل المحادثة');
   console.log('✓ K2: إيقاف الدور يرسل session/cancel ويبقي الجلسة حية، والقتل الكامل من السجل فقط');
   console.log('✓ K2: سقف عمليتين حيتين يطرد الأقدم خمولاً عبر المحرك');
+  console.log('✓ K3: المرجع الحي لسياق المهارات يقرأ الاختيار الحالي ولا يتسرّب القديم (مع توافق الكائن العادي)');
+  console.log('✓ K3: الدور المستأجر يرى مهارات اختياره عبر extraTools المبنية في الدور الأول');
   console.log('✓ /جلسات يستخدم session/list وsession/load الرسميين');
   console.log('✓ سرد الجلسات يتصفح فوق 80 حتى سقف 200 وقراءتها تلتقط نداءات الأدوات بتسمياتها العربية وحالاتها');
   console.log('✓ اختيار K3 يضبط model عبر ACP و/ضغط يعرض compact_boundary دون نص تقني خام');

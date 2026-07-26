@@ -23,6 +23,7 @@ node scripts/kimi-capability-probe.js
 | mode في configOptions | **معلن** | خيار `mode` متاح (يستعمل لوضع التخطيط). |
 | terminal reverse-RPC | **غير موصول** | `initialize` لا يعلن دعم terminal. |
 | الأوامر المائلة المعلنة | **محدودة** | الأساسي: `compact`, `status`, `usage`, `mcp`, `tasks`, `help`؛ إضافية: `check-kimi-code-docs`, `custom-theme`, `import-from-cc-codex`, `mcp-config`, `sub-skill*`, `update-config`, `write-goal`. |
+| إطلاق cron بين الأدوار على قناة الجلسة | **غير مرصود — حدّ upstream** | قناة keep-alive تبقى حية بعد end_turn (مؤكد بسجل `ks_*`)، لكن Kimi 0.27.0 لم يبث أي `session/update` عند إطلاق cron خلال 150 ثانية من الانتظار (مسبار K3-ب 2026-07-27، `dist/kimi-cron-probe-log.txt`). جسر `kimi_keepalive_event` في سطر جاهز ومختبَر بإشعارات مصطنعة؛ يُفعَّل فعلياً فور بثّ Kimi للحدث. |
 
 ## كيفية التعامل مع الفروق
 
