@@ -25,12 +25,15 @@ class SatrComposer extends HTMLElement {
     let slashIndex = 0, slashFiltered = [];
     let activeDraftCwd = $('cwd').value.trim();
 
+    // حارس غياب الترميز: fixtures الاختبارات الحية قد تحمل نسخة مؤلّف بلا شريحة الاقتراح،
+    // وغيابها لا يجوز أن يُسقط تهيئة المكوّن ودواله العامة.
     function clearPromptSuggestion() {
+      if (!promptSuggestion) return;
       promptSuggestion.hidden = true;
       promptSuggestionText.textContent = '';
     }
 
-    promptSuggestion.addEventListener('click', () => {
+    if (promptSuggestion) promptSuggestion.addEventListener('click', () => {
       const suggestion = promptSuggestionText.textContent;
       if (!suggestion) return;
       input.value = suggestion;
@@ -590,6 +593,7 @@ class SatrComposer extends HTMLElement {
     };
     this.switchDraft = switchDraft;
     this.showPromptSuggestion = (suggestion) => {
+      if (!promptSuggestion) return false;
       const text = typeof suggestion === 'string' ? suggestion.trim().slice(0, 500) : '';
       if (!text) { clearPromptSuggestion(); return false; }
       promptSuggestionText.textContent = text;

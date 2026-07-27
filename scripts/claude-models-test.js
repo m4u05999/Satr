@@ -251,7 +251,9 @@ function testUiAndIpcContracts() {
   assert.match(appSource, /fallbackModel: engine === 'sdk' \? \$\('fallbackModel'\)\.value : ''/);
   assert.match(appSource, /window\.satr\.claudeAccount\(\)/);
   assert.match(appSource, /مسجّل الدخول: /);
-  assert.match(appSource, /queueMicrotask\(\(\) => \{ if \(!\$\('settingsPop'\)\.hidden\) refreshClaudeAccountView\(\); \}\)/);
+  // بعد دمج C4 صارت الكتلة متعددة الأسطر وتحدّث حسابي Claude وCodex معاً؛ العقد الثابت:
+  // خروج مبكر إن كانت ⚙ مخفية ثم استدعاء refreshClaudeAccountView الكسول.
+  assert.match(appSource, /queueMicrotask\(\(\) => \{\s*if \(\$\('settingsPop'\)\.hidden\) return;\s*refreshClaudeAccountView\(\);/);
   assert.match(htmlSource, /نموذج احتياطي عند انشغال النموذج/);
   assert.match(htmlSource, /<option value="">بلا<\/option>/);
   assert.match(htmlSource, /id="claudeAccountEmail"/);
