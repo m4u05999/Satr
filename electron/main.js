@@ -449,6 +449,47 @@ ipcMain.handle('satr:codexModels', async () => {
 
 ipcMain.handle('satr:codexRateLimits', () => codex.rateLimits());
 
+// ---------- C4: حساب Codex واستهلاكه ----------
+// عقود عامة مغلقة: أرقام استهلاك وحدود فقط. لا يُقرأ ~/.codex/auth.json ولا يعبر أي
+// token أو رمز إلى renderer — المصادقة كلها داخل Codex.
+ipcMain.handle('satr:codexUsage', () => codex.accountUsage());
+ipcMain.handle('satr:codexLimits', () => codex.accountRateLimits());
+
+// تسجيل دخول Codex — نمط OAuth الآمن من C3 حرفياً: **الرابط لا يعبر IPC إطلاقاً**.
+// البدء يعيد معرّفاً فقط؛ والفتح يقرأ الرابط من الطلب المعلّق داخل codex.js (منقّى
+// بـsafeOauthUrl fail-closed) ويفتحه في متصفح النظام بعد تأكيد صريح من المستخدم.
+const SAFE_CODEX_LOGIN_ID = /^cxlogin_[0-9]{1,9}_[a-z0-9]{1,8}$/;
+const codexLoginOpening = new Set();
+
+ipcMain.handle('satr:codexLoginStart', async () => {
+  const started = await codex.accountLoginStart();
+  if (!started || !started.ok) return { ok: false, error: (started && started.error) || 'failed' };
+  return { ok: true, id: started.id }; // قائمة سماح صارمة — لا رابط ولا loginId داخلي
+});
+
+ipcMain.handle('satr:codexLoginOpen', async (event, p) => {
+  if (!p || typeof p.id !== 'string' || !SAFE_CODEX_LOGIN_ID.test(p.id)) return { ok: false, error: 'bad_id' };
+  const url = codex.accountLoginUrl(p.id);
+  if (!url) { codex.accountLoginCancel(p.id); return { ok: false, error: 'bad_url' }; }
+  if (codexLoginOpening.has(p.id)) return { ok: false, error: 'in_flight' };
+  codexLoginOpening.add(p.id);
+  try {
+    await shell.openExternal(url);
+  } catch {
+    codexLoginOpening.delete(p.id);
+    return { ok: false, error: 'open_failed' }; // يبقى الطلب معلّقاً لإعادة المحاولة
+  }
+  try {
+    const done = await codex.accountLoginAwait(p.id);
+    return done && done.ok ? { ok: true, success: done.success === true } : { ok: false, error: (done && done.error) || 'failed' };
+  } finally { codexLoginOpening.delete(p.id); }
+});
+
+ipcMain.handle('satr:codexLoginCancel', (event, p) => {
+  if (!p || typeof p.id !== 'string' || !SAFE_CODEX_LOGIN_ID.test(p.id)) return { ok: false, error: 'bad_id' };
+  return codex.accountLoginCancel(p.id);
+});
+
 // Kimi Code الأصيل يعتمد CLI واشتراك Kimi المحليين، لا مفتاح KIMI_API_KEY في خزنة سطر.
 // لا نعيد مسار الثنائي أو محتوى credentials/config إلى renderer.
 ipcMain.handle('satr:kimiStatus', () => {

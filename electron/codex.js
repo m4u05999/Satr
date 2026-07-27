@@ -198,10 +198,12 @@ async function listModels() {
   } catch { return []; }
 }
 
-async function rateLimits() {
+// cwd اختياري (الافتراضي المنزل): استدعاء على مستوى الحساب لا يعتمد على المشروع، و
+// main.js لا يمرّره — فلا يصل مسار من renderer إلى spawn. يستعمله الاختبار القطعي فقط.
+async function rateLimits(cwd) {
   const bin = resolveCodexBin();
   if (!bin) return null;
-  try { return await queryCodex(bin, 'account/rateLimits/read', null); }
+  try { return await queryCodex(bin, 'account/rateLimits/read', null, cwd ? { cwd } : {}); }
   catch { return null; }
 }
 
@@ -523,6 +525,174 @@ function mcpOauthAwait(id, timeoutMs) {
 }
 
 function mcpOauthCancel(id) { dropMcpOauth(id); return { ok: true }; }
+
+// ---------- حساب Codex واستهلاكه (C4) ----------
+// الطرق من الـschema المولّد: account/usage/read (params=null) →
+// GetAccountTokenUsageResponse {summary, dailyUsageBuckets?}، وaccount/rateLimits/read
+// (params=null) → GetAccountRateLimitsResponse {rateLimits, rateLimitResetCredits?, …}.
+// `rateLimits()` القائمة تعيد الحمولة الخام؛ هنا نطبّعها إلى عقد عام مغلق للواجهة.
+//
+// **قاعدة ثابتة**: لا يُقرأ `~/.codex/auth.json` ولا يعبر أي token أو رمز إلى renderer —
+// المصادقة كلها داخل Codex، و«سطر» يعرض حالة وأرقاماً عامة فقط.
+const MAX_PLAN_CHARS = 40;
+const MAX_LIMIT_NAME_CHARS = 60;
+
+function cleanLabel(value, max) {
+  if (typeof value !== 'string') return '';
+  const text = value.replace(STEER_STRIP, ' ').replace(/\s+/g, ' ').trim();
+  return text.length > max ? text.slice(0, max) : text;
+}
+const asInt = (value) => (Number.isFinite(Number(value)) ? Math.max(0, Math.round(Number(value))) : null);
+
+// نافذة حدّ (RateLimitWindow): usedPercent إلزامي، والباقي اختياري في الـschema
+function normalizeWindow(win) {
+  if (!win || typeof win !== 'object') return null;
+  const used = Number(win.usedPercent);
+  if (!Number.isFinite(used)) return null;
+  return {
+    usedPercent: Math.max(0, Math.min(100, Math.round(used))),
+    windowDurationMins: asInt(win.windowDurationMins),
+    resetsAt: asInt(win.resetsAt),
+  };
+}
+
+function normalizeRateLimits(raw) {
+  const snapshot = raw && raw.rateLimits;
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const credits = snapshot.credits && typeof snapshot.credits === 'object' ? snapshot.credits : null;
+  return {
+    planType: cleanLabel(snapshot.planType, MAX_PLAN_CHARS),
+    limitName: cleanLabel(snapshot.limitName, MAX_LIMIT_NAME_CHARS),
+    primary: normalizeWindow(snapshot.primary),
+    secondary: normalizeWindow(snapshot.secondary),
+    // rateLimitReachedType يفيد المستخدم حين يبلغ الحد؛ قيمة معدودة لا نص حر
+    reachedType: cleanLabel(snapshot.rateLimitReachedType, MAX_PLAN_CHARS),
+    // credits.balance نص في الحمولة الحيّة (مثبّت بالمسبار) — نمرره منقّى لا مؤوَّلاً
+    credits: credits ? {
+      hasCredits: credits.hasCredits === true,
+      unlimited: credits.unlimited === true,
+      balance: cleanLabel(credits.balance, MAX_PLAN_CHARS),
+    } : null,
+    resetCredits: raw && raw.rateLimitResetCredits
+      ? asInt(raw.rateLimitResetCredits.availableCount) : null,
+  };
+}
+
+// cwd اختياري كما في rateLimits — main.js لا يمرّره (استدعاء على مستوى الحساب).
+async function accountRateLimits(cwd) {
+  const raw = await rateLimits(cwd);
+  const normalized = normalizeRateLimits(raw);
+  return normalized ? { ok: true, limits: normalized } : { ok: false, error: 'لم يُعِد Codex حدود الاستهلاك بعد' };
+}
+
+async function accountUsage(cwd) {
+  const bin = resolveCodexBin();
+  if (!bin) return { ok: false, error: 'لم يُعثر على Codex CLI' };
+  let raw = null;
+  try { raw = await queryCodex(bin, 'account/usage/read', null, cwd ? { timeoutMs: 15000, cwd } : { timeoutMs: 15000 }); }
+  catch { return { ok: false, error: 'تعذّرت قراءة استهلاك حساب Codex' }; }
+  const summary = raw && raw.summary && typeof raw.summary === 'object' ? raw.summary : null;
+  if (!summary) return { ok: false, error: 'لم يُعِد Codex ملخّص الاستهلاك' };
+  const buckets = Array.isArray(raw.dailyUsageBuckets) ? raw.dailyUsageBuckets : [];
+  const recent = buckets.slice(-30)
+    .map((b) => ({ startDate: cleanLabel(b && b.startDate, 24), tokens: asInt(b && b.tokens) }))
+    .filter((b) => b.startDate && b.tokens != null);
+  return {
+    ok: true,
+    usage: {
+      lifetimeTokens: asInt(summary.lifetimeTokens),
+      peakDailyTokens: asInt(summary.peakDailyTokens),
+      currentStreakDays: asInt(summary.currentStreakDays),
+      longestStreakDays: asInt(summary.longestStreakDays),
+      longestRunningTurnSec: asInt(summary.longestRunningTurnSec),
+      recentDays: recent.length,
+      recentTokens: recent.reduce((sum, b) => sum + b.tokens, 0),
+    },
+  };
+}
+
+// ---------- تسجيل دخول حساب Codex (نمط C3 حرفياً) ----------
+// **الرابط لا يعبر IPC ولا يُبثّ**: يبقى هنا، وmain.js يقرأه ويتحقق منه بـsafeOauthUrl
+// نفسها ثم يفتحه بـshell.openExternal بعد تأكيد صريح من المستخدم.
+// عقد v2 المثبّت: account/login/start {type:'chatgpt'} → {type,authUrl,loginId}؛
+// account/login/cancel {loginId} → {status:'canceled'|'notFound'}؛ وإشعار
+// account/login/completed {success, loginId?, error?}.
+const pendingAccountLogin = new Map();
+const ACCOUNT_LOGIN_TTL_MS = 5 * 60 * 1000;
+let accountLoginSeq = 0;
+
+function dropAccountLogin(id, cancelUpstream) {
+  const entry = pendingAccountLogin.get(id);
+  if (!entry) return;
+  pendingAccountLogin.delete(id);
+  clearTimeout(entry.timer);
+  // إلغاء الدورة لدى Codex قبل إغلاق القناة كي لا تبقى معلّقة لديه
+  if (cancelUpstream && entry.loginId) {
+    try { entry.session.request('account/login/cancel', { loginId: entry.loginId }).catch(() => {}); } catch {}
+  }
+  setTimeout(() => { try { entry.session.close(); } catch {} }, cancelUpstream ? 300 : 0);
+}
+
+// cwd اختياري كما أعلاه — main.js لا يمرّره.
+async function accountLoginStart(cwd) {
+  const bin = resolveCodexBin();
+  if (!bin) return { ok: false, error: 'لم يُعثر على Codex CLI' };
+  let session = null;
+  try {
+    const entry = { url: '', loginId: '', session: null, timer: null, settle: null, outcome: null };
+    session = openTransient(bin, cwd || os.homedir(), (method, params) => {
+      if (method !== 'account/login/completed') return;
+      if (entry.loginId && typeof params.loginId === 'string' && params.loginId !== entry.loginId) return;
+      entry.outcome = { success: params.success === true, error: sanitizeMcpError(params.error) };
+      if (entry.settle) { const fn = entry.settle; entry.settle = null; fn(entry.outcome); }
+    });
+    entry.session = session;
+    await session.request('initialize', { clientInfo: { name: 'satr', title: 'Satr', version: '1.0.0' } });
+    session.notify('initialized', {});
+    const started = await session.request('account/login/start', { type: 'chatgpt' });
+    const url = started && typeof started.authUrl === 'string' ? started.authUrl : '';
+    const loginId = started && typeof started.loginId === 'string' ? started.loginId : '';
+    if (!url || !loginId) { session.close(); return { ok: false, error: 'لم يُعِد Codex رابط تسجيل دخول صالحاً' }; }
+    entry.url = url;
+    entry.loginId = loginId;
+    const id = 'cxlogin_' + (++accountLoginSeq) + '_' + Math.random().toString(36).slice(2, 8);
+    entry.timer = setTimeout(() => dropAccountLogin(id, true), ACCOUNT_LOGIN_TTL_MS);
+    pendingAccountLogin.set(id, entry);
+    return { ok: true, id };
+  } catch (e) {
+    if (session) session.close();
+    return { ok: false, error: 'تعذّر بدء تسجيل الدخول إلى Codex' };
+  }
+}
+
+// العقد: نص صالح أو null — رابط upstream غير الآمن يُسقَط إلى null fail-closed.
+function accountLoginUrl(id) {
+  const entry = pendingAccountLogin.get(id);
+  return entry ? (safeOauthUrl(entry.url) || null) : null;
+}
+
+function accountLoginAwait(id, timeoutMs) {
+  const entry = pendingAccountLogin.get(id);
+  if (!entry) return Promise.resolve({ ok: false, error: 'انتهت صلاحية طلب تسجيل الدخول' });
+  if (entry.outcome) {
+    const outcome = entry.outcome;
+    dropAccountLogin(id, false);
+    return Promise.resolve({ ok: true, success: outcome.success });
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      entry.settle = null;
+      resolve({ ok: false, error: 'لم يصل تأكيد اكتمال تسجيل الدخول بعد' });
+    }, Number.isInteger(timeoutMs) ? timeoutMs : 180000);
+    entry.settle = (outcome) => {
+      clearTimeout(timer);
+      dropAccountLogin(id, false);
+      resolve({ ok: true, success: outcome.success });
+    };
+  });
+}
+
+function accountLoginCancel(id) { dropAccountLogin(id, true); return { ok: true }; }
 
 function projectPath(cwd, filePath) {
   if (typeof filePath !== 'string' || !filePath.trim()) return null;
@@ -1610,5 +1780,8 @@ module.exports = {
   // C3: لوحة /موصلات — mcpOauthUrl لـmain.js وحدها (الرابط لا يعبر IPC)
   mcpStatus, mcpReload, mcpOauthStart, mcpOauthUrl, mcpOauthAwait, mcpOauthCancel,
   safeOauthUrl, sanitizeMcpError,
+  // C4: الحساب والاستهلاك — accountLoginUrl لـmain.js وحدها (الرابط لا يعبر IPC)
+  accountUsage, accountRateLimits, normalizeRateLimits,
+  accountLoginStart, accountLoginUrl, accountLoginAwait, accountLoginCancel,
   _internals: { projectPath, isInternalMcpApprovalElicitation },
 };

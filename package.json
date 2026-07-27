@@ -51,6 +51,8 @@
     "test:codex-compact-probe": "node scripts/codex-compact-probe.js",
     "test:codex-mcp-panel": "node scripts/codex-mcp-panel-test.js",
     "test:codex-mcp-panel-probe": "node scripts/codex-mcp-panel-probe.js",
+    "test:codex-account": "node scripts/codex-account-test.js",
+    "test:codex-account-probe": "node scripts/codex-account-probe.js",
     "test:kimi": "node scripts/kimi-test.js",
     "test:kimi-keepalive": "node scripts/kimi-keepalive-test.js",
     "test:browserguard": "node scripts/browserguard-test.js",

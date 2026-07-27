@@ -192,6 +192,81 @@ import { createUpdateToast } from './lib/update-toast.js';
     state.classList.remove('set');
     renderClaudeAccount(await fetchClaudeAccount());
   }
+
+  // ---------- C4: حساب Codex واستهلاكه (نمط قسم حساب Claude) ----------
+  // تحديث كسول عند فتح ⚙ فقط. الأرقام LTR، ولا يمر أي token أو رابط عبر هذه القناة.
+  const fmtTokens = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : '—');
+  let codexAccountRequest = null;
+  async function fetchCodexAccount() {
+    if (codexAccountRequest) return codexAccountRequest;
+    const request = (async () => {
+      try {
+        const [status, limits, usage] = await Promise.all([
+          window.satr.codexStatus(),
+          window.satr.codexLimits(),
+          window.satr.codexUsage(),
+        ]);
+        return { status, limits, usage };
+      } catch (e) { return null; }
+    })();
+    codexAccountRequest = request;
+    try { return await request; } finally {
+      if (codexAccountRequest === request) codexAccountRequest = null;
+    }
+  }
+  function renderCodexAccount(data) {
+    const state = $('codexAccountState');
+    const status = data && data.status;
+    const auth = status && status.auth;
+    const ready = !!(status && status.installed && auth && auth.ok);
+    state.textContent = !status || !status.installed ? 'غير مثبَّت'
+      : ready ? 'مسجَّل الدخول' : 'غير مسجَّل الدخول';
+    state.classList.toggle('set', ready);
+    $('codexAccountMethod').textContent = ready && auth.method ? auth.method : '—';
+    const limits = data && data.limits && data.limits.ok ? data.limits.limits : null;
+    $('codexAccountPlan').textContent = limits && limits.planType ? limits.planType
+      : (ready && auth.plan ? auth.plan : '—');
+    $('codexAccountWindow').textContent = limits && limits.primary
+      ? limits.primary.usedPercent + '%' : '—';
+    const usage = data && data.usage && data.usage.ok ? data.usage.usage : null;
+    $('codexAccountRecent').textContent = usage ? fmtTokens(usage.recentTokens) : '—';
+    $('codexAccountLifetime').textContent = usage ? fmtTokens(usage.lifetimeTokens) : '—';
+    // زر تسجيل الدخول يظهر عند غياب الاعتماد فقط (Codex مثبَّت وغير مسجَّل)
+    $('codexLoginRow').hidden = !(status && status.installed && !ready);
+  }
+  async function refreshCodexAccountView() {
+    const state = $('codexAccountState');
+    state.textContent = 'جارٍ التحديث…';
+    state.classList.remove('set');
+    renderCodexAccount(await fetchCodexAccount());
+  }
+  // الرابط لا يصل الواجهة إطلاقاً: البدء يعيد معرّفاً، والفتح بعد confirm عربي صريح.
+  $('codexLoginBtn').addEventListener('click', async () => {
+    const btn = $('codexLoginBtn');
+    btn.disabled = true;
+    const previous = btn.textContent;
+    btn.textContent = 'جارٍ…';
+    const started = await window.satr.codexLoginStart();
+    if (!started || !started.ok) {
+      addNotice('✗ تعذّر بدء تسجيل الدخول إلى Codex' + (started && started.error ? ' — ' + started.error : ''));
+      btn.disabled = false; btn.textContent = previous;
+      return;
+    }
+    const approved = window.confirm('سيفتح «سطر» صفحة تسجيل دخول Codex في متصفح النظام.'
+      + ' أكمل الدخول هناك ثم عُد.\n\nهل تفتحها الآن؟');
+    if (!approved) {
+      await window.satr.codexLoginCancel(started.id);
+      btn.disabled = false; btn.textContent = previous;
+      return;
+    }
+    btn.textContent = 'بانتظار المتصفح…';
+    const done = await window.satr.codexLoginOpen(started.id);
+    if (done && done.ok && done.success) addNotice('✓ اكتمل تسجيل الدخول إلى Codex');
+    else if (done && done.ok) addNotice('✗ لم يكتمل تسجيل الدخول إلى Codex');
+    else addNotice('✗ تعذّر إكمال تسجيل الدخول' + (done && done.error ? ' — ' + done.error : ''));
+    btn.disabled = false; btn.textContent = previous;
+    refreshCodexAccountView();
+  });
   let gateBannerTimer = null;
   function hideGateBannerAfter(banner, delay) {
     if (gateBannerTimer) clearTimeout(gateBannerTimer);
@@ -453,7 +528,11 @@ import { createUpdateToast } from './lib/update-toast.js';
   // ---------- مدير المفاتيح + زر اختيار المجلد: انتقلا لمكوّن <satr-topbar> (تفكيك ت-11) ----------
   const topbarEl = document.querySelector('satr-topbar');
   $('settingsBtn').addEventListener('click', () => {
-    queueMicrotask(() => { if (!$('settingsPop').hidden) refreshClaudeAccountView(); });
+    queueMicrotask(() => {
+      if ($('settingsPop').hidden) return;
+      refreshClaudeAccountView();
+      refreshCodexAccountView(); // C4: تحديث كسول لقسم حساب Codex
+    });
   });
   const sessionChanges = new Map();
   function sessionChangesPayload() {
