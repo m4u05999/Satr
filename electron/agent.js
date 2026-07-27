@@ -35,7 +35,7 @@ const envbrief = require('./envbrief');
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_METADATA_TTL_MS = 2 * 60 * 1000;
-const SAFE_CLAUDE_MODEL = /^[A-Za-z0-9./-]{1,64}$/;
+const SAFE_CLAUDE_MODEL = /^[A-Za-z0-9./-]{1,64}(\[1m\])?$/; // لاحقة [1m] بقرار مالك 2026-07-27 (نظير SAFE_MODEL)
 // الدفعة D: البوادئ والمحارف مثبتة بالمسبار؛ النطاقات المحدودة تتوافق مع تغيّر أطوال CLI.
 const SAFE_SDK_TOOL_USE_ID = /^toolu_[A-Za-z0-9]{16,64}$/;
 const SAFE_SDK_TASK_ID = /^[a-z0-9]{6,64}$/;

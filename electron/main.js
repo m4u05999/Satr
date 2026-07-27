@@ -48,7 +48,9 @@ const claudeauth = require('./claudeauth');
 const adapters = require('./adapters');
 const renderertrust = require('./renderertrust');
 // الشرطة المائلة مسموحة لقيم نماذج ACP المُنطَّقة مثل kimi-code/k3 (تُمرَّر كوسيطة مستقلة لا في صدفة).
-const SAFE_MODEL = /^[A-Za-z0-9./-]{1,64}$/;
+// لاحقة [1m] (نافذة مليون رمز) مقبولة حصراً بقرار مالك 2026-07-27 — Claude Code صار
+// يعلن Fable 5 وOpus 5 بهذه الصيغة فقط؛ لا أقواس أخرى.
+const SAFE_MODEL = /^[A-Za-z0-9./-]{1,64}(\[1m\])?$/;
 
 function cleanClaudePublicText(value, maxLength) {
   if (typeof value !== 'string') return '';

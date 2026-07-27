@@ -147,7 +147,9 @@ async function testMainSanitization() {
       description: 'د'.repeat(260),
       tokenSource: SECRET_SENTINEL,
     },
-    { value: 'opus[1m]', displayName: SECRET_SENTINEL, description: SECRET_SENTINEL },
+    // لاحقة [1m] صارت مقبولة (قرار مالك 2026-07-27)؛ الصيغ المقوّسة الأخرى تبقى مرفوضة
+    { value: 'opus[1m]', displayName: 'Opus 1M', description: 'نافذة مليون رمز' },
+    { value: 'opus[2m]', displayName: SECRET_SENTINEL, description: SECRET_SENTINEL },
     { value: 'sonnet', displayName: 'مكرر', description: 'مكرر' },
     ...Array.from({ length: 15 }, (_, index) => ({
       value: `model-${index}`, displayName: `Model ${index}`, description: `Description ${index}`,
@@ -165,10 +167,11 @@ async function testMainSanitization() {
     value: 'sonnet', label: 'Sonnet 5', description: 'د'.repeat(240),
   });
   for (const model of modelResult.models) {
-    assert.match(model.value, /^[A-Za-z0-9./-]{1,64}$/);
+    assert.match(model.value, /^[A-Za-z0-9./-]{1,64}(\[1m\])?$/);
     assert.deepEqual(Object.keys(model).sort(), ['description', 'label', 'value']);
   }
-  assert.ok(!modelResult.models.some((model) => model.value.includes('[')), 'عبر نموذج لا يطابق SAFE_MODEL');
+  assert.ok(modelResult.models.some((model) => model.value === 'opus[1m]'), 'حُجب نموذج [1m] المقبول بقرار المالك');
+  assert.ok(!modelResult.models.some((model) => model.value.includes('[2m]')), 'عبر نموذج مقوّس لا يطابق SAFE_MODEL');
   assert.ok(!JSON.stringify(modelResult).includes(SECRET_SENTINEL), 'تسرّب حقل نموذج غير معلن');
 
   const accountResult = plain(await contract.handleClaudeAccountRequest({
@@ -202,7 +205,8 @@ async function testMainSanitization() {
   assert.deepEqual(failure, { ok: false });
   assert.equal(contract.sanitizeClaudeFallbackModel('default', 'sonnet'), 'default');
   assert.equal(contract.sanitizeClaudeFallbackModel('sonnet', 'sonnet'), null);
-  assert.equal(contract.sanitizeClaudeFallbackModel('opus[1m]', 'sonnet'), null);
+  assert.equal(contract.sanitizeClaudeFallbackModel('opus[1m]', 'sonnet'), 'opus[1m]');
+  assert.equal(contract.sanitizeClaudeFallbackModel('opus[2m]', 'sonnet'), null);
   assert.equal(contract.sanitizeClaudeFallbackModel(' sonnet ', null), null);
 }
 
@@ -221,7 +225,12 @@ function testFallbackIsolation() {
     assert.equal(applyClaudeFallbackModel(options, 'opus', 'sonnet', policy), false);
     assert.ok(!Object.hasOwn(options, 'fallbackModel'), `وصل fallbackModel إلى ${policy.mode}`);
   }
-  for (const fallback of ['', 'opus', 'opus[1m]', 'bad model', 'a'.repeat(65)]) {
+  {
+    const options = {};
+    assert.equal(applyClaudeFallbackModel(options, 'opus', 'opus[1m]', null), true, 'رُفض fallback بلاحقة [1m] المقبولة');
+    assert.equal(options.fallbackModel, 'opus[1m]');
+  }
+  for (const fallback of ['', 'opus', 'opus[2m]', 'bad model', 'a'.repeat(65)]) {
     const options = {};
     assert.equal(applyClaudeFallbackModel(options, 'opus', fallback, null), false);
     assert.ok(!Object.hasOwn(options, 'fallbackModel'));

@@ -457,6 +457,16 @@ import { createUpdateToast } from './lib/update-toast.js';
       mSel.appendChild(o);
     }
     if ([...mSel.options].some((o) => o.value === saved)) mSel.value = saved;
+    else if (saved) {
+      // شبكة أمان: الاختيار المحفوظ لم يعد ضمن قائمة المحرك المعلنة — أبقه خياراً ظاهراً
+      // موسوماً بدل حقل فارغ يوحي بضياعه؛ القيمة تُرسل وتعمل ما دام المحرك يقبلها.
+      const known = [...CLAUDE_MODELS, ...CODEX_MODELS].find((m) => m.value === saved);
+      const o = document.createElement('option');
+      o.value = saved;
+      o.textContent = (known && known.label ? known.label : saved) + ' (محفوظ)';
+      mSel.appendChild(o);
+      mSel.value = saved;
+    }
     rebuildEfforts();
     syncAwareness();
   }
