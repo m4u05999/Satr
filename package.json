@@ -77,6 +77,8 @@
     "test:claude-models": "node scripts/claude-models-test.js",
     "test:elicitation": "node scripts/elicitation-test.js",
     "test:sdk-background": "node scripts/sdk-background-test.js",
+    "test:sdk-polish": "node scripts/sdk-polish-test.js",
+    "test:sdk-polish-probe": "node scripts/sdk-polish-probe.js",
     "test:testsprite": "node scripts/testsprite-integration-test.js",
     "testsprite:harness": "node scripts/testsprite-harness.js",
     "test:testsprite-harness": "node scripts/testsprite-harness-test.js",

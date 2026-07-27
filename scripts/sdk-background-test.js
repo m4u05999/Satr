@@ -280,7 +280,7 @@ async function testAgentController() {
   const agentSource = read('electron/agent.js');
   assert.match(agentSource, /subtype === 'task_notification'[\s\S]*?send\('merge', 'claude_agent'/);
   assert.match(agentSource, /function safeSdkTaskText\([\s\S]*?memory\.hasSecret\(text\)/);
-  assert.match(agentSource, /rawTaskNotification[\s\S]*?!rawTaskNotification/);
+  assert.match(agentSource, /rawPrivateLifecycle[\s\S]*?!rawPrivateLifecycle/);
   assert.match(agentSource, /if \(!startedTaskIds\.has\(id\)\) return/);
   assert.match(agentSource, /status === 'failed'[\s\S]*?status === 'stopped'\) return 'blocked'/);
   assert.match(agentSource, /isolated: !!internalPolicy/);

@@ -610,6 +610,39 @@ function sanitizeImages(arr) {
   return out;
 }
 
+const SAFE_SDK_POLISH_TOOL = /^toolu_[A-Za-z0-9]{16,64}$/;
+const SAFE_SDK_POLISH_TASK = /^[a-z0-9]{6,64}$/;
+function sanitizeClaudePolishText(value, maxLength) {
+  if (typeof value !== 'string') return '';
+  const text = Array.from(value
+    .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()).slice(0, maxLength).join('');
+  return text && !memory.hasSecret(text) ? text : '';
+}
+
+function sanitizeClaudePolishEvent(event) {
+  if (!event || typeof event !== 'object') return null;
+  if (event.type === 'prompt_suggestion') {
+    const suggestion = sanitizeClaudePolishText(event.suggestion, 500);
+    return suggestion ? { type: 'prompt_suggestion', suggestion } : null;
+  }
+  if (event.type === 'sdk_agent_progress') {
+    const taskId = String(event.taskId || '');
+    const toolUseId = String(event.toolUseId || '');
+    const summary = sanitizeClaudePolishText(event.summary, 300);
+    if (!SAFE_SDK_POLISH_TASK.test(taskId) || !summary) return null;
+    const safe = { type: 'sdk_agent_progress', taskId, summary };
+    if (SAFE_SDK_POLISH_TOOL.test(toolUseId)) safe.toolUseId = toolUseId;
+    return safe;
+  }
+  if (event.type === 'system' && event.subtype === 'compact_summary') {
+    const compactSummary = sanitizeClaudePolishText(event.compact_summary, 1200);
+    return compactSummary ? { type: 'system', subtype: 'compact_summary', compact_summary: compactSummary } : null;
+  }
+  return event;
+}
+
 // إيقاف أي تشغيل جارٍ أياً كان محركه (محوّل غير SDK أو تشغيل SDK)
 function stopAll(includeSdkBackground = true) {
   preview.clearSensitiveState();
@@ -1331,6 +1364,11 @@ async function handleSendRequest(event, payload, requestEpoch) {
   let sdkRunForEmit = null;
   const emit = (obj) => {
     if (!obj || typeof obj !== 'object') return;
+    if (runEngine === 'sdk' && (obj.type === 'prompt_suggestion' || obj.type === 'sdk_agent_progress'
+        || obj.type === 'system' && obj.subtype === 'compact_summary')) {
+      obj = sanitizeClaudePolishEvent(obj);
+      if (!obj) return;
+    }
     const lateSdkBackgroundEvent = token !== runSeq && runEngine === 'sdk'
       && sdkRunForEmit && sdkBackgroundRuns.has(sdkRunForEmit)
       && (obj.type === 'sdk_task_notification' || obj.type === 'sdk_task_started'

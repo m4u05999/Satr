@@ -420,6 +420,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       return;
     }
     const e = $('engine').value;
+    clearPromptSuggestion();
     localStorage.setItem('satr_engine', e);
     rebuildModels();
     applyEngineCommands(e); // إخفاء أوامر Claude-الخاصة مع Codex (المرحلة 4)
@@ -858,6 +859,13 @@ import { createUpdateToast } from './lib/update-toast.js';
       addNotice('تعذّر حفظ فيديو البرومو النهائي' + (ev.filename ? ': ' + ev.filename : ''));
       return;
     }
+    // اقتراح Claude يصل بعد result؛ يملأ المؤلف فقط ولا يبدأ دوراً.
+    if (ev.type === 'prompt_suggestion') {
+      if ($('engine').value === 'sdk' && composerEl.showPromptSuggestion) {
+        composerEl.showPromptSuggestion(ev.suggestion);
+      }
+      return;
+    }
     // أسئلة الاختيار (AskUserQuestion) — تُعالج دائماً أيضاً (تنتظر رد المستخدم أثناء الدور)
     if (ev.type === 'question_request') {
       questionEl.ask({ id: ev.id, questions: ev.questions });
@@ -1033,12 +1041,18 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
     const block = currentBlock;
     if (!block || block.done) return;
+    if (ev.type === 'sdk_agent_progress') {
+      if (block.updateAgentProgress) block.updateAgentProgress(ev);
+      return;
+    }
     if (ev.type === 'stream_text') {
       if (ev.text) block.addDelta(ev.text, ev.phase);
       return;
     }
     if (ev.type === 'system' && ev.subtype === 'compact_boundary') {
       block.compacted(ev.compact_metadata);
+    } else if (ev.type === 'system' && ev.subtype === 'compact_summary') {
+      block.compacted({ compact_summary: ev.compact_summary });
     } else if (ev.type === 'system' && ev.session_id) {
       sessionId = ev.session_id;
       $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8);
@@ -1105,6 +1119,10 @@ import { createUpdateToast } from './lib/update-toast.js';
 
   // ---------- شريط عمليات الخلفية: انتقل لمكوّن <satr-composer> (تفكيك ت-10) ----------
   // المكوّن يملك العرض والقتل والاسترجاع عند الإقلاع؛ حدث bg_procs يصله عبر setBgProcs.
+
+  function clearPromptSuggestion() {
+    if (composerEl.clearPromptSuggestion) composerEl.clearPromptSuggestion();
+  }
 
   function releaseRunControls() {
     busy = false;
@@ -1253,6 +1271,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       images = [];
     }
     if (!prompt && !images.length) return;
+    clearPromptSuggestion();
     // وقاية: جلسات Claude Code مرتبطة بمجلدها — تغيير مجلد المشروع مع جلسة حيّة
     // يجعل --resume يفشل بـ «No conversation found» (لقطة قبول). مجلد جديد ⇐ جلسة جديدة.
     const cwdNow = $('cwd').value.trim();
@@ -1531,6 +1550,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
     // 1.3: «جلسة جديدة» على محوّل أعمى تنسى مؤشر الاستئناف على القرص (سجلّه يبقى للتنظيف)
     const engNow = $('engine').value;
+    clearPromptSuggestion();
     if (isBlindEngine(engNow)) { try { window.satr.forgetChat(engNow); } catch (e) {} }
     sessionId = null; currentBlock = null; lastUserTurn = { prompt: '', images: [] };
     if (composerEl.clearImages) composerEl.clearImages();
@@ -1561,6 +1581,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       return;
     }
     const s = e.detail;
+    clearPromptSuggestion();
     sessionResumeBusy = true;
     try {
       if (s.kind === 'chat') await resumeChat(s);

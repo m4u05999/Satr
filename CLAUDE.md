@@ -711,6 +711,75 @@ rollback. أما محرك sdk فيضيف بجواره فعلاً مستقلاً 
   `dist\agent-eval\2026-07-26T22-11-53-950Z`. لم تُشغّل `test:full` محلياً التزاماً
   بتنسيق الجولة؛ يشغّلها قائد الفريق عند المراجعة.
 
+### تلميع محرك Claude Agent SDK (دفعة E — 2026-07-27)
+
+- **مصدر الحقيقة والمسبار الحي**: استُخدمت الحقول العامة المستقرة فقط من
+  `@anthropic-ai/claude-agent-sdk/sdk.d.ts` في الإصدار `0.3.176`: الخياران
+  `promptSuggestions` و`agentProgressSummaries`، و`PermissionResult.decisionClassification`،
+  وخطافا `PostToolUseFailure` و`PostCompact`. لا واجهة `@alpha` أو `EXPERIMENTAL`.
+  شُغّل `scripts/sdk-polish-probe.js` على Claude Code `2.1.220 (Claude Code)` والنموذج
+  `sonnet`، وحُفظ الخرج الحرفي في `dist/sdk-polish-probe.log`.
+- **أرقام الاقتراح والضغط الحية وحدّ upstream**: أكمل الدور التمهيدي بنتيجة واحدة، ثم
+  أكمل الدور المستأنف بنتيجة واحدة من subtype ‏`success`. رغم تفعيل
+  `promptSuggestions:true` لم يصل أي `prompt_suggestion`: كان `suggestionCount:0`،
+  وبقي input مفتوحاً `15006ms` بعد `result` ثم أُغلق بسبب مهلة مضبوطة `15000ms`؛ لا
+  متغير بيئة `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` ولا إعداد
+  `promptSuggestionEnabled` محلي ظاهر عطّله. كذلك أكمل `/compact` بنتيجة `success` لكن
+  لم يصل `PostCompact` ولا `compact_boundary` خلال مهلة `15000ms`. لذلك يظل الحقلان
+  مدعومين في typings لكن الثنائي المثبت لا يصدر الحدث/الخطاف في هذين السيناريوهين؛ هذا
+  حد upstream موثق لا يُعوّض بتخمين summary أو suggestion. الإنتاج يتدهور رشيقاً: ينتظر
+  الاقتراح `1500ms` بعد النتيجة ثم يغلق input، ويعرض ملخص الضغط فقط إن وصل الخطاف فعلاً.
+- **أرقام تقدم الوكيل الفعلية**: مع `agentProgressSummaries:true` وأمر وكيل مضبوط على
+  `42000ms` وصل حدثا `task_progress` (`taskProgressCount:2`) وانتهت النتيجة
+  `success`. أول summary كان النص `Running node timeout script` بطول `27`، وطول
+  `description` كان `27`. مفاتيح الرسالة الفعلية كانت `description, session_id,
+  subagent_type, subtype, summary, task_id, tool_use_id, type, usage, uuid`، ومفاتيح
+  `usage` كانت `duration_ms, tool_uses, total_tokens`.
+  إعادة السيناريو منفرداً ثلاث مرات لم تُصدر summary رغم بقاء الخيار مفعلاً؛ آخرها أصدر
+  `taskProgressCount:1` بلا summary. فالملخص الدوري
+  (~30s في typings) best-effort وغير مضمون لكل استدعاء وكيل، والواجهة تتجاهل غيابه بلا أثر.
+- **حمولة الفشل الفعلية**: وصل `PostToolUseFailure` لأداة `Bash` مع المفاتيح
+  `cwd, duration_ms, effort, error, hook_event_name, is_interrupt, permission_mode,
+  prompt_id, session_id, tool_input, tool_name, tool_use_id, transcript_path`؛ كانت
+  `duration_ms:14453` و`errorLength:11` و`is_interrupt:false`، ومفتاحا input هما
+  `command, description`. الإنتاج لا يبث هذه الحمولة؛ يستعمل فقط `tool_name` و
+  `tool_use_id` لحذف لقطة التعديل اليتيمة من `editSnapshots` عند فشل `Edit/Write/
+  MultiEdit`.
+- **موضع تصنيف الإذن المثبت**: `decisionClassification` حقل top-level في قيمة
+  `PermissionResult` المعادة من `canUseTool`، لا داخل `updatedInput` أو خرج Hook. قبل
+  SDK القرارات الثلاثة حياً بالترتيب: `allow/user_temporary` ثم
+  `allow/user_permanent` ثم `deny/user_reject`، وانتهى الدور `success`. مفاتيح سياق
+  callback في كل مرة كانت `agentID, blockedPath, decisionReason, description,
+  displayName, signal, suggestions, title, toolUseID`. لذلك يوسم `resolvePermission`
+  «دائماً» الفعلية `user_permanent`، والموافقة مرة/للدور `user_temporary`، والرفض
+  `user_reject`؛ إلغاء التشغيل التقني لا يُنسب للمستخدم.
+- **العزل ودورة إغلاق input**: التشغيل العادي وحده يضبط
+  `promptSuggestions:true` و`agentProgressSummaries:true`؛ كل تشغيل يحمل
+  `internalPolicy` لا يضبطهما. بوابة الإغلاق تبدأ مهلة `1500ms` عند `result` وتغلق عند
+  وصول الاقتراح أو انتهاء المهلة، لكنها لا تغلق بينما نقل SDK خلفي معلق؛ إذا انتهت
+  المهلة أولاً تنتظر `task_notification` النهائي ثم تغلق. `stop()` بقي يقاطع Query عبر
+  `interrupt()` ثم يغلق input مباشرة، وmain ما زال ينتظر stop و`done` حتى `5000ms` ثم
+  `forceClose` ومهلة `1000ms`؛ لم يتغير عقد دفعة A أو قفل send/control.
+- **عقود `satr:event` الجديدة المنقّاة**: اقتراح المؤلف هو
+  `{type:'prompt_suggestion',suggestion}`، وتقدم بطاقة الوكيل هو
+  `{type:'sdk_agent_progress',taskId,toolUseId?,summary}`، وملخص الضغط هو
+  `{type:'system',subtype:'compact_summary',compact_summary}`. يزيل main محارف التحكم
+  وBidi ويطوي الفراغات ويفحص `memory.hasSecret`، ويقص الحقول على الترتيب إلى
+  `500/300/1200` نقطة Unicode. لا يعبر `uuid/session_id/usage/transcript_path/prompt_id`
+  أو أي حقل SDK خام. `task_progress` الخام و`task_notification` الخام محجوبان عن renderer
+  والمراقبين؛ ويعيد مسار lifecycle نفسه في agent تنقية summary قبل إنشاء الحدث وLedger.
+- **الواجهة**: `sdk_agent_progress` يحدّث سطر تقدم داخل `agent-card` المرتبطة بـ
+  `tool_use_id` (أو ربط task المعروف). `compact_summary` يضاف إلى بطاقة الضغط القائمة؛
+  أرقام `pre_tokens/post_tokens` لا تتغير، واستدعاء Codex `compact_boundary` بلا أرقام أو
+  summary يبقى كما كان. شريحة الاقتراح فوق المؤلف تملأ textarea ولا ترسل؛ تختفي عند
+  الكتابة أو النقر أو بدء دور أو جلسة جديدة أو استئناف جلسة أو تبديل المحرك. لا style
+  مضمّن ولا IPC جديد في preload.
+- **التحقق القطعي**: `npm run test:sdk-polish` يغطي الخيارات الخمسة، تنقية lifecycle
+  وقائمة سماح main، عدم تسريب حقول SDK، بوابة الاقتراح مع مهام دفعة D والخيار القديم،
+  تنظيف snapshot، موضع التصنيف، إضافة بطاقة الضغط دون تغيير أرقام Codex، سلوك الشريحة
+  بلا إرسال، وعقد الإيقاف؛ وهو مسجل داخل `test:full` ولا يشغّل شبكة. حارس
+  `test:sdk-background` الذي كان يثبت الاسم المحلي `rawTaskNotification` حُدث بوعي إلى
+  `rawPrivateLifecycle` ليثبت حجب كل من `task_notification/task_progress` الخامَين.
 ### استمرارية الجلسة
 
 كل رسالة جديدة تمرّر `--resume <session_id>` المأخوذ من حدث `result` السابق.

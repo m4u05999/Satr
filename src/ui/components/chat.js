@@ -1011,8 +1011,10 @@ class SatrChat extends HTMLElement {
     const agentsHead = document.createElement('div'); agentsHead.className = 'work-section-head'; agentsHead.textContent = 'الوكلاء الفرعيون';
     const agentsFlow = document.createElement('div'); agentsFlow.className = 'agents-flow';
     agentsWrap.appendChild(agentsHead); agentsWrap.appendChild(agentsFlow);
-    const agentCards = {}; // tool_use_id للإطلاق → { el, tools, text, buf }
+    const agentCards = {}; // tool_use_id للإطلاق → { el, tools, text, progress, buf }
     let agentCount = 0;
+    let compactCard = null;
+    let compactSummary = null;
 
     const diffsWrap = document.createElement('section'); diffsWrap.className = 'work-section diffs-wrap'; diffsWrap.hidden = true;
     const diffsHead = document.createElement('div'); diffsHead.className = 'work-section-head'; diffsHead.textContent = 'التغييرات';
@@ -1114,14 +1116,15 @@ class SatrChat extends HTMLElement {
       head.querySelector('.aname').textContent = '🤖 وكيل فرعي' + (type ? ' · ' + type : '');
       head.querySelector('.adesc').textContent =
         (inp && (inp.description || (typeof inp.prompt === 'string' ? inp.prompt.split('\n')[0] : ''))) || '';
+      const progress = document.createElement('div'); progress.className = 'agent-progress-summary'; progress.dir = 'auto';
       const nested = document.createElement('div'); nested.className = 'agent-tools';
       const text = document.createElement('div'); text.className = 'agent-text';
-      card.appendChild(head); card.appendChild(nested); card.appendChild(text);
+      card.appendChild(head); card.appendChild(progress); card.appendChild(nested); card.appendChild(text);
       agentsFlow.appendChild(card);
       agentsWrap.hidden = false;
       agentCount++;
       revealActivity('ينسّق وكيلاً فرعياً');
-      agentCards[id] = { el: card, tools: nested, text, buf: '' };
+      agentCards[id] = { el: card, tools: nested, text, progress, buf: '' };
       if (id) toolEls[id] = card; // toolDone يعلّم البطاقة ✓/✗ عبر .state داخلها
       registerSdkTool(id, card, head.querySelector('.state'), head.querySelector('.adesc'), isSdk);
     }
@@ -1153,6 +1156,18 @@ class SatrChat extends HTMLElement {
           lastRender[normalized] = now;
           renderPhase(normalized);
         } // خنق إعادة الرسم لكل مرحلة على حدة
+      },
+      updateAgentProgress(event) {
+        if (!event || !event.summary) return false;
+        const direct = event.toolUseId ? agentCards[event.toolUseId] : null;
+        const registered = sdkToolsByTaskId.get(event.taskId);
+        const progress = direct && direct.progress
+          || registered && registered.el && registered.el.querySelector('.agent-progress-summary');
+        if (!progress) return false;
+        progress.textContent = event.summary;
+        revealActivity('يتابع تقدّم وكيل فرعي');
+        scrollDown();
+        return true;
       },
       addTool(id, name, inp, parentId, isSdk) {
         const card = parentId ? agentCards[parentId] : null;
@@ -1220,15 +1235,19 @@ class SatrChat extends HTMLElement {
         revealActivity('يراجع التغييرات');
         scrollDown();
       },
-      // بطاقة نتيجة ضغط المحادثة (/ضغط): من X رمز ← Y رمز
+      // بطاقة نتيجة ضغط المحادثة (/ضغط): أرقام الحدود تبقى كما هي لكل المحركات،
+      // وملخص PostCompact الخاص بـClaude يُضاف إلى البطاقة نفسها إن وصل.
       compacted(meta) {
         const fmt = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : '—');
-        const card = document.createElement('div');
-        card.className = 'compact-card';
-        const ico = document.createElement('span'); ico.className = 'ico'; ico.textContent = '🗜';
-        const label2 = document.createElement('span'); label2.textContent = 'ضُغطت المحادثة';
-        card.appendChild(ico); card.appendChild(label2);
-        if (meta && typeof meta.pre_tokens === 'number') {
+        if (!compactCard) {
+          compactCard = document.createElement('div');
+          compactCard.className = 'compact-card';
+          const ico = document.createElement('span'); ico.className = 'ico'; ico.textContent = '🗜';
+          const label2 = document.createElement('span'); label2.textContent = 'ضُغطت المحادثة';
+          compactCard.appendChild(ico); compactCard.appendChild(label2);
+          workBody.appendChild(compactCard);
+        }
+        if (meta && typeof meta.pre_tokens === 'number' && !compactCard.querySelector('.nums')) {
           const nums = document.createElement('span'); nums.className = 'nums'; nums.dir = 'ltr';
           const from = document.createElement('span'); from.className = 'from'; from.textContent = fmt(meta.pre_tokens);
           const arr = document.createElement('span'); arr.className = 'arrow'; arr.textContent = '←';
@@ -1236,9 +1255,16 @@ class SatrChat extends HTMLElement {
           to.textContent = typeof meta.post_tokens === 'number' ? fmt(meta.post_tokens) : '…';
           nums.appendChild(from); nums.appendChild(arr); nums.appendChild(to);
           const unit = document.createElement('span'); unit.className = 'sub'; unit.textContent = 'رمز · المحادثة مستمرة';
-          card.appendChild(nums); card.appendChild(unit);
+          compactCard.appendChild(nums); compactCard.appendChild(unit);
         }
-        workBody.appendChild(card);
+        if (meta && typeof meta.compact_summary === 'string' && meta.compact_summary) {
+          if (!compactSummary) {
+            compactSummary = document.createElement('div');
+            compactSummary.className = 'compact-summary'; compactSummary.dir = 'auto';
+            compactCard.appendChild(compactSummary);
+          }
+          compactSummary.textContent = meta.compact_summary;
+        }
         revealActivity('يضغط المحادثة');
         scrollDown();
       },

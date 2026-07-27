@@ -47,6 +47,7 @@ const SUITE = [
   'test:claude-models',
   'test:elicitation',
   'test:sdk-background',
+  'test:sdk-polish',
   'test:testsprite-ready',
   'test:viewer-security',
   'test:askquestion',

@@ -68,6 +68,7 @@ const NEVER_TURN_TOOLS = new Set([
 ]);
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة ولا نعرض فرقاً (أداء وذاكرة)
 const MAX_SKILL_TOOL_CHARS = 48 * 1024;
+const PROMPT_SUGGESTION_WAIT_MS = 1500;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_USER_MESSAGE_CHECKPOINTS = 200;
 const lastUserMessageBySession = new Map();
@@ -243,6 +244,71 @@ function safeSdkTaskText(value, maxLength) {
   return text && !memory.hasSecret(text) ? text : '';
 }
 
+function sdkAgentProgressEvent(message) {
+  if (!message || message.type !== 'system' || message.subtype !== 'task_progress') return null;
+  const taskId = String(message.task_id || '');
+  const toolUseId = String(message.tool_use_id || '');
+  const summary = safeSdkTaskText(message.summary, 300);
+  if (!SAFE_SDK_TASK_ID.test(taskId) || !summary) return null;
+  const event = { type: 'sdk_agent_progress', taskId, summary };
+  if (SAFE_SDK_TOOL_USE_ID.test(toolUseId)) event.toolUseId = toolUseId;
+  return event;
+}
+
+function sdkCompactSummaryEvent(input) {
+  if (!input || input.hook_event_name !== 'PostCompact') return null;
+  const summary = safeSdkTaskText(input.compact_summary, 1200);
+  return summary ? { type: 'system', subtype: 'compact_summary', compact_summary: summary } : null;
+}
+
+function clearFailedEditSnapshot(input, snapshots = editSnapshots) {
+  if (!input || !EDIT_TOOLS.has(input.tool_name)) return false;
+  const id = String(input.tool_use_id || '');
+  return id ? snapshots.delete(id) : false;
+}
+
+function applyClaudePolishOptions(options, internalPolicy) {
+  if (!options || typeof options !== 'object' || internalPolicy) return false;
+  options.promptSuggestions = true;
+  options.agentProgressSummaries = true;
+  return true;
+}
+
+function createPromptSuggestionGate({ closeInput, enabled, timeoutMs = PROMPT_SUGGESTION_WAIT_MS,
+  setTimer = setTimeout, clearTimer = clearTimeout }) {
+  let resultSeen = false;
+  let backgroundIdle = true;
+  let suggestionSeen = false;
+  let timedOut = !enabled;
+  let closed = false;
+  let timer = null;
+
+  function closeIfReady() {
+    if (closed || !resultSeen || !backgroundIdle || !(suggestionSeen || timedOut)) return false;
+    closed = true;
+    if (timer) { clearTimer(timer); timer = null; }
+    if (typeof closeInput === 'function') closeInput();
+    return true;
+  }
+
+  return {
+    markResult() {
+      resultSeen = true;
+      if (enabled && !suggestionSeen && !timedOut && !timer) {
+        timer = setTimer(() => { timer = null; timedOut = true; closeIfReady(); }, timeoutMs);
+      }
+      closeIfReady();
+    },
+    markSuggestion() { suggestionSeen = true; closeIfReady(); },
+    setBackgroundIdle(value) { backgroundIdle = value === true; closeIfReady(); },
+    forceClose() {
+      if (timer) { clearTimer(timer); timer = null; }
+      if (!closed) { closed = true; if (typeof closeInput === 'function') closeInput(); }
+    },
+    state() { return { resultSeen, backgroundIdle, suggestionSeen, timedOut, closed }; },
+  };
+}
+
 // قناة آمنة خاصة ببطاقة مهمة SDK الخلفية. لا نعيد output_file أو usage أو UUID،
 // ونسقط summary كاملة إن التقط حارس الذاكرة اعتماداً محتملاً.
 function sdkTaskNotificationEvent(message, toolUseId) {
@@ -269,7 +335,7 @@ function sdkTaskStartedEvent(toolUseId, taskId) {
   return { type: 'sdk_task_started', toolUseId: String(toolUseId), taskId: String(taskId) };
 }
 
-function createSdkBackgroundController({ query, emit, closeInput, isolated }) {
+function createSdkBackgroundController({ query, emit, closeInput, holdInput, isolated }) {
   const taskIdByToolUse = new Map();
   const toolUseByTaskId = new Map();
   const taskTitleById = new Map();
@@ -372,6 +438,7 @@ function createSdkBackgroundController({ query, emit, closeInput, isolated }) {
       promise: null, taskMappingEmitted: false,
     };
     moveStates.set(toolUseId, state);
+    if (typeof holdInput === 'function') holdInput();
     state.promise = performMove(toolUseId, state);
     return state.promise;
   }
@@ -751,7 +818,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   // PreToolUse يُنفَّذ قبل تشغيل الأداة وعملية claude تنتظر رده، فهو اللحظة
   // المضمونة لالتقاط «قبل» (القراءة المتزامنة تسبق أي كتابة). PostToolUse
   // يُنفَّذ بعد نجاح الأداة فنقرأ «بعد» الفعلي من القرص ونحسب الفرق.
-  // (الفشل يمرّ عبر PostToolUseFailure لا PostToolUse، فلا نعرض فرقاً لتعديل فاشل.)
+  // الفشل يمرّ عبر PostToolUseFailure فنحذف لقطة «قبل» اليتيمة ولا نعرض فرقاً.
   async function preToolUse(input) {
     try {
       if (input && EDIT_TOOLS.has(input.tool_name)) {
@@ -821,6 +888,17 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     return { continue: true };
   }
 
+  async function postToolUseFailure(input) {
+    clearFailedEditSnapshot(input);
+    return { continue: true };
+  }
+
+  async function postCompact(input) {
+    const event = sdkCompactSummaryEvent(input);
+    if (event) emit(event);
+    return { continue: true };
+  }
+
   const options = {
     cwd,
     includePartialMessages: true,
@@ -831,6 +909,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     hooks: {
       PreToolUse: [{ hooks: [preToolUse] }],
       PostToolUse: [{ hooks: [postToolUse] }],
+      PostToolUseFailure: [{ hooks: [postToolUseFailure] }],
+      PostCompact: [{ hooks: [postCompact] }],
     },
     // بدون هذا لا يحمّل SDK إعدادات الملفات (تغيّر جذري بعد إعادة تسمية الحزمة):
     // خوادم MCP المحلية (.mcp.json) وحالة موصّلات claude.ai وأذوناتها ومهارات
@@ -991,6 +1071,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const bin = resolveClaudeBin();
   if (bin) options.pathToClaudeCodeExecutable = bin;
   if (!internalPolicy) options.enableFileCheckpointing = true;
+  applyClaudePolishOptions(options, internalPolicy);
   applyClaudeElicitation(options, elicitationController.handle, internalPolicy);
   if (sessionId) options.resume = sessionId;
   if (model) options.model = model;
@@ -1821,10 +1902,15 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   }
 
   const q = query({ prompt: promptStream(), options });
+  const promptSuggestionGate = createPromptSuggestionGate({
+    closeInput,
+    enabled: !internalPolicy && options.promptSuggestions === true,
+  });
   const sdkBackgroundController = createSdkBackgroundController({
     query: q,
     emit,
-    closeInput,
+    closeInput: () => promptSuggestionGate.setBackgroundIdle(true),
+    holdInput: () => promptSuggestionGate.setBackgroundIdle(false),
     isolated: !!internalPolicy,
   });
 
@@ -1853,6 +1939,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           emit({ type: 'stderr', text: 'لا يدعم إصدار Claude Code المستخدم طلب إدخال الموصّلات. حدّث Claude Code أو أكمل المصادقة عبر /mcp.' });
         }
         emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingTaskCreates, startedClaudeTaskIds);
+        const agentProgress = sdkAgentProgressEvent(msg);
+        if (agentProgress) emit(agentProgress);
         sdkBackgroundController.observe(msg);
         if (msg.type === 'stream_event') {
           const phaseEvent = phaseEventFromStreamEvent(msg.event);
@@ -1860,13 +1948,18 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         } else if (msg.type === 'assistant') {
           emit(annotateAssistantMessage(msg));
         } else if (msg.type === 'system' || msg.type === 'user') {
-          // task_notification الخام يحمل output_file/usage/UUID؛ استُهلك أعلاه إلى
-          // task_update والحدث المنقّى، فلا يعبر الغلاف الخام إلى renderer أو المراقبين.
-          const rawTaskNotification = msg.type === 'system' && msg.subtype === 'task_notification';
-          if (!rawTaskNotification && !(matchingPromptUser && (inputAlreadyEmitted || internalPolicy))) emit(msg);
+          // task_notification/task_progress الخامان يحملان usage/UUID وحقول SDK داخلية؛
+          // استُهلكا أعلاه إلى أحداث allowlist منقّاة، فلا يعبران إلى renderer أو المراقبين.
+          const rawPrivateLifecycle = msg.type === 'system'
+            && (msg.subtype === 'task_notification' || msg.subtype === 'task_progress');
+          if (!rawPrivateLifecycle && !(matchingPromptUser && (inputAlreadyEmitted || internalPolicy))) emit(msg);
+        } else if (msg.type === 'prompt_suggestion') {
+          if (!internalPolicy) emit(msg);
+          promptSuggestionGate.markSuggestion();
         } else if (msg.type === 'result') {
           emit(msg);
           turnAllowed.clear();
+          promptSuggestionGate.markResult();
           sdkBackgroundController.markResult(); // تبقى القناة حية إن كانت مهمة SDK خلفية تنتظر task_notification
         }
         // أنواع أخرى (status/progress…) لا تعنينا حالياً
@@ -1930,11 +2023,16 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       const p = pending.get(id);
       if (!p) return false;
       pending.delete(id);
+      const permanent = !!(allow && always && ((p.originTrust && p.origin
+        && trustedBrowserOrigins instanceof Set)
+        || (!p.originTrust && !p.neverAlways && !NEVER_ALWAYS_TOOLS.has(p.toolName))));
+      const decisionClassification = allow ? (permanent ? 'user_permanent' : 'user_temporary') : 'user_reject';
       if (allow && p.budgetExtend) actionBudget.extend();
       if (allow && p.budgetAction) {
         const consumed = actionBudget.consume(p.toolName);
         if (!consumed.allowed) {
-          p.resolve({ behavior: 'deny', message: 'بلغت ميزانية أفعال المتصفح؛ لم يُنفّذ الفعل.' });
+          p.resolve({ behavior: 'deny', message: 'بلغت ميزانية أفعال المتصفح؛ لم يُنفّذ الفعل.',
+            decisionClassification: 'user_reject' });
           return true;
         }
       }
@@ -1943,8 +2041,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       } else if (allow && always && !p.neverAlways && !NEVER_ALWAYS_TOOLS.has(p.toolName)) alwaysAllowed.add(p.toolName);
       if (allow && turn && p.turnEligible) turnAllowed.add(p.toolName);
       p.resolve(allow
-        ? { behavior: 'allow', updatedInput: p.input }
-        : { behavior: 'deny', message: 'رفض المستخدم استخدام هذه الأداة' });
+        ? { behavior: 'allow', updatedInput: p.input, decisionClassification }
+        : { behavior: 'deny', message: 'رفض المستخدم استخدام هذه الأداة', decisionClassification });
       return true;
     },
     // رد الواجهة على أسئلة AskUserQuestion: selections مؤشرات فقط، تبني updatedInput من
@@ -2285,11 +2383,17 @@ module.exports = {
   claudeAccount,
   createClaudeMetadataClient,
   createSdkBackgroundController,
+  createPromptSuggestionGate,
   emitClaudeTasks,
+  sdkAgentProgressEvent,
+  sdkCompactSummaryEvent,
   sdkTaskNotificationEvent,
   sdkTaskStartedEvent,
+  clearFailedEditSnapshot,
   SAFE_SDK_TOOL_USE_ID,
   SAFE_SDK_TASK_ID,
+  PROMPT_SUGGESTION_WAIT_MS,
+  applyClaudePolishOptions,
   applyClaudeFallbackModel,
   applyClaudeElicitation,
   undoEdit,

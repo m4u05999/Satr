@@ -14,6 +14,8 @@ class SatrComposer extends HTMLElement {
     const $ = (id) => document.getElementById(id);
     const composerHost = this;
     const input = $('input');
+    const promptSuggestion = $('promptSuggestion');
+    const promptSuggestionText = $('promptSuggestionText');
     const notice = (t) => this.dispatchEvent(new CustomEvent('notice', { detail: t }));
     const emitSend = () => this.dispatchEvent(new CustomEvent('composer-send'));
     let commands = []; // عناصر قائمة «/» الأصلية — تُحقن من القشرة (معاودات نداء تنفيذها هناك)
@@ -22,6 +24,19 @@ class SatrComposer extends HTMLElement {
     const slashMenu = $('slashMenu');
     let slashIndex = 0, slashFiltered = [];
     let activeDraftCwd = $('cwd').value.trim();
+
+    function clearPromptSuggestion() {
+      promptSuggestion.hidden = true;
+      promptSuggestionText.textContent = '';
+    }
+
+    promptSuggestion.addEventListener('click', () => {
+      const suggestion = promptSuggestionText.textContent;
+      if (!suggestion) return;
+      input.value = suggestion;
+      clearPromptSuggestion();
+      autoResize(); saveDraft(); closeSlash(); closeFiles(); input.focus();
+    });
 
 // ما يلي منقول حرفياً من القشرة (لصق الصور + زر الإرفاق + شريط الخلفية + محرّك
 // قائمتي / و@ + المسودة) — التغييرات الوحيدة: addNotice⇒notice وsend⇒emitSend
@@ -527,6 +542,7 @@ class SatrComposer extends HTMLElement {
   $('cwd').addEventListener('change', () => switchDraft($('cwd').value));
 
   input.addEventListener('input', () => {
+    clearPromptSuggestion();
     autoResize();
     saveDraft();
     const v = input.value;
@@ -573,6 +589,14 @@ class SatrComposer extends HTMLElement {
       autoResize(); saveDraft(); closeSlash(); closeFiles(); input.focus();
     };
     this.switchDraft = switchDraft;
+    this.showPromptSuggestion = (suggestion) => {
+      const text = typeof suggestion === 'string' ? suggestion.trim().slice(0, 500) : '';
+      if (!text) { clearPromptSuggestion(); return false; }
+      promptSuggestionText.textContent = text;
+      promptSuggestion.hidden = false;
+      return true;
+    };
+    this.clearPromptSuggestion = clearPromptSuggestion;
     // بعد الإرسال: تمدد المحرّر + مسح المسودة + إغلاق القائمتين (input.value تصفّره القشرة)
     this.afterSend = () => { autoResize(); clearDraft(); closeSlash(); closeFiles(); };
     this.setBgProcs = (procs) => { bgProcs = Array.isArray(procs) ? procs : []; renderBgBar(); };
