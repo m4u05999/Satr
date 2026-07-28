@@ -464,6 +464,83 @@ section {
   text-align: start;
 }
 
+/* ---------- المشهد 4ب: الطبقات الأربع ---------- */
+#layers { padding-block: 6rem 4rem; }
+
+.layers-stack {
+  list-style: none;
+  margin: 3.5rem auto 0;
+  padding: 0;
+  max-width: 46rem;
+  display: grid;
+  gap: 1.1rem;
+}
+
+.layer-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.4rem 1.6rem;
+}
+
+/* دَرَج تصاعدي: كل طبقة أعلى تنزاح خطوة — يقرأ RTL صعوداً نحو طبقتي «سطر» */
+.layer-card:nth-child(2) { margin-inline-start: 2.2rem; }
+.layer-card:nth-child(3) { margin-inline-start: 4.4rem; }
+.layer-card:nth-child(4) { margin-inline-start: 6.6rem; }
+
+.layer-num {
+  font-family: var(--mono);
+  color: var(--text-faint);
+  font-size: .85rem;
+  letter-spacing: .12em;
+  display: block;
+  margin-bottom: .45rem;
+  text-align: start;
+}
+
+.layer-card h3 {
+  margin: 0 0 .5rem;
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.layer-card p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: .98rem;
+  line-height: 1.8;
+}
+
+/* طبقتا «سطر» (الحوكمة والحلقة) — التمييز الذهبي */
+.layer-here {
+  background: var(--gold-soft);
+  border-color: var(--gold-border);
+}
+.layer-here .layer-num { color: var(--gold); }
+
+.layer-badge {
+  position: absolute;
+  top: -0.8rem;
+  inset-inline-start: 1.2rem;
+  background: var(--gold);
+  color: var(--on-gold);
+  font-size: .78rem;
+  font-weight: 600;
+  padding: .22rem .8rem;
+  border-radius: 999px;
+}
+
+.layers-punch {
+  margin: 3.2rem auto 0;
+  max-width: 44rem;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 1.15rem;
+  line-height: 2;
+}
+.layers-punch .gold { color: var(--gold); font-weight: 600; }
+
 /* ---------- المشهد 5: المحرّكات ---------- */
 #engines {
   padding-block: 6rem;
@@ -615,6 +692,8 @@ section {
   section { padding: 5rem 1.2rem; }
   .feature-card { grid-template-columns: 1fr; gap: 1.5rem; }
   .feature-card:nth-child(even) { direction: rtl; }
+  /* الطبقات: الدرج المائل يضيق الشاشة — أعمدة مستقيمة */
+  .layer-card:nth-child(2), .layer-card:nth-child(3), .layer-card:nth-child(4) { margin-inline-start: 0; }
   .site-header { padding: .8rem 1.2rem; }
   .site-header nav { gap: .9rem; }
   .term-body { font-size: .8rem; }
