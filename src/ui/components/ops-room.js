@@ -169,6 +169,17 @@ const roomSheet = sheet(`
   .setup-field { display: grid; gap: var(--space-1); min-width: 0; }
   .setup-field > span { color: var(--text-dim); font-size: .75rem; }
   .setup-note { color: var(--text-dim); font-size: .75rem; line-height: 1.7; }
+  .loop-options {
+    display: grid; gap: var(--space-2); padding: var(--space-3);
+    border: 1px solid var(--gold-border); border-radius: var(--radius-md); background: var(--surface);
+  }
+  .loop-toggle { display: flex; align-items: center; gap: var(--space-2); color: var(--gold); }
+  .loop-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+  .loop-fields[hidden] { display: none; }
+  input[type="number"] {
+    width: 100%; direction: ltr; text-align: left; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: var(--radius-md); padding: var(--space-2); font: .8rem/1.7 var(--mono);
+  }
   .worker-input {
     display: grid; gap: var(--space-2); padding: var(--space-3);
     border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface);
@@ -209,6 +220,20 @@ const roomSheet = sheet(`
   .path, .command { flex: 1; min-width: 0; }
   .counts { direction: ltr; font-family: var(--mono); color: var(--text-dim); white-space: nowrap; }
   .summary { white-space: pre-wrap; unicode-bidi: plaintext; }
+  .loop-card { display: grid; gap: var(--space-3); }
+  .loop-head, .loop-metrics, .loop-actions {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap;
+  }
+  .loop-metric { display: inline-flex; align-items: baseline; gap: var(--space-1); color: var(--text-dim); }
+  .loop-title { color: var(--gold); font-weight: 700; }
+  .loop-state { color: var(--text-dim); }
+  .loop-progress { width: 100%; height: var(--space-2); accent-color: var(--gold); }
+  .loop-progress::-webkit-progress-bar { background: var(--surface-3); border-radius: var(--radius-pill); }
+  .loop-progress::-webkit-progress-value { background: var(--gold); border-radius: var(--radius-pill); }
+  .loop-failure, .loop-guidance { unicode-bidi: plaintext; line-height: 1.7; }
+  .loop-failure { color: var(--red); }
+  .loop-guidance { color: var(--text-dim); }
+  .loop-stop { color: var(--red); }
   .review-section { display: grid; gap: var(--space-1); }
   .review-section h4 { color: var(--gold); font-size: .78rem; }
   .review-section ul { margin: var(--space-0); padding-inline-start: var(--space-5); display: grid; gap: var(--space-1); }
@@ -230,6 +255,7 @@ const roomSheet = sheet(`
     .action-bar { align-items: stretch; }
     .action-bar button { flex: 1 1 auto; }
     .setup-head { align-items: flex-start; flex-direction: column; }
+    .loop-fields { grid-template-columns: minmax(0, 1fr); }
   }
 `);
 
@@ -286,6 +312,16 @@ const TEAM_STATES = {
   failed: 'فشل التنفيذ', timed_out: 'انتهت المهلة', stopped: 'توقف',
   cleanup_failed: 'فشل التنظيف', conflict: 'تعارض ملكية',
   interrupted: 'انقطع بإغلاق سابق',
+};
+
+const LOOP_STATES = {
+  preparing: 'يجهّز الحلقة', working: 'ينفّذ الإصلاح', verifying: 'يتحقق', passed: 'نجحت',
+  failed_after_n: 'فشلت بعد نفاد الدورات', budget_exhausted: 'نفدت الميزانية',
+  failed: 'فشلت', stopped: 'توقفت',
+};
+const LOOP_STOP_REASONS = {
+  pass: 'نجح التحقق', iterations: 'نفدت الدورات', budget: 'نفدت الميزانية',
+  user: 'أوقفها المستخدم', error: 'حدث خطأ',
 };
 
 const TERMINAL_AGENT_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
@@ -391,6 +427,15 @@ function makeElement(tagName, className, label) {
 function timeLabel(value) {
   const timestamp = Number(value);
   return timestamp > 0 ? new Date(timestamp).toLocaleString('ar-SA') : 'وقت غير متاح';
+}
+
+function integerLabel(value) {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Number(value) || 0);
+}
+
+function usdLabel(value) {
+  return '$' + new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+    .format(Number(value) || 0);
 }
 
 function engineLabel(value) {
@@ -904,6 +949,27 @@ class SatrOpsRoom extends HTMLElement {
     const fields = document.createElement('div'); fields.className = 'setup-fields';
     fields.appendChild(countWrap); fields.appendChild(timeoutWrap);
     head.appendChild(title); head.appendChild(fields); setup.appendChild(head);
+    const loopOptions = document.createElement('section'); loopOptions.className = 'loop-options';
+    const loopToggle = document.createElement('label'); loopToggle.className = 'loop-toggle';
+    const loopMode = document.createElement('input'); loopMode.type = 'checkbox';
+    loopMode.setAttribute('aria-label', 'تشغيل حلقة محدودة');
+    const loopLabel = document.createElement('span'); loopLabel.textContent = '🔁 حلقة محدودة';
+    loopToggle.appendChild(loopMode); loopToggle.appendChild(loopLabel); loopOptions.appendChild(loopToggle);
+    const loopFields = document.createElement('div'); loopFields.className = 'loop-fields'; loopFields.hidden = true;
+    const iterationWrap = document.createElement('label'); iterationWrap.className = 'setup-field';
+    const iterationLabel = document.createElement('span'); iterationLabel.textContent = 'الحد الأقصى للدورات';
+    const maxIterations = document.createElement('input'); maxIterations.type = 'number';
+    maxIterations.min = '1'; maxIterations.max = '5'; maxIterations.step = '1'; maxIterations.value = '3';
+    maxIterations.setAttribute('aria-label', 'الحد الأقصى لدورات الحلقة');
+    iterationWrap.appendChild(iterationLabel); iterationWrap.appendChild(maxIterations);
+    const budgetWrap = document.createElement('label'); budgetWrap.className = 'setup-field';
+    const budgetLabel = document.createElement('span'); budgetLabel.textContent = 'ميزانية الرموز التقديرية';
+    const budgetTokens = document.createElement('input'); budgetTokens.type = 'number';
+    budgetTokens.min = '50000'; budgetTokens.max = '2000000'; budgetTokens.step = '50000'; budgetTokens.value = '400000';
+    budgetTokens.setAttribute('aria-label', 'ميزانية رموز الحلقة');
+    budgetWrap.appendChild(budgetLabel); budgetWrap.appendChild(budgetTokens);
+    loopFields.appendChild(iterationWrap); loopFields.appendChild(budgetWrap); loopOptions.appendChild(loopFields);
+    setup.appendChild(loopOptions);
     const note = document.createElement('div'); note.className = 'setup-note';
     note.textContent = 'المسار الافتراضي بعامل واحد: تنفيذ معزول ← مراجعة ← تحقق ← شاهدها تعمل ← دمج. الفريق من عاملين أو ثلاثة خيار متقدم للمهام ذات الملكيات المنفصلة.';
     const planRow = document.createElement('div'); planRow.className = 'setup-actions';
@@ -949,11 +1015,27 @@ class SatrOpsRoom extends HTMLElement {
       setup.appendChild(worker); inputs.push(worker);
     }
     setup.appendChild(note); setup.appendChild(planRow);
+    const syncLoopOptions = () => {
+      const singleWorker = Number(count.value) === 1;
+      if (!singleWorker) loopMode.checked = false;
+      loopMode.disabled = !singleWorker;
+      loopMode.title = singleWorker ? '' : 'الحلقة المحدودة تعمل بعامل واحد فقط.';
+      loopFields.hidden = !loopMode.checked;
+      maxIterations.disabled = !loopMode.checked;
+      budgetTokens.disabled = !loopMode.checked;
+      timeoutLabel.textContent = loopMode.checked ? 'مهلة كل دورة' : 'مهلة كل عامل';
+      timeout.setAttribute('aria-label', loopMode.checked ? 'مهلة كل دورة' : 'مهلة كل عامل');
+    };
+    loopMode.addEventListener('change', () => { syncLoopOptions(); this._syncSetupActions(); });
     count.addEventListener('change', () => {
       inputs.forEach((worker, index) => { worker.hidden = index >= Number(count.value); });
+      syncLoopOptions();
       this._syncSetupActions();
     });
-    this._setup = { count, timeout, inputs, planButton, planHint };
+    this._setup = {
+      count, timeout, inputs, planButton, planHint, loopMode, loopFields, maxIterations, budgetTokens,
+    };
+    syncLoopOptions();
     this._syncSetupActions();
     return setup;
   }
@@ -1006,14 +1088,71 @@ class SatrOpsRoom extends HTMLElement {
     if (!entries.length && !this._state.team) this._empty(view, 'لا قرارات مسجلة بعد.');
   }
 
+  _renderLoop(view, derived) {
+    const loop = this._state.loop;
+    if (!loop) return;
+    const card = document.createElement('article'); card.className = 'setup loop-card';
+    const head = document.createElement('div'); head.className = 'loop-head';
+    const title = document.createElement('div'); title.className = 'loop-title'; title.textContent = 'حلقة محدودة — الدورة ';
+    const iteration = document.createElement('bdi'); iteration.className = 'counts';
+    iteration.textContent = integerLabel(loop.iteration) + '/' + integerLabel(loop.max_iterations);
+    title.appendChild(iteration);
+    const state = document.createElement('span'); state.className = 'loop-state';
+    state.textContent = LOOP_STATES[loop.state] || loop.state;
+    head.appendChild(title); head.appendChild(state); card.appendChild(head);
+    const progress = document.createElement('progress'); progress.className = 'loop-progress';
+    progress.max = Math.max(1, Number(loop.max_iterations) || 1);
+    progress.value = Math.min(progress.max, Math.max(0, Number(loop.iteration) || 0));
+    progress.setAttribute('aria-label', 'تقدم دورات الحلقة المحدودة'); card.appendChild(progress);
+    if (loop.last_failure_summary) {
+      const failure = document.createElement('div'); failure.className = 'loop-failure'; failure.dir = 'auto';
+      failure.textContent = 'آخر فشل: ' + loop.last_failure_summary; card.appendChild(failure);
+    }
+    const metrics = document.createElement('div'); metrics.className = 'loop-metrics';
+    const cost = document.createElement('span'); cost.className = 'loop-metric'; cost.textContent = 'الكلفة (إدخال/إخراج) ';
+    const costValue = document.createElement('bdi'); costValue.className = 'counts';
+    const costEstimate = loop.cost && loop.cost.estimate ? ' · تقديري' : '';
+    costValue.textContent = usdLabel(loop.cost && loop.cost.usd) + ' · '
+      + integerLabel(loop.cost && loop.cost.input_tokens) + '/'
+      + integerLabel(loop.cost && loop.cost.output_tokens);
+    cost.appendChild(costValue);
+    if (costEstimate) cost.appendChild(document.createTextNode(costEstimate));
+    const budget = document.createElement('span'); budget.className = 'loop-metric'; budget.textContent = 'الميزانية (رمز) ';
+    const budgetValue = document.createElement('bdi'); budgetValue.className = 'counts';
+    const budgetEstimate = loop.budget && loop.budget.estimate ? ' · تقديري' : '';
+    budgetValue.textContent = integerLabel(loop.budget && loop.budget.used_tokens) + '/'
+      + integerLabel(loop.budget && loop.budget.limit_tokens);
+    budget.appendChild(budgetValue);
+    if (budgetEstimate) budget.appendChild(document.createTextNode(budgetEstimate));
+    metrics.appendChild(cost); metrics.appendChild(budget); card.appendChild(metrics);
+    if (derived.loopTerminal) {
+      const guidance = document.createElement('div'); guidance.className = 'loop-guidance';
+      const reason = LOOP_STOP_REASONS[loop.stop_reason] || LOOP_STATES[loop.state] || loop.state;
+      guidance.textContent = 'سبب التوقف: ' + reason + '. ' + (loop.state === 'passed'
+        ? 'راجع الأثر ثم امشِ بوابة الدمج كالمعتاد.'
+        : 'راجع الأثر الجزئي وسجل الغرفة، ثم قرر الخطوة التالية عبر البوابات المعتادة.');
+      card.appendChild(guidance);
+    } else {
+      const actions = document.createElement('div'); actions.className = 'loop-actions';
+      const hint = document.createElement('span'); hint.className = 'setup-note';
+      hint.textContent = 'الإيقاف يقاطع العامل ويحفظ الأثر الجزئي للمراجعة إن أمكن.';
+      const stop = document.createElement('button'); stop.type = 'button'; stop.className = 'loop-stop';
+      stop.textContent = '⏹ أوقف الحلقة'; stop.disabled = Boolean(this._state.pending);
+      stop.addEventListener('click', () => this._stopLoop(loop));
+      actions.appendChild(hint); actions.appendChild(stop); card.appendChild(actions);
+    }
+    view.appendChild(card);
+  }
+
   _renderTasks() {
     const view = this._views.tasks; view.textContent = '';
     this._setup = null;
     const derived = deriveOpsRoomState(this._state);
     if (derived.canStart) view.appendChild(this._setupCard(this._state.team));
     else this._syncSetupActions();
+    this._renderLoop(view, derived);
     const team = this._state.team;
-    if (!team) { if (!derived.canStart) this._empty(view, 'لا يوجد فريق تنفيذ.'); return; }
+    if (!team) { if (!derived.canStart && !this._state.loop) this._empty(view, 'لا يوجد فريق تنفيذ.'); return; }
     for (const agent of team.agents || []) {
       const card = this._card({
         title: agent.label || 'عامل', state: agent.state, stateLabel: TEAM_STATES[agent.state] || agent.state,
@@ -1273,8 +1412,10 @@ class SatrOpsRoom extends HTMLElement {
   _groupSignature(groupId) {
     const team = this._state.team;
     if (groupId === 'work') {
-      if (!team && !this._plan && !this._brainstorm) return '';
+      const loop = this._state.loop;
+      if (!team && !loop && !this._plan && !this._brainstorm) return '';
       return [team && team.id, team && team.state, team && team.updated_at,
+        loop && loop.loop_id, loop && loop.state, loop && loop.updated_at,
         this._plan && this._plan.id, this._plan && this._plan.state,
         this._brainstorm && this._brainstorm.id, this._brainstorm && this._brainstorm.state].join(':');
     }
@@ -1296,6 +1437,7 @@ class SatrOpsRoom extends HTMLElement {
   _groupAlerts() {
     const team = this._state.team;
     const work = !!(team && ['failed', 'timed_out', 'conflict', 'cleanup_failed'].includes(team.state))
+      || !!(this._state.loop && ['failed_after_n', 'budget_exhausted', 'failed'].includes(this._state.loop.state))
       || ((team && team.agents) || []).some((agent) => agent && ['failed', 'timed_out', 'cleanup_failed'].includes(agent.state))
       || !!(this._plan && this._plan.state === 'failed')
       || ((this._brainstorm && this._brainstorm.workers) || []).some((worker) => worker && worker.state === 'failed');
@@ -1327,7 +1469,7 @@ class SatrOpsRoom extends HTMLElement {
   _renderCompactState(derived) {
     const alerts = this._groupAlerts();
     const hasAlert = alerts.work || alerts.results;
-    const running = derived.teamActive || derived.reviewActive || derived.verificationActive;
+    const running = derived.loopActive || derived.teamActive || derived.reviewActive || derived.verificationActive;
     const merged = !!(this._state.team && this._state.team.merged);
     this._compactState.textContent = hasAlert ? '!' : this._primaryAction ? '←' : running ? '…' : merged ? '✓' : '•';
     this._compactState.toggleAttribute('data-alert', hasAlert);
@@ -1346,7 +1488,8 @@ class SatrOpsRoom extends HTMLElement {
     this._timeoutRow.hidden = true;
     this._buttons.stop.hidden = !derived.canStop;
     this._status.textContent = this._state.status || (this._state.pending ? 'جارٍ تنفيذ الانتقال المطلوب…'
-      : this._state.team ? (TEAM_STATES[this._state.team.state] || this._state.team.state)
+      : this._state.loop && derived.loopActive ? (LOOP_STATES[this._state.loop.state] || this._state.loop.state)
+        : this._state.team ? (TEAM_STATES[this._state.team.state] || this._state.team.state)
         : 'حدّد المهام والملكية، ثم ابدأ انتقال التنفيذ صراحةً.');
     this._renderHistory(); this._renderBrainstorm(); this._renderDecisions(); this._renderTasks(); this._renderDiscussion();
     this._renderEvidence(); this._renderDiffs(); this._renderReview();
@@ -1375,6 +1518,51 @@ class SatrOpsRoom extends HTMLElement {
     if (agents.some((agent) => !agent.task || !agent.ownership.length)) {
       this._dispatch({ type: 'status', status: 'اكتب مهمة وملكية ملفات لكل عامل.' }); return;
     }
+    if (this._setup.loopMode.checked) {
+      if (count !== 1) {
+        this._dispatch({ type: 'status', status: 'الحلقة المحدودة تعمل بعامل واحد فقط.' }); return;
+      }
+      if (typeof window.satr.loopPreflight !== 'function' || typeof window.satr.loopStart !== 'function') {
+        this._dispatch({ type: 'status', status: 'وضع الحلقة المحدودة غير متاح في هذه النسخة حالياً.' }); return;
+      }
+      const maxIterations = Number(this._setup.maxIterations.value);
+      const budgetTokens = Number(this._setup.budgetTokens.value);
+      if (!Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > 5
+        || !Number.isInteger(budgetTokens) || budgetTokens < 50000 || budgetTokens > 2000000) {
+        this._dispatch({ type: 'status', status: 'راجع عدد الدورات وميزانية الرموز قبل بدء الحلقة.' }); return;
+      }
+      let preflight = null;
+      try { preflight = await window.satr.loopPreflight(this._cwd); } catch {}
+      if (!preflight || !preflight.ok) {
+        this._dispatch({ type: 'status', status: errorLabel(preflight, 'execution',
+          'تعذّر فحص إعداد التحقق للحلقة — راجع .satr/verify.json المعتمد في HEAD.') });
+        return;
+      }
+      const confirmed = await this._confirm({
+        kind: 'loop-start', title: 'تأكيد الحلقة المحدودة', confirmLabel: 'ابدأ الحلقة',
+        description: 'موافقة واحدة على الحلقة كاملة: حتى ' + integerLabel(maxIterations)
+          + ' دورات، وميزانية ' + integerLabel(budgetTokens)
+          + ' رمز تقديرية، ومهلة ' + integerLabel(timeoutSeconds) + ' ثانية لكل دورة. لن يندمج شيء تلقائياً.',
+        items: (preflight.checks || []).map((check) => check.command).filter((command) => typeof command === 'string'),
+      });
+      if (!confirmed) return;
+      this._dispatch({ type: 'pending', action: 'loop-start' });
+      let result = null;
+      try {
+        result = await window.satr.loopStart(this._cwd, agents[0].task, agents[0].ownership, {
+          max_iterations: maxIterations, budget_tokens: budgetTokens, timeout_seconds: timeoutSeconds,
+        }, true);
+      } catch {}
+      if (!result || !result.ok) {
+        this._dispatch({ type: 'settled', status: errorLabel(result, 'execution',
+          'تعذّر بدء الحلقة المحدودة — راجع المهمة والملكية وإعداد التحقق ثم أعد المحاولة.') });
+        return;
+      }
+      this._dispatch({ type: 'settled', status: 'بدأت الحلقة المحدودة داخل نسخة عمل معزولة.' });
+      if (result.loop) this._dispatch({ type: 'event', event: { ...result.loop, type: 'loop_update' } });
+      if (result.loop && result.loop.room_id) await this._loadRoom(result.loop.room_id);
+      return;
+    }
     const confirmed = await this._confirm({
       kind: 'start', title: 'تأكيد بدء التنفيذ المعزول', confirmLabel: 'ابدأ التنفيذ',
       description: 'سينشئ «سطر» worktree مستقلاً لكل عامل بمهلة ' + (timeoutSeconds / 60)
@@ -1392,6 +1580,25 @@ class SatrOpsRoom extends HTMLElement {
     }
     this._dispatch({ type: 'settled', team: result.team, status: 'بدأ التنفيذ داخل النسخ المعزولة.' });
     await this._loadRoom(result.team && result.team.room_id);
+  }
+
+  async _stopLoop(loop) {
+    if (!loop || !loop.loop_id) return;
+    if (typeof window.satr.loopStop !== 'function') {
+      this._dispatch({ type: 'status', status: 'إيقاف الحلقة غير متاح في هذه النسخة حالياً.' }); return;
+    }
+    const confirmed = await this._confirm({
+      kind: 'loop-stop', title: 'تأكيد إيقاف الحلقة', confirmLabel: 'أوقف الحلقة',
+      description: 'سيُقاطع العامل فوراً، ويحفظ «سطر» الأثر الجزئي للمراجعة إن أمكن التقاطه.',
+    });
+    if (!confirmed) return;
+    this._dispatch({ type: 'pending', action: 'loop-stop' });
+    let result = null;
+    try { result = await window.satr.loopStop(loop.loop_id); } catch {}
+    this._dispatch({ type: 'settled', status: result && result.ok
+      ? 'توقفت الحلقة المحدودة بطلب المستخدم.'
+      : errorLabel(result, 'execution', 'تعذّر إيقاف الحلقة — حدّث الغرفة ثم أعد المحاولة.') });
+    if (result && result.loop) this._dispatch({ type: 'event', event: { ...result.loop, type: 'loop_update' } });
   }
 
   async _startReview() {
@@ -1712,12 +1919,19 @@ class SatrOpsRoom extends HTMLElement {
     this._diffCache.clear();
     this._groupSeen = { work: '', results: '', log: '' };
     this._state = createOpsRoomState(); this._render();
-    let team = null; let review = null; let verification = null; let preview = null; let room = null;
+    let team = null; let review = null; let verification = null; let preview = null; let room = null; let loop = null;
+    const loopLatestAvailable = typeof window.satr.loopLatest === 'function';
     try {
       const brainstormed = await window.satr.opsBrainstormLatest(this._cwd);
       this._brainstorm = brainstormed && brainstormed.run;
       const planned = await window.satr.opsPlanLatest(this._cwd);
       this._plan = planned && planned.run;
+      if (loopLatestAvailable) {
+        try {
+          const loopLatest = await window.satr.loopLatest(this._cwd);
+          loop = loopLatest && loopLatest.loop;
+        } catch {}
+      }
       const latest = await window.satr.executionTeamLatest(this._cwd);
       team = latest && latest.team;
       if (team) {
@@ -1732,7 +1946,7 @@ class SatrOpsRoom extends HTMLElement {
         }
       }
     } catch {}
-    this._dispatch({ type: 'hydrate', room, team, review, verification, preview });
+    this._dispatch({ type: 'hydrate', room, team, review, verification, preview, loop });
     if (this._plan && this._plan.state === 'completed') this._applyPlan();
     await this._loadHistory();
   }

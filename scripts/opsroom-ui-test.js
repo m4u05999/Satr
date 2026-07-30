@@ -58,6 +58,19 @@ function fixture(artifactId) {
   return { team, review, verification };
 }
 
+function loopFixture(overrides) {
+  return {
+    type: 'loop_update', schema_version: 1,
+    loop_id: 'loop-ui-test', team_id: 'execution-team-ui-test', room_id: 'ops-room-ui-test',
+    state: 'working', iteration: 2, max_iterations: 3,
+    last_failure_summary: 'فشل اختبار الواجهة (رمز الخروج 1)',
+    cost: { usd: 0.42, input_tokens: 12000, output_tokens: 3000, estimate: true },
+    budget: { limit_tokens: 400000, used_tokens: 15000, estimate: true, exhausted: false },
+    stop_reason: '', updated_at: 1_722_345_678_000,
+    ...(overrides || {}),
+  };
+}
+
 async function testReducer() {
   const stateModule = await loadStateModule();
   const {
@@ -69,6 +82,7 @@ async function testReducer() {
   const current = fixture(artifact);
 
   let state = createOpsRoomState();
+  assert.strictEqual(state.loop, null, 'loop state starts empty');
   assert.strictEqual(deriveOpsRoomState(state).canStart, true, 'initial execution must be available');
   state = opsRoomReducer(state, { type: 'event', event: {
     type: 'execution_team_update', team: { ...current.team, state: 'running', artifact_id: '' },
@@ -126,6 +140,42 @@ async function testReducer() {
   assert.deepStrictEqual(state.entries.map((entry) => entry.id), ['ops-entry-a', 'ops-entry-b', 'ops-entry-c'], 'stable dedupe ordering');
   assert.strictEqual(deriveOpsRoomState(state).canReview, true, 'completed artifact must expose explicit review action');
   assert.strictEqual(deriveOpsRoomState(state).nextAction.action, 'review', 'completed artifact recommends review without starting it');
+
+  let loopState = opsRoomReducer(createOpsRoomState(), {
+    type: 'hydrate', room: { room_id: current.team.room_id, entries: [] }, team: current.team,
+    loop: loopFixture({ state: 'preparing', iteration: 1 }),
+  });
+  assert.strictEqual(loopState.loop.state, 'preparing', 'hydrate accepts the latest loop snapshot');
+  loopState = opsRoomReducer(loopState, { type: 'event', event: loopFixture() });
+  assert.strictEqual(loopState.loop.iteration, 2, 'matching loop_update is consumed');
+  const runningLoop = deriveOpsRoomState(loopState);
+  assert.strictEqual(runningLoop.loopActive, true, 'non-terminal loop is active');
+  assert.strictEqual(runningLoop.loopTerminal, false, 'non-terminal loop is not terminal');
+  assert.strictEqual(runningLoop.canStart, false, 'active loop owns the execution start gate');
+  assert.strictEqual(runningLoop.canStop, false, 'active loop uses its own stop button, not the team stop button');
+  assert.strictEqual(runningLoop.canReview, false, 'active loop blocks review');
+  assert.strictEqual(runningLoop.canPrepareVerification, false, 'active loop blocks formal verification preparation');
+  assert.strictEqual(runningLoop.nextAction.key, 'loop_running', 'active loop precedes team-running guidance');
+  assert.strictEqual(runningLoop.nextAction.action, '', 'loop_running is descriptive only');
+  loopState = opsRoomReducer(loopState, { type: 'event', event: loopFixture({
+    room_id: 'ops-room-other-test', iteration: 3,
+  }) });
+  assert.strictEqual(loopState.loop.iteration, 2, 'loop update from another room is ignored');
+  loopState = opsRoomReducer(loopState, { type: 'event', event: loopFixture({
+    team_id: 'execution-team-other-test', iteration: 3,
+  }) });
+  assert.strictEqual(loopState.loop.iteration, 2, 'loop update from another team is ignored');
+  loopState = opsRoomReducer(loopState, { type: 'event', event: loopFixture({
+    state: 'passed', stop_reason: 'pass', iteration: 3,
+  }) });
+  const passedLoop = deriveOpsRoomState(loopState);
+  assert.strictEqual(passedLoop.loopActive, false, 'passed loop releases active ownership');
+  assert.strictEqual(passedLoop.loopTerminal, true, 'passed loop is terminal');
+  assert.strictEqual(passedLoop.nextAction.action, 'review', 'passed loop returns to the ordinary review gate');
+  loopState = opsRoomReducer(loopState, { type: 'event', event: {
+    type: 'execution_team_update', team: { ...current.team, id: 'execution-team-new-test' },
+  } });
+  assert.strictEqual(loopState.loop, null, 'changing the team id clears the old loop snapshot');
 
   state = opsRoomReducer(state, { type: 'settled', review: current.review });
   assert.strictEqual(deriveOpsRoomState(state).canPrepareVerification, true, 'all actual verdicts unlock prepare only');
@@ -318,6 +368,40 @@ function testDesignGuard() {
   'disabled primary action must expose its reason beside the button');
   assert(component.includes("source: this._primaryAction === options.kind ? this._primaryButton : this"),
     'confirmation focus source must follow the single primary action');
+  assert(component.includes("const LOOP_STATES = {") && component.includes("failed_after_n: 'فشلت بعد نفاد الدورات'")
+    && component.includes("budget_exhausted: 'نفدت الميزانية'"),
+  'loop card must localize all terminal loop outcomes');
+  assert(component.includes("title.textContent = 'حلقة محدودة — الدورة '")
+    && component.includes("iteration.textContent = integerLabel(loop.iteration) + '/' + integerLabel(loop.max_iterations)"),
+  'loop card must expose the current and maximum iteration with LTR digits');
+  assert(component.includes("failure.textContent = 'آخر فشل: ' + loop.last_failure_summary")
+    && !component.includes('loop.last_failure_summary.trim('),
+  'loop card must display the already-sanitized failure summary without reprocessing it');
+  assert(component.includes("stop.textContent = '⏹ أوقف الحلقة'")
+    && component.includes("stop.addEventListener('click', () => this._stopLoop(loop))")
+    && component.includes('await window.satr.loopStop(loop.loop_id)'),
+  'active loop card must expose a confirmed narrow stop action');
+  assert(component.includes('راجع الأثر ثم امشِ بوابة الدمج كالمعتاد.')
+    && component.includes("LOOP_STOP_REASONS[loop.stop_reason]"),
+  'terminal loop card must show its localized reason and passed guidance');
+  assert(component.includes("const costEstimate = loop.cost && loop.cost.estimate ? ' · تقديري' : ''")
+    && component.includes("const budgetEstimate = loop.budget && loop.budget.estimate ? ' · تقديري' : ''"),
+  'loop cost and token budget must retain their estimate labels');
+  assert(component.includes("loopLabel.textContent = '🔁 حلقة محدودة'")
+    && component.includes("maxIterations.value = '3'") && component.includes("budgetTokens.value = '400000'"),
+  'execution setup must offer the approved bounded-loop defaults');
+  assert(component.includes('loopMode.disabled = !singleWorker')
+    && component.includes("loopMode.title = singleWorker ? '' : 'الحلقة المحدودة تعمل بعامل واحد فقط.'"),
+  'bounded-loop setup must disable itself for multi-worker execution');
+  assert(component.includes("typeof window.satr.loopPreflight !== 'function'")
+    && component.includes("typeof window.satr.loopStart !== 'function'")
+    && component.includes("typeof window.satr.loopStop !== 'function'")
+    && component.includes("typeof window.satr.loopLatest === 'function'"),
+  'all loop bridge calls must fail calmly when the core bridge is absent');
+  assert(component.includes('items: (preflight.checks || []).map((check) => check.command)')
+    && component.includes("kind: 'loop-start'") && component.includes('max_iterations: maxIterations')
+    && component.includes('budget_tokens: budgetTokens') && component.includes('timeout_seconds: timeoutSeconds'),
+  'loop preflight commands and approved bounds must cross the existing confirmation surface');
   assert(component.includes(':host([compact]) {') && component.includes('width: var(--space-7); min-width: var(--space-7)'),
     'compact ops room must reclaim width through spacing tokens');
   assert(component.includes("makeElement('div', 'status-row')") && component.includes("makeElement('div', 'timeout-row')"),
@@ -364,6 +448,8 @@ function testDesignGuard() {
   const main = read('electron/main.js');
   const verifyPreload = read('electron/preload.js');
   const verifyDialog = read('src/ui/components/verify-config-dialog.js');
+  assert(app.includes("if (ev.type === 'loop_update') { opsRoomEl.handleEvent(ev); return; }"),
+    'loop_update must route into the ops-room reducer');
   assert(app.includes("surfaceCoordinator.register('verify-config-dialog'")
     && app.includes("opsRoomEl.addEventListener('verify-config-open'")
     && verifyDialog.includes('window.satr.verifyConfigCreate')

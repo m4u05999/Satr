@@ -3,6 +3,9 @@ const TERMINAL_TEAM_STATES = new Set([
 ]);
 const TERMINAL_REVIEW_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped']);
 const TERMINAL_AGENT_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
+const TERMINAL_LOOP_STATES = new Set([
+  'passed', 'failed_after_n', 'budget_exhausted', 'failed', 'stopped',
+]);
 
 export const OBSERVABLE_ACTIVITY_QUIET_MS = 60 * 1000;
 
@@ -27,6 +30,7 @@ export function createOpsRoomState() {
     review: null,
     verification: null,
     preview: null,
+    loop: null,
     pending: '',
     status: '',
   };
@@ -50,13 +54,20 @@ function reduceRuntimeEvent(state, event) {
     return { ...state, entries: orderedEntries(state.entries.concat(event.entry)) };
   }
   if (event.type === 'execution_team_update' && event.team) {
+    const teamChanged = !!(state.team && state.team.id !== event.team.id);
     const replaced = !!(state.team && (state.team.id !== event.team.id
       || state.team.artifact_id && state.team.artifact_id !== event.team.artifact_id));
     return {
       ...state,
       team: { ...event.team },
       ...(replaced ? { room: null, entries: [], review: null, verification: null, preview: null } : {}),
+      ...(teamChanged ? { loop: null } : {}),
     };
+  }
+  if (event.type === 'loop_update') {
+    if (state.room && event.room_id !== state.room.room_id) return state;
+    if (state.team && event.team_id !== state.team.id) return state;
+    return { ...state, loop: { ...event } };
   }
   if (event.type === 'execution_review_update' && event.review) {
     if (state.team && event.review.team_id !== state.team.id) return state;
@@ -86,6 +97,7 @@ export function opsRoomReducer(state, action) {
       review: input.review ? { ...input.review } : null,
       verification: input.verification ? { ...input.verification } : null,
       preview: input.preview ? { ...input.preview } : null,
+      loop: input.loop ? { ...input.loop } : null,
       pending: '',
       status: '',
     };
@@ -127,6 +139,9 @@ function approvedReviewForArtifact(review, team, artifactId) {
 export function deriveOpsRoomState(state) {
   const current = state || createOpsRoomState();
   const team = current.team;
+  const loop = current.loop;
+  const loopTerminal = !!(loop && TERMINAL_LOOP_STATES.has(loop.state));
+  const loopActive = !!(loop && !loopTerminal);
   const artifactId = team && typeof team.artifact_id === 'string' ? team.artifact_id : '';
   const teamTerminal = !!(team && TERMINAL_TEAM_STATES.has(team.state));
   const reviewActive = !!(current.review && !TERMINAL_REVIEW_STATES.has(current.review.state));
@@ -139,11 +154,11 @@ export function deriveOpsRoomState(state) {
   const previewActive = previewCurrent && ['starting', 'running', 'stopping'].includes(current.preview.state);
   const previewNeedsCleanup = previewCurrent && current.preview.state === 'cleanup_failed';
   const busy = !!current.pending;
-  const canStart = !busy && (!team || teamTerminal) && !reviewActive && !verificationActive;
-  const canStop = !busy && (!!(team && !teamTerminal) || reviewActive || verificationActive);
-  const canReview = !busy && !!(team && team.state === 'completed' && team.merge_supported
+  const canStart = !loopActive && !busy && (!team || teamTerminal) && !reviewActive && !verificationActive;
+  const canStop = !loopActive && !busy && (!!(team && !teamTerminal) || reviewActive || verificationActive);
+  const canReview = !loopActive && !busy && !!(team && team.state === 'completed' && team.merge_supported
     && artifactId && !current.review);
-  const canPrepareVerification = !busy && !!(team && team.merge_supported && reviewApproved
+  const canPrepareVerification = !loopActive && !busy && !!(team && team.merge_supported && reviewApproved
     && !verificationCurrent);
   const canRunVerification = !busy && verificationCurrent
     && current.verification.state === 'pending_confirmation';
@@ -182,11 +197,14 @@ export function deriveOpsRoomState(state) {
   else if (canStart) nextAction = team
     ? { key: 'start', action: 'start', label: 'انتهى الفريق الحالي؛ راجع النتيجة ثم أنشئ فريقاً جديداً عند الحاجة.' }
     : { key: 'start', action: 'start', label: 'حدّد مهام العوامل وملكياتها، ثم ابدأ التنفيذ صراحةً.' };
+  else if (loopActive) nextAction = { key: 'loop_running', action: '', label: 'الحلقة المحدودة تعمل الآن؛ راقب الدورة الحالية أو أوقف الحلقة من بطاقتها.' };
   else if (verificationActive) nextAction = { key: 'verification_running', action: '', label: 'التحقق التكاملي يعمل الآن؛ انتظر النتيجة أو أوقف المرحلة.' };
   else if (reviewActive) nextAction = { key: 'review_running', action: '', label: 'المراجعات المستقلة تعمل الآن؛ انتظر الأحكام أو أوقف المرحلة.' };
   else if (team && !teamTerminal) nextAction = { key: 'team_running', action: '', label: 'العوامل تنفّذ داخل النسخ المعزولة؛ راقب النشاط أو أوقف المرحلة.' };
   return {
     artifactId,
+    loopActive,
+    loopTerminal,
     teamActive: !!(team && !teamTerminal),
     reviewActive,
     verificationActive,

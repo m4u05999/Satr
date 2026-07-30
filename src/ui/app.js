@@ -1087,6 +1087,8 @@ import { createUpdateToast } from './lib/update-toast.js';
       opsRoomEl.handleEvent(ev);
       return;
     }
+    // وضع الحلقة المحدودة (schema v1): توجيه عرض فقط إلى غرفة العمليات.
+    if (ev.type === 'loop_update') { opsRoomEl.handleEvent(ev); return; }
     if (ev.type === 'execution_review_update') {
       opsRoomEl.handleEvent(ev);
       return;
