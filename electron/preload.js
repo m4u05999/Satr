@@ -84,6 +84,13 @@ contextBridge.exposeInMainWorld('satr', {
   executionTeamStop: (runId) => ipcRenderer.invoke('satr:executionTeamStop', { runId }),
   executionTeamExtend: (runId) => ipcRenderer.invoke('satr:executionTeamExtend', { runId }),
   executionTeamLatest: (cwd) => ipcRenderer.invoke('satr:executionTeamLatest', { cwd }),
+  // وضع الحلقة المحدودة (الجولة الخامسة) — ثلاث دوال تحكّم + قراءة، لا غير
+  loopPreflight: (cwd) => ipcRenderer.invoke('satr:loopPreflight', { cwd }),
+  loopStart: (cwd, task, ownership, loop, confirmed) => ipcRenderer.invoke('satr:loopStart', {
+    cwd, task, ownership, loop, confirmed,
+  }),
+  loopStop: (loopId) => ipcRenderer.invoke('satr:loopStop', { loopId }),
+  loopLatest: (cwd) => ipcRenderer.invoke('satr:loopLatest', { cwd }),
   executionReviewStart: (teamId) => ipcRenderer.invoke('satr:executionReviewStart', { teamId }),
   executionReviewStop: (reviewId) => ipcRenderer.invoke('satr:executionReviewStop', { reviewId }),
   executionReviewLatest: (teamId) => ipcRenderer.invoke('satr:executionReviewLatest', { teamId }),

@@ -1786,6 +1786,91 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 - **مؤجّل عمداً**: Codex منفذاً أو فريق مختلط، قوالب المهام، مقارنة المخرجات جنباً لجنب، بث التفكير
   الحي، وإحياء معاينة تكاملية بعد إعادة تشغيل التطبيق؛ ليست مرفوضة، لكنها تحتاج دفعات مستقلة وحواجزها.
 
+### وضع الحلقة المحدودة (الجولة الخامسة — النواة)
+
+الطبقة الرابعة (Loop Engineering): حلقة **نفّذ ← تحقق ← أصلح** تلقائية **داخل** بوابات غرفة
+العمليات القائمة — لا مسار تنفيذ موازياً — والدمج بشري دائماً. المواصفة المعتمدة في
+`docs/LOOP-MODE-DESIGN.md` (قرارات المالك الخمسة محسومة كما هي).
+
+- **القرار المعماري**: `electron/looprunner.js` **لا يكرّر** طبقة الفريق ولا يعدّل عقودها؛ ينشئ
+  نسخة `executionteam` خاصة ويحقن فيها **عاملاً واحداً يكرّر داخلياً** عبر `createExecutor`
+  المعلن أصلاً في عقدها. بذلك تُعاد `teamPublic` و`buildArtifact` و
+  `artifactId = sha256(head+'\0'+patch)` و`producer_engines` حرفياً، وتبقى بطاقات الغرفة
+  صادقة عبر `execution_team_update` المعتاد. البديل (إدارة worktree/runner مباشرة وبناء
+  الأثر يدوياً) رُفض لأنه يُضاعف بصمة الأثر وشكل اللقطة في موضعين.
+- **حدود مجمَّدة**: عامل SDK واحد (حاجز 3A قائم — Codex لا ينفّذ)، worktree **واحد يعيش طوال
+  الحلقة**، و`team_id` ثابت (فريق/تشغيل واحد لكل حلقة لا فريق جديد لكل دورة). الدورات
+  `1..5` (افتراضي 3)، الميزانية `50k..2M` رمزاً (افتراضي 400k)، ومهلة **كل دورة** من
+  presets ‏`180|300|600` ثانية (افتراضي 300).
+- **مصدر التحقق الوحيد**: أوامر `.satr/verify.json` من **blob ‏HEAD حصراً** عبر
+  `integration.preflight` (‏`worktrees.readFileAt` + `verify.parseConfig`) — تُقرأ **مرة واحدة**
+  عند البدء وتُثبَّت snapshot لا يُعاد من الشجرة، وتُعرض حرفياً في **موافقة واحدة مسبقة** على
+  الحلقة كاملة (الأوامر + عدد الدورات + الميزانية). لا TestSprite في MVP.
+- **الدورة**: دور بـ`permissionMode:'acceptEdits'` وسياسة `executor` نفسها (قائمة الأدوات
+  تُستورد من `executor.READ_TOOL_NAMES/EDIT_TOOL_NAMES` فمصدر الحقيقة واحد) ⇐ **تحقق داخلي**
+  في worktree تكاملي مؤقت من HEAD المثبت + patch الحالي عبر `verify.boundedExecutor` المسقوف
+  (لا الطرفية المرئية) ⇐ عند الفشل يُحقن `buildFailureInjection` في دور الإصلاح **بنفس جلسة
+  العامل** (سياق متراكم) ⇐ حتى pass أو نفاد الدورات/الميزانية.
+- **التحقق الوسيط داخلي**: لا يبثّ `execution_verification_update` ولا يلمس بوابة الدمج، ويحظر
+  لمس ملف الإعداد داخل patch (‏`applyPatch` بقائمة الحجب — نمط `integration` حرفياً) فيفشل مغلقاً.
+- **جلسة جديدة عند تلوث السياق**: فشل متطابق مرتين متتاليتين (`sameFailure`) ⇒ الدورة التالية
+  بجلسة جديدة، وبرومبتها يحمل المهمة كاملةً + كتلة الفشل لأن السياق المتراكم سقط.
+- **الميزانية**: تُجمع من `usage` الحقيقي حيث يتوفر وإلا التقدير، وتُوسم `estimate:true` دائماً في
+  الحدث لأن العدّ التقريبي لا يُنسب إلى tokenizer المزوّد. تُفحص **قبل** بدء دورة جديدة فقط —
+  لا قطع دور جارٍ.
+- **سياسة الكتابة**: سقف `executor` (30 إذن كتابة) **لكل دورة** لأن كل دورة دورٌ مكافئ لتشغيل
+  `executor` واحد، وسقف كلي = الدورات × 30 كي لا تتحول الحلقة إلى ميزانية مفتوحة؛ اللقطة تعرض
+  السقف الكلي والمستهلك التراكمي.
+- **الحدث** `loop_update` ‏(schema v1، طبقة المنسّق مثل `execution_team_update`):
+  `{type,schema_version:1,loop_id,team_id,room_id,state,iteration,max_iterations,
+  last_failure_summary,cost{usd,input_tokens,output_tokens,estimate},
+  budget{limit_tokens,used_tokens,estimate:true,exhausted},stop_reason,updated_at}`.
+  الحالات `preparing|working|verifying|passed|failed_after_n|budget_exhausted|failed|stopped`،
+  والاقتران إلزامي: `passed⇔pass · failed_after_n⇔iterations · budget_exhausted⇔budget ·
+  stopped⇔user · failed⇔error`، وغير الطرفية `''`. ممنوع في الحدث: patch أو خرج أوامر أو مسار
+  مطلق أو حقل SDK خام. المهلة تنتهي إلى `failed/error` (لا حالة `timed_out` في عقد الحلقة).
+- **فصل خرج الأوامر (‏`electron/loopfailure.js` — نقي فوق `secretscrub`)**:
+  `buildFailureInjection` نص **داخلي** لمدخل دور الإصلاح فقط (ذيل الخرج بعد حجب الأسرار وإزالة
+  التحكم/Bidi وتعطيل قوسي الوسم، ≤2000 محرف/فحص وسقف كلي 8000، داخل
+  `<untrusted_verification_output>`) — **لا يعبر أي حدث أو IPC أو سجل**؛ و`buildFailureSummary`
+  هو **المصدر الوحيد** لـ`last_failure_summary` (بلا خرج إطلاقاً، ≤300 نقطة Unicode)؛
+  و`sameFailure` بصمة الفشل. التنقية بمُسنِد نقاط Unicode لا بتعبير نمطي فيه محارف تحكم حرفية.
+- **السجل**: كل دورة وقرار جلسة وحالة طرفية تُسجَّل `opsroom.appendSystem(roomId,'note',…)` —
+  **لا نوع entry جديد** — بنص عربي قصير + الملخص المنقّى، ويمر ببوابات `hasSecret/patch_forbidden`.
+- **IPC** (تنقية في `main.js` حصراً، preload محدد بأربع دوال): `satr:loopPreflight {cwd}` غلاف
+  قراءة فقط فوق `integration.preflight` **يحذف `sourceRoot`** فلا يعبر مسار مطلق إلى renderer ·
+  `satr:loopStart {cwd,task,ownership,loop{max_iterations,budget_tokens,timeout_seconds},
+  confirmed:true}` · `satr:loopStop {loopId}` · `satr:loopLatest {cwd}`. الأخطاء:
+  `confirmation_required` و`verification_config_required` و`busy` و`bad_input`، ومعها
+  preflight الفريق المدمَج نفسه (`ops_model_invalid`/`review_engine_unavailable`) كي لا يُكتشف
+  غياب محرك المراجعة بعد استهلاك دورات. **حصر متبادل**: حلقة نشطة ترفض `executionTeamStart`
+  وفريق نشط يرفض `loopStart` — لأن الحلقة تملك فريقها.
+- **التسليم للبوابة البشرية**: عند نهاية الحلقة يُلتقط patch نهائي واحد ويُسلَّم عبر
+  `looprunner.handoff()` إلى `executionTeam.restore(bundle, cwd, emit)` — وهو **المنفذ الوحيد**،
+  فتعمل المراجعة العمياء cross-engine والتحقق الرسمي وحفظ الأثر المشفّر وفهرس الغرفة وبوابة
+  الدمج بالتأكيد الصريح **بلا تغيير حرف في أي منها**. التسليم يقع لحالات
+  `passed|failed_after_n|budget_exhausted` فقط (العامل أنهى أدواره نظيفاً)؛ أما `stopped`
+  و`failed` و`timed_out` فلا تُسلَّم fail-closed — الأثر مُلتقط لكن لا يدخل مسار الدمج.
+- **حدود موثّقة**: (1) `loopStart` يوجب أن يكون `cwd` **جذر المستودع**، لأن خزنة الأثر
+  (`opsartifacts`) توجب أصلاً `cwd === sourceRoot`؛ الفشل مبكر بـ`bad_input` لا عند التسليم.
+  (2) المهلة لكل دورة، فأقصى زمن نظري 5 × 600ث + زمن التحقق. (3) الميزانية تقديرية لا فاتورة.
+  (4) لا تمديد مهلة داخل الحلقة (لا `extend`) بخلاف الفريق اليدوي.
+- **التحقق**: `npm run test:loop-live-probe` (حيّ بمحرك SDK — **خارج `test:full` عمداً** مثل بقية
+  المسابير) يثبت الإصلاح خلال ≤3 دورات وsnapshot الأوامر من HEAD (‏`HEAD` وشجرة العمل الأصلية
+  لا تتغيران) وتسجيل الدورات بلا خرج أوامر وعقد `loop_update` وصلاحية بصمة الأثر وقبول مسار
+  المراجعة له. له سيناريوهان: `--scenario simple` (خلل معلن — المسار السعيد) و
+  `--scenario repair` (خللان والمهمة تذكر الأول فقط، فالثاني لا يُعرف إلا من خرج التحقق
+  المحقون) وهو **الدليل الحيّ أن حلقة الإصلاح تعمل بمحرك حقيقي**. طقم `test:opsroom-all` عقد
+  عدم التراجع ويبقى 9/9. اختبار الطقم القطعي `test:loop-mode` وتحصين `loopfailure` الخصومي
+  ملكية منفّذ آخر فوق هذا العقد بلا تغيير التواقيع أو السقوف.
+- **توسعة additive وحيدة في ملف عدم تراجع**: `electron/executor.js` صدّر
+  `READ_TOOL_NAMES`/`EDIT_TOOL_NAMES` (مصفوفتان مجمَّدتان من الـSets القائمة) ليبقى مصدر قائمة
+  الأدوات واحداً؛ صفر تغيير سلوكي، و`test:worktrees`/`test:executionteam`/`test:integration`/
+  `test:reviewmerge`/`test:opsroom` خضراء بلا تعديل ملفات اختبارها.
+- **مؤجّل عمداً**: بطاقة الحلقة في الواجهة واختبار الطقم القطعي (منفّذان آخران في الجولة نفسها)،
+  وTestSprite مصدر تحقق ثانياً، وحلقة متعددة العوامل، ومتابعة الدورات بعد مهلة دور، وتسليم أثر
+  حلقة أوقفها المستخدم إلى مسار المراجعة (يحتاج قرار مالك).
+
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 
 ثلاثة أوامر أساسية تطابق ما يعتمده مستخدم Claude Code اليومي. **بعد هذه الدفعة تُجمَّد
