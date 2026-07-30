@@ -105,8 +105,8 @@ function sanitizeCheckOutput(value) {
     .split('>').join(' ')
     .replace(/[ \t]+\n/g, '\n')
     .trim();
-  if (cleaned.length <= MAX_CHECK_OUTPUT_CHARS) return cleaned;
-  return '…' + cleaned.slice(cleaned.length - MAX_CHECK_OUTPUT_CHARS);
+  if ([...cleaned].length <= MAX_CHECK_OUTPUT_CHARS) return cleaned;
+  return '…' + slicePoints(cleaned.slice(cleaned.length - MAX_CHECK_OUTPUT_CHARS * 2), MAX_CHECK_OUTPUT_CHARS);
 }
 
 /**
@@ -138,7 +138,7 @@ function buildFailureInjection(checks) {
   }
   if (!blocks.length) return '';
   const text = OPEN_TAG + '\n' + blocks.join('\n\n') + '\n' + CLOSE_TAG;
-  return text.length <= MAX_INJECTION_CHARS ? text : text.slice(0, MAX_INJECTION_CHARS);
+  return slicePoints(text, MAX_INJECTION_CHARS);
 }
 
 /**

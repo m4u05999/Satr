@@ -1446,7 +1446,6 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   يتحقق من engine/session/checkpoint/cwd في `main.js` ثم يستخدم undo الموحّدة.
 - **التحقق**: `npm run test:verify` يغطي schema/رفض الأسطر المتعددة/runner/حدود الخرج/
   persistence/reverse restore/cwd/عودة النتيجة مرة واحدة. `npm run eval:agent` يبقى 12/12.
-
 ### ذاكرة المشروع المحلية الصريحة (الأولوية 4)
 
 - **الفصل والتخزين**: `electron/memory.js` يحفظ JSON صغيراً لكل مشروع تحت
@@ -1867,8 +1866,15 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   المراجعة له. له سيناريوهان: `--scenario simple` (خلل معلن — المسار السعيد) و
   `--scenario repair` (خللان والمهمة تذكر الأول فقط، فالثاني لا يُعرف إلا من خرج التحقق
   المحقون) وهو **الدليل الحيّ أن حلقة الإصلاح تعمل بمحرك حقيقي**. طقم `test:opsroom-all` عقد
-  عدم التراجع ويبقى 9/9. اختبار الطقم القطعي `test:loop-mode` وتحصين `loopfailure` الخصومي
-  ملكية منفّذ آخر فوق هذا العقد بلا تغيير التواقيع أو السقوف.
+  عدم التراجع ويبقى 10/10.
+- **الاختبار القطعي والتحصين الخصومي**: `npm run test:loop-mode` (قطعي، بلا شبكة) يغطي
+  schema الحدث والاقتران state/stop_reason وfail-closed (غياب/فساد verify.json في HEAD، busy)
+  والتنقية IPC والمسار السعيد والنفاد (failed_after_n/budget_exhausted) ونفس الجلسة والجلسة
+  الجديدة عند تكرار نفس الفشل (`sameFailure`) والإيقاف الفوري وتنظيف worktrees وعدم تسريب
+  الأسرار وثبات أنواع أحداث المحركات (loop_update خارج KNOWN_EVENT_TYPES). التحصينات الأربعة
+  في `electron/loopfailure.js`: قص Unicode بلا كسر surrogate pairs (`slicePoints`)، تحييد وسم
+  الإغلاق المزروع (تعطيل قوسي الوسم)، إزالة تحكم/Bidi، وfail-closed للمدخلات المشوهة — بلا
+  تغيير تواقيع أو سقوف العقد.
 - **توسعة additive وحيدة في ملف عدم تراجع**: `electron/executor.js` صدّر
   `READ_TOOL_NAMES`/`EDIT_TOOL_NAMES` (مصفوفتان مجمَّدتان من الـSets القائمة) ليبقى مصدر قائمة
   الأدوات واحداً؛ صفر تغيير سلوكي، و`test:worktrees`/`test:executionteam`/`test:integration`/

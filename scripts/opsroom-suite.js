@@ -7,6 +7,7 @@ const { execFileSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const npmCli = process.env.npm_execpath;
 const deterministicSuite = [
+  'test:loop-mode',
   'test:worktrees',
   'test:executionteam',
   'test:reviewmerge',
