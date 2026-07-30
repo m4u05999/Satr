@@ -115,6 +115,12 @@ const SHOTS = [
     js: "document.querySelector('#opsRoomToggle').click(); document.querySelector('#previewToggle').click()",
   },
 
+  // العمود المضيّق بسطح جانبي: الحالة الفارغة يجب أن تسعه بلا تمرير ولا زر قفز
+  {
+    out: '21-empty-narrow', w: 1440, h: 900,
+    js: "document.querySelector('#opsRoomToggle').click()",
+  },
+
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
 ];

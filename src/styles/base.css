@@ -252,19 +252,20 @@
   #jumpDown[hidden] { display: none; }
   #jumpDown:hover { background: var(--gold-soft); }
   .thread { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-6); }
-  /* 12vh كانت تدفع محتوى صار أطول (دعوة + أمثلة) إلى ما دون الطيّ */
-  .empty { text-align: center; color: var(--text-dim); margin-top: 6vh; }
+  /* المحتوى صار أطول (دعوة + أمثلة) وقد يضيق العمود بسطح جانبي مفتوح، فالفراغ
+     العلوي الكبير كان يدفع التلميحات تحت الطيّ ويُظهر تمريراً في محادثة فارغة */
+  .empty { text-align: center; color: var(--text-dim); margin-top: 3vh; }
   .empty .big { font-size: 40px; font-weight: 700; color: var(--gold); margin-bottom: var(--space-2h); }
   .empty p { max-width: 500px; margin: var(--space-1h) auto; font-size: 14px; unicode-bidi: plaintext; }
   /* دعوة الفعل والأمثلة (دفعة المجموعة ب): الحالة الفارغة تبدأ بالخطوة التالية */
-  .empty-cta { max-width: 420px; margin: var(--space-5) auto 0; }
+  .empty-cta { max-width: 420px; margin: var(--space-4) auto 0; }
   .empty-cta-text { color: var(--text-dim); font-size: 13.5px; margin-bottom: var(--space-2h); }
   .empty-cta button {
     background: var(--gold); color: var(--on-gold); border: none; font-weight: 600;
     padding: var(--space-2) var(--space-5); border-radius: var(--radius-pill); font-size: 14px;
   }
   .empty-cta button:hover { background: var(--gold-strong); }
-  .empty-examples { max-width: 420px; margin: var(--space-5) auto 0; display: flex; flex-direction: column; gap: var(--space-1h); }
+  .empty-examples { max-width: 420px; margin: var(--space-4) auto 0; display: flex; flex-direction: column; gap: var(--space-1h); }
   .empty-examples-head { color: var(--text-faint); font-size: 12px; margin-bottom: var(--space-1); }
   .empty-example {
     background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
@@ -272,7 +273,7 @@
     font-size: 13px; text-align: start; unicode-bidi: plaintext; width: 100%;
   }
   .empty-example:hover { border-color: var(--gold-border); color: var(--text); background: var(--surface-2); }
-  .empty .hints { max-width: 340px; margin: var(--space-5) auto 0; text-align: right; font-size: 13.5px; display: flex; flex-direction: column; gap: var(--space-2); }
+  .empty .hints { max-width: 340px; margin: var(--space-4) auto 0; text-align: right; font-size: 13.5px; display: flex; flex-direction: column; gap: var(--space-2); }
   .empty .hints > span { display: flex; align-items: baseline; gap: var(--space-2); }
   .empty .hints kbd { min-width: 52px; text-align: center; }
   .empty kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px var(--space-2); font-family: var(--mono); font-size: 12px; }

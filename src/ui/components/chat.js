@@ -378,7 +378,9 @@ class SatrChat extends HTMLElement {
   }
   main.addEventListener('scroll', () => {
     chatPinned = main.scrollTop + main.clientHeight >= main.scrollHeight - 48;
-    jumpDown.hidden = chatPinned;
+    // «⬇ الأحدث» يقفز إلى آخر رسالة — بلا رسائل لا معنى له. صار يظهر في المحادثة
+    // الفارغة بعد أن طالت (دعوة + أمثلة) فتجاوزت ارتفاع العمود وظهر تمرير.
+    jumpDown.hidden = chatPinned || !!$('empty');
   });
   jumpDown.addEventListener('click', () => { scrollDown(true); jumpDown.hidden = true; });
   function hideEmpty() { const e = $('empty'); if (e) e.remove(); }
