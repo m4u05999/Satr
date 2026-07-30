@@ -16,6 +16,9 @@ const MARKUP = `
     <!-- شريط التبويبات (المرحلة 15.2): تبويب لكل طرفية + زر ＋ لواحدة جديدة -->
     <div id="termTabs"></div>
     <button id="termNew" type="button" title="طرفية جديدة">＋</button>
+    <!-- تنظيف التبويبات المنتهية: تتراكم عبر الجلسات الطويلة (مهام انتهت وخوادم
+         أُوقفت) فيمتلئ الشريط بما لا يعمل. يظهر عند وجود تبويبين منتهيَين فأكثر. -->
+    <button id="termCloseDead" type="button" title="إغلاق التبويبات المنتهية" hidden>🧹 المنتهية</button>
     <span class="term-shell" id="termShell"></span>
     <span class="spacer"></span>
     <button id="termView" type="button" title="تبديل العارض: عربي (BiDi) / شبكي (xterm)">العرض: عربي</button>
@@ -315,6 +318,13 @@ class SatrTerminalPanel extends HTMLElement {
       updateTabLabel(t);
       bar.appendChild(el);
     });
+    // زر التنظيف يظهر عند تراكم منتهيَين فأكثر — لا يُغلق شيئاً حيّاً ولا تلقائياً
+    const dead = tabs.filter((t) => t.exited);
+    const cleanup = $('termCloseDead');
+    if (cleanup) {
+      cleanup.hidden = dead.length < 2;
+      cleanup.title = 'إغلاق ' + dead.length + ' تبويباً منتهياً';
+    }
   }
 
   // ملاءمة واعية بالوضع للتبويب النشط (إصلاح فقدان الأسطر عند تغيير الحجم — لقطة قبول):
@@ -351,6 +361,10 @@ class SatrTerminalPanel extends HTMLElement {
   $('termToggle').addEventListener('click', () => setTermOpen(termPanel.hidden));
   $('termClose').addEventListener('click', () => setTermOpen(false)); // الطرفيات تبقى حيّة
   $('termNew').addEventListener('click', newTab);
+  // إغلاق كل المنتهية دفعةً — closeTab نفسها فيمر كل تبويب بمسار الإغلاق المعتاد
+  $('termCloseDead').addEventListener('click', () => {
+    for (const t of tabs.filter((tab) => tab.exited)) closeTab(t);
+  });
   $('termRestart').addEventListener('click', restartTermSession);
   $('termRestart2').addEventListener('click', restartTermSession);
 

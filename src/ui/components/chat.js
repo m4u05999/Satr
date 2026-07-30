@@ -23,7 +23,7 @@
 import { buildDiff } from '../lib/diff.js';
 import { diffSheet } from '../lib/diff.css.js';
 import { cardSheet } from '../lib/card.css.js';
-import { addUsageResult, emptyUsageSummary, formatUsage, formatUsageSummary } from '../lib/usage-summary.js';
+import { addUsageResult, emptyUsageSummary, formatUsage, formatUsageSummary, formatUsageSummaryFull } from '../lib/usage-summary.js';
 
 // حسم ازدواج أنماط بطاقة الفرق (الموثّق منذ ت-5): نسخة base.css حُذفت مع هذه الدفعة،
 // وdiffSheet تُعتمد هنا على **المستند** نفسه (adoptedStyleSheets على المستند — تحقق §1
@@ -86,8 +86,10 @@ class SatrChat extends HTMLElement {
       const costInfo = $('costInfo');
       if (!costInfo) return;
       const text = formatUsageSummary(usageSummary);
-      costInfo.textContent = text;
-      costInfo.title = usageSummary.estimated ? 'يتضمن أرقاماً تقديرية' : '';
+      // «هذه الجلسة» تُضاف هنا لا في الدالة النقية: الرقم تراكمي عبر الجلسة كلها،
+      // وبلوغه عشرات الدولارات بلا هذا السياق يُقرأ كأنه كلفة الدور الأخير.
+      costInfo.textContent = text ? 'هذه الجلسة · ' + text : '';
+      costInfo.title = text ? formatUsageSummaryFull(usageSummary) : '';
     }
 
     function resetUsageSummary() {

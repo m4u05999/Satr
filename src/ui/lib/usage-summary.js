@@ -108,14 +108,45 @@ export function addUsageResult(summary, result, seenResults) {
   return next;
 }
 
+// عدّاد مختصر للعرض في شريط الحالة: الأرقام التراكمية تبلغ عشرات الملايين في
+// الجلسات الطويلة فتُقرأ ككتلة أرقام لا كمعلومة. تبقى الأرقام المألوفة كاملة،
+// ويُختصر ما فوق مئة ألف. الرقم الكامل يبقى في title (formatUsageSummaryFull).
+function compactCount(value) {
+  const n = Math.floor(value || 0);
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + ' مليون';
+  if (n >= 100000) return Math.round(n / 1000).toLocaleString('en-US') + ' ألف';
+  return n.toLocaleString('en-US');
+}
+
+// الكلفة التراكمية: خانتان فوق الدولار (‏$81.17 لا $81.1695 — الدقة الزائدة
+// تجعل التقدير يبدو فاتورة)، وأربع للمبالغ الصغيرة حيث الفروق الدقيقة تهمّ.
+function formatCost(value) {
+  return '~$' + (value >= 1 ? value.toFixed(2) : value.toFixed(4));
+}
+
+function usageParts(summary, format) {
+  const parts = [];
+  if (summary.hasInput) parts.push('إدخال ' + format(summary.input));
+  if (summary.hasOutput) parts.push('إخراج ' + format(summary.output));
+  if (summary.hasCached) parts.push('من المخبّأ ' + format(summary.cached));
+  if (summary.hasReasoning) parts.push('تفكير ' + format(summary.reasoning));
+  return parts;
+}
+
 export function formatUsageSummary(summary) {
   if (!summary || typeof summary !== 'object') return '';
-  const parts = [];
-  if (summary.hasInput) parts.push('إدخال ' + Math.floor(summary.input || 0).toLocaleString('en-US'));
-  if (summary.hasOutput) parts.push('إخراج ' + Math.floor(summary.output || 0).toLocaleString('en-US'));
-  if (summary.hasCached) parts.push('من المخبّأ ' + Math.floor(summary.cached || 0).toLocaleString('en-US'));
-  if (summary.hasReasoning) parts.push('تفكير ' + Math.floor(summary.reasoning || 0).toLocaleString('en-US'));
-  if (summary.hasCost && summary.cost > 0) parts.push('الكلفة التقديرية: ~$' + summary.cost.toFixed(4));
+  const parts = usageParts(summary, compactCount);
+  if (summary.hasCost && summary.cost > 0) parts.push('الكلفة التقديرية: ' + formatCost(summary.cost));
   if (!parts.length) return '';
   return (summary.estimated ? 'تقديري · ' : '') + parts.join(' · ');
+}
+
+// النسخة الكاملة بلا اختصار — تُعرض في tooltip كي يبقى الرقم الدقيق متاحاً
+export function formatUsageSummaryFull(summary) {
+  if (!summary || typeof summary !== 'object') return '';
+  const exact = (value) => Math.floor(value || 0).toLocaleString('en-US');
+  const parts = usageParts(summary, exact);
+  if (summary.hasCost && summary.cost > 0) parts.push('الكلفة التقديرية: ~$' + summary.cost.toFixed(4));
+  if (!parts.length) return '';
+  return 'تراكم هذه الجلسة' + (summary.estimated ? ' (يتضمن أرقاماً تقديرية)' : '') + ':\n' + parts.join('\n');
 }

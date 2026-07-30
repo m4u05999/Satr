@@ -36,6 +36,21 @@ const previewSheet = sheet(`
     color: var(--text); border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); outline: none;
   }
   #pvUrl:focus { border-color: var(--gold); }
+  #pvMore.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  #pvTools {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1h);
+    padding: var(--space-1h) var(--space-2h);
+    background: var(--surface-2); border-bottom: 1px solid var(--border-dim);
+  }
+  #pvTools button {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius-md); padding: var(--space-1) var(--space-2h); font-size: 12px; cursor: pointer;
+  }
+  #pvTools button:hover { border-color: var(--gold); }
+  #pvTools select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); font-size: 12px;
+  }
   #pvReload.loading { color: var(--gold); border-color: var(--gold-border); }
   #pvAuto.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   #pvPick.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
@@ -162,7 +177,20 @@ const previewSheet = sheet(`
     background: var(--surface-2); border-bottom: 1px solid var(--border-dim); }
   #pvTaskTrace.show { display: flex; }
   .trace-head { display: flex; align-items: center; gap: var(--space-2); font-size: 11.5px; color: var(--text-dim); }
-  .trace-head b { flex: 1; color: var(--text); }
+  #traceToggle {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-1h);
+    background: none; border: none; color: inherit; font: inherit; cursor: pointer;
+    padding: 0; text-align: start;
+  }
+  #traceToggle b { color: var(--text); flex: none; }
+  .trace-chev { flex: none; transition: transform var(--dur) var(--ease); }
+  #pvTaskTrace.collapsed .trace-chev { transform: rotate(-90deg); }
+  #pvTaskTrace.collapsed #traceList { display: none; }
+  .trace-last {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text-faint);
+  }
+  #pvTaskTrace:not(.collapsed) .trace-last { display: none; }
   #traceStop { border: 1px solid var(--red-border); background: var(--red-soft); color: var(--red);
     border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); cursor: pointer; }
   #traceList { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; max-height: 66px; overflow: auto; }
@@ -207,21 +235,26 @@ const MARKUP = `
     <button id="pvReload" type="button" title="تحديث">⟳</button>
     <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل">🔄</button>
     <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)">🎯</button>
-    <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (mp4)">⏺</button>
+    <button id="pvDevice" type="button" title="محاكاة الأجهزة: كامل/موبايل/لوحي (لاختبار التصميم المتجاوب)">🖥️</button>
+    <button id="pvConsoleBtn" type="button" title="لوحة Console والأخطاء (رسائل الصفحة وأخطاء الشبكة)">🐞</button>
+    <button id="pvMore" type="button" aria-expanded="false" title="أدوات إضافية: تسجيل، استوديو، أدوات المطوّر، الشبكة، التخزين">⋯</button>
+    <span id="pvServerState"><span id="pvServerDot"></span><span id="pvServerText">حالة الخادم</span><button id="pvServerRestart" type="button" hidden>تشغيل</button></span>
+    <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
+    <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
+  </div>
+  <!-- درج الأدوات المتخصصة: صف في التدفق لا منبثق — WebContentsView تطفو فوق كل
+       DOM، فقائمة مطلقة فوق مساحة العرض تختفي خلفها (الدرس نفسه من مربع الإذن). -->
+  <div id="pvTools" hidden>
+    <button id="pvRec" type="button" title="تسجيل فيديو للتصفح (mp4)">⏺ تسجيل</button>
     <select id="pvRecAspect" title="نسبة فيديو البرومو">
       <option value="16:9">16:9</option>
       <option value="9:16">9:16</option>
       <option value="1:1">1:1</option>
     </select>
-    <button id="pvStudio" type="button" title="فتح استوديو البرومو">🎬</button>
-    <button id="pvDevice" type="button" title="محاكاة الأجهزة: كامل/موبايل/لوحي (لاختبار التصميم المتجاوب)">🖥️</button>
-    <button id="pvConsoleBtn" type="button" title="لوحة Console والأخطاء (رسائل الصفحة وأخطاء الشبكة)">🐞</button>
-    <button id="pvDevtools" type="button" title="أدوات المطوّر (DevTools) — فحص كامل للصفحة في نافذة منفصلة">🔧</button>
-    <button id="pvNet" type="button" title="محاكاة سرعة الشبكة: عادي/بطيء/سريع/غير متصل">🚦</button>
-    <button id="pvClearStore" type="button" title="مسح تخزين الصفحة (كوكيز + localStorage + cache) وإعادة التحميل">🧹</button>
-    <span id="pvServerState"><span id="pvServerDot"></span><span id="pvServerText">حالة الخادم</span><button id="pvServerRestart" type="button" hidden>تشغيل</button></span>
-    <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
-    <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
+    <button id="pvStudio" type="button" title="فتح استوديو البرومو">🎬 الاستوديو</button>
+    <button id="pvDevtools" type="button" title="أدوات المطوّر (DevTools) — فحص كامل للصفحة في نافذة منفصلة">🔧 أدوات المطوّر</button>
+    <button id="pvNet" type="button" title="محاكاة سرعة الشبكة: عادي/بطيء/سريع/غير متصل">🚦 الشبكة</button>
+    <button id="pvClearStore" type="button" title="مسح تخزين الصفحة (كوكيز + localStorage + cache) وإعادة التحميل">🧹 مسح التخزين</button>
   </div>
   <!-- شريط التسليم البشري (browser_handoff): يظهر حين يسلّم الوكيل القيادة للمستخدم -->
   <div id="pvHandoff">
@@ -236,8 +269,16 @@ const MARKUP = `
     <button id="secretDone" type="button">تم ✓</button>
     <button id="secretCancel" type="button">إلغاء</button>
   </div>
-  <div id="pvTaskTrace">
-    <div class="trace-head"><b>أثر مهمة الإعداد</b><button id="traceStop" type="button">إيقاف المهمة</button></div>
+  <!-- أثر المهمة مطويّ افتراضياً: كان يقتطع نحو ٦٦px من ارتفاع المعاينة دائماً،
+       وهي المساحة التي فُتحت اللوحة لأجلها. الرأس يعرض آخر خطوة، والفرد بالنقر. -->
+  <div id="pvTaskTrace" class="collapsed">
+    <div class="trace-head">
+      <button id="traceToggle" type="button" aria-expanded="false" title="عرض خطوات المهمة">
+        <span class="trace-chev" aria-hidden="true">⌄</span><b>أثر المهمة</b>
+        <span id="traceLast" class="trace-last"></span>
+      </button>
+      <button id="traceStop" type="button">إيقاف المهمة</button>
+    </div>
     <ol id="traceList"></ol>
   </div>
   <div id="pvBox">
@@ -655,11 +696,28 @@ class SatrPreviewPanel extends HTMLElement {
         li.appendChild(title); li.appendChild(last); traceList.appendChild(li);
       }
       traceBox.classList.toggle('show', traceEntries.length > 0);
+      // ملخّص الرأس وهو مطويّ: آخر صفحة وآخر فعل عليها
+      const latest = traceEntries[traceEntries.length - 1];
+      $('traceLast').textContent = latest ? (latest.action + ' · ' + (latest.title || latest.url)) : '';
     };
     const recordTraceAction = (label) => {
       traceActive = true;
       upsertTrace(urlIn.value, label);
     };
+    // درج الأدوات: فتحه/طيّه يغيّر ارتفاع الرأس فيلزم إعادة قياس مستطيل العرض
+    $('pvMore').addEventListener('click', () => {
+      const tools = $('pvTools');
+      const open = tools.hidden;
+      tools.hidden = !open;
+      $('pvMore').classList.toggle('on', open);
+      $('pvMore').setAttribute('aria-expanded', String(open));
+      reportBounds();
+    });
+    $('traceToggle').addEventListener('click', () => {
+      const collapsed = traceBox.classList.toggle('collapsed');
+      $('traceToggle').setAttribute('aria-expanded', String(!collapsed));
+      reportBounds(); // تغيّر ارتفاع الأثر يغيّر مستطيل العرض الأصلي
+    });
     $('traceStop').addEventListener('click', async () => {
       try { await window.satr.stop(); } catch (e) {}
       this.dispatchEvent(new CustomEvent('preview-notice', { bubbles: true, detail: 'أُوقفت مهمة المتصفح بطلبك.' }));
