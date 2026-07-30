@@ -529,6 +529,11 @@ module.exports = {
   MAX_TIMEOUT_MS,
   TIMEOUT_PRESETS_MS,
   SAFE_ENGINE_LABEL,
+  // توسعة additive (وضع الحلقة المحدودة): قائمة الأدوات المسموحة تُقرأ من هنا كي
+  // يبقى مصدر الحقيقة واحداً بين executor.js وlooprunner.js. مصفوفتان مجمَّدتان
+  // (لا Sets قابلة للتعديل من الخارج)، وبلا أي تغيير في سلوك هذا الملف.
+  READ_TOOL_NAMES: Object.freeze([...READ_TOOLS]),
+  EDIT_TOOL_NAMES: Object.freeze([...EDIT_TOOLS]),
   normalizeOwnership,
   ownedBy,
   ownershipsOverlap,

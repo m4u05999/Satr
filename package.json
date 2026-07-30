@@ -39,6 +39,7 @@
     "test:slash-menu": "electron scripts/slash-menu-test.js",
     "test:terminal-tabs": "electron scripts/terminal-tabs-test.js",
     "test:codex-executor-probe": "node scripts/codex-executor-probe.js",
+    "test:loop-live-probe": "node scripts/loop-live-probe.js",
     "test:codex-subagent-live": "node scripts/codex-subagent-live-probe.js",
     "test:browser-loop-probe": "electron scripts/browser-loop-live-probe.js",
     "test:browser-loop-sdk-probe": "electron scripts/browser-loop-sdk-probe.js",

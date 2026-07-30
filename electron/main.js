@@ -34,6 +34,7 @@ const agent = require('./agent');
 const orchestratorModule = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
 const executorModule = require('./executor'); // نواة عامل محايدة عن المحرك داخل worktree — الخطوة 2
 const executionTeamModule = require('./executionteam'); // 1–3 عوامل بملكية ملفات — الخطوة 3
+const looprunnerModule = require('./looprunner'); // وضع الحلقة المحدودة — الجولة الخامسة
 const reviewerModule = require('./reviewer'); // مراجع فرق قراءة فقط — الخطوة 4
 const integration = require('./integration'); // تحقق تكاملي داخل worktree مستقل — المرحلة 5
 const merger = require('./merger'); // تطبيق patch بعد المراجعة والتحقق والموافقة — المرحلة 5
@@ -2349,6 +2350,8 @@ ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
     return { ok: false, error: 'bad_input' };
   }
   if (!mode || (mode === 'draft' && p.agents.length !== 1)) return { ok: false, error: 'bad_input' };
+  // حلقة نشطة تملك فريقها؛ بدء فريق يدوي بجانبها يخلق منفّذين متزامنين على المشروع.
+  if (loopRunner.isActive()) return { ok: false, error: 'busy' };
   const agents = [];
   for (const raw of p.agents) {
     const task = cleanMemoryText(raw && raw.task, 4000);
@@ -2399,6 +2402,146 @@ ipcMain.handle('satr:executionTeamLatest', (event, payload) => {
   const cwd = sanitizeMemoryCwd(payload && payload.cwd);
   if (!cwd) return { ok: false, error: 'bad_input' };
   return { ok: true, team: executionTeam.latest(cwd) };
+});
+
+// ---------- وضع الحلقة المحدودة (الجولة الخامسة — النواة) ----------
+// الحلقة تملك فريقاً واحداً طوال عمرها، فبدء فريق يدوي أثناءها مرفوض والعكس.
+// عند نهايتها يُسلَّم الأثر إلى مسار المراجعة/التحقق/الدمج القائم عبر restore بلا
+// تغيير أي بوابة: البوابة البشرية تبقى مراجعة عمياء + تحقق passed + تأكيد صريح.
+const LOOP_ITERATION_MIN = looprunnerModule.MIN_ITERATIONS;
+const LOOP_ITERATION_MAX = looprunnerModule.MAX_ITERATIONS;
+const LOOP_BUDGET_MIN = looprunnerModule.MIN_BUDGET_TOKENS;
+const LOOP_BUDGET_MAX = looprunnerModule.MAX_BUDGET_TOKENS;
+const LOOP_BLOCKING_TEAM_STATES = new Set(['preparing', 'running', 'stopping']);
+const loopHandoffSeen = new Set();
+
+const loopRunner = looprunnerModule.create({
+  runner: sdkExecutionRunner,
+  recordNote: (note) => {
+    const value = note && typeof note === 'object' ? note : {};
+    recordOpsSystem(value.roomId, 'note', value.text, value.teamId, '', value.transitionKey);
+  },
+});
+
+function loopTeamBusy() {
+  const team = executionTeam.latest();
+  return !!(team && LOOP_BLOCKING_TEAM_STATES.has(team.state));
+}
+
+/**
+ * تسليم أثر الحلقة مرة واحدة: restore يسجّل الفريق المكتمل في نسخة main، فيبثّ
+ * execution_team_update عبر emitOpsTeam فيجري حفظ الأثر المشفّر وملاحظة الجهوزية
+ * وفهرس الغرفة كما لأي فريق عادي — بلا مسار حفظ ثانٍ وبلا تكرار.
+ */
+function finalizeLoopHandoff(roomId, cwd, loopEvent) {
+  if (loopHandoffSeen.has(loopEvent.loop_id)) return;
+  loopHandoffSeen.add(loopEvent.loop_id);
+  while (loopHandoffSeen.size > 20) loopHandoffSeen.delete(loopHandoffSeen.values().next().value);
+  if (!looprunnerModule.HANDOFF_STATES.has(loopEvent.state)) return;
+  const handoff = loopRunner.handoff(loopEvent.loop_id);
+  if (!handoff || !handoff.ok) {
+    recordOpsSystem(roomId, 'note', 'انتهت الحلقة بلا أثر قابل للمراجعة.', loopEvent.team_id, '',
+      'loop-handoff-empty:' + loopEvent.loop_id);
+    return;
+  }
+  const restored = executionTeam.restore(handoff.bundle, handoff.cwd, (obj) => emitOpsTeam(roomId, cwd, obj));
+  if (!restored || !restored.ok) {
+    recordOpsSystem(roomId, 'note', 'تعذّر تسليم أثر الحلقة إلى مسار المراجعة؛ ابدأ فريقاً جديداً للمتابعة.',
+      loopEvent.team_id, '', 'loop-handoff-failed:' + loopEvent.loop_id);
+  }
+}
+
+function emitLoopEvent(roomId, cwd, obj) {
+  if (!obj || typeof obj !== 'object') return;
+  if (obj.type === 'loop_update') {
+    emitToWindow(obj);
+    if (looprunnerModule.TERMINAL_LOOP_STATES.has(obj.state)) finalizeLoopHandoff(roomId, cwd, obj);
+    return;
+  }
+  // execution_team_update من نسخة الحلقة الخاصة: بثّ مباشر بلا bookkeeping الأثر،
+  // كي لا يُحاول حفظ أثر لفريق لم يُسجَّل بعد في نسخة main (يجري ذلك عند التسليم).
+  emitToWindow(obj);
+}
+
+ipcMain.handle('satr:loopPreflight', async (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  const configured = await integration.preflight(cwd);
+  if (!configured || !configured.ok) return configured || { ok: false, error: 'verification_config_required' };
+  // sourceRoot مسار مطلق ولا يعبر إلى renderer — العقد يعيد head والأوامر فقط.
+  return {
+    ok: true,
+    head: configured.head,
+    checks: (configured.checks || []).map((check) => ({
+      id: check.id,
+      label: check.label,
+      command: check.command,
+      timeout_seconds: check.timeout_seconds,
+    })),
+  };
+});
+
+ipcMain.handle('satr:loopStart', async (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  const task = cleanMemoryText(p.task, 4000);
+  const ownership = sanitizeOwnership(p.ownership);
+  const options = p.loop && typeof p.loop === 'object' && !Array.isArray(p.loop) ? p.loop : {};
+  const maxIterations = options.max_iterations == null ? looprunnerModule.DEFAULT_ITERATIONS : options.max_iterations;
+  const budgetTokens = options.budget_tokens == null ? looprunnerModule.DEFAULT_BUDGET_TOKENS : options.budget_tokens;
+  const timeoutSeconds = options.timeout_seconds == null ? 300 : options.timeout_seconds;
+  if (p.confirmed !== true) return { ok: false, error: 'confirmation_required' };
+  if (!cwd || !task || !ownership) return { ok: false, error: 'bad_input' };
+  if (!Number.isInteger(maxIterations) || maxIterations < LOOP_ITERATION_MIN || maxIterations > LOOP_ITERATION_MAX) {
+    return { ok: false, error: 'bad_input' };
+  }
+  if (!Number.isInteger(budgetTokens) || budgetTokens < LOOP_BUDGET_MIN || budgetTokens > LOOP_BUDGET_MAX) {
+    return { ok: false, error: 'bad_input' };
+  }
+  if (!Number.isInteger(timeoutSeconds) || !OPS_TIMEOUT_SECONDS.has(timeoutSeconds)) {
+    return { ok: false, error: 'bad_input' };
+  }
+  if (loopRunner.isActive() || loopTeamBusy()) return { ok: false, error: 'busy' };
+  // الحلقة مسار قابل للدمج دائماً: نفس preflight الفريق المدمَج كي لا يُكتشف غياب
+  // محرك المراجعة أو الإعداد بعد استهلاك دورات.
+  const modelCheck = preflightOpsRoomModels(['sdk', 'codex']);
+  if (!modelCheck.ok) return modelCheck;
+  const configured = await integration.preflight(cwd);
+  if (!configured.ok) return configured;
+  const unavailable = unavailableReviewEngines(['sdk']);
+  if (unavailable.length) return { ok: false, error: 'review_engine_unavailable', engines: unavailable };
+  const previewCleanup = await integration.stopPreview();
+  if (!previewCleanup.ok) return previewCleanup;
+  const created = opsroom.createRoom();
+  if (!created.ok) return { ok: false, error: 'ops_room_unavailable' };
+  const roomId = created.room.room_id;
+  const result = await loopRunner.start({
+    task, ownership, roomId, maxIterations, budgetTokens, timeoutMs: timeoutSeconds * 1000,
+  }, cwd, (obj) => emitLoopEvent(roomId, cwd, obj));
+  if (!result || !result.ok || !result.loop) return result;
+  const teamId = result.loop.team_id;
+  const recorded = recordOpsSystem(roomId, 'note', 'مهمة الحلقة: ' + task, teamId, '',
+    'loop-task:' + result.loop.loop_id);
+  if (!recorded.ok) {
+    recordOpsSystem(roomId, 'note', 'حُجب نص مهمة الحلقة وفق سياسة المحتوى الحساس.', teamId, '',
+      'loop-task-redacted:' + result.loop.loop_id);
+  }
+  recordOpsSystem(roomId, 'note', 'حدود الحلقة المعتمدة: حتى ' + maxIterations + ' دورات، وميزانية تقديرية '
+    + budgetTokens + ' رمزاً، ومهلة ' + timeoutSeconds + ' ثانية لكل دورة، والدمج يبقى بمراجعة وتحقق وتأكيد صريح.',
+  teamId, '', 'loop-limits:' + result.loop.loop_id);
+  return result;
+});
+
+ipcMain.handle('satr:loopStop', async (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  if (!looprunnerModule.SAFE_LOOP_ID.test(p.loopId || '')) return { ok: false, error: 'bad_input' };
+  return loopRunner.stop(p.loopId);
+});
+
+ipcMain.handle('satr:loopLatest', (event, payload) => {
+  const cwd = sanitizeMemoryCwd(payload && payload.cwd);
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  return { ok: true, loop: loopRunner.latest(cwd) };
 });
 
 // ---------- مراجعة ثانية ودمج صريح لفرق الفريق (الأولوية 6 — الخطوة 4) ----------
@@ -3007,7 +3150,7 @@ async function cleanupBeforeQuit() {
   await stopAll();
   await Promise.allSettled([
     orchestrator.stopAll(), opsBrainstorm.stopAll(), opsPlanner.stopAll(), executor.stopAll(),
-    executionTeam.stopAll(), reviewer.stopAll(), integration.stopAll(), promocapture.stopAll(),
+    executionTeam.stopAll(), loopRunner.stopAll(), reviewer.stopAll(), integration.stopAll(), promocapture.stopAll(),
   ]);
   if (integration.latestPreview()) await integration.stopAll();
   bgprocs.killAll();
