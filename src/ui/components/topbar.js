@@ -96,6 +96,8 @@ class SatrTopbar extends HTMLElement {
   }
   settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); closeTopPops(); setSettingsOpen(settingsPop.hidden); });
   settingsPop.addEventListener('click', (e) => e.stopPropagation());
+  // زر ✕ في رأس اللوحة (دفعة الصقل): كان الإغلاق بالنقر خارجها أو Escape فقط
+  $('settingsClose').addEventListener('click', () => { setSettingsOpen(false); settingsBtn.focus(); });
   document.addEventListener('click', () => { if (!settingsPop.hidden) setSettingsOpen(false); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !settingsPop.hidden) setSettingsOpen(false); });
 

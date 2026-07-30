@@ -1053,6 +1053,16 @@ class SatrChat extends HTMLElement {
       worklog.classList.toggle('collapsed', collapsed);
       workToggle.setAttribute('aria-expanded', String(!collapsed));
     }
+    // إطار الكتلة يتناسب مع محتواها (دفعة الصقل): ردّ بسيط بلا أدوات ولا تفكير كان
+    // يحمل خمسة عناصر إطار حول سطر واحد («اكتمل العمل» + فاصل + «الإجابة» + …).
+    // سجل العمل يُخفى فقط حين تحلّ الإجابة محلّه: لا نشاط مسجَّل، ولا حالة طرفية
+    // تحذيرية، ونصّ إجابة موجود فعلاً. فيبقى ظاهراً قبل وصول النص («يستعد») وعند
+    // الفشل/الإيقاف وعند دور ينتهي بلا نص. و«الإجابة» عنوانٌ لا معنى له بلا سجل فوقه.
+    function syncFrameChrome() {
+      const notice = worklog.classList.contains('failed') || worklog.classList.contains('stopped');
+      worklog.hidden = !(hasActivity || notice || !phaseText('final_answer'));
+      answerLabel.hidden = !hasActivity;
+    }
     workToggle.addEventListener('click', () => {
       manuallyCollapsed = true;
       setWorklogCollapsed(!worklog.classList.contains('collapsed'));
@@ -1071,6 +1081,7 @@ class SatrChat extends HTMLElement {
       workTitle.textContent = title;
       if (!manuallyCollapsed && !answerStarted) setWorklogCollapsed(false);
       updateWorkMeta();
+      syncFrameChrome();
     }
     function startAnswer() {
       if (answerStarted) return;
@@ -1079,6 +1090,7 @@ class SatrChat extends HTMLElement {
       worklog.classList.add('answering');
       workTitle.textContent = 'يصوغ الإجابة';
       if (hasActivity) setWorklogCollapsed(true);
+      syncFrameChrome();
     }
     function renderPhase(phase) {
       const text = phaseText(phase);
@@ -1270,11 +1282,12 @@ class SatrChat extends HTMLElement {
       },
       finish(resultObj) {
         flushTextSurfaces();
-        if (!resultObj && (worklog.classList.contains('failed') || worklog.classList.contains('stopped'))) return;
+        if (!resultObj && (worklog.classList.contains('failed') || worklog.classList.contains('stopped'))) { syncFrameChrome(); return; }
         worklog.classList.remove('working', 'answering');
         worklog.classList.add(resultObj && resultObj.is_error ? 'failed' : 'done');
         workTitle.textContent = resultObj && resultObj.is_error ? 'اكتمل مع خطأ' : 'اكتمل العمل';
         if (hasActivity) setWorklogCollapsed(true);
+        syncFrameChrome();
         // أزرار النسخ تُحقن بعد اكتمال النص (البث يعيد بناء innerHTML فيضيعها).
         const answerText = phaseText('final_answer');
         const commentaryText = phaseText('commentary');
@@ -1313,7 +1326,7 @@ class SatrChat extends HTMLElement {
         workTitle.textContent = 'تعذّر الإكمال';
         const e = document.createElement('div');
         e.className = 'error-box'; e.dir = 'auto'; e.textContent = text;
-        w.appendChild(e); scrollDown();
+        w.appendChild(e); syncFrameChrome(); scrollDown();
       },
       stopped() {
         flushTextSurfaces();
@@ -1321,6 +1334,7 @@ class SatrChat extends HTMLElement {
         worklog.classList.add('stopped');
         workTitle.textContent = 'أُوقِف الدور';
         if (hasActivity) setWorklogCollapsed(true);
+        syncFrameChrome();
         const answerText = phaseText('final_answer');
         const commentaryText = phaseText('commentary');
         if (answerText) addCodeCopyButtons(md);

@@ -177,14 +177,23 @@ import { createUpdateToast } from './lib/update-toast.js';
       if (claudeAccountRequest === request) claudeAccountRequest = null;
     }
   }
+  // صف تفصيل حساب: يُخفى كلياً عند غياب القيمة بدل عرض «—». كانت أقسام الحسابات
+  // تعرض ثمانية صفوف فارغة لمستخدم غير مسجّل فتبدو اللوحة معطوبة (دفعة الصقل).
+  function setAccountField(id, value) {
+    const el = $(id);
+    const has = !!value;
+    el.textContent = has ? value : '—';
+    const row = el.closest('.dirs-head');
+    if (row) row.hidden = !has;
+  }
   function renderClaudeAccount(account) {
     const ready = !!account;
     const state = $('claudeAccountState');
     state.textContent = ready ? 'متصل' : 'تعذّر التحديث';
     state.classList.toggle('set', ready);
-    $('claudeAccountEmail').textContent = ready && account.email ? account.email : '—';
-    $('claudeAccountOrganization').textContent = ready && account.organization ? account.organization : '—';
-    $('claudeAccountSubscription').textContent = ready && account.subscriptionType ? account.subscriptionType : '—';
+    setAccountField('claudeAccountEmail', ready && account.email ? account.email : '');
+    setAccountField('claudeAccountOrganization', ready && account.organization ? account.organization : '');
+    setAccountField('claudeAccountSubscription', ready && account.subscriptionType ? account.subscriptionType : '');
   }
   async function refreshClaudeAccountView() {
     const state = $('claudeAccountState');
@@ -222,15 +231,15 @@ import { createUpdateToast } from './lib/update-toast.js';
     state.textContent = !status || !status.installed ? 'غير مثبَّت'
       : ready ? 'مسجَّل الدخول' : 'غير مسجَّل الدخول';
     state.classList.toggle('set', ready);
-    $('codexAccountMethod').textContent = ready && auth.method ? auth.method : '—';
+    setAccountField('codexAccountMethod', ready && auth.method ? auth.method : '');
     const limits = data && data.limits && data.limits.ok ? data.limits.limits : null;
-    $('codexAccountPlan').textContent = limits && limits.planType ? limits.planType
-      : (ready && auth.plan ? auth.plan : '—');
-    $('codexAccountWindow').textContent = limits && limits.primary
-      ? limits.primary.usedPercent + '%' : '—';
+    setAccountField('codexAccountPlan', limits && limits.planType ? limits.planType
+      : (ready && auth.plan ? auth.plan : ''));
+    setAccountField('codexAccountWindow', limits && limits.primary
+      ? limits.primary.usedPercent + '%' : '');
     const usage = data && data.usage && data.usage.ok ? data.usage.usage : null;
-    $('codexAccountRecent').textContent = usage ? fmtTokens(usage.recentTokens) : '—';
-    $('codexAccountLifetime').textContent = usage ? fmtTokens(usage.lifetimeTokens) : '—';
+    setAccountField('codexAccountRecent', usage ? fmtTokens(usage.recentTokens) : '');
+    setAccountField('codexAccountLifetime', usage ? fmtTokens(usage.lifetimeTokens) : '');
     // زر تسجيل الدخول يظهر عند غياب الاعتماد فقط (Codex مثبَّت وغير مسجَّل)
     $('codexLoginRow').hidden = !(status && status.installed && !ready);
   }

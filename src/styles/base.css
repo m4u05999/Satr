@@ -80,13 +80,16 @@
      داكنين أسفل هذه الكتلة — عكس لوحة ANSI على خلفية فاتحة رديء، والأعراف تُبقيهما داكنين. */
   html[data-theme="light"] {
     color-scheme: light;
+    /* دفعة الصقل: كانت الأسطح والحدود متقاربة جداً (‏#eeedeb على #f6f5f4 بفارق 3%
+       و#dddbd7 حدّاً عليه ≈1.1:1) فتبدو الأزرار مسطّحة والطبقات بلا فصل. عُمّق
+       السلّم درجةً: فصل أوضح بين bg/surface/surface-2، وحدود تُرى فعلاً. */
     --bg: #fdfdfc;             /* sand1 فاتح */
-    --surface: #f6f5f4;        /* sand2 */
-    --surface-2: #eeedeb;      /* sand3 */
-    --surface-3: #e6e4e1;      /* sand4 — تمييز/تحويم */
-    --border-dim: #eae8e6;     /* فواصل خافتة */
-    --border: #dddbd7;         /* sand6 */
-    --border-strong: #c0beb8;  /* sand8 */
+    --surface: #f4f3f1;        /* sand2 — أغمق قليلاً ليفصل الشريط والمؤلّف عن الخلفية */
+    --surface-2: #e9e8e6;      /* sand4 — خلفية الأزرار تبرز عن سطحها */
+    --surface-3: #dedcd9;      /* sand5/6 — تمييز/تحويم */
+    --border-dim: #e4e2df;     /* فواصل خافتة */
+    --border: #cfceca;         /* sand7 — حدّ مرئي على الأسطح الفاتحة */
+    --border-strong: #b3b1aa;  /* sand8 */
     --text: #21201c;           /* sand12 */
     --text-dim: #63605b;       /* sand11 — نص ثانوي مقروء */
     --text-faint: #8f8d86;     /* sand10 — أخفت */
@@ -136,6 +139,13 @@
     font-family: var(--sans); font-size: 16px; line-height: 1.8;
     display: flex; flex-direction: column; overflow: hidden;
   }
+
+  /* أي قاعدة مؤلف فيها display تغلب [hidden] من ورقة المتصفح، فكان كل عنصر يُخفى
+     بـhidden ويحمل صنفاً ذا display يبقى ظاهراً. عولجت المشكلة حالةً بحالة (تسع قواعد
+     X[hidden] أدناه) فسقطت الحالات المنسية: قسم Enterprise وزر تسجيل دخول Codex كانا
+     يظهران دائماً في بناء Community. هذه القاعدة العامة تحسمها مرة واحدة لكل light DOM
+     (أوراق المكوّنات داخل Shadow لها نطاقها المستقل). */
+  [hidden] { display: none !important; }
 
   /* ===== الشريط العلوي ===== */
   /* منذ ت-11: header داخل مكوّن satr-topbar (بلا Shadow — غلاف شفاف للتخطيط) */
@@ -591,8 +601,19 @@
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
     padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2h); min-width: 300px;
     box-shadow: var(--shadow-pop); animation: pop var(--dur) var(--ease);
+    /* اللوحة تطول بأقسام الحساب والمفاتيح فكانت تفيض خارج الشاشة بلا تمرير */
+    max-height: calc(100vh - 5rem); overflow-y: auto; overscroll-behavior: contain;
   }
   #settingsPop[hidden] { display: none; }
+  /* رأس ثابت أثناء التمرير — نفس نمط .panel-head في اللوحات الجانبية */
+  .settings-head {
+    position: sticky; top: calc(var(--space-4) * -1); z-index: var(--z-local);
+    display: flex; align-items: center; justify-content: space-between;
+    margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) 0;
+    padding: var(--space-2h) var(--space-4); background: var(--surface);
+    border-bottom: 1px solid var(--border); font-weight: 600; color: var(--gold);
+  }
+  .settings-head button { font-size: 12px; padding: 2px var(--space-2h); }
   #settingsPop .field { justify-content: space-between; }
   #settingsPop select { min-width: 190px; }
   #settingsBtn.active { border-color: var(--gold); background: var(--gold-soft); }
