@@ -52,6 +52,10 @@ const renderertrust = require('./renderertrust');
 // لاحقة [1m] (نافذة مليون رمز) مقبولة حصراً بقرار مالك 2026-07-27 — Claude Code صار
 // يعلن Fable 5 وOpus 5 بهذه الصيغة فقط؛ لا أقواس أخرى.
 const SAFE_MODEL = /^[A-Za-z0-9./-]{1,64}(\[1m\])?$/;
+// إصلاح الموثوقية (2026-07-30): سقفان زمنيان يمنعان حبس قفل الإرسال sendRequestBusy
+// إلى الأبد حين يعلق إيقاف دور سابق أو إقلاع محرك SDK (الشرح عند موضعي الاستخدام).
+const STOP_ALL_SEND_TIMEOUT_MS = 15000;
+const SDK_START_TIMEOUT_MS = 90000;
 
 function cleanClaudePublicText(value, maxLength) {
   if (typeof value !== 'string') return '';
@@ -1386,7 +1390,15 @@ async function handleSendRequest(event, payload, requestEpoch) {
     return { error: 'bad_cwd', message: 'مجلد المشروع غير موجود: ' + cwd };
   }
 
-  await stopAll(false); // ينهي الدور التفاعلي السابق ويحافظ على Queries ذات مهام SDK الخلفية
+  // إصلاح الموثوقية (2026-07-30): سقف دفاعي — تعليق إيقاف الدور السابق (قناة محرك
+  // ميتة) كان يحبس sendRequestBusy إلى الأبد فترتد كل الرسائل بـ«انتظر اكتمال بدء
+  // الطلب السابق». مهما حدث لا ينتظر الإرسال الإيقاف أكثر من السقف؛ مقابض الدور
+  // القديم سُحبت مزامنةً داخل stopAll وأحداثه محجوبة بـrunSeq، وcleanup المحرك يقتل
+  // العملية اليتيمة بمهلته الخاصة (BOOT/INTERRUPT timeouts في codex.js).
+  await Promise.race([
+    stopAll(false), // ينهي الدور التفاعلي السابق ويحافظ على Queries ذات مهام SDK الخلفية
+    new Promise((resolve) => { const t = setTimeout(resolve, STOP_ALL_SEND_TIMEOUT_MS); if (t.unref) t.unref(); }),
+  ]);
   if (requestEpoch !== sendRequestEpoch) {
     return { error: 'stopped', message: 'أوقف المستخدم الطلب قبل بدء تشغيله.' };
   }
@@ -1610,7 +1622,24 @@ async function handleSendRequest(event, payload, requestEpoch) {
     sdkStartingPromise = starting;
     let sdkRun;
     try {
-      sdkRun = await starting;
+      // إصلاح الموثوقية (2026-07-30): تعليق agent.start قبل الحسم كان يحبس قفل
+      // الإرسال إلى الأبد (تكافؤ مهلة إقلاع Codex). عند التجاوز نفشل الدور برسالة
+      // عربية، وحين يُحسم البدء المتأخر لاحقاً يُوقف تشغيله اليتيم فوراً.
+      sdkRun = await Promise.race([
+        starting,
+        new Promise((_, reject) => {
+          const t = setTimeout(() => reject(new Error('sdk_boot_timeout')), SDK_START_TIMEOUT_MS);
+          if (t.unref) t.unref();
+        }),
+      ]);
+    } catch (raceErr) {
+      if (raceErr && raceErr.message === 'sdk_boot_timeout') {
+        Promise.resolve(starting).then((run) => { if (run) stopSdkRun(run).catch(() => {}); }).catch(() => {});
+        markSdkRunInFlight(false);
+        currentRun = null;
+        return { error: 'sdk_failed', message: 'تأخر إقلاع محرك Claude ولم يبدأ الدور خلال المهلة — أعد المحاولة.' };
+      }
+      throw raceErr;
     } finally {
       if (sdkStartingPromise === starting) sdkStartingPromise = null;
     }

@@ -46,6 +46,7 @@
     "test:browser-loop-kimi-probe": "electron scripts/browser-loop-kimi-probe.js",
     "test:codexmcp": "node scripts/codexmcp-test.js",
     "test:codex-contract": "node scripts/codex-contract-test.js",
+    "test:send-liveness": "node scripts/send-liveness-test.js",
     "test:codex-steer": "node scripts/codex-steer-test.js",
     "test:codex-steer-probe": "node scripts/codex-steer-probe.js",
     "test:codex-compact": "node scripts/codex-compact-test.js",

@@ -22,6 +22,7 @@ const SUITE = [
   'test:opsroom-all',
   'test:codexmcp',
   'test:codex-contract',
+  'test:send-liveness',
   'test:codex-steer',
   'test:codex-compact',
   'test:codex-mcp-panel',

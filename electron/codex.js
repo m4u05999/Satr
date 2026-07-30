@@ -39,6 +39,16 @@ const { queryCodex } = require('./codexrpc');
 const IS_WIN = process.platform === 'win32';
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة تراجع ولا نعرض فرقاً
 const DEFAULT_MODEL = 'gpt-5.6-sol';
+// إصلاح الموثوقية (2026-07-30): سقوف زمنية لتسلسل الإقلاع والإيقاف — عملية app-server
+// حيّة غير مستجيبة كانت تعلّق الدور في «يستعد» بلا نهاية، وتعليق turn/interrupt كان
+// يعلّق stopAll فيحبس قفل الإرسال العام في main.js إلى الأبد (لا مخرج إلا إعادة التشغيل).
+// تجاوز البيئة للاختبار القطعي فقط (fixture لا يمكنه انتظار 60ث) — عدد صحيح 100..600000.
+function reliabilityTimeout(envName, fallback) {
+  const raw = Number.parseInt(process.env[envName] || '', 10);
+  return Number.isInteger(raw) && raw >= 100 && raw <= 600000 ? raw : fallback;
+}
+const BOOT_REQUEST_TIMEOUT_MS = reliabilityTimeout('SATR_CODEX_BOOT_TIMEOUT_MS', 60000);   // initialize/thread/turn — لكل طلب إقلاع
+const INTERRUPT_TIMEOUT_MS = reliabilityTimeout('SATR_CODEX_INTERRUPT_TIMEOUT_MS', 5000); // turn/interrupt عند الإيقاف (نمط forceClose في SDK)
 
 // ---------- لقطات التراجع (نظير agent.js) ----------
 // المفتاح call_id للتعديل، القيمة { file_path, before } (before=null ⇒ ملف جديد، التراجع=حذف).
@@ -935,10 +945,24 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   function writeMsg(obj) {
     try { proc.stdin.write(JSON.stringify(obj) + '\n'); } catch { /* أُغلق */ }
   }
-  function request(method, params) {
+  function request(method, params, timeoutMs) {
     const id = ++reqId;
     return new Promise((resolve, reject) => {
-      replies.set(id, { resolve, reject });
+      // إصلاح الموثوقية (2026-07-30): وعد RPC عارٍ بلا مهلة كان يعلّق الدور صامتاً
+      // إلى الأبد حين تكون عملية app-server حيّة لكن غير مستجيبة («يستعد» بلا نهاية).
+      // مهلة اختيارية: عند تجاوزها يُحذف الإدخال ويُرفض الوعد فيقع في مسارات الفشل
+      // القائمة (spawn_error/cleanup) بدل الصمت الأبدي. الطلبات بلا مهلة تبقى كما كانت.
+      let timer = null;
+      if (Number.isInteger(timeoutMs) && timeoutMs > 0) {
+        timer = setTimeout(() => {
+          if (replies.delete(id)) reject(new Error('rpc_timeout:' + method));
+        }, timeoutMs);
+        if (timer && typeof timer.unref === 'function') timer.unref();
+      }
+      replies.set(id, {
+        resolve: (value) => { if (timer) clearTimeout(timer); resolve(value); },
+        reject: (err) => { if (timer) clearTimeout(timer); reject(err); },
+      });
       writeMsg({ jsonrpc: '2.0', id, method, params: params || {} });
     });
   }
@@ -1611,7 +1635,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // ---------- تسلسل الإقلاع: initialize → thread/start أو resume → turn/start ----------
   (async () => {
     try {
-      await request('initialize', { clientInfo: { name: 'satr', title: 'Satr', version: '1.0.0' } });
+      await request('initialize', { clientInfo: { name: 'satr', title: 'Satr', version: '1.0.0' } }, BOOT_REQUEST_TIMEOUT_MS);
       writeMsg({ method: 'initialized', params: {} });
   const { approvalPolicy, sandbox } = mapMode(permissionMode);
   const resolvedModel = model || DEFAULT_MODEL;
@@ -1624,16 +1648,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         // استئناف خيط قائم من القرص (~/.codex/sessions) بمعرّفه. الحقول cwd/السياسة/
         // persistExtendedHistory مطلوبة (persistExtendedHistory ليست اختيارية في السكيمة).
         try {
-          const r = await request('thread/resume', { threadId: sessionId, cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, persistExtendedHistory: false });
+          const r = await request('thread/resume', { threadId: sessionId, cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, persistExtendedHistory: false }, BOOT_REQUEST_TIMEOUT_MS);
           threadId = (r && r.thread && r.thread.id) || sessionId;
         } catch (e) {
           // فشل الاستئناف (جلسة محذوفة/تالفة) ⇒ نبدأ خيطاً جديداً بدل تعليق الدور
           emit({ type: 'stderr', text: 'تعذّر استئناف جلسة Codex — بدء جلسة جديدة' });
-          const r = await request('thread/start', startParams);
+          const r = await request('thread/start', startParams, BOOT_REQUEST_TIMEOUT_MS);
           threadId = r && r.thread && r.thread.id;
         }
       } else {
-        const r = await request('thread/start', startParams);
+        const r = await request('thread/start', startParams, BOOT_REQUEST_TIMEOUT_MS);
         threadId = r && r.thread && r.thread.id;
       }
       if (threadId) emit({ type: 'system', subtype: 'init', session_id: threadId });
@@ -1645,7 +1669,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       if (typeof prompt === 'string' && prompt.trim() === COMPACT_COMMAND) {
         compacting = true;
         try {
-          await request('thread/compact/start', { threadId });
+          await request('thread/compact/start', { threadId }, BOOT_REQUEST_TIMEOUT_MS);
         } catch (e) {
           // تدهور رشيق: إصدار لا يعلن الطريقة (‏-32601) أو يرفضها ⇒ رسالة عربية ثابتة
           // بلا نص خطأ upstream الخام.
@@ -1675,7 +1699,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       }
       if (!inputItems.length) inputItems.push({ type: 'text', text: effectivePrompt || '', text_elements: [] });
       const turnParams = { threadId, input: inputItems, model: resolvedModel };
-      const startedTurn = await request('turn/start', turnParams);
+      const startedTurn = await request('turn/start', turnParams, BOOT_REQUEST_TIMEOUT_MS);
       turnId = startedTurn && startedTurn.turn && startedTurn.turn.id || turnId;
       // الأحداث تصل عبر notifications؛ الدور ينتهي بـ turn/completed
     } catch (e) {
@@ -1766,7 +1790,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       }
       for (const [questionId, info] of pendingQuestions) { try { info.answer([]); } catch {} pendingQuestions.delete(questionId); }
       for (const [permId, info] of mcpPerms) { try { info.resolve(false); } catch {} mcpPerms.delete(permId); }
-      if (threadId && turnId) { try { await request('turn/interrupt', { threadId, turnId }); } catch {} }
+      if (threadId && turnId) { try { await request('turn/interrupt', { threadId, turnId }, INTERRUPT_TIMEOUT_MS); } catch {} }
       cleanup(0);
     },
   };
