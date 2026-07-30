@@ -39,16 +39,16 @@
     <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (للمحركات الداعمة للصور)">📎 إرفاق</button>
     <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
   </div>
+  <!-- شريط الوعي: ما لا يظهر في صف المحرك/النموذج أعلاه فقط — أُزيل «model:» المكرّر
+       (منتقي النموذج بجواره يعرض الاسم الكامل)، وعُرّبت التسميات (القاعدة 3) -->
   <div id="awarenessBar" class="awareness-bar" aria-label="حالة الدور الحالية">
-    <button id="awarenessModel" type="button" dir="ltr" title="فتح قائمة النماذج القائمة">model: default</button>
+    <button id="awarenessEffort" type="button" title="تدوير جهد التفكير">الجهد: الافتراضي</button>
     <span aria-hidden="true">·</span>
-    <button id="awarenessEffort" type="button" dir="ltr" title="تدوير جهد التفكير">effort: default</button>
-    <span aria-hidden="true">·</span>
-    <button id="awarenessThinking" type="button" dir="ltr" title="تفعيل/تعطيل التفكير الحي (Kimi Code)">thinking: —</button>
+    <button id="awarenessThinking" type="button" title="تفعيل/تعطيل التفكير الحي (Kimi Code)">التفكير: —</button>
     <span aria-hidden="true">·</span>
     <button id="awarenessPerm" type="button" title="تدوير وضع الأذونات الآمن">الأذونات: افتراضي</button>
     <span aria-hidden="true">·</span>
-    <button id="awarenessContext" type="button" dir="ltr" title="فتح لوحة السياق">context: —%</button>
+    <button id="awarenessContext" type="button" title="فتح لوحة السياق">السياق: —</button>
   </div>
   <!-- دفعة E: اقتراح Claude يملأ المحرّر فقط ولا يرسل -->
   <button id="promptSuggestion" class="prompt-suggestion" type="button" hidden>

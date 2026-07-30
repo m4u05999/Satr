@@ -32,15 +32,18 @@ const controlsText = `
 export const controlsSheet = sheet(controlsText);
 
 export const panelSheet = sheet(controlsText + `
+  /* سطح جانبي داخل #midRow — لا overlay مثبّت (دفعة صقل الواجهة، الحزمة الأولى):
+     كانت اللوحات position:fixed بكامل الطول فتحجب علامة الشريط العلوي وتقصّ المؤلّف
+     بصرياً؛ صارت شقيقة flex مثل satr-ops-room فتضيّق عمود الدردشة بدل تغطيته. */
   :host {
-    position: fixed; top: 0; bottom: 0; right: 0; width: 420px; max-width: 92vw;
+    position: relative; inset: auto; align-self: stretch;
+    width: min(420px, 50vw); flex: 0 0 auto; height: 100%; min-height: var(--space-0);
     background: var(--surface); border-inline-start: 1px solid var(--border);
     z-index: var(--z-panel);
-    transform: translateX(100%); transition: transform var(--dur) var(--ease);
-    display: flex; flex-direction: column;
+    display: none; flex-direction: column;
   }
-  /* الظلّ عند الفتح فقط: لوحة مغلقة منزلقة خارج الشاشة كانت تُبقي شريط ظلّها الدائم يمين الحافة */
-  :host([open]) { transform: translateX(0); box-shadow: var(--shadow-panel); }
+  /* الظلّ عند الفتح فقط — وظلّ dock الأخف لأن اللوحة صارت ملتصقة لا عائمة */
+  :host([open]) { display: flex; box-shadow: var(--shadow-dock); }
   .panel-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border);

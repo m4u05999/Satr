@@ -180,16 +180,16 @@
     <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (للمحركات الداعمة للصور)">📎 إرفاق</button>
     <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
   </div>
+  <!-- شريط الوعي: ما لا يظهر في صف المحرك/النموذج أعلاه فقط — أُزيل «model:» المكرّر
+       (منتقي النموذج بجواره يعرض الاسم الكامل)، وعُرّبت التسميات (القاعدة 3) -->
   <div id="awarenessBar" class="awareness-bar" aria-label="حالة الدور الحالية">
-    <button id="awarenessModel" type="button" dir="ltr" title="فتح قائمة النماذج القائمة">model: default</button>
+    <button id="awarenessEffort" type="button" title="تدوير جهد التفكير">الجهد: الافتراضي</button>
     <span aria-hidden="true">·</span>
-    <button id="awarenessEffort" type="button" dir="ltr" title="تدوير جهد التفكير">effort: default</button>
-    <span aria-hidden="true">·</span>
-    <button id="awarenessThinking" type="button" dir="ltr" title="تفعيل/تعطيل التفكير الحي (Kimi Code)">thinking: —</button>
+    <button id="awarenessThinking" type="button" title="تفعيل/تعطيل التفكير الحي (Kimi Code)">التفكير: —</button>
     <span aria-hidden="true">·</span>
     <button id="awarenessPerm" type="button" title="تدوير وضع الأذونات الآمن">الأذونات: افتراضي</button>
     <span aria-hidden="true">·</span>
-    <button id="awarenessContext" type="button" dir="ltr" title="فتح لوحة السياق">context: —%</button>
+    <button id="awarenessContext" type="button" title="فتح لوحة السياق">السياق: —</button>
   </div>
   <!-- دفعة E: اقتراح Claude يملأ المحرّر فقط ولا يرسل -->
   <button id="promptSuggestion" class="prompt-suggestion" type="button" hidden>
@@ -215,6 +215,37 @@
 <!-- لوحة المعاينة المدمجة (م-1 — الدفعة 5): إطار الرأس والمساحة فقط — الصفحة ترسمها
      WebContentsView أصلية معزولة تطفو فوق المساحة (satr:previewBounds يحدد مكانها) -->
 <satr-preview-panel aria-label="المعاينة المدمجة"></satr-preview-panel>
+
+<!-- اللوحات الجانبية: أسطح flex داخل الصف الأوسط مثل غرفة العمليات (دفعة الصقل) —
+     كانت overlay مثبّتاً يحجب علامة الشريط ويقصّ المؤلّف؛ الآن تضيّق عمود الدردشة.
+     منسّق الأسطح يفتح واحدة فقط ويعيد قياس المعاينة عند كل تغيّر عرض. -->
+
+<!-- لوحة /جلسات: مكوّن Web Component (تفكيك ت-4) — الاستئناف حدث session-resume للقشرة -->
+<satr-sessions-panel aria-label="الجلسات المحفوظة"></satr-sessions-panel>
+
+<!-- لوحة 📄 الملفات + بحث المحتوى: مكوّن Web Component (تفكيك ت-6) — فتح ملف عبر حدث file-open -->
+<satr-files-panel aria-label="ملفات المشروع"></satr-files-panel>
+
+<!-- لوحة ± git: مكوّن Web Component (تفكيك ت-5) — بطاقات الفرق عبر ui/lib/diff.js المشتركة -->
+<satr-git-panel aria-label="تغييرات المشروع"></satr-git-panel>
+
+<!-- لوحة /مهارات: مكوّن Web Component (تفكيك ت-2) — يملك حالة المفعّل/المعطّل -->
+<satr-skills-panel aria-label="المهارات"></satr-skills-panel>
+
+<!-- لوحة /موصلات: مكوّن Web Component (تفكيك ت-3) -->
+<satr-mcp-panel aria-label="موصّلات MCP"></satr-mcp-panel>
+
+<!-- لوحة /وكلاء: مكوّن Web Component (تفكيك ت-1) — بنيته وأنماطه داخل Shadow DOM -->
+<satr-agents-panel aria-label="الوكلاء الفرعيون"></satr-agents-panel>
+
+<!-- لوحة /سياق: مكوّن Web Component (تفكيك ت-3) -->
+<satr-context-panel aria-label="استخدام السياق"></satr-context-panel>
+
+<!-- لوحة /ذاكرة: مراجعة المرشّحات وإدارة ذاكرة المشروع الشخصية المنفصلة عن المحادثة -->
+<satr-memory-panel aria-label="ذاكرة المشروع"></satr-memory-panel>
+
+<!-- لوحة /بحث: منسّق 1–3 باحثين للقراءة فقط مع خلاصات ومصادر -->
+<satr-research-panel aria-label="فريق البحث"></satr-research-panel>
 </div>
 
 <satr-promo-studio role="dialog" aria-modal="true" aria-label="استوديو البرومو"></satr-promo-studio>
@@ -242,38 +273,12 @@
 <!-- دفعة C: إدخال موصّلات Claude غير السري + فتح URL بعد نقرة صريحة -->
 <satr-elicitation-dialog></satr-elicitation-dialog>
 
-<!-- لوحة /جلسات: مكوّن Web Component (تفكيك ت-4) — الاستئناف حدث session-resume للقشرة -->
-<satr-sessions-panel aria-label="الجلسات المحفوظة"></satr-sessions-panel>
+<!-- اللوحات الجانبية التسع انتقلت إلى #midRow أعلاه (دفعة الصقل: أسطح flex لا overlay) -->
 
-<!-- لوحة ملفات المشروع (الدفعة 1.2): شجرة قراءة فقط + عارض + بحث محتوى (4.6) -->
-<!-- لوحة 📄 الملفات + بحث المحتوى: مكوّن Web Component (تفكيك ت-6) — فتح ملف عبر حدث file-open -->
-<satr-files-panel aria-label="ملفات المشروع"></satr-files-panel>
-
-<!-- لوحة تغييرات git (الدفعة 4.7): عرض فقط — لا commit ولا revert من «سطر» -->
-<!-- لوحة ± git: مكوّن Web Component (تفكيك ت-5) — بطاقات الفرق عبر ui/lib/diff.js المشتركة -->
-<satr-git-panel aria-label="تغييرات المشروع"></satr-git-panel>
-
-<!-- عارض القراءة (الدفعة 1.2) + تحرير خفيف (الدفعة 4): textarea بديل عند التحرير -->
+<!-- عارض القراءة (الدفعة 1.2) + تحرير خفيف (الدفعة 4): textarea بديل عند التحرير —
+     حوار لا سطح، فيبقى على مستوى body بـz-index أعلى من اللوحات -->
 <!-- عارض القراءة/التحرير: مكوّن Web Component (تفكيك ت-7) — بطاقة الحفظ عبر حدث file-saved -->
 <satr-file-viewer role="dialog" aria-modal="true" aria-label="عارض ملف"></satr-file-viewer>
-
-<!-- لوحة /مهارات: مكوّن Web Component (تفكيك ت-2) — يملك حالة المفعّل/المعطّل -->
-<satr-skills-panel aria-label="المهارات"></satr-skills-panel>
-
-<!-- لوحة /موصلات: مكوّن Web Component (تفكيك ت-3) -->
-<satr-mcp-panel aria-label="موصّلات MCP"></satr-mcp-panel>
-
-<!-- لوحة /وكلاء: مكوّن Web Component (تفكيك ت-1) — بنيته وأنماطه داخل Shadow DOM -->
-<satr-agents-panel aria-label="الوكلاء الفرعيون"></satr-agents-panel>
-
-<!-- لوحة /سياق: مكوّن Web Component (تفكيك ت-3) -->
-<satr-context-panel aria-label="استخدام السياق"></satr-context-panel>
-
-<!-- لوحة /ذاكرة: مراجعة المرشّحات وإدارة ذاكرة المشروع الشخصية المنفصلة عن المحادثة -->
-<satr-memory-panel aria-label="ذاكرة المشروع"></satr-memory-panel>
-
-<!-- لوحة /بحث: منسّق 1–3 باحثين للقراءة فقط مع خلاصات ومصادر -->
-<satr-research-panel aria-label="فريق البحث"></satr-research-panel>
 
 <!-- حوار قرار غرفة العمليات: تشغيل الاختبارات والدمج لا يمران عبر toast أو confirm أصلي -->
 <satr-ops-dialog role="dialog" aria-modal="true" aria-label="تأكيد قرار غرفة العمليات"></satr-ops-dialog>

@@ -56,7 +56,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   // مفتاح thinking الخاص بـ Kimi Code: يُعلنه ACP أحياناً (Kimi 0.27.0 يعلن 'on' فقط).
   let thinkingValue = localStorage.getItem('satr_thinking') || '';
   const THINKING_CYCLE = ['on', ''];
-  const THINKING_LABELS = { 'on': 'مفعّل', '': 'ACP default' };
+  const THINKING_LABELS = { 'on': 'مفعّل', '': 'افتراضي ACP' };
   const EFFORT_CYCLE = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'minimal', ''];
   const EFFORT_LABELS = {
     '': 'الافتراضي', minimal: 'أدنى — لأقصر زمن استجابة', low: 'منخفض — أسرع وأرخص',
@@ -68,12 +68,19 @@ import { createUpdateToast } from './lib/update-toast.js';
     default: 'افتراضي', acceptEdits: 'قبول التعديلات', plan: 'تخطيط فقط', auto: 'تلقائي ذكي',
     bypassPermissions: 'تجاوز كل الأذونات',
   };
-  function selectedValueLabel(select) {
-    return select.value || 'default';
+  // اسم الجلسة المختصر: القصّ إلى 8 محارف مقصود (المعرّفات طويلة)، لكن بلا علامة
+  // كان النص يبدو اسماً كاملاً مبتوراً («testspri»)؛ «…» تُظهر أنه مقتطع
+  function shortSessionLabel(id) {
+    const value = String(id || '');
+    return value.length > 8 ? value.slice(0, 8) + '…' : value;
+  }
+  // تسمية الجهد المختصرة لشريط الوعي: EFFORT_LABELS تحمل شرحاً للقائمة المنسدلة
+  // («منخفض — أسرع وأرخص») والشريط يحتاج الكلمة وحدها
+  function effortShort(value) {
+    return (EFFORT_LABELS[value] || value || 'افتراضي').split(' — ')[0];
   }
   function syncAwareness() {
-    const model = $('awarenessModel'), effort = $('awarenessEffort'), thinking = $('awarenessThinking'), permission = $('awarenessPerm');
-    if (model) model.textContent = 'model: ' + selectedValueLabel($('model'));
+    const effort = $('awarenessEffort'), thinking = $('awarenessThinking'), permission = $('awarenessPerm');
     const engine = $('engine').value;
     const effortSupported = engineSupportsEffort(engine);
     $('effort').disabled = !effortSupported;
@@ -83,14 +90,14 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (effort) {
       effort.hidden = engine === 'kimi-code';
       effort.disabled = !effortSupported;
-      effort.textContent = effortSupported ? 'effort: ' + ($('effort').value || 'default') : 'effort: ACP default';
+      effort.textContent = effortSupported ? 'الجهد: ' + effortShort($('effort').value) : 'الجهد: افتراضي ACP';
       effort.title = effortSupported ? 'تدوير جهد التفكير' : 'جهد التفكير غير متاح عبر Kimi ACP حالياً';
     }
     if (thinking) {
       const thinkingVisible = engine === 'kimi-code';
       thinking.hidden = !thinkingVisible;
       if (thinkingVisible) {
-        thinking.textContent = 'thinking: ' + (THINKING_LABELS[thinkingValue] || thinkingValue || 'ACP default');
+        thinking.textContent = 'التفكير: ' + (THINKING_LABELS[thinkingValue] || thinkingValue || 'افتراضي ACP');
         thinking.title = 'تفعيل/تعطيل التفكير الحي (Kimi Code)';
       }
     }
@@ -106,13 +113,6 @@ import { createUpdateToast } from './lib/update-toast.js';
     select.value = values[(index + 1 + values.length) % values.length];
     select.dispatchEvent(new Event('change', { bubbles: true }));
   }
-  $('awarenessModel').addEventListener('click', () => {
-    const select = $('model');
-    select.focus();
-    if (typeof select.showPicker === 'function') {
-      try { select.showPicker(); } catch (error) { select.click(); }
-    } else select.click();
-  });
   $('awarenessEffort').addEventListener('click', () => cycleSelect($('effort'), EFFORT_CYCLE));
   $('awarenessThinking').addEventListener('click', () => {
     const index = THINKING_CYCLE.indexOf(thinkingValue);
@@ -410,7 +410,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     try { const r = await window.satr.lastChat(e); sid = (r && r.sid) || null; } catch (err) {}
     if (sid && !sessionId) {
       sessionId = sid;
-      $('sessionInfo').textContent = 'جلسة: ' + sid.slice(0, 8) + ' (مستأنفة)';
+      $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(sid) + ' (مستأنفة)';
       loadTaskLedger(e, sid);
       loadCheckpoint(e, sid);
     }
@@ -521,7 +521,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       sessionId = null;
       if (isBlindEngine(e)) await restoreAdapterSession(); // لا أثر لغير الأعمى (يعود مبكراً)
       $('sessionInfo').textContent = sessionId
-        ? ('جلسة: ' + sessionId.slice(0, 8) + ' (مستأنفة)')
+        ? ('جلسة: ' + shortSessionLabel(sessionId) + ' (مستأنفة)')
         : 'لا جلسة';
       if (!sessionId) chatEl.clearTaskLedger();
       if (!sessionId) chatEl.clearCheckpoint();
@@ -1146,7 +1146,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       block.compacted({ compact_summary: ev.compact_summary });
     } else if (ev.type === 'system' && ev.session_id) {
       sessionId = ev.session_id;
-      $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8);
+      $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(sessionId);
       // 1.3: مؤشر الاستئناف يكتبه المحوّل نفسه على القرص (chats.save) — لا حفظ هنا
     } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
       // parent_tool_use_id (المرحلة 14.2): رسائل الوكيل الفرعي تتوجه لبطاقة وكيلها
@@ -1173,7 +1173,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       const completedEngine = runningEngine;
       if (ev.session_id) {
         sessionId = ev.session_id;
-        $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8);
+        $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(sessionId);
       }
       if (ev.is_error && ev.result) {
         if (deadSessionRecovery(ev.result)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
@@ -1722,7 +1722,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     // حارس تغيّر المجلد في send() يخص جلسات كلود — نطابق المجلد الحالي حتى لا
     // يصفّر جلسة محوّل غير مرتبطة بمجلد أصلاً
     sessionCwd = $('cwd').value.trim();
-    $('sessionInfo').textContent = 'جلسة: ' + c.id.slice(0, 8) + ' (مستأنفة)';
+    $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(c.id) + ' (مستأنفة)';
     loadTaskLedger(c.provider, c.id);
     loadCheckpoint(c.provider, c.id);
     addNotice('📂 استؤنفت محادثة ' + label + ' — أرسل رسالتك للمتابعة');
@@ -1737,7 +1737,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (!data || data.error) { addNotice('✗ تعذّر فتح الجلسة'); return; }
     if (!newSession({ fromResume: true })) return;
     sessionId = s.id; // الرسالة القادمة ستُرسل بـ --resume على هذه الجلسة
-    $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8);
+    $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(s.id);
     if (data.cwd) {
       $('cwd').value = data.cwd;
       localStorage.setItem('satr_cwd', data.cwd);
@@ -1796,7 +1796,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       else chatEl.addHistoryAssistant({ text: msg.text }, 'Codex');
     }
     sessionId = s.id; // الرسالة القادمة تُرسل بـ sessionId فيستأنفها thread/resume
-    $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8) + ' (Codex مستأنفة)';
+    $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(s.id) + ' (Codex مستأنفة)';
     loadTaskLedger('codex', s.id);
     loadCheckpoint('codex', s.id);
     addNotice('📂 استؤنفت جلسة Codex — أرسل رسالتك للمتابعة');
@@ -1840,7 +1840,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       } else chatEl.addHistoryAssistant({ text: message.text }, 'Kimi Code');
     }
     sessionId = s.id;
-    $('sessionInfo').textContent = 'جلسة: ' + s.id.slice(0, 8) + ' (Kimi مستأنفة)';
+    $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(s.id) + ' (Kimi مستأنفة)';
     loadTaskLedger('kimi-code', s.id);
     loadCheckpoint('kimi-code', s.id);
     addNotice('📂 استؤنفت جلسة Kimi Code — أرسل رسالتك للمتابعة');
@@ -2016,15 +2016,15 @@ import { createUpdateToast } from './lib/update-toast.js';
       const result = await window.satr.contextUsage(requestedCwd, requestedSessionId, requestedEngine);
       if (requestedCwd !== $('cwd').value.trim() || requestedSessionId !== sessionId
           || requestedEngine !== $('engine').value) return;
-      if (!result || !result.ok || !result.usage) { button.textContent = 'context: —%'; return; }
+      if (!result || !result.ok || !result.usage) { button.textContent = 'السياق: —'; return; }
       const usage = result.usage;
       const total = Number(usage.totalTokens) || 0;
       const max = Number(usage.maxTokens) || 0;
       const percentage = Number.isFinite(Number(usage.percentage))
         ? Math.round(Number(usage.percentage))
         : (max ? Math.round((total / max) * 100) : 0);
-      button.textContent = 'context: ' + Math.max(0, Math.min(100, percentage)) + '%';
-    } catch (error) { button.textContent = 'context: —%'; }
+      button.textContent = 'السياق: ' + Math.max(0, Math.min(100, percentage)) + '%';
+    } catch (error) { button.textContent = 'السياق: —'; }
   }
   function openMcp() {
     // C3: المحرك يُمرَّر لحظة الفتح — Codex له خوادمه وإجراءاته الخاصة
@@ -2044,7 +2044,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     const percentage = Number.isFinite(Number(usage.percentage))
       ? Math.round(Number(usage.percentage))
       : (max ? Math.round((total / max) * 100) : 0);
-    $('awarenessContext').textContent = 'context: ' + Math.max(0, Math.min(100, percentage)) + '%';
+    $('awarenessContext').textContent = 'السياق: ' + Math.max(0, Math.min(100, percentage)) + '%';
   });
   mcpEl.addEventListener('notice', (e) => addNotice(e.detail));
 
@@ -2127,7 +2127,7 @@ import { createUpdateToast } from './lib/update-toast.js';
       sessionId = result.sessionId;
       sessionCwd = epoch.cwd;
       currentBlock = null;
-      $('sessionInfo').textContent = 'جلسة: ' + sessionId.slice(0, 8) + ' (فرع)';
+      $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(sessionId) + ' (فرع)';
       const trimmed = chatEl.trimAfterSdkUserMessage
         ? chatEl.trimAfterSdkUserMessage(detail.messageId) : false;
       if (!trimmed) {

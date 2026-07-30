@@ -33,7 +33,11 @@ const MARKUP = `
   </div>
   <!-- سطر الإدخال (8.3): عابر — يُفرَّغ عند الإرسال وصدى الصدفة هو المعروض الوحيد -->
   <div id="termInputRow">
-    <input type="text" id="termInput" dir="auto" spellcheck="false"
+    <!-- ‏dir يُضبط ديناميكياً (syncInputDir): rtl وهو فارغ كي يُعرض placeholder العربي
+         بترتيبه الصحيح، و auto عند الكتابة كي يحسم الأمر اللاتيني اتجاهه بنفسه.
+         السبب المثبّت: dir="auto" على حقل فارغ يحسم LTR فينقلب ترتيب أزواج
+         «Enter ينفّذ — Ctrl+C يقطع» بصرياً في نص عربي. -->
+    <input type="text" id="termInput" dir="rtl" spellcheck="false"
            placeholder="اكتب أمراً… (Enter ينفّذ — Ctrl+C يقطع — ▲▼ التاريخ والحقل فارغ)">
     <button id="termInputMask" type="button" aria-pressed="false"
             aria-label="إخفاء إدخال الطرفية" title="إخفاء الإدخال بصرياً فقط">👁</button>
@@ -606,6 +610,13 @@ class SatrTerminalPanel extends HTMLElement {
   const termInputEl = $('termInput');
   const termInputMaskEl = $('termInputMask');
 
+  // اتجاه حقل الإدخال: rtl وهو فارغ (فيُعرض placeholder العربي بترتيبه الصحيح)،
+  // و auto عند وجود قيمة (فيحسم الأمر اللاتيني اتجاهه بنفسه كما كان). ‏dir="auto"
+  // على حقل فارغ يحسم LTR فينقلب ترتيب الأزواج العربية/اللاتينية في placeholder.
+  function syncInputDir() {
+    termInputEl.dir = termInputEl.value ? 'auto' : 'rtl';
+  }
+
   function applyInputMask(tab) {
     const masked = !!(tab && tab.inputMasked);
     termInputEl.type = masked ? 'password' : 'text';
@@ -614,7 +625,10 @@ class SatrTerminalPanel extends HTMLElement {
     termInputMaskEl.setAttribute('aria-pressed', String(masked));
     termInputMaskEl.setAttribute('aria-label', masked ? 'إظهار إدخال الطرفية' : 'إخفاء إدخال الطرفية');
     termInputMaskEl.title = masked ? 'إظهار الإدخال' : 'إخفاء الإدخال بصرياً فقط';
+    syncInputDir(); // يُنادى من activateTab بعد استعادة مسودة التبويب
   }
+
+  termInputEl.addEventListener('input', syncInputDir);
 
   termInputMaskEl.addEventListener('click', () => {
     if (!active || active.exited) return;
@@ -634,7 +648,7 @@ class SatrTerminalPanel extends HTMLElement {
     // Ctrl+C يقطع دائماً (والحقل غير فارغ: يفرّغه أيضاً) — Ctrl+Z وCtrl+D تمريران خامان
     if (e.ctrlKey && !e.shiftKey && !e.altKey) {
       const k = e.key.toLowerCase();
-      if (k === 'c') { e.preventDefault(); termInputEl.value = ''; ptySend('\x03'); return; }
+      if (k === 'c') { e.preventDefault(); termInputEl.value = ''; syncInputDir(); ptySend('\x03'); return; }
       if (k === 'z') { e.preventDefault(); ptySend('\x1a'); return; }
       if (k === 'd') { e.preventDefault(); ptySend('\x04'); return; }
       return; // بقية اختصارات Ctrl (نسخ/لصق…) تبقى للمتصفح
@@ -643,6 +657,7 @@ class SatrTerminalPanel extends HTMLElement {
       e.preventDefault();
       const v = termInputEl.value;
       termInputEl.value = '';
+      syncInputDir();
       ptySend(v + '\r'); // حقل فارغ ⇐ \r خام («اضغط أي مفتاح» ومحثّات كثيرة)
       // أمر معروف بعكس العربية بصرياً ⇐ تبديل تلقائي للعارض الشبكي مع تنبيه (8.4)
       const cmd = v.trim().split(/\s+/)[0].toLowerCase();

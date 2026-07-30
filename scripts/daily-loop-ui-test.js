@@ -90,12 +90,14 @@ async function main() {
     })()`);
 
     const awareness = await evaluate(win, `(() => {
-      document.getElementById('awarenessModel').click();
-      const modelFocused = document.activeElement === document.getElementById('model');
       document.getElementById('awarenessEffort').click();
       document.getElementById('awarenessPerm').click();
+      const bar = document.getElementById('awarenessBar');
       return {
-        modelFocused,
+        // دفعة الصقل: «model:» أُزيل من الشريط (مكرّر مع منتقي النموذج بجواره)
+        modelChipRemoved: !document.getElementById('awarenessModel'),
+        modelSelectPresent: !!document.getElementById('model'),
+        barText: bar.textContent,
         effort: document.getElementById('effort').value,
         effortText: document.getElementById('awarenessEffort').textContent,
         permission: document.getElementById('perm').value,
@@ -103,9 +105,14 @@ async function main() {
         warning: document.getElementById('awarenessPerm').classList.contains('mode-warning'),
       };
     })()`);
-    assert.strictEqual(awareness.modelFocused, true, 'زر النموذج لا يعيد استخدام القائمة القائمة');
+    assert.strictEqual(awareness.modelChipRemoved, true, 'رجع «model:» المكرّر إلى شريط الوعي');
+    assert.strictEqual(awareness.modelSelectPresent, true, 'منتقي النموذج غاب عن المؤلّف');
+    // القاعدة 3: تسميات الشريط عربية — لا model:/effort:/thinking:/context: إنجليزية
+    for (const latin of ['model:', 'effort:', 'thinking:', 'context:']) {
+      assert(!awareness.barText.includes(latin), 'تسمية إنجليزية في شريط الوعي: ' + latin);
+    }
     assert.strictEqual(awareness.effort, 'low');
-    assert(awareness.effortText.includes('low'));
+    assert(awareness.effortText.includes('الجهد: منخفض'), 'تسمية الجهد العربية غائبة');
     assert.strictEqual(awareness.permission, 'acceptEdits');
     assert(awareness.permissionText.includes('قبول التعديلات'));
     assert.strictEqual(awareness.warning, true);
@@ -139,7 +146,8 @@ async function main() {
     assert.strictEqual(kimiParity.model, 'k3');
     assert.strictEqual(kimiParity.effortDisabled, true);
     assert.strictEqual(kimiParity.awarenessDisabled, true);
-    assert(kimiParity.awarenessText.includes('ACP default'));
+    assert(kimiParity.awarenessText.includes('الجهد: افتراضي ACP'),
+      'تسمية الجهد غير المدعوم لـKimi يجب أن تبقى عربية');
     assert(kimiParity.commands.includes('/سياق') && kimiParity.commands.includes('/ضغط'));
     assert(!kimiParity.commands.includes('/مهارات'));
     await waitFor(win,
