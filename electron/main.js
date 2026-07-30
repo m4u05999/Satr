@@ -1756,7 +1756,11 @@ term.setNotifier((obj) => {
 
 ipcMain.handle('satr:termStart', (event, p) => {
   const cwd = sanitizeMemoryCwd(p && p.cwd);
-  if (!cwd) return { ok: false, error: 'bad_cwd' };
+  // السبب الأشيع لفشل البدء أن المستخدم لم يختر مجلد المشروع بعد؛ الرمز وحده كان
+  // يظهر له «تعذّر بدء الطرفية» بلا سبب. بقية أخطاء startTerm تحمل رسائلها أصلاً.
+  if (!cwd) {
+    return { ok: false, error: 'bad_cwd', message: 'اختر مجلد المشروع أولاً من الشريط العلوي 📁 ثم أعد المحاولة.' };
+  }
   const cols = Number.isInteger(p && p.cols) ? p.cols : 0;
   const rows = Number.isInteger(p && p.rows) ? p.rows : 0;
   return term.startTerm(cwd, cols, rows);

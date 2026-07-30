@@ -95,9 +95,22 @@ class SatrTerminalPanel extends HTMLElement {
     if (tab.tabEl) tab.tabEl.setAttribute('aria-label', name);
   }
 
+  // PowerShell (وغيرها) يبثّ مسار تنفيذيّه الكامل عنواناً لـOSC، فكان اسم التبويب
+  // يصير «C:\WINDOWS\System32\WindowsPowerShel…» مقصوصاً بلا معنى. العنوان الذي
+  // هو مسار تنفيذي فقط يُختصر إلى اسم الصدفة المعروف؛ وأي عنوان آخر يبقى كما بثّه
+  // البرنامج (vim/htop/npm… تبثّ عناوين مفيدة نريدها كما هي).
+  function normalizeTabTitle(title) {
+    if (!/[\\/]/.test(title)) return title;
+    if (!/\.(?:exe|cmd|bat|com)$/i.test(title.trim())) return title;
+    return shellTabName(title);
+  }
+
   function queueTabTitle(tab, value) {
     if (tab.isModel || tab.isJob || tab.manualName) return;
-    const title = sanitizeTabTitle(value);
+    // التطبيع قبل القصّ: مسار PowerShell يتجاوز سقف الأربعين محرفاً، فقصّه أولاً
+    // يبتلع اللاحقة .exe فلا يتعرّف عليه التطبيع — وهذا سبب ظهوره مقصوصاً خاماً.
+    const cleaned = String(value || '').replace(TAB_TITLE_CONTROLS, '').trim();
+    const title = sanitizeTabTitle(normalizeTabTitle(cleaned));
     if (!title) return;
     tab.pendingTitle = title;
     if (tab.titleTimer) return;

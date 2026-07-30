@@ -110,6 +110,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(tabElements()[1] === secondTabBeforeTitle, 'أعاد OSC بناء شريط التبويبات بدلاً من تحديث الاسم فقط.');
     checks.push('osc-sanitized', 'osc-truncated', 'title-throttled');
 
+    // عنوان OSC الذي هو مسار تنفيذي فقط يُختصر إلى اسم الصدفة (PowerShell يبثّ
+    // مسار تنفيذيّه كاملاً فكان الاسم «C:\\WINDOWS\\…\\powershell.exe» مقصوصاً)
+    emitTitle(starts[1].id, 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    await waitFor(() => tabLabels()[1] === 'PowerShell', 'اختصار عنوان OSC ذي مسار التنفيذي');
+    // بينما يبقى العنوان المفيد كما بثّه البرنامج
+    emitTitle(starts[1].id, 'npm run dev');
+    await waitFor(() => tabLabels()[1] === 'npm run dev', 'بقاء عنوان OSC المفيد كما هو');
+    checks.push('osc-exe-path-shortened');
+    // إعادة عنوان التبويب الثاني لما تتوقّعه فحوص العزل التالية
+    emitTitle(starts[1].id, unsafeTitle);
+    await waitFor(() => tabLabels()[1] === expectedTitle, 'استعادة عنوان الاختبار');
+
     let firstTab = tabElements()[0];
     firstTab.focus();
     assert(document.activeElement === firstTab, 'تعذّر تركيز التبويب بلوحة المفاتيح.');

@@ -52,6 +52,7 @@ async function main() {
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console أثناء اختبار التبويبات.');
     for (const check of [
       'derived-shell-name', 'keyboard-tab', 'osc-sanitized', 'osc-truncated', 'title-throttled',
+      'osc-exe-path-shortened',
       'keyboard-rename', 'manual-priority', 'isolated-names', 'stable-switch-restart-exit',
       'password-toggle', 'isolated-input-mask', 'line-mode-unchanged',
       'model-tab-distinct', 'session-only', 'zero-csp-violations',
