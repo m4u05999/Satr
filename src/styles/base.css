@@ -155,6 +155,15 @@
     padding: var(--space-2h) var(--space-4); border-bottom: 1px solid var(--border);
     background: var(--surface); flex-wrap: wrap; -webkit-app-region: no-drag;
   }
+  /* درج أدوات الشريط: صفٌّ في التدفق تحت الشريط (لا منبثق) كي تبقى منبثقات
+     Δ و«؟» على غلافها النسبي، ولأن الشريط كان يلتف صفّين عند 820px فيبدّد الأولوية */
+  #topTools {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1h);
+    padding: var(--space-1h) var(--space-4);
+    background: var(--surface-2); border-bottom: 1px solid var(--border);
+  }
+  #topTools .top-pop-wrap { position: relative; }
+  #topMore.on { border-color: var(--gold); background: var(--gold-soft); color: var(--gold); }
   .wordmark { font-size: 22px; font-weight: 700; color: var(--gold); display: flex; align-items: baseline; gap: 3px; user-select: none; }
   .wordmark .cursor { display: inline-block; width: 10px; height: 19px; background: var(--gold); animation: blink 1.1s steps(1) infinite; transform: translateY(2px); }
   @keyframes blink { 50% { opacity: 0; } }
@@ -193,6 +202,8 @@
   }
   input[type="text"]:focus, select:focus, textarea:focus { border-color: var(--gold); }
   #cwd { width: 240px; direction: ltr; text-align: left; font-family: var(--mono); font-size: 12px; }
+  /* فارغاً لا يستحق عرضه الكامل — كان يلتهم ثلث الشريط عند 820px بلا محتوى */
+  #cwd:placeholder-shown:not(:focus) { width: 150px; }
   button {
     background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
     border-radius: var(--radius-md); padding: var(--space-1h) var(--space-3); font-family: var(--sans); font-size: 13px;
@@ -241,10 +252,27 @@
   #jumpDown[hidden] { display: none; }
   #jumpDown:hover { background: var(--gold-soft); }
   .thread { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-6); }
-  .empty { text-align: center; color: var(--text-dim); margin-top: 12vh; }
+  /* 12vh كانت تدفع محتوى صار أطول (دعوة + أمثلة) إلى ما دون الطيّ */
+  .empty { text-align: center; color: var(--text-dim); margin-top: 6vh; }
   .empty .big { font-size: 40px; font-weight: 700; color: var(--gold); margin-bottom: var(--space-2h); }
   .empty p { max-width: 500px; margin: var(--space-1h) auto; font-size: 14px; unicode-bidi: plaintext; }
-  .empty .hints { max-width: 340px; margin: var(--space-4) auto 0; text-align: right; font-size: 13.5px; display: flex; flex-direction: column; gap: var(--space-2); }
+  /* دعوة الفعل والأمثلة (دفعة المجموعة ب): الحالة الفارغة تبدأ بالخطوة التالية */
+  .empty-cta { max-width: 420px; margin: var(--space-5) auto 0; }
+  .empty-cta-text { color: var(--text-dim); font-size: 13.5px; margin-bottom: var(--space-2h); }
+  .empty-cta button {
+    background: var(--gold); color: var(--on-gold); border: none; font-weight: 600;
+    padding: var(--space-2) var(--space-5); border-radius: var(--radius-pill); font-size: 14px;
+  }
+  .empty-cta button:hover { background: var(--gold-strong); }
+  .empty-examples { max-width: 420px; margin: var(--space-5) auto 0; display: flex; flex-direction: column; gap: var(--space-1h); }
+  .empty-examples-head { color: var(--text-faint); font-size: 12px; margin-bottom: var(--space-1); }
+  .empty-example {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: var(--radius-lg); padding: var(--space-2) var(--space-3);
+    font-size: 13px; text-align: start; unicode-bidi: plaintext; width: 100%;
+  }
+  .empty-example:hover { border-color: var(--gold-border); color: var(--text); background: var(--surface-2); }
+  .empty .hints { max-width: 340px; margin: var(--space-5) auto 0; text-align: right; font-size: 13.5px; display: flex; flex-direction: column; gap: var(--space-2); }
   .empty .hints > span { display: flex; align-items: baseline; gap: var(--space-2); }
   .empty .hints kbd { min-width: 52px; text-align: center; }
   .empty kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px var(--space-2); font-family: var(--mono); font-size: 12px; }
@@ -796,7 +824,9 @@
   /* منذ ت-9: البنية داخل مكوّن satr-terminal-panel (بلا Shadow — الأنماط تبقى هنا)،
      والغلاف شفاف للتخطيط كي يبقى #termPanel ابناً مباشراً لعمود body كما كان */
   satr-terminal-panel { display: contents; }
-  #termPanel { display: flex; flex-direction: column; height: 42vh; min-height: 140px; border-top: 1px solid var(--border); background: var(--bg-deep); position: relative; }
+  /* 30vh افتراضياً (كانت 42vh): الطرفية نصف فارغة غالباً بينما تنضغط الدردشة إلى
+     فراغ. السحب والحفظ لكل مشروع كما هما، ومن ضبط ارتفاعه سابقاً لا يتأثر. */
+  #termPanel { display: flex; flex-direction: column; height: 30vh; min-height: 140px; border-top: 1px solid var(--border); background: var(--bg-deep); position: relative; }
   #termPanel[hidden] { display: none; }
   /* مقبض سحب لتغيير ارتفاع اللوحة — الارتفاع يُحفظ في localStorage */
   #termResizer { position: absolute; top: -3px; left: 0; right: 0; height: 7px; cursor: ns-resize; z-index: 5; }

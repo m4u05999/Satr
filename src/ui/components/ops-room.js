@@ -169,6 +169,15 @@ const roomSheet = sheet(`
   .setup-field { display: grid; gap: var(--space-1); min-width: 0; }
   .setup-field > span { color: var(--text-dim); font-size: .75rem; }
   .setup-note { color: var(--text-dim); font-size: .75rem; line-height: 1.7; }
+  /* الإعدادات المتقدمة مطوية: الحلقة ونماذج العامل والمراجعين */
+  .setup-advanced { display: grid; gap: var(--space-2); }
+  .setup-advanced-toggle {
+    background: none; border: none; color: var(--text-dim); cursor: pointer;
+    font: inherit; font-size: .78rem; padding: var(--space-1) 0; text-align: start;
+  }
+  .setup-advanced-toggle:hover { color: var(--gold); }
+  .setup-advanced-toggle.open { color: var(--gold); }
+  .setup-advanced-body { display: grid; gap: var(--space-3); }
   .model-fields {
     display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3);
     padding: var(--space-3); border: 1px solid var(--border);
@@ -309,6 +318,11 @@ const roomSheet = sheet(`
     .setup-head { align-items: flex-start; flex-direction: column; }
     .model-fields { grid-template-columns: minmax(0, 1fr); }
     .loop-fields { grid-template-columns: minmax(0, 1fr); }
+    /* في الشاشة الضيقة كانت الرؤوس المتراكمة تلتهم 41% من الطول قبل أول محتوى:
+       الشريط العلوي ثم رأس الغرفة ثم المراحل ثم التبويبات ثم الإرشاد ثم التبويبات
+       الفرعية. مؤشر المراحل والإرشاد وصفيّان — يُطويان هنا ويبقى شريط الفعل
+       والتنقّل، فما يُخفى لا يمنع انتقالاً ولا يخفي حالة لا تظهر في مكان آخر. */
+    .stage-indicator, .next-step { display: none; }
   }
 `);
 
@@ -1065,6 +1079,29 @@ class SatrOpsRoom extends HTMLElement {
     const fields = document.createElement('div'); fields.className = 'setup-fields';
     fields.appendChild(countWrap); fields.appendChild(timeoutWrap);
     head.appendChild(title); head.appendChild(fields); setup.appendChild(head);
+    // الحلقة ومنتقيات النماذج إعدادات متقدمة تُضبط نادراً، وكانت معروضة كلها قبل
+    // أن يكتب المستخدم حرفاً فتزحم أول ما يراه. تُطوى خلف زر، ويُحفظ فتحها لمن
+    // يعتمد عليها. لا تتغيّر قيمها ولا عقودها — الطيّ عرضٌ فقط.
+    const advanced = document.createElement('section'); advanced.className = 'setup-advanced';
+    const advancedToggle = document.createElement('button');
+    advancedToggle.type = 'button'; advancedToggle.className = 'setup-advanced-toggle';
+    advancedToggle.setAttribute('aria-expanded', 'false');
+    advancedToggle.textContent = '⌄ إعدادات متقدمة — الحلقة المحدودة ونماذج العامل والمراجعين';
+    const advancedBody = document.createElement('div');
+    advancedBody.className = 'setup-advanced-body'; advancedBody.hidden = true;
+    let advancedOpen = false;
+    try { advancedOpen = localStorage.getItem('satr_ops_advanced') === '1'; } catch {}
+    const syncAdvanced = () => {
+      advancedBody.hidden = !advancedOpen;
+      advancedToggle.setAttribute('aria-expanded', String(advancedOpen));
+      advancedToggle.classList.toggle('open', advancedOpen);
+    };
+    advancedToggle.addEventListener('click', () => {
+      advancedOpen = !advancedOpen;
+      try { localStorage.setItem('satr_ops_advanced', advancedOpen ? '1' : '0'); } catch {}
+      syncAdvanced();
+    });
+    advanced.appendChild(advancedToggle); advanced.appendChild(advancedBody);
     const loopOptions = document.createElement('section'); loopOptions.className = 'loop-options';
     const loopToggle = document.createElement('label'); loopToggle.className = 'loop-toggle';
     const loopMode = document.createElement('input'); loopMode.type = 'checkbox';
@@ -1085,7 +1122,7 @@ class SatrOpsRoom extends HTMLElement {
     budgetTokens.setAttribute('aria-label', 'ميزانية رموز الحلقة');
     budgetWrap.appendChild(budgetLabel); budgetWrap.appendChild(budgetTokens);
     loopFields.appendChild(iterationWrap); loopFields.appendChild(budgetWrap); loopOptions.appendChild(loopFields);
-    setup.appendChild(loopOptions);
+    advancedBody.appendChild(loopOptions);
     const modelFields = document.createElement('section'); modelFields.className = 'model-fields';
     const modelInputs = {};
     for (const [name, label, className] of [
@@ -1115,7 +1152,9 @@ class SatrOpsRoom extends HTMLElement {
         syncJudgeWarning();
       });
     }
-    syncJudgeWarning(); setup.appendChild(modelFields);
+    syncJudgeWarning();
+    advancedBody.appendChild(modelFields);
+    syncAdvanced(); setup.appendChild(advanced);
     const note = document.createElement('div'); note.className = 'setup-note';
     note.textContent = 'المسار الافتراضي بعامل واحد: تنفيذ معزول ← مراجعة ← تحقق ← شاهدها تعمل ← دمج. الفريق من عاملين أو ثلاثة خيار متقدم للمهام ذات الملكيات المنفصلة.';
     const planRow = document.createElement('div'); planRow.className = 'setup-actions';

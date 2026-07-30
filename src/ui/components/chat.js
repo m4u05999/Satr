@@ -56,9 +56,22 @@ const MARKUP = `
     <button id="threadSearchClose" type="button" title="إغلاق البحث">✕</button>
   </div>
   <div class="thread" id="thread">
+    <!-- الحالة الفارغة: كانت شعاراً وأربع تلميحات باهتة فوق فراغ شاسع. صارت تبدأ
+         بالخطوة التالية فعلاً — اختيار المجلد إن غاب، أو أمثلة تُملأ بنقرة — ثم
+         التلميحات بعدها. الأمثلة تملأ المحرّر ولا ترسل (القرار يبقى للمستخدم). -->
     <div class="empty" id="empty">
       <div class="big">سطر</div>
       <p>تطبيق عربي لـ Claude Code — اكتب بالعربية وكل شيء يظهر بالاتجاه الصحيح.</p>
+      <div class="empty-cta" id="emptyPickCta" hidden>
+        <p class="empty-cta-text">ابدأ باختيار مجلد مشروعك — عندها يرى النموذج ملفاتك وتعمل الطرفية والمعاينة.</p>
+        <button type="button" id="emptyPickFolder">📁 اختر مجلد المشروع</button>
+      </div>
+      <div class="empty-examples" id="emptyExamples">
+        <div class="empty-examples-head">جرّب مثالاً — يملأ المحرّر ولا يُرسل</div>
+        <button type="button" class="empty-example">اشرح لي بنية هذا المشروع وأهم ملفاته</button>
+        <button type="button" class="empty-example">ابحث عن الأخطاء المحتملة في آخر تغييراتي</button>
+        <button type="button" class="empty-example">أضف اختباراً للدالة التي عدّلتها أخيراً</button>
+      </div>
       <div class="hints">
         <span><kbd>/</kbd> قائمة الأوامر (في بداية السطر)</span>
         <span><kbd>@</kbd> إدراج ملف من المشروع</span>
@@ -369,6 +382,33 @@ class SatrChat extends HTMLElement {
   });
   jumpDown.addEventListener('click', () => { scrollDown(true); jumpDown.hidden = true; });
   function hideEmpty() { const e = $('empty'); if (e) e.remove(); }
+
+  // دعوة الحالة الفارغة: زر اختيار المجلد يظهر حين لا مجلد (يفوّض زر 📁 القائم
+  // فلا مسار ثانياً)، والأمثلة تملأ المحرّر عبر حدث للقشرة ولا ترسل.
+  function syncEmptyCta() {
+    const cta = $('emptyPickCta');
+    if (!cta) return;
+    const cwd = document.getElementById('cwd');
+    cta.hidden = !!(cwd && cwd.value.trim());
+  }
+  main.addEventListener('click', (event) => {
+    const target = event.composedPath ? event.composedPath()[0] : event.target;
+    if (!target || !target.closest) return;
+    if (target.closest('#emptyPickFolder')) {
+      const pick = document.getElementById('pickFolder');
+      if (pick) pick.click();
+      return;
+    }
+    const example = target.closest('.empty-example');
+    if (example) {
+      component.dispatchEvent(new CustomEvent('example-pick', {
+        bubbles: true, detail: { text: example.textContent.trim() },
+      }));
+    }
+  });
+  const cwdField = document.getElementById('cwd');
+  if (cwdField) for (const type of ['change', 'input']) cwdField.addEventListener(type, syncEmptyCta);
+  requestAnimationFrame(syncEmptyCta);
 
   // بحث الخيط: يعمل على DOM المعروض فقط ولا يغيّر مخازن النص أو منطق البث.
   const searchBar = $('threadSearch');

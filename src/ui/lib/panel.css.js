@@ -12,6 +12,11 @@ import { sheet } from './sheet.js';
 // (كالعارض ت-7) التي تحتاجها دون قواعد :host الخاصة باللوحات الجانبية الثابتة
 const controlsText = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  /* [hidden] لا يعبر Shadow، وأي قاعدة مؤلف فيها display تغلبه — فكان كل مكوّن
+     يعالجها حالةً بحالة وتسقط الحالات المنسية (رُصد: «إعدادات متقدمة» في غرفة
+     العمليات بقيت مفرودة رغم hidden لأن display:grid يغلبه). نفس القاعدة العامة
+     التي حسمتها في base.css للـlight DOM، هنا لكل مكوّن يستورد هذه الورقة. */
+  [hidden] { display: none !important; }
   button {
     background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
     border-radius: var(--radius-md); padding: var(--space-1h) var(--space-3); font-family: var(--sans); font-size: 13px;

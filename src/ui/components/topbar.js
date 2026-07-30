@@ -53,6 +53,18 @@ class SatrTopbar extends HTMLElement {
       $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
     }
   });
+
+  // الحقل ضيّق والمسار طويل، فبداية المسار وحدها كانت تظهر («D:\sater\sa…»)
+  // بينما المفيد اسم المجلد في آخره. التمرير إلى النهاية خارج التركيز يُظهره،
+  // والمسار الكامل يبقى في tooltip. لا تتغيّر القيمة نفسها — يقرؤها كل شيء كاملة.
+  function syncCwdView() {
+    const el = $('cwd');
+    const value = el.value.trim();
+    el.title = value || 'اختر مجلد المشروع';
+    if (document.activeElement !== el) el.scrollLeft = el.scrollWidth;
+  }
+  for (const type of ['change', 'input', 'blur']) $('cwd').addEventListener(type, syncCwdView);
+  requestAnimationFrame(syncCwdView);
   // ---------- المجلدات الإضافية (المرحلة 14.4) ----------
   // تُمنح للنموذج وصولاً بجانب مجلد المشروع (additionalDirectories في SDK) —
   // تُدار من ⚙ وتُحفظ في localStorage، والتحقق النهائي (وجود المجلد) في main.js
@@ -87,6 +99,18 @@ class SatrTopbar extends HTMLElement {
     }
   });
   renderDirChips();
+
+  // درج أدوات الشريط (⋯): الأدوات الأقل استعمالاً في صف يُفتح ويُطوى، ويُحفظ
+  // اختياره فيبقى مفتوحاً لمن يعتمد عليها. طيّه لا يعطّل شيئاً — الاختصارات تعمل.
+  const topTools = $('topTools'), topMore = $('topMore');
+  function setTopToolsOpen(open) {
+    topTools.hidden = !open;
+    topMore.classList.toggle('on', open);
+    topMore.setAttribute('aria-expanded', String(open));
+    try { localStorage.setItem('satr_top_tools', open ? '1' : '0'); } catch (e) {}
+  }
+  topMore.addEventListener('click', () => setTopToolsOpen(topTools.hidden));
+  try { if (localStorage.getItem('satr_top_tools') === '1') setTopToolsOpen(true); } catch (e) {}
 
   // لوحة الإعدادات المنبثقة (⚙): تُفتح وتُغلق بالزر، وتُغلق بالنقر خارجها أو بـ Escape
   const settingsPop = $('settingsPop'), settingsBtn = $('settingsBtn');

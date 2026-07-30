@@ -125,7 +125,10 @@ async function capture(win, shot, url) {
   else await win.loadURL(url);
   await win.webContents.executeJavaScript('document.fonts.ready.then(() => true)', true);
   await delay(SETTLE_MS);
-  if (!shot.file) await win.webContents.executeJavaScript('(() => {' + RESET_THEME + '})()', true);
+  if (!shot.file) {
+    await win.webContents.executeJavaScript('(() => {' + RESET_THEME + '})()', true);
+    await delay(120); // التصفير قد يقلب اللوحة، واللقطة الفورية تصوّر ما قبل إعادة الرسم
+  }
   if (shot.js) {
     await win.webContents.executeJavaScript('(async () => { ' + shot.js + ' })()', true);
     await delay(ACTION_MS);
@@ -154,6 +157,10 @@ async function themeCheck(win, url) {
     const dark = { theme: document.documentElement.dataset.theme, bg: body() };
     document.getElementById('themeToggle').click();
     const light = { theme: document.documentElement.dataset.theme, bg: body() };
+    // إعادة الحالة داكنة ومسح الاختيار: وإلا بقي 'light' على القرص فبدأ التشغيل
+    // التالي فاتحاً (partition الافتراضية مشتركة بين التشغيلات)
+    document.getElementById('themeToggle').click();
+    try { localStorage.removeItem('satr_theme'); } catch (e) {}
     return { dark, light, flipped: dark.bg !== light.bg && dark.theme === 'dark' && light.theme === 'light' };
   })()`, true);
 }

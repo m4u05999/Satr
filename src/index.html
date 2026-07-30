@@ -28,29 +28,11 @@
     <button id="newSession">جلسة جديدة</button>
     <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
     <button id="previewToggle" title="المعاينة المدمجة — متصفح لمشروعك (م-1)">🌐</button>
-    <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄</button>
-    <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">±</button>
-    <div class="top-pop-wrap">
-      <button id="sessionChangesToggle" type="button" title="تغييرات هذه الجلسة">Δ <span id="sessionChangesCount" hidden>0</span></button>
-      <div id="sessionChangesPop" class="top-pop" hidden>
-        <div class="top-pop-head">تغييرات هذه الجلسة</div>
-        <div id="sessionChangesList" class="session-changes-list"></div>
-      </div>
-    </div>
     <button id="opsRoomToggle" title="غرفة العمليات">غرفة العمليات</button>
-    <button id="exportChat" title="تصدير المحادثة الحالية (Markdown)">📤</button>
-    <button id="themeToggle" title="تبديل الوضع الفاتح/الداكن">🌙</button>
-    <div class="top-pop-wrap">
-      <button id="shortcutsToggle" type="button" title="اختصارات لوحة المفاتيح">؟</button>
-      <div id="shortcutsPop" class="top-pop shortcuts-pop" hidden>
-        <div class="top-pop-head">اختصارات سريعة</div>
-        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+N</kbd><span>جلسة جديدة</span></div>
-        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+S</kbd><span>إيقاف الدور الجاري</span></div>
-        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+I</kbd><span>تركيز المحرّر</span></div>
-        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+T</kbd><span>طيّ/فرد الطرفية</span></div>
-        <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+P</kbd><span>طيّ/فرد المعاينة</span></div>
-      </div>
-    </div>
+    <!-- درج الأدوات الأقل استعمالاً: صفٌّ في التدفق لا قائمة منبثقة، كي تبقى
+         منبثقات Δ و«؟» على غلافها النسبي وتعمل كما هي (نمط درج المعاينة) -->
+    <button id="topMore" type="button" aria-expanded="false" aria-controls="topTools"
+            title="أدوات إضافية: الملفات، تغييرات المشروع، ملخّص الجلسة، التصدير، الثيم، الاختصارات">⋯</button>
     <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
     <div class="settings-wrap">
       <button id="settingsBtn" title="الإعدادات">⚙</button>
@@ -149,6 +131,31 @@
     </div>
   </div>
 </header>
+<!-- درج أدوات الشريط العلوي: مخفي افتراضياً، ويُفتح بزر ⋯ -->
+<div id="topTools" hidden>
+  <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄 الملفات</button>
+  <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">± التغييرات</button>
+  <div class="top-pop-wrap">
+    <button id="sessionChangesToggle" type="button" title="تغييرات هذه الجلسة">Δ ملخّص الجلسة <span id="sessionChangesCount" hidden>0</span></button>
+    <div id="sessionChangesPop" class="top-pop" hidden>
+      <div class="top-pop-head">تغييرات هذه الجلسة</div>
+      <div id="sessionChangesList" class="session-changes-list"></div>
+    </div>
+  </div>
+  <button id="exportChat" title="تصدير المحادثة الحالية (Markdown)">📤 تصدير</button>
+  <button id="themeToggle" title="تبديل الوضع الفاتح/الداكن">🌙</button>
+  <div class="top-pop-wrap">
+    <button id="shortcutsToggle" type="button" title="اختصارات لوحة المفاتيح">؟ اختصارات</button>
+    <div id="shortcutsPop" class="top-pop shortcuts-pop" hidden>
+      <div class="top-pop-head">اختصارات سريعة</div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+N</kbd><span>جلسة جديدة</span></div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+S</kbd><span>إيقاف الدور الجاري</span></div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+I</kbd><span>تركيز المحرّر</span></div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+T</kbd><span>طيّ/فرد الطرفية</span></div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+P</kbd><span>طيّ/فرد المعاينة</span></div>
+    </div>
+  </div>
+</div>
 </satr-topbar>
 
 <div id="banner"></div>

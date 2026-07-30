@@ -2070,6 +2070,14 @@ import { createUpdateToast } from './lib/update-toast.js';
     else input.value = detail.text || '';
     addNotice('✏️ أُعيدت الرسالة إلى المحرّر. الإرسال الجديد لا يرجع سياق الخادم ولا يفرّع الجلسة.');
   });
+  // مثال الحالة الفارغة: يملأ المحرّر ويترك الإرسال للمستخدم (لا دور تلقائي)
+  chatEl.addEventListener('example-pick', (event) => {
+    const text = (event.detail && event.detail.text) || '';
+    if (!text) return;
+    input.value = text;
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
   function captureSessionControlEpoch(detail) {
     const cwd = $('cwd').value.trim();
     const sourceCwd = typeof detail.cwd === 'string' && detail.cwd
