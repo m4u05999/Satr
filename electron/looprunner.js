@@ -767,6 +767,12 @@ function create(options) {
     }
     if (activeLoopId) return { ok: false, error: 'busy' };
     if (!runner || typeof runner.start !== 'function') return { ok: false, error: 'engine_unavailable' };
+    // توسعة additive (هيئة القضاة): نموذج عامل الحلقة لهذا التشغيل. الغياب = المحرك
+    // المحقون كما هو؛ تُنقّى القيمة في main.js بـSAFE_MODEL قبل الوصول إلى هنا.
+    const workerModel = cleanText(payload.model, 64);
+    const effectiveRunner = workerModel
+      ? { engine: runner.engine, model: workerModel, start: (value, cwd2, emit2) => runner.start(value, cwd2, emit2) }
+      : runner;
 
     // snapshot أوامر التحقق من blob ‏HEAD مرة واحدة (المصدر الوحيد المسموح).
     const configured = await integration.preflight(cwd);
@@ -813,12 +819,12 @@ function create(options) {
     activeLoopId = loop.id;
 
     const team = executionTeamModule.create({
-      runner,
+      runner: effectiveRunner,
       worktrees: manager,
       timeoutMs,
       now,
       createExecutor: () => createLoopExecutor({
-        manager, runner, timeoutMs, loop, verify, now, recordNote,
+        manager, runner: effectiveRunner, timeoutMs, loop, verify, now, recordNote,
         onTerminal: (id) => { if (activeLoopId === id) activeLoopId = null; },
       }),
     });

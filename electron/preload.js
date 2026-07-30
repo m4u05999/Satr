@@ -78,20 +78,21 @@ contextBridge.exposeInMainWorld('satr', {
   executionStart: (cwd, task, confirmed) => ipcRenderer.invoke('satr:executionStart', { cwd, task, confirmed }),
   executionStop: (runId) => ipcRenderer.invoke('satr:executionStop', { runId }),
   executionLatest: (cwd) => ipcRenderer.invoke('satr:executionLatest', { cwd }),
-  executionTeamStart: (cwd, agents, confirmed, mode, timeoutSeconds) => ipcRenderer.invoke('satr:executionTeamStart', {
-    cwd, agents, confirmed, mode, timeoutSeconds,
+  // models معامل أخير اختياري (هيئة القضاة): الاستدعاءات القائمة بلا models تبقى صالحة.
+  executionTeamStart: (cwd, agents, confirmed, mode, timeoutSeconds, models) => ipcRenderer.invoke('satr:executionTeamStart', {
+    cwd, agents, confirmed, mode, timeoutSeconds, models,
   }),
   executionTeamStop: (runId) => ipcRenderer.invoke('satr:executionTeamStop', { runId }),
   executionTeamExtend: (runId) => ipcRenderer.invoke('satr:executionTeamExtend', { runId }),
   executionTeamLatest: (cwd) => ipcRenderer.invoke('satr:executionTeamLatest', { cwd }),
   // وضع الحلقة المحدودة (الجولة الخامسة) — ثلاث دوال تحكّم + قراءة، لا غير
   loopPreflight: (cwd) => ipcRenderer.invoke('satr:loopPreflight', { cwd }),
-  loopStart: (cwd, task, ownership, loop, confirmed) => ipcRenderer.invoke('satr:loopStart', {
-    cwd, task, ownership, loop, confirmed,
+  loopStart: (cwd, task, ownership, loop, confirmed, models) => ipcRenderer.invoke('satr:loopStart', {
+    cwd, task, ownership, loop, confirmed, models,
   }),
   loopStop: (loopId) => ipcRenderer.invoke('satr:loopStop', { loopId }),
   loopLatest: (cwd) => ipcRenderer.invoke('satr:loopLatest', { cwd }),
-  executionReviewStart: (teamId) => ipcRenderer.invoke('satr:executionReviewStart', { teamId }),
+  executionReviewStart: (teamId, models) => ipcRenderer.invoke('satr:executionReviewStart', { teamId, models }),
   executionReviewStop: (reviewId) => ipcRenderer.invoke('satr:executionReviewStop', { reviewId }),
   executionReviewLatest: (teamId) => ipcRenderer.invoke('satr:executionReviewLatest', { teamId }),
   executionFileDiff: (teamId, artifactId, rel) => ipcRenderer.invoke('satr:executionFileDiff', {

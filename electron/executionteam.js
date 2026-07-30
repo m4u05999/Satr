@@ -260,6 +260,12 @@ function create(options) {
     }
     const declared = ownershipConflicts(agents);
     if (declared.length) return { ok: false, error: 'ownership_overlap', conflicts: declared };
+    // توسعة additive (هيئة القضاة): نموذج عامل لهذا التشغيل فقط. الغياب أو القيمة
+    // الفارغة = المحرك المحقون كما هو حرفياً؛ لا تغيير في أي سلوك افتراضي قائم.
+    const runModel = cleanText(input && input.model, 64);
+    const effectiveRunner = runModel && runner
+      ? { engine: runner.engine, model: runModel, start: (value, cwd2, emit2) => runner.start(value, cwd2, emit2) }
+      : runner;
 
     const createdAt = now();
     const team = {
@@ -298,7 +304,7 @@ function create(options) {
     publish(team);
 
     const results = await Promise.all(team.agents.map(async (worker) => {
-      worker.executor = makeExecutor({ worktrees: manager, runner, timeoutMs: team._timeoutMs });
+      worker.executor = makeExecutor({ worktrees: manager, runner: effectiveRunner, timeoutMs: team._timeoutMs });
       const result = await worker.executor.start({ task: worker.task, ownership: worker.ownership }, cwd,
         (event) => onAgentEvent(team, worker, event));
       if (!result || !result.ok) {

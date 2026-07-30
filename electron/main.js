@@ -2359,6 +2359,24 @@ function sanitizeOwnership(value) {
   return [...new Set(patterns)];
 }
 
+// ---------- نموذج لكل عقدة (هيئة القضاة) — تنقية في main.js حصراً ----------
+// الغياب أو الكائن الفارغ = السلوك القائم حرفياً (resolveOpsRoomModel: env ثم
+// الافتراضي). قيمة موجودة لا تطابق SAFE_MODEL ⇒ bad_input، لا تجاهل صامت.
+// قيم البيئة لا تصل renderer كما كانت.
+function sanitizeOpsModels(value, allowedKeys) {
+  if (value == null) return { ok: true, models: {} };
+  if (typeof value !== 'object' || Array.isArray(value)) return { ok: false };
+  const models = {};
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.includes(key)) return { ok: false };
+    const raw = value[key];
+    if (raw == null || raw === '') continue;
+    if (typeof raw !== 'string' || !SAFE_MODEL.test(raw)) return { ok: false };
+    models[key] = raw;
+  }
+  return { ok: true, models };
+}
+
 function sanitizeArtifactRel(value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 512
     || /[\x00-\x1F\x7F-\x9F?*]/.test(value)) return '';
@@ -2390,6 +2408,9 @@ ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
   }
   const modelCheck = preflightOpsRoomModels(mode === 'mergeable' ? ['sdk', 'codex'] : ['sdk']);
   if (!modelCheck.ok) return modelCheck;
+  // هيئة القضاة: نموذج عوامل sdk لهذا التشغيل (اختياري).
+  const teamModels = sanitizeOpsModels(p.models, ['worker']);
+  if (!teamModels.ok) return { ok: false, error: 'bad_input' };
   if (mode === 'mergeable') {
     const configured = await integration.preflight(cwd);
     if (!configured.ok) return configured;
@@ -2401,8 +2422,9 @@ ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
   const created = opsroom.createRoom();
   if (!created.ok) return { ok: false, error: 'ops_room_unavailable' };
   const roomId = created.room.room_id;
-  const result = await executionTeam.start({ agents, mode, roomId, timeoutMs: timeoutSeconds * 1000 }, cwd,
-    (obj) => emitOpsTeam(roomId, cwd, obj));
+  const result = await executionTeam.start({
+    agents, mode, roomId, timeoutMs: timeoutSeconds * 1000, model: teamModels.models.worker || '',
+  }, cwd, (obj) => emitOpsTeam(roomId, cwd, obj));
   if (!result || !result.ok || !result.team) return result;
   for (let index = 0; index < agents.length; index++) {
     const taskText = 'مهمة العامل ' + (index + 1) + ': ' + agents[index].task;
@@ -2530,6 +2552,9 @@ ipcMain.handle('satr:loopStart', async (event, payload) => {
   if (!Number.isInteger(timeoutSeconds) || !OPS_TIMEOUT_SECONDS.has(timeoutSeconds)) {
     return { ok: false, error: 'bad_input' };
   }
+  // هيئة القضاة: نموذج عامل الحلقة لهذا التشغيل (اختياري).
+  const loopModels = sanitizeOpsModels(p.models, ['worker']);
+  if (!loopModels.ok) return { ok: false, error: 'bad_input' };
   if (loopRunner.isActive() || loopTeamBusy()) return { ok: false, error: 'busy' };
   // الحلقة مسار قابل للدمج دائماً: نفس preflight الفريق المدمَج كي لا يُكتشف غياب
   // محرك المراجعة أو الإعداد بعد استهلاك دورات.
@@ -2546,6 +2571,7 @@ ipcMain.handle('satr:loopStart', async (event, payload) => {
   const roomId = created.room.room_id;
   const result = await loopRunner.start({
     task, ownership, roomId, maxIterations, budgetTokens, timeoutMs: timeoutSeconds * 1000,
+    model: loopModels.models.worker || '',
   }, cwd, (obj) => emitLoopEvent(roomId, cwd, obj));
   if (!result || !result.ok || !result.loop) return result;
   const teamId = result.loop.team_id;
@@ -2581,12 +2607,16 @@ ipcMain.handle('satr:executionReviewStart', (event, payload) => {
   if (!artifact || !opsroom.SAFE_ROOM_ID.test(artifact.room_id || '')) return { ok: false, error: 'not_available' };
   const modelCheck = preflightOpsRoomModels(reviewerModule.requiredReviewEngines(artifact.producer_engines));
   if (!modelCheck.ok) return modelCheck;
+  // هيئة القضاة: نموذج اختياري لعقد زوايا كل محرك مراجعة.
+  const reviewModels = sanitizeOpsModels(p.models, ['sdk', 'codex']);
+  if (!reviewModels.ok) return { ok: false, error: 'bad_input' };
   return reviewer.start({
     teamId: p.teamId,
     artifactId: artifact.artifact_id,
     patch: artifact.patch,
     files: artifact.files,
     producerEngines: artifact.producer_engines,
+    models: reviewModels.models,
   }, (obj) => emitOpsReview(artifact.room_id, obj));
 });
 
