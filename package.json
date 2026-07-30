@@ -26,6 +26,7 @@
     "test:worktrees": "node scripts/worktrees-test.js",
     "test:executionteam": "node scripts/executionteam-test.js",
     "test:reviewmerge": "node scripts/reviewmerge-test.js",
+    "test:review-panel": "node scripts/review-panel-test.js",
     "test:integration": "node scripts/integration-test.js",
     "test:opsroom": "node scripts/opsroom-test.js",
     "test:opsroom-ui": "node scripts/opsroom-ui-test.js",

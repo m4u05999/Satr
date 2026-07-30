@@ -11,6 +11,7 @@ const deterministicSuite = [
   'test:worktrees',
   'test:executionteam',
   'test:reviewmerge',
+  'test:review-panel',
   'test:verify',
   'test:integration',
   'test:opsroom',
