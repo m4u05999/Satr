@@ -169,6 +169,21 @@ const roomSheet = sheet(`
   .setup-field { display: grid; gap: var(--space-1); min-width: 0; }
   .setup-field > span { color: var(--text-dim); font-size: .75rem; }
   .setup-note { color: var(--text-dim); font-size: .75rem; line-height: 1.7; }
+  .model-fields {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3);
+    padding: var(--space-3); border: 1px solid var(--border);
+    border-radius: var(--radius-md); background: var(--surface);
+  }
+  .model-input {
+    width: 100%; direction: ltr; text-align: left; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: var(--radius-md); padding: var(--space-2); font: .8rem/1.7 var(--mono);
+  }
+  .model-input:focus { border-color: var(--gold); outline: none; }
+  .judge-model-warning {
+    grid-column: 1 / -1; color: var(--gold); font-size: .75rem; line-height: 1.7;
+    unicode-bidi: plaintext;
+  }
+  .judge-model-warning[hidden] { display: none; }
   .loop-options {
     display: grid; gap: var(--space-2); padding: var(--space-3);
     border: 1px solid var(--gold-border); border-radius: var(--radius-md); background: var(--surface);
@@ -238,6 +253,43 @@ const roomSheet = sheet(`
   .review-section h4 { color: var(--gold); font-size: .78rem; }
   .review-section ul { margin: var(--space-0); padding-inline-start: var(--space-5); display: grid; gap: var(--space-1); }
   .review-section li { unicode-bidi: plaintext; }
+  .merged-report {
+    display: grid; gap: var(--space-3); padding: var(--space-3);
+    border: 1px solid var(--gold-border); border-radius: var(--radius-lg); background: var(--surface-2);
+  }
+  .merged-head, .merged-counts, .merged-item-head, .review-lens-head {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  }
+  .merged-head { justify-content: space-between; }
+  .merged-title { color: var(--gold); font-weight: 700; }
+  .merged-count, .merged-severity, .merged-truncated, .review-lens-state, .review-lens-verdict {
+    display: inline-flex; align-items: center; padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border); border-radius: var(--radius-pill); font-size: .7rem;
+  }
+  .merged-count[data-severity="critical"], .merged-severity[data-severity="critical"] {
+    color: var(--red); border-color: var(--red);
+  }
+  .merged-count[data-severity="high"], .merged-severity[data-severity="high"] {
+    color: var(--red); border-color: var(--red);
+  }
+  .merged-count[data-severity="medium"], .merged-severity[data-severity="medium"] {
+    color: var(--gold); border-color: var(--gold-border);
+  }
+  .merged-count[data-severity="low"], .merged-severity[data-severity="low"] {
+    color: var(--green); border-color: var(--green-border);
+  }
+  .merged-truncated { color: var(--gold); border-color: var(--gold-border); }
+  .merged-items, .review-lenses { display: grid; gap: var(--space-2); }
+  .merged-item, .review-lens {
+    display: grid; gap: var(--space-2); padding: var(--space-3);
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface);
+  }
+  .merged-lens { color: var(--text-dim); }
+  .merged-engine { direction: ltr; unicode-bidi: isolate; font-family: var(--mono); color: var(--text-dim); }
+  .merged-text { unicode-bidi: plaintext; line-height: 1.7; }
+  .merged-repair { justify-self: start; color: var(--gold); border-color: var(--gold-border); }
+  .review-lens-title { color: var(--gold); font-weight: 700; }
+  .review-lens-state, .review-lens-verdict { color: var(--text-dim); }
   .live-activity {
     display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
     padding: 0 var(--space-3) var(--space-3); color: var(--text-dim); font-size: .75rem;
@@ -255,6 +307,7 @@ const roomSheet = sheet(`
     .action-bar { align-items: stretch; }
     .action-bar button { flex: 1 1 auto; }
     .setup-head { align-items: flex-start; flex-direction: column; }
+    .model-fields { grid-template-columns: minmax(0, 1fr); }
     .loop-fields { grid-template-columns: minmax(0, 1fr); }
   }
 `);
@@ -298,6 +351,10 @@ const GROUPS = [
 const STAGES = ['الإعداد', 'التنفيذ', 'التحقق', 'الاعتماد'];
 const DRAWER_MEDIA = '(max-width: 44rem)';
 const LAYOUT_STORAGE_PREFIX = 'satr_ops_layout:';
+const MODEL_STORAGE_PREFIX = 'satr_ops_models::';
+const WEAK_JUDGE_MODEL = /haiku|mini|lite|flash|nano/i;
+const LENS_LABELS = { correctness: 'الصحة', security: 'الأمان', simplicity: 'التبسيط' };
+const SEVERITY_LABELS = { critical: 'حرج', high: 'مرتفع', medium: 'متوسط', low: 'منخفض' };
 const PRIMARY_ACTIONS = {
   start: { label: 'ابدأ التنفيذ', can: 'canStart', method: '_startExecution' },
   review: { label: 'ابدأ المراجعة', can: 'canReview', method: '_startReview' },
@@ -347,6 +404,7 @@ const ERROR_LABELS = {
   busy: 'يوجد انتقال يعمل بالفعل — انتظر اكتماله أو أوقفه قبل بدء انتقال جديد.',
   ownership_overlap: 'تتداخل ملكيات عاملين — افصل أنماط الملفات بين العاملين ثم أعد المحاولة.',
   review_engine_unavailable: 'محرك المراجعة المستقل غير متاح — تحقق من توفر المحركات وتسجيل الدخول ثم أعد المراجعة؛ بقيت البوابة مغلقة.',
+  ops_model_invalid: 'اسم النموذج المختار غير صالح — راجع منتقي نماذج غرفة العمليات أو اترك الحقل فارغاً لاستخدام الافتراضي.',
   verification_config_required: 'يلزم ملف .satr/verify.json صالح ومعتمد في HEAD — أضفه في مهمة مستقلة ثم أعد التحقق.',
   verification_config_changed: 'يمس الأثر سياسة التحقق؛ يلزم اعتمادها في مهمة مستقلة.',
   confirmation_required: 'يلزم تأكيد صريح — أعد المحاولة ووافق في نافذة التأكيد.',
@@ -465,6 +523,29 @@ function reviewSections(summary, recommendation) {
   }
   if (recommendation) sections.recommendation.push('عقد المراجع: ' + recommendation);
   return sections;
+}
+
+function reviewDecisionLabel(decision) {
+  if (decision === 'approve') return 'موافقة';
+  if (decision === 'changes_required') return 'تغييرات مطلوبة';
+  if (decision === 'reject') return 'رفض';
+  return decision || 'بلا حكم';
+}
+
+function reviewStateLabel(state) {
+  if (state === 'completed') return 'مكتملة';
+  if (state === 'running') return 'قيد المراجعة';
+  if (state === 'failed') return 'فشلت';
+  if (state === 'timed_out') return 'انتهت المهلة';
+  if (state === 'stopped') return 'توقفت';
+  return state || 'غير متاحة';
+}
+
+function truncatePoints(value, maximum, suffix) {
+  const points = Array.from(text(value));
+  if (points.length <= maximum) return points.join('');
+  const tail = Array.from(suffix);
+  return points.slice(0, Math.max(0, maximum - tail.length)).join('') + tail.join('');
 }
 
 function remainingLabel(deadline) {
@@ -643,6 +724,7 @@ class SatrOpsRoom extends HTMLElement {
     this._brainstormDraft = '';
     this._plan = null;
     this._planDraft = '';
+    this._models = { worker: '', sdk: '', codex: '' };
     this._appliedPlanId = '';
     this._notified = new Set();
     this._diffCache = new Map();
@@ -782,6 +864,40 @@ class SatrOpsRoom extends HTMLElement {
       views: { ...this._groupViews },
     };
     try { localStorage.setItem(key, JSON.stringify(payload)); } catch {}
+  }
+
+  _modelStorageKey() {
+    return this._cwd ? MODEL_STORAGE_PREFIX + this._cwd : '';
+  }
+
+  _loadModelPreferences() {
+    let saved = null;
+    const key = this._modelStorageKey();
+    try { if (key) saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
+    this._models = {
+      worker: text(saved && saved.worker),
+      sdk: text(saved && saved.sdk),
+      codex: text(saved && saved.codex),
+    };
+  }
+
+  _saveModelPreferences() {
+    const key = this._modelStorageKey();
+    if (!key) return;
+    try { localStorage.setItem(key, JSON.stringify(this._models)); } catch {}
+  }
+
+  _modelOverrides(names) {
+    const models = {};
+    for (const name of names) {
+      const value = text(this._models[name]).trim();
+      if (value) models[name] = value;
+    }
+    return Object.keys(models).length ? models : null;
+  }
+
+  _supportsModels(method, arity) {
+    return typeof method === 'function' && method.length >= arity;
   }
 
   _syncResponsiveMode() {
@@ -970,6 +1086,36 @@ class SatrOpsRoom extends HTMLElement {
     budgetWrap.appendChild(budgetLabel); budgetWrap.appendChild(budgetTokens);
     loopFields.appendChild(iterationWrap); loopFields.appendChild(budgetWrap); loopOptions.appendChild(loopFields);
     setup.appendChild(loopOptions);
+    const modelFields = document.createElement('section'); modelFields.className = 'model-fields';
+    const modelInputs = {};
+    for (const [name, label, className] of [
+      ['worker', 'نموذج العامل', 'worker-model'],
+      ['sdk', 'مراجع Claude', 'sdk-review-model'],
+      ['codex', 'مراجع Codex', 'codex-review-model'],
+    ]) {
+      const wrap = document.createElement('label'); wrap.className = 'setup-field';
+      const fieldLabel = document.createElement('span'); fieldLabel.textContent = label;
+      const input = document.createElement('input'); input.type = 'text';
+      input.className = 'model-input ' + className; input.dir = 'ltr';
+      input.value = text(this._models[name]); input.placeholder = 'الافتراضي';
+      input.setAttribute('aria-label', label);
+      wrap.appendChild(fieldLabel); wrap.appendChild(input); modelFields.appendChild(wrap);
+      modelInputs[name] = input;
+    }
+    const judgeWarning = document.createElement('div'); judgeWarning.className = 'judge-model-warning';
+    judgeWarning.textContent = 'عقدة القاضي أخطر مكان للتوفير — نموذج ضعيف هنا يُصلح ما ليس مكسوراً ويكلّف أكثر مما يوفّر';
+    judgeWarning.setAttribute('role', 'status'); modelFields.appendChild(judgeWarning);
+    const syncJudgeWarning = () => {
+      judgeWarning.hidden = !WEAK_JUDGE_MODEL.test(modelInputs.sdk.value) && !WEAK_JUDGE_MODEL.test(modelInputs.codex.value);
+    };
+    for (const [name, input] of Object.entries(modelInputs)) {
+      input.addEventListener('input', () => {
+        this._models[name] = input.value;
+        this._saveModelPreferences();
+        syncJudgeWarning();
+      });
+    }
+    syncJudgeWarning(); setup.appendChild(modelFields);
     const note = document.createElement('div'); note.className = 'setup-note';
     note.textContent = 'المسار الافتراضي بعامل واحد: تنفيذ معزول ← مراجعة ← تحقق ← شاهدها تعمل ← دمج. الفريق من عاملين أو ثلاثة خيار متقدم للمهام ذات الملكيات المنفصلة.';
     const planRow = document.createElement('div'); planRow.className = 'setup-actions';
@@ -1033,7 +1179,7 @@ class SatrOpsRoom extends HTMLElement {
       this._syncSetupActions();
     });
     this._setup = {
-      count, timeout, inputs, planButton, planHint, loopMode, loopFields, maxIterations, budgetTokens,
+      count, timeout, inputs, planButton, planHint, loopMode, loopFields, maxIterations, budgetTokens, modelInputs,
     };
     syncLoopOptions();
     this._syncSetupActions();
@@ -1306,10 +1452,79 @@ class SatrOpsRoom extends HTMLElement {
     button.disabled = false; button.title = previous;
   }
 
+  _appendReviewSections(container, sections) {
+    for (const [label, values] of [
+      ['المخاطر', sections.risks], ['الملاحظات', sections.notes], ['التوصية', sections.recommendation],
+    ]) {
+      const section = document.createElement('section'); section.className = 'review-section';
+      const title = document.createElement('h4'); title.textContent = label; section.appendChild(title);
+      const list = document.createElement('ul');
+      const items = values.length ? values : ['لم يذكر المراجع بنوداً مستقلة.'];
+      for (const value of items) {
+        const row = document.createElement('li'); row.dir = 'auto'; row.textContent = value; list.appendChild(row);
+      }
+      section.appendChild(list); container.appendChild(section);
+    }
+  }
+
+  _repairTaskFromReport(report) {
+    const items = Array.isArray(report && report.items) ? report.items : [];
+    const important = items.filter((item) => item && (item.severity === 'critical' || item.severity === 'high'));
+    const lines = important.map((item) => '- [' + item.severity + '] [' + (LENS_LABELS[item.lens] || item.lens || 'زاوية غير محددة')
+      + '] [' + engineLabel(item.engine) + '] ' + text(item.text));
+    const draft = 'أصلح ملاحظات هيئة القضاة الحرجة والمرتفعة التالية، ثم شغّل التحقق المناسب:\n\n'
+      + (lines.length ? lines.join('\n') : 'لا توجد بنود حرجة أو مرتفعة في التقرير الحالي.');
+    this.seedTask(truncatePoints(draft, 2000, '\n… [قُصّ ذيل الملاحظات]'));
+  }
+
+  _renderMergedReport(view, report) {
+    const items = Array.isArray(report && report.items) ? report.items : [];
+    if (!items.length) return;
+    const card = document.createElement('article'); card.className = 'merged-report';
+    const head = document.createElement('div'); head.className = 'merged-head';
+    const title = document.createElement('strong'); title.className = 'merged-title'; title.textContent = 'تقرير هيئة القضاة المدموج';
+    const counts = document.createElement('div'); counts.className = 'merged-counts';
+    for (const severity of ['critical', 'high', 'medium', 'low']) {
+      const count = document.createElement('span'); count.className = 'merged-count'; count.dataset.severity = severity;
+      count.textContent = (SEVERITY_LABELS[severity] || severity) + ': ' + integerLabel(
+        items.filter((item) => item && item.severity === severity).length,
+      );
+      counts.appendChild(count);
+    }
+    head.appendChild(title); head.appendChild(counts); card.appendChild(head);
+    if (report.truncated === true) {
+      const truncated = document.createElement('span'); truncated.className = 'merged-truncated';
+      truncated.textContent = 'مقصوص'; card.appendChild(truncated);
+    }
+    const list = document.createElement('div'); list.className = 'merged-items';
+    for (const item of items) {
+      const row = document.createElement('section'); row.className = 'merged-item';
+      row.dataset.severity = text(item && item.severity);
+      const itemHead = document.createElement('div'); itemHead.className = 'merged-item-head';
+      const severity = document.createElement('span'); severity.className = 'merged-severity';
+      severity.dataset.severity = text(item && item.severity);
+      severity.textContent = SEVERITY_LABELS[item && item.severity] || text(item && item.severity);
+      const lens = document.createElement('span'); lens.className = 'merged-lens';
+      lens.textContent = LENS_LABELS[item && item.lens] || text(item && item.lens) || 'زاوية غير محددة';
+      const engine = document.createElement('bdi'); engine.className = 'merged-engine';
+      engine.textContent = engineLabel(item && item.engine);
+      itemHead.appendChild(severity); itemHead.appendChild(lens); itemHead.appendChild(engine);
+      const content = document.createElement('div'); content.className = 'merged-text'; content.dir = 'auto';
+      content.textContent = text(item && item.text);
+      row.appendChild(itemHead); row.appendChild(content); list.appendChild(row);
+    }
+    card.appendChild(list);
+    const repair = document.createElement('button'); repair.type = 'button'; repair.className = 'merged-repair';
+    repair.textContent = '🔧 أصلح بالملاحظات';
+    repair.addEventListener('click', () => this._repairTaskFromReport(report));
+    card.appendChild(repair); view.appendChild(card);
+  }
+
   _renderReview() {
     const view = this._views.review; view.textContent = '';
     const derived = deriveOpsRoomState(this._state);
     const review = this._state.review;
+    this._renderMergedReport(view, review && review.merged_report);
     for (const item of (review && review.reviews) || []) {
       const decision = item.verdict && item.verdict.decision;
       const sections = reviewSections(item.summary, item.recommendation);
@@ -1320,17 +1535,25 @@ class SatrOpsRoom extends HTMLElement {
         summary: item.error || 'حكم مراجعة عمياء قراءة فقط؛ افتح التفاصيل لرؤية المخاطر والملاحظات والتوصية.', actor: 'reviewer',
         engine: item.engine, artifact: item.artifact_id, time: item.updated_at,
         body: (body) => {
-          for (const [label, values] of [
-            ['المخاطر', sections.risks], ['الملاحظات', sections.notes], ['التوصية', sections.recommendation],
-          ]) {
-            const section = document.createElement('section'); section.className = 'review-section';
-            const title = document.createElement('h4'); title.textContent = label; section.appendChild(title);
-            const list = document.createElement('ul');
-            const items = values.length ? values : ['لم يذكر المراجع بنوداً مستقلة.'];
-            for (const value of items) {
-              const row = document.createElement('li'); row.dir = 'auto'; row.textContent = value; list.appendChild(row);
+          if (Array.isArray(item.lenses)) {
+            const lenses = document.createElement('div'); lenses.className = 'review-lenses';
+            for (const lens of item.lenses) {
+              const section = document.createElement('section'); section.className = 'review-lens';
+              section.dataset.lens = text(lens && lens.lens);
+              const head = document.createElement('div'); head.className = 'review-lens-head';
+              const title = document.createElement('strong'); title.className = 'review-lens-title';
+              title.textContent = LENS_LABELS[lens && lens.lens] || text(lens && lens.lens) || 'زاوية غير محددة';
+              const state = document.createElement('span'); state.className = 'review-lens-state';
+              state.textContent = reviewStateLabel(lens && lens.state);
+              const verdict = document.createElement('span'); verdict.className = 'review-lens-verdict';
+              verdict.textContent = reviewDecisionLabel(lens && lens.verdict && lens.verdict.decision);
+              head.appendChild(title); head.appendChild(state); head.appendChild(verdict); section.appendChild(head);
+              this._appendReviewSections(section, reviewSections(lens && lens.summary));
+              lenses.appendChild(section);
             }
-            section.appendChild(list); body.appendChild(section);
+            body.appendChild(lenses);
+          } else {
+            this._appendReviewSections(body, sections);
           }
         },
       }));
@@ -1548,10 +1771,14 @@ class SatrOpsRoom extends HTMLElement {
       if (!confirmed) return;
       this._dispatch({ type: 'pending', action: 'loop-start' });
       let result = null;
+      const models = this._modelOverrides(['worker']);
       try {
-        result = await window.satr.loopStart(this._cwd, agents[0].task, agents[0].ownership, {
+        const loop = {
           max_iterations: maxIterations, budget_tokens: budgetTokens, timeout_seconds: timeoutSeconds,
-        }, true);
+        };
+        result = models && this._supportsModels(window.satr.loopStart, 6)
+          ? await window.satr.loopStart(this._cwd, agents[0].task, agents[0].ownership, loop, true, models)
+          : await window.satr.loopStart(this._cwd, agents[0].task, agents[0].ownership, loop, true);
       } catch {}
       if (!result || !result.ok) {
         this._dispatch({ type: 'settled', status: errorLabel(result, 'execution',
@@ -1571,7 +1798,12 @@ class SatrOpsRoom extends HTMLElement {
     if (!confirmed) return;
     this._dispatch({ type: 'pending', action: 'start' });
     let result = null;
-    try { result = await window.satr.executionTeamStart(this._cwd, agents, true, 'mergeable', timeoutSeconds); } catch {}
+    const models = this._modelOverrides(['worker']);
+    try {
+      result = models && this._supportsModels(window.satr.executionTeamStart, 6)
+        ? await window.satr.executionTeamStart(this._cwd, agents, true, 'mergeable', timeoutSeconds, models)
+        : await window.satr.executionTeamStart(this._cwd, agents, true, 'mergeable', timeoutSeconds);
+    } catch {}
     if (!result || !result.ok) {
       this._dispatch({ type: 'settled', ...(result && result.team ? { team: result.team } : {}),
         status: errorLabel(result, 'execution', 'تعذّر بدء فريق التنفيذ — تحقق من المجلد والمهام والملكيات ثم أعد المحاولة.') });
@@ -1606,7 +1838,12 @@ class SatrOpsRoom extends HTMLElement {
     if (!derived.canReview) return;
     this._dispatch({ type: 'pending', action: 'review' });
     let result = null;
-    try { result = await window.satr.executionReviewStart(this._state.team.id); } catch {}
+    const models = this._modelOverrides(['sdk', 'codex']);
+    try {
+      result = models && this._supportsModels(window.satr.executionReviewStart, 2)
+        ? await window.satr.executionReviewStart(this._state.team.id, models)
+        : await window.satr.executionReviewStart(this._state.team.id);
+    } catch {}
     this._dispatch({ type: 'settled', ...(result && result.review ? { review: result.review } : {}),
       status: result && result.ok ? 'بدأت المراجعات المستقلة.'
         : errorLabel(result, 'review', 'تعذّر بدء المراجعة — حدّث الغرفة وتحقق من اكتمال الأثر ثم أعد المحاولة.') });
@@ -1912,6 +2149,7 @@ class SatrOpsRoom extends HTMLElement {
     this._cwd = typeof cwd === 'string' ? cwd : '';
     this._verifyConfigButton.disabled = !this._cwd;
     this._loadLayoutPreferences();
+    this._loadModelPreferences();
     this.setAttribute('open', '');
     clearInterval(this._clock);
     this._clock = setInterval(() => this._refreshCountdowns(), 1000);

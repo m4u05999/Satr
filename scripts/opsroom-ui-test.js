@@ -35,6 +35,20 @@ function changedFiles() {
   });
 }
 
+function methodBody(source, marker) {
+  const start = source.indexOf(marker);
+  assert(start !== -1, 'missing method ' + marker);
+  const opening = source.indexOf('{', start + marker.length);
+  assert(opening !== -1, 'missing method body ' + marker);
+  let depth = 1;
+  for (let index = opening + 1; index < source.length; index++) {
+    if (source[index] === '{') depth++;
+    else if (source[index] === '}') depth--;
+    if (depth === 0) return source.slice(opening + 1, index);
+  }
+  assert.fail('unterminated method body ' + marker);
+}
+
 async function loadStateModule() {
   const source = read('src/ui/lib/ops-room-state.js');
   const url = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
@@ -56,6 +70,246 @@ function fixture(artifactId) {
   };
   const verification = { artifact_id: artifactId, state: 'passed', checks: [] };
   return { team, review, verification };
+}
+
+function judgesFixture(artifactId) {
+  const current = fixture(artifactId);
+  const lensSummary = (label) => [
+    '## المخاطر',
+    '[risk: high] ' + label + ' يحتاج معالجة.',
+    '## الملاحظات',
+    label + ' ملاحظة مستقلة.',
+    '## التوصية',
+    'عالج البند ثم أعد المراجعة.',
+  ].join('\n');
+  const lenses = [
+    ['correctness', 'الصحة'],
+    ['security', 'الأمان'],
+    ['simplicity', 'التبسيط'],
+  ].map(([lens, label]) => ({
+    lens, state: 'completed', summary: lensSummary(label),
+    verdict: { schema_version: 1, decision: 'changes_required', source: 'explicit' },
+    duration_ms: 1250,
+    cost: { usd: 0.01, input_tokens: 100, output_tokens: 40, estimate: false },
+  }));
+  return {
+    ...current,
+    review: {
+      ...current.review,
+      reviews: current.review.reviews.map((item) => ({
+        ...item,
+        state: 'completed',
+        summary: lenses.map((lens) => lens.summary).join('\n'),
+        verdict: { schema_version: 1, decision: 'changes_required', source: 'explicit' },
+        lenses: lenses.map((lens) => ({ ...lens })),
+      })),
+      merged_report: {
+        schema_version: 1,
+        items: [
+          { severity: 'low', lens: 'simplicity', engine: 'codex', text: 'البند الأول كما وصل.' },
+          { severity: 'critical', lens: 'security', engine: 'sdk', text: 'البند الثاني كما وصل.' },
+          { severity: 'high', lens: 'correctness', engine: 'codex', text: 'البند الثالث كما وصل.' },
+          { severity: 'medium', lens: 'security', engine: 'sdk', text: 'البند الرابع كما وصل.' },
+        ],
+        truncated: true,
+      },
+    },
+  };
+}
+
+function testJudgesHelpers(component) {
+  const safeText = (value) => typeof value === 'string' ? value : '';
+  class FakeElement {
+    constructor(tagName) {
+      this.tagName = tagName;
+      this.className = '';
+      this.textContent = '';
+      this.children = [];
+      this.dataset = {};
+      this.listeners = {};
+      this.dir = '';
+    }
+
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    }
+
+    addEventListener(type, listener) {
+      this.listeners[type] = listener;
+    }
+  }
+  const document = { createElement: (tagName) => new FakeElement(tagName) };
+  const elementsByClass = (root, className) => {
+    const matches = [];
+    const visit = (element) => {
+      if (!element) return;
+      if (String(element.className).split(/\s+/).includes(className)) matches.push(element);
+      for (const child of element.children || []) visit(child);
+    };
+    visit(root);
+    return matches;
+  };
+  const storageValues = new Map();
+  const localStorage = {
+    getItem: (key) => storageValues.has(key) ? storageValues.get(key) : null,
+    setItem: (key, value) => storageValues.set(key, value),
+  };
+  const modelStorageKey = new Function('MODEL_STORAGE_PREFIX',
+    'return function () {' + methodBody(component, '  _modelStorageKey()') + '};')('satr_ops_models::');
+  const loadModels = new Function('localStorage', 'text',
+    'return function () {' + methodBody(component, '  _loadModelPreferences()') + '};')(localStorage, safeText);
+  const saveModels = new Function('localStorage',
+    'return function () {' + methodBody(component, '  _saveModelPreferences()') + '};')(localStorage);
+  const modelOverrides = new Function('text',
+    'return function (names) {' + methodBody(component, '  _modelOverrides(names)') + '};')(safeText);
+  const supportsModels = new Function(
+    'return function (method, arity) {' + methodBody(component, '  _supportsModels(method, arity)') + '};')();
+  const modelHost = {
+    _cwd: 'D:\\repo\\judge-ui',
+    _models: { worker: '', sdk: '', codex: '' },
+    _modelStorageKey: modelStorageKey,
+  };
+  storageValues.set('satr_ops_models::D:\\repo\\judge-ui', JSON.stringify({
+    worker: 'worker-model', sdk: 'judge-mini', codex: 'judge-codex',
+  }));
+  loadModels.call(modelHost);
+  assert.deepStrictEqual(modelHost._models, {
+    worker: 'worker-model', sdk: 'judge-mini', codex: 'judge-codex',
+  }, 'model preferences must restore from the cwd-scoped frozen key');
+  modelHost._models.codex = '';
+  saveModels.call(modelHost);
+  assert.deepStrictEqual(JSON.parse(storageValues.get('satr_ops_models::D:\\repo\\judge-ui')), modelHost._models,
+    'model preferences must save back to the same cwd-scoped key');
+  assert.deepStrictEqual(modelOverrides.call(modelHost, ['worker', 'sdk', 'codex']), {
+    worker: 'worker-model', sdk: 'judge-mini',
+  }, 'empty model selectors must not create overrides');
+  assert.strictEqual(supportsModels(function (a, b) {}, 2), true,
+    'extended bridge arity must enable model overrides');
+  assert.strictEqual(supportsModels(function (a) {}, 2), false,
+    'legacy bridge arity must retain the old call path');
+
+  const weakJudgeLiteral = /const WEAK_JUDGE_MODEL = (\/[^\r\n]+\/i);/.exec(component);
+  assert(weakJudgeLiteral, 'weak judge model regex missing');
+  const weakJudgeModel = new Function('return ' + weakJudgeLiteral[1])();
+  for (const model of ['claude-haiku', 'gpt-mini', 'judge-lite', 'gemini-flash', 'nano-reviewer']) {
+    assert.strictEqual(weakJudgeModel.test(model), true, 'weak judge warning must match ' + model);
+  }
+  assert.strictEqual(weakJudgeModel.test('claude-opus'), false,
+    'strong judge names must not trigger the non-blocking warning');
+
+  const truncateSource = /function truncatePoints\(value, maximum, suffix\) \{[\s\S]*?\n\}/.exec(component);
+  assert(truncateSource, 'Unicode code-point truncation helper missing');
+  const truncatePoints = new Function('text',
+    truncateSource[0] + '; return truncatePoints;')(safeText);
+  const repairTaskFromReport = new Function('LENS_LABELS', 'engineLabel', 'text', 'truncatePoints',
+    'return function (report) {' + methodBody(component, '  _repairTaskFromReport(report)') + '};')(
+    { correctness: 'الصحة', security: 'الأمان', simplicity: 'التبسيط' },
+    (value) => value === 'sdk' ? 'Claude SDK' : value === 'codex' ? 'Codex' : value,
+    safeText,
+    truncatePoints,
+  );
+  let seeded = '';
+  const repairHost = { seedTask: (value) => { seeded = value; } };
+  repairTaskFromReport.call(repairHost, judgesFixture('c'.repeat(64)).review.merged_report);
+  assert(seeded.includes('البند الثاني كما وصل.') && seeded.includes('البند الثالث كما وصل.')
+    && !seeded.includes('البند الأول كما وصل.') && !seeded.includes('البند الرابع كما وصل.'),
+  'repair draft must include only critical/high items and must not submit anything');
+  repairTaskFromReport.call(repairHost, { items: [{
+    severity: 'critical', lens: 'security', engine: 'sdk', text: '😀'.repeat(2200),
+  }] });
+  assert.strictEqual(Array.from(seeded).length, 2000,
+    'repair draft must be bounded to 2000 Unicode code points');
+  assert(seeded.endsWith('… [قُصّ ذيل الملاحظات]'),
+    'repair draft must expose a clear tail truncation marker');
+
+  const severityLabels = { critical: 'حرج', high: 'مرتفع', medium: 'متوسط', low: 'منخفض' };
+  const lensLabels = { correctness: 'الصحة', security: 'الأمان', simplicity: 'التبسيط' };
+  const engineLabel = (value) => value === 'sdk' ? 'Claude SDK' : value === 'codex' ? 'Codex' : value;
+  const renderMergedReport = new Function(
+    'document', 'SEVERITY_LABELS', 'integerLabel', 'text', 'LENS_LABELS', 'engineLabel',
+    'return function (view, report) {' + methodBody(component, '  _renderMergedReport(view, report)') + '};',
+  )(document, severityLabels, (value) => String(value), safeText, lensLabels, engineLabel);
+  let repairClicks = 0;
+  const mergedView = new FakeElement('div');
+  const mergedReport = judgesFixture('d'.repeat(64)).review.merged_report;
+  renderMergedReport.call({ _repairTaskFromReport: () => { repairClicks++; } }, mergedView, mergedReport);
+  const mergedCards = elementsByClass(mergedView, 'merged-report');
+  assert.strictEqual(mergedCards.length, 1, 'synthetic merged_report must render one report card');
+  assert.deepStrictEqual(
+    elementsByClass(mergedView, 'merged-count').map((element) => element.dataset.severity),
+    ['critical', 'high', 'medium', 'low'],
+    'merged report counters must retain the frozen severity order',
+  );
+  assert.deepStrictEqual(
+    elementsByClass(mergedView, 'merged-item').map((element) => element.dataset.severity),
+    mergedReport.items.map((item) => item.severity),
+    'merged report rows must retain their received order',
+  );
+  assert.deepStrictEqual(
+    elementsByClass(mergedView, 'merged-text').map((element) => element.textContent),
+    mergedReport.items.map((item) => item.text),
+    'merged report rows must render the synthetic item text verbatim through textContent',
+  );
+  assert(elementsByClass(mergedView, 'merged-text').every((element) => element.dir === 'auto'),
+    'merged report item text must use dir=auto');
+  assert.strictEqual(elementsByClass(mergedView, 'merged-truncated')[0].textContent, 'مقصوص',
+    'synthetic truncated report must show its marker');
+  const repairButton = elementsByClass(mergedView, 'merged-repair')[0];
+  assert(repairButton && typeof repairButton.listeners.click === 'function',
+    'synthetic merged report must expose an explicit repair click');
+  repairButton.listeners.click();
+  assert.strictEqual(repairClicks, 1, 'repair click must only invoke the form-filling handler once');
+
+  const reviewSections = new Function('text',
+    'return function (summary, recommendation) {'
+      + methodBody(component, 'function reviewSections(summary, recommendation)') + '};')(safeText);
+  const reviewStateLabel = new Function('return function (state) {'
+    + methodBody(component, 'function reviewStateLabel(state)') + '};')();
+  const reviewDecisionLabel = new Function('return function (decision) {'
+    + methodBody(component, 'function reviewDecisionLabel(decision)') + '};')();
+  const appendReviewSections = new Function('document',
+    'return function (container, sections) {'
+      + methodBody(component, '  _appendReviewSections(container, sections)') + '};')(document);
+  const renderReview = new Function(
+    'document', 'deriveOpsRoomState', 'reviewSections', 'engineLabel', 'text',
+    'LENS_LABELS', 'reviewStateLabel', 'reviewDecisionLabel',
+    'return function () {' + methodBody(component, '  _renderReview()') + '};',
+  )(document, () => ({ canMerge: false }), reviewSections, engineLabel, safeText,
+    lensLabels, reviewStateLabel, reviewDecisionLabel);
+  const renderHost = {
+    _views: { review: new FakeElement('div') },
+    _state: { review: judgesFixture('e'.repeat(64)).review, entries: [] },
+    _renderMergedReport: () => {},
+    _appendReviewSections: appendReviewSections,
+    _entryCard: () => new FakeElement('article'),
+    _card: (options) => {
+      const card = new FakeElement('article');
+      if (typeof options.body === 'function') {
+        const body = new FakeElement('div');
+        options.body(body);
+        card.appendChild(body);
+      }
+      return card;
+    },
+  };
+  renderReview.call(renderHost);
+  const renderedLenses = elementsByClass(renderHost._views.review, 'review-lens');
+  assert.deepStrictEqual(renderedLenses.map((element) => element.dataset.lens),
+    ['correctness', 'security', 'simplicity', 'correctness', 'security', 'simplicity'],
+  'each synthetic engine card must render all three frozen lenses');
+  assert.deepStrictEqual(
+    elementsByClass(renderHost._views.review, 'review-lens-title').slice(0, 3).map((element) => element.textContent),
+    ['الصحة', 'الأمان', 'التبسيط'],
+    'synthetic lens cards must expose the frozen Arabic labels',
+  );
+  renderHost._views.review = new FakeElement('div');
+  renderHost._state.review = fixture('e'.repeat(64)).review;
+  renderReview.call(renderHost);
+  assert.strictEqual(elementsByClass(renderHost._views.review, 'review-lens').length, 0,
+    'legacy review items without lenses must retain the old renderer path');
+  assert(elementsByClass(renderHost._views.review, 'review-section').length > 0,
+    'legacy review items without lenses must still render their ordinary sections');
 }
 
 function loopFixture(overrides) {
@@ -220,6 +474,39 @@ async function testReducer() {
   state = opsRoomReducer(state, { type: 'settled', review: rejected, verification: current.verification });
   assert.strictEqual(deriveOpsRoomState(state).canMerge, false, 'rejection cannot be overridden');
 
+  const judges = judgesFixture(artifact);
+  let judgesState = opsRoomReducer(createOpsRoomState(), {
+    type: 'hydrate', room: { room_id: current.team.room_id, entries: [] }, team: current.team,
+  });
+  judgesState = opsRoomReducer(judgesState, { type: 'event', event: {
+    type: 'execution_review_update', review: judges.review,
+  } });
+  assert.deepStrictEqual(
+    judgesState.review.merged_report.items.map((item) => item.text),
+    judges.review.merged_report.items.map((item) => item.text),
+    'merged report item order must survive the existing review event unchanged',
+  );
+  assert.deepStrictEqual(
+    judgesState.review.reviews[0].lenses.map((item) => item.lens),
+    ['correctness', 'security', 'simplicity'],
+    'the three frozen review lenses must survive the existing review event',
+  );
+  assert.strictEqual(judgesState.review.merged_report.truncated, true,
+    'the merged report truncation marker must survive the existing review event');
+  assert.strictEqual(deriveOpsRoomState(judgesState).canPrepareVerification, false,
+    'aggregated changes_required verdicts must keep the existing gate closed');
+
+  const legacyReview = fixture(artifact).review;
+  const legacyState = opsRoomReducer(judgesState, { type: 'event', event: {
+    type: 'execution_review_update', review: legacyReview,
+  } });
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(legacyState.review, 'merged_report'), false,
+    'a legacy review event without merged_report must remain valid');
+  assert(legacyState.review.reviews.every((item) => !Object.prototype.hasOwnProperty.call(item, 'lenses')),
+    'legacy review items without lenses must remain valid');
+  assert.strictEqual(deriveOpsRoomState(legacyState).canPrepareVerification, true,
+    'legacy approved review events must retain their existing gate behavior');
+
   const oneFilePatch = [
     'diff --git a/src/app.js b/src/app.js',
     'index 1111111..2222222 100644',
@@ -339,6 +626,7 @@ function testDesignGuard() {
     && stateSource.includes("key: 'retry_timeout'") && stateSource.includes("key: 'retry_cleanup'"),
   'ops-room state must derive observable activity and terminal recovery guidance purely');
   const component = read('src/ui/components/ops-room.js');
+  testJudgesHelpers(component);
   assert(component.includes('adoptedStyleSheets'), 'ops room must use constructable stylesheets');
   assert(component.includes("makeElement('button', 'verify-config', 'إعداد التحقق')")
     && component.includes("new CustomEvent('verify-config-open'"),
@@ -519,6 +807,100 @@ function testDesignGuard() {
   assert(component.includes("['المخاطر', sections.risks]")
     && component.includes("['الملاحظات', sections.notes]")
     && component.includes("['التوصية', sections.recommendation]"));
+  for (const [lens, label] of [
+    ['correctness', 'الصحة'], ['security', 'الأمان'], ['simplicity', 'التبسيط'],
+  ]) {
+    assert(component.includes(lens + ": '" + label + "'"),
+      'missing frozen Arabic review lens label ' + lens);
+  }
+  for (const severity of ['critical', 'high', 'medium', 'low']) {
+    assert(component.includes('.merged-count[data-severity="' + severity + '"]')
+      && component.includes('.merged-severity[data-severity="' + severity + '"]'),
+    'merged report must expose a semantic count and item badge for ' + severity);
+  }
+  for (const className of [
+    'merged-report', 'merged-item', 'merged-severity', 'merged-lens', 'merged-engine',
+    'merged-truncated', 'merged-repair', 'review-lenses', 'review-lens', 'review-lens-title',
+    'review-lens-state', 'review-lens-verdict',
+  ]) {
+    assert(component.includes("'" + className + "'") || component.includes('.' + className),
+      'missing judges UI class ' + className);
+  }
+  const renderReview = component.slice(component.indexOf('  _renderReview() {'),
+    component.indexOf('\n  _entryCard(', component.indexOf('  _renderReview() {')));
+  assert(renderReview.includes('review.merged_report')
+    && renderReview.indexOf('review.merged_report') < renderReview.indexOf('review.reviews'),
+  'a non-empty merged report must render above the engine review cards');
+  assert(renderReview.includes('Array.isArray(item.lenses)')
+    && renderReview.includes('reviewSections(lens && lens.summary)')
+    && renderReview.includes('this._appendReviewSections(body, sections)'),
+  'engine cards must render the three optional lens summaries through reviewSections');
+  assert(component.includes("row.dir = 'auto'") && component.includes('row.textContent = value'),
+    'legacy review summaries must retain safe textContent rendering');
+  const mergedRenderer = component.slice(component.indexOf('  _renderMergedReport('),
+    component.indexOf('\n  _renderReview()', component.indexOf('  _renderMergedReport(')));
+  assert(mergedRenderer.includes('report.items') && !mergedRenderer.includes('.sort('),
+    'merged report items must render in the received order without renderer sorting');
+  assert(mergedRenderer.includes('row.dataset.severity = text(item && item.severity)')
+    && mergedRenderer.includes("content.dir = 'auto'")
+    && mergedRenderer.includes('content.textContent = text(item && item.text)'),
+  'merged report items must expose severity while rendering untrusted text safely');
+  assert(mergedRenderer.includes('report.truncated') && mergedRenderer.includes("'مقصوص'"),
+    'merged report must expose the frozen truncation marker');
+  assert(mergedRenderer.includes("addEventListener('click'")
+    && mergedRenderer.includes('_repairTaskFromReport(report)'),
+  'merged report repair must remain an explicit click');
+  const repairTask = component.slice(component.indexOf('  _repairTaskFromReport('),
+    component.indexOf('\n  _renderMergedReport(', component.indexOf('  _repairTaskFromReport(')));
+  assert(repairTask.includes("item.severity === 'critical' || item.severity === 'high'")
+    && repairTask.includes('truncatePoints(') && repairTask.includes('2000')
+    && repairTask.includes('this.seedTask('),
+  'repair must seed only critical/high notes through the 2000-code-point bound');
+  assert(!repairTask.includes('executionTeamStart') && !repairTask.includes('_startExecution('),
+    'repair must fill the setup form without starting execution');
+  const truncateSource = /function truncatePoints\(value, maximum, suffix\) \{[\s\S]*?\n\}/.exec(component);
+  assert(truncateSource, 'Unicode code-point truncation helper missing');
+  const truncatePoints = new Function('text',
+    truncateSource[0] + '; return truncatePoints;')((value) => typeof value === 'string' ? value : '');
+  const unicodeTrimmed = truncatePoints('أ'.repeat(1999) + '😀😀', 2000, '…');
+  assert.strictEqual(Array.from(unicodeTrimmed).length, 2000,
+    'repair truncation must count Unicode code points, not UTF-16 units');
+  assert(unicodeTrimmed.endsWith('…'), 'repair truncation must expose a clear tail marker');
+  assert(component.includes("const MODEL_STORAGE_PREFIX = 'satr_ops_models::'")
+    && component.includes('localStorage.getItem(key)')
+    && component.includes('localStorage.setItem(key, JSON.stringify(this._models))'),
+  'per-project model choices must round-trip through the frozen localStorage key');
+  for (const [name, className] of [
+    ['worker', 'worker-model'], ['sdk', 'sdk-review-model'], ['codex', 'codex-review-model'],
+  ]) {
+    assert(component.includes("['" + name + "',") && component.includes("'" + className + "'"),
+      'missing optional model selector ' + name);
+  }
+  assert(component.includes('this._loadModelPreferences()'),
+    'opening a project must restore its saved model choices');
+  assert(component.includes('const WEAK_JUDGE_MODEL = /haiku|mini|lite|flash|nano/i')
+    && component.includes('WEAK_JUDGE_MODEL.test(modelInputs.sdk.value)')
+    && component.includes('WEAK_JUDGE_MODEL.test(modelInputs.codex.value)')
+    && component.includes('عقدة القاضي أخطر مكان للتوفير — نموذج ضعيف هنا يُصلح ما ليس مكسوراً ويكلّف أكثر مما يوفّر'),
+  'weak judge models must show the frozen non-blocking warning');
+  assert(component.includes("ops_model_invalid: '")
+    && component.includes('اسم النموذج المختار غير صالح'),
+  'ops_model_invalid must have a clear Arabic UI message');
+  const startExecution = component.slice(component.indexOf('  async _startExecution() {'),
+    component.indexOf('\n  async _stopLoop(', component.indexOf('  async _startExecution() {')));
+  assert(startExecution.includes("this._modelOverrides(['worker'])")
+    && startExecution.includes('this._supportsModels(window.satr.loopStart, 6)')
+    && startExecution.includes('this._supportsModels(window.satr.executionTeamStart, 6)'),
+  'worker overrides must cross loop/team starts only when the extended bridge arity is available');
+  assert((startExecution.match(/window\.satr\.loopStart\(/g) || []).length >= 2
+    && (startExecution.match(/window\.satr\.executionTeamStart\(/g) || []).length >= 2,
+  'loop/team model overrides must retain literal legacy call branches');
+  const startReview = component.slice(component.indexOf('  async _startReview() {'),
+    component.indexOf('\n  async _prepareVerification(', component.indexOf('  async _startReview() {')));
+  assert(startReview.includes("this._modelOverrides(['sdk', 'codex'])")
+    && startReview.includes('this._supportsModels(window.satr.executionReviewStart, 2)')
+    && (startReview.match(/window\.satr\.executionReviewStart\(/g) || []).length >= 2,
+  'review model overrides must retain the literal legacy call and use the optional extended bridge');
   assert(main.includes("ipcMain.handle('satr:executionFileDiff'")
     && main.includes("ipcMain.handle('satr:executionPreviewStart'")
     && main.includes("Object.prototype.hasOwnProperty.call(p, 'command')"));
