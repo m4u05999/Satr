@@ -541,6 +541,70 @@ section {
 }
 .layers-punch .gold { color: var(--gold); font-weight: 600; }
 
+/* ---------- المشهد 4ج: الجراف المحكوم ---------- */
+#graph { background: var(--bg-deep); }
+
+.graph-walls {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  margin-top: 3.5rem;
+}
+
+.graph-wall {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--gold-border);
+  border-radius: 14px;
+  padding: 1.6rem 1.5rem;
+}
+
+.wall-num {
+  font-family: var(--mono);
+  color: var(--gold);
+  font-size: .85rem;
+  letter-spacing: .12em;
+  display: block;
+  margin-bottom: .6rem;
+  text-align: start;
+}
+
+.graph-wall h3 {
+  margin: 0 0 .6rem;
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.graph-wall p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: .95rem;
+  line-height: 1.85;
+}
+
+.graph-stage {
+  max-width: 34rem;
+  margin: 4rem auto 0;
+}
+
+.graph-caption {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: .95rem;
+  max-width: 30rem;
+  margin: 1.4rem auto 0;
+}
+
+.graph-punch {
+  margin: 4rem auto 0;
+  max-width: 44rem;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--display-md);
+  line-height: 1.9;
+}
+.graph-punch .gold { color: var(--gold); font-weight: 700; }
+
 /* ---------- المشهد 5: المحرّكات ---------- */
 #engines {
   padding-block: 6rem;
@@ -691,6 +755,7 @@ section {
 @media (max-width: 48rem) {
   section { padding: 5rem 1.2rem; }
   .feature-card { grid-template-columns: 1fr; gap: 1.5rem; }
+  .graph-walls { grid-template-columns: 1fr; }
   .feature-card:nth-child(even) { direction: rtl; }
   /* الطبقات: الدرج المائل يضيق الشاشة — أعمدة مستقيمة */
   .layer-card:nth-child(2), .layer-card:nth-child(3), .layer-card:nth-child(4) { margin-inline-start: 0; }

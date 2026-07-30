@@ -20,6 +20,7 @@ const SHOTS = [
   { fixture: 'site-shots.html', out: 'app-chat.png', width: 1500, height: 1220, query: { variant: 'diff' } },
   { fixture: 'site-shots-term.html', out: 'app-term.png', width: 1500, height: 440 },
   { fixture: 'site-shots-ops.html', out: 'app-ops.png', width: 760, height: 700 },
+  { fixture: 'site-shots-ops.html', out: 'app-judges.png', width: 760, height: 1080, query: { variant: 'judges' } },
   { fixture: 'site-shots-preview.html', out: 'app-preview.png', width: 1280, height: 860 },
 ];
 
