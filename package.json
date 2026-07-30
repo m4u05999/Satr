@@ -112,7 +112,8 @@
     "dist:ee": "electron-builder --win --config scripts/ee-builder-config.js --publish never",
     "site:serve": "node scripts/site-serve.js",
     "vendor:site": "node scripts/vendor-site.js",
-    "site:shots": "electron scripts/site-shots.js"
+    "site:shots": "electron scripts/site-shots.js",
+    "ui:audit": "electron scripts/ui-audit.js"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",

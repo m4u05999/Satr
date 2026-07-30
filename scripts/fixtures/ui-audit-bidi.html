@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; script-src 'none'; object-src 'none'; base-uri 'none'">
+<title>ui-audit — مقارنة اتجاه نصوص الطرفية</title>
+<link rel="stylesheet" href="../../src/vendor/fonts.css">
+<link rel="stylesheet" href="ui-audit-bidi.css">
+</head>
+<body>
+
+<!-- مرجع بصري لقرار اتجاه حقل إدخال الطرفية (syncInputDir في terminal-panel.js):
+     ‏dir="auto" على حقل فارغ يحسم LTR فينقلب ترتيب أزواج «Enter ينفّذ — Ctrl+C يقطع»؛
+     وdir="rtl" يعرض النص العربي بترتيبه الصحيح. الصفّان أ/ب يوثّقان الفرق. -->
+
+<div class="row">
+  <div class="lbl">أ — dir=auto على حقل فارغ (السلوك المعطوب: يرسو يساراً والأزواج مقلوبة)</div>
+  <input dir="auto" placeholder="اكتب أمراً… (Enter ينفّذ — Ctrl+C يقطع — ▲▼ التاريخ والحقل فارغ)">
+</div>
+
+<div class="row">
+  <div class="lbl">ب — dir=rtl (المعتمد وهو فارغ: الترتيب سليم)</div>
+  <input dir="rtl" placeholder="اكتب أمراً… (Enter ينفّذ — Ctrl+C يقطع — ▲▼ التاريخ والحقل فارغ)">
+</div>
+
+<div class="row">
+  <div class="lbl">ج — dir=auto وفيه أمر لاتيني (المعتمد عند الكتابة: القيمة تحسم اتجاهها)</div>
+  <input dir="auto" value="npm run test:full">
+</div>
+
+<div class="row">
+  <div class="lbl">د — تلميح Tab (سليم بلا تدخّل — أُثبت أنه ليس عيباً)</div>
+  <div class="hint">Tab لا يُكمل هنا</div>
+</div>
+
+</body>
+</html>

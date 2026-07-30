@@ -1,0 +1,29 @@
+/* أنماط مقارنة اتجاه نصوص الطرفية — تحاكي ظروف #termInput الفعلية
+   (نفس عائلة الخط وحجمه ولوحة الطرفية الداكنة) بلا استيراد base.css كاملاً */
+body {
+  background: #111110;
+  color: #eeeeec;
+  font-family: 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif;
+  padding: 16px;
+  margin: 0;
+}
+.row { margin-bottom: 16px; }
+.lbl { font-size: 12px; color: #D9A441; margin-bottom: 5px; }
+input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #0d0d0c;
+  border: 1px solid #3b3a37;
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: #eeeeec;
+  outline: none;
+  font-family: 'Cascadia Mono', 'Consolas', 'IBM Plex Sans Arabic', monospace;
+  font-size: 13px;
+}
+.hint {
+  font-size: 11px;
+  color: #b5b3ad;
+  white-space: nowrap;
+  margin-top: 5px;
+}
