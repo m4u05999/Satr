@@ -20,6 +20,7 @@ const exporter = require('./exporter'); // تصدير المحادثة Markdown 
 const skills = require('./skills');
 const tasks = require('./tasks');
 const verify = require('./verify');
+const skillwriter = require('./skillwriter');
 const checkpoints = require('./checkpoints');
 const sdkrewinds = require('./sdkrewinds');
 const memory = require('./memory');
@@ -2847,6 +2848,58 @@ ipcMain.handle('satr:taskAction', (event, payload) => {
 // ---------- تحقق المشروع وcheckpoints (الأولوية 3) ----------
 const SAFE_CHECKPOINT_ID = /^cp-[A-Za-z0-9-]{3,80}$/;
 const MAX_VERIFY_CWD = 4096;
+const REVIEW_CONTROL_AND_BIDI = /[\u0000-\u0009\u000B-\u001F\u007F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
+function sanitizeReviewSkillReference(value) {
+  if (value == null) return { ok: true, value: null };
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || typeof value.name !== 'string' || value.name.length > 64) {
+    return { ok: false, error: 'bad_review_skill' };
+  }
+  const name = value.name.trim();
+  return skillwriter.SAFE_SKILL_NAME.test(name) && name !== '.' && name !== '..'
+    ? { ok: true, value: { name } }
+    : { ok: false, error: 'bad_review_skill' };
+}
+
+function sanitizeReviewSkillDraft(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false, error: 'bad_skill' };
+  if (typeof value.name !== 'string' || value.name.length > 64) return { ok: false, error: 'bad_name' };
+  const name = value.name.trim();
+  if (!skillwriter.SAFE_SKILL_NAME.test(name) || name === '.' || name === '..') return { ok: false, error: 'bad_name' };
+  if (typeof value.description !== 'string'
+      || Array.from(value.description).length > skillwriter.MAX_DESCRIPTION_POINTS) {
+    return { ok: false, error: 'bad_description' };
+  }
+  const description = value.description.replace(REVIEW_CONTROL_AND_BIDI, ' ').replace(/\s+/g, ' ').trim();
+  if (!description) return { ok: false, error: 'bad_description' };
+  if (typeof value.criteria !== 'string'
+      || Buffer.byteLength(value.criteria, 'utf8') > skillwriter.MAX_CRITERIA_BYTES) {
+    return { ok: false, error: 'bad_criteria' };
+  }
+  if (memory.hasSecret(value.criteria)) return { ok: false, error: 'secret' };
+  const criteria = value.criteria.replace(/\r\n?/g, '\n').replace(REVIEW_CONTROL_AND_BIDI, '').trim();
+  if (!criteria) return { ok: false, error: 'bad_criteria' };
+  return { ok: true, value: { name, description, criteria } };
+}
+
+ipcMain.handle('satr:reviewSkillCreate', (event, payload) => {
+  const p = payload || {};
+  if (p.confirmed !== true) return { ok: false, error: 'confirmation_required' };
+  if (typeof p.overwrite !== 'boolean'
+      || typeof p.cwd !== 'string' || !p.cwd.trim() || p.cwd.length > MAX_VERIFY_CWD
+      || p.cwd.includes('\0') || !path.isAbsolute(p.cwd.trim())) {
+    return { ok: false, error: 'bad_input' };
+  }
+  const cwd = p.cwd.trim();
+  try {
+    const cwdStat = fs.lstatSync(cwd);
+    if (!cwdStat.isDirectory() || cwdStat.isSymbolicLink()) throw new Error();
+  } catch { return { ok: false, error: 'bad_cwd' }; }
+  const draft = sanitizeReviewSkillDraft(p.skill);
+  if (!draft.ok) return { ok: false, error: draft.error };
+  return skillwriter.createSkill(cwd, draft.value, { confirmed: true, overwrite: p.overwrite });
+});
 
 ipcMain.handle('satr:verifyConfigCreate', (event, payload) => {
   const p = payload || {};
@@ -2861,6 +2914,8 @@ ipcMain.handle('satr:verifyConfigCreate', (event, payload) => {
     const cwdStat = fs.lstatSync(cwd);
     if (!cwdStat.isDirectory() || cwdStat.isSymbolicLink()) throw new Error();
   } catch { return { ok: false, error: 'bad_cwd' }; }
+  const reviewSkill = sanitizeReviewSkillReference(p.reviewSkill);
+  if (!reviewSkill.ok) return { ok: false, error: reviewSkill.error };
   const commands = [];
   const seenIds = new Set();
   for (const value of p.commands) {
@@ -2883,10 +2938,13 @@ ipcMain.handle('satr:verifyConfigCreate', (event, payload) => {
       id, label, command, timeout_seconds: value.timeout_seconds,
     });
   }
-  if (Buffer.byteLength(JSON.stringify({ version: 1, commands }), 'utf8') > verify.MAX_CONFIG_BYTES) {
+  const configShape = { version: 1, commands, ...(reviewSkill.value ? { review_skill: reviewSkill.value } : {}) };
+  if (Buffer.byteLength(JSON.stringify(configShape), 'utf8') > verify.MAX_CONFIG_BYTES) {
     return { ok: false, error: 'bad_input' };
   }
-  return verify.createConfig(cwd, commands, { confirmed: true, overwrite: p.overwrite });
+  return verify.createConfig(cwd, commands, {
+    confirmed: true, overwrite: p.overwrite, reviewSkill: reviewSkill.value,
+  });
 });
 
 ipcMain.handle('satr:checkpointLatest', (event, payload) => {

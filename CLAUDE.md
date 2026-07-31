@@ -1454,6 +1454,19 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `verify.js` يثبت المسار `.satr/verify.json` داخل cwd، ويرفض root/`.satr`/الهدف الرمزي
   والخروج والكتابة فوق ملف بلا `overwrite:true`. الإنشاء لا يشغّل شيئاً، ويبقى الملف مطلوباً
   داخل `HEAD` قبل غرفة قابلة للدمج.
+- **مهارة المراجعة النوعية**: المعالج نفسه يتيح اختيارياً معاينة
+  `review_skill:{name}` داخل JSON قبل أي كتابة. عقد preload المحدد هو
+  `verifyConfigCreate(cwd, commands, overwrite, confirmed, reviewSkill)`؛ تنقّي قناة
+  `satr:verifyConfigCreate` المرجع ثم تمرّره إلى `verify.createConfig`، وهو الكاتب الوحيد
+  لـ`.satr/verify.json`. إنشاء المصدر مستقل وصريح عبر
+  `reviewSkillCreate(cwd, skill, overwrite, confirmed)` وقناة `satr:reviewSkillCreate`، حيث
+  `skill={name,description,criteria}` ولا يمرّر renderer مسار الهدف. `electron/skillwriter.js`
+  يثبت الهدف في `.agents/skills/<name>/SKILL.md`، والاسم يطابق
+  `[A-Za-z0-9._-]{1,64}`، والمعايير لا تتجاوز 16KiB وتُزال منها محارف التحكم/Bidi وتُرفض
+  كلياً إن التقطها `memory.hasSecret`. يفحص الكاتب `realpath` لكل مكوّن ويرفض
+  symlink/junction والخروج بلا كشف المسار الخارجي، ولا يستبدل بلا `overwrite:true`، ويكتب
+  ذرياً عبر temp+rename مع استعادة الملف السابق عند فشل الاستبدال. غياب المهارة يبقي العقد
+  السابق بلا تغيير، وأي فشل في التنقية أو المسار مغلق ولا يتحول إلى كتابة جزئية.
 - **المحرّكات**: Claude SDK يملك خادم MCP مستقل `satr-verify` خارج `satr-terminal`؛
   Kimi ACP والمحوّلات يملكون الأداتين عبر `tools.js` (Kimi من MCP المحلي). Codex لم يُعدّل: `main.js` يجمع تعديلاته مثل
   غيره، وزر التحقق اليدوي يعيد ملخص النتيجة إلى دوره التالي مرة واحدة عبر

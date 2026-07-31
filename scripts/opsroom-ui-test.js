@@ -746,7 +746,7 @@ function testDesignGuard() {
   assert(main.includes("ipcMain.handle('satr:verifyConfigCreate'")
     && main.includes('!verify.SAFE_CHECK_ID.test(id)')
     && main.includes('cwdStat.isSymbolicLink()')
-    && verifyPreload.includes("verifyConfigCreate: (cwd, commands, overwrite, confirmed)"),
+    && verifyPreload.includes("verifyConfigCreate: (cwd, commands, overwrite, confirmed, reviewSkill)"),
   'verification config IPC must stay narrowly exposed and independently sanitized in main');
   assert(app.includes("state: 'hidden'") && app.includes("record.state = 'held'") && app.includes("record.state = 'active'"),
     'surface coordinator states missing');

@@ -3,7 +3,17 @@
 import { sheet } from '../lib/sheet.js';
 import { controlsSheet } from '../lib/panel.css.js';
 
-const LIMITS = { commands: 6, id: 64, label: 120, command: 1000, timeout: 600 };
+const LIMITS = { commands: 6, id: 64, label: 120, command: 1000, timeout: 600, skillName: 64, description: 500, criteriaBytes: 16 * 1024 };
+const REVIEW_SKILL_TEMPLATE = `# مهمة المراجعة النوعية
+
+راجع التغيير المقترح وفق سياق هذا المشروع، ولا تنفّذ أوامر ولا تعدّل ملفات.
+
+- افحص صحة السلوك والحالات الحدّية.
+- افحص حدود الأمان والبيانات غير الموثوقة.
+- افحص وضوح الحل وبساطته وقابليته للصيانة.
+- اربط كل ملاحظة بملف أو دليل ظاهر، ولا تخمّن.
+
+اختم بحكم موجز، ثم رتّب الملاحظات من الأعلى خطراً إلى الأدنى.`;
 
 const ownSheet = sheet(`
   :host {
@@ -17,13 +27,13 @@ const ownSheet = sheet(`
     border: 1px solid var(--gold-border); border-radius: var(--radius-xl);
     background: var(--surface-2); box-shadow: var(--shadow-modal);
   }
-  h2 { margin: var(--space-0); color: var(--gold); font-size: 1rem; }
+  h2, h3 { margin: var(--space-0); color: var(--gold); font-size: 1rem; }
   .intro, .path, .note, .message { margin: var(--space-0); line-height: 1.7; }
   .intro, .note { color: var(--text-dim); }
-  .path, pre, .id, .command { direction: ltr; text-align: left; font-family: var(--mono); }
+  .path, pre, .id, .command, .skill-name, .skill-path { direction: ltr; text-align: left; font-family: var(--mono); }
   .path { color: var(--text); }
   .rows { display: grid; gap: var(--space-3); }
-  .row {
+  .row, .skill-step, .skill-review {
     display: grid; gap: var(--space-2); padding: var(--space-3);
     border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface);
   }
@@ -32,6 +42,10 @@ const ownSheet = sheet(`
   .fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(7rem, .6fr); gap: var(--space-2); }
   label { display: grid; gap: var(--space-1); color: var(--text-dim); font-size: .75rem; }
   .command-field { grid-column: 1 / -1; }
+  .skill-fields { display: grid; grid-template-columns: minmax(10rem, .8fr) minmax(0, 2fr); gap: var(--space-2); }
+  .criteria-field { grid-column: 1 / -1; }
+  .criteria { min-height: 12rem; unicode-bidi: plaintext; }
+  .skill-path { color: var(--text-dim); font-size: .75rem; }
   input, textarea {
     width: 100%; box-sizing: border-box; padding: var(--space-2);
     border: 1px solid var(--border); border-radius: var(--radius-md);
@@ -41,7 +55,7 @@ const ownSheet = sheet(`
   input:focus, textarea:focus { border-color: var(--gold); }
   .actions { justify-content: flex-end; }
   .actions .spacer { flex: 1; }
-  .review[hidden], .editor[hidden] { display: none; }
+  .review[hidden], .editor[hidden], .skill-review[hidden] { display: none; }
   .review { display: grid; gap: var(--space-3); }
   pre {
     margin: var(--space-0); padding: var(--space-3); max-height: 42vh; overflow: auto;
@@ -56,7 +70,9 @@ const ownSheet = sheet(`
     :host { padding: var(--space-2); }
     .box { padding: var(--space-3); }
     .fields { grid-template-columns: 1fr; }
+    .skill-fields { grid-template-columns: 1fr; }
     .command-field { grid-column: auto; }
+    .criteria-field { grid-column: auto; }
   }
 `);
 
@@ -80,10 +96,30 @@ class SatrVerifyConfigDialog extends HTMLElement {
 
     this._editor = element('section', 'editor');
     this._rows = element('div', 'rows'); this._editor.appendChild(this._rows);
+    this._skillStep = element('section', 'skill-step');
+    this._skillStep.appendChild(element('h3', '', 'مهارة مراجعة نوعية — اختيارية'));
+    this._skillStep.appendChild(element('p', 'note', 'عرّف مراجعة تناسب مشروعك. إدراج المرجع يعرضه أولاً داخل JSON، وإنشاء ملف المهارة يحتاج نقرة مستقلة بعد المراجعة.'));
+    const skillFields = element('div', 'skill-fields');
+    this._skillName = document.createElement('input'); this._skillName.className = 'skill-name';
+    this._skillName.maxLength = LIMITS.skillName; this._skillName.dir = 'ltr';
+    this._skillDescription = document.createElement('input'); this._skillDescription.className = 'skill-description';
+    this._skillDescription.maxLength = LIMITS.description;
+    this._skillCriteria = document.createElement('textarea'); this._skillCriteria.className = 'criteria';
+    const skillField = (caption, input, className) => {
+      const holder = element('label', className || ''); holder.appendChild(element('span', '', caption)); holder.appendChild(input); return holder;
+    };
+    skillFields.appendChild(skillField('اسم المهارة', this._skillName));
+    skillFields.appendChild(skillField('الوصف', this._skillDescription));
+    skillFields.appendChild(skillField('معايير المراجعة — نص عربي قابل للتحرير', this._skillCriteria, 'criteria-field'));
+    this._skillStep.appendChild(skillFields);
+    const skillActions = element('div', 'actions');
+    this._includeSkill = element('button', 'include-skill', 'أدرج review_skill في JSON'); this._includeSkill.type = 'button';
+    skillActions.appendChild(element('span', 'spacer')); skillActions.appendChild(this._includeSkill);
+    this._skillStep.appendChild(skillActions); this._editor.appendChild(this._skillStep);
     const editorActions = element('div', 'actions');
     this._add = element('button', 'add', '＋ أضف أمراً'); this._add.type = 'button';
     this._cancel = element('button', 'cancel', 'إلغاء'); this._cancel.type = 'button';
-    this._reviewButton = element('button', 'review-button', 'راجع الكتابة'); this._reviewButton.type = 'button';
+    this._reviewButton = element('button', 'review-button', 'راجع JSON بلا مهارة'); this._reviewButton.type = 'button';
     editorActions.appendChild(this._add); editorActions.appendChild(element('span', 'spacer'));
     editorActions.appendChild(this._cancel); editorActions.appendChild(this._reviewButton);
     this._editor.appendChild(editorActions); box.appendChild(this._editor);
@@ -91,6 +127,14 @@ class SatrVerifyConfigDialog extends HTMLElement {
     this._review = element('section', 'review'); this._review.hidden = true;
     this._review.appendChild(element('p', 'note', 'راجع الملف أدناه. الكتابة لا تشغّل الأوامر، لكنها تعتمدها للتحقق لاحقاً بعد إضافتها إلى HEAD.'));
     this._preview = element('pre'); this._review.appendChild(this._preview);
+    this._skillReview = element('section', 'skill-review'); this._skillReview.hidden = true;
+    this._skillReview.appendChild(element('h3', '', 'ملف مهارة المراجعة'));
+    this._skillPath = element('p', 'skill-path'); this._skillReview.appendChild(this._skillPath);
+    this._skillReview.appendChild(element('p', 'note', 'هذا زر كتابة مستقل. لا يُنشأ الملف بمجرد إدراج review_skill في JSON.'));
+    const createSkillActions = element('div', 'actions');
+    this._createSkill = element('button', 'create-skill', 'أنشئ ملف المهارة'); this._createSkill.type = 'button';
+    createSkillActions.appendChild(element('span', 'spacer')); createSkillActions.appendChild(this._createSkill);
+    this._skillReview.appendChild(createSkillActions); this._review.appendChild(this._skillReview);
     const reviewActions = element('div', 'actions');
     this._back = element('button', 'back', 'رجوع للتعديل'); this._back.type = 'button';
     this._write = element('button', 'write', 'اكتب الملف'); this._write.type = 'button';
@@ -104,12 +148,17 @@ class SatrVerifyConfigDialog extends HTMLElement {
     this._commandRows = [];
     this._cwd = '';
     this._reviewCommands = [];
+    this._reviewSkill = null;
     this._overwriteRequired = false;
+    this._skillOverwriteRequired = false;
+    this._skillCreated = false;
     this._sending = false;
     this._add.addEventListener('click', () => this._addRow());
     this._cancel.addEventListener('click', () => this.close());
-    this._reviewButton.addEventListener('click', () => this._showReview());
+    this._reviewButton.addEventListener('click', () => this._showReview(false));
+    this._includeSkill.addEventListener('click', () => this._showReview(true));
     this._back.addEventListener('click', () => this._showEditor());
+    this._createSkill.addEventListener('click', () => this._writeSkill());
     this._write.addEventListener('click', () => this._writeConfig());
     root.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && !this._sending) { event.preventDefault(); this.close(); }
@@ -123,8 +172,14 @@ class SatrVerifyConfigDialog extends HTMLElement {
     this._commandRows = [];
     this._rows.textContent = '';
     this._reviewCommands = [];
+    this._reviewSkill = null;
     this._overwriteRequired = false;
+    this._skillOverwriteRequired = false;
+    this._skillCreated = false;
     this._sending = false;
+    this._skillName.value = 'quality-review';
+    this._skillDescription.value = 'يراجع جودة التغيير وفق معايير هذا المشروع قبل اعتماده.';
+    this._skillCriteria.value = REVIEW_SKILL_TEMPLATE;
     this._setMessage('');
     this._showEditor();
     this._addRow({ id: 'test', label: 'الاختبارات', command: '', timeout_seconds: 120 });
@@ -198,13 +253,39 @@ class SatrVerifyConfigDialog extends HTMLElement {
     return { commands };
   }
 
-  _showReview() {
+  _collectReviewSkill() {
+    const name = this._skillName.value.trim();
+    const description = this._skillDescription.value.trim();
+    const criteria = this._skillCriteria.value.trim();
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(name) || name === '.' || name === '..') return { error: 'اسم المهارة يجب أن يكون بحروف لاتينية أو أرقام أو . _ - فقط.' };
+    if (!description || Array.from(description).length > LIMITS.description || /[\u0000-\u001F\u007F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/.test(description)) {
+      return { error: 'اكتب وصفاً صالحاً بلا محارف تحكم.' };
+    }
+    if (!criteria || new TextEncoder().encode(criteria).length > LIMITS.criteriaBytes
+        || /[\u0000-\u0009\u000B-\u001F\u007F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/.test(criteria)) {
+      return { error: 'معايير المراجعة مطلوبة، بلا محارف تحكم، وبحجم لا يتجاوز 16KiB.' };
+    }
+    return { skill: { name, description, criteria } };
+  }
+
+  _showReview(includeSkill) {
     const collected = this._collect();
     if (collected.error) { this._setMessage(collected.error); return; }
+    const skill = includeSkill ? this._collectReviewSkill() : { skill: null };
+    if (skill.error) { this._setMessage(skill.error); return; }
     this._reviewCommands = collected.commands;
+    this._reviewSkill = skill.skill;
     this._overwriteRequired = false;
+    this._skillOverwriteRequired = false;
+    this._skillCreated = false;
     this._write.textContent = 'اكتب الملف'; this._write.classList.remove('danger');
-    this._preview.textContent = JSON.stringify({ version: 1, commands: this._reviewCommands }, null, 2);
+    this._createSkill.textContent = 'أنشئ ملف المهارة'; this._createSkill.classList.remove('danger');
+    this._skillReview.hidden = !this._reviewSkill;
+    this._createSkill.disabled = !this._reviewSkill;
+    this._skillPath.textContent = this._reviewSkill ? '.agents/skills/' + this._reviewSkill.name + '/SKILL.md' : '';
+    const preview = { version: 1, commands: this._reviewCommands };
+    if (this._reviewSkill) preview.review_skill = { name: this._reviewSkill.name };
+    this._preview.textContent = JSON.stringify(preview, null, 2);
     this._editor.hidden = true; this._review.hidden = false; this._setMessage('');
     this._write.focus();
   }
@@ -219,7 +300,8 @@ class SatrVerifyConfigDialog extends HTMLElement {
     this._sending = true; this._setBusy(true); this._setMessage('');
     let result = null;
     try {
-      result = await window.satr.verifyConfigCreate(this._cwd, this._reviewCommands, this._overwriteRequired, true);
+      const reviewSkill = this._reviewSkill ? { name: this._reviewSkill.name } : null;
+      result = await window.satr.verifyConfigCreate(this._cwd, this._reviewCommands, this._overwriteRequired, true, reviewSkill);
     } catch {}
     this._sending = false; this._setBusy(false);
     if (result && result.ok) {
@@ -245,14 +327,54 @@ class SatrVerifyConfigDialog extends HTMLElement {
     this._setMessage(labels[result && result.error] || 'تعذّر إنشاء ملف التحقق.');
   }
 
-  _setBusy(busy) {
-    for (const button of [this._add, this._cancel, this._reviewButton, this._back, this._write]) button.disabled = busy;
-    if (!busy) this._syncRows();
+  async _writeSkill() {
+    if (this._sending || !this._reviewSkill || this._skillCreated) return;
+    this._sending = true; this._setBusy(true); this._setMessage('');
+    let result = null;
+    try {
+      result = await window.satr.reviewSkillCreate(this._cwd, this._reviewSkill, this._skillOverwriteRequired, true);
+    } catch {}
+    this._sending = false; this._setBusy(false);
+    if (result && result.ok) {
+      this._skillCreated = true;
+      this._createSkill.textContent = result.overwritten === true ? 'استُبدل ملف المهارة' : 'أُنشئ ملف المهارة';
+      this._createSkill.classList.remove('danger'); this._createSkill.disabled = true;
+      this.dispatchEvent(new CustomEvent('notice', { bubbles: true, detail: result.overwritten === true
+        ? 'استُبدل ملف مهارة المراجعة. راجعه وأضفه إلى Git.'
+        : 'أُنشئ ملف مهارة المراجعة. راجعه وأضفه إلى Git.' }));
+      this._setMessage('اكتملت كتابة ملف المهارة. ما زال verify.json ينتظر زر الكتابة المستقل.', 'success');
+      return;
+    }
+    if (result && result.error === 'exists' && !this._skillOverwriteRequired) {
+      this._skillOverwriteRequired = true;
+      this._createSkill.textContent = 'استبدل ملف المهارة القائم'; this._createSkill.classList.add('danger');
+      this._setMessage('ملف المهارة موجود. اضغط «استبدل ملف المهارة القائم» لتأكيد الاستبدال صراحةً.');
+      return;
+    }
+    const labels = {
+      confirmation_required: 'لم يصل تأكيد صريح لإنشاء المهارة.', bad_input: 'رفضت العملية الرئيسية المدخلات.',
+      bad_cwd: 'مجلد المشروع غير صالح.', bad_skill: 'بيانات المهارة غير صالحة.', bad_name: 'اسم المهارة غير صالح.',
+      bad_description: 'وصف المهارة غير صالح.', bad_criteria: 'معايير المراجعة غير صالحة أو تتجاوز السقف.',
+      secret: 'رُفضت المعايير لأنها تبدو محتوية على سر.', symlink: 'رُفض المسار لأنه رابط رمزي أو junction.',
+      outside: 'رُفض مسار يخرج من مجلد المشروع.', unsafe_target: 'هدف المهارة القائم غير آمن.',
+      write_failed: 'تعذّرت كتابة ملف المهارة بأمان.',
+    };
+    this._setMessage(labels[result && result.error] || 'تعذّر إنشاء ملف مهارة المراجعة.');
   }
 
-  _setMessage(message) {
+  _setBusy(busy) {
+    for (const button of [this._add, this._cancel, this._reviewButton, this._includeSkill, this._back, this._write, this._createSkill]) button.disabled = busy;
+    if (!busy) {
+      this._syncRows();
+      this._createSkill.disabled = !this._reviewSkill || this._skillCreated;
+    }
+  }
+
+  _setMessage(message, kind) {
     this._message.textContent = message || '';
     this._message.hidden = !message;
+    if (kind) this._message.dataset.kind = kind;
+    else delete this._message.dataset.kind;
   }
 
   _trapFocus(event) {
