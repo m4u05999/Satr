@@ -82,17 +82,20 @@
     color-scheme: light;
     /* دفعة الصقل: كانت الأسطح والحدود متقاربة جداً (‏#eeedeb على #f6f5f4 بفارق 3%
        و#dddbd7 حدّاً عليه ≈1.1:1) فتبدو الأزرار مسطّحة والطبقات بلا فصل. عُمّق
-       السلّم درجةً: فصل أوضح بين bg/surface/surface-2، وحدود تُرى فعلاً. */
+       السلّم درجةً: فصل أوضح بين bg/surface/surface-2، وحدود تُرى فعلاً.
+       دفعة إصلاح مقاسة (ui:audit مشاهد 22–26): فقاعة الرد كانت 1.07:1 على محيطها،
+       وborder-dim 1.17:1 على surface، و--text-faint 3.26:1 على bg، وشريط النجاح
+       3.68:1 — رُفعت كلها فوق عتباتها (انظر CLAUDE.md «نظام التصميم»). */
     --bg: #fdfdfc;             /* sand1 فاتح */
     --surface: #f4f3f1;        /* sand2 — أغمق قليلاً ليفصل الشريط والمؤلّف عن الخلفية */
-    --surface-2: #e9e8e6;      /* sand4 — خلفية الأزرار تبرز عن سطحها */
-    --surface-3: #dedcd9;      /* sand5/6 — تمييز/تحويم */
-    --border-dim: #e4e2df;     /* فواصل خافتة */
-    --border: #cfceca;         /* sand7 — حدّ مرئي على الأسطح الفاتحة */
+    --surface-2: #e6e5e2;      /* sand4 — خلفية الأزرار تبرز عن سطحها */
+    --surface-3: #d8d6d2;      /* sand5/6 — تمييز/تحويم */
+    --border-dim: #d6d4cf;     /* فواصل خافتة */
+    --border: #c2c1bb;         /* sand7 — حدّ مرئي على الأسطح الفاتحة */
     --border-strong: #b3b1aa;  /* sand8 */
     --text: #21201c;           /* sand12 */
     --text-dim: #63605b;       /* sand11 — نص ثانوي مقروء */
-    --text-faint: #8f8d86;     /* sand10 — أخفت */
+    --text-faint: #6e6c66;     /* بين sand10/11 — 5.16:1 على bg و4.73:1 على surface (WCAG AA) */
     /* الهوية الذهبية — مُغمَّقة للتباين على الفاتح (تبقى «ذهباً» بصرياً) */
     --gold: #9a6a10;
     --on-gold: #fdf6e8;        /* نص فاتح على الذهب الداكن — الداكن يرث #1A1408 على ذهب فاتح */
@@ -100,9 +103,9 @@
     --gold-soft: rgba(217, 164, 65, 0.16);
     --gold-border: rgba(154, 106, 16, 0.4);
     --chat-user-surface: rgba(154, 106, 16, 0.08);
-    --chat-answer-surface: rgba(154, 106, 16, 0.045);
+    --chat-answer-surface: rgba(154, 106, 16, 0.11);
     /* دلالية — أغمق من نسخ الداكن لتقرأ على خلفية فاتحة */
-    --green: #2f8a46;
+    --green: #26733a;
     --on-green: #f2faf3;       /* نص فاتح على الأخضر المُغمَّق */
     --green-soft: rgba(47, 138, 70, 0.12);
     --green-border: rgba(47, 138, 70, 0.4);
@@ -127,7 +130,7 @@
     --border-dim: #2a2a28; --border: #3b3a37; --border-strong: #62605b;
     --text: #eeeeec; --text-dim: #b5b3ad; --text-faint: #7c7b74;
     --gold: #D9A441; --gold-strong: #E5B655; --gold-soft: rgba(217, 164, 65, 0.12); --gold-border: rgba(217, 164, 65, 0.35);
-    --green: #71d083; --green-soft: rgba(113, 208, 131, 0.12);
+    --green: #71d083; --green-soft: rgba(113, 208, 131, 0.12); --green-border: rgba(113, 208, 131, 0.4);
     --red: #ec5d5e; --red-soft: rgba(236, 93, 94, 0.1);
     --blue: #8FB8E8;
   }
@@ -195,12 +198,12 @@
   .shortcut-row kbd { direction: ltr; padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); font: 10.5px var(--mono); }
   .field { display: flex; align-items: center; gap: var(--space-1h); }
   .field label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
-  input[type="text"], select {
+  input[type="text"], input[type="password"], select {
     background: var(--bg); border: 1px solid var(--border); color: var(--text);
     border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); font-family: var(--sans); font-size: 13px; outline: none;
     transition: border-color var(--dur) var(--ease);
   }
-  input[type="text"]:focus, select:focus, textarea:focus { border-color: var(--gold); }
+  input[type="text"]:focus, input[type="password"]:focus, select:focus, textarea:focus { border-color: var(--gold); }
   #cwd { width: 240px; direction: ltr; text-align: left; font-family: var(--mono); font-size: 12px; }
   /* فارغاً لا يستحق عرضه الكامل — كان يلتهم ثلث الشريط عند 820px بلا محتوى */
   #cwd:placeholder-shown:not(:focus) { width: 150px; }
