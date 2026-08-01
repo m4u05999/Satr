@@ -957,9 +957,15 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
         const requester = typeof agentID === 'string'
           ? agentID.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 80) : '';
+        // سطر الكلفة البشري أولاً — الوعد الجوهري للميزة يجب أن يُقرأ بلا فك JSON
+        // (ملاحظة مالك 2026-08-01: الكلفة كانت مدفونة في الحقول الخام فلم تُرَ).
+        const humanCost = 'الكلفة التقديرية: $' + prepared.input.cost_usd_estimate
+          + ' · تراكمي الجلسة: $' + prepared.input.session_cost_usd_estimate
+          + '\nالنموذج: ' + prepared.input.model + ' عبر ' + prepared.input.provider
+          + ' · العدد: ' + prepared.input.count;
         emit({
           type: 'permission_request', id, tool: toolName, input: prepared.input, requester,
-          detail: 'تفاصيل توليد الوسائط:\n' + JSON.stringify(prepared.input, null, 2),
+          detail: humanCost + '\n\nتفاصيل توليد الوسائط:\n' + JSON.stringify(prepared.input, null, 2),
           turnEligible: false, alwaysEligible: false,
         });
         return new Promise((resolve) => {
