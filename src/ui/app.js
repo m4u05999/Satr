@@ -727,6 +727,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     ['sessions', 'satr-sessions-panel'], ['files', 'satr-files-panel'], ['git', 'satr-git-panel'],
     ['skills', 'satr-skills-panel'], ['agents', 'satr-agents-panel'], ['mcp', 'satr-mcp-panel'],
     ['context', 'satr-context-panel'], ['memory', 'satr-memory-panel'], ['research', 'satr-research-panel'],
+    ['gallery', 'satr-gallery-panel'],
     ['ops-room', 'satr-ops-room'],
   ]) surfaceCoordinator.register(name, document.querySelector(selector), 'panel');
   surfaceCoordinator.register('ops-dialog', opsDialogEl, 'dialog');
@@ -1908,6 +1909,31 @@ import { createUpdateToast } from './lib/update-toast.js';
   gitEl.addEventListener('panel-refresh', openGitPanel);
   $('gitToggle').addEventListener('click', () => {
     if (gitEl.hasAttribute('open')) closeGitPanel(); else openGitPanel();
+  });
+
+  // ---------- لوحة معرض التوليدات 🖼 (الجولة 8 — «ولّد من سطر») ----------
+  // نمط 📄/±: القشرة تدير توهج الزر، وpanel-close/panel-refresh من المكوّن.
+  // «أرسل المسار للمؤلف» يصل حدث gallery-insert فيُلحق المسار بالمحرر **بلا إرسال**
+  // (حدث input يطلق حفظ المسودة والتمدد التلقائي في المؤلّف).
+  const galleryEl = document.querySelector('satr-gallery-panel');
+  function openGalleryPanel() {
+    $('galleryToggle').classList.add('active');
+    surfaceCoordinator.openPanel('gallery', $('galleryToggle'), () => galleryEl.open($('cwd').value.trim()));
+  }
+  function closeGalleryPanel() { galleryEl.close(); } // المكوّن يبث panel-close فيطفأ الزر
+  galleryEl.addEventListener('panel-close', () => $('galleryToggle').classList.remove('active'));
+  galleryEl.addEventListener('panel-refresh', openGalleryPanel);
+  galleryEl.addEventListener('gallery-insert', (e) => {
+    const rel = e.detail && e.detail.rel;
+    if (!rel) return;
+    const input = $('input');
+    const cur = input.value.trim();
+    input.value = cur ? cur + '\n' + rel : rel;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
+  });
+  $('galleryToggle').addEventListener('click', () => {
+    if (galleryEl.hasAttribute('open')) closeGalleryPanel(); else openGalleryPanel();
   });
 
   // ---------- تصدير المحادثة Markdown (الدفعة 4.8 «مشاركة») ----------

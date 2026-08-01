@@ -135,6 +135,7 @@
 <div id="topTools" hidden>
   <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄 الملفات</button>
   <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">± التغييرات</button>
+  <button id="galleryToggle" title="صور وفيديوهات ولّدها الوكيل في هذا المشروع">🖼 المعرض</button>
   <div class="top-pop-wrap">
     <button id="sessionChangesToggle" type="button" title="تغييرات هذه الجلسة">Δ ملخّص الجلسة <span id="sessionChangesCount" hidden>0</span></button>
     <div id="sessionChangesPop" class="top-pop" hidden>
@@ -241,6 +242,9 @@
 <!-- لوحة ± git: مكوّن Web Component (تفكيك ت-5) — بطاقات الفرق عبر ui/lib/diff.js المشتركة -->
 <satr-git-panel aria-label="تغييرات المشروع"></satr-git-panel>
 
+<!-- لوحة 🖼 معرض التوليدات (الجولة 8 — «ولّد من سطر»): شبكة مصغرات من سجل generations — الإدراج في المؤلف عبر حدث gallery-insert -->
+<satr-gallery-panel aria-label="معرض التوليدات"></satr-gallery-panel>
+
 <!-- لوحة /مهارات: مكوّن Web Component (تفكيك ت-2) — يملك حالة المفعّل/المعطّل -->
 <satr-skills-panel aria-label="المهارات"></satr-skills-panel>
 
@@ -315,6 +319,7 @@
 <script type="module" src="ui/components/sessions-panel.js"></script>
 <script type="module" src="ui/components/git-panel.js"></script>
 <script type="module" src="ui/components/files-panel.js"></script>
+<script type="module" src="ui/components/gallery-panel.js"></script>
 <script type="module" src="ui/components/file-viewer.js"></script>
 <script type="module" src="ui/components/gate.js"></script>
 <script type="module" src="ui/components/perm-dialog.js"></script>
