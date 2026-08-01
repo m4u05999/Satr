@@ -135,6 +135,20 @@ const LOOP_REVIEW_BODY = `
   return out;
 `;
 
+// حقن بيانات المعرض في مشهدَي اللوحة (32–33): قنوات generationsList/genThumb
+// تُضاف عند الدمج — تُستبدل هنا بدوال fixture على window.satr (الـProxy يسمح
+// بالكتابة على الهدف)، فيمرّ المشهد بمسار المكوّن الحقيقي كاملاً.
+const GALLERY_FX = require("./fixtures/gallery-fixture.js");
+const GALLERY_INJECT = `
+  const FX = ${JSON.stringify(GALLERY_FX)};
+  window.satr.generationsList = async () => ({ ok: true, items: FX.items.map((it) => ({ ...it })) });
+  window.satr.genThumb = async (cwd, rel) => FX.thumbs[rel]
+    ? { ok: true, dataUrl: FX.thumbs[rel] } : { ok: false, error: "not_found" };
+  document.getElementById("cwd").value = "D:\fixture-project"; // الـharness يتركه فارغاً
+  document.querySelector("#galleryToggle").click();
+  await new Promise((r) => setTimeout(r, 700)); // فتح + تحميل المصغرات الكسولة
+`;
+
 const SHOTS = [
   // ---------- الأسطح اليومية ----------
   { out: '01-daily-1440', w: 1440, h: 900 },
@@ -380,6 +394,39 @@ const SHOTS = [
   // ---------- بطاقة الحلقة بحقل المراجعة النوعية (داكن/فاتح) ----------
   { out: '30-ops-loop-review', w: 1440, h: 900, js: MEASURE + LOOP_REVIEW_BODY },
   { out: '31-ops-loop-review-light', w: 1440, h: 900, js: LIGHT + MEASURE + LOOP_REVIEW_BODY },
+
+  // ---------- لوحة معرض التوليدات 🖼 (الجولة 8) ----------
+  // الداكن: الشبكة كاملة (صورتان + فيديو مؤجل + فاشلة) ببيانات fixture
+  { out: '32-gallery', w: 1440, h: 900, js: GALLERY_INJECT },
+  // الحالة الفارغة الإرشادية — تُختبر بصرياً لا منطقياً فقط (درس «زر الأحدث»)
+  { out: '34-gallery-empty', w: 1440, h: 900,
+    js: "window.satr.generationsList = async () => ({ ok: true, items: [] }); document.getElementById('cwd').value = 'D:" + String.fromCharCode(92) + String.fromCharCode(92) + "fixture-project'; document.querySelector('#galleryToggle').click();" },
+  // الفاتح: قياس تباين البرومبت/الميتا + شرح العرض المكبر (يتبع الثيمة — لا جزيرة داكنة)
+  {
+    out: '33-gallery-light', w: 1440, h: 900,
+    js: LIGHT + MEASURE + GALLERY_INJECT + `
+      const panel = document.querySelector("satr-gallery-panel");
+      const root = panel.shadowRoot;
+      const cards = [...root.querySelectorAll(".gal-card")];
+      if (!cards.length) { out.push("✗ لم تُرسم بطاقات المعرض"); return out; }
+      out.push("بطاقات: " + cards.length + " · مصغرات محمّلة: " + root.querySelectorAll(".gal-thumb img").length);
+      const promptEl = cards[0].querySelector(".gal-prompt");
+      const metaEl = cards[0].querySelector(".gal-meta");
+      const cardBg = effBg(cards[0]);
+      out.push("البرومبت: " + fmt(parseColor(getComputedStyle(promptEl).color)) + " على " + fmt(cardBg) + " = " + contrast(parseColor(getComputedStyle(promptEl).color), cardBg).toFixed(2) + ":1");
+      out.push("الميتا: " + fmt(parseColor(getComputedStyle(metaEl).color)) + " على " + fmt(cardBg) + " = " + contrast(parseColor(getComputedStyle(metaEl).color), cardBg).toFixed(2) + ":1");
+      // العرض المكبر في الفاتح: بطاقة الشرح تتبع الثيمة (قرار موثّق — لا جزيرة داكنة)
+      cards[0].querySelector("button.gal-thumb").click();
+      await new Promise((r) => setTimeout(r, 300));
+      const lb = root.querySelector(".gal-lightbox");
+      if (lb.hidden) { out.push("✗ لم يُفتح العرض المكبر"); return out; }
+      const cap = lb.querySelector(".gal-lb-caption");
+      const capBg = effBg(cap);
+      const capFg = parseColor(getComputedStyle(cap.querySelector(".gal-prompt")).color);
+      out.push("شرح العرض المكبر: نص " + fmt(capFg) + " على " + fmt(capBg) + " = " + contrast(capFg, capBg).toFixed(2) + ":1");
+      return out;
+    `,
+  },
 
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
