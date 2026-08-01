@@ -162,6 +162,61 @@
 - CLAUDE.md مشترك بإضافات موضعية؛ تعارضات الدمج يحلها القائد. الدمج بالتسلسل:
   أوبس ⇒ كودكس ⇒ كيمي، والقائد يتحقق من الوصلة الحية وبوابة test:full الختامية.
 
+## العقد المجمَّد للجولة 9 (v2 — إضافي فوق v1؛ النسخة القانونية)
+
+> خلفية الجولة: ج8 اكتملت (main ≥ `8f9a6d3`، بوابة 63/63، توليد حي مثبت بيد المالك).
+> تجربة المالك الأولى كشفت ثلاث فجوات UX دخلت هذا العقد، واعتُمدت «الطبقات الثلاث»
+> (HTML/CSS للنص العربي · generate_media للمشاهد · الموصّل الخارجي بالتسمية) في
+> سياسة البيئة (`952a224`).
+
+### 1) توسعة النواة (أوبس)
+- نوع `audio` عبر fal (موسيقى/مؤثرات — النموذج والمعاملات يثبتها المسبار الحي حصراً؛
+  FAL_KEY قائم). سطر السجل يقبل `kind:'audio'` (توسعة قيم لا حقول — schema يبقى v1).
+- `refs` تعمل فعلياً: image-to-image عبر نموذج fal يثبته المسبار (مثل flux kontext)؛
+  تبقى `refs_unsupported` لكل نموذج لم يثبت مساره.
+- حارس مجلد المستخدم: `req.cwd` يساوي مجلد المستخدم (home) ⇒ `{ok:false,
+  error:'no_project'}` — لا سقوط صامت للأصول في home (اكتشاف تجربة المالك).
+- إعادة مسبار openai/gemini: إن فُكّ عجز الفوترة اقلبهما proven وجمّد الشكل المرصود؛
+  وإن بقي الرفض فأبقِهما unproven بسطر SKIPPED صريح — لا بناء على توثيق.
+
+### 2) حدث العرض في الدردشة (كودكس — schema v1)
+- بعد نجاح `generate_media` تبثّ طبقة الأداة حدثاً منقّى واحداً:
+  `{type:'generation_done', kind, files:[rel], cost_usd_estimate, provider, model}`
+  — مسارات نسبية فقط، لا برومبت ولا حقل خام ولا مفتاح؛ يصل renderer عبر مسار
+  أحداث الدور القائم في الأسطح الثلاثة (SDK والمحوّلات وcodexmcp لكودكس/كيمي).
+- الواجهة (كيمي) تلتقطه: بطاقة مصغرة في المحادثة عبر `genThumb` القائمة (الصورة)،
+  وبطاقة معلومات للصوت/الفيديو؛ نقر البطاقة يفتح لوحة المعرض.
+- التقاط الحدث لا يغيّر عقد `KNOWN_EVENT_TYPES` في اختبارات codex-contract
+  (حدث منسّق لا حدث محرك — نمط `loop_update`).
+
+### 3) مهارة `satr-generate` المضمّنة (كودكس)
+- `.agents/skills/satr-generate/SKILL.md` + موارد بالتحميل التدريجي: سياسة الطبقات
+  الثلاث بتفصيلها، الصياغة الاحترافية من برومبت عربي، إرشاد النماذج للنص العربي
+  (مشروط بالنموذج — GPT Image/Nano Banana Pro يجيدانه وflux لا)، ونمط
+  `ig-post-shots` للبوستات كقالب موثق.
+- تنضم إلى `BUILTIN_SKILLS` في `electron/skills.js` (سطر واحد) وإلى
+  `build.files`/`asarUnpack` في package.json (نمط satr-guide حرفياً).
+- محتوى المهارة مسودة يعتمدها المالك عند المراجعة (نمط features.md).
+
+### 4) واجهة المعرض (كيمي)
+- بطاقة `generation_done` في المحادثة (نمط بطاقة `agent_screenshot`/`addActionNotice`
+  القائم — إضافة موضعية في chat.js **بحدها الأدنى، والملف حساس**).
+- بطاقة الصوت في المعرض (معلومات + كلفة، بلا مشغّل)، ومعاينة الفيديو تبقى مؤجلة
+  صراحة إلى ج10 (تظهر «تأتي لاحقاً» كما اليوم).
+
+### 5) حدود ملكية الجولة 9 (صارمة)
+- أوبس: `electron/genmedia.js` · `scripts/genmedia-probe.js` · `scripts/genmedia-test.js`
+  · قسمه في CLAUDE.md.
+- كودكس: `electron/tools.js` · `electron/codexmcp.js` · `electron/agent.js` ·
+  `electron/main.js` · `electron/skills.js` (سطر BUILTIN فقط) ·
+  `.agents/skills/satr-generate/**` (جديد) · `package.json` (build.files/asarUnpack)
+  · `tools.md` عبر المولّد حصراً · `scripts/codexmcp-test.js` (توسعة الأداة/الحدث)
+  · قسمه في CLAUDE.md.
+- كيمي: `src/ui/app.js` · `src/ui/components/chat.js` (بطاقة التوليد فقط) ·
+  `src/ui/components/gallery-panel.js` · `scripts/gallery-live-test.js` + fixtures ·
+  `scripts/ui-audit.js` · قسمه في CLAUDE.md.
+- الدمج بالتسلسل: أوبس ⇒ كودكس ⇒ كيمي؛ الوصلة الحية وبوابة test:full على القائد.
+
 ## سجل القرارات
 
 - 2026-08-01 · محمد: اعتماد التسلسل الكامل (BYOK ⇒ إطلاق ⇒ رصيد ⇒ مُدار) وتوثيقه
