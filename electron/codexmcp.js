@@ -29,6 +29,7 @@ const browserorigin = require('./browserorigin');
 const browserpolicy = require('./browserpolicy');
 const promocapture = require('./promocapture');
 const promostudio = require('./promostudio');
+const agentTools = require('./tools');
 
 const PROTOCOL_VERSION = '2024-11-05'; // نسخة MCP التي يتفاوض عليها العميل (rmcp يقبلها)
 const SERVER_INFO = { name: 'satr-preview', title: 'Satr Preview', version: '1.0.0' };
@@ -69,7 +70,7 @@ function whyClosed(err, extra) {
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
 
-const PERMISSION_KEYS = new Set(['url', 'aspect', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page', 'expression', 'width', 'height', 'command', 'label', 'id', 'tail_lines', 'from_ref', 'to_ref', 'transfer_id', 'field_ref', 'reason', 'resume_hint', 'fields']);
+const PERMISSION_KEYS = new Set(['url', 'aspect', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page', 'expression', 'width', 'height', 'command', 'label', 'id', 'tail_lines', 'from_ref', 'to_ref', 'transfer_id', 'field_ref', 'reason', 'resume_hint', 'fields', 'kind', 'provider', 'model', 'count', 'cost_usd_estimate', 'session_cost_usd_estimate', 'catalog_date']);
 function permissionInput(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const out = {};
@@ -100,6 +101,7 @@ function buildTools(deps) {
   const promo = deps.promoCapture || promocapture;
   const studio = deps.promoStudio || promostudio;
   const openPreview = typeof deps.openPreview === 'function' ? deps.openPreview : null;
+  const mediaCostState = { total: 0 };
   // التسليم البشري: codex.js يوفّر requestHandoff (بثّ الشريط + انتظار «استلمت»).
   // غيابه ⇒ الأداة ترفض fail-closed (نفس مبدأ requestPermission أدناه).
   const requestHandoff = typeof deps.requestHandoff === 'function' ? deps.requestHandoff : null;
@@ -503,6 +505,27 @@ function buildTools(deps) {
       },
     },
     {
+      name: 'generate_media', access: 'exec', neverAlways: true,
+      description: 'ولّد صورة أو فيديو داخل generations/ بعد عرض النوع والمزوّد والنموذج والعدد والكلفة التقديرية وتراكمي الجلسة في إذن صريح لمرة واحدة.',
+      inputSchema: { type: 'object', properties: {
+        kind: { type: 'string', enum: ['image', 'video'] },
+        prompt: { type: 'string', maxLength: 2000 },
+        model: { type: 'string' },
+        count: { type: 'integer', minimum: 1, maximum: 4 },
+        refs: { type: 'array', items: { type: 'string' }, maxItems: 6 },
+        budget_usd: { type: 'number', minimum: 0 },
+      }, required: ['kind', 'prompt'] },
+      preparePermission: async (args) => agentTools.generationPermission(deps.cwd, args, {
+        genmedia: deps.genmedia, mediaCostState,
+      }),
+      handler: async (args) => {
+        const result = await agentTools.runGenerateMedia(deps.cwd, args, {
+          genmedia: deps.genmedia, mediaCostState,
+        });
+        return textResult(result.content, !result.ok);
+      },
+    },
+    {
       name: 'promo_record_start', access: 'exec', neverAlways: true,
       description: 'ابدأ تسجيل فيديو برومو لنافذة منتج مرئية مخصّصة، ملء الإطار وبـ30fps. يطلب إذن تسجيل الشاشة صراحةً كل مرة، ويلتقط نافذة المنتج وحدها بلا شاشة المستخدم وبلا رفع.',
       inputSchema: { type: 'object', properties: {
@@ -677,6 +700,14 @@ function start(deps) {
         if (inputError) return rpcOk(id, textResult(whyClosed(inputError), true));
         let allowed = tool.access === 'read';
         if (!allowed && requestPermission) {
+          let displayInput = permissionInput(browserpolicy.safePermissionInput(tool.name, input));
+          if (typeof tool.preparePermission === 'function') {
+            const prepared = await tool.preparePermission(input);
+            if (!prepared || !prepared.ok) {
+              return rpcOk(id, textResult((prepared && prepared.content) || agentTools.GENMEDIA_MISSING, true));
+            }
+            displayInput = permissionInput(prepared.input);
+          }
           const currentUrl = typeof preview.currentUrl === 'function' ? preview.currentUrl() : null;
           const direction = tool.name === 'browser_back' ? 'back' : tool.name === 'browser_forward' ? 'forward' : '';
           const navigationTarget = direction && typeof preview.navigationTarget === 'function'
@@ -689,7 +720,7 @@ function start(deps) {
           else if (tool.browserClass === 'act' && typeof preview.browserTarget === 'function') target = await preview.browserTarget(tool.name, input) || target;
           try {
             allowed = await requestPermission(
-              tool.name, permissionInput(browserpolicy.safePermissionInput(tool.name, input)), tool.access,
+              tool.name, displayInput, tool.access,
               tool.neverAlways === true, target, currentUrl, pageContext, input
             );
           } catch (e) { allowed = false; }

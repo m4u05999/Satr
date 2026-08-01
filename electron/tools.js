@@ -33,6 +33,182 @@ const MAX_RESULT = 48 * 1024;  // سقف نتيجة الأداة (محارف) �
 const MAX_LIST = 1500;         // سقف أسطر list_files
 const MAX_WRITE = 1024 * 1024; // سقف محتوى كتابة واحد (1م.ب)
 const MAX_EDIT_SRC = 2 * 1024 * 1024; // لا تعديل على ملف أكبر (حماية ذاكرة + تراجع مضمون)
+const GENMEDIA_MISSING = 'ميزة التوليد لم تكتمل بعد';
+const GENMEDIA_FILE = path.join(__dirname, 'genmedia.js');
+const MEDIA_PROVIDERS = new Set(['openai', 'gemini', 'fal', 'managed']);
+let cachedGenmedia = null;
+
+function resolveGenmedia(override) {
+  if (override === null) return null;
+  if (override && typeof override.estimate === 'function' && typeof override.generate === 'function') return override;
+  if (cachedGenmedia) return cachedGenmedia;
+  if (!fs.existsSync(GENMEDIA_FILE)) return null;
+  try {
+    const loaded = require(GENMEDIA_FILE);
+    if (!loaded || typeof loaded.estimate !== 'function' || typeof loaded.generate !== 'function') return null;
+    cachedGenmedia = loaded;
+    return loaded;
+  } catch {
+    return null;
+  }
+}
+
+function mediaRequest(cwd, args) {
+  const input = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  const kind = input.kind === 'image' || input.kind === 'video' ? input.kind : '';
+  const prompt = typeof input.prompt === 'string' ? input.prompt : '';
+  const count = input.count == null ? undefined : input.count;
+  const refs = input.refs == null ? undefined : input.refs;
+  const budget = input.budget_usd == null ? undefined : input.budget_usd;
+  if (!kind || !prompt.trim()) return { ok: false, error: 'bad_input' };
+  if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > 4)) return { ok: false, error: 'bad_count' };
+  if (refs !== undefined && (!Array.isArray(refs) || refs.length > 6 || refs.some((item) => typeof item !== 'string'))) {
+    return { ok: false, error: 'bad_refs' };
+  }
+  if (budget !== undefined && (!Number.isFinite(budget) || budget < 0)) return { ok: false, error: 'bad_budget' };
+  const request = { cwd, kind, prompt };
+  if (typeof input.model === 'string' && input.model.trim()) request.model = input.model.trim();
+  if (count !== undefined) request.count = count;
+  if (refs !== undefined) request.refs = refs.slice();
+  if (budget !== undefined) request.budget_usd = budget;
+  return { ok: true, request };
+}
+
+function mediaObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  for (const key of ['estimate', 'result', 'entry', 'record', 'selected']) {
+    if (value[key] && typeof value[key] === 'object' && !Array.isArray(value[key])) return { ...value, ...value[key] };
+  }
+  return value;
+}
+
+function mediaToken(value, maxLength) {
+  const cleaned = typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim()
+    : '';
+  return /^[A-Za-z0-9._/-]+$/.test(cleaned) && !memory.hasSecret(cleaned) ? cleaned.slice(0, maxLength) : '';
+}
+
+function mediaCost(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 && number <= 100000 ? number : 0;
+}
+
+function normalizeMediaEstimate(raw, request) {
+  const item = mediaObject(raw);
+  if (!raw || raw.ok === false || item.ok === false) {
+    return { ok: false, error: mediaToken((item && item.error_code) || '', 64) || 'estimate_failed' };
+  }
+  const provider = mediaToken(item.provider || item.provider_id, 32);
+  const model = mediaToken(item.model || request.model, 160);
+  const cost = mediaCost(item.cost_usd_estimate ?? item.cost_usd ?? item.estimated_cost_usd ?? item.total_cost_usd);
+  const count = Number.isInteger(item.count) && item.count >= 1 && item.count <= 4
+    ? item.count : (request.count || 1);
+  return {
+    ok: true,
+    provider: MEDIA_PROVIDERS.has(provider) ? provider : 'auto',
+    model: model || 'auto',
+    count,
+    cost_usd_estimate: cost,
+    catalog_date: /^\d{4}-\d{2}-\d{2}$/.test(String(item.catalog_date || '')) ? item.catalog_date : '',
+  };
+}
+
+function mediaErrorText(error) {
+  if (error === 'unavailable') return GENMEDIA_MISSING;
+  if (error === 'over_budget') return 'رُفض التوليد لأن الكلفة التقديرية تتجاوز budget_usd.';
+  if (error === 'missing_key' || error === 'no_provider') return 'لا يوجد مفتاح مزوّد مناسب لنوع التوليد المطلوب.';
+  if (error === 'bad_count' || error === 'bad_refs' || error === 'bad_budget' || error === 'bad_input') {
+    return 'مدخلات generate_media غير صالحة.';
+  }
+  return 'تعذّر تجهيز توليد الوسائط' + (error ? ' (' + error + ')' : '') + '.';
+}
+
+async function generationPermission(cwd, args, ctx) {
+  const prepared = mediaRequest(cwd, args);
+  if (!prepared.ok) return { ok: false, error: prepared.error, content: mediaErrorText(prepared.error) };
+  const genmedia = resolveGenmedia(ctx && ctx.genmedia);
+  if (!genmedia) return { ok: false, error: 'unavailable', content: GENMEDIA_MISSING };
+  let raw;
+  try { raw = await genmedia.estimate(prepared.request); }
+  catch { return { ok: false, error: 'estimate_failed', content: mediaErrorText('estimate_failed') }; }
+  const estimate = normalizeMediaEstimate(raw, prepared.request);
+  if (!estimate.ok) return { ...estimate, content: mediaErrorText(estimate.error) };
+  const current = mediaCost(ctx && ctx.mediaCostState && ctx.mediaCostState.total);
+  return {
+    ok: true,
+    request: prepared.request,
+    estimate,
+    input: {
+      kind: prepared.request.kind,
+      provider: estimate.provider,
+      model: estimate.model,
+      count: estimate.count,
+      cost_usd_estimate: estimate.cost_usd_estimate,
+      session_cost_usd_estimate: current + estimate.cost_usd_estimate,
+      ...(estimate.catalog_date ? { catalog_date: estimate.catalog_date } : {}),
+    },
+  };
+}
+
+function safeMediaRel(cwd, value) {
+  if (typeof value !== 'string' || !value || path.isAbsolute(value) || path.win32.isAbsolute(value)) return '';
+  const rel = value.replace(/\\/g, '/');
+  if (!rel.startsWith('generations/') || rel.split('/').some((part) => !part || part === '.' || part === '..')) return '';
+  const root = path.resolve(cwd);
+  const resolved = path.resolve(root, rel);
+  return resolved.startsWith(root + path.sep) && !memory.hasSecret(rel) ? rel.slice(0, 1000) : '';
+}
+
+function formatMediaResult(cwd, raw, estimate) {
+  const item = mediaObject(raw);
+  const error = mediaToken((item && item.error_code) || '', 64);
+  if (!raw || raw.ok === false || item.ok === false || item.status === 'failed') {
+    return { ok: false, content: mediaErrorText(error || 'generation_failed'), cost: 0 };
+  }
+  const candidates = Array.isArray(item.files) ? item.files : Array.isArray(item.assets) ? item.assets : [];
+  const paths = candidates.map((value) => safeMediaRel(cwd, value)).filter(Boolean).slice(0, 4);
+  const cost = mediaCost(item.cost_usd_estimate ?? item.cost_usd ?? item.estimated_cost_usd
+    ?? (estimate && estimate.cost_usd_estimate));
+  const providerToken = mediaToken(item.provider || (estimate && estimate.provider), 32);
+  const provider = MEDIA_PROVIDERS.has(providerToken) ? providerToken : '';
+  const model = mediaToken(item.model || (estimate && estimate.model), 160);
+  const fallbackValues = Array.isArray(item.fallbacks) ? item.fallbacks
+    : Array.isArray(item.fallback) ? item.fallback : item.fallback ? [item.fallback] : [];
+  const fallbacks = fallbackValues.map((value) => {
+    if (typeof value === 'string') {
+      const parts = value.split(/\s*(?:→|->)\s*/).map((part) => mediaToken(part, 32)).filter(Boolean);
+      return parts.length === 2 ? parts[0] + ' → ' + parts[1] : (parts[0] || '');
+    }
+    if (!value || typeof value !== 'object') return '';
+    const from = mediaToken(value.from || value.provider, 32);
+    const to = mediaToken(value.to || value.fallback_provider, 32);
+    return from && to ? from + ' → ' + to : (to || from);
+  }).filter(Boolean).slice(0, 4);
+  const lines = [
+    paths.length ? 'اكتمل توليد الوسائط:' : 'اكتمل طلب التوليد بلا مسار أصل صالح.',
+    ...paths.map((rel) => '- ' + rel),
+    'الكلفة التقديرية: $' + cost.toFixed(6),
+    provider ? 'المزوّد: ' + provider : '',
+    model ? 'النموذج: ' + model : '',
+    fallbacks.length ? 'سقوط المزوّد: ' + fallbacks.join('، ') : '',
+  ].filter(Boolean);
+  return { ok: paths.length > 0, content: lines.join('\n'), cost: paths.length ? cost : 0 };
+}
+
+async function runGenerateMedia(cwd, args, ctx) {
+  const permission = await generationPermission(cwd, args, ctx);
+  if (!permission.ok) return { ok: false, content: permission.content };
+  const genmedia = resolveGenmedia(ctx && ctx.genmedia);
+  let raw;
+  try { raw = await genmedia.generate(permission.request, ctx || {}); }
+  catch { return { ok: false, content: mediaErrorText('generation_failed') }; }
+  const formatted = formatMediaResult(cwd, raw, permission.estimate);
+  if (formatted.ok && ctx && ctx.mediaCostState) {
+    ctx.mediaCostState.total = mediaCost(ctx.mediaCostState.total) + formatted.cost;
+  }
+  return { ok: formatted.ok, content: formatted.content };
+}
 
 // ---------- أدوات الكتابة (الدفعة 2.2): إذن عربي إلزامي + diff + تراجع ----------
 // نفس نموذج agent.js: لقطة «قبل» لكل تعديل تعيش بعد الدور ليعمل «تراجع» لاحقاً.
@@ -71,7 +247,8 @@ function undoEdit(id) {
 function permissionTier(name) {
   if (WRITE_TOOLS.has(name)) return 'write';
   if (name === 'run_command' || name === 'verify_project'
-    || name === 'run_in_background' || name === 'stop_background_task') return 'exec';
+    || name === 'run_in_background' || name === 'stop_background_task'
+    || name === 'generate_media') return 'exec';
   return null;
 }
 function needsPermission(name) { return permissionTier(name) !== null; }
@@ -254,6 +431,25 @@ const DEFS = [
           path: { type: 'string', description: 'Relative file path inside the project' },
         },
         required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'generate_media',
+      description: 'Generate image or video assets in the project generations/ folder. This always shows the selected provider, model, count, estimated cost, and session cumulative cost for one-time approval before execution.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['image', 'video'] },
+          prompt: { type: 'string', description: 'Media generation prompt' },
+          model: { type: 'string', description: 'Optional catalog model ID' },
+          count: { type: 'integer', minimum: 1, maximum: 4 },
+          refs: { type: 'array', items: { type: 'string' }, maxItems: 6 },
+          budget_usd: { type: 'number', minimum: 0 },
+        },
+        required: ['kind', 'prompt'],
       },
     },
   },
@@ -575,6 +771,7 @@ async function run(name, cwd, args, ctx) {
       if (content.length > MAX_RESULT) content = content.slice(0, MAX_RESULT) + '\n…(قُصّ المورد — تجاوز سقف النتيجة)';
       return { ok: true, content };
     }
+    if (name === 'generate_media') return runGenerateMedia(cwd, args, ctx);
     if (name === 'write_file') {
       const rel = args && typeof args.path === 'string' ? args.path.trim() : '';
       const content = args && typeof args.content === 'string' ? args.content : null;
@@ -691,4 +888,7 @@ async function run(name, cwd, args, ctx) {
   }
 }
 
-module.exports = { defs, run, needsPermission, permissionTier, undoEdit, saveFromViewer, MAX_RESULT };
+module.exports = {
+  defs, run, needsPermission, permissionTier, undoEdit, saveFromViewer, MAX_RESULT,
+  generationPermission, runGenerateMedia, GENMEDIA_MISSING,
+};

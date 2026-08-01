@@ -11,6 +11,7 @@ const SDK_TOOL_NAMES = Object.freeze([
   'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
   'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
   'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
+  'generate_media',
   'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard',
   'load_skill', 'read_skill_resource', 'verification_config', 'verify_project', 'propose_memory',
 ]);

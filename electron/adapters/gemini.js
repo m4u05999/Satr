@@ -113,13 +113,21 @@ function start(input, cwd, emit) {
   const usageTotal = { input_tokens: 0, output_tokens: 0 };
   const estimatedUsage = { input_tokens: 0, output_tokens: 0 };
   let contextEstimate = null;
+  const mediaCostState = { total: 0 }; // generate_media فقط: تراكمي تقديري للجلسة
 
   // ---------- الإذن العربي (نفس عقد openai-compatible — 2.2/2.3) ----------
   const pendingPerms = new Map();
-  function askPermission(callId, name, args, tier) {
+  async function askPermission(callId, name, args, tier) {
     if (permissionMode === 'bypassPermissions') return Promise.resolve(true);
     if (tier === 'write' && (autoAllowWrites || alwaysAllowed.has(name))) return Promise.resolve(true);
-    emit({ type: 'permission_request', id: callId, tool: name, input: displayInput(args), alwaysEligible: tier !== 'exec' });
+    let visibleInput = displayInput(args);
+    if (name === 'generate_media') {
+      const prepared = await tools.generationPermission(cwd, args, { mediaCostState });
+      if (!prepared.ok) return true; // التنفيذ يعيد التدهور العربي المنقّى للنموذج
+      visibleInput = prepared.input;
+    }
+    emit({ type: 'permission_request', id: callId, tool: name, input: visibleInput,
+      alwaysEligible: tier !== 'exec', ...(name === 'generate_media' ? { turnEligible: false } : {}) });
     return new Promise((resolve) => { pendingPerms.set(callId, { resolve, name }); });
   }
 
@@ -261,10 +269,10 @@ function start(input, cwd, emit) {
             const allowed = await askPermission(c.id, c.name, c.args, tier);
             if (aborted) return;
             out = allowed
-              ? await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext, engine: PROVIDER })
+              ? await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext, engine: PROVIDER, mediaCostState })
               : { ok: false, content: 'رفض المستخدم هذا الإجراء — لا تعاود المحاولة نفسها؛ اشرح ما كنت ستفعله أو اقترح بديلاً' };
           } else {
-            out = await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext, engine: PROVIDER });
+            out = await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext, engine: PROVIDER, mediaCostState });
           }
           emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: c.id, is_error: !out.ok }] } });
           responseParts.push({ functionResponse: { name: c.name, response: { result: out.content } } });

@@ -185,14 +185,22 @@ function start(input, cwd, emit) {
   let currentRequest = null;
   let aborted = false;
   let contextEstimate = null;
+  const mediaCostState = { total: 0 }; // generate_media فقط: تراكمي تقديري للجلسة
 
   emit({ type: 'system', subtype: 'init', session_id: sessionId, model });
 
-  function askPermission(callId, name, args, tier) {
+  async function askPermission(callId, name, args, tier) {
     if (permissionMode === 'bypassPermissions') return Promise.resolve(true);
     if (tier === 'write' && (autoAllowWrites || alwaysAllowed.has(name))) return Promise.resolve(true);
     const id = String(callId);
-    emit({ type: 'permission_request', id, tool: name, input: displayInput(args) });
+    let visibleInput = displayInput(args);
+    if (name === 'generate_media') {
+      const prepared = await tools.generationPermission(cwd, args, { mediaCostState });
+      if (!prepared.ok) return true; // التنفيذ يعيد التدهور العربي المنقّى للنموذج
+      visibleInput = prepared.input;
+    }
+    emit({ type: 'permission_request', id, tool: name, input: visibleInput,
+      ...(name === 'generate_media' ? { alwaysEligible: false, turnEligible: false } : {}) });
     return new Promise((resolve) => { pendingPerms.set(id, { resolve, name }); });
   }
 
@@ -402,10 +410,10 @@ function start(input, cwd, emit) {
             const allowed = await askPermission(call.call_id, call.name, args, tier);
             if (aborted) return;
             toolResult = allowed
-              ? await tools.run(call.name, cwd, args, { emit, id: call.call_id, skillContext, engine: PROVIDER })
+              ? await tools.run(call.name, cwd, args, { emit, id: call.call_id, skillContext, engine: PROVIDER, mediaCostState })
               : { ok: false, content: 'رفض المستخدم هذا الإجراء — لا تعاود المحاولة نفسها؛ اشرح ما كنت ستفعله أو اقترح بديلاً' };
           } else {
-            toolResult = await tools.run(call.name, cwd, args, { emit, id: call.call_id, skillContext, engine: PROVIDER });
+            toolResult = await tools.run(call.name, cwd, args, { emit, id: call.call_id, skillContext, engine: PROVIDER, mediaCostState });
           }
           emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: call.call_id, is_error: !toolResult.ok }] } });
           items.push({ type: 'function_call_output', call_id: call.call_id, output: toolResult.content });

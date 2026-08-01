@@ -8,8 +8,11 @@
 
 const http = require('http');
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const codexmcp = require('../electron/codexmcp');
 const codex = require('../electron/codex');
+const tools = require('../electron/tools');
 
 // preview مزيّف يحاكي عقد electron/preview.js دون WebContentsView
 const preview = {
@@ -67,6 +70,22 @@ const promoStudio = {
   proposals: 0,
   propose: () => { promoStudio.proposals += 1; return { ok: true, storyboard: { scenes: [{ id: 'scene_1' }] } }; },
 };
+const genmedia = {
+  estimates: 0,
+  generations: 0,
+  listCatalog: () => [],
+  estimate: async (request) => {
+    genmedia.estimates += 1;
+    return { ok: true, provider: 'fal', model: request.model || 'fal-image-test', count: request.count || 1,
+      cost_usd_estimate: 0.25, catalog_date: '2026-08-01' };
+  },
+  generate: async (request) => {
+    genmedia.generations += 1;
+    return { ok: true, provider: 'fal', model: request.model || 'fal-image-test',
+      files: ['generations/test.png'], cost_usd_estimate: 0.25, fallbacks: ['openai → fal'],
+      api_key: 'FAL_TEST_SECRET_MUST_NOT_LEAK' };
+  },
+};
 
 function post(url, token, msg) {
   return new Promise((resolve) => {
@@ -94,7 +113,7 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   const cleanedFields = codexmcp._internals.permissionInput({ fields: [{ ref: 's3:e1', value: 'smtp-relay.brevo.com', injected: 'no' }] });
   ok(cleanedFields.fields[0].value === 'smtp-relay.brevo.com' && !Object.hasOwn(cleanedFields.fields[0], 'injected'), 'حقول إذن fill_form مرئية ومنقّاة');
   const allowAll = async () => true;
-  const srv = await codexmcp.start({ preview, requestPermission: allowAll });
+  const srv = await codexmcp.start({ preview, cwd: process.cwd(), genmedia, requestPermission: allowAll });
 
   // المصادقة: بلا رمز أو رمز خاطئ ⇒ 401
   let r = await post(srv.url, null, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
@@ -121,17 +140,30 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
    'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
    'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
    'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task',
+   'generate_media',
    'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
-  ok(names.length === 33, 'عدد أدوات Codex MCP أصبح 33 (25 متصفح + 4 خلفية + 4 برومو)');
+  ok(names.length === 34, 'عدد أدوات Codex MCP أصبح 34 (25 متصفح + 4 خلفية + generate_media + 4 برومو)');
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
-  const builtTools = codexmcp.buildTools({ preview, promoCapture, promoStudio });
+  const builtTools = codexmcp.buildTools({ preview, cwd: process.cwd(), genmedia, promoCapture, promoStudio });
   const built = (name) => builtTools.find((tool) => tool.name === name);
   ok(built('browser_evaluate').browserClass === 'act', 'browser_evaluate مصنّفة act');
   ok(built('browser_set_viewport').browserClass === 'read' && built('browser_perf').browserClass === 'read', 'viewport/perf مصنّفتان read');
   ok(built('browser_back').browserClass === 'navigate' && built('browser_forward').browserClass === 'navigate', 'back/forward مصنّفتان navigate');
   ok(['browser_fill_form', 'browser_transfer_field', 'browser_request_secret'].every((name) => built(name).browserClass === 'act'), 'أدوات الحقول الجديدة مصنّفة act');
   ok(built('browser_handoff_step').browserClass === 'handoff', 'browser_handoff_step مصنّفة handoff');
+  ok(built('generate_media').access === 'exec' && built('generate_media').neverAlways, 'generate_media فعل exec بلا «دائماً»');
+  ok(['kind', 'prompt', 'model', 'count', 'refs', 'budget_usd'].every((field) => Object.hasOwn(built('generate_media').inputSchema.properties, field)),
+    'generate_media تعلن حقول العقد المجمّد فقط');
+  const adapterMediaDef = tools.defs().find((definition) => definition.function.name === 'generate_media');
+  ok(tools.permissionTier('generate_media') === 'exec' && adapterMediaDef
+    && ['kind', 'prompt', 'model', 'count', 'refs', 'budget_usd'].every((field) => Object.hasOwn(adapterMediaDef.function.parameters.properties, field)),
+  'generate_media مصنّفة exec في tools.js وتعلن حقول العقد');
+  const agentSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'agent.js'), 'utf8');
+  ok(agentSource.includes("const GENERATE_MEDIA_TOOL = 'mcp__satr-terminal__generate_media'")
+    && /NEVER_ALWAYS_TOOLS[^\n]+GENERATE_MEDIA_TOOL/.test(agentSource)
+    && /NEVER_TURN_TOOLS[\s\S]{0,300}GENERATE_MEDIA_TOOL/.test(agentSource),
+  'generate_media في SDK مصنّفة بلا «دائماً» ولا موافقة دور');
   ok(built('promo_record_start').access === 'exec' && built('promo_record_start').neverAlways, 'بدء تسجيل البرومو فعل صريح بلا «دائماً»');
   ok(built('promo_record_stop').access === 'exec' && built('promo_record_stop').neverAlways, 'إيقاف تسجيل البرومو فعل صريح بلا «دائماً»');
   ok(built('promo_list_segments').access === 'read', 'سرد مقاطع البرومو قراءة حرّة');
@@ -231,6 +263,49 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   ok(!asked.includes('list_background_tasks') && !jj.result.isError, 'list_background_tasks حرّة كقراءة');
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'get_background_output', arguments: { id: 'term_999' } } });
   ok(!asked.includes('get_background_output'), 'get_background_output حرّة كقراءة');
+  await srv3.stop();
+
+  asked.length = 0; askedMeta.length = 0;
+  genmedia.generations = 0;
+  srv3 = await codexmcp.start({ preview, cwd: process.cwd(), genmedia, requestPermission: gate(false) });
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 61, method: 'tools/call', params: {
+    name: 'generate_media', arguments: { kind: 'image', prompt: 'اختبار', count: 2, budget_usd: 1 },
+  } });
+  jj = JSON.parse(rr.body);
+  const mediaDenied = askedMeta.find((item) => item.tool === 'generate_media');
+  ok(jj.result.isError && genmedia.generations === 0 && mediaDenied && mediaDenied.access === 'exec' && mediaDenied.neverAlways,
+    'رفض إذن generate_media يمنع التنفيذ ويعطّل «دائماً»');
+  ok(mediaDenied.input.provider === 'fal' && mediaDenied.input.model === 'fal-image-test'
+    && mediaDenied.input.count === 2 && mediaDenied.input.cost_usd_estimate === 0.25
+    && mediaDenied.input.session_cost_usd_estimate === 0.25,
+  'إذن generate_media يعرض النوع والمزوّد والنموذج والعدد والكلفة وتراكمي الجلسة');
+  await srv3.stop();
+
+  asked.length = 0; askedMeta.length = 0;
+  srv3 = await codexmcp.start({ preview, cwd: process.cwd(), genmedia, requestPermission: gate(true) });
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 62, method: 'tools/call', params: {
+    name: 'generate_media', arguments: { kind: 'image', prompt: 'اختبار' },
+  } });
+  jj = JSON.parse(rr.body);
+  ok(!jj.result.isError && genmedia.generations === 1 && /generations\/test\.png/.test(jj.result.content[0].text)
+    && /0\.250000/.test(jj.result.content[0].text) && /openai → fal/.test(jj.result.content[0].text)
+    && !JSON.stringify(jj).includes('FAL_TEST_SECRET_MUST_NOT_LEAK'),
+  'قبول generate_media يفوّض للمزيّف ويعيد المسار والكلفة والسقوط بالعربية');
+  asked.length = 0; askedMeta.length = 0;
+  await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 63, method: 'tools/call', params: {
+    name: 'generate_media', arguments: { kind: 'image', prompt: 'اختبار ثانٍ' },
+  } });
+  ok(askedMeta.some((item) => item.tool === 'generate_media' && item.input.session_cost_usd_estimate === 0.5),
+    'إذن generate_media يجمع الكلفة التقديرية عبر الجلسة');
+  await srv3.stop();
+
+  srv3 = await codexmcp.start({ preview, cwd: process.cwd(), genmedia: null, requestPermission: gate(true) });
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 64, method: 'tools/call', params: {
+    name: 'generate_media', arguments: { kind: 'image', prompt: 'اختبار' },
+  } });
+  jj = JSON.parse(rr.body);
+  ok(jj.result.isError && /ميزة التوليد لم تكتمل بعد/.test(jj.result.content[0].text),
+    'غياب genmedia يتدهور برسالة عربية بلا كسر التطبيق');
   await srv3.stop();
 
   asked.length = 0; askedMeta.length = 0;

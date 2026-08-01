@@ -530,8 +530,108 @@ ipcMain.handle('satr:kimiLogin', async (event, cwd) => {
 // للواجهة أبداً (satr:keysList يعيد الأسماء المضبوطة فقط). التكاملات المسجّلة وحدها قد
 // تمرّر السر عبر env إلى عملية ثابتة؛ لا يدخل السر argv أو أمر صدفة مبنياً من المستخدم.
 const SAFE_KEY_NAME = /^[A-Z][A-Z0-9_]{1,64}$/;
+const GEN_KEY_NAMES = ['FAL_KEY'];
+const GEN_PROVIDER_KEYS = Object.freeze([
+  { provider: 'openai', keyName: 'OPENAI_API_KEY', label: 'OpenAI' },
+  { provider: 'gemini', keyName: 'GEMINI_API_KEY', label: 'Google Gemini' },
+  { provider: 'fal', keyName: 'FAL_KEY', label: 'fal.ai' },
+]);
+const GEN_PROVIDERS = new Set(['openai', 'gemini', 'fal', 'managed']);
+const GEN_CONTROL_AND_BIDI = /[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const GEN_IMAGE_MIME = Object.freeze({
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.avif': 'image/avif',
+});
+const GEN_THUMB_MAX_BYTES = 3 * 1024 * 1024;
+const GEN_LOG_READ_MAX_BYTES = 4 * 1024 * 1024;
+
+function loadGenmedia() {
+  const filename = path.join(__dirname, 'genmedia.js');
+  if (!fs.existsSync(filename)) return null;
+  try {
+    const loaded = require(filename);
+    return loaded && typeof loaded.listCatalog === 'function' ? loaded : null;
+  } catch { return null; }
+}
+
+function safeGenerationRel(cwd, value, generationsOnly) {
+  if (typeof value !== 'string' || !value || path.isAbsolute(value) || path.win32.isAbsolute(value)) return '';
+  const rel = value.replace(/\\/g, '/');
+  if (rel.split('/').some((part) => !part || part === '.' || part === '..')) return '';
+  if (generationsOnly && !rel.startsWith('generations/')) return '';
+  const root = path.resolve(cwd);
+  const resolved = path.resolve(root, rel);
+  return resolved.startsWith(root + path.sep) ? rel.slice(0, 1000) : '';
+}
+
+function cleanGenerationText(value, maxPoints) {
+  if (typeof value !== 'string') return '';
+  return Array.from(value.replace(GEN_CONTROL_AND_BIDI, '').trim()).slice(0, maxPoints).join('');
+}
+
+function sanitizeGenerationItem(cwd, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const id = typeof value.id === 'string' && /^gen_[A-Za-z0-9_-]{1,100}$/.test(value.id) ? value.id : '';
+  const kind = value.kind === 'image' || value.kind === 'video' ? value.kind : '';
+  const provider = cleanGenerationText(value.provider, 32);
+  const model = cleanGenerationText(value.model, 160);
+  const status = value.status === 'completed' || value.status === 'failed' ? value.status : '';
+  const cost = Number(value.cost_usd_estimate);
+  if (!id || !kind || !GEN_PROVIDERS.has(provider)
+      || !/^[A-Za-z0-9._/-]{1,160}$/.test(model) || memory.hasSecret(model) || !status
+      || !Number.isFinite(cost) || cost < 0 || cost > 100000) return null;
+  const refs = (Array.isArray(value.refs) ? value.refs : [])
+    .map((item) => safeGenerationRel(cwd, item, false)).filter((item) => item && !memory.hasSecret(item)).slice(0, 6);
+  const filesList = (Array.isArray(value.files) ? value.files : [])
+    .map((item) => safeGenerationRel(cwd, item, true)).filter((item) => item && !memory.hasSecret(item)).slice(0, 4);
+  const at = typeof value.at === 'string' ? cleanGenerationText(value.at, 64)
+    : Number.isFinite(value.at) ? value.at : '';
+  const catalogDate = /^\d{4}-\d{2}-\d{2}$/.test(String(value.catalog_date || '')) ? value.catalog_date : '';
+  if (at === '' || !catalogDate) return null;
+  const prompt = cleanGenerationText(value.prompt, 2000);
+  const item = {
+    id, at, kind, provider, model, prompt: memory.hasSecret(prompt) ? '' : prompt,
+    refs, files: filesList, cost_usd_estimate: cost, catalog_date: catalogDate, status,
+  };
+  const errorCode = typeof value.error_code === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value.error_code)
+    && !memory.hasSecret(value.error_code) ? value.error_code : '';
+  if (errorCode) item.error_code = errorCode;
+  return item;
+}
+
+function generationLogTail(cwd) {
+  let filename = path.join(cwd, '.satr', 'generations.jsonl');
+  let stat;
+  try {
+    if (!fs.existsSync(filename)) return { ok: true, items: [] };
+    const realRoot = fs.realpathSync(cwd);
+    filename = fs.realpathSync(filename);
+    if (!filename.startsWith(realRoot + path.sep)) return { ok: false, error: 'bad_log' };
+    stat = fs.statSync(filename);
+  } catch { return { ok: false, error: 'read_failed' }; }
+  if (!stat.isFile()) return { ok: false, error: 'bad_log' };
+  const size = Math.min(stat.size, GEN_LOG_READ_MAX_BYTES);
+  const buffer = Buffer.alloc(size);
+  let fd;
+  try {
+    fd = fs.openSync(filename, 'r');
+    fs.readSync(fd, buffer, 0, size, stat.size - size);
+  } catch { return { ok: false, error: 'read_failed' }; }
+  finally { if (fd !== undefined) try { fs.closeSync(fd); } catch {} }
+  let text = buffer.toString('utf8');
+  if (stat.size > size) text = text.slice(text.indexOf('\n') + 1);
+  const items = [];
+  for (const line of text.split(/\r?\n/).filter(Boolean).slice(-200)) {
+    try {
+      const item = sanitizeGenerationItem(cwd, JSON.parse(line));
+      if (item) items.push(item);
+    } catch { /* سطر تالف يُهمل ولا يسقط المعرض */ }
+  }
+  return { ok: true, items: items.slice(-200).reverse() };
+}
+
 function knownKeyNames() {
-  return new Set([...adapters.list().map((p) => p.keyName).filter(Boolean), testsprite.KEY_NAME]);
+  return new Set([...adapters.list().map((p) => p.keyName).filter(Boolean), testsprite.KEY_NAME, ...GEN_KEY_NAMES]);
 }
 
 ipcMain.handle('satr:keysList', () => ({ names: keys.names() }));
@@ -549,6 +649,44 @@ ipcMain.handle('satr:keyDelete', (event, p) => {
   const name = p && typeof p.name === 'string' ? p.name : '';
   if (!SAFE_KEY_NAME.test(name) || !knownKeyNames().has(name)) return { ok: false, error: 'bad_name' };
   try { keys.remove(name); return { ok: true }; } catch (e) { return { ok: false, error: 'write_failed' }; }
+});
+
+ipcMain.handle('satr:generationsList', (event, p) => {
+  const cwd = sanitizeMemoryCwd(p && p.cwd);
+  return cwd ? generationLogTail(cwd) : { ok: false, error: 'bad_cwd', items: [] };
+});
+
+ipcMain.handle('satr:genThumb', (event, p) => {
+  const cwd = sanitizeMemoryCwd(p && p.cwd);
+  const rel = cwd ? safeGenerationRel(cwd, p && p.rel, true) : '';
+  const mime = rel ? GEN_IMAGE_MIME[path.extname(rel).toLowerCase()] : '';
+  if (!cwd || !rel || !mime) return { ok: false, error: 'bad_path' };
+  try {
+    const cwdRoot = fs.realpathSync(cwd);
+    const generationsRoot = fs.realpathSync(path.join(cwd, 'generations'));
+    if (!generationsRoot.startsWith(cwdRoot + path.sep)) return { ok: false, error: 'bad_path' };
+    const filename = fs.realpathSync(path.resolve(cwd, rel));
+    if (!filename.startsWith(generationsRoot + path.sep)) return { ok: false, error: 'bad_path' };
+    const stat = fs.statSync(filename);
+    if (!stat.isFile() || stat.size > GEN_THUMB_MAX_BYTES) return { ok: false, error: 'bad_size' };
+    return { ok: true, dataUrl: 'data:' + mime + ';base64,' + fs.readFileSync(filename).toString('base64') };
+  } catch { return { ok: false, error: 'read_failed' }; }
+});
+
+ipcMain.handle('satr:genProviders', async () => {
+  const genmedia = loadGenmedia();
+  if (!genmedia) return { ok: false, error: 'ميزة التوليد لم تكتمل بعد', providers: [] };
+  let catalog;
+  try { catalog = await genmedia.listCatalog(); }
+  catch { return { ok: false, error: 'catalog_failed', providers: [] }; }
+  const rows = Array.isArray(catalog) ? catalog
+    : catalog && Array.isArray(catalog.models) ? catalog.models
+      : catalog && Array.isArray(catalog.providers) ? catalog.providers : [];
+  const available = new Set(rows.map((item) => item && (item.provider || item.id)).filter(Boolean));
+  const providers = GEN_PROVIDER_KEYS.filter((item) => !available.size || available.has(item.provider)).map((item) => ({
+    keyName: item.keyName, label: item.label, set: !!(process.env[item.keyName] || keys.get(item.keyName)),
+  }));
+  return { ok: true, providers };
 });
 
 ipcMain.handle('satr:preflight', async () => {

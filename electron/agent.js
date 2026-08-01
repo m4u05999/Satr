@@ -32,6 +32,7 @@ const keys = require('./keys');
 const testsprite = require('./testsprite');
 const testspriteHarness = require('./testspriteharness');
 const envbrief = require('./envbrief');
+const adapterTools = require('./tools');
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_METADATA_TTL_MS = 2 * 60 * 1000;
@@ -61,10 +62,11 @@ const VERIFY_EXEC_TOOL = 'mcp__satr-verify__verify_project';
 const STOP_BACKGROUND_TOOL = 'mcp__satr-terminal__stop_background_task';
 const PROMO_START_TOOL = 'mcp__satr-terminal__promo_record_start';
 const PROMO_STOP_TOOL = 'mcp__satr-terminal__promo_record_stop';
-const NEVER_ALWAYS_TOOLS = new Set([VERIFY_EXEC_TOOL, STOP_BACKGROUND_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL]);
+const GENERATE_MEDIA_TOOL = 'mcp__satr-terminal__generate_media';
+const NEVER_ALWAYS_TOOLS = new Set([VERIFY_EXEC_TOOL, STOP_BACKGROUND_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL, GENERATE_MEDIA_TOOL]);
 const NEVER_TURN_TOOLS = new Set([
   'Bash', 'mcp__satr-terminal__run_in_terminal', 'mcp__satr-terminal__run_in_background',
-  STOP_BACKGROUND_TOOL, VERIFY_EXEC_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL,
+  STOP_BACKGROUND_TOOL, VERIFY_EXEC_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL, GENERATE_MEDIA_TOOL,
 ]);
 const MAX_DIFF_BYTES = 2 * 1024 * 1024; // فوقه لا نلتقط لقطة ولا نعرض فرقاً (أداء وذاكرة)
 const MAX_SKILL_TOOL_CHARS = 48 * 1024;
@@ -769,6 +771,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
   const portableSkillPrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true });
   const memoryPrompt = isolatedPolicy ? '' : memory.retrieve(cwd, prompt).text;
+  const mediaCostState = { total: 0 };
+  const genmediaOverride = internalPolicy && internalPolicy.genmedia;
   const { query } = await loadSdk();
 
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
@@ -941,6 +945,28 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           if (signal) {
             signal.addEventListener('abort', () => {
               if (pendingQuestions.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
+            }, { once: true });
+          }
+        });
+      }
+      if (toolName === GENERATE_MEDIA_TOOL && permissionMode !== 'bypassPermissions') {
+        const prepared = await adapterTools.generationPermission(cwd, input, {
+          genmedia: genmediaOverride, mediaCostState,
+        });
+        if (!prepared.ok) return { behavior: 'deny', message: prepared.content };
+        const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
+        const requester = typeof agentID === 'string'
+          ? agentID.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 80) : '';
+        emit({
+          type: 'permission_request', id, tool: toolName, input: prepared.input, requester,
+          detail: 'تفاصيل توليد الوسائط:\n' + JSON.stringify(prepared.input, null, 2),
+          turnEligible: false, alwaysEligible: false,
+        });
+        return new Promise((resolve) => {
+          pending.set(id, { resolve, toolName, input, turnEligible: false, neverAlways: true });
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              if (pending.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
             }, { once: true });
           }
         });
@@ -1194,6 +1220,24 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         return result.ok
           ? { content: [{ type: 'text', text: JSON.stringify({ ok: true, session_id: result.session_id }) }] }
           : { content: [{ type: 'text', text: 'تعذّر بدء تسجيل البرومو (' + (result.error || 'خطأ') + ').' }], isError: true };
+      }
+    );
+    const generateMediaTool = sdk.tool(
+      'generate_media',
+      'ولّد صورة أو فيديو داخل generations/ بعد إذن صريح يعرض النوع والمزوّد والنموذج والعدد والكلفة التقديرية وتراكمي الجلسة. لا توجد موافقة دائمة أو موافقة دور لهذه الأداة.',
+      {
+        kind: z.enum(['image', 'video']),
+        prompt: z.string(),
+        model: z.string().optional(),
+        count: z.number().int().min(1).max(4).optional(),
+        refs: z.array(z.string()).max(6).optional(),
+        budget_usd: z.number().min(0).optional(),
+      },
+      async (args) => {
+        const result = await adapterTools.runGenerateMedia(cwd, args, {
+          genmedia: genmediaOverride, mediaCostState,
+        });
+        return { content: [{ type: 'text', text: result.content }], isError: !result.ok };
       }
     );
     const promoRecordStopTool = sdk.tool(
@@ -1793,7 +1837,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }

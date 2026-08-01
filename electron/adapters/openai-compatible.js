@@ -129,6 +129,7 @@ function make(config) {
     const usageTotal = usage.emptyActual();
     const estimatedUsage = { input_tokens: 0, output_tokens: 0 };
     let contextEstimate = null;
+    const mediaCostState = { total: 0 }; // generate_media فقط: تراكمي تقديري للجلسة
 
     // ---------- الإذن العربي لأدوات الكتابة والتنفيذ (2.2/2.3) ----------
     // نفس عقد مسار SDK: permission_request للواجهة، والرد يصل عبر resolvePermission
@@ -136,11 +137,18 @@ function make(config) {
     // طبقات: 'write' يعفيها acceptEdits/«موافقة دائمة»؛ 'exec' موافقة إلزامية كل مرة
     // (bypassPermissions وحده يعفيها — العرض المرئي في الطرفية لا يخفّف التنفيذ)
     const pendingPerms = new Map(); // id → { resolve, name }
-    function askPermission(callId, name, args, tier) {
+    async function askPermission(callId, name, args, tier) {
       if (permissionMode === 'bypassPermissions') return Promise.resolve(true);
       if (tier === 'write' && (autoAllowWrites || alwaysAllowed.has(name))) return Promise.resolve(true);
       const id = String(callId);
-      emit({ type: 'permission_request', id, tool: name, input: displayInput(args), alwaysEligible: tier !== 'exec' });
+      let visibleInput = displayInput(args);
+      if (name === 'generate_media') {
+        const prepared = await tools.generationPermission(cwd, args, { mediaCostState });
+        if (!prepared.ok) return true; // التنفيذ يعيد التدهور العربي المنقّى للنموذج
+        visibleInput = prepared.input;
+      }
+      emit({ type: 'permission_request', id, tool: name, input: visibleInput,
+        alwaysEligible: tier !== 'exec', ...(name === 'generate_media' ? { turnEligible: false } : {}) });
       return new Promise((resolve) => { pendingPerms.set(id, { resolve, name }); });
     }
 
@@ -319,10 +327,10 @@ function make(config) {
               const allowed = await askPermission(c.id, c.name, parsed, tier);
               if (aborted) return;
               out = allowed
-                ? await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext, engine: providerId || 'adapter' })
+                ? await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext, engine: providerId || 'adapter', mediaCostState })
                 : { ok: false, content: 'رفض المستخدم هذا الإجراء — لا تعاود المحاولة نفسها؛ اشرح ما كنت ستفعله أو اقترح بديلاً' };
             } else {
-              out = await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext, engine: providerId || 'adapter' });
+              out = await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext, engine: providerId || 'adapter', mediaCostState });
             }
             emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: c.id, is_error: !out.ok }] } });
             messages.push({ role: 'tool', tool_call_id: c.id, content: out.content });
