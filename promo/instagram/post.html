@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>سطر — بوست إنستقرام</title>
+<link rel="stylesheet" href="../../src/vendor/fonts.css">
+<style>
+  /* ‏tokens هوية «سطر» — منسوخة من src/styles/base.css (الوضع الداكن) */
+  :root {
+    --bg: #111110;
+    --bg-deep: #0d0d0c;
+    --surface: #191918;
+    --surface-2: #222221;
+    --border-dim: #2a2a28;
+    --border: #3b3a37;
+    --text: #eeeeec;
+    --text-dim: #b5b3ad;
+    --text-faint: #7c7b74;
+    --gold: #D9A441;
+    --gold-strong: #E5B655;
+    --gold-soft: rgba(217, 164, 65, 0.12);
+    --gold-border: rgba(217, 164, 65, 0.35);
+    --green: #71d083;
+    --green-soft: rgba(113, 208, 131, 0.12);
+    --green-border: rgba(113, 208, 131, 0.4);
+    --red: #ec5d5e;
+    --red-soft: rgba(236, 93, 94, 0.1);
+    --red-border: rgba(236, 93, 94, 0.35);
+    --sans: 'IBM Plex Sans Arabic', 'Segoe UI', 'Tahoma', system-ui, sans-serif;
+    --mono: 'Cascadia Mono', 'Consolas', monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { width: 100%; height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* توهّج ذهبي علوي + قاعدة داكنة */
+  .glow {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(1100px 620px at 78% -8%, rgba(217, 164, 65, 0.16), transparent 62%),
+      radial-gradient(900px 520px at 12% 108%, rgba(217, 164, 65, 0.07), transparent 60%);
+    pointer-events: none;
+  }
+
+  /* شبكة خفيفة جداً توحي بالطرفية */
+  .grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(to left, rgba(255,255,255,0.022) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,0.022) 1px, transparent 1px);
+    background-size: 72px 72px;
+    mask-image: radial-gradient(circle at 50% 40%, #000 55%, transparent 88%);
+    pointer-events: none;
+  }
+
+  .frame {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    padding: var(--pad, 72px);
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap, 40px);
+  }
+
+  /* ── الرأس ───────────────────────────────── */
+  header { display: flex; align-items: center; justify-content: space-between; }
+
+  .brand { display: flex; align-items: center; gap: 20px; }
+
+  .mark {
+    width: 84px; height: 84px;
+    border-radius: 22px;
+    background: linear-gradient(150deg, rgba(217,164,65,0.22), rgba(217,164,65,0.06));
+    border: 2px solid var(--gold-border);
+    display: grid; place-items: center;
+    box-shadow: 0 0 48px rgba(217, 164, 65, 0.18);
+  }
+  .mark span {
+    font-size: 46px; font-weight: 700; color: var(--gold-strong);
+    line-height: 1; transform: translateY(-2px);
+  }
+
+  .brand-text .name { font-size: 46px; font-weight: 700; letter-spacing: -0.5px; }
+  .brand-text .kicker { font-size: 21px; color: var(--text-dim); margin-top: 4px; }
+
+  .pill {
+    font-size: 19px; font-weight: 500; color: var(--gold);
+    background: var(--gold-soft); border: 1px solid var(--gold-border);
+    padding: 11px 22px; border-radius: 999px; white-space: nowrap;
+  }
+
+  /* ── العنوان ─────────────────────────────── */
+  .headline {
+    font-size: var(--h1, 72px);
+    font-weight: 700;
+    line-height: 1.24;
+    letter-spacing: -1.2px;
+  }
+  .headline .dim { color: var(--text-faint); }
+  .headline .hit { color: var(--gold); }
+
+  /* ── بطاقتا المقارنة ─────────────────────── */
+  .compare { display: flex; flex-direction: column; gap: 22px; }
+
+  .card {
+    background: var(--bg-deep);
+    border: 1px solid var(--border-dim);
+    border-radius: 20px;
+    padding: 26px 30px 30px;
+    position: relative;
+  }
+  .card.bad { border-color: var(--red-border); }
+  .card.good {
+    border-color: var(--gold-border);
+    box-shadow: 0 0 0 1px rgba(217,164,65,0.08), 0 24px 60px rgba(0,0,0,0.45);
+  }
+
+  .card-top {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .card-label { font-size: 20px; color: var(--text-dim); font-weight: 500; }
+  .tag {
+    font-size: 17px; font-weight: 500; padding: 7px 16px; border-radius: 999px;
+  }
+  .tag.bad { color: var(--red); background: var(--red-soft); border: 1px solid var(--red-border); }
+  .tag.good { color: var(--green); background: var(--green-soft); border: 1px solid var(--green-border); }
+
+  .line { display: flex; align-items: baseline; gap: 14px; }
+  .prompt { color: var(--gold); font-family: var(--mono); font-size: 26px; direction: ltr; }
+
+  /* النص المكسور: حروف معزولة بترتيب معكوس (محاكاة طرفية بلا BiDi) */
+  .broken {
+    direction: ltr;
+    font-size: var(--broken, 31px);
+    color: var(--text-dim);
+    letter-spacing: 4px;
+    white-space: nowrap;
+  }
+
+  .correct {
+    font-size: var(--line, 34px);
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  /* ── التذييل ─────────────────────────────── */
+  footer { margin-top: auto; display: flex; flex-direction: column; gap: 26px; }
+
+  .feats { display: flex; gap: 14px; }
+  .feat {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border-dim);
+    border-radius: 16px;
+    padding: 18px 20px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .feat .ic { font-size: 26px; line-height: 1; }
+  .feat .tx { font-size: 20px; color: var(--text-dim); font-weight: 500; }
+
+  .sign {
+    display: flex; align-items: center; justify-content: space-between;
+    border-top: 1px solid var(--border-dim); padding-top: 24px;
+  }
+  .sign .lead { font-size: 24px; color: var(--text); font-weight: 500; }
+  .sign .url { font-size: 22px; color: var(--gold); direction: ltr; font-family: var(--mono); }
+
+  /* ── المقاس الطولي 4:5 ───────────────────── */
+  body.tall {
+    --pad: 84px;
+    --gap: 56px;
+    --h1: 88px;
+    --line: 40px;
+    --broken: 33px;
+  }
+  /* توزيع الفراغ حول البطاقات بدل تكديسه فوق التذييل */
+  body.tall .compare { gap: 28px; margin-block: auto; }
+  body.tall .card { padding: 34px 38px 38px; }
+  body.tall .feat { padding: 22px 24px; }
+  body.tall .feat .tx { font-size: 22px; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="grid"></div>
+
+  <div class="frame">
+    <header>
+      <div class="brand">
+        <div class="mark"><span>س</span></div>
+        <div class="brand-text">
+          <div class="name">سطر</div>
+          <div class="kicker">البيت العربي لأدوات الأوامر الذكية</div>
+        </div>
+      </div>
+      <div class="pill">مجاني ومفتوح المصدر</div>
+    </header>
+
+    <div class="headline">
+      طرفيتك <span class="dim">لا تفهم</span> العربية.<br>
+      <span class="hit">سطر</span> يفهمها.
+    </div>
+
+    <div class="compare">
+      <div class="card bad">
+        <div class="card-top">
+          <div class="card-label">في الطرفية التقليدية</div>
+          <div class="tag bad">✕ مقطّع ومعكوس</div>
+        </div>
+        <div class="line">
+          <span class="prompt">&gt;</span>
+          <span class="broken">ة ي ب ر ع &nbsp;ط و ب ه &nbsp;ة ح ف ص &nbsp;ي ل &nbsp;ئ ش ن أ</span>
+        </div>
+      </div>
+
+      <div class="card good">
+        <div class="card-top">
+          <div class="card-label">في سطر</div>
+          <div class="tag good">✓ كما يجب أن يُقرأ</div>
+        </div>
+        <div class="line">
+          <span class="prompt">&gt;</span>
+          <span class="correct">أنشئ لي صفحة هبوط عربية</span>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <div class="feats">
+        <div class="feat"><span class="ic">🖥️</span><span class="tx">طرفية عربية</span></div>
+        <div class="feat"><span class="ic">🌐</span><span class="tx">معاينة مدمجة</span></div>
+        <div class="feat"><span class="ic">🔒</span><span class="tx">أذونات عربية</span></div>
+      </div>
+      <div class="sign">
+        <div class="lead">‏Claude Code وCodex وKimi — بواجهة عربية واحدة</div>
+        <div class="url">github.com/m4u05999/Satr</div>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module">
+    // وضع «الطولي 4:5» عبر ?variant=tall
+    const variant = new URLSearchParams(location.search).get('variant');
+    if (variant === 'tall') document.body.classList.add('tall');
+    await document.fonts.ready;
+    window.__shotsReady = true;
+  </script>
+</body>
+</html>
