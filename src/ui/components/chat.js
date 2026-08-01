@@ -7,6 +7,7 @@
 // العقد للخارج (تستدعيه القشرة وقت التفاعل — بعد تحميل الوحدات):
 //   addUserMsg(text, images) · addNotice(text) · addNoticeBefore(text, beforeEl)
 //   addStandaloneDiff(ev) · addHistoryAssistant(msg, label) · newAssistantBlock(label)
+//   addGenerationCard(ev, cwd, onOpen) «بطاقة توليد مكتمل — ج9»
 //   showTaskLedger(ledger) · clearTaskLedger()
 //   showCheckpoint(checkpoint) · showVerification(result) · clearCheckpoint()
 //   reset() «جلسة جديدة» · clearThread() «استئناف محوّل» · scrollToEnd(force)
@@ -687,6 +688,85 @@ class SatrChat extends HTMLElement {
     wrap.appendChild(bDiff(ev));
     thread.appendChild(wrap);
     scrollDown();
+  }
+
+  // تنسيق الكلفة التقديرية للتوليد بالدولار — LTR دائماً (أعراف بطاقات المعرض نفسها)
+  function formatGenCost(value) {
+    const n = Number(value);
+    if (!isFinite(n)) return '$?';
+    return '$' + n.toFixed(3);
+  }
+
+  // بطاقة «توليد مكتمل» (عقد ج9 §2): الحدث المنسّق generation_done تلتقطه القشرة
+  // وتستدعي هذه الطريقة — بطاقة مستقلة عن الدور بنمط addStandaloneDiff، تستهلك
+  // cardSheet القائمة (work-card) حصراً فلا ورقة جديدة ولا لون صلب. الصورة بمصغرة
+  // عبر window.satr.genThumb القائمة، والصوت/الفيديو بطاقة معلومات (النوع + الكلفة
+  // + المسار LTR) — المشغّل والمعاينة مؤجلان عمداً. نقر البطاقة يفتح لوحة المعرض
+  // عبر معاودة تمرّرها القشرة (تملك مسار فتح اللوحة وقيمة cwd).
+  function addGenerationCard(ev, cwd, onOpen) {
+    hideEmpty();
+    ev = ev || {};
+    const kind = ev.kind === 'video' ? 'video' : ev.kind === 'audio' ? 'audio' : 'image';
+    const files = Array.isArray(ev.files) ? ev.files : [];
+    const rel = files.length ? String(files[0]) : '';
+    const kindLabel = kind === 'video' ? 'فيديو' : kind === 'audio' ? 'صوت' : 'صورة';
+    const kindIcon = kind === 'video' ? '🎬' : kind === 'audio' ? '🎵' : '🖼';
+
+    const card = document.createElement('article');
+    card.className = 'work-card gen-card';
+    card.dataset.state = 'completed';
+    card.title = 'انقر لفتح معرض التوليدات';
+    card.style.cursor = 'pointer'; // CSSOM لا سمة مضمّنة (CSP)
+    if (onOpen) card.addEventListener('click', () => { try { onOpen(); } catch (e) {} });
+
+    const head = document.createElement('div'); head.className = 'work-card-head';
+    const title = document.createElement('div'); title.className = 'work-card-title';
+    title.textContent = kindIcon + ' توليد مكتمل: ' + kindLabel;
+    const state = document.createElement('div'); state.className = 'work-card-state';
+    state.textContent = (ev.provider || '?') + '/' + (ev.model || '?');
+    head.appendChild(title); head.appendChild(state); card.appendChild(head);
+
+    if (kind === 'image') {
+      const body = document.createElement('div'); body.className = 'work-card-body gen-thumb';
+      const ph = document.createElement('div'); ph.textContent = '…';
+      body.appendChild(ph); card.appendChild(body);
+      if (rel && cwd && window.satr && typeof window.satr.genThumb === 'function') {
+        window.satr.genThumb(cwd, rel).then((thumb) => {
+          if (!card.isConnected) return;
+          if (!thumb || !thumb.ok || !thumb.dataUrl) { ph.textContent = 'تعذّر تحميل المصغرة'; return; }
+          const img = document.createElement('img');
+          img.src = thumb.dataUrl; img.alt = 'الصورة المولّدة';
+          // قياس المصغرة عبر CSSOM (لا سمة style — CSP) بأعراف .tool .shot-thumb
+          img.style.display = 'block'; img.style.maxWidth = '100%';
+          img.style.maxHeight = '220px'; img.style.margin = 'auto';
+          img.style.borderRadius = 'var(--radius-sm)';
+          body.replaceChild(img, ph);
+        }).catch(() => { if (card.isConnected) ph.textContent = 'تعذّر تحميل المصغرة'; });
+      } else {
+        ph.textContent = rel || '—';
+      }
+    } else {
+      const summary = document.createElement('div'); summary.className = 'work-card-summary';
+      summary.dir = 'auto';
+      summary.textContent = kind === 'audio'
+        ? 'مقطع صوتي — المشغّل المضمّن مؤجل عمداً؛ الملف في معرض التوليدات مع برومبته وكلفته.'
+        : 'مقطع فيديو — المعاينة المضمّنة تأتي لاحقاً؛ الملف في معرض التوليدات مع برومبته وكلفته.';
+      card.appendChild(summary);
+    }
+
+    const foot = document.createElement('div'); foot.className = 'work-card-foot';
+    const costItem = document.createElement('span'); costItem.textContent = 'الكلفة التقديرية: ';
+    const costVal = document.createElement('bdi'); costVal.className = 'work-card-tech';
+    costVal.textContent = formatGenCost(ev.cost_usd_estimate);
+    costItem.appendChild(costVal); foot.appendChild(costItem);
+    if (rel) {
+      const pathItem = document.createElement('span'); pathItem.textContent = 'المسار: ';
+      const pathVal = document.createElement('bdi'); pathVal.className = 'work-card-tech';
+      pathVal.textContent = rel;
+      pathItem.appendChild(pathVal); foot.appendChild(pathItem);
+    }
+    card.appendChild(foot);
+    thread.appendChild(card); scrollDown();
   }
 
   function addNotice(text) {
@@ -1507,6 +1587,7 @@ class SatrChat extends HTMLElement {
     this.addNoticeBefore = addNoticeBefore;
     this.addActionNotice = addActionNotice;
     this.addStandaloneDiff = addStandaloneDiff;
+    this.addGenerationCard = addGenerationCard;
     this.addHistoryAssistant = addHistoryAssistant;
     this.showOpsEvent = showOpsEvent;
     this.showTaskLedger = showTaskLedger;

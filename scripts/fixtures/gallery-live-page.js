@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     el.addEventListener('panel-close', () => { closeEvents++; });
     el.addEventListener('gallery-insert', (e) => { insertEvent = e.detail; });
 
-    // (1) الفتح بالبيانات المزيفة: شبكة بأربع بطاقات
+    // (1) الفتح بالبيانات المزيفة: شبكة بخمس بطاقات (صورتان + فيديو + صوت + فاشلة)
     window.__galleryLiveProgress = 'open-with-data';
     await el.open(document.getElementById('cwd').value);
     assert(el.hasAttribute('open'), 'لم تُفتح اللوحة.');
@@ -68,8 +68,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const grid = root.querySelector('.gal-grid');
     assert(grid, 'لم تُرسم الشبكة.');
     const cards = [...grid.querySelectorAll('.gal-card')];
-    assert(cards.length === 4, 'عدد البطاقات غير متوقع: ' + cards.length);
-    checks.push('grid-four-cards');
+    assert(cards.length === 5, 'عدد البطاقات غير متوقع: ' + cards.length);
+    checks.push('grid-five-cards');
 
     // (2) المصغرات الكسولة تُحمّل عبر genThumb للصورتين فقط
     await waitFor(() => root.querySelectorAll('.gal-thumb img').length === 2, 'تحميل مصغرتين');
@@ -80,13 +80,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     // (3) الفيديو بطاقة معلومات مؤجلة بلا <img> وبلا طلب مصغرة
     const videoCard = cards[2];
     assert(videoCard.querySelector('.gal-video'), 'غاب صندوق الفيديو.');
-    assert(!videoCard.querySelector('img'), 'ظهرت معاينة فيديو (مؤجلة ج9).');
-    assert(videoCard.textContent.includes('الجولة 9'), 'غابت عبارة تأجيل الفيديو.');
+    assert(!videoCard.querySelector('img'), 'ظهرت معاينة فيديو (مؤجلة ج10).');
+    assert(videoCard.textContent.includes('تأتي لاحقاً'), 'غابت عبارة تأجيل الفيديو.');
     assert(videoCard.querySelector('.gal-meta').textContent.includes('fal/kling-v2.1'), 'ميتا الفيديو ناقصة.');
     checks.push('video-deferred-card');
 
+    // (3ب) الصوت بطاقة معلومات بلا مشغّل وبلا طلب مصغرة (مؤجل عمداً — عقد ج9 §4)
+    const audioCard = cards[3];
+    assert(audioCard.querySelector('.gal-audio'), 'غاب صندوق الصوت.');
+    assert(!audioCard.querySelector('img'), 'ظهرت معاينة في بطاقة الصوت.');
+    assert(audioCard.textContent.includes('المشغّل يأتي لاحقاً'), 'غابت عبارة تأجيل مشغّل الصوت.');
+    assert(audioCard.querySelector('.gal-meta').textContent.includes('fal/stable-audio-2.5'), 'ميتا الصوت ناقصة.');
+    assert(bridge.thumbCalls.length === 2, 'طلبت بطاقة الصوت/الفيديو مصغرة: ' + bridge.thumbCalls.length);
+    checks.push('audio-info-card');
+
     // (4) بطاقة الفشل تعرض الخطأ وبلا زر إرسال مسار
-    const failedCard = cards[3];
+    const failedCard = cards[4];
     assert(failedCard.querySelector('.gal-failed'), 'غابت بطاقة الفشل.');
     assert(failedCard.textContent.includes('over_budget'), 'غاب رمز خطأ الفشل.');
     assert(![...failedCard.querySelectorAll('button')].some((b) => b.textContent.includes('أرسل المسار')),

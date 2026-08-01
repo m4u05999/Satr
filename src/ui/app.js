@@ -1100,6 +1100,14 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
     // وضع الحلقة المحدودة (schema v1): توجيه عرض فقط إلى غرفة العمليات.
     if (ev.type === 'loop_update') { opsRoomEl.handleEvent(ev); return; }
+    // «توليد مكتمل» (schema v1 — عقد ج9 §2): حدث منسّق لا حدث محرك (نمط
+    // loop_update) ⇒ بطاقة مستقلة في المحادثة عبر chat.js؛ نقرها يفتح لوحة
+    // المعرض بالمسار القائم (openGalleryPanel — تُستدعى كسولاً بعد إقلاع القشرة).
+    if (ev.type === 'generation_done') {
+      if (chatEl.addGenerationCard) chatEl.addGenerationCard(
+        ev, sessionCwd || $('cwd').value.trim(), () => openGalleryPanel());
+      return;
+    }
     if (ev.type === 'execution_review_update') {
       opsRoomEl.handleEvent(ev);
       return;

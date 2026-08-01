@@ -40,6 +40,13 @@
       cost_usd_estimate: 0.35, catalog_date: '2026-08-01', status: 'completed',
     },
     {
+      id: 'gen_1754000005_e5', at: '2026-08-01T05:25:05.000Z', kind: 'audio',
+      provider: 'fal', model: 'stable-audio-2.5',
+      prompt: 'موسيقى خلفية هادئة بعود وناي لمقطع تعريفي عن تطبيق كتابة عربي، دقيقة واحدة',
+      refs: [], files: ['generations/satr-theme.mp3'],
+      cost_usd_estimate: 0.05, catalog_date: '2026-08-01', status: 'completed',
+    },
+    {
       id: 'gen_1754000004_d4', at: '2026-08-01T05:30:04.000Z', kind: 'image',
       provider: 'gemini', model: 'imagen-4',
       prompt: 'خلفية سطح مكتب بزخارف هندسية إسلامية هادئة',
