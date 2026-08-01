@@ -104,6 +104,37 @@ const fmt = (c) => 'rgb(' + Math.round(c.r) + ',' + Math.round(c.g) + ',' + Math
 const out = [];
 `;
 
+// جسم مشهدَي بطاقة الحلقة بالمراجعة النوعية (30–31): يفتح الغرفة ويبثّ loop_update
+// اصطناعياً عبر خطّاف الـharness فيصل app.js ⇒ opsRoomEl.handleEvent (المسار الحقيقي)
+// ثم يقيس تباين نصوص قسم المراجعة على خلفيته. changes_required ⇒ الحالة --red.
+const LOOP_REVIEW_BODY = `
+  document.querySelector('#opsRoomToggle').click();
+  await new Promise((r) => setTimeout(r, 250));
+  window.__SATR_TESTSPRITE_HARNESS__.emitEvent({
+    type: 'loop_update', state: 'running', iteration: 2, max_iterations: 5,
+    review: { configured: true, state: 'changes_required',
+      summary: 'منطق الحلقة سليم والتحقق يمرّ، لكن معالجة حالة فشل المراجعة تحتاج تغطية اختبار، ورسالة الخطأ الظاهرة للمستخدم غير معرّبة.' },
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const root = document.querySelector('satr-ops-room').shadowRoot;
+  const card = root.querySelector('.loop-card');
+  if (!card) { out.push('✗ لم تظهر بطاقة الحلقة'); return out; }
+  const review = card.querySelector('.loop-review');
+  if (!review) { out.push('✗ لم يظهر قسم المراجعة النوعية'); return out; }
+  const reviewBg = effBg(review);
+  const measureLine = (el, label) => {
+    if (!el) { out.push(label + ': ✗ العنصر غائب'); return; }
+    const c = parseColor(getComputedStyle(el).color);
+    out.push(label + ': ' + fmt(c) + ' على ' + fmt(reviewBg) + ' = ' + contrast(c, reviewBg).toFixed(2) + ':1');
+  };
+  out.push('خلفية قسم المراجعة: ' + fmt(reviewBg));
+  measureLine(review.querySelector('.loop-review-title'), 'العنوان');
+  const stateEl = review.querySelector('.loop-review-state');
+  measureLine(stateEl, 'الحالة (' + (stateEl ? stateEl.textContent : '?') + ')');
+  measureLine(review.querySelector('.loop-review-summary'), 'الملخص');
+  return out;
+`;
+
 const SHOTS = [
   // ---------- الأسطح اليومية ----------
   { out: '01-daily-1440', w: 1440, h: 900 },
@@ -344,6 +375,11 @@ const SHOTS = [
       return out;
     `,
   },
+
+
+  // ---------- بطاقة الحلقة بحقل المراجعة النوعية (داكن/فاتح) ----------
+  { out: '30-ops-loop-review', w: 1440, h: 900, js: MEASURE + LOOP_REVIEW_BODY },
+  { out: '31-ops-loop-review-light', w: 1440, h: 900, js: LIGHT + MEASURE + LOOP_REVIEW_BODY },
 
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
