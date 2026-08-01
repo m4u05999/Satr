@@ -16,6 +16,7 @@ const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
 
+const executionTeamModule = require('../electron/executionteam');
 const loopfailure = require('../electron/loopfailure');
 const looprunner = require('../electron/looprunner');
 const integrationModule = require('../electron/integration');
@@ -290,6 +291,35 @@ function stopAcceptingRunner(stats) {
   };
 }
 
+/** يكتب تعديلاً حقيقياً (فيوجد patch سليم) ثم يبقى معلّقاً حتى يوقفه المستخدم. */
+function editThenHangRunner(stats) {
+  return {
+    engine: 'sdk',
+    model: 'test-model',
+    start(input, cwd, emit) {
+      stats.calls.push({ input, cwd });
+      let stopped = false;
+      const finish = () => {
+        emit({ type: 'result', total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 5 } });
+        emit({ type: 'proc_done', code: 0 });
+      };
+      setTimeout(() => {
+        if (stopped) return;
+        emit({ type: 'assistant', session_id: 'test-session', message: { content: [{ type: 'tool_use', name: 'Edit', input: { file_path: path.join(cwd, 'src', 'app.js') } }] } });
+        emit({ type: 'permission_request', id: 'perm-hang', tool: 'Edit', input: { file_path: path.join(cwd, 'src', 'app.js') } });
+        fs.writeFileSync(path.join(cwd, 'src', 'app.js'), 'export const value = 99;\n', 'utf8');
+        emit({ type: 'file_edit', id: 'edit-hang', rel: 'src/app.js', added: 1, removed: 1 });
+        stats.edited = true;
+      }, 40);
+      const hang = setTimeout(finish, 120000);
+      return {
+        resolvePermission(id, allow) { stats.permissions.push({ id, allow }); },
+        stop() { stopped = true; clearTimeout(hang); finish(); return Promise.resolve(); },
+      };
+    },
+  };
+}
+
 function sameFailureTwiceRunner(stats) {
   return {
     engine: 'sdk',
@@ -519,6 +549,10 @@ async function main() {
     await waitFor(() => loops5.isActive() === false, 5000, 'cleanup');
     const wtList = await git(project5, ['worktree', 'list', '--porcelain']);
     assert.strictEqual(wtList.split(/\r?\n/).filter((line) => line.startsWith('worktree ')).length, 1, 'worktrees cleaned');
+    // إيقاف بلا أي تعديل ⇒ لا أثر ⇒ لا تسليم (شرط الأثر السليم يبقى الحارس الفعلي).
+    const emptyStopHandoff = loops5.handoff(started5.loop.loop_id);
+    assert.strictEqual(emptyStopHandoff.ok, false, 'stopped loop without a patch must not hand off');
+    assert.strictEqual(emptyStopHandoff.error, 'not_available');
     events.length = 0;
 
     // 8) عدم التسريب: خرج فحص يحوي سراً
@@ -812,6 +846,13 @@ async function main() {
     assertStateStop(failedEvent, 'failed', 'error');
     assert.strictEqual(failedEvent.review.state, 'failed', 'review marked failed');
     assert.strictEqual(failedEvent.review.summary, '', 'failed review carries no summary');
+    // حارس عدم تراجع: failed تبقى fail-closed رغم انضمام stopped إلى التسليم.
+    const failedHandoff = loopsR4.handoff(startedR4.loop.loop_id);
+    assert.strictEqual(failedHandoff.ok, false, 'failed loop must stay fail-closed');
+    assert.strictEqual(failedHandoff.error, 'not_available');
+    assert.strictEqual(looprunner.HANDOFF_STATES.has('failed'), false, 'failed must not be a handoff state');
+    assert.strictEqual(looprunner.HANDOFF_STATES.has('timed_out'), false, 'timed_out must not be a handoff state');
+    assert.strictEqual(looprunner.HANDOFF_STATES.has('stopped'), true, 'stopped must be a handoff state');
     events.length = 0;
 
     // 18) fail-closed في preflight: review_skill مضبوط والمهارة غائبة من HEAD
@@ -964,6 +1005,80 @@ async function main() {
     assert.strictEqual(statsR8.reviews.length, 0, 'reviewer never invoked without review_skill');
     events.length = 0;
 
+    // 22) قرار المالك: أثر حلقة أوقفها المستخدم يُسلَّم إلى مسار المراجعة كاملاً
+    const projectS1 = await makeRepo(temp, 's1');
+    const statsS1 = { calls: [], permissions: [], edited: false };
+    const loopsS1 = looprunner.create({
+      runner: editThenHangRunner(statsS1),
+      recordNote,
+      worktrees: manager,
+      integration,
+      verify,
+    });
+    const roomS1 = opsroom.createRoom({ root: opsroomRoot });
+    const startedS1 = await loopsS1.start({
+      task: 'أصلح', ownership: ['**'], roomId: roomS1.room.room_id,
+      maxIterations: 3, budgetTokens: 400000, timeoutMs: 300000,
+    }, projectS1, emit);
+    assert.strictEqual(startedS1.ok, true);
+    await waitFor(() => statsS1.edited, 10000, 'edit landed before stop');
+    const stoppedS1 = await loopsS1.stop(startedS1.loop.loop_id);
+    assertStateStop(stoppedS1.loop, 'stopped', 'user');
+    // كل الحالات تبقى صادقة: لا شيء يدّعي أن التشغيل اكتمل.
+    const teamS1 = events.filter((e) => e.type === 'execution_team_update').pop();
+    assert.strictEqual(teamS1.team.state, 'stopped', 'live team card must still say stopped');
+    assert.strictEqual(teamS1.team.agents[0].state, 'stopped', 'live agent card must still say stopped');
+    // الأثر الجزئي يُسلَّم فعلاً.
+    const handoffS1 = loopsS1.handoff(startedS1.loop.loop_id);
+    assert.strictEqual(handoffS1.ok, true, 'stopped loop with a valid patch must hand off');
+    assert.ok(handoffS1.bundle.artifact.patch.includes('diff --git'), 'handed-off patch is structurally valid');
+    assert.strictEqual(handoffS1.bundle.artifact.artifact_id,
+      executionTeamModule.artifactId(handoffS1.bundle.artifact.head, handoffS1.bundle.artifact.patch),
+      'artifact fingerprint stays the frozen sha256(head+\\0+patch)');
+    // مسار المراجعة يقبله، والبوابات البشرية بعده كما هي حرفياً.
+    const freshTeam = executionTeamModule.create({ runner: { engine: 'sdk', start: async () => ({}) } });
+    const restoredS1 = freshTeam.restore(handoffS1.bundle, handoffS1.cwd, () => {});
+    assert.strictEqual(restoredS1.ok, true, 'review path must accept the partial artifact');
+    assert.strictEqual(restoredS1.team.merge_supported, true, 'human merge gate stays in place');
+    assert.strictEqual(restoredS1.team.verification, null, 'verification still required before merge');
+    assert.strictEqual(restoredS1.team.merged, false, 'nothing is merged automatically');
+    // ملاحظة الغرفة تميّز الأثر صراحةً بلا نوع entry جديد.
+    const roomS1Loaded = opsroom.load(stoppedS1.loop.room_id, { root: opsroomRoot });
+    const partialNote = (roomS1Loaded.entries || []).find((entry) => entry.text.includes('أثر جزئي من حلقة أوقفها المستخدم'));
+    assert.ok(partialNote, 'room log must name the artifact as partial and user-stopped');
+    assert.strictEqual(partialNote.type, 'note', 'no new entry type is introduced');
+    assert.ok(/عند الدورة \d+ من \d+/.test(partialNote.text), 'partial note records the iteration number');
+    events.length = 0;
+
+    // 23) الإيقاف أثناء المراجعة النوعية: يُسلَّم الأثر بلا حكم مراجعة
+    const projectS2 = await makeReviewRepo(temp, 's2', {
+      reviewSkill: { name: 'project-review', timeout_seconds: 600 },
+    });
+    const statsS2 = { calls: [], permissions: [], reviews: [] };
+    const loopsS2 = looprunner.create({
+      runner: passingRunner(statsS2),
+      reviewRunner: slowReviewRunner(statsS2),
+      recordNote,
+      worktrees: manager,
+      integration,
+      verify,
+    });
+    const roomS2 = opsroom.createRoom({ root: opsroomRoot });
+    const startedS2 = await loopsS2.start({
+      task: 'أصلح', ownership: ['**'], roomId: roomS2.room.room_id,
+      maxIterations: 3, budgetTokens: 400000, timeoutMs: 300000,
+    }, projectS2, emit);
+    assert.strictEqual(startedS2.ok, true);
+    await waitFor(() => statsS2.reviews.length === 1, 15000, 'review running before stop');
+    const stoppedS2 = await loopsS2.stop(startedS2.loop.loop_id);
+    assertStateStop(stoppedS2.loop, 'stopped', 'user');
+    assert.ok(!['approve', 'changes_required', 'reject'].includes(stoppedS2.loop.review.state),
+      'a stopped review carries no verdict');
+    assert.strictEqual(stoppedS2.loop.review.summary, '', 'a stopped review carries no summary');
+    const handoffS2 = loopsS2.handoff(startedS2.loop.loop_id);
+    assert.strictEqual(handoffS2.ok, true, 'stopping during review still hands off the artifact');
+    events.length = 0;
+
     console.log('✓ loopfailure adversarial hardening');
     console.log('✓ loop_update not in engine event types');
     console.log('✓ happy path passes on iteration 1');
@@ -983,6 +1098,9 @@ async function main() {
     console.log('✓ criteria come from HEAD worktree and verdict never comes from the patch');
     console.log('✓ reviewer secrets never reach loop_update or the room log');
     console.log('✓ backward compatible: no review_skill means zero behaviour change');
+    console.log('✓ user-stopped loop hands its partial artifact to the review path with honest states');
+    console.log('✓ stopped without a patch, failed, and timed_out all stay fail-closed');
+    console.log('✓ stopping during the review stage hands off without a verdict');
   } finally {
     await manager.removeAll().catch(() => {});
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
