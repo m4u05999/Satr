@@ -86,6 +86,8 @@ const roomSheet = sheet(`
     padding-inline-end: var(--space-3); border-bottom: 1px solid var(--border);
   }
   .status-row .stop { color: var(--red); white-space: nowrap; }
+  .status-row .verify-config-recovery { color: var(--gold); border-color: var(--gold-border); white-space: nowrap; }
+  .status-row .verify-config-recovery[hidden] { display: none; }
   .timeout-row[hidden] { display: none; }
   .timeout-row .extend { color: var(--gold); border-color: var(--gold-border); white-space: nowrap; }
   .room-nav {
@@ -258,6 +260,21 @@ const roomSheet = sheet(`
   .loop-failure { color: var(--red); }
   .loop-guidance { color: var(--text-dim); }
   .loop-stop { color: var(--red); }
+  .loop-review {
+    display: grid; gap: var(--space-2); padding: var(--space-3);
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2);
+  }
+  .loop-review-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+  .loop-review-title { color: var(--gold); font-weight: 600; }
+  .loop-review-state { color: var(--text-dim); }
+  .loop-review-state[data-state="approve"] { color: var(--green); }
+  .loop-review-state[data-state="changes_required"], .loop-review-state[data-state="reject"],
+  .loop-review-state[data-state="failed"] { color: var(--red); }
+  .loop-review-summary {
+    display: -webkit-box; margin: var(--space-0); overflow: hidden; overflow-wrap: anywhere;
+    color: var(--text-dim); line-height: 1.7; unicode-bidi: plaintext;
+    -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  }
   .review-section { display: grid; gap: var(--space-1); }
   .review-section h4 { color: var(--gold); font-size: .78rem; }
   .review-section ul { margin: var(--space-0); padding-inline-start: var(--space-5); display: grid; gap: var(--space-1); }
@@ -390,6 +407,10 @@ const LOOP_STATES = {
   failed_after_n: 'فشلت بعد نفاد الدورات', budget_exhausted: 'نفدت الميزانية',
   failed: 'فشلت', stopped: 'توقفت',
 };
+const LOOP_REVIEW_STATES = {
+  idle: 'بانتظار المراجع', running: 'جارية', approve: 'اعتمدت',
+  changes_required: 'تطلب تعديلات', reject: 'رفضت', failed: 'فشلت',
+};
 const LOOP_STOP_REASONS = {
   pass: 'نجح التحقق', iterations: 'نفدت الدورات', budget: 'نفدت الميزانية',
   user: 'أوقفها المستخدم', error: 'حدث خطأ',
@@ -446,6 +467,7 @@ const ERROR_LABELS = {
   timeout_cap: 'بلغت المهلة سقف 10 دقائق ولا يمكن تمديدها — ضيّق المهمة ثم أعد التنفيذ.',
   brainstorm_engine_unavailable: 'محركا العصف المستقلان غير متاحين — تحقق من توفر Claude وCodex وتسجيل الدخول ثم أعد المحاولة.',
   planner_engine_unavailable: 'مخطط المهام عبر Claude غير متاح — تحقق من توفر Claude وتسجيل الدخول ثم أعد المحاولة.',
+  review_skill_unavailable: 'مهارة المراجعة المضبوطة غير متاحة — افتح «إعداد التحقق» وأنشئ المهارة أو صحح اسمها، ثم أعد بدء الحلقة.',
   invalid_plan: 'لم يعد المخطط اقتراحاً بنيوياً صالحاً — وضّح المهمة وملكياتها ثم اطلب التقسيم من جديد.',
   secret_detected: 'حُجب الناتج لأنه قد يحتوي سراً — أزل الأسرار أو القيم الحساسة ثم أعد المحاولة.',
   forbidden_tool: 'أوقف المخطط طلب أداة غير مسموحة — أعد صياغة المهمة لتبقى قراءةً فقط ثم أعد المحاولة.',
@@ -689,8 +711,10 @@ class SatrOpsRoom extends HTMLElement {
     nav.setAttribute('aria-label', 'أقسام غرفة العمليات');
     const statusRow = makeElement('div', 'status-row');
     const status = makeElement('div', 'status'); status.setAttribute('aria-live', 'polite');
+    const verifyConfigRecovery = makeElement('button', 'verify-config-recovery', 'افتح إعداد التحقق');
+    verifyConfigRecovery.type = 'button'; verifyConfigRecovery.hidden = true;
     const stopButton = makeElement('button', 'stop', 'إيقاف المرحلة'); stopButton.type = 'button'; stopButton.hidden = true;
-    statusRow.appendChild(status); statusRow.appendChild(stopButton);
+    statusRow.appendChild(status); statusRow.appendChild(verifyConfigRecovery); statusRow.appendChild(stopButton);
     const timeoutRow = makeElement('div', 'timeout-row'); timeoutRow.hidden = true;
     const timeoutWarning = makeElement('div', 'timeout-warning'); timeoutWarning.setAttribute('aria-live', 'polite');
     const extendButton = makeElement('button', 'extend', 'مدّد المهلة مرة'); extendButton.type = 'button';
@@ -719,6 +743,7 @@ class SatrOpsRoom extends HTMLElement {
     this._resizeHandle = resizeHandle;
     this._closeButton = closeButton;
     this._verifyConfigButton = verifyConfigButton;
+    this._verifyConfigRecovery = verifyConfigRecovery;
     this._buttons = {
       primary: this._primaryButton, preview: previewButton, previewStop: previewStopButton,
       extend: extendButton, stop: stopButton,
@@ -746,10 +771,8 @@ class SatrOpsRoom extends HTMLElement {
     this._buildStages();
     this._buildViews();
     closeButton.addEventListener('click', () => this.close());
-    verifyConfigButton.addEventListener('click', () => {
-      if (!this._cwd) return;
-      this.dispatchEvent(new CustomEvent('verify-config-open', { bubbles: true, detail: { cwd: this._cwd } }));
-    });
+    verifyConfigButton.addEventListener('click', () => this._openVerifyConfig());
+    verifyConfigRecovery.addEventListener('click', () => this._openVerifyConfig());
     this._compactButton = compactButton;
     this._compactButton.addEventListener('click', () => this._toggleCompact());
     this._primaryButton.addEventListener('click', () => this._runPrimaryAction());
@@ -773,6 +796,11 @@ class SatrOpsRoom extends HTMLElement {
       const item = document.createElement('li'); item.textContent = label;
       this._stageIndicator.appendChild(item); return item;
     });
+  }
+
+  _openVerifyConfig() {
+    if (!this._cwd) return;
+    this.dispatchEvent(new CustomEvent('verify-config-open', { bubbles: true, detail: { cwd: this._cwd } }));
   }
 
   _buildViews() {
@@ -1293,6 +1321,22 @@ class SatrOpsRoom extends HTMLElement {
       const failure = document.createElement('div'); failure.className = 'loop-failure'; failure.dir = 'auto';
       failure.textContent = 'آخر فشل: ' + loop.last_failure_summary; card.appendChild(failure);
     }
+    const loopReview = loop.review;
+    if (loopReview && loopReview.configured === true) {
+      const review = document.createElement('section'); review.className = 'loop-review';
+      const reviewHead = document.createElement('div'); reviewHead.className = 'loop-review-head';
+      const reviewTitle = document.createElement('span'); reviewTitle.className = 'loop-review-title';
+      reviewTitle.textContent = 'المراجعة النوعية';
+      const reviewState = document.createElement('span'); reviewState.className = 'loop-review-state';
+      reviewState.dataset.state = loopReview.state || 'idle';
+      reviewState.textContent = LOOP_REVIEW_STATES[loopReview.state] || 'بانتظار المراجع';
+      reviewHead.appendChild(reviewTitle); reviewHead.appendChild(reviewState); review.appendChild(reviewHead);
+      if (loopReview.summary) {
+        const summary = document.createElement('p'); summary.className = 'loop-review-summary'; summary.dir = 'auto';
+        summary.textContent = truncatePoints(loopReview.summary, 300, '…'); review.appendChild(summary);
+      }
+      card.appendChild(review);
+    }
     const metrics = document.createElement('div'); metrics.className = 'loop-metrics';
     const cost = document.createElement('span'); cost.className = 'loop-metric'; cost.textContent = 'الكلفة (إدخال/إخراج) ';
     const costValue = document.createElement('bdi'); costValue.className = 'counts';
@@ -1749,6 +1793,8 @@ class SatrOpsRoom extends HTMLElement {
     this._buttons.previewStop.hidden = !derived.canStopPreview;
     this._timeoutRow.hidden = true;
     this._buttons.stop.hidden = !derived.canStop;
+    this._verifyConfigRecovery.hidden = this._state.status !== ERROR_LABELS.review_skill_unavailable;
+    this._verifyConfigRecovery.disabled = !this._cwd;
     this._status.textContent = this._state.status || (this._state.pending ? 'جارٍ تنفيذ الانتقال المطلوب…'
       : this._state.loop && derived.loopActive ? (LOOP_STATES[this._state.loop.state] || this._state.loop.state)
         : this._state.team ? (TEAM_STATES[this._state.team.state] || this._state.team.state)

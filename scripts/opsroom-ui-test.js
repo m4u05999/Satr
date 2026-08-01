@@ -127,6 +127,7 @@ function testJudgesHelpers(component) {
       this.children = [];
       this.dataset = {};
       this.listeners = {};
+      this.attributes = {};
       this.dir = '';
     }
 
@@ -138,8 +139,17 @@ function testJudgesHelpers(component) {
     addEventListener(type, listener) {
       this.listeners[type] = listener;
     }
+
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    }
   }
-  const document = { createElement: (tagName) => new FakeElement(tagName) };
+  const document = {
+    createElement: (tagName) => new FakeElement(tagName),
+    createTextNode: (value) => {
+      const node = new FakeElement('#text'); node.textContent = String(value); return node;
+    },
+  };
   const elementsByClass = (root, className) => {
     const matches = [];
     const visit = (element) => {
@@ -310,6 +320,71 @@ function testJudgesHelpers(component) {
     'legacy review items without lenses must retain the old renderer path');
   assert(elementsByClass(renderHost._views.review, 'review-section').length > 0,
     'legacy review items without lenses must still render their ordinary sections');
+
+  const loopReviewLabels = {
+    idle: 'بانتظار المراجع', running: 'جارية', approve: 'اعتمدت',
+    changes_required: 'تطلب تعديلات', reject: 'رفضت', failed: 'فشلت',
+  };
+  const renderLoop = new Function(
+    'document', 'LOOP_STATES', 'LOOP_REVIEW_STATES', 'LOOP_STOP_REASONS', 'integerLabel', 'usdLabel', 'truncatePoints',
+    'return function (view, derived) {' + methodBody(component, '  _renderLoop(view, derived)') + '};',
+  )(
+    document,
+    { working: 'ينفّذ الإصلاح', passed: 'نجحت' },
+    loopReviewLabels,
+    { pass: 'نجح التحقق' },
+    (value) => String(Number(value) || 0),
+    (value) => '$' + (Number(value) || 0).toFixed(2),
+    truncatePoints,
+  );
+  const loopRenderHost = { _state: { loop: null, pending: '' }, _stopLoop: () => {} };
+  for (const [reviewState, label] of Object.entries(loopReviewLabels)) {
+    const view = new FakeElement('div');
+    loopRenderHost._state.loop = loopFixture({
+      review: { configured: true, state: reviewState, summary: reviewState === 'idle' ? '' : 'ملخص اصطناعي.' },
+    });
+    renderLoop.call(loopRenderHost, view, { loopTerminal: false });
+    const reviewCards = elementsByClass(view, 'loop-review');
+    const states = elementsByClass(view, 'loop-review-state');
+    assert.strictEqual(reviewCards.length, 1, 'configured loop review must render for ' + reviewState);
+    assert.strictEqual(states[0].textContent, label, 'loop review must localize ' + reviewState);
+    assert.strictEqual(states[0].dataset.state, reviewState, 'loop review must expose its presentational state ' + reviewState);
+  }
+  for (const review of [undefined, { configured: false, state: 'idle', summary: '' }]) {
+    const view = new FakeElement('div');
+    loopRenderHost._state.loop = loopFixture({ ...(review ? { review } : {}) });
+    renderLoop.call(loopRenderHost, view, { loopTerminal: false });
+    assert.strictEqual(elementsByClass(view, 'loop-review').length, 0,
+      'legacy or unconfigured loop snapshots must not gain a review row');
+  }
+  const adversarialView = new FakeElement('div');
+  loopRenderHost._state.loop = loopFixture({ review: {
+    configured: true, state: 'changes_required',
+    summary: '<img src=x onerror=alert(1)>\u202E' + '😀'.repeat(400),
+  } });
+  renderLoop.call(loopRenderHost, adversarialView, { loopTerminal: false });
+  const adversarialSummary = elementsByClass(adversarialView, 'loop-review-summary')[0];
+  assert(adversarialSummary && Array.from(adversarialSummary.textContent).length <= 300,
+    'adversarial loop review summary must be truncated by Unicode code points');
+  assert(adversarialSummary.textContent.startsWith('<img src=x onerror=alert(1)>')
+    && adversarialSummary.children.length === 0,
+  'adversarial loop review summary must remain inert text without breaking the card');
+
+  class FakeCustomEvent {
+    constructor(type, options) { this.type = type; this.detail = options && options.detail; this.bubbles = options && options.bubbles; }
+  }
+  const openVerifyConfig = new Function('CustomEvent',
+    'return function () {' + methodBody(component, '  _openVerifyConfig()') + '};')(FakeCustomEvent);
+  const recoveryEvents = [];
+  const recoveryHost = { _cwd: 'D:\\repo\\loop-review', dispatchEvent: (event) => recoveryEvents.push(event) };
+  openVerifyConfig.call(recoveryHost);
+  assert.strictEqual(recoveryEvents.length, 1, 'review skill recovery button must emit one wizard event');
+  assert.deepStrictEqual({ type: recoveryEvents[0].type, bubbles: recoveryEvents[0].bubbles, detail: recoveryEvents[0].detail }, {
+    type: 'verify-config-open', bubbles: true, detail: { cwd: 'D:\\repo\\loop-review' },
+  }, 'review skill recovery must reuse the existing cwd-scoped verification wizard event');
+  recoveryHost._cwd = '';
+  openVerifyConfig.call(recoveryHost);
+  assert.strictEqual(recoveryEvents.length, 1, 'review skill recovery must not emit without a cwd');
 }
 
 function loopFixture(overrides) {
@@ -402,6 +477,8 @@ async function testReducer() {
   assert.strictEqual(loopState.loop.state, 'preparing', 'hydrate accepts the latest loop snapshot');
   loopState = opsRoomReducer(loopState, { type: 'event', event: loopFixture() });
   assert.strictEqual(loopState.loop.iteration, 2, 'matching loop_update is consumed');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(loopState.loop, 'review'), false,
+    'legacy loop_update without review must retain the previous snapshot shape');
   const runningLoop = deriveOpsRoomState(loopState);
   assert.strictEqual(runningLoop.loopActive, true, 'non-terminal loop is active');
   assert.strictEqual(runningLoop.loopTerminal, false, 'non-terminal loop is not terminal');
@@ -411,6 +488,28 @@ async function testReducer() {
   assert.strictEqual(runningLoop.canPrepareVerification, false, 'active loop blocks formal verification preparation');
   assert.strictEqual(runningLoop.nextAction.key, 'loop_running', 'active loop precedes team-running guidance');
   assert.strictEqual(runningLoop.nextAction.action, '', 'loop_running is descriptive only');
+  const gateKeys = [
+    'loopActive', 'loopTerminal', 'canStart', 'canStop', 'canReview', 'canPrepareVerification',
+    'canRunVerification', 'canMerge', 'showPreview', 'canPreview', 'canStopPreview', 'nextAction',
+  ];
+  const baselineGates = Object.fromEntries(gateKeys.map((key) => [key, runningLoop[key]]));
+  const reviewStates = ['idle', 'running', 'approve', 'changes_required', 'reject', 'failed'];
+  for (const reviewState of reviewStates) {
+    const syntheticReview = {
+      configured: true, state: reviewState,
+      summary: reviewState === 'idle' ? '' : 'ملخص مراجعة نوعية اصطناعي.',
+    };
+    const reviewedState = opsRoomReducer(loopState, {
+      type: 'event', event: loopFixture({ review: syntheticReview }),
+    });
+    assert.deepStrictEqual(reviewedState.loop.review, syntheticReview,
+      'loop reducer must consume the additive review state ' + reviewState);
+    assert.notStrictEqual(reviewedState.loop.review, syntheticReview,
+      'loop reducer must detach the nested review snapshot ' + reviewState);
+    const reviewedGates = deriveOpsRoomState(reviewedState);
+    assert.deepStrictEqual(Object.fromEntries(gateKeys.map((key) => [key, reviewedGates[key]])), baselineGates,
+      'loop review must not change existing gates or nextAction for ' + reviewState);
+  }
   loopState = opsRoomReducer(loopState, { type: 'event', event: loopFixture({
     room_id: 'ops-room-other-test', iteration: 3,
   }) });
@@ -659,6 +758,14 @@ function testDesignGuard() {
   assert(component.includes("const LOOP_STATES = {") && component.includes("failed_after_n: 'فشلت بعد نفاد الدورات'")
     && component.includes("budget_exhausted: 'نفدت الميزانية'"),
   'loop card must localize all terminal loop outcomes');
+  assert(component.includes("const LOOP_REVIEW_STATES = {")
+    && component.includes("running: 'جارية', approve: 'اعتمدت'")
+    && component.includes("changes_required: 'تطلب تعديلات', reject: 'رفضت', failed: 'فشلت'"),
+  'loop card must localize every configured qualitative review state');
+  assert(component.includes('if (loopReview && loopReview.configured === true)')
+    && component.includes("summary.textContent = truncatePoints(loopReview.summary, 300, '…')")
+    && component.includes('-webkit-line-clamp: 3;'),
+  'loop review row must stay optional and visually clamp its inert Unicode summary');
   assert(component.includes("title.textContent = 'حلقة محدودة — الدورة '")
     && component.includes("iteration.textContent = integerLabel(loop.iteration) + '/' + integerLabel(loop.max_iterations)"),
   'loop card must expose the current and maximum iteration with LTR digits');
@@ -690,6 +797,11 @@ function testDesignGuard() {
     && component.includes("kind: 'loop-start'") && component.includes('max_iterations: maxIterations')
     && component.includes('budget_tokens: budgetTokens') && component.includes('timeout_seconds: timeoutSeconds'),
   'loop preflight commands and approved bounds must cross the existing confirmation surface');
+  assert(component.includes("review_skill_unavailable: 'مهارة المراجعة المضبوطة غير متاحة")
+    && component.includes("makeElement('button', 'verify-config-recovery', 'افتح إعداد التحقق')")
+    && component.includes('this._verifyConfigRecovery.hidden = this._state.status !== ERROR_LABELS.review_skill_unavailable')
+    && component.includes("new CustomEvent('verify-config-open'"),
+  'missing loop review skill must expose Arabic recovery through the existing verification wizard event');
   assert(component.includes(':host([compact]) {') && component.includes('width: var(--space-7); min-width: var(--space-7)'),
     'compact ops room must reclaim width through spacing tokens');
   assert(component.includes("makeElement('div', 'status-row')") && component.includes("makeElement('div', 'timeout-row')"),

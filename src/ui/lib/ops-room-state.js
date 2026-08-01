@@ -47,6 +47,16 @@ function orderedEntries(entries) {
   });
 }
 
+function loopSnapshot(value) {
+  if (!value || typeof value !== 'object') return null;
+  const snapshot = { ...value };
+  if (Object.prototype.hasOwnProperty.call(value, 'review')
+      && value.review && typeof value.review === 'object' && !Array.isArray(value.review)) {
+    snapshot.review = { ...value.review };
+  }
+  return snapshot;
+}
+
 function reduceRuntimeEvent(state, event) {
   if (!event || typeof event !== 'object') return state;
   if (event.type === 'ops_room_update' && event.entry) {
@@ -67,7 +77,7 @@ function reduceRuntimeEvent(state, event) {
   if (event.type === 'loop_update') {
     if (state.room && event.room_id !== state.room.room_id) return state;
     if (state.team && event.team_id !== state.team.id) return state;
-    return { ...state, loop: { ...event } };
+    return { ...state, loop: loopSnapshot(event) };
   }
   if (event.type === 'execution_review_update' && event.review) {
     if (state.team && event.review.team_id !== state.team.id) return state;
@@ -97,7 +107,7 @@ export function opsRoomReducer(state, action) {
       review: input.review ? { ...input.review } : null,
       verification: input.verification ? { ...input.verification } : null,
       preview: input.preview ? { ...input.preview } : null,
-      loop: input.loop ? { ...input.loop } : null,
+      loop: loopSnapshot(input.loop),
       pending: '',
       status: '',
     };
