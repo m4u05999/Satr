@@ -144,6 +144,13 @@ const GALLERY_INJECT = `
   window.satr.generationsList = async () => ({ ok: true, items: FX.items.map((it) => ({ ...it })) });
   window.satr.genThumb = async (cwd, rel) => FX.thumbs[rel]
     ? { ok: true, dataUrl: FX.thumbs[rel] } : { ok: false, error: "not_found" };
+  // genMedia (ج10): النوع من الامتداد بقائمة سماح — نفس قواعد main.js
+  const MEDIA_EXT = { ".mp4": "video/mp4", ".webm": "video/webm", ".wav": "audio/wav", ".mp3": "audio/mpeg" };
+  window.satr.genMedia = async (cwd, rel) => {
+    const mime = MEDIA_EXT[String(rel).slice(String(rel).lastIndexOf(".")).toLowerCase()];
+    const payload = FX.media[rel];
+    return (mime && payload) ? { ok: true, mime, dataUrl: payload.dataUrl } : { ok: false, error: "not_found" };
+  };
   document.getElementById("cwd").value = "D:/fixture-project"; // الـharness يتركه فارغاً
   document.querySelector("#galleryToggle").click();
   await new Promise((r) => setTimeout(r, 700)); // فتح + تحميل المصغرات الكسولة
@@ -164,6 +171,13 @@ const GEN_CARD_INJECT = `
     cost_usd_estimate: 0.04, provider: "fal", model: "gpt-image-2",
   });
   await new Promise((r) => setTimeout(r, 700)); // بناء البطاقة + جلب المصغرة
+`;
+
+// نقر زرَّي «▶» في مشهدَي المشغّلين (37–38) — يفترض GALLERY_INJECT قبله (فتح اللوحة)
+const GALLERY_PLAY_CLICK = `
+  const rootP = document.querySelector("satr-gallery-panel").shadowRoot;
+  for (const b of rootP.querySelectorAll(".gal-play")) b.click();
+  await new Promise((r) => setTimeout(r, 900)); // genMedia + Blob + objectURL
 `;
 
 const SHOTS = [
@@ -443,6 +457,32 @@ const SHOTS = [
       out.push(panel.hasAttribute("open") ? "✓ نقر البطاقة فتح لوحة المعرض" : "✗ نقر البطاقة لم يفتح اللوحة");
       const audioBox2 = panel.shadowRoot.querySelector(".gal-audio");
       out.push(audioBox2 ? "✓ بطاقة الصوت في المعرض: «" + audioBox2.textContent.trim() + "»" : "✗ غابت بطاقة الصوت من المعرض");
+      return out;
+    `,
+  },
+
+  // ---------- مشغّلا الوسائط في المعرض (الجولة 10 §3) ----------
+  // الداكن: نقر «▶» في البطاقتين ⇒ <video/audio controls> بـ objectURL من fixture
+  { out: '37-gallery-players', w: 1440, h: 900, js: GALLERY_INJECT + GALLERY_PLAY_CLICK },
+  // الفاتح مقاساً: تباين زر التشغيل ونص البطاقة قبل النقر + بناء المشغّلين بعده
+  {
+    out: '38-gallery-players-light', w: 1440, h: 900,
+    js: LIGHT + MEASURE + GALLERY_INJECT + `
+      const panel = document.querySelector("satr-gallery-panel");
+      const root = panel.shadowRoot;
+      const plays = [...root.querySelectorAll(".gal-play")];
+      if (plays.length !== 2) { out.push("✗ غاب زر تشغيل: " + plays.length); return out; }
+      const playBg = effBg(plays[0]);
+      out.push("زر التشغيل: نص " + fmt(parseColor(getComputedStyle(plays[0]).color)) + " على " + fmt(playBg) + " = " + contrast(parseColor(getComputedStyle(plays[0]).color), playBg).toFixed(2) + ":1");
+      const audioBox = root.querySelector(".gal-audio");
+      const audioBg = effBg(audioBox);
+      out.push("بطاقة الصوت قبل التشغيل: «" + audioBox.textContent.trim() + "» — نص " + fmt(parseColor(getComputedStyle(audioBox).color)) + " على " + fmt(audioBg) + " = " + contrast(parseColor(getComputedStyle(audioBox).color), audioBg).toFixed(2) + ":1");
+      for (const b of plays) b.click();
+      await new Promise((r) => setTimeout(r, 900));
+      const vids = root.querySelectorAll("video.gal-player");
+      const auds = root.querySelectorAll("audio.gal-audio-player");
+      if (!vids.length || !auds.length) { out.push("✗ لم يُبنَ المشغّلان بعد النقر: فيديو " + vids.length + " صوت " + auds.length); return out; }
+      out.push("✓ مشغّل فيديو + مشغّل صوت بُنيا بعد النقر — مصدر " + vids[0].src.slice(0, 5) + " · controls " + (vids[0].controls && auds[0].controls));
       return out;
     `,
   },

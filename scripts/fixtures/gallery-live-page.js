@@ -1,9 +1,19 @@
 // سيناريو الاختبار الحي للوحة المعرض: جسر window.satr مزيف يقدّم بيانات fixture
-// (قنوات generationsList/genThumb تُضاف عند الدمج — هنا نثبت عقد اللوحة معها).
+// (قنوات generationsList/genThumb/genMedia — هنا نثبت عقد اللوحة معها).
 const violations = [];
 window.__galleryLiveProgress = 'loading';
-const bridge = { listCalls: [], thumbCalls: [], copied: null, sendCalls: [] };
+const bridge = { listCalls: [], thumbCalls: [], mediaCalls: [], copied: null, sendCalls: [],
+  oversize: false, urlsCreated: 0, urlsRevoked: 0 };
 let nextItems = window.SATR_GALLERY_FIXTURE.items;
+
+// عدّاد objectURL: إثبات revokeObjectURL عند الإغلاق/إعادة الفتح (إلزام ج10)
+const realCreateUrl = URL.createObjectURL.bind(URL);
+const realRevokeUrl = URL.revokeObjectURL.bind(URL);
+URL.createObjectURL = (blob) => { bridge.urlsCreated++; return realCreateUrl(blob); };
+URL.revokeObjectURL = (url) => { bridge.urlsRevoked++; return realRevokeUrl(url); };
+
+// قائمة سماح امتدادات genMedia — نفس قواعد main.js حرفياً (النوع من الامتداد)
+const MEDIA_EXT = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.wav': 'audio/wav', '.mp3': 'audio/mpeg' };
 
 // جسر مزيف بنفس عقد IPC المجمَّد §3 — send مسجّل لإثبات أن اللوحة لا ترسل شيئاً
 window.satr = {
@@ -15,6 +25,18 @@ window.satr = {
     bridge.thumbCalls.push(rel);
     const dataUrl = window.SATR_GALLERY_FIXTURE.thumbs[rel];
     return dataUrl ? { ok: true, dataUrl } : { ok: false, error: 'not_found' };
+  },
+  // genMedia (ج10): rel داخل generations/ حصراً + قائمة السماح + سقف 24MiB (oversize)
+  genMedia: async (cwd, rel) => {
+    bridge.mediaCalls.push(rel);
+    if (typeof rel !== 'string' || !rel || rel.indexOf('..') !== -1 || rel[0] === '/'
+        || /^[A-Za-z]:/.test(rel) || !rel.startsWith('generations/'))
+      return { ok: false, error: 'bad_path' };
+    const mime = MEDIA_EXT[rel.slice(rel.lastIndexOf('.')).toLowerCase()];
+    if (!mime) return { ok: false, error: 'bad_path' };
+    if (bridge.oversize) return { ok: false, error: 'bad_size' };
+    const payload = window.SATR_GALLERY_FIXTURE.media[rel];
+    return payload ? { ok: true, mime, dataUrl: payload.dataUrl } : { ok: false, error: 'read_failed' };
   },
   send: async (payload) => { bridge.sendCalls.push(payload); return { started: true }; },
 };
@@ -77,22 +99,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(bridge.thumbCalls.includes('generations/satr-logo-1.png'), 'غاب طلب مصغرة الشعار.');
     checks.push('lazy-thumbs');
 
-    // (3) الفيديو بطاقة معلومات مؤجلة بلا <img> وبلا طلب مصغرة
+    // (3) الفيديو: بطاقة معلومات بزر «▶ شغّل المعاينة» — بلا مشغّل ولا طلب genMedia قبل النقر (كسل صارم)
     const videoCard = cards[2];
     assert(videoCard.querySelector('.gal-video'), 'غاب صندوق الفيديو.');
-    assert(!videoCard.querySelector('img'), 'ظهرت معاينة فيديو (مؤجلة ج10).');
-    assert(videoCard.textContent.includes('تأتي لاحقاً'), 'غابت عبارة تأجيل الفيديو.');
+    assert(!videoCard.querySelector('video'), 'ظهر مشغّل فيديو قبل النقر — الكسل مكسور.');
+    const videoPlay = videoCard.querySelector('button.gal-play');
+    assert(videoPlay && videoPlay.textContent.includes('شغّل المعاينة'), 'غاب زر تشغيل المعاينة.');
     assert(videoCard.querySelector('.gal-meta').textContent.includes('fal/kling-v2.1'), 'ميتا الفيديو ناقصة.');
-    checks.push('video-deferred-card');
+    checks.push('video-player-card');
 
-    // (3ب) الصوت بطاقة معلومات بلا مشغّل وبلا طلب مصغرة (مؤجل عمداً — عقد ج9 §4)
+    // (3ب) الصوت: بطاقة معلومات بزر «▶ شغّل المقطع» بالنمط نفسه
     const audioCard = cards[3];
     assert(audioCard.querySelector('.gal-audio'), 'غاب صندوق الصوت.');
-    assert(!audioCard.querySelector('img'), 'ظهرت معاينة في بطاقة الصوت.');
-    assert(audioCard.textContent.includes('المشغّل يأتي لاحقاً'), 'غابت عبارة تأجيل مشغّل الصوت.');
+    assert(!audioCard.querySelector('audio'), 'ظهر مشغّل صوت قبل النقر — الكسل مكسور.');
+    const audioPlay = audioCard.querySelector('button.gal-play');
+    assert(audioPlay && audioPlay.textContent.includes('شغّل المقطع'), 'غاب زر تشغيل المقطع.');
     assert(audioCard.querySelector('.gal-meta').textContent.includes('fal/stable-audio-2.5'), 'ميتا الصوت ناقصة.');
     assert(bridge.thumbCalls.length === 2, 'طلبت بطاقة الصوت/الفيديو مصغرة: ' + bridge.thumbCalls.length);
-    checks.push('audio-info-card');
+    assert(bridge.mediaCalls.length === 0, 'طُلب genMedia قبل أي نقر: ' + bridge.mediaCalls.length);
+    checks.push('audio-player-card');
+    checks.push('media-lazy-no-preload');
 
     // (4) بطاقة الفشل تعرض الخطأ وبلا زر إرسال مسار
     const failedCard = cards[4];
@@ -152,13 +178,64 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(lightbox.hidden, 'زر ✕ لم يغلق العرض المكبر.');
     checks.push('lightbox-open-esc-close');
 
-    // (9) الإغلاق: يبث panel-close ويطفأ open
+    // (8ب) تشغيل الفيديو: genMedia عند النقر فقط ثم <video controls> بـ blob:
+    window.__galleryLiveProgress = 'video-play';
+    videoPlay.click();
+    await waitFor(() => videoCard.querySelector('video.gal-player'), 'مشغّل الفيديو');
+    const videoEl = videoCard.querySelector('video.gal-player');
+    assert(videoEl.controls, 'مشغّل الفيديو بلا controls.');
+    assert(videoEl.src.startsWith('blob:'), 'مصدر الفيديو ليس objectURL: ' + videoEl.src);
+    assert(bridge.mediaCalls.length === 1 && bridge.mediaCalls[0] === 'generations/souq-aerial.mp4',
+      'طلب genMedia للفيديو غير متوقع: ' + JSON.stringify(bridge.mediaCalls));
+    checks.push('video-player-lazy');
+
+    // (8ج) تشغيل الصوت بالنمط نفسه ⇒ <audio controls>
+    audioPlay.click();
+    await waitFor(() => audioCard.querySelector('audio.gal-audio-player'), 'مشغّل الصوت');
+    const audioEl = audioCard.querySelector('audio.gal-audio-player');
+    assert(audioEl.controls, 'مشغّل الصوت بلا controls.');
+    assert(audioEl.src.startsWith('blob:'), 'مصدر الصوت ليس objectURL: ' + audioEl.src);
+    assert(bridge.mediaCalls.length === 2 && bridge.mediaCalls[1] === 'generations/satr-theme.mp3',
+      'طلب genMedia للصوت غير متوقع: ' + JSON.stringify(bridge.mediaCalls));
+    checks.push('audio-player-lazy');
+
+    // (8د) تجاوز السقف ⇒ بطاقة المعلومات القائمة + «تعذّر تحميل المعاينة» (لا فشل صامت)
+    window.__galleryLiveProgress = 'oversize';
+    bridge.oversize = true;
+    await el.open(document.getElementById('cwd').value); // إعادة بناء الشبكة
+    const videoCard2 = [...root.querySelectorAll('.gal-card')][2];
+    const play2 = videoCard2.querySelector('button.gal-play');
+    assert(play2, 'غاب زر التشغيل بعد إعادة الفتح.');
+    play2.click();
+    await waitFor(() => videoCard2.querySelector('.gal-media-err'), 'رسالة تعذّر المعاينة');
+    assert(videoCard2.querySelector('.gal-media-err').textContent.includes('تعذّر تحميل المعاينة'), 'رسالة الفشل غير صريحة.');
+    assert(!videoCard2.querySelector('video'), 'ظهر مشغّل رغم رفض السقف.');
+    assert(videoCard2.textContent.includes('فيديو'), 'فقدت بطاقة المعلومات محتواها بعد الفشل.');
+    bridge.oversize = false;
+    checks.push('media-oversize-rejected');
+
+    // (8هـ) رفض المسار/الامتداد على مستوى العقد (القواعد نفسها مفروضة في main.js
+    // وتُفحص ساكنة في gallery-live-test — هنا نثبت شكل الرفض الذي تبنيه الواجهة عليه)
+    const badRel = await window.satr.genMedia('C:/fixture', '../outside.mp4');
+    const badExt = await window.satr.genMedia('C:/fixture', 'generations/notes.txt');
+    const absPath = await window.satr.genMedia('C:/fixture', 'D:/generations/x.mp4');
+    assert(badRel.ok === false && badRel.error === 'bad_path', 'قُبل مسار خارج generations/.');
+    assert(badExt.ok === false && badExt.error === 'bad_path', 'قُبل امتداد خارج قائمة السماح.');
+    assert(absPath.ok === false && absPath.error === 'bad_path', 'قُبل مسار مطلق.');
+    bridge.mediaCalls.length = 0; // طلبات الفحص المباشرة لا تخص تدفق البطاقات
+    checks.push('media-path-ext-rejected');
+
+    // (9) الإغلاق: يبث panel-close ويطفأ open — ويسحب objectURL كلها (لا تسريب)
     window.__galleryLiveProgress = 'close';
     root.querySelector('.close').click();
     await frames(1);
     assert(!el.hasAttribute('open'), 'لم تُغلق اللوحة.');
     assert(closeEvents === 1, 'لم يُبث panel-close.');
     checks.push('close-event');
+    assert(bridge.urlsCreated >= 2, 'لم تُنشأ عناوين objectURL للمشغّلين: ' + bridge.urlsCreated);
+    assert(bridge.urlsCreated === bridge.urlsRevoked,
+      'تسريب objectURL: أُنشئ ' + bridge.urlsCreated + ' وسُحب ' + bridge.urlsRevoked);
+    checks.push('media-revoke-on-close');
 
     // (10) الحالة الفارغة: إرشاد عربي واضح (تُختبر بصرياً أيضاً في ui:audit)
     window.__galleryLiveProgress = 'empty';
