@@ -166,6 +166,12 @@ const TEST_MODELS = [
     unit: 'clip', unit_cost_usd: 0.002, max_count: 1, supports_refs: false, proven: true,
     wire: { duration: 10 }, duration_seconds: 10,
   },
+  // ج10: مدخل مدة أطول بمعرّف كتالوج مستقل ومسار سلك معلن
+  {
+    id: 'test/works-audio-63s', wire_model: 'test/works-audio', provider: 'fal', kind: 'audio',
+    label: 'audio 63s (works)', unit: 'clip', unit_cost_usd: 0.0126, max_count: 1,
+    supports_refs: false, proven: true, wire: { duration: 63 }, duration_seconds: 63,
+  },
   {
     id: 'test/works-refs', provider: 'fal', kind: 'image', label: 'image-to-image (works)',
     unit: 'image', unit_cost_usd: 0.03, max_count: 4, supports_refs: true, max_refs: 1,
@@ -649,7 +655,10 @@ async function main() {
     assert.strictEqual(plan.ok, true, 'فشل تقدير الصوت: ' + plan.error_code);
     assert.strictEqual(plan.model, 'test/works-audio');
     assert.strictEqual(plan.cost_usd_estimate, 0.002);
-    assert.deepStrictEqual(plan.alternatives, [], 'بدائل من نوع آخر تسرّبت');
+    // ج10: البدائل صارت مدداً صوتية أخرى — والنيّة الأصلية أن لا يتسرّب نوع آخر
+    const audioIds = TEST_MODELS.filter((m) => m.kind === 'audio').map((m) => m.id);
+    assert.ok(plan.alternatives.every((id) => audioIds.includes(id)),
+      'بدائل من نوع آخر تسرّبت: ' + plan.alternatives.join(','));
   });
 
   // ---------- المراجع الفعلية ----------
@@ -807,6 +816,91 @@ async function main() {
     assert.deepStrictEqual(plan.alternatives, ['test/pricey-video']);
     const real = genmedia.listCatalog().models.filter((m) => m.kind === 'video');
     assert.ok(real.every((m) => !m.default_for_kind), 'الكتالوج الحقيقي يعلن افتراضي فيديو');
+  });
+
+  // ---------- ج10: مدد الصوت المثبتة ----------
+  await check('ج10: الكتالوج يعلن مدد ace-step الأربع المقيسة، كل واحدة بسعرها ومدتها', () => {
+    const audio = genmedia.listCatalog().models.filter((m) => m.kind === 'audio' && m.proven);
+    const byId = new Map(audio.map((m) => [m.id, m]));
+    // القيم منسوخة حرفياً من خرج المسبار الحيّ (فرق الرصيد) — أي انحراف يكسر الطقم
+    const measured = [
+      ['fal-ai/ace-step', 10, 0.002],
+      ['fal-ai/ace-step-30s', 30, 0.006],
+      ['fal-ai/ace-step-63s', 63, 0.0126],
+      ['fal-ai/ace-step-120s', 120, 0.024],
+    ];
+    for (const [id, seconds, cost] of measured) {
+      const m = byId.get(id);
+      assert.ok(m, 'مدخل مدة غائب: ' + id);
+      assert.strictEqual(m.duration_seconds, seconds, id + ' مدة: ' + m.duration_seconds);
+      assert.strictEqual(m.unit_cost_usd, cost, id + ' سعر: ' + m.unit_cost_usd);
+      assert.strictEqual(m.max_count, 1, id + ' max_count ليس 1');
+    }
+    assert.strictEqual(audio.length, measured.length,
+      'مدخل صوت غير مقيس تسرّب إلى الكتالوج: ' + audio.map((m) => m.id).join(','));
+    // السعر خطي عند $0.0002/ث في نقاط القياس الأربع
+    for (const [id, seconds, cost] of measured) {
+      assert.strictEqual(Math.round((cost / seconds) * 1e6) / 1e6, 0.0002, id + ' لا يطابق $0.0002/ث');
+    }
+  });
+
+  await check('ج10: معرّف الكتالوج ذو لاحقة المدة يُرسل مسار السلك الصحيح وduration المجمَّد', async () => {
+    const cwd = freshCwd('audio-duration');
+    const before = seen.submits.length;
+    const res = await genmedia.generate(
+      { cwd, kind: 'audio', prompt: 'موسيقى إعلان', model: 'test/works-audio-63s' }, ctxFor());
+    assert.strictEqual(res.ok, true, 'فشل مدخل المدة: ' + res.error_code);
+    const sent = seen.submits.slice(before)[0];
+    // مسار السلك = wire_model لا معرّف الكتالوج
+    assert.strictEqual(sent.modelId, 'test/works-audio', 'مسار السلك: ' + sent.modelId);
+    assert.strictEqual(sent.body.duration, 63, 'duration المرسل: ' + sent.body.duration);
+    // بينما السجل والنتيجة يحملان معرّف الكتالوج وسعره
+    assert.strictEqual(res.model, 'test/works-audio-63s');
+    assert.strictEqual(res.cost_usd_estimate, 0.0126);
+    assert.strictEqual(readEntries(cwd)[0].model, 'test/works-audio-63s');
+  });
+
+  await check('ج10: مدة غير مقيسة لا تُمرَّر — لا حقل duration في الطلب ولا معرّف مخترع', async () => {
+    const cwd = freshCwd('audio-unmeasured');
+    const before = seen.submits.length;
+    // معرّف بلاحقة مدة غير موجودة في الكتالوج يُرفض بدل اشتقاقه بقصّ اللاحقة
+    const res = await genmedia.generate(
+      { cwd, kind: 'audio', prompt: 'x', model: 'test/works-audio-45s' }, ctxFor());
+    assert.strictEqual(res.ok, false, 'قُبل معرّف مدة غير مقيسة');
+    assert.strictEqual(res.error_code, 'unknown_model', 'رمز: ' + res.error_code);
+    assert.strictEqual(seen.submits.length, before, 'جرى نداء شبكة لمدة غير مقيسة');
+    // وحقل duration من المتصل يُتجاهل تماماً (شكل الطلب المجمَّد لم يتغيّر)
+    const withField = await genmedia.generate(
+      { cwd, kind: 'audio', prompt: 'x', model: 'test/works-audio', duration: 999 }, ctxFor());
+    assert.strictEqual(withField.ok, true, 'فشل الطلب: ' + withField.error_code);
+    const sent = seen.submits[seen.submits.length - 1];
+    assert.strictEqual(sent.body.duration, 10, 'duration من المتصل تسرّب إلى السلك: ' + sent.body.duration);
+  });
+
+  await check('ج10: التوجيه بلا model يبقى الأرخص (أقصر مدة) ويعرض البقية بدائل', () => {
+    const plan = genmedia.estimate({ kind: 'audio', prompt: 'x' }, ctxFor());
+    assert.strictEqual(plan.ok, true);
+    assert.strictEqual(plan.model, 'test/works-audio', 'رأس التوجيه: ' + plan.model);
+    assert.deepStrictEqual(plan.alternatives, ['test/works-audio-63s'], 'البدائل: ' + plan.alternatives.join(','));
+    // وفي الكتالوج الحقيقي الترتيب أرخص-فأرخص أيضاً
+    const chain = genmedia.routeChain('audio', { env: { FAL_KEY: FAKE_KEY }, getKey: () => '' }, false);
+    assert.strictEqual(chain[0].id, 'fal-ai/ace-step');
+    const costs = chain.map((m) => m.unit_cost_usd);
+    assert.deepStrictEqual(costs, costs.slice().sort((a, b) => a - b), 'سلسلة الصوت ليست مرتبة بالسعر');
+  });
+
+  await check('ج10: wireModelOf يعلن المسار ولا يشتقّه بقصّ اللاحقة', () => {
+    assert.strictEqual(genmedia.wireModelOf({ id: 'fal-ai/ace-step-63s', wire_model: 'fal-ai/ace-step' }), 'fal-ai/ace-step');
+    assert.strictEqual(genmedia.wireModelOf({ id: 'fal-ai/flux/schnell' }), 'fal-ai/flux/schnell');
+    // كل مدخل كتالوج ذي لاحقة مدة يعلن wire_model صراحةً
+    for (const m of genmedia.listCatalog().models) {
+      if (/-\d+s$/.test(m.id)) {
+        const raw = genmedia.candidatesFor(m.kind, { env: { FAL_KEY: FAKE_KEY }, getKey: () => '' })
+          .find((x) => x.id === m.id);
+        assert.ok(raw && raw.wire_model, 'معرّف بلاحقة مدة بلا wire_model معلن: ' + m.id);
+        assert.ok(!/-\d+s$/.test(raw.wire_model), 'wire_model يحمل لاحقة مدة: ' + raw.wire_model);
+      }
+    }
   });
 
   await check('ج9: الكتالوج الحقيقي يعلن خيارات فيديو متعددة مثبتة، مرتبة بالسعر وبلا افتراضي', () => {

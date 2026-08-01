@@ -12,7 +12,8 @@
  *
  * مفتاح غائب ⇒ «SKIPPED: no key» صريح، والمزوّد يُعلَّم unproven ولا يُبنى له عقد سلك.
  *
- * التشغيل: node scripts/genmedia-probe.js [--only gemini|openai|fal|discover|audio|refs|gptimage|video2] [--no-video]
+ * التشغيل: node scripts/genmedia-probe.js
+ *          [--only gemini|openai|fal|discover|audio|audio-duration|refs|gptimage|video2] [--no-video]
  * الأصول المولَّدة تُحفظ في dist/genmedia-probe/ للمعاينة البشرية (لا تدخل Git).
  *
  * === الجولة 9 ===
@@ -591,6 +592,93 @@ async function probeFalAudio() {
   record('fal', 'audio', false, 'all audio models failed');
 }
 
+// ============ 5-ب) fal — مدد ace-step الأطول (ج10: موسيقى الإعلان ≥62ث) ============
+/**
+ * ج9 جمّدت `duration:10` وحدها لأنها الوحيدة المقيسة. إعلان «سطر» يحتاج ≥62ث، فهذا
+ * السيناريو يثبت مدداً أطول **بالقياس لا بالافتراض**: لكل مدة يقيس السعر بفرق الرصيد
+ * (نمط `measuredCost` مع كشف `unsettled`)، و**يقرأ طول الصوت الفعلي من ترويسة WAV**
+ * (‏RIFF/‏fmt/‏data) بدل تصديق ما طُلب — فقد يقصّ المزوّد أو يمدّد بلا إعلان.
+ *
+ * التشغيل: node scripts/genmedia-probe.js --only audio-duration [--durations 30,63,120]
+ */
+const MUSIC_PROMPT = 'upbeat energetic synth-pop electro instrumental, 124 bpm, driving arpeggio, '
+  + 'rising energy, bright analog synths, punchy drums, no vocals';
+const DEFAULT_DURATIONS = [30, 63, 120];
+
+/** طول WAV الفعلي بالثواني من الترويسة (بلا اعتماديات): data chunk ÷ byteRate. */
+function wavSeconds(buf) {
+  try {
+    if (buf.length < 44 || buf.slice(0, 4).toString('latin1') !== 'RIFF'
+      || buf.slice(8, 12).toString('latin1') !== 'WAVE') return null;
+    let pos = 12;
+    let byteRate = 0;
+    let channels = 0;
+    let sampleRate = 0;
+    let bits = 0;
+    while (pos + 8 <= buf.length) {
+      const id = buf.slice(pos, pos + 4).toString('latin1');
+      const size = buf.readUInt32LE(pos + 4);
+      if (id === 'fmt ') {
+        channels = buf.readUInt16LE(pos + 10);
+        sampleRate = buf.readUInt32LE(pos + 12);
+        byteRate = buf.readUInt32LE(pos + 16);
+        bits = buf.readUInt16LE(pos + 22);
+      } else if (id === 'data') {
+        if (!byteRate) return null;
+        return { seconds: Math.round((size / byteRate) * 100) / 100, sampleRate, channels, bits, dataBytes: size };
+      }
+      pos += 8 + size + (size % 2);
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+async function probeAceStepDurations(durations) {
+  say('');
+  say('=== fal/ace-step: duration scaling (ج10 — promo music ≥62s) ===');
+  const { key } = resolveKey(['FAL_KEY']);
+  if (!key) { say('SKIPPED: no key (FAL_KEY)'); record('fal', 'audio-duration', false, 'SKIPPED no key'); return; }
+  const model = 'fal-ai/ace-step';
+  say('model:', model, '| prompt length:', MUSIC_PROMPT.length, '| durations:', durations.join(','));
+
+  for (const duration of durations) {
+    say('');
+    say('-- duration requested:', duration, 's');
+    const bal0 = await falBalance(key);
+    let sub;
+    try { sub = await falSubmit(key, model, { prompt: MUSIC_PROMPT, duration }); }
+    catch (e) { say('  TRANSPORT ERROR:', e.message); record('fal', 'audio-duration', false, duration + 's transport'); continue; }
+    say('  POST status:', sub.res.status, '| ms:', sub.ms);
+    if (sub.res.status !== 200) {
+      const d = sub.res.json && sub.res.json.detail;
+      say('  non-200 shape:', describe(sub.res.json), '| detail:',
+        JSON.stringify(String(typeof d === 'string' ? d : JSON.stringify(d || '')).slice(0, 300)));
+      record('fal', 'audio-duration', false, duration + 's submit ' + sub.res.status);
+      continue;
+    }
+    const q = sub.res.json || {};
+    const done = await falPoll(key, q.status_url, q.response_url, 600000, 'dur' + duration);
+    if (!done.ok) { record('fal', 'audio-duration', false, duration + 's poll failed'); continue; }
+    const body = done.out.json || {};
+    const a = body.audio || {};
+    say('  audio keys:', Object.keys(a).join(','), '| content_type:', JSON.stringify(String(a.content_type || '')));
+    if (!a.url) { record('fal', 'audio-duration', false, duration + 's no url'); continue; }
+    const asset = await request('GET', a.url, {}, null, 180000);
+    const meta = wavSeconds(asset.buffer);
+    say('  asset HTTP:', asset.status, '| bytes:', asset.buffer.length, '| magic:', magic(asset.buffer));
+    say('  ⏱ actual WAV seconds:', meta ? meta.seconds : '<unreadable>',
+      '| sampleRate:', meta ? meta.sampleRate : '-', '| channels:', meta ? meta.channels : '-',
+      '| bits:', meta ? meta.bits : '-');
+    const saved = saveAsset('fal-music-' + duration + 's.wav', asset.buffer);
+    say('  saved:', saved ? path.relative(path.join(__dirname, '..'), saved) : '<save failed>');
+    const cost = await measuredCost(key, bal0, model + '@' + duration + 's');
+    const okDur = !!(meta && meta.seconds >= duration - 1.5);
+    say('  duration honoured:', okDur, '(requested', duration + 's, got', meta ? meta.seconds + 's)' : '?)');
+    record('fal', 'audio-duration', okDur,
+      duration + 's -> ' + (meta ? meta.seconds : '?') + 's' + (cost == null ? ' | cost unsettled' : ' | measured $' + cost));
+  }
+}
+
 // ============================ 6) fal — refs فعلية (image-to-image بـdata: URI) ============================
 const REFS_PROMPT = 'change the circle color to solid blue, keep everything else identical';
 
@@ -783,7 +871,13 @@ async function main() {
   if (wantGpt) groups.push('gptimage');
   if (wantVid2) groups.push('video2');
   const force = args.includes('--rediscover');
-  if (only === 'discover') { await probeDiscover(Object.keys(DISCOVERY), force); }
+  if (only === 'audio-duration') {
+    const di = args.indexOf('--durations');
+    const list = di >= 0 && args[di + 1]
+      ? args[di + 1].split(',').map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)
+      : DEFAULT_DURATIONS;
+    await probeAceStepDurations(list);
+  } else if (only === 'discover') { await probeDiscover(Object.keys(DISCOVERY), force); }
   else if (groups.length) {
     await probeDiscover(groups, force);
     if (wantAudio) await probeFalAudio();

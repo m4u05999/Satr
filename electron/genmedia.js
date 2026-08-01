@@ -15,6 +15,11 @@
  *   • حارس مجلد المستخدم: `cwd` = home ⇒ `no_project` قبل أي شبكة (من تجربة المالك).
  *   • أسعار الكتالوج صارت **مقيسة حياً** بفرق رصيد fal قبل/بعد كل توليد، لا منقولة من توثيق.
  *
+ * === توسعة الجولة 10 (2026-08-02) ===
+ *   • مدد `ace-step` المثبتة صارت أربعاً (‏10/30/63/120ث) بمدخل كتالوج مستقل لكل واحدة
+ *     وسعر مقيس لها؛ الاختيار عبر حقل `model` القائم فلا يتغيّر شكل الطلب المجمَّد.
+ *     `wire_model` يفصل مسار السلك عن معرّف الكتالوج. وما لم يُقس لا يُمرَّر كما هو.
+ *
  * ⚠️ «المسبار أولاً» (المبدأ 5 في الخطة): لا يُجمَّد عقد سلك قبل استدعاء حيّ يثبته.
  * `scripts/genmedia-probe.js` شُغّل حياً 2026-08-01 والنتيجة:
  *   • fal  — PROVEN (صورة + فيديو عبر queue). عقده مجمَّد أدناه حرفياً كما رُصد.
@@ -189,20 +194,69 @@ const MODELS = [
     // مرصود: 6 استقصاءات و19571ms، وأصل 422785 بايت (أضخم بخمسة أضعاف من LTXV)
     wire: {},
   },
+  // --- الصوت: مدخل كتالوج **لكل مدة مقيسة** (ج10) ---
+  // لماذا مدخلات منفصلة لا حقل `duration` في الطلب: سعر الوحدة في هذا الكتالوج **مقيس**،
+  // فلو صار طول المقطع حقلاً يرسله المتصل لانكسر ثبات `unit_cost_usd` وتعذّر على
+  // `estimate()` حساب الكلفة من الكتالوج وحده قبل الشبكة. وبهذا الشكل أيضاً **لا يتغيّر
+  // شكل الطلب المجمَّد** `{cwd,kind,prompt,model?,count?,refs?,budget_usd?}` ولا عقد أداة
+  // `generate_media` (ملك كودكس) — الاختيار يمر بحقل `model` القائم.
+  // `wire_model` هو مسار السلك الفعلي؛ المعرّف يبقى ضمن [A-Za-z0-9._/-] كي يعرضه مربع
+  // إذن الكلفة (‏`mediaToken` في tools.js يرفض ما عداها).
+  // المدد الأربع مقيسة حياً وسعرها خطي تماماً عند $0.0002/ثانية (4 نقاط قياس).
   {
     id: 'fal-ai/ace-step',
     provider: 'fal',
     kind: 'audio',
-    label: 'ACE-Step — موسيقى/مقطع صوتي قصير (fal)',
+    label: 'ACE-Step — مقطع صوتي قصير 10ث (fal)',
     unit: 'clip',
-    unit_cost_usd: 0.002, // مقيس حياً: 9.9069575 -> 9.9049575
+    unit_cost_usd: 0.002, // مقيس حياً ج9: 9.9069575 -> 9.9049575
     max_count: 1,
     supports_refs: false,
     proven: true,
-    // مجمَّد من المسبار: {prompt, duration:10} ⇒ audio.url بـcontent_type=audio/wav
-    // (≈1.92م.ب لعشر ثوانٍ). **مُدد أخرى غير مقيسة** فلا تُمرَّر كي يبقى السعر صادقاً.
     wire: { duration: 10 },
     duration_seconds: 10,
+  },
+  {
+    id: 'fal-ai/ace-step-30s',
+    wire_model: 'fal-ai/ace-step',
+    provider: 'fal',
+    kind: 'audio',
+    label: 'ACE-Step — مقطع صوتي 30ث (fal)',
+    unit: 'clip',
+    unit_cost_usd: 0.006, // مقيس حياً ج10: 9.5041241667 -> 9.4981241667 (الفعلي 29.91ث)
+    max_count: 1,
+    supports_refs: false,
+    proven: true,
+    wire: { duration: 30 },
+    duration_seconds: 30,
+  },
+  {
+    id: 'fal-ai/ace-step-63s',
+    wire_model: 'fal-ai/ace-step',
+    provider: 'fal',
+    kind: 'audio',
+    label: 'ACE-Step — موسيقى إعلان 63ث (fal)',
+    unit: 'clip',
+    unit_cost_usd: 0.0126, // مقيس حياً ج10: 9.4981241667 -> 9.4855241667 (الفعلي 62.97ث)
+    max_count: 1,
+    supports_refs: false,
+    proven: true,
+    wire: { duration: 63 },
+    duration_seconds: 63,
+  },
+  {
+    id: 'fal-ai/ace-step-120s',
+    wire_model: 'fal-ai/ace-step',
+    provider: 'fal',
+    kind: 'audio',
+    label: 'ACE-Step — مقطع صوتي 120ث (fal)',
+    unit: 'clip',
+    unit_cost_usd: 0.024, // مقيس حياً ج10: 9.4855241667 -> 9.4615241667 (الفعلي 119.91ث)
+    max_count: 1,
+    supports_refs: false,
+    proven: true,
+    wire: { duration: 120 },
+    duration_seconds: 120,
   },
   {
     id: 'gpt-image-1-mini',
@@ -286,6 +340,15 @@ const PROVIDERS = [
 
 function providerByName(name) {
   return PROVIDERS.find((p) => p.name === name) || null;
+}
+
+/**
+ * ج10: مسار النموذج على سلك المزوّد. يساوي معرّف الكتالوج إلا حين يحمل المعرّف لاحقة
+ * تمييز داخلية (مثل لاحقة المدة `-63s`) فيُعلن `wire_model` صراحةً. لا اشتقاق بقصّ
+ * اللاحقة — المسار معلن في الكتالوج كي لا يخترع الكود معرّفاً لم يثبته المسبار.
+ */
+function wireModelOf(model) {
+  return (model && model.wire_model) || (model && model.id) || '';
 }
 
 /**
@@ -652,7 +715,8 @@ async function falGenerate(model, args, ctx, provider, key) {
   if (model.kind === 'image') input.num_images = args.count;
   if (model.supports_refs && args.refDataUri) input.image_url = args.refDataUri;
 
-  const submit = await request('POST', base + '/' + model.id, auth, input, SUBMIT_TIMEOUT_MS);
+  // ج10: معرّف الكتالوج قد يحمل لاحقة مدة (‏`…-63s`) بينما مسار السلك هو النموذج نفسه
+  const submit = await request('POST', base + '/' + wireModelOf(model), auth, input, SUBMIT_TIMEOUT_MS);
   if (submit.status !== 200 || !submit.json || !submit.json.status_url || !submit.json.response_url) {
     return { ok: false, error_code: 'provider_error', http_status: submit.status };
   }
@@ -1030,5 +1094,6 @@ module.exports = {
   candidatesFor,
   routeChain,
   isHomeDir,
+  wireModelOf,
   messageFor,
 };
