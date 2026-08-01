@@ -7,9 +7,12 @@
 // والمصغرة حتى 3MiB فالتحميل المسبق الكامل مرفوض)، البرومبت بزر نسخ، الكلفة
 // والنموذج/المزوّد LTR، زر «أرسل المسار للمؤلف» (حدث gallery-insert للقشرة —
 // تملأ المحرر ولا ترسل)، ونقر الصورة يفتح عرضاً مكبراً داخل اللوحة.
-// الفيديو بطاقة معلومات بلا معاينة (مؤجل صراحة إلى ج10)، والصوت بطاقة معلومات
-// بلا مشغّل (مؤجل عمداً — عقد ج9 §4). فراغ السجل ⇒ حالة
-// فارغة عربية إرشادية. العقد: open(cwd)/close() + panel-close/panel-refresh.
+// الفيديو والصوت (الجولة 10 §3 — المؤجل الموثق): زر «▶ شغّل المعاينة»/«▶ شغّل
+// المقطع» يطلب window.satr.genMedia(cwd, rel) عند النقر فقط (كسل صارم — لا تحميل
+// مسبق)، ثم Blob ← objectURL ← <video/audio controls> (media-src blob: في CSP).
+// الفشل/تجاوز السقف ⇒ بطاقة المعلومات القائمة + «تعذّر تحميل المعاينة» صراحةً.
+// revokeObjectURL إلزامي عند إغلاق اللوحة/إعادة فتحها/إزالتها (لا تسريب ذاكرة).
+// فراغ السجل ⇒ حالة فارغة عربية إرشادية. العقد: open(cwd)/close() + panel-close/panel-refresh.
 // قرار مظهر: العرض المكبر **يتبع الثيمة** (ستارة --scrim ثابتة الوضعين + بطاقة
 // شرح بأسطح الثيمة) — لا جزيرة داكنة جديدة، فلا حاجة لتوسعة كتلة التثبيت في
 // base.css (درس «الجزر الداكنة»: أي سطح داكن دائماً يلزم تثبيت tokens كاملاً).
@@ -36,6 +39,11 @@ const ownSheet = sheet(`
      الثابتة جعل نصها --text-dim/--red باهتاً في الفاتح (~1.9:1). تُنقل إلى سطح ثيمة
      يُقلب (--surface-3) فيصير تباينها بمرتبة ميتا البطاقة المقبولة — بلا token جديد */
   .gal-video, .gal-audio, .gal-failed { background: var(--surface-3); cursor: default; }
+  .gal-play { font-size: 11px; padding: 2px var(--space-2); }
+  .gal-media-err { color: var(--red); font-size: 12px; }
+  /* المشغّل داخل صندوق المعلومات: سطح وسائط --bg-deep (لا نص فوقه — لا جزيرة) */
+  .gal-player { width: 100%; height: 100%; object-fit: contain; background: var(--bg-deep); display: block; }
+  .gal-audio-player { width: 100%; }
   .gal-failed { color: var(--red); }
   .gal-body { padding: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1h); flex: 1; }
   .gal-prompt {
@@ -103,6 +111,8 @@ class SatrGalleryPanel extends HTMLElement {
     this._lightbox = r.querySelector('.gal-lightbox');
     this._cwd = '';
     this._itemsById = new Map();
+    // عناوين objectURL الحية للمشغّلات — تُسحب كلها عند الإغلاق/إعادة الفتح/الإزالة
+    this._mediaUrls = new Set();
     // مراقب الكسل: يحمّل مصغرة البطاقة عند دخولها مجال الرؤية فقط
     this._observer = ('IntersectionObserver' in window)
       ? new IntersectionObserver((entries) => {
@@ -130,10 +140,19 @@ class SatrGalleryPanel extends HTMLElement {
   }
 
   connectedCallback() { document.addEventListener('keydown', this._onEsc, true); }
-  disconnectedCallback() { document.removeEventListener('keydown', this._onEsc, true); }
+  disconnectedCallback() {
+    document.removeEventListener('keydown', this._onEsc, true);
+    this._revokeMedia();
+  }
+
+  _revokeMedia() {
+    for (const url of this._mediaUrls) { try { URL.revokeObjectURL(url); } catch (e) {} }
+    this._mediaUrls.clear();
+  }
 
   close() {
     this._closeLightbox();
+    this._revokeMedia();
     this.removeAttribute('open');
     this.dispatchEvent(new CustomEvent('panel-close'));
   }
@@ -174,6 +193,67 @@ class SatrGalleryPanel extends HTMLElement {
     if (item) btn.addEventListener('click', () => this._openLightbox(item, thumb.dataUrl));
   }
 
+  // data URL ← Blob بلا fetch (connect-src 'none' في fixtures — فكّ base64 يدوياً)
+  _dataUrlToBlob(dataUrl, mime) {
+    const base64 = String(dataUrl).slice(String(dataUrl).indexOf(',') + 1);
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime || 'application/octet-stream' });
+  }
+
+  // صندوق وسائط (ج10 §3): بطاقة معلومات بأيقونة + زر تشغيل كسول — genMedia عند
+  // النقر فقط، ثم <video/audio controls> بـ objectURL مُسجَّل للسحب عند الإغلاق
+  _buildMediaBox(item, rel) {
+    const isVideo = item.kind === 'video';
+    const box = document.createElement('div');
+    box.className = 'gal-thumb ' + (isVideo ? 'gal-video' : 'gal-audio');
+    const ico = document.createElement('span'); ico.className = 'gal-ico';
+    ico.textContent = isVideo ? '🎬' : '🎵';
+    const tx = document.createElement('span'); tx.textContent = isVideo ? 'فيديو' : 'صوت';
+    box.appendChild(ico); box.appendChild(tx);
+    if (!rel) {
+      const nofile = document.createElement('span'); nofile.textContent = 'لا ملف';
+      box.appendChild(nofile);
+      return box;
+    }
+    const play = document.createElement('button');
+    play.type = 'button'; play.className = 'gal-play';
+    play.textContent = isVideo ? '▶ شغّل المعاينة' : '▶ شغّل المقطع';
+    play.addEventListener('click', () => this._loadMedia(box, play, item.kind, rel));
+    box.appendChild(play);
+    return box;
+  }
+
+  // الفشل/تجاوز السقف ⇒ بطاقة المعلومات القائمة + رسالة عربية صريحة (لا فشل صامت)
+  _failMedia(box, btn) {
+    if (btn && btn.isConnected) btn.remove();
+    if (box.querySelector('.gal-media-err')) return;
+    const err = document.createElement('span');
+    err.className = 'gal-media-err';
+    err.textContent = 'تعذّر تحميل المعاينة';
+    box.appendChild(err);
+  }
+
+  async _loadMedia(box, btn, kind, rel) {
+    btn.disabled = true; btn.textContent = '…';
+    let res = null;
+    try { res = await window.satr.genMedia(this._cwd, rel); } catch (e) { /* يُعالج أدناه */ }
+    if (!box.isConnected) return; // أُعيد رسم الشبكة أثناء الانتظار
+    if (!res || !res.ok || !res.dataUrl) { this._failMedia(box, btn); return; }
+    let url = '';
+    try {
+      url = URL.createObjectURL(this._dataUrlToBlob(res.dataUrl, res.mime));
+    } catch (e) { this._failMedia(box, btn); return; }
+    this._mediaUrls.add(url);
+    const media = document.createElement(kind === 'video' ? 'video' : 'audio');
+    media.controls = true;
+    media.src = url;
+    media.className = kind === 'video' ? 'gal-player' : 'gal-audio-player';
+    box.textContent = '';
+    box.appendChild(media);
+  }
+
   // بطاقة عنصر واحد من سجل v1: {id, kind, provider, model, prompt, files, cost_usd_estimate, status, error_code?}
   _renderCard(item) {
     const card = document.createElement('article');
@@ -189,22 +269,8 @@ class SatrGalleryPanel extends HTMLElement {
       tx.textContent = 'فشل التوليد' + (item.error_code ? ' (' + item.error_code + ')' : '');
       box.appendChild(ico); box.appendChild(tx);
       card.appendChild(box);
-    } else if (item.kind === 'video') {
-      // الفيديو: بطاقة معلومات بلا معاينة — المعاينة المضمّنة مؤجلة صراحة إلى ج10
-      const box = document.createElement('div');
-      box.className = 'gal-thumb gal-video';
-      const ico = document.createElement('span'); ico.className = 'gal-ico'; ico.textContent = '🎬';
-      const tx = document.createElement('span'); tx.textContent = 'فيديو — المعاينة تأتي لاحقاً';
-      box.appendChild(ico); box.appendChild(tx);
-      card.appendChild(box);
-    } else if (item.kind === 'audio') {
-      // الصوت: بطاقة معلومات بلا مشغّل (مؤجل عمداً — عقد ج9 §4) بأعراف الفيديو نفسها
-      const box = document.createElement('div');
-      box.className = 'gal-thumb gal-audio';
-      const ico = document.createElement('span'); ico.className = 'gal-ico'; ico.textContent = '🎵';
-      const tx = document.createElement('span'); tx.textContent = 'صوت — المشغّل يأتي لاحقاً';
-      box.appendChild(ico); box.appendChild(tx);
-      card.appendChild(box);
+    } else if (item.kind === 'video' || item.kind === 'audio') {
+      card.appendChild(this._buildMediaBox(item, firstFile));
     } else {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -269,6 +335,7 @@ class SatrGalleryPanel extends HTMLElement {
     this._cwd = cwd || '';
     this.setAttribute('open', '');
     this._closeLightbox();
+    this._revokeMedia(); // الشبكة تُبنى من جديد — اسحب عناوين المشغّلات السابقة
     if (this._observer) this._observer.disconnect();
     if (!this._cwd) {
       this._list.innerHTML = '<div class="hint">اختر مجلد المشروع أولاً 📁</div>';

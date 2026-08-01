@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('satr', {
   generationsList: (cwd) => ipcRenderer.invoke('satr:generationsList', { cwd }),
   genProviders: () => ipcRenderer.invoke('satr:genProviders'),
   genThumb: (cwd, rel) => ipcRenderer.invoke('satr:genThumb', { cwd, rel }),
+  genMedia: (cwd, rel) => ipcRenderer.invoke('satr:genMedia', { cwd, rel }), // ج10: وسائط المعاينة — محدّدة فقط
   pickFolder: () => ipcRenderer.invoke('satr:pickFolder'),
   send: (payload) => ipcRenderer.invoke('satr:send', payload),
   stop: () => ipcRenderer.invoke('satr:stop'),

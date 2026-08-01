@@ -696,6 +696,33 @@ ipcMain.handle('satr:genThumb', (event, p) => {
   } catch { return { ok: false, error: 'read_failed' }; }
 });
 
+// ---------- كتلة genMedia (الجولة 10 — كيمي): قراءة وسائط التوليد للمعاينة ----------
+// قناة قراءة فقط لمشغّلَي المعرض (عقد ج10 §3): نفس تحقق genThumb حرفياً (rel
+// داخل generations/ حصراً عبر safeGenerationRel، وrealpath يرفض traversal/symlink)،
+// بقائمة سماح امتدادات وسائط (النوع من الامتداد — لا اشتقاق من المحتوى) وسقف 24MiB.
+const GEN_MEDIA_MIME = Object.freeze({
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.wav': 'audio/wav', '.mp3': 'audio/mpeg',
+});
+const GEN_MEDIA_MAX_BYTES = 24 * 1024 * 1024;
+
+ipcMain.handle('satr:genMedia', (event, p) => {
+  const cwd = sanitizeMemoryCwd(p && p.cwd);
+  const rel = cwd ? safeGenerationRel(cwd, p && p.rel, true) : '';
+  const mime = rel ? GEN_MEDIA_MIME[path.extname(rel).toLowerCase()] : '';
+  if (!cwd || !rel || !mime) return { ok: false, error: 'bad_path' };
+  try {
+    const cwdRoot = fs.realpathSync(cwd);
+    const generationsRoot = fs.realpathSync(path.join(cwd, 'generations'));
+    if (!generationsRoot.startsWith(cwdRoot + path.sep)) return { ok: false, error: 'bad_path' };
+    const filename = fs.realpathSync(path.resolve(cwd, rel));
+    if (!filename.startsWith(generationsRoot + path.sep)) return { ok: false, error: 'bad_path' };
+    const stat = fs.statSync(filename);
+    if (!stat.isFile() || stat.size > GEN_MEDIA_MAX_BYTES) return { ok: false, error: 'bad_size' };
+    return { ok: true, mime, dataUrl: 'data:' + mime + ';base64,' + fs.readFileSync(filename).toString('base64') };
+  } catch { return { ok: false, error: 'read_failed' }; }
+});
+// ---------- نهاية كتلة genMedia ----------
+
 ipcMain.handle('satr:genProviders', async () => {
   const genmedia = loadGenmedia();
   if (!genmedia) return { ok: false, error: 'ميزة التوليد لم تكتمل بعد', providers: [] };

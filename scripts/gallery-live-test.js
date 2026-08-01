@@ -6,9 +6,11 @@
  * الحقيقيين وورق التصميم الحقيقي تحت CSP الفعلية بنمط اللوحات، مع جسر
  * window.satr مزيف يقدّم بيانات fixture.
  *
- * fixture 1 — لوحة معرض التوليدات 🖼 (ج8 + بطاقة الصوت من ج9 §4): الفتح
- * والإغلاق، الشبكة بخمس بطاقات (صورتان + فيديو مؤجل + صوت مؤجل + فاشلة)،
- * المصغرات الكسولة عبر genThumb، نسخ البرومبت، حدث gallery-insert بلا إرسال
+ * fixture 1 — لوحة معرض التوليدات 🖼 (ج8/ج9 + مشغّلا الوسائط من ج10 §3): الفتح
+ * والإغلاق، الشبكة بخمس بطاقات (صورتان + فيديو + صوت + فاشلة)، المصغرات
+ * الكسولة عبر genThumb، المشغّلان الكسولان عبر genMedia (لا طلب قبل النقر،
+ * <video/audio controls> بـ objectURL، رفض السقف/المسار/الامتداد برسالة صريحة،
+ * revokeObjectURL عند الإغلاق)، نسخ البرومبت، حدث gallery-insert بلا إرسال
  * فعلي، العرض المكبر (فتح/Escape/✕)، والحالة الفارغة الإرشادية.
  *
  * fixture 2 — بطاقة «توليد مكتمل» في المحادثة (ج9 §2): method addGenerationCard
@@ -33,12 +35,13 @@ const FIXTURES = [
     component: '../../src/ui/components/gallery-panel.js',
     resultVar: '__galleryLiveResult', progressVar: '__galleryLiveProgress',
     checks: [
-      'grid-five-cards', 'lazy-thumbs', 'video-deferred-card', 'audio-info-card', 'failed-card',
-      'meta-ltr-prompt-auto', 'copy-prompt', 'insert-event-no-send',
-      'lightbox-open-esc-close', 'close-event', 'empty-state',
+      'grid-five-cards', 'lazy-thumbs', 'video-player-card', 'audio-player-card', 'media-lazy-no-preload',
+      'failed-card', 'meta-ltr-prompt-auto', 'copy-prompt', 'insert-event-no-send',
+      'lightbox-open-esc-close', 'video-player-lazy', 'audio-player-lazy',
+      'media-oversize-rejected', 'media-path-ext-rejected', 'close-event', 'media-revoke-on-close', 'empty-state',
     ],
     label: 'gallery-live',
-    done: 'شبكة 5 بطاقات (صورتان/فيديو مؤجل/صوت مؤجل/فاشلة)، مصغرات كسولة، نسخ، إدراج بلا إرسال، عرض مكبّر، حالة فارغة',
+    done: 'شبكة 5 بطاقات، مصغرات كسولة، مشغّلا فيديو/صوت كسولان (genMedia عند النقر فقط)، رفض السقف/المسار/الامتداد، revokeObjectURL عند الإغلاق، نسخ، إدراج بلا إرسال، عرض مكبّر، حالة فارغة',
   },
   {
     file: 'gen-card-live.html',
@@ -54,6 +57,26 @@ const FIXTURES = [
 ];
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+// عقد genMedia الساكن (ج10 §3): الكتلة المعلَّمة في main.js تفرض القواعد الفعلية —
+// الجسر المزيف في الصفحة يحاكيها فقط. الفحص بنمط assertStaticContract في chat-rtl.
+function assertGenMediaMainContract() {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
+  assert.strictEqual((main.match(/satr:genMedia/g) || []).length, 1, 'معالج satr:genMedia ليس وحيداً في main.js.');
+  const start = main.indexOf('كتلة genMedia');
+  const end = main.indexOf('نهاية كتلة genMedia');
+  assert(start !== -1 && end > start, 'غابت علامتا كتلة genMedia الموضعية في main.js.');
+  const block = main.slice(start, end);
+  for (const needle of [
+    "'.mp4': 'video/mp4'", "'.webm': 'video/webm'", "'.wav': 'audio/wav'", "'.mp3': 'audio/mpeg'",
+    '24 * 1024 * 1024', 'safeGenerationRel(cwd, p && p.rel, true)',
+    'fs.realpathSync', 'stat.size > GEN_MEDIA_MAX_BYTES',
+    'GEN_MEDIA_MIME[path.extname(rel).toLowerCase()]',
+  ]) assert(block.includes(needle), 'نقص في كتلة genMedia بـ main.js: ' + needle);
+  assert(preload.includes("genMedia: (cwd, rel) => ipcRenderer.invoke('satr:genMedia', { cwd, rel })"),
+    'غاب سطر genMedia المحدّد في preload.js.');
+}
 
 function assertFixtureContract(spec) {
   const source = fs.readFileSync(path.join(__dirname, 'fixtures', spec.file), 'utf8');
@@ -102,6 +125,7 @@ async function runFixture(spec) {
 }
 
 async function main() {
+  assertGenMediaMainContract();
   await app.whenReady();
   // إتلاف نافذة fixture 1 قبل إقلاع نافذة fixture 2 يُسقط آخر نافذة فيبدأ Electron
   // الإغلاق التلقائي فيفشل التحميل الثاني بـ ERR_FAILED — نمنع الإقلاع بين النافذتين
