@@ -15,6 +15,9 @@ const ROOT = path.resolve(__dirname, '..');
 const OUT_DIR = path.join(ROOT, 'site', 'assets');
 const TIMEOUT_MS = 30000;
 
+// profile محلي يمنع تصادم cache Electron حين تولّد شجرة عمل موازية لقطاتها في الوقت نفسه.
+app.setPath('userData', path.join(ROOT, 'dist', '.site-shots-profile'));
+
 const SHOTS = [
   { fixture: 'site-shots.html', out: 'app-tasks.png', width: 1500, height: 1220, query: { variant: 'ledger' } },
   { fixture: 'site-shots.html', out: 'app-chat.png', width: 1500, height: 1220, query: { variant: 'diff' } },
@@ -22,6 +25,10 @@ const SHOTS = [
   { fixture: 'site-shots-ops.html', out: 'app-ops.png', width: 760, height: 700 },
   { fixture: 'site-shots-ops.html', out: 'app-judges.png', width: 760, height: 1080, query: { variant: 'judges' } },
   { fixture: 'site-shots-preview.html', out: 'app-preview.png', width: 1280, height: 860 },
+  { fixture: 'site-shots-gen.html', out: 'app-generation-chat.png', width: 1280, height: 820, query: { scene: 'chat' } },
+  { fixture: 'site-shots-gen.html', out: 'app-generation-gallery.png', width: 1280, height: 900, query: { scene: 'gallery' } },
+  { fixture: 'site-shots-gen.html', out: 'app-generation-permission.png', width: 960, height: 680, query: { scene: 'permission' } },
+  { sitePage: true, out: 'round10-generation-preview.png', width: 1440, height: 2500, destination: 'dist' },
 ];
 
 function delay(ms) {
@@ -40,12 +47,55 @@ async function waitReady(win) {
   throw new Error('انتهت مهلة تجهيز لقطة الموقع.');
 }
 
+async function verifySiteResponsive(win, shot) {
+  win.setSize(390, 844);
+  await delay(120);
+  const state = await win.webContents.executeJavaScript(`
+    const columns = (selector) => getComputedStyle(document.querySelector(selector))
+      .gridTemplateColumns.trim().split(/\\s+/).length;
+    ({
+      width: innerWidth,
+      height: innerHeight,
+      story: columns('.generate-story'),
+      cost: columns('.cost-story'),
+      transparency: columns('.generate-transparency'),
+      frameTransform: getComputedStyle(document.querySelector('.generate-frame')).transform,
+    });
+  `, true);
+  if (state.story !== 1 || state.cost !== 1 || state.transparency !== 1 || state.frameTransform !== 'none') {
+    throw new Error('فشل تجاوب قسم التوليد: ' + JSON.stringify(state));
+  }
+  console.log('✓ site-responsive', state.width + 'x' + state.height,
+    'columns=' + state.story + '/' + state.cost + '/' + state.transparency,
+    'transform=' + state.frameTransform);
+  win.setSize(shot.width, shot.height);
+  await delay(120);
+}
+
 // نافذة واحدة يُعاد تحميلها لكل لقطة — إنشاء نافذة ثانية offscreen+sandbox
 // يفشل حتمياً بـ ERR_FAILED في هذه البيئة (ملاحظة مثبّتة بالتجربة)
 async function capture(win, shot) {
   win.setSize(shot.width, shot.height);
-  await win.loadFile(path.join(__dirname, 'fixtures', shot.fixture), { query: shot.query || {} });
-  await waitReady(win);
+  if (shot.sitePage) {
+    await win.loadFile(path.join(ROOT, 'site', 'index.html'));
+    await verifySiteResponsive(win, shot);
+    await win.webContents.executeJavaScript(`
+      document.documentElement.style.scrollBehavior = 'auto';
+      document.querySelectorAll('[data-reveal]').forEach((element) => {
+        element.style.setProperty('opacity', '1', 'important');
+        element.style.setProperty('transform', 'none', 'important');
+      });
+      document.querySelectorAll('.generate-frame').forEach((element) =>
+        element.style.setProperty('transform', 'none', 'important'));
+      const goldLine = document.getElementById('goldLine');
+      if (goldLine) goldLine.style.display = 'none';
+      document.getElementById('generate').scrollIntoView({ block: 'start' });
+    `, true);
+    await delay(900); // تحميل الصور الكسول واستقرار خطوط صفحة الهبوط
+  } else {
+    await win.loadFile(path.join(__dirname, 'fixtures', shot.fixture), { query: shot.query || {} });
+    await waitReady(win);
+  }
   await delay(250); // استقرار الرسم النهائي
   let image = await win.webContents.capturePage();
   if (image.isEmpty()) {
@@ -56,8 +106,9 @@ async function capture(win, shot) {
     image = await win.webContents.capturePage();
   }
   if (image.isEmpty()) throw new Error('capturePage أعادت صورة فارغة: ' + shot.out);
-  fs.mkdirSync(OUT_DIR, { recursive: true });
-  const file = path.join(OUT_DIR, shot.out);
+  const destination = shot.destination === 'dist' ? path.join(ROOT, 'dist') : OUT_DIR;
+  fs.mkdirSync(destination, { recursive: true });
+  const file = path.join(destination, shot.out);
   fs.writeFileSync(file, image.toPNG());
   const size = image.getSize();
   console.log('✓', shot.out, size.width + 'x' + size.height, Math.round(fs.statSync(file).size / 1024) + 'KB');

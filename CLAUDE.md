@@ -292,7 +292,11 @@ site/                ← صفحة الهبوط (قرار «توزيع أوسع»
                        التطبيق (files allowlist). التطوير: npm run site:serve (4600)؛
                        الترقية: vendor:site؛ توليد اللقطات: site:shots (حتمي — الزمن
                        مجمَّد في fixture الغرفة، ونافذة offscreen واحدة تُعاد — الثانية
-                       تفشل ERR_FAILED). fixtures تحت scripts/fixtures/site-shots-*
+                       تفشل ERR_FAILED). fixtures تحت scripts/fixtures/site-shots-*.
+                       منذ ج10: قسم «ولّد من سطر» يشرح التوليد العربي وبطاقة المحادثة
+                       والمعرض والكلفة قبل التنفيذ وBYOK المجاني دائماً؛ لقطاته الثلاث
+                       من مكوّنات chat/gallery/perm الإنتاجية وبيانات ثابتة في
+                       scripts/fixtures/site-shots-gen*، بلا CDN أو رابط تنزيل جديد.
 ```
 
 ملاحظة CSP: لا يوجد `'unsafe-inline'` — أي `<style>` أو `<script>` مضمّن جديد في index.html
