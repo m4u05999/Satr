@@ -144,9 +144,26 @@ const GALLERY_INJECT = `
   window.satr.generationsList = async () => ({ ok: true, items: FX.items.map((it) => ({ ...it })) });
   window.satr.genThumb = async (cwd, rel) => FX.thumbs[rel]
     ? { ok: true, dataUrl: FX.thumbs[rel] } : { ok: false, error: "not_found" };
-  document.getElementById("cwd").value = "D:\fixture-project"; // الـharness يتركه فارغاً
+  document.getElementById("cwd").value = "D:/fixture-project"; // الـharness يتركه فارغاً
   document.querySelector("#galleryToggle").click();
   await new Promise((r) => setTimeout(r, 700)); // فتح + تحميل المصغرات الكسولة
+`;
+
+// حقن حدث generation_done اصطناعي في مشهدَي بطاقة المحادثة (35–36 — عقد ج9 §2):
+// يمرّ بمسار القشرة الحقيقي كاملاً (خطّاف الـharness ⇒ app.js ⇒ chat.addGenerationCard
+// — نمط بطاقة المراجعة في المشهدين 30–31)، وقنوات generationsList/genThumb تُستبدل
+// بدوال fixture كي تعمل المصغرة ويفتح نقرُ البطاقة المعرضَ ببياناته.
+const GEN_CARD_INJECT = `
+  const FXG = ${JSON.stringify(GALLERY_FX)};
+  window.satr.generationsList = async () => ({ ok: true, items: FXG.items.map((it) => ({ ...it })) });
+  window.satr.genThumb = async (cwd, rel) => FXG.thumbs[rel]
+    ? { ok: true, dataUrl: FXG.thumbs[rel] } : { ok: false, error: "not_found" };
+  document.getElementById("cwd").value = "D:/fixture-project"; // الـharness يتركه فارغاً
+  window.__SATR_TESTSPRITE_HARNESS__.emitEvent({
+    type: "generation_done", kind: "image", files: ["generations/satr-logo-1.png"],
+    cost_usd_estimate: 0.04, provider: "fal", model: "gpt-image-2",
+  });
+  await new Promise((r) => setTimeout(r, 700)); // بناء البطاقة + جلب المصغرة
 `;
 
 const SHOTS = [
@@ -395,12 +412,41 @@ const SHOTS = [
   { out: '30-ops-loop-review', w: 1440, h: 900, js: MEASURE + LOOP_REVIEW_BODY },
   { out: '31-ops-loop-review-light', w: 1440, h: 900, js: LIGHT + MEASURE + LOOP_REVIEW_BODY },
 
-  // ---------- لوحة معرض التوليدات 🖼 (الجولة 8) ----------
-  // الداكن: الشبكة كاملة (صورتان + فيديو مؤجل + فاشلة) ببيانات fixture
+  // ---------- لوحة معرض التوليدات 🖼 (الجولة 8 + بطاقة الصوت من ج9 §4) ----------
+  // الداكن: الشبكة كاملة (صورتان + فيديو مؤجل + صوت مؤجل + فاشلة) ببيانات fixture
   { out: '32-gallery', w: 1440, h: 900, js: GALLERY_INJECT },
   // الحالة الفارغة الإرشادية — تُختبر بصرياً لا منطقياً فقط (درس «زر الأحدث»)
   { out: '34-gallery-empty', w: 1440, h: 900,
     js: "window.satr.generationsList = async () => ({ ok: true, items: [] }); document.getElementById('cwd').value = 'D:" + String.fromCharCode(92) + String.fromCharCode(92) + "fixture-project'; document.querySelector('#galleryToggle').click();" },
+  // ---------- بطاقة «توليد مكتمل» في المحادثة (الجولة 9 §2) ----------
+  // الداكن: البطاقة بمصغرتها عبر المسار الحقيقي كاملاً (emitEvent ⇒ app.js ⇒ chat.js)
+  { out: '35-gen-card', w: 1440, h: 900, js: GEN_CARD_INJECT },
+  // الفاتح: قياس تباين نصوص البطاقة + نقرها يفتح المعرض وفيه بطاقة الصوت (بصرياً)
+  {
+    out: '36-gen-card-light', w: 1440, h: 900,
+    js: LIGHT + MEASURE + GEN_CARD_INJECT + `
+      const card = document.querySelector(".gen-card");
+      if (!card) { out.push("✗ لم تظهر بطاقة التوليد في المحادثة"); return out; }
+      out.push("مصغرة محمّلة: " + card.querySelectorAll(".gen-thumb img").length);
+      const headBg = effBg(card.querySelector(".work-card-head"));
+      const title = card.querySelector(".work-card-title");
+      out.push("العنوان: " + fmt(parseColor(getComputedStyle(title).color)) + " على " + fmt(headBg) + " = " + contrast(parseColor(getComputedStyle(title).color), headBg).toFixed(2) + ":1");
+      const state = card.querySelector(".work-card-state");
+      out.push("المزوّد/النموذج: " + fmt(parseColor(getComputedStyle(state).color)) + " على " + fmt(headBg) + " = " + contrast(parseColor(getComputedStyle(state).color), headBg).toFixed(2) + ":1");
+      const footBg = effBg(card.querySelector(".work-card-foot"));
+      const tech = card.querySelector(".work-card-tech");
+      out.push("الكلفة/المسار: " + fmt(parseColor(getComputedStyle(tech).color)) + " على " + fmt(footBg) + " = " + contrast(parseColor(getComputedStyle(tech).color), footBg).toFixed(2) + ":1 · اتجاه " + getComputedStyle(tech).direction);
+      // نقر البطاقة يفتح المعرض بالمسار الحقيقي — وفيه بطاقة الصوت
+      card.click();
+      await new Promise((r) => setTimeout(r, 600));
+      const panel = document.querySelector("satr-gallery-panel");
+      out.push(panel.hasAttribute("open") ? "✓ نقر البطاقة فتح لوحة المعرض" : "✗ نقر البطاقة لم يفتح اللوحة");
+      const audioBox2 = panel.shadowRoot.querySelector(".gal-audio");
+      out.push(audioBox2 ? "✓ بطاقة الصوت في المعرض: «" + audioBox2.textContent.trim() + "»" : "✗ غابت بطاقة الصوت من المعرض");
+      return out;
+    `,
+  },
+
   // الفاتح: قياس تباين البرومبت/الميتا + شرح العرض المكبر (يتبع الثيمة — لا جزيرة داكنة)
   {
     out: '33-gallery-light', w: 1440, h: 900,
@@ -415,6 +461,11 @@ const SHOTS = [
       const cardBg = effBg(cards[0]);
       out.push("البرومبت: " + fmt(parseColor(getComputedStyle(promptEl).color)) + " على " + fmt(cardBg) + " = " + contrast(parseColor(getComputedStyle(promptEl).color), cardBg).toFixed(2) + ":1");
       out.push("الميتا: " + fmt(parseColor(getComputedStyle(metaEl).color)) + " على " + fmt(cardBg) + " = " + contrast(parseColor(getComputedStyle(metaEl).color), cardBg).toFixed(2) + ":1");
+      // بطاقة الصوت (ج9): معلومات بلا مشغّل على سطح ثيمة يُقلب (لا سطح وسائط ثابت)
+      const audioBox = cards[3] && cards[3].querySelector(".gal-audio");
+      if (!audioBox) { out.push("✗ غابت بطاقة الصوت من المعرض"); return out; }
+      const audioBg = effBg(audioBox);
+      out.push("بطاقة الصوت: «" + audioBox.textContent.trim() + "» — نص " + fmt(parseColor(getComputedStyle(audioBox).color)) + " على " + fmt(audioBg) + " = " + contrast(parseColor(getComputedStyle(audioBox).color), audioBg).toFixed(2) + ":1");
       // العرض المكبر في الفاتح: بطاقة الشرح تتبع الثيمة (قرار موثّق — لا جزيرة داكنة)
       cards[0].querySelector("button.gal-thumb").click();
       await new Promise((r) => setTimeout(r, 300));

@@ -7,7 +7,8 @@
 // والمصغرة حتى 3MiB فالتحميل المسبق الكامل مرفوض)، البرومبت بزر نسخ، الكلفة
 // والنموذج/المزوّد LTR، زر «أرسل المسار للمؤلف» (حدث gallery-insert للقشرة —
 // تملأ المحرر ولا ترسل)، ونقر الصورة يفتح عرضاً مكبراً داخل اللوحة.
-// الفيديو بطاقة معلومات بلا معاينة (مؤجل صراحة إلى ج9). فراغ السجل ⇒ حالة
+// الفيديو بطاقة معلومات بلا معاينة (مؤجل صراحة إلى ج10)، والصوت بطاقة معلومات
+// بلا مشغّل (مؤجل عمداً — عقد ج9 §4). فراغ السجل ⇒ حالة
 // فارغة عربية إرشادية. العقد: open(cwd)/close() + panel-close/panel-refresh.
 // قرار مظهر: العرض المكبر **يتبع الثيمة** (ستارة --scrim ثابتة الوضعين + بطاقة
 // شرح بأسطح الثيمة) — لا جزيرة داكنة جديدة، فلا حاجة لتوسعة كتلة التثبيت في
@@ -31,7 +32,10 @@ const ownSheet = sheet(`
   }
   .gal-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .gal-thumb .gal-ico { font-size: 24px; }
-  .gal-video { cursor: default; }
+  /* صناديق المعلومات النصية (فيديو/صوت/فشل) فوقها نص فعلاً — بقاؤها على --bg-deep
+     الثابتة جعل نصها --text-dim/--red باهتاً في الفاتح (~1.9:1). تُنقل إلى سطح ثيمة
+     يُقلب (--surface-3) فيصير تباينها بمرتبة ميتا البطاقة المقبولة — بلا token جديد */
+  .gal-video, .gal-audio, .gal-failed { background: var(--surface-3); cursor: default; }
   .gal-failed { color: var(--red); }
   .gal-body { padding: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1h); flex: 1; }
   .gal-prompt {
@@ -186,11 +190,19 @@ class SatrGalleryPanel extends HTMLElement {
       box.appendChild(ico); box.appendChild(tx);
       card.appendChild(box);
     } else if (item.kind === 'video') {
-      // الفيديو: بطاقة معلومات بلا معاينة — المعاينة المضمّنة مؤجلة صراحة إلى ج9
+      // الفيديو: بطاقة معلومات بلا معاينة — المعاينة المضمّنة مؤجلة صراحة إلى ج10
       const box = document.createElement('div');
       box.className = 'gal-thumb gal-video';
       const ico = document.createElement('span'); ico.className = 'gal-ico'; ico.textContent = '🎬';
-      const tx = document.createElement('span'); tx.textContent = 'فيديو — المعاينة تأتي في الجولة 9';
+      const tx = document.createElement('span'); tx.textContent = 'فيديو — المعاينة تأتي لاحقاً';
+      box.appendChild(ico); box.appendChild(tx);
+      card.appendChild(box);
+    } else if (item.kind === 'audio') {
+      // الصوت: بطاقة معلومات بلا مشغّل (مؤجل عمداً — عقد ج9 §4) بأعراف الفيديو نفسها
+      const box = document.createElement('div');
+      box.className = 'gal-thumb gal-audio';
+      const ico = document.createElement('span'); ico.className = 'gal-ico'; ico.textContent = '🎵';
+      const tx = document.createElement('span'); tx.textContent = 'صوت — المشغّل يأتي لاحقاً';
       box.appendChild(ico); box.appendChild(tx);
       card.appendChild(box);
     } else {
