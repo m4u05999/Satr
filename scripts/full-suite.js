@@ -21,6 +21,7 @@ const SUITE = [
   'test:orchestrator',
   'test:opsroom-all',
   'test:codexmcp',
+  'test:genmedia',
   'test:codex-contract',
   'test:send-liveness',
   'test:codex-steer',
@@ -66,6 +67,7 @@ const SUITE = [
   'test:browser-member-live',
   'test:preview-member-live',
   'test:question-dialog',
+  'test:gallery',
   'eval:agent',
 ];
 
