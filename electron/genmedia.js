@@ -5,6 +5,16 @@
  * + توجيه أرخص-أولاً حسب المفاتيح المتوفرة مع سقوط صريح + تنزيل الأصول إلى
  * `<cwd>/generations/` + سجل JSONL في `<cwd>/.satr/generations.jsonl`.
  *
+ * === توسعة الجولة 9 (2026-08-01) ===
+ *   • `kind:'audio'` عبر fal (‏fal-ai/ace-step) — مثبت حياً، $0.002 مقيسة لعشر ثوانٍ.
+ *   • `refs` تعمل فعلاً: image-to-image عبر `fal-ai/flux/dev/image-to-image` والمرجع
+ *     يُمرَّر **data: URI** (بلا رفع لأي خدمة)؛ وكل نموذج لم يثبت مساره يبقى refs_unsupported.
+ *   • **افتراضي الصور** صار `fal-ai/gpt-image-1/text-to-image` (قرار المالك v2.1) بعد أن
+ *     أثبت المسبار استضافة fal له **بلا BYOK** ورسمه «سطر» بأحرف عربية موصولة صحيحة؛
+ *     وflux/schnell يبقى «الأرخص» يُطلب صراحةً. **لا افتراضي للفيديو** (نصّ العقد).
+ *   • حارس مجلد المستخدم: `cwd` = home ⇒ `no_project` قبل أي شبكة (من تجربة المالك).
+ *   • أسعار الكتالوج صارت **مقيسة حياً** بفرق رصيد fal قبل/بعد كل توليد، لا منقولة من توثيق.
+ *
  * ⚠️ «المسبار أولاً» (المبدأ 5 في الخطة): لا يُجمَّد عقد سلك قبل استدعاء حيّ يثبته.
  * `scripts/genmedia-probe.js` شُغّل حياً 2026-08-01 والنتيجة:
  *   • fal  — PROVEN (صورة + فيديو عبر queue). عقده مجمَّد أدناه حرفياً كما رُصد.
@@ -47,6 +57,7 @@ const MAX_PROMPT_SEND = 4000;      // أقصى برومبت يُرسل للمز�
 const MAX_PROMPT_LOG = 2000;       // أقصى برومبت يُخزَّن في السجل (نصّ العقد)
 const MAX_REFS = 6;                // سقف المراجع (نصّ العقد)
 const MAX_COUNT = 4;               // سقف العدد في الطلب الواحد (نصّ عقد الأداة)
+const MAX_REF_BYTES = 8 * 1024 * 1024;    // ج9: سقف حجم ملف المرجع قبل ترميزه data: URI
 const MAX_ASSET_BYTES = 64 * 1024 * 1024; // سقف حجم الأصل الواحد المنزَّل
 const LOG_MAX_BYTES = 4 * 1024 * 1024;    // سقف ملف السجل (نصّ العقد) — يُقصّ الأقدم
 const LOG_TRIM_TO = Math.floor(LOG_MAX_BYTES * 0.75);
@@ -55,46 +66,143 @@ const SUBMIT_TIMEOUT_MS = 120000;
 const POLL_INTERVAL_MS = 3000;
 const POLL_BUDGET_IMAGE_MS = 300000;
 const POLL_BUDGET_VIDEO_MS = 900000;
+const POLL_BUDGET_AUDIO_MS = 300000;
 const ASSET_TIMEOUT_MS = 180000;
 
-const KINDS = new Set(['image', 'video']); // الصوت خارج ج8 صراحةً
+// ج9: `audio` أُضيف بعد إثباته حياً على fal (‏fal-ai/ace-step) — توسعة قيم لا حقول.
+const KINDS = new Set(['image', 'video', 'audio']);
 
-// امتدادات الأصول المسموحة (تُشتق من content-type لا من رابط المزوّد)
+/**
+ * امتدادات الأصول المسموحة (تُشتق من content-type لا من رابط المزوّد).
+ * هذه **قائمة سماح أمنية** لا ادعاء عقد: المثبت حياً هو `image/jpeg` و`image/png`
+ * و`video/mp4` و`audio/wav`؛ والبقية مُدرجة لأنها أنواع وسائط شائعة غير خطرة، وأي نوع
+ * خارجها يُرفض بـ`asset_type_rejected` قبل الكتابة.
+ */
 const EXT_BY_TYPE = {
   'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/webp': '.webp',
   'video/mp4': '.mp4', 'video/webm': '.webm',
+  'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/wave': '.wav',
+  'audio/mpeg': '.mp3', 'audio/mp3': '.mp3',
+};
+
+// امتدادات المراجع المقبولة ⇒ نوع data: URI (المدخل لا يُشتق من محتوى الملف)
+const REF_MIME_BY_EXT = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
 };
 
 // ============================ كتالوج النماذج (تقديري ومؤرَّخ) ============================
 /**
- * `unit_cost_usd` تقديري بتاريخ CATALOG_DATE — لا يُنسب إلى فاتورة المزوّد.
- * `proven` يعكس مسبارَ 2026-08-01 حصراً؛ غير المثبت لا يدخل التوجيه.
+ * `unit_cost_usd` **مقيس حياً** لكل نموذج مثبت (فرق رصيد fal قبل/بعد توليد واحد، ج9)
+ * ويبقى موسوماً تقديرياً لأنه قياسة واحدة بتاريخ CATALOG_DATE لا فاتورة المزوّد.
+ * `proven` يعكس المسبار الحيّ حصراً؛ غير المثبت لا يدخل التوجيه.
+ *
+ * `default_for_kind` (ج9 — قرار المالك v2.1): النموذج المختار عند **غياب** model صريح.
+ * للصور هو GPT Image لأنه الوحيد الذي أثبت رسم النص العربي صحيحاً موصولاً؛ وflux/schnell
+ * يبقى «الأرخص» يُطلب صراحةً. **للفيديو لا افتراضي مفروض** (نصّ العقد): غياب model يسقط
+ * إلى قاعدة الأرخص-أولاً العامة، ومهارة satr-generate تعرض الخيارات بأسعارها على المستخدم.
  */
 const MODELS = [
+  {
+    id: 'fal-ai/gpt-image-1/text-to-image',
+    provider: 'fal',
+    kind: 'image',
+    label: 'GPT Image — صور بنص عربي صحيح (fal)',
+    unit: 'image',
+    unit_cost_usd: 0.02, // مقيس حياً: 9.9049575 -> 9.8849575
+    max_count: 4,
+    supports_refs: false,
+    proven: true,
+    default_for_kind: 'image',
+    arabic_text: true,
+    // مجمَّد من المسبار: quality=low + 1024x1024 أعاد PNG ‏1024×1024 (970128 بايت)
+    wire: { image_size: '1024x1024', quality: 'low' },
+  },
   {
     id: 'fal-ai/flux/schnell',
     provider: 'fal',
     kind: 'image',
-    label: 'FLUX schnell — صور سريعة رخيصة (fal)',
+    label: 'FLUX schnell — الأرخص للمشاهد بلا نص (fal)',
     unit: 'image',
-    unit_cost_usd: 0.003,
+    unit_cost_usd: 0.003, // مقيس حياً: 9.8549575 -> 9.8519575
     max_count: 4,
     supports_refs: false,
     proven: true,
+    arabic_text: false,
     // مجمَّد من المسبار: image_size=square_hd أعاد 1024×1024 image/jpeg
     wire: { image_size: 'square_hd' },
   },
   {
+    id: 'fal-ai/flux/dev/image-to-image',
+    provider: 'fal',
+    kind: 'image',
+    label: 'FLUX dev image-to-image — تعديل صورة مرجعية (fal)',
+    unit: 'image',
+    unit_cost_usd: 0.03, // مقيس حياً: 9.8849575 -> 9.8549575
+    max_count: 4,
+    supports_refs: true,
+    max_refs: 1, // المسبار أثبت `image_url` مفرداً — لا مسار لأكثر من مرجع
+    proven: true,
+    arabic_text: false,
+    // مجمَّد من المسبار: {prompt, image_url:data-URI, strength:0.6} ⇒ images[0].url
+    wire: { strength: 0.6 },
+  },
+  // --- الفيديو: ثلاثة خيارات مثبتة و**لا افتراضي معلن** (نصّ العقد v2.1). مهارة
+  // satr-generate تعرضها بأسعارها على المستخدم؛ وغياب model يسقط إلى الأرخص-أولاً العام.
+  {
     id: 'fal-ai/ltx-video',
     provider: 'fal',
     kind: 'video',
-    label: 'LTX Video — فيديو قصير رخيص (fal)',
+    label: 'LTX Video — الأرخص للمشاهد القصيرة (fal)',
     unit: 'video',
-    unit_cost_usd: 0.04,
+    // مقيس حياً في ج9: 9.5461241667 -> 9.5261241667 = 0.02. كان تقدير ج8 ‏0.04 (ضِعف
+    // الحقيقة) — أول تصحيح يثبت لماذا يجب أن يكون السعر مقيساً لا منقولاً.
+    unit_cost_usd: 0.02,
     max_count: 1,
     supports_refs: false,
     proven: true,
+    // مرصود: 71 استقصاءً و229143ms وأصل 2433833 بايت
     wire: {},
+  },
+  {
+    id: 'fal-ai/ltxv-13b-098-distilled',
+    provider: 'fal',
+    kind: 'video',
+    label: 'LTXV 13B distilled — جودة أعلى وزمن أطول (fal)',
+    unit: 'video',
+    unit_cost_usd: 0.052, // مقيس حياً: 9.8519575 -> 9.7999575
+    max_count: 1,
+    supports_refs: false,
+    proven: true,
+    // مرصود: 55 استقصاءً و177731ms حتى الاكتمال — أبطأ بكثير من LTX العادي
+    wire: {},
+  },
+  {
+    id: 'fal-ai/wan/v2.2-5b/text-to-video',
+    provider: 'fal',
+    kind: 'video',
+    label: 'WAN 2.2 5B — الأجود والأغلى (fal)',
+    unit: 'video',
+    unit_cost_usd: 0.250833, // مقيس حياً: 9.7999575 -> 9.5491241667
+    max_count: 1,
+    supports_refs: false,
+    proven: true,
+    // مرصود: 6 استقصاءات و19571ms، وأصل 422785 بايت (أضخم بخمسة أضعاف من LTXV)
+    wire: {},
+  },
+  {
+    id: 'fal-ai/ace-step',
+    provider: 'fal',
+    kind: 'audio',
+    label: 'ACE-Step — موسيقى/مقطع صوتي قصير (fal)',
+    unit: 'clip',
+    unit_cost_usd: 0.002, // مقيس حياً: 9.9069575 -> 9.9049575
+    max_count: 1,
+    supports_refs: false,
+    proven: true,
+    // مجمَّد من المسبار: {prompt, duration:10} ⇒ audio.url بـcontent_type=audio/wav
+    // (≈1.92م.ب لعشر ثوانٍ). **مُدد أخرى غير مقيسة** فلا تُمرَّر كي يبقى السعر صادقاً.
+    wire: { duration: 10 },
+    duration_seconds: 10,
   },
   {
     id: 'gpt-image-1-mini',
@@ -143,9 +251,10 @@ const PROVIDERS = [
     proven: false,
     unproven: {
       code: 'billing_hard_limit_reached',
-      probed_at: '2026-08-01',
+      probed_at: '2026-08-01', // أُعيد المسبار في ج9 والنتيجة لم تتغيّر (400 نفسه لكلا النموذجين)
       note: 'المفتاح مقبول والمسار صحيح، لكن الحساب ردّ 400 قبل أي توليد. ارفع حد الإنفاق '
-        + 'أو أضِف رصيداً في platform.openai.com ثم أعد تشغيل المسبار.',
+        + 'أو أضِف رصيداً في platform.openai.com ثم أعد تشغيل المسبار. '
+        + 'وحتى ذلك الحين يتوفّر GPT Image نفسه عبر fal بلا حساب OpenAI.',
     },
   },
   {
@@ -157,7 +266,7 @@ const PROVIDERS = [
     proven: false,
     unproven: {
       code: 'free_tier_quota_zero',
-      probed_at: '2026-08-01',
+      probed_at: '2026-08-01', // أُعيد المسبار في ج9 والنتيجة لم تتغيّر (429 نفسه)
       note: 'المسار صحيح، لكن حصة الطبقة المجانية لتوليد الصور صفر (429 RESOURCE_EXHAUSTED, '
         + 'limit: 0). فعّل الفوترة على مشروع المفتاح ثم أعد تشغيل المسبار.',
     },
@@ -283,6 +392,30 @@ function isDirectory(p) {
   try { return fs.statSync(p).isDirectory(); } catch (e) { return false; }
 }
 
+/**
+ * 🏠 حارس مجلد المستخدم (ج9 — من تجربة المالك الأولى): توليد بـ`cwd` يساوي مجلد المنزل
+ * كان يسكب الأصول والسجل في `C:\Users\<name>\generations` بلا أن ينتبه أحد. يُرفض الآن
+ * **قبل أي استدعاء شبكة** بـ`no_project`.
+ *
+ * المقارنة على المسار الحقيقي (realpath) كي لا يلتفّ عليها رابط رمزي أو اسم 8.3، وبلا
+ * حساسية حالة على ويندوز. فشل realpath يسقط إلى المسار المُطبَّع (فحص أضعف لا تجاوز).
+ * `ctx.homeDir` منفذ اختبار داخلي فقط (نظير ctx.models — لا يعبر من renderer).
+ */
+function normalizeDirPath(p) {
+  let out = path.resolve(String(p || ''));
+  try { out = fs.realpathSync.native ? fs.realpathSync.native(out) : fs.realpathSync(out); }
+  catch (e) { /* غير موجود أو ممنوع — يبقى المُطبَّع */ }
+  out = out.replace(/[\\/]+$/, '');
+  return process.platform === 'win32' ? out.toLowerCase() : out;
+}
+
+function isHomeDir(cwd, ctx) {
+  let home = '';
+  try { home = (ctx && ctx.homeDir) || require('os').homedir(); } catch (e) { home = ''; }
+  if (!home) return false;
+  return normalizeDirPath(cwd) === normalizeDirPath(home);
+}
+
 // ============================ الكتالوج والتقدير ============================
 
 function modelPublic(m) {
@@ -292,6 +425,11 @@ function modelPublic(m) {
     supports_refs: m.supports_refs, proven: m.proven,
     estimate: true, catalog_date: CATALOG_DATE,
   };
+  // ج9: حقول عرض تستهلكها مهارة satr-generate لعرض الخيارات على المستخدم
+  if (m.default_for_kind) out.default_for_kind = m.default_for_kind;
+  if (m.supports_refs) out.max_refs = m.max_refs || 1;
+  if (typeof m.arabic_text === 'boolean') out.arabic_text = m.arabic_text;
+  if (m.duration_seconds) out.duration_seconds = m.duration_seconds;
   if (!m.proven) out.unproven_reason = m.unproven_reason || '';
   return out;
 }
@@ -335,6 +473,27 @@ function candidatesFor(kind, ctx) {
 }
 
 /**
+ * ترتيب التوجيه عند **غياب** model صريح (ج9 — قرار المالك v2.1):
+ *   • مراجع مطلوبة ⇒ لا يدخل إلا نموذج يدعمها فعلاً (وإلا لكان الفشل مضموناً).
+ *   • وإلا: الافتراضي المعلن للنوع أولاً ثم البقية أرخص-فأرخص.
+ *   • **لا افتراضي للفيديو** ⇒ الترتيب يبقى الأرخص-أولاً كما كان.
+ * الميزانية **لا تُرشِّح هنا**: الفحص لكل مرشّح داخل حلقة التوليد كي يُذكر تجاوز السقف
+ * صراحةً في `fallbacks` بدل اختفاء المرشّح صامتاً.
+ */
+function routeChain(kind, ctx, wantRefs) {
+  let cands = candidatesFor(kind, ctx);
+  if (wantRefs) cands = cands.filter((m) => m.supports_refs);
+  const def = cands.find((m) => m.default_for_kind === kind);
+  return def ? [def].concat(cands.filter((m) => m !== def)) : cands;
+}
+
+/** أول مرشّح تسعه الميزانية (وإلا الأول — فيعيد generate رمز over_budget صريحاً). */
+function pickWithinBudget(chain, count, budget) {
+  if (budget == null || !Number.isFinite(budget)) return chain[0];
+  return chain.find((m) => costFor(m, count) <= budget) || chain[0];
+}
+
+/**
  * التقدير قبل أي شبكة. نموذج صريح ⇒ مزوّده (ولو غير مثبت — نعيد سبباً صريحاً)؛
  * غيابه ⇒ الأرخص المتاح للنوع.
  */
@@ -351,8 +510,13 @@ function estimate(req, ctx) {
     return { ok: false, error_code: 'bad_count' };
   }
 
+  // ج9: وجود مراجع يغيّر التوجيه — لا نختار نموذجاً يفشل حتماً بها
+  const wantRefs = Array.isArray(r.refs) && r.refs.length > 0;
+  const budget = (r.budget_usd != null && Number.isFinite(Number(r.budget_usd)))
+    ? Number(r.budget_usd) : null;
+
   let chosen = null;
-  let fallbackChain = [];
+  let chain = [];
   if (r.model) {
     const wanted = String(r.model);
     const model = modelsOf(ctx).find((m) => m.id === wanted);
@@ -368,9 +532,14 @@ function estimate(req, ctx) {
     if (!hasKey(provider, ctx)) return { ok: false, error_code: 'no_key', provider: provider.name, key_name: provider.keyName };
     chosen = model;
   } else {
-    fallbackChain = candidatesFor(kind, ctx);
-    if (!fallbackChain.length) return { ok: false, error_code: 'no_provider', kind };
-    chosen = fallbackChain[0];
+    chain = routeChain(kind, ctx, wantRefs);
+    if (!chain.length) {
+      // فرّق بين «لا مزوّد لهذا النوع» و«لا نموذج يدعم المراجع»
+      return wantRefs && candidatesFor(kind, ctx).length
+        ? { ok: false, error_code: 'refs_unsupported', kind }
+        : { ok: false, error_code: 'no_provider', kind };
+    }
+    chosen = pickWithinBudget(chain, rawCount, budget);
   }
 
   if (rawCount > chosen.max_count) return { ok: false, error_code: 'count_exceeded', max_count: chosen.max_count };
@@ -384,7 +553,7 @@ function estimate(req, ctx) {
     cost_usd_estimate: costFor(chosen, rawCount),
     catalog_date: CATALOG_DATE,
     estimate: true,
-    alternatives: fallbackChain.slice(1).map((m) => m.id),
+    alternatives: chain.filter((m) => m !== chosen).map((m) => m.id),
   };
 }
 
@@ -463,9 +632,15 @@ function isAllowedAssetUrl(rawUrl, provider, ctx) {
  *  3) GET response_url ⇒ 200 وبنية الخرج:
  *     صورة: { images:[{url,width,height,content_type}], timings, seed, has_nsfw_concepts, prompt }
  *     فيديو: { video:{url,content_type,file_name,file_size}, seed }
+ *     صوت (ج9): { audio:{url,content_type:"audio/wav",file_name,file_size:null}, seed, tags, lyrics }
  *  4) الأصل يُجلب بـGET عادي على url **بلا ترويسة اعتماد**.
  * ⚠️ status_url/response_url تُستعملان كما أعادهما المزوّد ولا تُبنيان محلياً: المسار
  *    المرصود يطوي `fal-ai/flux/schnell` إلى `fal-ai/flux/requests/<id>`.
+ * ⚠️ **حدّ upstream مثبت في ج9**: `status=COMPLETED` **لا يعني نجاحاً**. رصد المسبار حياً
+ *    وظيفة بلغت COMPLETED ثم أعاد جلب الخرج **422** (‏`detail[0].type="missing"`) وأخرى
+ *    **404**. لذلك فحص `out.status !== 200` بعد الاكتمال شرط لازم لا احتياط.
+ * ⚠️ المراجع (ج9): تُمرَّر **data: URI** في `image_url` — أثبته المسبار حياً فلا حاجة إلى
+ *    نقطة رفع ولا يغادر ملف المستخدم إلى أي خدمة تخزين.
  */
 async function falGenerate(model, args, ctx, provider, key) {
   const request = transportOf(ctx);
@@ -475,6 +650,7 @@ async function falGenerate(model, args, ctx, provider, key) {
 
   const input = Object.assign({}, model.wire, { prompt: args.prompt });
   if (model.kind === 'image') input.num_images = args.count;
+  if (model.supports_refs && args.refDataUri) input.image_url = args.refDataUri;
 
   const submit = await request('POST', base + '/' + model.id, auth, input, SUBMIT_TIMEOUT_MS);
   if (submit.status !== 200 || !submit.json || !submit.json.status_url || !submit.json.response_url) {
@@ -483,7 +659,8 @@ async function falGenerate(model, args, ctx, provider, key) {
   const statusUrl = String(submit.json.status_url);
   const responseUrl = String(submit.json.response_url);
 
-  const budget = model.kind === 'video' ? POLL_BUDGET_VIDEO_MS : POLL_BUDGET_IMAGE_MS;
+  const budget = model.kind === 'video' ? POLL_BUDGET_VIDEO_MS
+    : (model.kind === 'audio' ? POLL_BUDGET_AUDIO_MS : POLL_BUDGET_IMAGE_MS);
   const started = Date.now();
   let completed = false;
   while (Date.now() - started < budget) {
@@ -508,6 +685,9 @@ async function falGenerate(model, args, ctx, provider, key) {
     for (const img of (Array.isArray(out.json.images) ? out.json.images : [])) {
       if (img && img.url) assets.push({ url: String(img.url), contentType: String(img.content_type || '') });
     }
+  } else if (model.kind === 'audio') {
+    const a = out.json.audio || (Array.isArray(out.json.audios) ? out.json.audios[0] : null);
+    if (a && a.url) assets.push({ url: String(a.url), contentType: String(a.content_type || '') });
   } else {
     const v = out.json.video || (Array.isArray(out.json.videos) ? out.json.videos[0] : null);
     if (v && v.url) assets.push({ url: String(v.url), contentType: String(v.content_type || '') });
@@ -517,6 +697,25 @@ async function falGenerate(model, args, ctx, provider, key) {
 }
 
 const DRIVERS = { fal: falGenerate };
+
+/**
+ * ج9 — بناء data: URI للمرجع الأول. المسار مُتحقَّق منه مسبقاً بـ`sanitizeRefs`
+ * (‏`inject.resolveInside`: داخل cwd، لا مطلق، لا `..`، ولا هروب symlink)؛ هنا نضيف
+ * سقف الحجم ونوع الامتداد من قائمة سماح — لا يُشتق النوع من محتوى الملف.
+ */
+function refDataUri(cwd, rel) {
+  const abs = inject.resolveInside(cwd, rel);
+  if (!abs) return { ok: false, error_code: 'refs_outside' };
+  const mime = REF_MIME_BY_EXT[path.extname(abs).toLowerCase()];
+  if (!mime) return { ok: false, error_code: 'refs_type_rejected' };
+  let stat;
+  try { stat = fs.statSync(abs); } catch (e) { return { ok: false, error_code: 'refs_missing' }; }
+  if (!stat.isFile()) return { ok: false, error_code: 'refs_missing' };
+  if (stat.size > MAX_REF_BYTES) return { ok: false, error_code: 'refs_too_large' };
+  let buf;
+  try { buf = fs.readFileSync(abs); } catch (e) { return { ok: false, error_code: 'refs_missing' }; }
+  return { ok: true, uri: 'data:' + mime + ';base64,' + buf.toString('base64') };
+}
 
 // ============================ كتابة الأصول ============================
 async function downloadAssets(assets, opts) {
@@ -639,6 +838,11 @@ async function generate(req, ctx) {
     return { ok: false, id, error_code: 'bad_cwd', message: 'مجلد المشروع غير صالح.' };
   }
 
+  // 🏠 ج9: مجلد المستخدم ليس مشروعاً — يُرفض قبل التقدير وقبل أي شبكة
+  if (isHomeDir(cwd, context)) {
+    return { ok: false, id, error_code: 'no_project', message: MESSAGES.no_project };
+  }
+
   // 1) التقدير أولاً — لا شبكة قبله
   const plan = estimate(r, context);
   if (!plan.ok) {
@@ -654,8 +858,25 @@ async function generate(req, ctx) {
   if (refs.refs.length && !model.supports_refs) {
     return {
       ok: false, id, error_code: 'refs_unsupported',
-      message: 'النموذج المختار (' + model.id + ') لا يملك مسار مراجع مثبتاً بالمسبار — أزِل المراجع أو انتظر ج9.',
+      message: 'النموذج المختار (' + model.id + ') لا يملك مسار مراجع مثبتاً بالمسبار — '
+        + 'استعمل نموذجاً يدعم المراجع أو أزِلها.',
     };
+  }
+  // النموذج المثبت يقبل مرجعاً واحداً؛ تمرير أكثر يُرفض صريحاً بدل إسقاط الزائد صامتاً
+  if (refs.refs.length > (model.max_refs || 1) && model.supports_refs) {
+    return {
+      ok: false, id, error_code: 'refs_too_many', max_refs: model.max_refs || 1,
+      message: 'النموذج المختار (' + model.id + ') أثبت مسار مرجع واحد فقط — أرسل مرجعاً واحداً.',
+    };
+  }
+  // ترميز المرجع الأول data: URI (بلا رفع لأي خدمة)
+  let refDataUriValue = '';
+  if (refs.refs.length && model.supports_refs) {
+    const encoded = refDataUri(cwd, refs.refs[0]);
+    if (!encoded.ok) {
+      return { ok: false, id, error_code: encoded.error_code, message: messageFor({ error_code: encoded.error_code }) };
+    }
+    refDataUriValue = encoded.uri;
   }
 
   // 3) 💰 السقف الصلب — قبل أي استدعاء شبكة
@@ -677,7 +898,7 @@ async function generate(req, ctx) {
   // 4) سلسلة المرشّحين (سقوط صريح): النموذج الصريح وحده، أو الأرخص فالأرخص
   const chain = r.model
     ? [model]
-    : candidatesFor(plan.kind, context).filter((m) => plan.count <= m.max_count);
+    : routeChain(plan.kind, context, refs.refs.length > 0).filter((m) => plan.count <= m.max_count);
   const logged = logPrompt(r.prompt);
   const stamp = String(now);
   const fallbacks = [];
@@ -697,8 +918,11 @@ async function generate(req, ctx) {
 
     let outcome;
     try {
-      outcome = await driver(candidate, { prompt: slicePoints(cleanText(r.prompt), MAX_PROMPT_SEND), count: plan.count },
-        context, provider, key);
+      outcome = await driver(candidate, {
+        prompt: slicePoints(cleanText(r.prompt), MAX_PROMPT_SEND),
+        count: plan.count,
+        refDataUri: refDataUriValue,
+      }, context, provider, key);
     } catch (e) {
       outcome = { ok: false, error_code: 'provider_error' };
     }
@@ -745,10 +969,12 @@ async function generate(req, ctx) {
 
 // ============================ الرسائل العربية (بلا نص مزوّد خام) ============================
 const MESSAGES = {
-  unsupported_kind: 'نوع التوليد غير مدعوم — المتاح: صورة أو فيديو (الصوت خارج هذه الجولة).',
+  unsupported_kind: 'نوع التوليد غير مدعوم — المتاح: صورة أو فيديو أو صوت.',
   bad_input: 'طلب غير صالح — تحقّق من الوصف.',
   bad_count: 'العدد المطلوب خارج النطاق المسموح (1 إلى 4).',
   bad_cwd: 'مجلد المشروع غير صالح.',
+  no_project: 'مجلد العمل الحالي هو مجلد المستخدم (home) لا مجلد مشروع، فلن تُكتب الأصول فيه. '
+    + 'اختر مجلد المشروع من شريط «سطر» العلوي ثم أعد الطلب.',
   unknown_model: 'النموذج المطلوب غير موجود في الكتالوج.',
   kind_mismatch: 'النموذج المطلوب لا يولّد هذا النوع.',
   count_exceeded: 'العدد المطلوب يتجاوز سقف هذا النموذج.',
@@ -758,7 +984,10 @@ const MESSAGES = {
   refs_invalid: 'المراجع غير صالحة — مسارات نسبية داخل المشروع بحد أقصى 6.',
   refs_outside: 'المراجع يجب أن تكون داخل مجلد المشروع حصراً.',
   refs_missing: 'ملف مرجعي غير موجود.',
-  refs_unsupported: 'النموذج المختار لا يدعم المراجع.',
+  refs_unsupported: 'لا نموذج مثبت يدعم المراجع لهذا النوع — أزِل المراجع أو اختر نموذجاً يدعمها.',
+  refs_too_many: 'النموذج المختار يقبل مرجعاً واحداً فقط.',
+  refs_type_rejected: 'نوع ملف المرجع غير مدعوم — المسموح: PNG أو JPEG أو WebP.',
+  refs_too_large: 'ملف المرجع أكبر من الحد المسموح (8 م.ب).',
   provider_error: 'تعذّر إكمال التوليد لدى المزوّد.',
   provider_failed: 'أبلغ المزوّد بفشل التوليد.',
   timeout: 'انتهت مهلة انتظار المزوّد قبل اكتمال التوليد.',
@@ -791,6 +1020,7 @@ module.exports = {
   MAX_REFS,
   MAX_COUNT,
   MAX_PROMPT_LOG,
+  MAX_REF_BYTES,
   LOG_MAX_BYTES,
   logFileFor,
   logPrompt,
@@ -798,5 +1028,7 @@ module.exports = {
   isAllowedAssetUrl,
   providerByName,
   candidatesFor,
+  routeChain,
+  isHomeDir,
   messageFor,
 };

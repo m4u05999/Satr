@@ -12,8 +12,18 @@
  *
  * مفتاح غائب ⇒ «SKIPPED: no key» صريح، والمزوّد يُعلَّم unproven ولا يُبنى له عقد سلك.
  *
- * التشغيل: node scripts/genmedia-probe.js [--only gemini|openai|fal] [--no-video]
+ * التشغيل: node scripts/genmedia-probe.js [--only gemini|openai|fal|discover|audio|refs|gptimage|video2] [--no-video]
  * الأصول المولَّدة تُحفظ في dist/genmedia-probe/ للمعاينة البشرية (لا تدخل Git).
+ *
+ * === الجولة 9 ===
+ * أُضيفت خمس مراحل، أولاها **مجانية عمداً**:
+ *   • `discover` — POST بجسم فارغ `{}` لكل مرشّح: 404 ⇒ غير مستضاف على fal · 422 ⇒
+ *     مستضاف (رفض تحقّق المدخل) · 200 ⇒ مستضاف ويقبل الفارغ. لا يُنفَّذ توليد فلا كلفة،
+ *     وبذلك لا ندفع ثمن نموذج غير موجود ولا نبني على اسم من توثيق منشور.
+ *   • `audio`    — أرخص نموذج صوت مستضاف يثبته الاكتشاف (نوع kind:'audio' الجديد).
+ *   • `refs`     — image-to-image فعلي: المرجع يُمرَّر **data: URI** (بلا رفع لأي خدمة).
+ *   • `gptimage` — استضافة fal لـGPT Image وسعره (قرار المالك v2.1)، ومعه بدائل النص العربي.
+ *   • `video2`   — نموذج/نموذجان إضافيان للفيديو إن اتسعت الكلفة الصغرى.
  */
 
 'use strict';
@@ -266,6 +276,45 @@ const FAL_VIDEO_MODELS = [
   'fal-ai/wan/v2.2-5b/text-to-video',
 ];
 
+/**
+ * 💰 الرصيد الحيّ — الطريقة الوحيدة الصادقة لإثبات السعر: fal **لا يعيد كلفة في استجابة
+ * التوليد**، فنقيس فرق الرصيد قبل/بعد. مرصود حياً 2026-08-01: `GET
+ * https://rest.alpha.fal.ai/billing/user_balance` بترويسة `Authorization: Key <FAL_KEY>`
+ * ⇒ 200 ونص جسمه **رقم عشري عارٍ** (لا JSON). التسوية غير فورية أحياناً فننتظر قليلاً.
+ */
+async function falBalance(key) {
+  try {
+    const res = await request('GET', 'https://rest.alpha.fal.ai/billing/user_balance',
+      { authorization: 'Key ' + key }, null, 30000);
+    const n = Number(String(res.buffer.toString('utf8')).trim());
+    return Number.isFinite(n) ? n : null;
+  } catch (e) { return null; }
+}
+/**
+ * ⚠️ **تسوية الرصيد ليست فورية** (مرصود حياً): بقي الرصيد ثابتاً ست ثوانٍ بعد اكتمال
+ * التوليد ثم تحرّك. لذلك نستقصي حتى يتغيّر أو تنفد المهلة، ونُبلّغ صراحةً حين لا يتحرّك
+ * (`unsettled`) بدل تسجيل صفر كاذب.
+ */
+const SETTLE_BUDGET_MS = 150000;
+const SETTLE_STEP_MS = 10000;
+async function measuredCost(key, before, label) {
+  if (before == null) return null;
+  const started = Date.now();
+  let after = before;
+  while (Date.now() - started < SETTLE_BUDGET_MS) {
+    await new Promise((r) => setTimeout(r, SETTLE_STEP_MS));
+    const now = await falBalance(key);
+    if (now == null) break;
+    after = now;
+    if (after !== before) break;
+  }
+  const delta = Math.round((before - after) * 1e6) / 1e6;
+  const settled = after !== before;
+  say('  💰 measured cost (' + label + '): balance', before, '->', after,
+    '| delta USD:', delta, '| settled:', settled, '| waited ms:', Date.now() - started);
+  return settled ? delta : null;
+}
+
 async function falSubmit(key, model, input) {
   const url = 'https://queue.fal.run/' + model;
   const t0 = Date.now();
@@ -327,6 +376,7 @@ async function probeFal(doVideo, imageSize) {
   // ---- صورة ----
   let imageOk = false;
   for (const model of FAL_IMAGE_MODELS) {
+    const bal0 = await falBalance(key);
     let sub;
     try { sub = await falSubmit(key, model, { prompt: PROMPT, image_size: imageSize, num_images: 1 }); }
     catch (e) { say('image model', model, '-> TRANSPORT ERROR:', e.message); continue; }
@@ -346,7 +396,8 @@ async function probeFal(doVideo, imageSize) {
     say('  WIRE OK: POST https://queue.fal.run/<model> (Authorization: Key <FAL_KEY>) ->'
       + ' {request_id,status_url,response_url}; GET status_url until status=COMPLETED;'
       + ' GET response_url -> {images:[{url,content_type,...}]}; asset fetched by URL (no auth header needed)');
-    record('fal', 'image', imageOk, model);
+    const cost = await measuredCost(key, bal0, model);
+    record('fal', 'image', imageOk, model + (cost == null ? '' : ' | measured $' + cost));
     break;
   }
   if (!imageOk && !results.some((r) => r.provider === 'fal' && r.kind === 'image')) {
@@ -356,6 +407,7 @@ async function probeFal(doVideo, imageSize) {
   // ---- فيديو ----
   if (!doVideo) { say('video: SKIPPED by --no-video flag'); record('fal', 'video', false, 'SKIPPED by flag'); return; }
   for (const model of FAL_VIDEO_MODELS) {
+    const bal0 = await falBalance(key);
     let sub;
     try { sub = await falSubmit(key, model, { prompt: VIDEO_PROMPT }); }
     catch (e) { say('video model', model, '-> TRANSPORT ERROR:', e.message); continue; }
@@ -376,10 +428,330 @@ async function probeFal(doVideo, imageSize) {
     let ok = false;
     if (video.url) ok = await falDownload(video.url, 'fal-video' + (path.extname(safeUrl(video.url)) || '.mp4'));
     say('  WIRE OK (video): same queue cycle as image; output {video:{url,content_type,file_size?}}');
-    record('fal', 'video', ok, model);
+    const cost = await measuredCost(key, bal0, model);
+    record('fal', 'video', ok, model + (cost == null ? '' : ' | measured $' + cost));
     return;
   }
   record('fal', 'video', false, 'all video models failed');
+}
+
+// ============================ 4) اكتشاف مجاني: أي مرشّح مستضاف على fal؟ ============================
+/**
+ * POST بجسم فارغ `{}` على `queue.fal.run/<model>`.
+ *
+ * ⚠️ **مرصود حياً 2026-08-01 (تصحيح فرضية سابقة)**: بوابة الطابور **لا تتحقّق من المدخل
+ * عند التقديم**؛ أعادت `200 IN_QUEUE` لكل معرّف موجود ولو بجسم فارغ، والتحقق يقع وقت
+ * التنفيذ. لذلك الإشارة الوحيدة الموثوقة هنا هي:
+ *   404 ⇒ لا نموذج بهذا المعرّف على fal
+ *   200 ⇒ المعرّف موجود (ولا يعني أنه سيُنفَّذ بنجاح ولا أن الحساب مخوَّل له)
+ * الطلب يُلغى فوراً بـ`PUT cancel_url`، ووظيفة الجسم الفارغ تنتهي بخطأ تحقّق وقت التنفيذ
+ * فلا استدلال ⇒ لا كلفة. النتيجة تُخزَّن في `discovery.json` كي لا تتكرر الإدراجات.
+ */
+const DISCOVERY = {
+  audio: [
+    'fal-ai/cassetteai/sound-effects-generator',
+    'fal-ai/ace-step',
+    'fal-ai/stable-audio',
+    'fal-ai/stable-audio-25/text-to-audio',
+    'fal-ai/elevenlabs/sound-effects',
+    'fal-ai/lyria2',
+    'fal-ai/minimax-music',
+    'fal-ai/diffrhythm',
+  ],
+  refs: [
+    'fal-ai/flux/dev/image-to-image',
+    'fal-ai/flux-kontext/dev',
+    'fal-ai/flux-pro/kontext',
+    'fal-ai/nano-banana/edit',
+    'fal-ai/gemini-25-flash-image/edit',
+    'fal-ai/qwen-image-edit',
+  ],
+  gptimage: [
+    // مرصود 2026-08-01: نسختا `/byok` تلزمان مفتاح OpenAI الخاص بالمستخدم — الأولى ردّت
+    // 422 `{detail:[{type:"missing"}]}` عند جلب الخرج والثانية 404؛ لذلك النسخة **بلا BYOK**
+    // مقدَّمة هنا لأنها الوحيدة التي أنتجت أصلاً فعلياً.
+    'fal-ai/gpt-image-1/text-to-image',
+    'fal-ai/gpt-image-1/text-to-image/byok',
+    'fal-ai/gpt-image-1-mini/text-to-image/byok',
+    'fal-ai/gpt-image-1-mini',
+    'fal-ai/gpt-image-2',
+    'fal-ai/nano-banana',
+    'fal-ai/nano-banana-pro',
+    'fal-ai/gemini-25-flash-image',
+  ],
+  video2: [
+    'fal-ai/ltxv-13b-098-distilled',
+    'fal-ai/wan/v2.2-5b/text-to-video',
+    'fal-ai/kling-video/v1/standard/text-to-video',
+    'fal-ai/minimax/hailuo-02/standard/text-to-video',
+  ],
+};
+
+const DISCOVERY_CACHE = path.join(OUT_DIR, 'discovery.json');
+let discovered = {}; // model id -> http status
+
+function loadDiscovery() {
+  try { discovered = JSON.parse(fs.readFileSync(DISCOVERY_CACHE, 'utf8')) || {}; } catch (e) { discovered = {}; }
+}
+function saveDiscovery() {
+  try { fs.mkdirSync(OUT_DIR, { recursive: true }); fs.writeFileSync(DISCOVERY_CACHE, JSON.stringify(discovered, null, 2)); }
+  catch (e) { /* أفضل جهد */ }
+}
+
+async function probeDiscover(groups, force) {
+  say('');
+  say('=== DISCOVERY (empty-body POST; 404 vs 200 only — cancelled immediately) ===');
+  const { key } = resolveKey(['FAL_KEY']);
+  if (!key) { say('SKIPPED: no key (FAL_KEY)'); return; }
+  loadDiscovery();
+  for (const group of groups) {
+    say('-- group:', group);
+    for (const model of DISCOVERY[group]) {
+      if (!force && typeof discovered[model] === 'number') {
+        say('  ', model, '-> cached HTTP', discovered[model],
+          '|', discovered[model] === 404 ? 'NOT HOSTED' : 'HOSTED (id exists)');
+        continue;
+      }
+      let res;
+      try { res = await request('POST', 'https://queue.fal.run/' + model, { authorization: 'Key ' + key }, {}, 60000); }
+      catch (e) { say('  ', model, '-> TRANSPORT ERROR:', e.message); continue; }
+      discovered[model] = res.status;
+      say('  ', model, '-> HTTP', res.status, '|',
+        res.status === 404 ? 'NOT HOSTED' : (res.status === 200 ? 'HOSTED (id exists)' : 'status ' + res.status));
+      if (res.status !== 404 && res.status !== 200) {
+        const d = res.json && (res.json.detail || res.json.error || res.json.message);
+        say('     body shape:', describe(res.json), '| detail:', JSON.stringify(String(
+          typeof d === 'string' ? d : JSON.stringify(d || '')).slice(0, 200)));
+      }
+      if (res.status === 200 && res.json && res.json.cancel_url) {
+        let cancel = null;
+        try { cancel = await request('PUT', res.json.cancel_url, { authorization: 'Key ' + key }, null, 30000); } catch (e) { /* أفضل جهد */ }
+        say('     cancel -> HTTP', cancel ? cancel.status : '<error>');
+      }
+    }
+  }
+  saveDiscovery();
+}
+
+function hostedOf(group) {
+  return DISCOVERY[group].filter((m) => discovered[m] === 200);
+}
+
+// ============================ 5) fal — الصوت (نوع kind:'audio' الجديد) ============================
+const AUDIO_PROMPT = 'a short soft synth pad chord, calm ambient, one bar';
+// مدخلات كل نموذج تختلف — نجرّب الشكل الشائع ثم نقرأ رسالة 422 لتصحيحه إن لزم
+const AUDIO_INPUT = {
+  'fal-ai/cassetteai/sound-effects-generator': { prompt: AUDIO_PROMPT, duration: 5 },
+  'fal-ai/ace-step': { prompt: AUDIO_PROMPT, duration: 10 },
+  'fal-ai/stable-audio': { prompt: AUDIO_PROMPT, seconds_total: 10 },
+  'fal-ai/stable-audio-25/text-to-audio': { prompt: AUDIO_PROMPT, seconds_total: 10 },
+  'fal-ai/elevenlabs/sound-effects': { text: AUDIO_PROMPT, duration_seconds: 5 },
+  'fal-ai/lyria2': { prompt: AUDIO_PROMPT },
+  'fal-ai/minimax-music': { prompt: AUDIO_PROMPT },
+  'fal-ai/diffrhythm': { lyrics: '[00:00.00]la la la' },
+};
+
+async function probeFalAudio() {
+  say('');
+  say('=== PROVIDER: fal (audio via queue) ===');
+  const { key } = resolveKey(['FAL_KEY']);
+  if (!key) { say('SKIPPED: no key (FAL_KEY)'); record('fal', 'audio', false, 'SKIPPED no key'); return; }
+
+  const hosted = hostedOf('audio');
+  say('hosted audio candidates:', hosted.length ? hosted.join(', ') : '<none discovered>');
+  for (const model of hosted) {
+    const input = AUDIO_INPUT[model] || { prompt: AUDIO_PROMPT };
+    say('audio model:', model, '| input keys:', Object.keys(input).join(','));
+    const bal0 = await falBalance(key);
+    let sub;
+    try { sub = await falSubmit(key, model, input); }
+    catch (e) { say('  TRANSPORT ERROR:', e.message); continue; }
+    say('  POST status:', sub.res.status, '| ms:', sub.ms);
+    if (sub.res.status !== 200) {
+      say('  non-200 shape:', describe(sub.res.json));
+      const d = sub.res.json && sub.res.json.detail;
+      say('  detail:', JSON.stringify(String(typeof d === 'string' ? d : JSON.stringify(d || '')).slice(0, 300)));
+      continue;
+    }
+    say('  submit shape:', describe(sub.res.json));
+    const q = sub.res.json || {};
+    const done = await falPoll(key, q.status_url, q.response_url, 300000, 'audio');
+    if (!done.ok) { record('fal', 'audio', false, model + ' poll failed'); continue; }
+    const body = done.out.json || {};
+    say('  output top keys:', Object.keys(body).join(','));
+    const a = body.audio || body.audio_file || (body.audios || [])[0] || {};
+    say('  audio object keys:', Object.keys(a).join(','), '| url host+path:', safeUrl(a.url));
+    let ok = false;
+    if (a.url) ok = await falDownload(a.url, 'fal-audio' + (path.extname(safeUrl(a.url)) || '.mp3'));
+    const cost = await measuredCost(key, bal0, model);
+    say('  WIRE OK (audio): same queue cycle as image; output field observed above');
+    record('fal', 'audio', ok, model + (cost == null ? '' : ' | measured $' + cost));
+    return;
+  }
+  record('fal', 'audio', false, 'all audio models failed');
+}
+
+// ============================ 6) fal — refs فعلية (image-to-image بـdata: URI) ============================
+const REFS_PROMPT = 'change the circle color to solid blue, keep everything else identical';
+
+function dataUriFor(file) {
+  const buf = fs.readFileSync(file);
+  const ext = path.extname(file).toLowerCase();
+  const mime = ext === '.png' ? 'image/png' : (ext === '.webp' ? 'image/webp' : 'image/jpeg');
+  return { uri: 'data:' + mime + ';base64,' + buf.toString('base64'), bytes: buf.length, mime };
+}
+
+async function probeFalRefs() {
+  say('');
+  say('=== PROVIDER: fal (refs / image-to-image) ===');
+  const { key } = resolveKey(['FAL_KEY']);
+  if (!key) { say('SKIPPED: no key (FAL_KEY)'); record('fal', 'refs', false, 'SKIPPED no key'); return; }
+
+  // المرجع: أصل الصورة الذي أنتجه المسبار نفسه (لا رفع لأي خدمة — data: URI محلي)
+  let refFile = '';
+  for (const name of ['fal-image.jpg', 'fal-image.jpeg', 'fal-image.png', 'gemini-image.png']) {
+    const p = path.join(OUT_DIR, name);
+    if (fs.existsSync(p)) { refFile = p; break; }
+  }
+  if (!refFile) { say('SKIPPED: no local reference asset in dist/genmedia-probe (run image probe first)'); record('fal', 'refs', false, 'no local ref'); return; }
+  const ref = dataUriFor(refFile);
+  say('reference:', path.basename(refFile), '| bytes:', ref.bytes, '| mime:', ref.mime,
+    '| data URI length:', ref.uri.length);
+
+  const hosted = hostedOf('refs');
+  say('hosted refs candidates:', hosted.length ? hosted.join(', ') : '<none discovered>');
+  for (const model of hosted) {
+    const input = { prompt: REFS_PROMPT, image_url: ref.uri };
+    if (model.includes('flux/dev/image-to-image')) input.strength = 0.6;
+    say('refs model:', model, '| input keys:', Object.keys(input).join(','));
+    const bal0 = await falBalance(key);
+    let sub;
+    try { sub = await falSubmit(key, model, input); }
+    catch (e) { say('  TRANSPORT ERROR:', e.message); continue; }
+    say('  POST status:', sub.res.status, '| ms:', sub.ms);
+    if (sub.res.status !== 200) {
+      const d = sub.res.json && sub.res.json.detail;
+      say('  non-200 shape:', describe(sub.res.json), '| detail:',
+        JSON.stringify(String(typeof d === 'string' ? d : JSON.stringify(d || '')).slice(0, 300)));
+      continue;
+    }
+    const q = sub.res.json || {};
+    const done = await falPoll(key, q.status_url, q.response_url, 300000, 'refs');
+    if (!done.ok) { record('fal', 'refs', false, model + ' poll failed'); continue; }
+    const body = done.out.json || {};
+    say('  output top keys:', Object.keys(body).join(','));
+    const img = (body.images || [])[0] || body.image || {};
+    say('  images[0] keys:', Object.keys(img).join(','), '| url host+path:', safeUrl(img.url));
+    let ok = false;
+    if (img.url) ok = await falDownload(img.url, 'fal-refs-' + model.split('/').join('-') + (path.extname(safeUrl(img.url)) || '.jpg'));
+    const cost = await measuredCost(key, bal0, model);
+    say('  WIRE OK (refs): input {prompt, image_url:"data:<mime>;base64,..."} — no upload endpoint needed');
+    record('fal', 'refs', ok, model + (cost == null ? '' : ' | measured $' + cost));
+    return;
+  }
+  record('fal', 'refs', false, 'all refs models failed');
+}
+
+// ============================ 7) fal — GPT Image واستضافته (قرار المالك v2.1) ============================
+const ARABIC_PROMPT = 'a clean poster with the Arabic word «سطر» written large and correctly in the center, white background, minimal';
+
+async function probeFalGptImage(allCandidates) {
+  say('');
+  say('=== PROVIDER: fal (GPT Image hosting + Arabic-text alternatives) ===');
+  const { key } = resolveKey(['FAL_KEY']);
+  if (!key) { say('SKIPPED: no key (FAL_KEY)'); record('fal', 'gptimage', false, 'SKIPPED no key'); return; }
+
+  const hosted = hostedOf('gptimage');
+  say('hosted gptimage-group candidates:', hosted.length ? hosted.join(', ') : '<none discovered>');
+  const gpt = hosted.filter((m) => m.includes('gpt-image'));
+  const alt = hosted.filter((m) => !m.includes('gpt-image'));
+  say('GPT Image hosted on fal:', gpt.length ? gpt.join(', ') : '<NONE>');
+  say('Arabic-capable alternatives hosted:', alt.length ? alt.join(', ') : '<none>');
+
+  // نولّد فعلياً بأول مرشّح GPT Image؛ فإن غاب فبأول بديل (لتقرير القائد)
+  const order = gpt.concat(alt);
+  for (const model of order) {
+    const input = { prompt: ARABIC_PROMPT };
+    if (model.includes('gpt-image')) { input.image_size = '1024x1024'; input.quality = 'low'; input.num_images = 1; }
+    say('generating with:', model, '| input keys:', Object.keys(input).join(','));
+    const bal0 = await falBalance(key);
+    let sub;
+    try { sub = await falSubmit(key, model, input); }
+    catch (e) { say('  TRANSPORT ERROR:', e.message); continue; }
+    say('  POST status:', sub.res.status, '| ms:', sub.ms);
+    if (sub.res.status !== 200) {
+      const d = sub.res.json && sub.res.json.detail;
+      say('  non-200 shape:', describe(sub.res.json), '| detail:',
+        JSON.stringify(String(typeof d === 'string' ? d : JSON.stringify(d || '')).slice(0, 300)));
+      continue;
+    }
+    const q = sub.res.json || {};
+    const done = await falPoll(key, q.status_url, q.response_url, 300000, 'gptimage');
+    if (!done.ok) { record('fal', 'gptimage', false, model + ' poll failed'); continue; }
+    const body = done.out.json || {};
+    say('  output top keys:', Object.keys(body).join(','));
+    const img = (body.images || [])[0] || {};
+    say('  images[0] keys:', Object.keys(img).join(','), '| url host+path:', safeUrl(img.url));
+    let ok = false;
+    if (img.url) ok = await falDownload(img.url, 'fal-arabic-' + model.split('/').join('-') + (path.extname(safeUrl(img.url)) || '.jpg'));
+    const cost = await measuredCost(key, bal0, model);
+    record('fal', 'gptimage', ok, model + (cost == null ? '' : ' | measured $' + cost));
+    if (!allCandidates) return; // الافتراضي: أول نجاح يكفي — والمقارنة العربية بـ--all-candidates
+  }
+  record('fal', 'gptimage', false, 'no candidate generated');
+}
+
+// ============================ 8) fal — نماذج فيديو إضافية ============================
+/**
+ * حارس كلفة صريح: نماذج الفيديو المميّزة (Kling/Hailuo) أغلى بمرتبة من LTX/WAN، والعقد
+ * يطلب «نموذجاً أو اثنين إضافيين **إن اتسعت الكلفة الصغرى**». فلا تُولَّد إلا بعلم صريح،
+ * ويُطبع سبب التخطي كي لا يُقرأ غيابها نقصاً في التغطية.
+ */
+const PREMIUM_VIDEO = new Set([
+  'fal-ai/kling-video/v1/standard/text-to-video',
+  'fal-ai/minimax/hailuo-02/standard/text-to-video',
+]);
+
+async function probeFalVideoExtra(includePremium) {
+  say('');
+  say('=== PROVIDER: fal (extra video models) ===');
+  const { key } = resolveKey(['FAL_KEY']);
+  if (!key) { say('SKIPPED: no key (FAL_KEY)'); record('fal', 'video2', false, 'SKIPPED no key'); return; }
+  const hosted = hostedOf('video2');
+  say('hosted extra-video candidates:', hosted.length ? hosted.join(', ') : '<none discovered>');
+  let proven = 0;
+  for (const model of hosted) {
+    if (PREMIUM_VIDEO.has(model) && !includePremium) {
+      say('SKIPPED (cost guard):', model, '— premium tier; run with --include-premium-video to prove it');
+      continue;
+    }
+    if (proven >= 2) { say('stopping after 2 proven extra video models (cost guard)'); break; }
+    say('video model:', model);
+    const bal0 = await falBalance(key);
+    let sub;
+    try { sub = await falSubmit(key, model, { prompt: VIDEO_PROMPT }); }
+    catch (e) { say('  TRANSPORT ERROR:', e.message); continue; }
+    say('  POST status:', sub.res.status, '| ms:', sub.ms);
+    if (sub.res.status !== 200) {
+      const d = sub.res.json && sub.res.json.detail;
+      say('  non-200 shape:', describe(sub.res.json), '| detail:',
+        JSON.stringify(String(typeof d === 'string' ? d : JSON.stringify(d || '')).slice(0, 300)));
+      continue;
+    }
+    const q = sub.res.json || {};
+    const done = await falPoll(key, q.status_url, q.response_url, 900000, 'video2');
+    if (!done.ok) { record('fal', 'video2', false, model + ' poll failed'); continue; }
+    const body = done.out.json || {};
+    say('  output top keys:', Object.keys(body).join(','));
+    const v = body.video || (body.videos || [])[0] || {};
+    say('  video keys:', Object.keys(v).join(','), '| url host+path:', safeUrl(v.url));
+    let ok = false;
+    if (v.url) ok = await falDownload(v.url, 'fal-video-' + model.split('/').join('-') + '.mp4');
+    const cost = await measuredCost(key, bal0, model);
+    record('fal', 'video2', ok, model + (cost == null ? '' : ' | measured $' + cost));
+    if (ok) proven += 1;
+  }
+  if (!proven) record('fal', 'video2', false, 'no extra video model proven');
 }
 
 // ============================ التشغيل ============================
@@ -399,6 +771,26 @@ async function main() {
   if (!only || only === 'gemini') await probeGemini();
   if (!only || only === 'openai') await probeOpenai();
   if (!only || only === 'fal') await probeFal(doVideo, imageSize);
+
+  // --- الجولة 9 ---
+  const wantAudio = !only || only === 'audio';
+  const wantRefs = !only || only === 'refs';
+  const wantGpt = !only || only === 'gptimage';
+  const wantVid2 = !only || only === 'video2';
+  const groups = [];
+  if (wantAudio) groups.push('audio');
+  if (wantRefs) groups.push('refs');
+  if (wantGpt) groups.push('gptimage');
+  if (wantVid2) groups.push('video2');
+  const force = args.includes('--rediscover');
+  if (only === 'discover') { await probeDiscover(Object.keys(DISCOVERY), force); }
+  else if (groups.length) {
+    await probeDiscover(groups, force);
+    if (wantAudio) await probeFalAudio();
+    if (wantRefs) await probeFalRefs();
+    if (wantGpt) await probeFalGptImage(args.includes('--all-candidates'));
+    if (wantVid2) await probeFalVideoExtra(args.includes('--include-premium-video'));
+  }
 
   say('');
   say('=== SUMMARY ===');

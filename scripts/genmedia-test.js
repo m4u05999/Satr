@@ -48,6 +48,9 @@ const TEST_ENV = { FAL_KEY: FAKE_KEY };
 // ============================ الخادم المزيّف ============================
 const IMAGE_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
 const VIDEO_BYTES = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42', 'latin1'), Buffer.alloc(16)]);
+// ج9: RIFF/WAVE كما يعيده fal-ai/ace-step فعلاً (content_type=audio/wav)
+const AUDIO_BYTES = Buffer.concat([Buffer.from('RIFF', 'latin1'), Buffer.from([0x24, 0, 0, 0]),
+  Buffer.from('WAVEfmt ', 'latin1'), Buffer.alloc(20)]);
 
 let server = null;
 let origin = '';
@@ -73,7 +76,7 @@ function startServer() {
             res.end(JSON.stringify({ detail: 'simulated provider outage' }));
             return;
           }
-          const kind = modelId.includes('video') ? 'video' : 'image';
+          const kind = modelId.includes('video') ? 'video' : (modelId.includes('audio') ? 'audio' : 'image');
           statusHits = 0;
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify({
@@ -108,6 +111,12 @@ function startServer() {
             video: { url: origin + '/assets/clip.mp4', content_type: 'video/mp4', file_name: 'clip.mp4', file_size: VIDEO_BYTES.length },
             seed: 7,
           }));
+        } else if (kind === 'audio') {
+          // بنية fal-ai/ace-step المرصودة حياً: file_size يعود null فعلاً
+          res.end(JSON.stringify({
+            audio: { url: origin + '/assets/track.wav', content_type: 'audio/wav', file_name: 'track.wav', file_size: null },
+            seed: 7, tags: 'ambient, calm', lyrics: '[inst]',
+          }));
         } else {
           res.end(JSON.stringify({
             images: [{ url: origin + '/assets/one.jpg', width: 1024, height: 1024, content_type: 'image/jpeg' }],
@@ -121,6 +130,7 @@ function startServer() {
       if (req.method === 'GET' && p.startsWith('/assets/')) {
         seen.assetAuth.push(String(req.headers.authorization || ''));
         if (p.endsWith('.mp4')) { res.writeHead(200, { 'content-type': 'video/mp4' }); res.end(VIDEO_BYTES); return; }
+        if (p.endsWith('.wav')) { res.writeHead(200, { 'content-type': 'audio/wav' }); res.end(AUDIO_BYTES); return; }
         if (p.endsWith('.exe')) { res.writeHead(200, { 'content-type': 'application/x-msdownload' }); res.end(Buffer.alloc(8)); return; }
         res.writeHead(200, { 'content-type': 'image/jpeg' }); res.end(IMAGE_BYTES); return;
       }
@@ -149,6 +159,42 @@ const TEST_MODELS = [
   {
     id: 'test/works-video', provider: 'fal', kind: 'video', label: 'video (works)',
     unit: 'video', unit_cost_usd: 0.04, max_count: 1, supports_refs: false, proven: true, wire: {},
+  },
+  // --- ج9 ---
+  {
+    id: 'test/works-audio', provider: 'fal', kind: 'audio', label: 'audio (works)',
+    unit: 'clip', unit_cost_usd: 0.002, max_count: 1, supports_refs: false, proven: true,
+    wire: { duration: 10 }, duration_seconds: 10,
+  },
+  {
+    id: 'test/works-refs', provider: 'fal', kind: 'image', label: 'image-to-image (works)',
+    unit: 'image', unit_cost_usd: 0.03, max_count: 4, supports_refs: true, max_refs: 1,
+    proven: true, wire: { strength: 0.6 },
+  },
+];
+
+/**
+ * ج9 — مجموعة منفصلة لاختبار «الافتراضي المعلن» كي لا تتلوّث حالة «الأرخص أولاً» القائمة:
+ * الافتراضي هنا أغلى من الأرخص عمداً، فيثبت أن الاختيار قصدي لا ناتج ترتيب سعر.
+ */
+const DEFAULT_MODELS = [
+  {
+    id: 'test/cheap-no-arabic', provider: 'fal', kind: 'image', label: 'cheap',
+    unit: 'image', unit_cost_usd: 0.003, max_count: 4, supports_refs: false, proven: true,
+    arabic_text: false, wire: {},
+  },
+  {
+    id: 'test/default-arabic', provider: 'fal', kind: 'image', label: 'default (arabic)',
+    unit: 'image', unit_cost_usd: 0.02, max_count: 4, supports_refs: false, proven: true,
+    default_for_kind: 'image', arabic_text: true, wire: {},
+  },
+  {
+    id: 'test/works-video', provider: 'fal', kind: 'video', label: 'video (works)',
+    unit: 'video', unit_cost_usd: 0.04, max_count: 1, supports_refs: false, proven: true, wire: {},
+  },
+  {
+    id: 'test/pricey-video', provider: 'fal', kind: 'video', label: 'pricey video',
+    unit: 'video', unit_cost_usd: 0.5, max_count: 1, supports_refs: false, proven: true, wire: {},
   },
 ];
 
@@ -237,7 +283,8 @@ async function main() {
     assert.strictEqual(plan.model, 'test/always-fails-cheap', 'لم يُختر الأرخص');
     assert.strictEqual(plan.cost_usd_estimate, 0.002, 'كلفة خاطئة: ' + plan.cost_usd_estimate);
     assert.strictEqual(plan.estimate, true);
-    assert.deepStrictEqual(plan.alternatives, ['test/works-mid']);
+    // البدائل أرخص-فأرخص (وسّعت ج9 مجموعة نماذج الاختبار بنموذج مراجع أغلى)
+    assert.deepStrictEqual(plan.alternatives, ['test/works-mid', 'test/works-refs']);
   });
 
   await check('غياب المفتاح ⇒ لا مرشّح ⇒ no_provider بلا شبكة', async () => {
@@ -523,7 +570,8 @@ async function main() {
     const cwd = freshCwd('bad-input');
     const before = seen.submits.length;
     const cases = [
-      [{ cwd, kind: 'audio', prompt: 'x' }, 'unsupported_kind'],
+      [{ cwd, kind: 'model3d', prompt: 'x' }, 'unsupported_kind'], // ج9: audio صار مدعوماً فبُدِّل بنوع فعلاً غير مدعوم
+      [{ cwd, kind: '', prompt: 'x' }, 'unsupported_kind'],
       [{ cwd, kind: 'image', prompt: '   ' }, 'bad_input'],
       [{ cwd, kind: 'image', prompt: 'x', count: 0 }, 'bad_count'],
       [{ cwd, kind: 'image', prompt: 'x', count: 9 }, 'bad_count'],
@@ -549,6 +597,295 @@ async function main() {
     assert.strictEqual(res.error_code, 'count_exceeded');
   });
 
+  // ======================================================================
+  // ====================== توسعة الجولة 9 ==================================
+  // ======================================================================
+
+  // ---------- الصوت ----------
+  await check('ج9: الكتالوج يعلن kind الصوت ونموذجاً مثبتاً له بسعر مقيس', () => {
+    const cat = genmedia.listCatalog();
+    assert.ok(cat.kinds.includes('audio'), 'kinds بلا audio: ' + cat.kinds.join(','));
+    const audio = cat.models.filter((m) => m.kind === 'audio');
+    assert.ok(audio.length >= 1, 'لا نموذج صوت في الكتالوج');
+    assert.ok(audio.every((m) => m.proven), 'نموذج صوت غير مثبت في الكتالوج');
+    assert.ok(audio.every((m) => m.estimate === true && m.catalog_date === cat.catalog_date),
+      'نموذج صوت بلا وسم estimate/تاريخ');
+    assert.strictEqual(audio[0].id, 'fal-ai/ace-step', 'نموذج الصوت المثبت تغيّر: ' + audio[0].id);
+    assert.strictEqual(audio[0].unit_cost_usd, 0.002, 'سعر الصوت لا يطابق المقيس حياً');
+  });
+
+  await check('ج9: توليد صوت يمر بدورة queue نفسها ويُكتب .wav تحت generations/', async () => {
+    const cwd = freshCwd('audio-ok');
+    const before = seen.submits.length;
+    const res = await genmedia.generate({ cwd, kind: 'audio', prompt: 'موسيقى هادئة قصيرة', model: 'test/works-audio' }, ctxFor());
+    assert.strictEqual(res.ok, true, 'فشل الصوت: ' + res.error_code);
+    assert.strictEqual(res.kind, 'audio');
+    assert.strictEqual(res.files.length, 1);
+    assert.ok(/^generations\/gen-audio-\d+-[a-z0-9]+-1\.wav$/.test(res.files[0]), 'اسم/امتداد الصوت: ' + res.files[0]);
+    assert.ok(fs.existsSync(path.join(cwd, res.files[0])), 'ملف الصوت غير موجود');
+    assert.strictEqual(fs.readFileSync(path.join(cwd, res.files[0])).length, AUDIO_BYTES.length);
+    // مدخل السلك يحمل duration المجمَّد من المسبار
+    const sent = seen.submits.slice(before)[0];
+    assert.strictEqual(sent.body.duration, 10, 'duration المجمَّد لم يُرسل: ' + JSON.stringify(sent.body));
+    assert.ok(!('num_images' in sent.body), 'num_images أُرسل لنموذج صوت');
+  });
+
+  await check('ج9: سطر سجل الصوت يطابق schema v1 نفسه بلا حقل جديد', async () => {
+    const cwd = freshCwd('audio-log');
+    const res = await genmedia.generate({ cwd, kind: 'audio', prompt: 'نغمة', model: 'test/works-audio' }, ctxFor());
+    assert.strictEqual(res.ok, true);
+    const e = readEntries(cwd)[0];
+    assert.deepStrictEqual(Object.keys(e), [
+      'id', 'at', 'kind', 'provider', 'model', 'prompt', 'refs', 'files',
+      'cost_usd_estimate', 'catalog_date', 'status',
+    ], 'حقول سطر الصوت: ' + Object.keys(e).join(','));
+    assert.strictEqual(e.kind, 'audio', 'قيمة kind: ' + e.kind);
+    assert.strictEqual(e.status, 'completed');
+    assert.ok(e.files[0].endsWith('.wav'));
+  });
+
+  await check('ج9: التوجيه بلا نموذج يجد الصوت المثبت وحده (لا تسرّب من نوع آخر)', () => {
+    const plan = genmedia.estimate({ kind: 'audio', prompt: 'x' }, ctxFor());
+    assert.strictEqual(plan.ok, true, 'فشل تقدير الصوت: ' + plan.error_code);
+    assert.strictEqual(plan.model, 'test/works-audio');
+    assert.strictEqual(plan.cost_usd_estimate, 0.002);
+    assert.deepStrictEqual(plan.alternatives, [], 'بدائل من نوع آخر تسرّبت');
+  });
+
+  // ---------- المراجع الفعلية ----------
+  await check('ج9: المرجع يُمرَّر data: URI في image_url — بلا رفع لأي خدمة', async () => {
+    const cwd = freshCwd('refs-ok');
+    fs.writeFileSync(path.join(cwd, 'base.jpg'), IMAGE_BYTES);
+    const before = seen.submits.length;
+    const res = await genmedia.generate(
+      { cwd, kind: 'image', prompt: 'اجعل الدائرة زرقاء', model: 'test/works-refs', refs: ['base.jpg'] },
+      ctxFor(),
+    );
+    assert.strictEqual(res.ok, true, 'فشل مسار المراجع: ' + res.error_code);
+    const sent = seen.submits.slice(before)[0];
+    assert.ok(typeof sent.body.image_url === 'string', 'image_url لم يُرسل');
+    assert.ok(sent.body.image_url.startsWith('data:image/jpeg;base64,'), 'المرجع ليس data URI: '
+      + String(sent.body.image_url).slice(0, 40));
+    assert.strictEqual(sent.body.image_url, 'data:image/jpeg;base64,' + IMAGE_BYTES.toString('base64'),
+      'محتوى المرجع لا يطابق الملف');
+    assert.strictEqual(sent.body.strength, 0.6, 'strength المجمَّد لم يُرسل');
+    assert.deepStrictEqual(res.refs, ['base.jpg'], 'المرجع لا يظهر نسبياً في النتيجة');
+    assert.ok(!JSON.stringify(res).includes('data:image'), 'data URI تسرّب إلى النتيجة');
+    const raw = fs.readFileSync(genmedia.logFileFor(cwd), 'utf8');
+    assert.ok(!raw.includes('data:image'), 'data URI تسرّب إلى السجل');
+  });
+
+  await check('ج9: غياب نموذج صريح مع مراجع يوجّه إلى نموذج يدعمها لا إلى الأرخص', async () => {
+    const cwd = freshCwd('refs-route');
+    fs.writeFileSync(path.join(cwd, 'base.png'), IMAGE_BYTES);
+    const plan = genmedia.estimate({ kind: 'image', prompt: 'x', refs: ['base.png'] }, ctxFor());
+    assert.strictEqual(plan.ok, true, 'فشل توجيه المراجع: ' + plan.error_code);
+    assert.strictEqual(plan.model, 'test/works-refs', 'اختير نموذج لا يدعم المراجع: ' + plan.model);
+    // وبلا مراجع يبقى الأرخص كما كان
+    const plain = genmedia.estimate({ kind: 'image', prompt: 'x' }, ctxFor());
+    assert.strictEqual(plain.model, 'test/always-fails-cheap', 'تغيّر التوجيه العادي: ' + plain.model);
+  });
+
+  await check('ج9: النموذج بلا مسار مراجع مثبت يبقى refs_unsupported، وبلا أي مرشّح داعم كذلك', async () => {
+    const cwd = freshCwd('refs-unsup');
+    fs.writeFileSync(path.join(cwd, 'base.png'), IMAGE_BYTES);
+    const explicit = await genmedia.generate(
+      { cwd, kind: 'image', prompt: 'x', model: 'test/works-mid', refs: ['base.png'] }, ctxFor());
+    assert.strictEqual(explicit.error_code, 'refs_unsupported', 'نموذج بلا مراجع قَبِلها');
+    // مجموعة نماذج لا يدعم أيٌّ منها المراجع ⇒ رمز صريح لا no_provider مضلِّل
+    const noRefs = ctxFor({ models: TEST_MODELS.filter((m) => !m.supports_refs) });
+    const routed = await genmedia.generate({ cwd, kind: 'image', prompt: 'x', refs: ['base.png'] }, noRefs);
+    assert.strictEqual(routed.error_code, 'refs_unsupported', 'رمز مضلِّل: ' + routed.error_code);
+  });
+
+  await check('ج9: المرجع الثاني وغير الصورة والضخم كلها مرفوضة قبل الشبكة', async () => {
+    const cwd = freshCwd('refs-guard');
+    fs.writeFileSync(path.join(cwd, 'a.png'), IMAGE_BYTES);
+    fs.writeFileSync(path.join(cwd, 'b.png'), IMAGE_BYTES);
+    fs.writeFileSync(path.join(cwd, 'notes.txt'), 'نص');
+    fs.writeFileSync(path.join(cwd, 'huge.png'), Buffer.alloc(genmedia.MAX_REF_BYTES + 1));
+    const before = seen.submits.length;
+    const cases = [
+      [['a.png', 'b.png'], 'refs_too_many'],
+      [['notes.txt'], 'refs_type_rejected'],
+      [['huge.png'], 'refs_too_large'],
+    ];
+    for (const [refs, expected] of cases) {
+      const res = await genmedia.generate(
+        { cwd, kind: 'image', prompt: 'x', model: 'test/works-refs', refs }, ctxFor());
+      assert.strictEqual(res.ok, false, 'قُبل مرجع غير صالح: ' + refs.join(','));
+      assert.strictEqual(res.error_code, expected, refs.join(',') + ' -> ' + res.error_code);
+    }
+    assert.strictEqual(seen.submits.length, before, 'جرى نداء شبكة رغم مرجع غير صالح');
+  });
+
+  // ---------- حارس مجلد المستخدم ----------
+  await check('ج9: cwd = مجلد المستخدم ⇒ no_project قبل أي شبكة وبلا كتابة', async () => {
+    const home = freshCwd('fake-home');
+    const before = seen.submits.length;
+    const res = await genmedia.generate(
+      { cwd: home, kind: 'image', prompt: 'x', model: 'test/works-mid' }, ctxFor({ homeDir: home }));
+    assert.strictEqual(res.ok, false, 'قُبل التوليد في مجلد المستخدم!');
+    assert.strictEqual(res.error_code, 'no_project');
+    assert.ok(/[؀-ۿ]/.test(res.message), 'رسالة غير عربية');
+    assert.strictEqual(seen.submits.length, before, 'جرى نداء شبكة رغم مجلد المستخدم');
+    assert.ok(!fs.existsSync(path.join(home, 'generations')), 'أُنشئ مجلد generations في المنزل');
+    assert.ok(!fs.existsSync(genmedia.logFileFor(home)), 'كُتب سجل داخل المنزل');
+  });
+
+  await check('ج9: حارس المنزل يقاوم اللاحقة والحالة والمسار غير المُطبَّع، ولا يمنع مجلداً بداخله', async () => {
+    const home = freshCwd('home-guard');
+    const child = path.join(home, 'project');
+    fs.mkdirSync(child, { recursive: true });
+    const variants = [home, home + path.sep, home.toUpperCase(), path.join(home, '.', '')];
+    for (const v of variants) {
+      assert.strictEqual(genmedia.isHomeDir(v, { homeDir: home }), true, 'لم يُلتقط شكل المنزل: ' + v);
+    }
+    assert.strictEqual(genmedia.isHomeDir(child, { homeDir: home }), false, 'مجلد داخل المنزل حُجب خطأً');
+    // ومشروع داخل المنزل يعمل طبيعياً (الحارس على المنزل نفسه لا على شجرته)
+    const res = await genmedia.generate(
+      { cwd: child, kind: 'image', prompt: 'x', model: 'test/works-mid' }, ctxFor({ homeDir: home }));
+    assert.strictEqual(res.ok, true, 'مشروع داخل المنزل مُنع: ' + res.error_code);
+  });
+
+  // ---------- افتراضي الصور (قرار المالك v2.1) ----------
+  await check('ج9: غياب model يختار الافتراضي المعلن لا الأرخص (للصور)', () => {
+    const ctx = ctxFor({ models: DEFAULT_MODELS });
+    const plan = genmedia.estimate({ kind: 'image', prompt: 'x' }, ctx);
+    assert.strictEqual(plan.ok, true);
+    assert.strictEqual(plan.model, 'test/default-arabic', 'لم يُختر الافتراضي: ' + plan.model);
+    assert.strictEqual(plan.cost_usd_estimate, 0.02);
+    assert.deepStrictEqual(plan.alternatives, ['test/cheap-no-arabic'], 'البدائل: ' + plan.alternatives.join(','));
+  });
+
+  await check('ج9: طلب الأرخص صراحةً يُحترم، ولا يُستبدل بالافتراضي', async () => {
+    const cwd = freshCwd('explicit-cheap');
+    const ctx = ctxFor({ models: DEFAULT_MODELS });
+    const before = seen.submits.length;
+    const res = await genmedia.generate({ cwd, kind: 'image', prompt: 'x', model: 'test/cheap-no-arabic' }, ctx);
+    assert.strictEqual(res.ok, true, 'فشل الأرخص الصريح: ' + res.error_code);
+    assert.strictEqual(res.model, 'test/cheap-no-arabic');
+    assert.strictEqual(res.cost_usd_estimate, 0.003);
+    const calls = seen.submits.slice(before).map((s) => s.modelId);
+    assert.deepStrictEqual(calls, ['test/cheap-no-arabic'], 'نُودي غير المطلوب: ' + calls.join(','));
+  });
+
+  await check('ج9: ضيق budget_usd يُسقط الافتراضي إلى الأرخص بدل الفشل', () => {
+    const ctx = ctxFor({ models: DEFAULT_MODELS });
+    const tight = genmedia.estimate({ kind: 'image', prompt: 'x', budget_usd: 0.005 }, ctx);
+    assert.strictEqual(tight.ok, true, 'فشل بدل السقوط: ' + tight.error_code);
+    assert.strictEqual(tight.model, 'test/cheap-no-arabic', 'لم يسقط للأرخص: ' + tight.model);
+    // وميزانية تسع الافتراضي تبقيه
+    const roomy = genmedia.estimate({ kind: 'image', prompt: 'x', budget_usd: 1 }, ctx);
+    assert.strictEqual(roomy.model, 'test/default-arabic', 'الميزانية الواسعة غيّرت الافتراضي');
+  });
+
+  await check('ج9: السقوط يبدأ من الافتراضي ثم يهبط أرخص-فأرخص', async () => {
+    const cwd = freshCwd('default-fallback');
+    // الافتراضي يفشل عمداً (اسمه يحمل always-fails) فيجب أن يسقط إلى الأرخص
+    const models = [
+      Object.assign({}, DEFAULT_MODELS[0]),
+      Object.assign({}, DEFAULT_MODELS[1], { id: 'test/always-fails-default' }),
+    ];
+    const before = seen.submits.length;
+    const res = await genmedia.generate({ cwd, kind: 'image', prompt: 'x' }, ctxFor({ models }));
+    assert.strictEqual(res.ok, true, 'لم ينجح السقوط: ' + res.error_code);
+    const calls = seen.submits.slice(before).map((s) => s.modelId);
+    assert.deepStrictEqual(calls, ['test/always-fails-default', 'test/cheap-no-arabic'],
+      'ترتيب السقوط: ' + calls.join(','));
+    assert.strictEqual(res.model, 'test/cheap-no-arabic');
+  });
+
+  await check('ج9: لا افتراضي مفروض للفيديو — الأرخص أولاً كما نصّ العقد', () => {
+    const ctx = ctxFor({ models: DEFAULT_MODELS });
+    const plan = genmedia.estimate({ kind: 'video', prompt: 'x' }, ctx);
+    assert.strictEqual(plan.ok, true);
+    assert.strictEqual(plan.model, 'test/works-video', 'الفيديو اختار غير الأرخص: ' + plan.model);
+    assert.ok(!DEFAULT_MODELS.some((m) => m.kind === 'video' && m.default_for_kind),
+      'أُعلن افتراضي للفيديو خلافاً للعقد');
+    // وكل خيارات الفيديو معروضة كي تسألها المهارة عن المستخدم
+    assert.deepStrictEqual(plan.alternatives, ['test/pricey-video']);
+    const real = genmedia.listCatalog().models.filter((m) => m.kind === 'video');
+    assert.ok(real.every((m) => !m.default_for_kind), 'الكتالوج الحقيقي يعلن افتراضي فيديو');
+  });
+
+  await check('ج9: الكتالوج الحقيقي يعلن خيارات فيديو متعددة مثبتة، مرتبة بالسعر وبلا افتراضي', () => {
+    const videos = genmedia.listCatalog().models.filter((m) => m.kind === 'video');
+    assert.ok(videos.length >= 3, 'عدد خيارات الفيديو: ' + videos.length);
+    assert.ok(videos.every((m) => m.proven), 'خيار فيديو غير مثبت في الكتالوج');
+    assert.ok(videos.every((m) => !m.default_for_kind), 'أُعلن افتراضي للفيديو خلافاً للعقد');
+    assert.ok(videos.every((m) => m.max_count === 1), 'max_count فيديو ليس 1');
+    const ids = videos.map((m) => m.id);
+    for (const want of ['fal-ai/ltx-video', 'fal-ai/ltxv-13b-098-distilled', 'fal-ai/wan/v2.2-5b/text-to-video']) {
+      assert.ok(ids.includes(want), 'خيار فيديو مثبت غائب: ' + want);
+    }
+    // التوجيه بلا model يبقى الأرخص-أولاً (لا افتراضي مفروض)
+    const ctx = { env: { FAL_KEY: FAKE_KEY }, getKey: () => '' };
+    const chain = genmedia.routeChain('video', ctx, false);
+    const costs = chain.map((m) => m.unit_cost_usd);
+    assert.deepStrictEqual(costs, costs.slice().sort((a, b) => a - b), 'سلسلة الفيديو ليست مرتبة بالسعر');
+    assert.strictEqual(chain[0].id, 'fal-ai/ltx-video', 'رأس سلسلة الفيديو: ' + chain[0].id);
+  });
+
+  await check('ج9: الكتالوج الحقيقي يعلن GPT Image افتراضياً للصور مع flux خياراً أرخص', () => {
+    const cat = genmedia.listCatalog();
+    const images = cat.models.filter((m) => m.kind === 'image' && m.proven);
+    const def = images.filter((m) => m.default_for_kind === 'image');
+    assert.strictEqual(def.length, 1, 'عدد الافتراضيات للصور: ' + def.length);
+    assert.strictEqual(def[0].id, 'fal-ai/gpt-image-1/text-to-image', 'الافتراضي: ' + def[0].id);
+    assert.strictEqual(def[0].unit_cost_usd, 0.02, 'سعر الافتراضي لا يطابق المقيس حياً');
+    assert.strictEqual(def[0].arabic_text, true, 'الافتراضي غير موسوم بقدرة النص العربي');
+    const cheap = images.find((m) => m.id === 'fal-ai/flux/schnell');
+    assert.ok(cheap, 'flux/schnell غاب عن الكتالوج');
+    assert.strictEqual(cheap.unit_cost_usd, 0.003);
+    assert.ok(cheap.unit_cost_usd < def[0].unit_cost_usd, 'الأرخص ليس أرخص!');
+    // والمراجع معلنة على النموذج المثبت وحده
+    const refsModels = images.filter((m) => m.supports_refs);
+    assert.strictEqual(refsModels.length, 1, 'عدد نماذج المراجع: ' + refsModels.length);
+    assert.strictEqual(refsModels[0].id, 'fal-ai/flux/dev/image-to-image');
+    assert.strictEqual(refsModels[0].max_refs, 1);
+  });
+
+  await check('ج9: التوجيه الحقيقي بلا حقن يختار GPT Image ولا يمسّه مزوّد غير مثبت', () => {
+    const ctx = { env: { FAL_KEY: FAKE_KEY, OPENAI_API_KEY: 'x', GEMINI_API_KEY: 'y' }, getKey: () => '' };
+    const chain = genmedia.routeChain('image', ctx, false);
+    assert.ok(chain.length >= 2, 'سلسلة قصيرة: ' + chain.length);
+    assert.strictEqual(chain[0].id, 'fal-ai/gpt-image-1/text-to-image', 'رأس السلسلة: ' + chain[0].id);
+    assert.ok(chain.every((m) => m.provider === 'fal'), 'مزوّد غير مثبت دخل السلسلة');
+    // وبقية السلسلة أرخص-فأرخص
+    const rest = chain.slice(1).map((m) => m.unit_cost_usd);
+    assert.deepStrictEqual(rest, rest.slice().sort((a, b) => a - b), 'الذيل ليس مرتباً بالسعر');
+    // ومع مراجع لا يبقى إلا الداعم
+    const refsChain = genmedia.routeChain('image', ctx, true);
+    assert.ok(refsChain.length >= 1 && refsChain.every((m) => m.supports_refs), 'تسرّب نموذج بلا مراجع');
+  });
+
+  await check('ج9: لا تسريب مفتاح ولا مسار مطلق في مسارات الصوت والمراجع الجديدة', async () => {
+    const cwd = freshCwd('r9-leak');
+    fs.writeFileSync(path.join(cwd, 'base.jpg'), IMAGE_BYTES);
+    const a = await genmedia.generate({ cwd, kind: 'audio', prompt: 'x', model: 'test/works-audio' }, ctxFor());
+    const b = await genmedia.generate({ cwd, kind: 'image', prompt: 'y', model: 'test/works-refs', refs: ['base.jpg'] }, ctxFor());
+    const home = freshCwd('r9-home');
+    const c = await genmedia.generate({ cwd: home, kind: 'audio', prompt: 'z' }, ctxFor({ homeDir: home }));
+    const blobs = [JSON.stringify(a), JSON.stringify(b), JSON.stringify(c),
+      fs.readFileSync(genmedia.logFileFor(cwd), 'utf8')];
+    for (const blob of blobs) {
+      assert.ok(!blob.includes(FAKE_KEY) && !blob.includes('TESTKEY'), 'المفتاح تسرّب في مسار ج9');
+      assert.ok(!blob.includes(cwd) && !blob.includes(home), 'مسار مطلق تسرّب في مسار ج9');
+    }
+  });
+
+  await check('ج9: رسائل الرموز الجديدة عربية وبلا نص مزوّد خام', () => {
+    for (const code of ['no_project', 'refs_too_many', 'refs_type_rejected', 'refs_too_large', 'refs_unsupported']) {
+      const msg = genmedia.messageFor({ error_code: code });
+      assert.ok(msg && /[؀-ۿ]/.test(msg), 'رسالة غير عربية للرمز: ' + code);
+      assert.ok(!/[<>{}]/.test(msg), 'رسالة تحمل بنية خام: ' + code);
+    }
+    assert.ok(genmedia.messageFor({ error_code: 'no_project' }).includes('مجلد المشروع'), 'no_project بلا إرشاد');
+    assert.ok(!genmedia.messageFor({ error_code: 'unsupported_kind' }).includes('خارج هذه الجولة'),
+      'رسالة النوع ما زالت تقول إن الصوت خارج الجولة');
+  });
+
   // ---------- الخاتمة ----------
   server.close();
   console.log('');
@@ -558,7 +895,8 @@ async function main() {
     process.exitCode = 1;
   } else {
     console.log('genmedia-test: ok — ' + passed + '/' + total
-      + ' (التوجيه والسقوط، السقف الصلب، schema السجل والقصّ، تفريغ السر، حصر المراجع، حارس النطاق، عدم تسريب المفتاح)');
+      + ' (التوجيه والسقوط، السقف الصلب، schema السجل والقصّ، تفريغ السر، حصر المراجع، حارس النطاق،'
+      + ' عدم تسريب المفتاح | ج9: الصوت، المراجع data: URI، حارس المنزل، افتراضي الصور)');
   }
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* أفضل جهد */ }
 }
