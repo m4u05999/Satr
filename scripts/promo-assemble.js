@@ -51,6 +51,9 @@ const SEGMENTS = [
   { file: '11-cta.mp4',         ss: 0,   t: 8.4 },
 ];
 
+// الطول الفعلي للإعلان = مجموع مدد القائمة (يحكم قصّ الموسيقى وخفوت النهاية)
+const TOTAL = Math.round(SEGMENTS.reduce((sum, s) => sum + s.t, 0) * 1000) / 1000;
+
 const run = (args) => {
   const r = spawnSync(FFMPEG, args, { stdio: ['ignore', 'ignore', 'inherit'] });
   if (r.status !== 0) throw new Error('ffmpeg فشل (كود ' + r.status + '): ' + args.join(' '));
@@ -95,12 +98,19 @@ function main() {
   const music = path.join(FOOT, 'music.mp3');
   const hasMusic = fs.existsSync(music);
   const suffix = missing ? 'rough' : '60s';
-  const finalOut = path.join(ROOT, 'promo', 'satr-promo-' + suffix + '.mp4');
+  const outName = process.env.PROMO_OUT || ('satr-promo-' + suffix + '.mp4');
+  const finalOut = path.join(ROOT, 'promo', outName);
 
   if (hasMusic) {
-    console.log('♪ تركيب الموسيقى مع خفوت النهاية');
+    // ج10: الخفوت يحاذي **الطول الفعلي** المحسوب من قائمة المونتاج لا الرقم الثابت 60،
+    // وإلا انقطع الخفوت قبل تمامه حين يقلّ المجموع عن دقيقة (المجموع اليوم 59.8ث).
+    const fadeDur = Math.min(4, Math.max(1, TOTAL / 12));
+    const fadeStart = Math.max(0, TOTAL - fadeDur);
+    console.log('♪ تركيب الموسيقى مع خفوت النهاية (المجموع ' + TOTAL.toFixed(2)
+      + 'ث · الخفوت من ' + fadeStart.toFixed(2) + 'ث)');
     run(['-y', '-i', silent, '-i', music,
-      '-filter_complex', '[1:a]atrim=0:60,afade=t=out:st=56:d=4[a]',
+      '-filter_complex', '[1:a]atrim=0:' + TOTAL.toFixed(3)
+        + ',afade=t=out:st=' + fadeStart.toFixed(3) + ':d=' + fadeDur.toFixed(3) + '[a]',
       '-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', finalOut]);
   } else {
     console.log('♪ لا موسيقى (ضع promo/footage/music.mp3) — الناتج صامت');
@@ -111,7 +121,7 @@ function main() {
   const kb = Math.round(fs.statSync(finalOut).size / 1024);
   console.log('\n=== ' + path.basename(finalOut) + ' (' + kb + 'KB) ===');
   if (missing) console.log('نواقص: ' + missing + ' لقطة واجهة (بطاقات نائبة) + ' + (hasMusic ? '' : 'الموسيقى. '));
-  console.log('المدة: ~60ث · ' + W + 'x' + H + ' · ' + FPS + 'fps');
+  console.log('المدة: ' + TOTAL.toFixed(2) + 'ث · ' + W + 'x' + H + ' · ' + FPS + 'fps');
 }
 
 try { main(); } catch (e) { console.error('promo-assemble:', e.message); process.exit(1); }
