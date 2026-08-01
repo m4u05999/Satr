@@ -23,7 +23,7 @@ const MAX_RESOURCE_BYTES = 256 * 1024;
 const MAX_RESOURCES = 100;
 const MAX_RESOURCE_DEPTH = 5;
 const MAX_CATALOG_CHARS = 16 * 1024;
-const BUILTIN_SKILLS = new Set(['satr-guide', 'satr-diverge']);
+const BUILTIN_SKILLS = new Set(['satr-guide', 'satr-diverge', 'satr-generate']);
 
 function parseFrontmatter(text) {
   const clean = String(text || '').replace(/^﻿/, '');

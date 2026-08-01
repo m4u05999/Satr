@@ -76,14 +76,17 @@ const genmedia = {
   listCatalog: () => [],
   estimate: async (request) => {
     genmedia.estimates += 1;
-    return { ok: true, provider: 'fal', model: request.model || 'fal-image-test', count: request.count || 1,
+    return { ok: true, provider: 'fal', model: request.model || (request.kind === 'audio' ? 'fal-audio-test' : 'fal-image-test'), count: request.count || 1,
       cost_usd_estimate: 0.25, catalog_date: '2026-08-01' };
   },
   generate: async (request) => {
     genmedia.generations += 1;
-    return { ok: true, provider: 'fal', model: request.model || 'fal-image-test',
-      files: ['generations/test.png'], cost_usd_estimate: 0.25, fallbacks: ['openai → fal'],
-      api_key: 'FAL_TEST_SECRET_MUST_NOT_LEAK' };
+    return { ok: true, kind: request.kind, provider: 'fal',
+      model: request.model || (request.kind === 'audio' ? 'fal-audio-test' : 'fal-image-test'),
+      files: [request.kind === 'audio' ? 'generations/test.mp3' : 'generations/test.png',
+        'C:\\Users\\owner\\secret.png', '../outside.png'],
+      cost_usd_estimate: 0.25, fallbacks: ['openai → fal'], prompt: 'RAW_PROMPT_MUST_NOT_LEAK',
+      api_key: 'FAL_TEST_SECRET_MUST_NOT_LEAK', sdk_raw: { token: 'SDK_RAW_MUST_NOT_LEAK' } };
   },
 };
 
@@ -164,6 +167,41 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
     && /NEVER_ALWAYS_TOOLS[^\n]+GENERATE_MEDIA_TOOL/.test(agentSource)
     && /NEVER_TURN_TOOLS[\s\S]{0,300}GENERATE_MEDIA_TOOL/.test(agentSource),
   'generate_media في SDK مصنّفة بلا «دائماً» ولا موافقة دور');
+  ok(/kind:\s*z\.enum\(\['image', 'video', 'audio'\]\)/.test(agentSource)
+    && /runGenerateMedia\(cwd, args, \{[\s\S]{0,120}genmedia: genmediaOverride, mediaCostState, emit/.test(agentSource),
+  'سطح SDK يمرّر باعث الدور إلى طبقة generate_media المشتركة ويدعم audio');
+  const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  ok(/function sanitizeGenerationDoneEvent\(cwd, value\)/.test(mainSource)
+    && /return \{ type: 'generation_done', kind, files: filesList, cost_usd_estimate: cost, provider, model \}/.test(mainSource)
+    && /codexmcp\.setEventSink\(/.test(mainSource),
+  'main.js يعيد بناء generation_done بقائمة الحقول المغلقة ويمرّر مصرف codexmcp');
+
+  const adapterEvents = [];
+  const adapterMedia = await tools.runGenerateMedia(process.cwd(), {
+    kind: 'audio', prompt: 'تعليق عربي', budget_usd: 1,
+  }, { genmedia, mediaCostState: { total: 0 }, emit: (event) => adapterEvents.push(event) });
+  ok(adapterMedia.ok && adapterEvents.length === 1, 'سطح المحوّلات يبث generation_done واحداً بعد النجاح');
+  assert.deepStrictEqual(adapterEvents[0], {
+    type: 'generation_done', kind: 'audio', files: ['generations/test.mp3'],
+    cost_usd_estimate: 0.25, provider: 'fal', model: 'fal-audio-test',
+  });
+  ok(Object.keys(adapterEvents[0]).sort().join(',') === 'cost_usd_estimate,files,kind,model,provider,type'
+    && !JSON.stringify(adapterEvents).includes('RAW_PROMPT_MUST_NOT_LEAK')
+    && !JSON.stringify(adapterEvents).includes('FAL_TEST_SECRET_MUST_NOT_LEAK')
+    && !JSON.stringify(adapterEvents).includes('SDK_RAW_MUST_NOT_LEAK')
+    && !JSON.stringify(adapterEvents).includes('C:\\Users') && !JSON.stringify(adapterEvents).includes('../outside'),
+  'حدث المحوّلات يطابق schema v1 وينقّي البرومبت والمفتاح والخرج الخام والمسارات غير النسبية');
+
+  const failedEvents = [];
+  const failedMedia = await tools.runGenerateMedia(process.cwd(), { kind: 'image', prompt: 'اختبار' }, {
+    genmedia: {
+      estimate: genmedia.estimate,
+      generate: async () => ({ ok: true, kind: 'image', provider: 'fal', model: 'fal-image-test',
+        files: ['C:\\outside.png', '../outside.png'], cost_usd_estimate: 0.25 }),
+    },
+    mediaCostState: { total: 0 }, emit: (event) => failedEvents.push(event),
+  });
+  ok(!failedMedia.ok && failedEvents.length === 0, 'نجاح خام بلا مسار نسبي صالح لا يبث generation_done');
   ok(built('promo_record_start').access === 'exec' && built('promo_record_start').neverAlways, 'بدء تسجيل البرومو فعل صريح بلا «دائماً»');
   ok(built('promo_record_stop').access === 'exec' && built('promo_record_stop').neverAlways, 'إيقاف تسجيل البرومو فعل صريح بلا «دائماً»');
   ok(built('promo_list_segments').access === 'read', 'سرد مقاطع البرومو قراءة حرّة');
@@ -267,7 +305,8 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
 
   asked.length = 0; askedMeta.length = 0;
   genmedia.generations = 0;
-  srv3 = await codexmcp.start({ preview, cwd: process.cwd(), genmedia, requestPermission: gate(false) });
+  const deniedMediaEvents = [];
+  srv3 = await codexmcp.start({ preview, cwd: process.cwd(), genmedia, emit: (event) => deniedMediaEvents.push(event), requestPermission: gate(false) });
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 61, method: 'tools/call', params: {
     name: 'generate_media', arguments: { kind: 'image', prompt: 'اختبار', count: 2, budget_usd: 1 },
   } });
@@ -275,6 +314,7 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   const mediaDenied = askedMeta.find((item) => item.tool === 'generate_media');
   ok(jj.result.isError && genmedia.generations === 0 && mediaDenied && mediaDenied.access === 'exec' && mediaDenied.neverAlways,
     'رفض إذن generate_media يمنع التنفيذ ويعطّل «دائماً»');
+  ok(deniedMediaEvents.length === 0, 'رفض إذن generate_media لا يبث generation_done');
   ok(mediaDenied.input.provider === 'fal' && mediaDenied.input.model === 'fal-image-test'
     && mediaDenied.input.count === 2 && mediaDenied.input.cost_usd_estimate === 0.25
     && mediaDenied.input.session_cost_usd_estimate === 0.25,
@@ -282,7 +322,8 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   await srv3.stop();
 
   asked.length = 0; askedMeta.length = 0;
-  srv3 = await codexmcp.start({ preview, cwd: process.cwd(), genmedia, requestPermission: gate(true) });
+  const codexMcpEvents = [];
+  srv3 = await codexmcp.start({ preview, cwd: process.cwd(), genmedia, emit: (event) => codexMcpEvents.push(event), requestPermission: gate(true) });
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 62, method: 'tools/call', params: {
     name: 'generate_media', arguments: { kind: 'image', prompt: 'اختبار' },
   } });
@@ -291,6 +332,14 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
     && /0\.250000/.test(jj.result.content[0].text) && /openai → fal/.test(jj.result.content[0].text)
     && !JSON.stringify(jj).includes('FAL_TEST_SECRET_MUST_NOT_LEAK'),
   'قبول generate_media يفوّض للمزيّف ويعيد المسار والكلفة والسقوط بالعربية');
+  assert.deepStrictEqual(codexMcpEvents, [{
+    type: 'generation_done', kind: 'image', files: ['generations/test.png'],
+    cost_usd_estimate: 0.25, provider: 'fal', model: 'fal-image-test',
+  }]);
+  ok(!JSON.stringify(codexMcpEvents).includes('RAW_PROMPT_MUST_NOT_LEAK')
+    && !JSON.stringify(codexMcpEvents).includes('FAL_TEST_SECRET_MUST_NOT_LEAK')
+    && !JSON.stringify(codexMcpEvents).includes('SDK_RAW_MUST_NOT_LEAK'),
+  'سطح codexmcp يبث schema المنقّى نفسه بلا أي حقل خام أو سر');
   asked.length = 0; askedMeta.length = 0;
   await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 63, method: 'tools/call', params: {
     name: 'generate_media', arguments: { kind: 'image', prompt: 'اختبار ثانٍ' },

@@ -1230,9 +1230,9 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     );
     const generateMediaTool = sdk.tool(
       'generate_media',
-      'ولّد صورة أو فيديو داخل generations/ بعد إذن صريح يعرض النوع والمزوّد والنموذج والعدد والكلفة التقديرية وتراكمي الجلسة. لا توجد موافقة دائمة أو موافقة دور لهذه الأداة.',
+      'ولّد صورة أو فيديو أو صوتاً داخل generations/ بعد إذن صريح يعرض النوع والمزوّد والنموذج والعدد والكلفة التقديرية وتراكمي الجلسة. لا توجد موافقة دائمة أو موافقة دور لهذه الأداة.',
       {
-        kind: z.enum(['image', 'video']),
+        kind: z.enum(['image', 'video', 'audio']),
         prompt: z.string(),
         model: z.string().optional(),
         count: z.number().int().min(1).max(4).optional(),
@@ -1241,7 +1241,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       },
       async (args) => {
         const result = await adapterTools.runGenerateMedia(cwd, args, {
-          genmedia: genmediaOverride, mediaCostState,
+          genmedia: genmediaOverride, mediaCostState, emit,
         });
         return { content: [{ type: 'text', text: result.content }], isError: !result.ok };
       }

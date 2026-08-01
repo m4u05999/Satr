@@ -40,6 +40,7 @@ const reviewerModule = require('./reviewer'); // مراجع فرق قراءة ف
 const integration = require('./integration'); // تحقق تكاملي داخل worktree مستقل — المرحلة 5
 const merger = require('./merger'); // تطبيق patch بعد المراجعة والتحقق والموافقة — المرحلة 5
 const codex = require('./codex'); // محرك Codex الأصيل (المرحلة 1) — خاص مثل sdk
+const codexmcp = require('./codexmcp'); // مصرف أحداث أدوات MCP المنقّاة لـCodex/Kimi
 const codexSessions = require('./codexsessions'); // جلسات Codex للوحة /جلسات (قراءة فقط)
 const kimi = require('./kimi'); // محرك Kimi Code الأصيل عبر ACP — اشتراك + جلسات حقيقية
 const previewrecording = require('./previewrecording'); // تنزيل تسجيل المعاينة إلى Downloads + إشعار المسار
@@ -536,7 +537,8 @@ const GEN_PROVIDER_KEYS = Object.freeze([
   { provider: 'gemini', keyName: 'GEMINI_API_KEY', label: 'Google Gemini' },
   { provider: 'fal', keyName: 'FAL_KEY', label: 'fal.ai' },
 ]);
-const GEN_PROVIDERS = new Set(['openai', 'gemini', 'fal', 'managed']);
+const GEN_PROVIDERS = new Set(['openai', 'gemini', 'fal', 'kie', 'wavespeed', 'managed']);
+const GEN_KINDS = new Set(['image', 'video', 'audio']);
 const GEN_CONTROL_AND_BIDI = /[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 const GEN_IMAGE_MIME = Object.freeze({
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -572,7 +574,7 @@ function cleanGenerationText(value, maxPoints) {
 function sanitizeGenerationItem(cwd, value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const id = typeof value.id === 'string' && /^gen_[A-Za-z0-9_-]{1,100}$/.test(value.id) ? value.id : '';
-  const kind = value.kind === 'image' || value.kind === 'video' ? value.kind : '';
+  const kind = GEN_KINDS.has(value.kind) ? value.kind : '';
   const provider = cleanGenerationText(value.provider, 32);
   const model = cleanGenerationText(value.model, 160);
   const status = value.status === 'completed' || value.status === 'failed' ? value.status : '';
@@ -629,6 +631,27 @@ function generationLogTail(cwd) {
   }
   return { ok: true, items: items.slice(-200).reverse() };
 }
+
+function sanitizeGenerationDoneEvent(cwd, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.type !== 'generation_done') return null;
+  const kind = GEN_KINDS.has(value.kind) ? value.kind : '';
+  const provider = cleanGenerationText(value.provider, 32);
+  const model = cleanGenerationText(value.model, 160);
+  const cost = Number(value.cost_usd_estimate);
+  const filesList = (Array.isArray(value.files) ? value.files : [])
+    .map((item) => safeGenerationRel(cwd, item, true))
+    .filter((item) => item && !memory.hasSecret(item))
+    .slice(0, 4);
+  if (!kind || !filesList.length || !/^[A-Za-z0-9._-]{1,32}$/.test(provider) || memory.hasSecret(provider)
+      || !/^[A-Za-z0-9._/-]{1,160}$/.test(model) || memory.hasSecret(model)
+      || !Number.isFinite(cost) || cost < 0 || cost > 100000) return null;
+  return { type: 'generation_done', kind, files: filesList, cost_usd_estimate: cost, provider, model };
+}
+
+codexmcp.setEventSink((event, cwd) => {
+  const sanitized = sanitizeGenerationDoneEvent(cwd, event);
+  if (sanitized) emitToWindow(sanitized);
+});
 
 function knownKeyNames() {
   return new Set([...adapters.list().map((p) => p.keyName).filter(Boolean), testsprite.KEY_NAME, ...GEN_KEY_NAMES]);
@@ -1559,6 +1582,10 @@ async function handleSendRequest(event, payload, requestEpoch) {
   let sdkRunForEmit = null;
   const emit = (obj) => {
     if (!obj || typeof obj !== 'object') return;
+    if (obj.type === 'generation_done') {
+      obj = sanitizeGenerationDoneEvent(cwd, obj);
+      if (!obj) return;
+    }
     if (runEngine === 'sdk' && (obj.type === 'prompt_suggestion' || obj.type === 'sdk_agent_progress'
         || obj.type === 'system' && obj.subtype === 'compact_summary')) {
       obj = sanitizeClaudePolishEvent(obj);

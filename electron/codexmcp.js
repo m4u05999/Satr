@@ -31,6 +31,12 @@ const promocapture = require('./promocapture');
 const promostudio = require('./promostudio');
 const agentTools = require('./tools');
 
+let eventSink = null;
+
+function setEventSink(sink) {
+  eventSink = typeof sink === 'function' ? sink : null;
+}
+
 const PROTOCOL_VERSION = '2024-11-05'; // نسخة MCP التي يتفاوض عليها العميل (rmcp يقبلها)
 const SERVER_INFO = { name: 'satr-preview', title: 'Satr Preview', version: '1.0.0' };
 
@@ -101,6 +107,8 @@ function buildTools(deps) {
   const promo = deps.promoCapture || promocapture;
   const studio = deps.promoStudio || promostudio;
   const openPreview = typeof deps.openPreview === 'function' ? deps.openPreview : null;
+  const emit = typeof deps.emit === 'function' ? deps.emit
+    : eventSink ? (event) => eventSink(event, deps.cwd) : null;
   const mediaCostState = { total: 0 };
   // التسليم البشري: codex.js يوفّر requestHandoff (بثّ الشريط + انتظار «استلمت»).
   // غيابه ⇒ الأداة ترفض fail-closed (نفس مبدأ requestPermission أدناه).
@@ -506,9 +514,9 @@ function buildTools(deps) {
     },
     {
       name: 'generate_media', access: 'exec', neverAlways: true,
-      description: 'ولّد صورة أو فيديو داخل generations/ بعد عرض النوع والمزوّد والنموذج والعدد والكلفة التقديرية وتراكمي الجلسة في إذن صريح لمرة واحدة.',
+      description: 'ولّد صورة أو فيديو أو صوتاً داخل generations/ بعد عرض النوع والمزوّد والنموذج والعدد والكلفة التقديرية وتراكمي الجلسة في إذن صريح لمرة واحدة.',
       inputSchema: { type: 'object', properties: {
-        kind: { type: 'string', enum: ['image', 'video'] },
+        kind: { type: 'string', enum: ['image', 'video', 'audio'] },
         prompt: { type: 'string', maxLength: 2000 },
         model: { type: 'string' },
         count: { type: 'integer', minimum: 1, maximum: 4 },
@@ -520,7 +528,7 @@ function buildTools(deps) {
       }),
       handler: async (args) => {
         const result = await agentTools.runGenerateMedia(deps.cwd, args, {
-          genmedia: deps.genmedia, mediaCostState,
+          genmedia: deps.genmedia, mediaCostState, emit,
         });
         return textResult(result.content, !result.ok);
       },
@@ -798,4 +806,4 @@ function start(deps) {
   });
 }
 
-module.exports = { start, buildTools, _internals: { safeEqual, permissionInput, PROTOCOL_VERSION } };
+module.exports = { start, buildTools, setEventSink, _internals: { safeEqual, permissionInput, PROTOCOL_VERSION } };

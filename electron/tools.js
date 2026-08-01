@@ -35,7 +35,7 @@ const MAX_WRITE = 1024 * 1024; // سقف محتوى كتابة واحد (1م.ب)
 const MAX_EDIT_SRC = 2 * 1024 * 1024; // لا تعديل على ملف أكبر (حماية ذاكرة + تراجع مضمون)
 const GENMEDIA_MISSING = 'ميزة التوليد لم تكتمل بعد';
 const GENMEDIA_FILE = path.join(__dirname, 'genmedia.js');
-const MEDIA_PROVIDERS = new Set(['openai', 'gemini', 'fal', 'managed']);
+const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
 let cachedGenmedia = null;
 
 function resolveGenmedia(override) {
@@ -55,7 +55,7 @@ function resolveGenmedia(override) {
 
 function mediaRequest(cwd, args) {
   const input = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
-  const kind = input.kind === 'image' || input.kind === 'video' ? input.kind : '';
+  const kind = MEDIA_KINDS.has(input.kind) ? input.kind : '';
   const prompt = typeof input.prompt === 'string' ? input.prompt : '';
   const count = input.count == null ? undefined : input.count;
   const refs = input.refs == null ? undefined : input.refs;
@@ -106,7 +106,7 @@ function normalizeMediaEstimate(raw, request) {
     ? item.count : (request.count || 1);
   return {
     ok: true,
-    provider: MEDIA_PROVIDERS.has(provider) ? provider : 'auto',
+    provider: provider || 'auto',
     model: model || 'auto',
     count,
     cost_usd_estimate: cost,
@@ -160,7 +160,7 @@ function safeMediaRel(cwd, value) {
   return resolved.startsWith(root + path.sep) && !memory.hasSecret(rel) ? rel.slice(0, 1000) : '';
 }
 
-function formatMediaResult(cwd, raw, estimate) {
+function formatMediaResult(cwd, raw, estimate, request) {
   const item = mediaObject(raw);
   const error = mediaToken((item && item.error_code) || '', 64);
   if (!raw || raw.ok === false || item.ok === false || item.status === 'failed') {
@@ -170,9 +170,9 @@ function formatMediaResult(cwd, raw, estimate) {
   const paths = candidates.map((value) => safeMediaRel(cwd, value)).filter(Boolean).slice(0, 4);
   const cost = mediaCost(item.cost_usd_estimate ?? item.cost_usd ?? item.estimated_cost_usd
     ?? (estimate && estimate.cost_usd_estimate));
-  const providerToken = mediaToken(item.provider || (estimate && estimate.provider), 32);
-  const provider = MEDIA_PROVIDERS.has(providerToken) ? providerToken : '';
-  const model = mediaToken(item.model || (estimate && estimate.model), 160);
+  const provider = mediaToken(item.provider, 32) || mediaToken(estimate && estimate.provider, 32) || 'auto';
+  const model = mediaToken(item.model, 160) || mediaToken(estimate && estimate.model, 160) || 'auto';
+  const kind = MEDIA_KINDS.has(item.kind) ? item.kind : request && request.kind;
   const fallbackValues = Array.isArray(item.fallbacks) ? item.fallbacks
     : Array.isArray(item.fallback) ? item.fallback : item.fallback ? [item.fallback] : [];
   const fallbacks = fallbackValues.map((value) => {
@@ -193,7 +193,15 @@ function formatMediaResult(cwd, raw, estimate) {
     model ? 'النموذج: ' + model : '',
     fallbacks.length ? 'سقوط المزوّد: ' + fallbacks.join('، ') : '',
   ].filter(Boolean);
-  return { ok: paths.length > 0, content: lines.join('\n'), cost: paths.length ? cost : 0 };
+  const event = paths.length && MEDIA_KINDS.has(kind) ? {
+    type: 'generation_done',
+    kind,
+    files: paths,
+    cost_usd_estimate: cost,
+    provider,
+    model,
+  } : null;
+  return { ok: paths.length > 0, content: lines.join('\n'), cost: paths.length ? cost : 0, event };
 }
 
 async function runGenerateMedia(cwd, args, ctx) {
@@ -203,9 +211,12 @@ async function runGenerateMedia(cwd, args, ctx) {
   let raw;
   try { raw = await genmedia.generate(permission.request, ctx || {}); }
   catch { return { ok: false, content: mediaErrorText('generation_failed') }; }
-  const formatted = formatMediaResult(cwd, raw, permission.estimate);
+  const formatted = formatMediaResult(cwd, raw, permission.estimate, permission.request);
   if (formatted.ok && ctx && ctx.mediaCostState) {
     ctx.mediaCostState.total = mediaCost(ctx.mediaCostState.total) + formatted.cost;
+  }
+  if (formatted.ok && formatted.event && ctx && typeof ctx.emit === 'function') {
+    try { ctx.emit(formatted.event); } catch { /* بث العرض أفضل جهد ولا يغيّر نجاح التوليد */ }
   }
   return { ok: formatted.ok, content: formatted.content };
 }
@@ -438,11 +449,11 @@ const DEFS = [
     type: 'function',
     function: {
       name: 'generate_media',
-      description: 'Generate image or video assets in the project generations/ folder. This always shows the selected provider, model, count, estimated cost, and session cumulative cost for one-time approval before execution.',
+      description: 'Generate image, video, or audio assets in the project generations/ folder. This always shows the selected provider, model, count, estimated cost, and session cumulative cost for one-time approval before execution.',
       parameters: {
         type: 'object',
         properties: {
-          kind: { type: 'string', enum: ['image', 'video'] },
+          kind: { type: 'string', enum: ['image', 'video', 'audio'] },
           prompt: { type: 'string', description: 'Media generation prompt' },
           model: { type: 'string', description: 'Optional catalog model ID' },
           count: { type: 'integer', minimum: 1, maximum: 4 },

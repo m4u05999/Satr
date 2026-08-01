@@ -41,7 +41,7 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
     const builtinCatalog = skills.discoverSkills(project, { home, builtinRoot });
     const builtinGuide = builtinCatalog.find((s) => s.name === 'satr-guide');
     ok(!!builtinGuide && builtinGuide.source === 'builtin', 'المشروع الفارغ يكتشف satr-guide من المصدر المضمّن');
-    ok(builtinCatalog.map((s) => s.name).join(',') === 'satr-diverge,satr-guide'
+    ok(builtinCatalog.map((s) => s.name).join(',') === 'satr-diverge,satr-generate,satr-guide'
       && !builtinCatalog.some((s) => s.name === 'tafqeet'),
     'المصدر المضمّن مقصور على مهارتي سطر الرسميتين ولا يشحن مثال tafqeet');
 

@@ -142,6 +142,7 @@
       "src/**/*",
       ".agents/skills/satr-guide/**/*",
       ".agents/skills/satr-diverge/**/*",
+      ".agents/skills/satr-generate/**/*",
       "!enterprise/**",
       "!**/@anthropic-ai/claude-agent-sdk-win32-x64/**",
       "!**/@anthropic-ai/claude-agent-sdk-*/**",
@@ -151,7 +152,8 @@
     ],
     "asarUnpack": [
       ".agents/skills/satr-guide/**/*",
-      ".agents/skills/satr-diverge/**/*"
+      ".agents/skills/satr-diverge/**/*",
+      ".agents/skills/satr-generate/**/*"
     ],
     "win": {
       "icon": "build/icon.ico",

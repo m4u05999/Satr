@@ -36,7 +36,7 @@
 - **`browser_request_secret`** — اطلب من المستخدم إدخال قيمة سرّية بيده في حقل المعاينة. يبرز الحقل ويظهر شريط عربي، وتعود filled فقط بلا القيمة.
 - **`browser_handoff`** — سلّم قيادة المعاينة للمستخدم ليكمل خطوة بيده داخل متصفح «سطر» (تسجيل دخول، كلمة مرور، رمز تحقق 2FA أو بيانات حساسة) ثم انتظر ضغطه «استلمت». استعملها بدل طلب بيانات حساسة في المحادثة وبدل إحالة المستخدم لمتصفح خارجي. أثناء التسليم كل أدوات المعاينة معلّقة ولا ترى الصفحة. بعد الاستلام خذ browser_snapshot جديداً وأكمل.
 - **`browser_handoff_step`** — سلّم للمستخدم خطوة واحدة محددة داخل المعاينة ثم استأنف بسلاسة. أثناء الخطوة أدوات الوكيل معلّقة؛ بعد «تم» خذ snapshot جديداً واتبع resume_hint.
-- **`generate_media`** — ولّد صورة أو فيديو داخل generations/ بعد عرض النوع والمزوّد والنموذج والعدد والكلفة التقديرية وتراكمي الجلسة في إذن صريح لمرة واحدة.
+- **`generate_media`** — ولّد صورة أو فيديو أو صوتاً داخل generations/ بعد عرض النوع والمزوّد والنموذج والعدد والكلفة التقديرية وتراكمي الجلسة في إذن صريح لمرة واحدة.
 - **`promo_record_start`** — ابدأ تسجيل فيديو برومو لنافذة منتج مرئية مخصّصة، ملء الإطار وبـ30fps. يطلب إذن تسجيل الشاشة صراحةً كل مرة، ويلتقط نافذة المنتج وحدها بلا شاشة المستخدم وبلا رفع.
 - **`promo_record_stop`** — أوقف تسجيل البرومو الجاري واحفظ المقطع محلياً في Downloads. لا يرفع الملف إلى أي خدمة.
 - **`promo_list_segments`** — اسرد مقاطع البرومو المسجّلة محلياً في جلسة الاستوديو الحالية. قراءة فقط ولا ترفع الملفات.
@@ -63,7 +63,7 @@
 - **`read_skill_resource`** — Read one text resource bundled with an enabled Agent Skill after load_skill lists it. The path must be relative to that skill directory. This reads content only and never executes scripts.
 - **`write_file`** — Create a new file or completely overwrite an existing file in the user's project. The user is asked for permission first. Prefer edit_file for small changes to existing files.
 - **`delete_file`** — Delete a file from the user's project. The user is asked for permission first. This is reliable for any filename (including Arabic names) — prefer it over shell commands like del/rm for deleting files.
-- **`generate_media`** — Generate image or video assets in the project generations/ folder. This always shows the selected provider, model, count, estimated cost, and session cumulative cost for one-time approval before execution.
+- **`generate_media`** — Generate image, video, or audio assets in the project generations/ folder. This always shows the selected provider, model, count, estimated cost, and session cumulative cost for one-time approval before execution.
 - **`run_command`** — Run a single-line shell command (PowerShell on Windows) in the user's visible terminal and return its output. The user must approve each command. Long-running interactive apps (servers) will be cut by the timeout.
 - **`run_in_background`** — Start a development server or long-running task in a persistent visible Satr terminal tab. It survives the turn and chat session until stopped.
 - **`get_background_output`** — Read the tail of a persistent Satr background terminal without stopping it.
