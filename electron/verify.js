@@ -25,6 +25,32 @@ const MAX_PREVIEW_URL = 2048;
 const MAX_OUTPUT = 6000;
 const MAX_EXEC_OUTPUT = 64 * 1024;
 const MAX_MODEL_RESULT = 32 * 1024;
+// مهارة المراجعة النوعية (الجولة السابعة): حقل اختياري كلياً — غيابه يعني السلوك
+// القائم حرفياً. رمز الخطأ موحّد للقراءة والكتابة، والحقل خارج عدّ MAX_CHECKS.
+const SAFE_REVIEW_SKILL_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+const MAX_REVIEW_LABEL = 120;
+const DEFAULT_REVIEW_TIMEOUT_SECONDS = 300;
+// تنقية وسم المهارة بمُسنِد نقاط Unicode لا بتعبير نمطي فيه محارف تحكم حرفية
+// (درس loopfailure.js: التعبير الحرفي يُتلف الملف عند تحريره ويصعب اختباره عدداً).
+function isUnsafeLabelPoint(code) {
+  if (code <= 0x1f) return true; // C0 (تشمل السطر الجديد والإرجاع والصفر)
+  if (code >= 0x7f && code <= 0x9f) return true; // DEL + C1
+  if (code === 0x061c || code === 0x200e || code === 0x200f) return true; // ALM/LRM/RLM
+  if (code >= 0x202a && code <= 0x202e) return true; // LRE/RLE/PDF/LRO/RLO
+  if (code >= 0x2066 && code <= 0x2069) return true; // LRI/RLI/FSI/PDI
+  return false;
+}
+
+/** إزالة التحكّم وBidi ثم طيّ الفراغات ثم القصّ بنقاط Unicode (لا بوحدات UTF-16). */
+function cleanReviewLabel(value) {
+  let out = '';
+  for (const char of String(value == null ? '' : value)) {
+    if (!isUnsafeLabelPoint(char.codePointAt(0))) out += char;
+  }
+  const folded = out.replace(/\s+/g, ' ').trim();
+  const points = [...folded];
+  return points.length <= MAX_REVIEW_LABEL ? folded : points.slice(0, MAX_REVIEW_LABEL).join('');
+}
 
 function realInside(root, target) {
   try {
@@ -63,7 +89,29 @@ function normalizePreview(value) {
   return { ok: true, preview: { command, url: parsed.href, timeout_seconds: timeout } };
 }
 
-function buildConfig(commands, preview) {
+/**
+ * تطبيع حقل review_skill الاختياري — مصدر واحد للقراءة (parseConfig) وللكتابة
+ * (buildConfig) فلا يتباعد العقدان. غياب الحقل ⇒ {ok:true, reviewSkill:null} أي
+ * السلوك القائم حرفياً، وأي فساد ⇒ 'bad_review_skill' الموحّد (fail-closed).
+ */
+function normalizeReviewSkill(value) {
+  if (value == null) return { ok: true, reviewSkill: null };
+  if (typeof value !== 'object' || Array.isArray(value)) return { ok: false, error: 'bad_review_skill' };
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  if (!SAFE_REVIEW_SKILL_NAME.test(name)) return { ok: false, error: 'bad_review_skill' };
+  if (value.label != null && typeof value.label !== 'string') return { ok: false, error: 'bad_review_skill' };
+  const label = value.label == null ? '' : cleanReviewLabel(value.label);
+  const timeout = value.timeout_seconds == null ? DEFAULT_REVIEW_TIMEOUT_SECONDS : value.timeout_seconds;
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > MAX_TIMEOUT_SECONDS) {
+    return { ok: false, error: 'bad_review_skill' };
+  }
+  return {
+    ok: true,
+    reviewSkill: { name, ...(label ? { label } : {}), timeout_seconds: timeout },
+  };
+}
+
+function buildConfig(commands, preview, reviewSkill) {
   if (!Array.isArray(commands) || !commands.length) return { ok: false, error: 'empty' };
   if (commands.length > MAX_CHECKS) return { ok: false, error: 'too_many_commands' };
   const normalized = [];
@@ -89,15 +137,20 @@ function buildConfig(commands, preview) {
   }
   const normalizedPreview = normalizePreview(preview);
   if (!normalizedPreview.ok) return normalizedPreview;
+  const normalizedReview = normalizeReviewSkill(reviewSkill);
+  if (!normalizedReview.ok) return normalizedReview;
   const config = {
     version: CONFIG_VERSION,
     commands: normalized,
     ...(normalizedPreview.preview ? { preview: normalizedPreview.preview } : {}),
+    ...(normalizedReview.reviewSkill ? { review_skill: normalizedReview.reviewSkill } : {}),
   };
   const source = JSON.stringify(config, null, 2) + '\n';
   if (Buffer.byteLength(source, 'utf8') > MAX_CONFIG_BYTES) return { ok: false, error: 'bad_config' };
   const parsed = parseConfig(source);
-  return parsed.ok ? { ok: true, config, source, checks: parsed.checks } : parsed;
+  return parsed.ok
+    ? { ok: true, config, source, checks: parsed.checks, review_skill: parsed.review_skill }
+    : parsed;
 }
 
 function inspectConfigTarget(root, target) {
@@ -116,7 +169,9 @@ function inspectConfigTarget(root, target) {
 function createConfig(cwd, commands, options) {
   const settings = options || {};
   if (settings.confirmed !== true) return { ok: false, error: 'confirmation_required' };
-  const built = buildConfig(commands, settings.preview);
+  // إغلاق الوصلة مع معالج satr:verifyConfigCreate: الخيار المجمَّد `reviewSkill`
+  // ({name} أو null) يصل من main.js ويُكتب فعلاً داخل الملف بدل أن يسقط صامتاً.
+  const built = buildConfig(commands, settings.preview, settings.reviewSkill);
   if (!built.ok) return built;
   if (typeof cwd !== 'string' || !cwd.trim() || cwd.includes('\0')) return { ok: false, error: 'bad_cwd' };
   const root = path.resolve(cwd.trim());
@@ -201,7 +256,16 @@ function parseConfig(source) {
     if (!checks.length) return { ok: false, error: 'empty' };
     const preview = normalizePreview(parsed.preview);
     if (!preview.ok) return preview;
-    return { ok: true, version: CONFIG_VERSION, checks, preview: preview.preview };
+    // review_skill خارج عدّ MAX_CHECKS؛ غيابه يعيد null فيبقى المستهلك القديم كما هو.
+    const reviewSkill = normalizeReviewSkill(parsed.review_skill);
+    if (!reviewSkill.ok) return reviewSkill;
+    return {
+      ok: true,
+      version: CONFIG_VERSION,
+      checks,
+      preview: preview.preview,
+      review_skill: reviewSkill.reviewSkill,
+    };
   } catch {
     return { ok: false, error: 'bad_config' };
   }
@@ -385,6 +449,10 @@ module.exports = {
   MAX_LABEL,
   MAX_TIMEOUT_SECONDS,
   MAX_PREVIEW_URL,
+  MAX_REVIEW_LABEL,
+  DEFAULT_REVIEW_TIMEOUT_SECONDS,
+  SAFE_REVIEW_SKILL_NAME,
+  normalizeReviewSkill,
   loadConfig,
   parseConfig,
   buildConfig,
