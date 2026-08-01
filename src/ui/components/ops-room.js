@@ -265,18 +265,18 @@ const roomSheet = sheet(`
     border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2);
   }
   .loop-review-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
-  .loop-review-title { color: var(--gold); font-weight: 600; }
+  .loop-review-title { color: var(--ops-review-title, var(--gold)); font-weight: 600; }
   .loop-review-state { color: var(--text-dim); }
   .loop-review-state[data-state="approve"] { color: var(--green); }
   .loop-review-state[data-state="changes_required"], .loop-review-state[data-state="reject"],
-  .loop-review-state[data-state="failed"] { color: var(--red); }
+  .loop-review-state[data-state="failed"] { color: var(--ops-review-alert, var(--red)); }
   .loop-review-summary {
     display: -webkit-box; margin: var(--space-0); overflow: hidden; overflow-wrap: anywhere;
     color: var(--text-dim); line-height: 1.7; unicode-bidi: plaintext;
     -webkit-box-orient: vertical; -webkit-line-clamp: 3;
   }
   .review-section { display: grid; gap: var(--space-1); }
-  .review-section h4 { color: var(--gold); font-size: .78rem; }
+  .review-section h4 { color: var(--ops-review-title, var(--gold)); font-size: .78rem; }
   .review-section ul { margin: var(--space-0); padding-inline-start: var(--space-5); display: grid; gap: var(--space-1); }
   .review-section li { unicode-bidi: plaintext; }
   .merged-report {
@@ -314,7 +314,7 @@ const roomSheet = sheet(`
   .merged-engine { direction: ltr; unicode-bidi: isolate; font-family: var(--mono); color: var(--text-dim); }
   .merged-text { unicode-bidi: plaintext; line-height: 1.7; }
   .merged-repair { justify-self: start; color: var(--gold); border-color: var(--gold-border); }
-  .review-lens-title { color: var(--gold); font-weight: 700; }
+  .review-lens-title { color: var(--ops-review-title, var(--gold)); font-weight: 700; }
   .review-lens-state, .review-lens-verdict { color: var(--text-dim); }
   .live-activity {
     display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
