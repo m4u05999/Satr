@@ -18,6 +18,13 @@ const SAFE_RUN_ID = /^execution-team-[a-z0-9-]{6,80}$/;
 const SAFE_ROOM_ID = /^ops-room-[a-z0-9-]{6,80}$/;
 const TERMINAL_AGENT_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
 const TERMINAL_TEAM_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'conflict', 'cleanup_failed']);
+// حالات فريق يجوز أن يحمل أثراً قابلاً للمراجعة. `stopped` أُضيفت بقرار المالك
+// (تسليم أثر حلقة أوقفها المستخدم): الإيقاف نيّة صريحة، والأثر الجزئي يدخل مسار
+// المراجعة والتحقق والدمج البشري كاملاً بلا اختصار. `failed` و`timed_out` تبقيان
+// مستبعدتين لأن فشل المحرك قد يترك كتابة نصف مكتملة.
+// الأثر على الفرق العادية = صفر: `executor.artifact()` يشترط run.state==='completed'
+// فيعيد null لعامل موقوف، و`buildArtifact` يسقط عند أول أثر ناقص.
+const ARTIFACT_TEAM_STATES = new Set(['completed', 'stopped']);
 
 let sequence = 0;
 
@@ -376,7 +383,10 @@ function create(options) {
     const artifact = bundle && bundle.artifact;
     const snapshot = bundle && bundle.team;
     if (activeRunId) return { ok: false, error: 'busy' };
-    if (!artifact || !snapshot || snapshot.state !== 'completed'
+    // الفريق المستعاد يُسجَّل دائماً بحالة completed لأنه تمثيل **طور المراجعة** لا
+    // طور التنفيذ (بوابة canReview تقرؤها)؛ أما صدق «أُوقف» فيعيش في بطاقة التشغيل
+    // الحيّة وفي loop_update وفي ملاحظة الغرفة التي تسمّيه أثراً جزئياً.
+    if (!artifact || !snapshot || !ARTIFACT_TEAM_STATES.has(snapshot.state)
       || !SAFE_RUN_ID.test(snapshot.id || '') || !SAFE_ROOM_ID.test(snapshot.room_id || '')
       || artifact.team_id !== snapshot.id || artifact.room_id !== snapshot.room_id
       || artifact.artifact_id !== artifactId(artifact.head, artifact.patch)
@@ -424,7 +434,7 @@ function create(options) {
   function artifact(runId) {
     if (!SAFE_RUN_ID.test(runId || '')) return null;
     const team = runs.get(runId);
-    if (!team || team.state !== 'completed' || team._merged || team._mode !== 'mergeable') return null;
+    if (!team || !ARTIFACT_TEAM_STATES.has(team.state) || team._merged || team._mode !== 'mergeable') return null;
     return buildArtifact(team);
   }
 

@@ -62,9 +62,13 @@ const STOP_REASON_BY_STATE = Object.freeze({
   stopped: 'user',
   failed: 'error',
 });
-// حالات الحلقة التي تعني «جرت الحلقة مجراها» فيُسلَّم أثرها لمسار المراجعة.
-// الإيقاف والفشل والمهلة لا تُسلَّم: العامل لم ينته نظيفاً fail-closed.
-const HANDOFF_STATES = new Set(['passed', 'failed_after_n', 'budget_exhausted']);
+// حالات الحلقة التي يُسلَّم أثرها لمسار المراجعة. `stopped` أُضيفت بقرار المالك:
+// إيقاف المستخدم **نيّة صريحة**، والأثر الجزئي — إن التُقط سليم البنية — يدخل مسار
+// المراجعة العمياء والتحقق والدمج البشري كاملاً بلا اختصار. أما `failed` و`timed_out`
+// فتبقيان fail-closed لأن فشل المحرك قد يترك كتابة نصف مكتملة.
+const HANDOFF_STATES = new Set(['passed', 'failed_after_n', 'budget_exhausted', 'stopped']);
+// حالة العامل التي يجوز عندها التقاط أثره؛ تطابق ARTIFACT_TEAM_STATES في executionteam.
+const ARTIFACT_WORKER_STATES = new Set(['completed', 'stopped']);
 // مرحلة المراجعة النوعية (الجولة السابعة): تعمل فقط إن ضُبط review_skill في
 // .satr/verify.json عند HEAD؛ غيابه ⇒ صفر تغيير سلوكي في الحلقة.
 const REVIEW_STATES = new Set(['idle', 'running', 'approve', 'changes_required', 'reject', 'failed']);
@@ -697,6 +701,13 @@ function createLoopExecutor(context) {
     note('انتهت الحلقة: ' + (labels[state] || 'حالة غير مصنّفة.')
       + (loop.last_failure_summary ? ' آخر فشل: ' + loop.last_failure_summary : ''),
     'loop-terminal:' + loop.id + ':' + state);
+    // تمييز صريح في السجل: أثر حلقة أوقفها المستخدم جزئيٌّ بطبيعته. يُسجَّل فقط إن
+    // كان قابلاً للتسليم فعلاً، كي لا يناقض ملاحظة «بلا أثر قابل للمراجعة».
+    if (state === 'stopped' && artifact()) {
+      note('أثر جزئي من حلقة أوقفها المستخدم عند الدورة ' + loop.iteration + ' من '
+        + loop.max_iterations + '. يدخل مسار المراجعة العمياء والتحقق والدمج البشري كاملاً بلا اختصار.',
+      'loop-partial-artifact:' + loop.id);
+    }
     // تحرير قفل «حلقة واحدة نشطة» قبل بث الحالة الطرفية، كي يستطيع المستهلك بدء
     // فريق/حلقة تالية فور رؤيتها بلا انتظار دور آخر.
     if (typeof onTerminal === 'function') onTerminal(loop.id);
@@ -892,7 +903,10 @@ function createLoopExecutor(context) {
   }
 
   function artifact() {
-    if (!run || run.state !== 'completed' || !run._artifact || !run._artifact.patch) return null;
+    // `stopped` مقبولة: الالتقاط في finishWorker جرى فعلاً وأنتج patch سليم البنية.
+    // التقاط فاشل أو patch فارغ يعيد null، فلا تسليم — والملاحظة القائمة «انتهت
+    // الحلقة بلا أثر قابل للمراجعة» تبقى كما هي.
+    if (!run || !ARTIFACT_WORKER_STATES.has(run.state) || !run._artifact || !run._artifact.patch) return null;
     return { ...run._artifact, ownership: run.ownership.slice(), changes: publicChanges(run.changes) };
   }
 
@@ -1070,7 +1084,9 @@ function create(options) {
     if (!HANDOFF_STATES.has(loop.state)) return { ok: false, error: 'not_available' };
     const artifact = loop._team.artifact(loop.team_id);
     const team = loop._team.latest(loop._cwd);
-    if (!artifact || !artifact.patch || !team || team.state !== 'completed') {
+    // `stopped` مقبولة هنا وفي executionteam.ARTIFACT_TEAM_STATES معاً؛ وشرط
+    // `artifact.patch` يبقى الحارس الفعلي: بلا أثر سليم لا تسليم.
+    if (!artifact || !artifact.patch || !team || !ARTIFACT_WORKER_STATES.has(team.state)) {
       return { ok: false, error: 'not_available' };
     }
     return { ok: true, bundle: { artifact, team }, cwd: loop._cwd };
