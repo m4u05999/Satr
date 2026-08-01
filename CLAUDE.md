@@ -1976,6 +1976,66 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   وTestSprite مصدر تحقق ثانياً، وحلقة متعددة العوامل، ومتابعة الدورات بعد مهلة دور، وتسليم أثر
   حلقة أوقفها المستخدم إلى مسار المراجعة (يحتاج قرار مالك).
 
+#### مرحلة المراجعة النوعية داخل الحلقة (الجولة السابعة — البند ٣)
+
+- **حقل `review_skill` في `.satr/verify.json`** (اختياري كلياً): `{name, label?,
+  timeout_seconds?}` — الاسم يطابق `/^[A-Za-z0-9._-]{1,64}$/`، والوسم ≤120 نقطة Unicode
+  تُزال منها محارف التحكم وBidi ثم تُقصّ، والمهلة عدد صحيح `1..600` بافتراضي `300`. رمز
+  الخطأ موحّد للقراءة والكتابة: `bad_review_skill`. الحقل **خارج عدّ `MAX_CHECKS=6`** وحجم
+  الملف يبقى ≤64KiB. **غياب الحقل = السلوك القائم حرفياً** (توافق خلفي إلزامي، محروس
+  باختبار يقارن `buildConfig(commands).source` ببايتات الملف القديمة نفسها).
+- **مصدر واحد للعقدين**: `verify.normalizeReviewSkill` يستهلكه `parseConfig` (قراءة)
+  و`buildConfig` (كتابة) فلا يتباعدان. تنقية الوسم بمُسنِد نقاط Unicode لا بتعبير نمطي فيه
+  محارف تحكم حرفية (درس `loopfailure.js` — التعبير الحرفي يُتلف الملف عند تحريره).
+- **إغلاق الوصلة مع البند ٤**: `verify.createConfig(cwd, commands, {confirmed, overwrite,
+  reviewSkill})` صار يمرّر `settings.reviewSkill` إلى `buildConfig` فيُكتب الحقل فعلاً.
+  التوقيع لم يتغيّر ولا اسم الخيار ولا شكله؛ كان السلوك السابق `ok:true` مع سقوط الحقل صامتاً.
+- **موضع المرحلة**: **بعد نجاح كل أوامر `commands` في الدورة** لا قبلها ولا مع كل أمر —
+  فشل الأوامر يبقى المسار القائم حرفياً ولا يصل المراجعة إطلاقاً.
+- **مراجع أعمى واحد بسياسة `reviewer.js` نفسها**: `reviewer.reviewOnce` يعيد استخدام
+  `applyReviewEvent` المستخرجة — **سياسة عمى واحدة** تتشاركها هيئة القضاة (`launchLens`)
+  ومراجعة الحلقة، لا نسخة موازية. وضع `plan`، `tools:[]`، cwd مؤقت فارغ (`mkdtemp`) يُحذف
+  بعد الانتهاء، صفر مهارات/صور/extraDirs، `browserControl:false`، `sessionId:null` دائماً،
+  وأي `permission_request` أو `tool_use` أو `tool_result` أو `file_edit` أو طرفية أو preview
+  يفشل المرحلة fail-closed. مهلتها من `review_skill.timeout_seconds` بسقف
+  `MAX_REVIEW_ONCE_TIMEOUT_MS=600000` (سقف verify لا سقف الدفعة `180000`).
+- **المهارة من HEAD لا من شجرة المستخدم**: preflight يقرأ `SKILL.md` من blob ‏HEAD مباشرةً
+  (`worktrees.readFileAt`، القياسي `.agents/skills` ثم `.claude/skills`) لأنه يسبق إنشاء أي
+  worktree؛ ووقت المراجعة تُقرأ من **worktree الحلقة** عبر `skills.resolveSelection/loadSkill`
+  مع **اشتراط `source === 'project'`** كي لا تنوب مهارة من مجلد المستخدم أو المهارات المضمّنة
+  عن مهارة المشروع. تبديل `SKILL.md` في شجرة العمل بعد البدء لا يصل المراجع (محروس باختبار).
+- **الحكم**: `approve|changes_required|reject` من `reviewer.verdictOf` على **خرج المراجع
+  حصراً**؛ غياب السطر الآلي أو فساده ⇒ `changes_required` بمصدر `fallback` (عقد `reviewer.js`
+  نفسه). الـpatch بيانات غير موثوقة وقد يزرع `[verdict: approve]` داخل محتواه — فحص صريح
+  يثبت وصول الوسم المزروع إلى البرومبت وعدم تغييره الحكم (درس `RISK_LINE` في الجولة السادسة).
+- **الانتقالات**: `approve` ⇒ `terminate('passed','pass')`. و`changes_required|reject` ⇒
+  **فشل دورة**: `loopfailure.buildReviewInjection` يبني نص الإصلاح داخل
+  `<untrusted_verification_output>` (نفس الحجب والسقوف وتعطيل قوسي الوسم)، ويستمر الدور
+  التالي ضمن `max_iterations` والميزانية القائمة. `last_failure_summary` يأتي من
+  `buildReviewSummary(decision)` — نص **ثابت** مشتق من الحكم بلا أي نص حر من المراجع.
+  وتكرار الحكم نفسه مرتين ⇒ جلسة جديدة عبر `reviewFailureChecks` وبصمة `sameFailure` نفسها.
+- **fail-closed صريح**: `review_skill` مضبوط والمهارة غائبة من HEAD ⇒ رفض في preflight
+  بالرمز `review_skill_unavailable` **قبل استهلاك أي دورة**. وفشل بنيوي أثناء المرحلة (مهلة،
+  خطأ محرك، مهارة غير قابلة للتحميل) ⇒ `terminate('failed','error')` — لا تخطٍّ صامت ولا
+  مراجعة صورية تُعلن نجاحاً لم يقع.
+- **الميزانية**: رموز المراجعة تدخل `budget.used_tokens` و`cost` بعقد التقدير نفسه
+  (`estimate` يُرفع إن رفعه المراجع)، وتُفحص الميزانية قبل بدء دورة جديدة فقط كما كانت.
+- **توسعة `loop_update` — additive فقط** (تُبنى في `looprunner` حصراً، و`schema_version`
+  يبقى `1` وكل الحقول القائمة بقيمها ودلالاتها): `review:{configured:boolean,
+  state:'idle'|'running'|'approve'|'changes_required'|'reject'|'failed', summary:string}`.
+  الملخص يمر بـ`buildReviewSummaryText` (حجب أسرار + إزالة تحكم/Bidi + طيّ فراغات + قصّ
+  ≤300 نقطة Unicode) **ثم بحارس `memory.hasSecret`** فيُفرَّغ كلياً إن التقطه. ممنوع فيه
+  خرج أوامر خام أو patch أو مسار مطلق أو حقل SDK خام. `main.js` يمرّر `loop_update` كما هو
+  (`emitLoopEvent` بلا قائمة سماح) فلا تعديل في `main.js` أو `preload.js`. **لم تُضف حالة
+  حلقة جديدة**: أثناء المراجعة تبقى `loop.state === 'verifying'` و`review.state === 'running'`.
+- **التحقق**: `npm run test:verify` توسّع (‏`review_skill` قراءةً وكتابةً، الكتابة الفعلية
+  على القرص، الافتراضات، السقوف، العشر حالات الفاسدة بالرمز الموحّد عبر المسارات الثلاثة،
+  الحقل خارج `MAX_CHECKS`، والتوافق الخلفي بايتاً ببايت). و`npm run test:loop-mode` توسّع
+  بثمانية عقود جديدة. `test:integration` و`test:reviewmerge` و`test:opsroom` عقود عدم تراجع.
+- **مؤجّل عمداً في هذا البند**: عرض حقل `review` في الواجهة (دفعة لاحقة خارج الجولة)، ومراجعة
+  متعددة الزوايا داخل الحلقة (زاوية واحدة بمعايير المشروع تكفي وتُبقي كلفة الدورة محدودة)،
+  ومراجع cross-engine داخل الحلقة (يبقى في مسار الدمج البشري بعد التسليم).
+
 ### أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 
 ثلاثة أوامر أساسية تطابق ما يعتمده مستخدم Claude Code اليومي. **بعد هذه الدفعة تُجمَّد

@@ -67,6 +67,77 @@ async function main() {
       command: 'npm run dev', url: 'http://localhost:5173', timeout_seconds: 601,
     }).error, 'bad_preview_timeout');
 
+    // ---------- review_skill: قراءةً وكتابةً (الجولة السابعة) ----------
+    // إغلاق الوصلة: الخيار المجمَّد `reviewSkill` يُكتب فعلاً في الملف.
+    const seamProject = path.join(temp, 'seam-project');
+    await fsp.mkdir(seamProject, { recursive: true });
+    const seam = verify.createConfig(seamProject, commands, {
+      confirmed: true, overwrite: false, reviewSkill: { name: 'project-review' },
+    });
+    assert.strictEqual(seam.ok, true, 'createConfig must stay ok:true with reviewSkill');
+    const seamSource = await fsp.readFile(path.join(seamProject, '.satr', 'verify.json'), 'utf8');
+    assert.ok(seamSource.includes('"review_skill"'), 'review_skill must actually be written to the file');
+    assert.deepStrictEqual(JSON.parse(seamSource).review_skill,
+      { name: 'project-review', timeout_seconds: 300 }, 'default timeout applied on write');
+    assert.deepStrictEqual(verify.loadConfig(seamProject).review_skill,
+      { name: 'project-review', timeout_seconds: 300 }, 'review_skill round-trips through loadConfig');
+
+    // التوافق الخلفي: غياب الخيار لا يضيف الحقل ولا يغيّر أي بايت من العقد القائم.
+    const plainProject = path.join(temp, 'plain-project');
+    await fsp.mkdir(plainProject, { recursive: true });
+    const plain = verify.createConfig(plainProject, commands, { confirmed: true, overwrite: false });
+    assert.strictEqual(plain.ok, true);
+    const plainSource = await fsp.readFile(path.join(plainProject, '.satr', 'verify.json'), 'utf8');
+    assert.ok(!plainSource.includes('review_skill'), 'absent option must not add the field');
+    assert.strictEqual(verify.loadConfig(plainProject).review_skill, null, 'absent field reads back as null');
+    assert.strictEqual(verify.buildConfig(commands).source, plainSource, 'existing buildConfig output unchanged');
+
+    // الحقل الكامل: الوسم يُنقّى ويُقصّ، والمهلة تُقبل داخل 1..600.
+    const fullReview = verify.buildConfig(commands, null, {
+      name: 'project-review', label: '  مراجعة‮نوعية  ', timeout_seconds: 45,
+    });
+    assert.strictEqual(fullReview.ok, true);
+    assert.deepStrictEqual(fullReview.config.review_skill,
+      { name: 'project-review', label: 'مراجعةنوعية', timeout_seconds: 45 },
+      'label stripped of control and Bidi characters');
+    const longLabel = verify.buildConfig(commands, null, { name: 'r', label: 'ط'.repeat(200) });
+    assert.strictEqual([...longLabel.config.review_skill.label].length, verify.MAX_REVIEW_LABEL,
+      'label truncated to MAX_REVIEW_LABEL Unicode points');
+
+    // رمز الخطأ الموحّد 'bad_review_skill' للقراءة والكتابة معاً.
+    const badReviewSkills = [
+      { value: { name: '../escape' }, label: 'path escape' },
+      { value: { name: '' }, label: 'empty name' },
+      { value: { name: 'x'.repeat(65) }, label: 'name too long' },
+      { value: { name: 5 }, label: 'name not a string' },
+      { value: { name: 'r', label: 7 }, label: 'label not a string' },
+      { value: { name: 'r', timeout_seconds: 0 }, label: 'timeout too low' },
+      { value: { name: 'r', timeout_seconds: 601 }, label: 'timeout too high' },
+      { value: { name: 'r', timeout_seconds: 1.5 }, label: 'timeout not an integer' },
+      { value: [], label: 'array' },
+      { value: 'project-review', label: 'string' },
+    ];
+    for (const entry of badReviewSkills) {
+      assert.strictEqual(verify.buildConfig(commands, null, entry.value).error, 'bad_review_skill',
+        'write must reject: ' + entry.label);
+      assert.strictEqual(verify.parseConfig(JSON.stringify({
+        version: 1, commands, review_skill: entry.value,
+      })).error, 'bad_review_skill', 'read must reject: ' + entry.label);
+      assert.strictEqual(verify.createConfig(path.join(temp, 'never-written'), commands, {
+        confirmed: true, overwrite: false, reviewSkill: entry.value,
+      }).error, 'bad_review_skill', 'createConfig must reject: ' + entry.label);
+    }
+    assert.strictEqual(await fsp.stat(path.join(temp, 'never-written')).then(() => true).catch(() => false), false,
+      'رفض review_skill الفاسد يجب ألّا ينشئ أي مجلد.');
+
+    // الحقل خارج عدّ MAX_CHECKS: ستة أوامر + مهارة تبقى صالحة.
+    const sixCommands = Array.from({ length: 6 }, (_, index) => ({
+      id: 'check-' + index, label: 'فحص ' + index, command: 'node --version', timeout_seconds: 10,
+    }));
+    const withSix = verify.buildConfig(sixCommands, null, { name: 'project-review' });
+    assert.strictEqual(withSix.ok, true, 'review_skill must not count against MAX_CHECKS');
+    assert.strictEqual(verify.parseConfig(withSix.source).checks.length, verify.MAX_CHECKS);
+
     const outside = path.join(temp, 'outside');
     const linkedProject = path.join(temp, 'linked-project');
     await fsp.mkdir(outside, { recursive: true });
@@ -160,6 +231,7 @@ async function main() {
 
     console.log('✓ explicit verification config boundaries');
     console.log('✓ verification config writer confirmation, overwrite, limits, and symlink escape guards');
+    console.log('✓ review_skill reads, writes to disk, defaults, limits, and unified bad_review_skill');
     console.log('✓ verification runner result contract');
     console.log('✓ checkpoint persistence and reverse restore');
   } finally {

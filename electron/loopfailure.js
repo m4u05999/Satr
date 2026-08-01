@@ -160,6 +160,54 @@ function buildFailureSummary(checks) {
   return slicePoints(text, MAX_SUMMARY_POINTS);
 }
 
+// ---------- مرحلة المراجعة النوعية (الجولة السابعة) ----------
+// المراجعة تُعامل كفشل دورة، فتحتاج المسارين نفسيهما: حقن داخلي لدور الإصلاح،
+// وملخص عام لا يحمل نصاً حراً إطلاقاً. تُعاد استخدام المنقّيات نفسها بلا نسخ ثانية.
+const REVIEW_SUMMARY_BY_DECISION = Object.freeze({
+  changes_required: 'طلبت المراجعة النوعية تغييرات قبل الاعتماد.',
+  reject: 'رفضت المراجعة النوعية التغيير.',
+});
+
+/** ملخص `last_failure_summary` لفشل المراجعة: نص ثابت مشتق من الحكم، بلا خرج المراجع. */
+function buildReviewSummary(decision) {
+  return REVIEW_SUMMARY_BY_DECISION[decision] || 'لم تعتمد المراجعة النوعية التغيير.';
+}
+
+/**
+ * نص `review.summary` العام في `loop_update`: خرج المراجع بعد حجب الأسرار وإزالة
+ * التحكم وBidi وطيّ الفراغات والقصّ بنقاط Unicode. يبقى فحص `memory.hasSecret`
+ * على المستهلك (looprunner) كي تبقى هذه الوحدة نقية فوق secretscrub وحده.
+ */
+function buildReviewSummaryText(value) {
+  const cleaned = stripUnsafe(scrubSecrets(String(value == null ? '' : value)), false)
+    .replace(/\s+/g, ' ')
+    .trim();
+  return slicePoints(cleaned, MAX_SUMMARY_POINTS);
+}
+
+/** حقن داخلي لدور الإصلاح بعد مراجعة غير معتمِدة — نفس غلاف عدم الثقة والسقوف. */
+function buildReviewInjection(decision, value) {
+  const header = 'نتيجة المراجعة النوعية: ' + (decision === 'reject' ? 'مرفوضة' : 'تتطلب تغييرات');
+  const body = sanitizeCheckOutput(value);
+  const block = body ? header + '\n' + body : header;
+  return slicePoints(OPEN_TAG + '\n' + block + '\n' + CLOSE_TAG, MAX_INJECTION_CHARS);
+}
+
+/**
+ * كيان شبيه بالفحص يمثّل فشل المراجعة، كي تعمل بصمة `sameFailure` نفسها على
+ * المسارين (تكرار الحكم نفسه مرتين ⇒ سياق ملوّث ⇒ جلسة جديدة).
+ */
+function reviewFailureChecks(decision) {
+  return [{
+    id: 'satr:review:' + String(decision || 'unknown'),
+    label: 'المراجعة النوعية',
+    passed: false,
+    exit_code: null,
+    timed_out: false,
+    output: '',
+  }];
+}
+
 function fingerprint(checks) {
   const failed = failedChecks(checks);
   if (!failed.length) return '';
@@ -184,6 +232,10 @@ function sameFailure(a, b) {
 module.exports = {
   buildFailureInjection,
   buildFailureSummary,
+  buildReviewInjection,
+  buildReviewSummary,
+  buildReviewSummaryText,
+  reviewFailureChecks,
   sameFailure,
   MAX_INJECTION_CHARS,
   MAX_SUMMARY_POINTS,

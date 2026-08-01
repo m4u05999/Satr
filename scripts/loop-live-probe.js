@@ -38,6 +38,10 @@ const MAX_ITERATIONS = Math.max(1, Math.min(5, Number(flag('iterations', '3')) |
 // repair : خللان، والمهمة تذكر الأول فقط؛ الثاني لا يُكتشف إلا من خرج التحقق،
 //          فيثبت أن حلقة الإصلاح تعمل بمحرك حقيقي (الحقن يصل والنموذج يتصرف عليه).
 const SCENARIO = flag('scenario', 'simple') === 'repair' ? 'repair' : 'simple';
+// --review يزرع review_skill في HEAD فتعمل مرحلة المراجعة النوعية (الجولة السابعة).
+// غيابه = سلوك المسبار السابق حرفياً.
+const WITH_REVIEW = args.includes('--review');
+const REVIEW_SKILL_NAME = 'project-review';
 
 let failures = 0;
 function check(name, condition, detail) {
@@ -92,10 +96,33 @@ function seedRepo() {
   checkLines.push("if (bad) { process.exit(1); }", "console.log('all calc checks passed');", '');
   fs.writeFileSync(path.join(root, 'check.js'), checkLines.join('\n'));
   fs.mkdirSync(path.join(root, '.satr'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.satr', 'verify.json'), JSON.stringify({
+  const config = {
     version: 1,
     commands: [{ id: 'calc', label: 'اختبار الحسابات', command: 'node check.js', timeout_seconds: 60 }],
-  }, null, 2) + '\n');
+  };
+  if (WITH_REVIEW) {
+    config.review_skill = { name: REVIEW_SKILL_NAME, label: 'مراجعة نوعية', timeout_seconds: 120 };
+    const skillDir = path.join(root, '.agents', 'skills', REVIEW_SKILL_NAME);
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), [
+      '---',
+      'name: ' + REVIEW_SKILL_NAME,
+      'description: مراجعة نوعية لتغييرات وحدة الحساب',
+      '---',
+      '',
+      '# معايير المراجعة',
+      '',
+      'راجع الفرق وفق ما يلي:',
+      '',
+      '- هل تعيد `multiply` حاصل الضرب فعلاً لكل المدخلات بما فيها الصفر؟',
+      '- هل بقي سلوك `add` و`divide` سليماً؟',
+      '- هل التغيير محصور في `src/` بلا آثار جانبية؟',
+      '',
+      'اعتمد التغيير بـ [verdict: approve] إن استوفى ما سبق.',
+      '',
+    ].join('\n'));
+  }
+  fs.writeFileSync(path.join(root, '.satr', 'verify.json'), JSON.stringify(config, null, 2) + '\n');
   git(root, ['add', '-A']);
   git(root, ['commit', '-q', '-m', 'seed calc with planted multiply bug']);
   const head = git(root, ['rev-parse', 'HEAD']).trim();
@@ -103,7 +130,7 @@ function seedRepo() {
 }
 
 const LOOP_KEYS = ['type', 'schema_version', 'loop_id', 'team_id', 'room_id', 'state', 'iteration',
-  'max_iterations', 'last_failure_summary', 'cost', 'budget', 'stop_reason', 'updated_at'].sort().join(',');
+  'max_iterations', 'last_failure_summary', 'cost', 'budget', 'stop_reason', 'review', 'updated_at'].sort().join(',');
 const PAIRING = looprunner.STOP_REASON_BY_STATE;
 
 (async () => {
@@ -215,6 +242,28 @@ const PAIRING = looprunner.STOP_REASON_BY_STATE;
   check('4: خرج الأوامر لا يعبر أي حدث',
     !/multiply broken|all calc checks/.test(JSON.stringify(events)));
   check('4: بُثّت لقطات الفريق للبطاقات', teamUpdates.length > 0, String(teamUpdates.length));
+
+  // 6) مرحلة المراجعة النوعية (مع --review فقط)
+  if (WITH_REVIEW) {
+    check('6: review.configured=true في كل لقطة', updates.every((event) => event.review.configured === true));
+    check('6: مرّت المراجعة بحالة running',
+      updates.some((event) => event.review.state === 'running'),
+      JSON.stringify([...new Set(updates.map((event) => event.review.state))]));
+    check('6: الحكم النهائي approve', last.review.state === 'approve', last.review.state);
+    check('6: خلاصة المراجع منقّاة ومحدودة',
+      typeof last.review.summary === 'string' && [...last.review.summary].length <= 300,
+      String([...last.review.summary].length));
+    check('6: خرج الأوامر لا يعبر خلاصة المراجعة',
+      !/multiply broken|all calc checks/.test(JSON.stringify(updates.map((event) => event.review))));
+    check('6: لا patch في خلاصة المراجعة',
+      !/diff --git/.test(JSON.stringify(updates.map((event) => event.review))));
+    console.log('');
+    console.log('review_state: ' + last.review.state);
+    console.log('review_note : ' + last.review.summary.slice(0, 200));
+  } else {
+    check('6: بلا review_skill يبقى الحقل idle وغير مضبوط',
+      updates.every((event) => event.review.configured === false && event.review.state === 'idle'));
+  }
 
   // 5) الأثر النهائي وبوابة المراجعة
   const handoff = loops.handoff(last.loop_id);
