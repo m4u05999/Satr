@@ -23,8 +23,12 @@ const W = 1920, H = 1080, FPS = 60;
 
 function resolveFfmpeg() {
   if (process.env.FFMPEG && fs.existsSync(process.env.FFMPEG)) return process.env.FFMPEG;
-  const guess = path.join('D:', 'sater', 'tools', 'ffmpeg.exe');
-  if (fs.existsSync(guess)) return guess;
+  const guesses = [
+    path.join('D:', 'sater', 'tools', 'ffmpeg.exe'),
+    // تثبيت winget الرسمي (Gyan.FFmpeg) — روابطه لا تدخل PATH الجلسات القائمة
+    path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
+  ];
+  for (const guess of guesses) if (fs.existsSync(guess)) return guess;
   return 'ffmpeg';
 }
 const FFMPEG = resolveFfmpeg();
@@ -34,15 +38,17 @@ const FFMPEG = resolveFfmpeg();
 const SEGMENTS = [
   { file: '01-hook.mp4',        ss: 0,   t: 10.0 },
   { file: '02-title-otlob.mp4', ss: 0,   t: 2.0 },
-  { file: '03-ui-otlob.mp4',    ss: 0,   t: 8.0, optional: true, label: 'لقطة الواجهة: اطلب' },
+  // §1 من تسجيل جلسة حقيقية طولها ~17 دقيقة: النافذة المختارة (216ث) هي لحظة نمو بطاقة
+  // الفرق سطراً سطراً — اختيرت بمسح الجلسة كاملة بورقة اتصال إطار/دقيقة ثم تدقيق ثانوي.
+  { file: '03-ui-otlob.mp4',    ss: 216, t: 8.0, optional: true, label: 'لقطة الواجهة: اطلب' },
   { file: '04-title-3ayen.mp4', ss: 0,   t: 2.0 },
-  { file: '05-ui-3ayen.mp4',    ss: 0,   t: 8.0, optional: true, label: 'لقطة الواجهة: عايِن' },
+  { file: '05-ui-3ayen.mp4',    ss: 0,   t: 7.9, optional: true, label: 'لقطة الواجهة: عايِن' },
   { file: '06-title-sallem.mp4',ss: 0,   t: 2.0 },
   { file: '07-ui-sallem.mp4',   ss: 0,   t: 8.0, optional: true, label: 'لقطة الواجهة: سلّم' },
   { file: '08-watch.mp4',       ss: 0,   t: 3.5 },
   { file: '09-crescendo.mp4',   ss: 0,   t: 5.5 },
   { file: '10-cine-birds.mp4',  ss: 1.2, t: 2.5 },
-  { file: '11-cta.mp4',         ss: 0,   t: 8.5 },
+  { file: '11-cta.mp4',         ss: 0,   t: 8.4 },
 ];
 
 const run = (args) => {
