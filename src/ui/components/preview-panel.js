@@ -98,8 +98,25 @@ const previewSheet = sheet(`
   #pvConsoleBtn.has-err { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
   #pvDevtools.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
   #pvNet.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  /* درج السجلّ جزيرة داكنة في الوضعين (سطح سجلّات كسطوح الكود): في الفاتح تأتي
+     القيم الداكنة من tokens المُنطقية على المضيف (كتلة base.css أعلاه)، وفي الداكن
+     الاحتياط inherit فيرث tokens الثيمة نفسها (احتياط var(--x) هنا يصنع دورة). */
   #pvConsole { display: none; flex-direction: column; height: 170px; min-height: 0;
-    background: var(--bg-deep); border-top: 1px solid var(--border); }
+    background: var(--bg-deep); border-top: 1px solid var(--pv-console-border, var(--border));
+    color-scheme: dark;
+    --bg: var(--pv-console-bg, inherit);
+    --surface: var(--pv-console-surface, inherit);
+    --text: var(--pv-console-text, inherit);
+    --text-dim: var(--pv-console-text-dim, inherit);
+    --text-faint: var(--pv-console-text-faint, inherit);
+    --border: var(--pv-console-border, inherit);
+    --border-dim: var(--pv-console-border-dim, inherit);
+    --red: var(--pv-console-red, inherit);
+    --gold: var(--pv-console-gold, inherit);
+    --gold-strong: var(--pv-console-gold-strong, inherit);
+    --gold-soft: var(--pv-console-gold-soft, inherit);
+    --gold-border: var(--pv-console-gold-border, inherit);
+  }
   #pvConsole.show { display: flex; }
   #pvConsole .pc-head { display: flex; align-items: center; gap: var(--space-1h); padding: var(--space-1h) var(--space-2h);
     background: var(--surface); border-bottom: 1px solid var(--border); }
