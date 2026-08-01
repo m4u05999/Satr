@@ -268,6 +268,83 @@ const SHOTS = [
     `,
   },
 
+
+  // ---------- الجزر الداكنة خارج كتلة التثبيت (دفعة متابعة الفاتح) ----------
+  // اللقطة المكبرة: حوار --bg-deep يجب أن يكون جزيرة داكنة متّسقة (نص/زر/تمرير)
+  {
+    out: '27-light-shot-lightbox', w: 1440, h: 900,
+    js: LIGHT + MEASURE + `
+      const dialog = document.createElement('dialog');
+      dialog.className = 'shot-lightbox';
+      const close = document.createElement('button');
+      close.type = 'button'; close.className = 'shot-close'; close.textContent = '✕'; close.title = 'إغلاق';
+      const img = document.createElement('img');
+      img.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGP8z8DwnwEKmBgQAAA9+AEDu11sjwAAAABJRU5ErkJggg==';
+      img.alt = 'لقطة الوكيل';
+      dialog.appendChild(close); dialog.appendChild(img); document.body.appendChild(dialog); dialog.showModal();
+      const ds = getComputedStyle(dialog);
+      const bg = parseColor(ds.backgroundColor), fg = parseColor(ds.color);
+      const cs = getComputedStyle(close);
+      out.push('lightbox: خلفية ' + fmt(bg) + ' · نص ' + fmt(fg) + ' = ' + contrast(fg, bg).toFixed(2) + ':1 · color-scheme ' + ds.colorScheme);
+      out.push('زر الإغلاق: خلفية ' + cs.backgroundColor + ' · نص ' + cs.color + ' · حد ' + cs.borderTopColor);
+      return out;
+    `,
+  },
+
+  // سجلّ Console المعاينة: أسطر --text-dim/--text-faint/--red فوق --bg-deep
+  {
+    out: '28-light-preview-console', w: 1440, h: 900,
+    js: LIGHT + MEASURE + `
+      const panel = document.querySelector('satr-preview-panel');
+      panel.setAttribute('open', ''); panel.style.width = '46%';
+      await new Promise((r) => setTimeout(r, 200));
+      const root = panel.shadowRoot;
+      root.getElementById('pvConsole').classList.add('show');
+      const log = root.getElementById('pcLog');
+      const samples = [['log', 'console.log: رسالة عادية'], ['error', 'Uncaught Error: خطأ'], ['warning', 'تحذير'], ['netreq', 'GET /api/data 200']];
+      for (const [cls, txt] of samples) {
+        const d = document.createElement('div');
+        d.className = 'pc-line ' + cls; d.dataset.cat = cls === 'netreq' ? 'net' : 'console'; d.textContent = txt;
+        log.appendChild(d);
+      }
+      const cons = root.getElementById('pvConsole');
+      const cs = getComputedStyle(cons);
+      const bg = parseColor(cs.backgroundColor);
+      out.push('pvConsole: خلفية ' + fmt(bg) + ' · color-scheme ' + cs.colorScheme);
+      for (const line of log.querySelectorAll('.pc-line')) {
+        const c = parseColor(getComputedStyle(line).color);
+        out.push('سطر .' + line.className.replace('pc-line ', '') + ': ' + fmt(c) + ' = ' + contrast(c, bg).toFixed(2) + ':1');
+      }
+      const head = root.querySelector('#pvConsole .pc-title');
+      const hb = effBg(head.parentElement);
+      out.push('رأس السجل: ' + fmt(parseColor(getComputedStyle(head).color)) + ' على ' + fmt(hb) + ' = ' + contrast(parseColor(getComputedStyle(head).color), hb).toFixed(2) + ':1');
+      return out;
+    `,
+  },
+
+  // استوديو البرومو: سطح وسائط داكن — اتساق النصوص + ألوان المُصيّر (caption)
+  {
+    out: '29-light-promo-studio', w: 1440, h: 900,
+    js: LIGHT + MEASURE + `
+      const st = document.querySelector('satr-promo-studio');
+      st.setAttribute('open', '');
+      await new Promise((r) => setTimeout(r, 200));
+      const root = st.shadowRoot;
+      const studio = root.querySelector('.studio');
+      const ss = getComputedStyle(studio);
+      const sbg = parseColor(ss.backgroundColor), sfg = parseColor(ss.color);
+      out.push('studio: خلفية ' + fmt(sbg) + ' · نص ' + fmt(sfg) + ' = ' + contrast(sfg, sbg).toFixed(2) + ':1 · color-scheme ' + ss.colorScheme);
+      const h2 = root.querySelector('h2');
+      const hbg = effBg(root.querySelector('header'));
+      out.push('الترويسة: عنوان ' + fmt(parseColor(getComputedStyle(h2).color)) + ' على ' + fmt(hbg) + ' = ' + contrast(parseColor(getComputedStyle(h2).color), hbg).toFixed(2) + ':1');
+      const hostStyles = getComputedStyle(st);
+      const capText = parseColor(hostStyles.getPropertyValue('--text').trim());
+      const capBg = over(parseColor(hostStyles.getPropertyValue('--scrim').trim()), parseColor(hostStyles.getPropertyValue('--bg-deep').trim()));
+      out.push('مُصيّر الفيديو: caption ' + fmt(capText) + ' على scrim/bg-deep ' + fmt(capBg) + ' = ' + contrast(capText, capBg).toFixed(2) + ':1');
+      return out;
+    `,
+  },
+
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
 ];

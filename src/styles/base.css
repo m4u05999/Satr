@@ -119,12 +119,16 @@
     --shadow-dock: 4px 0 14px rgba(0, 0, 0, .06);
     --shadow-modal: 0 18px 60px rgba(0, 0, 0, .2);
   }
-  /* سطحا الكود يبقيان داكنين في الوضع الفاتح: الطرفية (#termPanel) والعارض
-     (satr-file-viewer — الـ tokens تعبر Shadow بالوراثة من المضيف في light DOM).
-     نعيد القيم الداكنة الأصلية محلياً فيظلّان جزيرتين داكنتين متّسقتين مع xterm
+  /* أسطح الكود والوسائط تبقى داكنة في الوضع الفاتح: الطرفية (#termPanel) والعارض
+     (satr-file-viewer — الـ tokens تعبر Shadow بالوراثة من المضيف في light DOM)،
+     ويلحق بهما (دفعة الجزر) استوديو البرومو (satr-promo-studio — ألوان مُصيّره
+     تُقرأ من المضيف نفسه) وحوار اللقطة المكبّرة (.shot-lightbox).
+     نعيد القيم الداكنة الأصلية محلياً فتظلّ جزراً داكنة متّسقة مع xterm
      (ألوانه صلبة في JS) — قرار موثّق: عكس ألوان الكود على الفاتح رديء. */
   html[data-theme="light"] #termPanel,
-  html[data-theme="light"] satr-file-viewer {
+  html[data-theme="light"] satr-file-viewer,
+  html[data-theme="light"] satr-promo-studio,
+  html[data-theme="light"] .shot-lightbox {
     color-scheme: dark;
     --bg-deep: #0d0d0c; --bg: #111110; --surface: #191918; --surface-2: #222221; --surface-3: #2a2a28;
     --border-dim: #2a2a28; --border: #3b3a37; --border-strong: #62605b;
@@ -133,6 +137,17 @@
     --green: #71d083; --green-soft: rgba(113, 208, 131, 0.12); --green-border: rgba(113, 208, 131, 0.4);
     --red: #ec5d5e; --red-soft: rgba(236, 93, 94, 0.1);
     --blue: #8FB8E8;
+  }
+  /* جزيرة سجلّ Console في لوحة المعاينة: اللوحة تتبع الثيمة إلا درج السجلّ
+     (#pvConsole — سطح سجلّات داكن كسطوح الكود). لا يمكن استهدافه عبر حدود
+     الظل، فتُمرَّر القيم الداكنة بأسماء مُنطقية ويعيد المكوّن تثبيت الـtokens
+     القياسية عليها محلياً (انظر preview-panel.js). */
+  html[data-theme="light"] satr-preview-panel {
+    --pv-console-bg: #111110; --pv-console-surface: #191918; --pv-console-text: #eeeeec;
+    --pv-console-text-dim: #b5b3ad; --pv-console-text-faint: #7c7b74;
+    --pv-console-border: #3b3a37; --pv-console-border-dim: #2a2a28;
+    --pv-console-red: #ec5d5e; --pv-console-gold: #D9A441; --pv-console-gold-strong: #E5B655;
+    --pv-console-gold-soft: rgba(217, 164, 65, 0.12); --pv-console-gold-border: rgba(217, 164, 65, 0.35);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
