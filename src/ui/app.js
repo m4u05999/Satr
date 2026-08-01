@@ -13,8 +13,9 @@ import { createUpdateToast } from './lib/update-toast.js';
 
   // ---------- الوضع الفاتح/الداكن (دفعة «وضع فاتح») ----------
   // يُطبَّق مبكراً (أول المنطق) لتقليل ومضة الثيمة. الاختيار في localStorage
-  // (satr_theme=light|dark)؛ وإن غاب يتبع تفضيل النظام (prefers-color-scheme) كافتراضي.
-  // الزر اليدوي يغلب النظام ويُحفظ. الثيمة على <html> فتعبر حدود Shadow بالوراثة.
+  // (satr_theme=light|dark)؛ وإن غاب فالافتراضي الداكن دائماً (قرار المالك — لا يتبع
+  // تفضيل النظام prefers-color-scheme). الزر اليدوي يُحفظ ويغلب الافتراضي.
+  // الثيمة على <html> فتعبر حدود Shadow بالوراثة.
   function applyTheme(theme) {
     const light = theme === 'light';
     document.documentElement.dataset.theme = light ? 'light' : 'dark';
