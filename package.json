@@ -1,7 +1,7 @@
 {
   "name": "satr",
   "productName": "Satr",
-  "version": "2.13.0",
+  "version": "2.14.0",
   "description": "سطر — تطبيق سطح مكتب عربي لأدوات الذكاء الاصطناعي في سطر الأوامر (Claude Code وغيرها) بدعم RTL كامل",
   "main": "electron/main.js",
   "author": "Moxa",
