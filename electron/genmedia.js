@@ -19,6 +19,10 @@
  *   • مدد `ace-step` المثبتة صارت أربعاً (‏10/30/63/120ث) بمدخل كتالوج مستقل لكل واحدة
  *     وسعر مقيس لها؛ الاختيار عبر حقل `model` القائم فلا يتغيّر شكل الطلب المجمَّد.
  *     `wire_model` يفصل مسار السلك عن معرّف الكتالوج. وما لم يُقس لا يُمرَّر كما هو.
+ *   • جولة الجودة ثبّتت `fal-ai/lyria2` بمقطع WAV واحد فعلي 32.77ث وسعر $0.1؛
+ *     مدخله المقيس `prompt + negative_prompt` بلا حقل مدة.
+ *   • `fal-ai/stable-audio-25/text-to-audio` ثبت بمقطع WAV فعلي 65ث وسعر $0.2؛
+ *     مدخله المقيس `prompt + seconds_total:65` وهو خيار الإعلان الطويل.
  *
  * ⚠️ «المسبار أولاً» (المبدأ 5 في الخطة): لا يُجمَّد عقد سلك قبل استدعاء حيّ يثبته.
  * `scripts/genmedia-probe.js` شُغّل حياً 2026-08-01 والنتيجة:
@@ -56,7 +60,7 @@ const inject = require('./inject'); // resolveInside — تحقّق المسار
 // ============================ الحدود والثوابت ============================
 
 const SCHEMA_VERSION = 1;
-const CATALOG_DATE = '2026-08-01'; // تاريخ الكتالوج — كل سعر تقديري منسوب إليه
+const CATALOG_DATE = '2026-08-02'; // تاريخ الكتالوج — كل سعر تقديري منسوب إليه
 
 const MAX_PROMPT_SEND = 4000;      // أقصى برومبت يُرسل للمزوّد (نقاط Unicode)
 const MAX_PROMPT_LOG = 2000;       // أقصى برومبت يُخزَّن في السجل (نصّ العقد)
@@ -257,6 +261,35 @@ const MODELS = [
     proven: true,
     wire: { duration: 120 },
     duration_seconds: 120,
+  },
+  {
+    id: 'fal-ai/lyria2',
+    wire_model: 'fal-ai/lyria2',
+    provider: 'fal',
+    kind: 'audio',
+    label: 'Lyria 2 — موسيقى سينمائية عالية الجودة 32.77ث (fal)',
+    unit: 'clip',
+    unit_cost_usd: 0.1, // مقيس حياً ج10: 9.4111241667 -> 9.3111241667 (الفعلي 32.77ث بـffprobe)
+    max_count: 1,
+    supports_refs: false,
+    proven: true,
+    // المسبار لم يمرر مدة: هذا هو المعامل الإضافي الوحيد المقيس مع prompt.
+    wire: { negative_prompt: 'vocals, singing, speech, choir, distortion, clipping' },
+    duration_seconds: 32.77,
+  },
+  {
+    id: 'fal-ai/stable-audio-25/text-to-audio',
+    wire_model: 'fal-ai/stable-audio-25/text-to-audio',
+    provider: 'fal',
+    kind: 'audio',
+    label: 'Stable Audio 2.5 — موسيقى إعلان 65ث (fal)',
+    unit: 'clip',
+    unit_cost_usd: 0.2, // مقيس حياً ج10: 9.2111241667 -> 9.0111241667 (الفعلي 65ث)
+    max_count: 1,
+    supports_refs: false,
+    proven: true,
+    wire: { seconds_total: 65 },
+    duration_seconds: 65,
   },
   {
     id: 'gpt-image-1-mini',

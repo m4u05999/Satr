@@ -2,17 +2,19 @@
 'use strict';
 
 /**
- * فارز موسيقى الإعلان — قياس موضوعي لمرشّحات `ace-step` بلا استماع (ج10).
+ * فارز موسيقى الإعلان — قياس موضوعي للمرشّحات بلا استماع (ج10).
  *
  * الوكيل لا يسمع، فاختيار «الأفضل» بالأذن مستحيل عليه. هذا الفارز يقيس من عيّنات WAV
- * ما يقبل القياس فعلاً ويطابق عقد `promo/EDIT-PLAN.md` (‏synth-pop نشيط ~120–128bpm،
- * طاقة صاعدة، ≥62ث):
+ * ما يقبل القياس فعلاً ويطابق عقد `promo/EDIT-PLAN.md` (سينمائي ملحمي هادئ البداية،
+ * يتصاعد إلى ذروة الخاتمة، ≥62ث):
  *   • المدة الفعلية من ترويسة WAV.
  *   • **الطاقة الصاعدة**: ميل انحدار خطي على مغلّف RMS بنافذة ثانية + نسبة الثلث
  *     الأخير إلى الثلث الأول.
+ *   • **ذروة الخاتمة**: طاقة الثواني 50..60 (نهاية الإعلان؛ آخر 5ث في أصل 65ث هامش)
+ *     قياساً بالعشر السابقة، ونسبة أعلى نافذة في الخاتمة إلى أعلى نافذة قبلها.
  *   • **تقدير الإيقاع (BPM)**: ارتباط ذاتي لمغلّف بداية النغمات (فرق الطاقة الموجب)
  *     في نطاق 60..200 — تقدير تقريبي لا قياس مرجعي، وموسوم كذلك.
- *   • الذروة والاقتطاع (clipping) وصمت البداية/النهاية.
+ *   • الذروة والاقتطاع (clipping) على كل قناة وصمت البداية/النهاية.
  * ما لا يقاس هنا: الغناء والذوق والمزاج — تبقى للاعتماد السمعي البشري.
  *
  * صفر اعتماديات (قراءة PCM مباشرة). التشغيل:
@@ -128,13 +130,36 @@ function analyze(file) {
   const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   const firstThird = avg(env.slice(0, third));
   const lastThird = avg(env.slice(-third));
+  const promoEnd = Math.min(60, env.length);
+  const finaleStart = Math.max(0, promoEnd - 10);
+  const preFinaleStart = Math.max(0, finaleStart - 10);
+  const finale = env.slice(finaleStart, promoEnd);
+  const preFinale = env.slice(preFinaleStart, finaleStart);
+  const beforeFinale = env.slice(0, finaleStart);
+  const maxOf = (arr) => arr.length ? Math.max(...arr) : 0;
+  const finaleMean = avg(finale);
+  const preFinaleMean = avg(preFinale);
+  const finalePeak = maxOf(finale);
+  const earlierPeak = maxOf(beforeFinale);
+  let peakWindow = 0;
+  for (let i = 1; i < env.length; i += 1) {
+    if (env[i] > env[peakWindow]) peakWindow = i;
+  }
 
   let peak = 0;
   let clipped = 0;
-  for (let i = 0; i < mono.length; i += 1) {
-    const a = Math.abs(mono[i]);
+  let clipRun = 0;
+  let maxClipRun = 0;
+  for (let i = 0; i + 1 < wav.data.length; i += 2) {
+    const a = Math.abs(wav.data.readInt16LE(i)) / 32768;
     if (a > peak) peak = a;
-    if (a >= 0.999) clipped += 1;
+    if (a >= (32767 / 32768)) {
+      clipped += 1;
+      clipRun += 1;
+      if (clipRun > maxClipRun) maxClipRun = clipRun;
+    } else {
+      clipRun = 0;
+    }
   }
   const leadIn = env.findIndex((v) => v > 0.01);
   const tailQuiet = env.length - 1 - [...env].reverse().findIndex((v) => v > 0.01);
@@ -148,8 +173,13 @@ function analyze(file) {
     rms_mean: Math.round(avg(env) * 10000) / 10000,
     rise_ratio: firstThird ? Math.round((lastThird / firstThird) * 100) / 100 : 0,
     trend_slope: Math.round(trendSlope(env) * 10000) / 10000,
+    finale_ratio: preFinaleMean ? Math.round((finaleMean / preFinaleMean) * 100) / 100 : 0,
+    finale_peak_ratio: earlierPeak ? Math.round((finalePeak / earlierPeak) * 100) / 100 : 0,
+    peak_window_sec: peakWindow,
     peak: Math.round(peak * 1000) / 1000,
     clipped_samples: clipped,
+    max_clip_run: maxClipRun,
+    sustained_clipping: maxClipRun >= 3,
     lead_in_sec: leadIn < 0 ? seconds : leadIn,
     last_loud_sec: tailQuiet,
   };
@@ -164,13 +194,17 @@ function main() {
     catch (e) { console.log(path.basename(f) + ': فشل التحليل — ' + e.message); }
   }
   // العرض LTR للأرقام والمسارات
-  console.log(['file', 'sec', 'bpm~', 'rms', 'rise', 'slope', 'peak', 'clip', 'lead', 'lastLoud'].join('\t'));
+  console.log(['file', 'sec', 'bpm~', 'rms', 'rise', 'slope', 'final10', 'finalPeak',
+    'peakAt', 'samplePeak', 'clipN', 'clipRun', 'clipped?', 'lead', 'lastLoud'].join('\t'));
   for (const r of rows) {
     console.log([r.file, r.seconds, r.bpm_estimate, r.rms_mean, r.rise_ratio, r.trend_slope,
-      r.peak, r.clipped_samples, r.lead_in_sec, r.last_loud_sec].join('\t'));
+      r.finale_ratio, r.finale_peak_ratio, r.peak_window_sec, r.peak, r.clipped_samples,
+      r.max_clip_run, r.sustained_clipping, r.lead_in_sec, r.last_loud_sec].join('\t'));
   }
   console.log('\nملاحظة: bpm~ تقدير تقريبي بالارتباط الذاتي لا قياس مرجعي؛ '
-    + 'rise = طاقة الثلث الأخير ÷ الثلث الأول (>1 يعني صعوداً). '
+    + 'rise = طاقة الثلث الأخير ÷ الثلث الأول، final10 = طاقة 50..60ث ÷ 40..50ث، '
+    + 'finalPeak = أعلى نافذة في آخر 10ث ÷ أعلى نافذة قبلها. البداية الهادئة مقصودة ولا تُرفض. '
+    + 'clipped? لا يصير true إلا مع 3 عينات Full Scale متتالية. '
     + 'الغناء والذوق خارج القياس — يبقيان للاعتماد السمعي البشري.');
 }
 

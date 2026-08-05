@@ -13,7 +13,7 @@
  * مفتاح غائب ⇒ «SKIPPED: no key» صريح، والمزوّد يُعلَّم unproven ولا يُبنى له عقد سلك.
  *
  * التشغيل: node scripts/genmedia-probe.js
- *          [--only gemini|openai|fal|discover|audio|audio-duration|refs|gptimage|video2] [--no-video]
+ *          [--only gemini|openai|fal|discover|audio|audio-duration|music-quality|music-candidates|refs|gptimage|video2] [--no-video]
  * الأصول المولَّدة تُحفظ في dist/genmedia-probe/ للمعاينة البشرية (لا تدخل Git).
  *
  * === الجولة 9 ===
@@ -32,6 +32,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const OUT_DIR = path.join(__dirname, '..', 'dist', 'genmedia-probe');
 const PROMPT = 'a single small red circle centered on a plain white background, minimal flat vector';
@@ -153,7 +154,11 @@ function magic(buf) {
   if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50) return 'PNG';
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8) return 'JPEG';
   if (buf.length >= 12 && buf.slice(4, 8).toString('latin1') === 'ftyp') return 'MP4(ftyp)';
-  if (buf.length >= 12 && buf.slice(0, 4).toString('latin1') === 'RIFF') return 'RIFF/WEBP';
+  if (buf.length >= 12 && buf.slice(0, 4).toString('latin1') === 'RIFF') {
+    return buf.slice(8, 12).toString('latin1') === 'WAVE' ? 'RIFF/WAVE' : 'RIFF/WEBP';
+  }
+  if (buf.length >= 3 && buf.slice(0, 3).toString('latin1') === 'ID3') return 'MP3/ID3';
+  if (buf.length >= 2 && buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return 'MP3/frame';
   return 'unknown';
 }
 
@@ -605,13 +610,13 @@ const MUSIC_PROMPT = 'upbeat energetic synth-pop electro instrumental, 124 bpm, 
   + 'rising energy, bright analog synths, punchy drums, no vocals';
 const DEFAULT_DURATIONS = [30, 63, 120];
 
-/** طول WAV الفعلي بالثواني من الترويسة (بلا اعتماديات): data chunk ÷ byteRate. */
+/** طول WAV الفعلي بالثواني من عدد إطارات PCM؛ لا نثق بـbyteRate إن خالف fmt. */
 function wavSeconds(buf) {
   try {
     if (buf.length < 44 || buf.slice(0, 4).toString('latin1') !== 'RIFF'
       || buf.slice(8, 12).toString('latin1') !== 'WAVE') return null;
     let pos = 12;
-    let byteRate = 0;
+    let headerByteRate = 0;
     let channels = 0;
     let sampleRate = 0;
     let bits = 0;
@@ -621,11 +626,20 @@ function wavSeconds(buf) {
       if (id === 'fmt ') {
         channels = buf.readUInt16LE(pos + 10);
         sampleRate = buf.readUInt32LE(pos + 12);
-        byteRate = buf.readUInt32LE(pos + 16);
+        headerByteRate = buf.readUInt32LE(pos + 16);
         bits = buf.readUInt16LE(pos + 22);
       } else if (id === 'data') {
-        if (!byteRate) return null;
-        return { seconds: Math.round((size / byteRate) * 100) / 100, sampleRate, channels, bits, dataBytes: size };
+        const pcmByteRate = sampleRate * channels * (bits / 8);
+        if (!pcmByteRate) return null;
+        return {
+          seconds: Math.round((size / pcmByteRate) * 100) / 100,
+          sampleRate,
+          channels,
+          bits,
+          dataBytes: size,
+          headerByteRate,
+          pcmByteRate,
+        };
       }
       pos += 8 + size + (size % 2);
     }
@@ -677,6 +691,334 @@ async function probeAceStepDurations(durations) {
     record('fal', 'audio-duration', okDur,
       duration + 's -> ' + (meta ? meta.seconds : '?') + 's' + (cost == null ? ' | cost unsettled' : ' | measured $' + cost));
   }
+}
+
+// ============ 5-ج) fal — جولة جودة موسيقى الإعلان (قرار محمد 2026-08-02) ============
+/**
+ * يجسّ النماذج الأعلى بالأولوية المتفق عليها، ويقف عند أول نموذج ينتج مقطعاً واحداً ≥62ث.
+ * السعر مجهول قبل أول توليدة لكل نموذج، لذلك يُسمح بمسبار واحد فقط ثم يصبح فرق الرصيد
+ * المقيس هو حارس بقية الجولة. أي تسوية معلّقة توقف الإنفاق بدلاً من افتراض كلفة صفرية.
+ *
+ * التشغيل: node scripts/genmedia-probe.js --only music-quality [--cap-usd 2]
+ */
+const QUALITY_CAP_USD = 2;
+const QUALITY_DIR = path.join(OUT_DIR, 'quality-round');
+const CINEMATIC_PROMPT = 'Instrumental cinematic technology-advertising score, no vocals. Begin very quiet and intimate '
+  + 'with sparse felt piano and a soft string bed, then add warm cellos, wider strings, restrained cinematic percussion '
+  + 'and subtle brass layer by layer. Maintain an elegant premium tone, a clear continuous upward energy arc, and reach '
+  + 'the strongest emotional climax in the final ten seconds with a clean resolved ending. No singing, no speech, no choir.';
+
+function falAudioAsset(body) {
+  const asset = body.audio || body.audio_file || (body.audios || [])[0] || null;
+  if (typeof asset === 'string') return { url: asset };
+  return asset && typeof asset === 'object' ? asset : {};
+}
+
+function qualityExtension(asset, response) {
+  const declared = String(asset.content_type || asset.contentType || response.contentType || '').toLowerCase();
+  const pathname = safeUrl(asset.url || '');
+  if (declared.includes('wav') || /\.wav$/i.test(pathname)) return '.wav';
+  if (declared.includes('mpeg') || declared.includes('mp3') || /\.mp3$/i.test(pathname)) return '.mp3';
+  return magic(response.buffer).startsWith('RIFF/WAVE') ? '.wav' : '.mp3';
+}
+
+function ffmpegPath() {
+  const candidates = [
+    process.env.FFMPEG_PATH,
+    'D:\\sater\\tools\\ffmpeg.exe',
+    path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
+  ].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(candidate)) || 'ffmpeg';
+}
+
+function analysisWav(rawPath) {
+  const raw = fs.readFileSync(rawPath);
+  const direct = wavSeconds(raw);
+  if (direct && direct.bits === 16) return { path: rawPath, meta: direct, converted: false };
+  const wavPath = rawPath.replace(/\.[^.]+$/, '') + '-pcm16.wav';
+  const converted = spawnSync(ffmpegPath(), [
+    '-hide_banner', '-loglevel', 'error', '-y', '-i', rawPath,
+    '-acodec', 'pcm_s16le', '-ar', '48000', wavPath,
+  ], { encoding: 'utf8' });
+  if (converted.status !== 0) {
+    say('  ffmpeg conversion failed | status:', converted.status, '| stderr:',
+      JSON.stringify(String(converted.stderr || '').slice(0, 300)));
+    return { path: '', meta: null, converted: true };
+  }
+  return { path: wavPath, meta: wavSeconds(fs.readFileSync(wavPath)), converted: true };
+}
+
+function validFalReferenceUrl(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    return parsed.protocol === 'https:' && (parsed.hostname === 'fal.media' || parsed.hostname.endsWith('.fal.media'))
+      && !parsed.search && !parsed.hash ? parsed.toString() : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+function qualityProbeSpecs(miniMaxReferenceUrl) {
+  const referenceUrl = validFalReferenceUrl(miniMaxReferenceUrl);
+  return [
+    {
+      model: 'fal-ai/lyria2',
+      input: { prompt: CINEMATIC_PROMPT, negative_prompt: 'vocals, singing, speech, choir, distortion, clipping' },
+      durationField: '<none>',
+    },
+    {
+      model: 'fal-ai/minimax-music',
+      input: referenceUrl ? { prompt: '## ' + CINEMATIC_PROMPT + ' ##', reference_audio_url: referenceUrl } : null,
+      durationField: '<none>',
+    },
+    {
+      model: 'fal-ai/stable-audio-25/text-to-audio',
+      input: { prompt: CINEMATIC_PROMPT, seconds_total: 65 },
+      durationField: 'seconds_total=65',
+    },
+  ];
+}
+
+async function probeMusicQuality(capUsd, originalRoundStart, startModel, miniMaxReferenceUrl) {
+  say('');
+  say('=== fal: cinematic music quality round (ج10 تكميلي) ===');
+  const { key } = resolveKey(['FAL_KEY']);
+  if (!key) {
+    say('SKIPPED: no key (FAL_KEY)');
+    record('fal', 'music-quality', false, 'SKIPPED no key');
+    return;
+  }
+  fs.mkdirSync(QUALITY_DIR, { recursive: true });
+  const currentStart = await falBalance(key);
+  if (currentStart == null) {
+    say('STOPPED: balance unavailable; cannot enforce cap');
+    record('fal', 'music-quality', false, 'balance unavailable');
+    return;
+  }
+  const roundStart = Number.isFinite(originalRoundStart) ? originalRoundStart : currentStart;
+  if (roundStart < currentStart) throw new Error('--round-start cannot be below current balance');
+  const specs = qualityProbeSpecs(miniMaxReferenceUrl);
+  const startIndex = startModel ? specs.findIndex((spec) => spec.model === startModel) : 0;
+  if (startIndex < 0) throw new Error('unknown --quality-start model: ' + startModel);
+  say('round cap USD:', capUsd, '| original balance:', roundStart, '| resume balance:', currentStart,
+    '| start model:', specs[startIndex].model);
+  let latestBalance = currentStart;
+
+  for (const spec of specs.slice(startIndex)) {
+    const spentBefore = Math.round((roundStart - latestBalance) * 1e6) / 1e6;
+    const remaining = Math.round((capUsd - spentBefore) * 1e6) / 1e6;
+    say('');
+    say('-- cap guard:', spec.model, '| spent:', spentBefore, '| remaining:', remaining);
+    if (remaining <= 0) {
+      say('STOPPED: round cap exhausted before generation');
+      break;
+    }
+    if (!spec.input) {
+      say('UNPROVEN:', spec.model, '| missing local MiniMax reference audio');
+      record('fal', 'music-quality', false, spec.model + ' missing reference');
+      continue;
+    }
+    say('model:', spec.model, '| input keys:', Object.keys(spec.input).join(','),
+      '| duration input:', spec.durationField);
+    const balanceBefore = await falBalance(key);
+    if (balanceBefore == null) {
+      say('STOPPED: pre-generation balance unavailable');
+      break;
+    }
+    latestBalance = balanceBefore;
+    let sub;
+    try {
+      sub = await falSubmit(key, spec.model, spec.input);
+    } catch (error) {
+      say('  TRANSPORT ERROR:', error.message);
+      record('fal', 'music-quality', false, spec.model + ' transport');
+      continue;
+    }
+    say('  POST status:', sub.res.status, '| ms:', sub.ms);
+    if (sub.res.status !== 200) {
+      const detail = sub.res.json && sub.res.json.detail;
+      say('  non-200 shape:', describe(sub.res.json), '| detail:',
+        JSON.stringify(String(typeof detail === 'string' ? detail : JSON.stringify(detail || '')).slice(0, 500)));
+      record('fal', 'music-quality', false, spec.model + ' submit ' + sub.res.status);
+      continue;
+    }
+    const queue = sub.res.json || {};
+    const done = await falPoll(key, queue.status_url, queue.response_url, 900000, 'music-quality');
+    if (!done.ok) {
+      record('fal', 'music-quality', false, spec.model + ' poll failed');
+      const failedCost = await measuredCost(key, balanceBefore, spec.model + ' failed');
+      if (failedCost == null) {
+        say('STOPPED: failed generation cost unsettled');
+        break;
+      }
+      latestBalance = await falBalance(key) || latestBalance;
+      continue;
+    }
+    const body = done.out.json || {};
+    const asset = falAudioAsset(body);
+    say('  output top keys:', Object.keys(body).join(','));
+    say('  audio keys:', Object.keys(asset).join(','), '| url host+path:', safeUrl(asset.url));
+    if (!asset.url) {
+      record('fal', 'music-quality', false, spec.model + ' no audio url');
+      const missingCost = await measuredCost(key, balanceBefore, spec.model + ' no-audio');
+      if (missingCost == null) {
+        say('STOPPED: no-audio generation cost unsettled');
+        break;
+      }
+      latestBalance = await falBalance(key) || latestBalance;
+      continue;
+    }
+    const response = await request('GET', asset.url, {}, null, 240000);
+    const extension = qualityExtension(asset, response);
+    const rawPath = path.join(QUALITY_DIR, spec.model.split('/').join('-') + '-probe' + extension);
+    fs.writeFileSync(rawPath, response.buffer);
+    say('  asset HTTP:', response.status, '| content-type:', JSON.stringify(response.contentType),
+      '| bytes:', response.buffer.length, '| magic:', magic(response.buffer), '| format:', extension.slice(1));
+    say('  raw saved:', path.relative(path.join(__dirname, '..'), rawPath));
+    const analyzed = analysisWav(rawPath);
+    const meta = analyzed.meta;
+    say('  analysis source:', analyzed.path ? path.relative(path.join(__dirname, '..'), analyzed.path) : '<conversion failed>',
+      '| converted to PCM16:', analyzed.converted);
+    say('  ⏱ actual file seconds:', meta ? meta.seconds : '<unreadable>',
+      '| sampleRate:', meta ? meta.sampleRate : '-', '| channels:', meta ? meta.channels : '-',
+      '| bits:', meta ? meta.bits : '-');
+    const cost = await measuredCost(key, balanceBefore, spec.model);
+    if (cost == null) {
+      record('fal', 'music-quality', false, spec.model + ' cost unsettled');
+      say('STOPPED: generation cost unsettled; cannot enforce remaining cap');
+      break;
+    }
+    latestBalance = await falBalance(key) || latestBalance;
+    const singleClip = !!(meta && meta.seconds >= 62);
+    record('fal', 'music-quality', !!meta,
+      spec.model + ' | actual ' + (meta ? meta.seconds : '?') + 's | format ' + extension.slice(1)
+      + ' | measured $' + cost + ' | single-clip>=62 ' + singleClip);
+    if (singleClip) {
+      say('SUFFICIENT: first proven single-clip model reached ≥62s; stopping priority probe');
+      break;
+    }
+  }
+
+  const roundEnd = await falBalance(key);
+  const roundSpent = roundEnd == null ? null : Math.round((roundStart - roundEnd) * 1e6) / 1e6;
+  say('');
+  say('quality round probe balance:', roundStart, '->', roundEnd == null ? '<unavailable>' : roundEnd,
+    '| spent USD:', roundSpent == null ? '<unsettled>' : roundSpent, '| cap USD:', capUsd);
+}
+
+const CANDIDATE_PROMPTS = [
+  'Instrumental cinematic technology-advertising score, no vocals. Open with almost-silent felt piano and a distant '
+    + 'warm string harmonic. Build patiently: intimate cello, then violins, restrained low percussion and subtle brass. '
+    + 'Each layer should raise emotional intensity without becoming bombastic. Make the final ten seconds the clear, '
+    + 'powerful premium-tech climax, then land on one clean resolved final chord. No choir, speech, singing or distortion.',
+  'Premium cinematic instrumental for a major technology brand, no vocals. A hushed solitary piano motif begins the piece; '
+    + 'soft violas and cellos answer it, wider strings enter gradually, then elegant cinematic drums and restrained horns. '
+    + 'Keep a continuous upward arc and generous dynamic range. Reserve the loudest, most moving statement for the final '
+    + 'ten seconds and finish decisively. Organic orchestra, clean master, no choir, speech, singing or clipping.',
+];
+
+const CANDIDATE_MODEL_PROFILES = {
+  'fal-ai/stable-audio-25/text-to-audio': {
+    probeFile: 'fal-ai-stable-audio-25-text-to-audio-probe.wav',
+    filePrefix: 'cine-stable25',
+  },
+};
+
+async function generateMusicCandidates(capUsd, roundStart, count, modelId) {
+  say('');
+  say('=== fal: cinematic candidates through electron/genmedia.generate ===');
+  const { key } = resolveKey(['FAL_KEY']);
+  if (!key) {
+    say('SKIPPED: no key (FAL_KEY)');
+    record('fal', 'music-candidates', false, 'SKIPPED no key');
+    return;
+  }
+  if (!Number.isFinite(roundStart) || roundStart <= 0) {
+    throw new Error('--round-start is required from the printed probe balance');
+  }
+  const genmedia = require('../electron/genmedia');
+  const profile = CANDIDATE_MODEL_PROFILES[modelId];
+  if (!profile) throw new Error('unsupported --candidate-model: ' + modelId);
+  const model = genmedia.listCatalog().models.find((item) => item.id === modelId);
+  if (!model || !model.proven) throw new Error(modelId + ' is not frozen as proven');
+  const projectDir = path.join(OUT_DIR, 'quality-project');
+  const candidateDir = path.join(__dirname, '..', 'promo', 'footage', 'music-candidates', 'quality-round');
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.mkdirSync(candidateDir, { recursive: true });
+
+  const probeSource = path.join(QUALITY_DIR, profile.probeFile);
+  if (fs.existsSync(probeSource)) {
+    const probeTarget = path.join(candidateDir, profile.filePrefix + '-probe.wav');
+    fs.copyFileSync(probeSource, probeTarget);
+    say('reused paid probe as candidate:', path.relative(path.join(__dirname, '..'), probeTarget));
+  } else {
+    say('probe candidate missing:', path.relative(path.join(__dirname, '..'), probeSource));
+  }
+
+  for (let index = 0; index < count; index += 1) {
+    const currentBalance = await falBalance(key);
+    if (currentBalance == null) {
+      say('STOPPED: balance unavailable before candidate', index + 1);
+      break;
+    }
+    const spent = Math.round((roundStart - currentBalance) * 1e6) / 1e6;
+    const remaining = Math.round((capUsd - spent) * 1e6) / 1e6;
+    say('');
+    say('-- candidate cap guard:', index + 1, '| balance:', currentBalance,
+      '| round spent:', spent, '| remaining:', remaining, '| estimated next:', model.unit_cost_usd);
+    if (remaining < model.unit_cost_usd) {
+      say('STOPPED: next measured model price does not fit remaining cap');
+      break;
+    }
+    const before = currentBalance;
+    const result = await genmedia.generate({
+      cwd: projectDir,
+      kind: 'audio',
+      prompt: CANDIDATE_PROMPTS[index],
+      model: model.id,
+      count: 1,
+      budget_usd: remaining,
+    }, {
+      env: {},
+      getKey: (name) => name === 'FAL_KEY' ? key : '',
+    });
+    say('  generate result:', JSON.stringify({
+      ok: result.ok,
+      error_code: result.error_code || '',
+      model: result.model || '',
+      files: result.files || [],
+      cost_usd_estimate: result.cost_usd_estimate,
+      catalog_date: result.catalog_date,
+    }));
+    const cost = await measuredCost(key, before, model.id + '/candidate-' + (index + 1));
+    if (cost == null) {
+      say('STOPPED: candidate cost unsettled; cannot enforce remaining cap');
+      break;
+    }
+    if (!result.ok || !Array.isArray(result.files) || !result.files[0]) {
+      record('fal', 'music-candidates', false, 'candidate ' + (index + 1) + ' failed | measured $' + cost);
+      continue;
+    }
+    const source = path.join(projectDir, result.files[0]);
+    const extension = path.extname(source).toLowerCase() || '.wav';
+    const target = path.join(candidateDir, profile.filePrefix + '-' + (index + 1) + extension);
+    fs.copyFileSync(source, target);
+    const analyzed = analysisWav(target);
+    say('  candidate saved:', path.relative(path.join(__dirname, '..'), target));
+    say('  ⏱ candidate actual file seconds:', analyzed.meta ? analyzed.meta.seconds : '<unreadable>',
+      '| sampleRate:', analyzed.meta ? analyzed.meta.sampleRate : '-',
+      '| channels:', analyzed.meta ? analyzed.meta.channels : '-',
+      '| bits:', analyzed.meta ? analyzed.meta.bits : '-');
+    record('fal', 'music-candidates', !!analyzed.meta,
+      path.basename(target) + ' | actual ' + (analyzed.meta ? analyzed.meta.seconds : '?')
+      + 's | measured $' + cost);
+  }
+
+  const roundEnd = await falBalance(key);
+  const totalSpent = roundEnd == null ? null : Math.round((roundStart - roundEnd) * 1e6) / 1e6;
+  say('');
+  say('quality round total balance:', roundStart, '->', roundEnd == null ? '<unavailable>' : roundEnd,
+    '| total spent USD:', totalSpent == null ? '<unsettled>' : totalSpent, '| cap USD:', capUsd);
 }
 
 // ============================ 6) fal — refs فعلية (image-to-image بـdata: URI) ============================
@@ -850,6 +1192,20 @@ async function main() {
   const doVideo = !args.includes('--no-video');
   const sizeIdx = args.indexOf('--image-size');
   const imageSize = sizeIdx >= 0 ? args[sizeIdx + 1] : 'square';
+  const capIdx = args.indexOf('--cap-usd');
+  const capUsd = capIdx >= 0 ? Number(args[capIdx + 1]) : QUALITY_CAP_USD;
+  const roundStartIdx = args.indexOf('--round-start');
+  const roundStart = roundStartIdx >= 0 ? Number(args[roundStartIdx + 1]) : NaN;
+  const qualityStartIdx = args.indexOf('--quality-start');
+  const qualityStart = qualityStartIdx >= 0 ? String(args[qualityStartIdx + 1] || '') : '';
+  const miniMaxReferenceIdx = args.indexOf('--minimax-reference-url');
+  const miniMaxReferenceUrl = miniMaxReferenceIdx >= 0 ? String(args[miniMaxReferenceIdx + 1] || '') : '';
+  const candidateCountIdx = args.indexOf('--candidate-count');
+  const candidateCount = candidateCountIdx >= 0 ? Number(args[candidateCountIdx + 1]) : 2;
+  const candidateModelIdx = args.indexOf('--candidate-model');
+  const candidateModel = candidateModelIdx >= 0
+    ? String(args[candidateModelIdx + 1] || '')
+    : 'fal-ai/stable-audio-25/text-to-audio';
 
   say('genmedia-probe: live wire probe for generation providers');
   say('node:', process.version, '| platform:', process.platform, '| date:', new Date().toISOString());
@@ -871,7 +1227,20 @@ async function main() {
   if (wantGpt) groups.push('gptimage');
   if (wantVid2) groups.push('video2');
   const force = args.includes('--rediscover');
-  if (only === 'audio-duration') {
+  if (only === 'music-candidates') {
+    if (!Number.isFinite(capUsd) || capUsd <= 0 || capUsd > QUALITY_CAP_USD) {
+      throw new Error('--cap-usd must be >0 and <=' + QUALITY_CAP_USD);
+    }
+    if (!Number.isInteger(candidateCount) || candidateCount < 1 || candidateCount > CANDIDATE_PROMPTS.length) {
+      throw new Error('--candidate-count must be 1..' + CANDIDATE_PROMPTS.length);
+    }
+    await generateMusicCandidates(capUsd, roundStart, candidateCount, candidateModel);
+  } else if (only === 'music-quality') {
+    if (!Number.isFinite(capUsd) || capUsd <= 0 || capUsd > QUALITY_CAP_USD) {
+      throw new Error('--cap-usd must be >0 and <=' + QUALITY_CAP_USD);
+    }
+    await probeMusicQuality(capUsd, roundStart, qualityStart, miniMaxReferenceUrl);
+  } else if (only === 'audio-duration') {
     const di = args.indexOf('--durations');
     const list = di >= 0 && args[di + 1]
       ? args[di + 1].split(',').map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)

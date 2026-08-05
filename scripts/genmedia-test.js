@@ -173,6 +173,18 @@ const TEST_MODELS = [
     supports_refs: false, proven: true, wire: { duration: 63 }, duration_seconds: 63,
   },
   {
+    id: 'test/works-lyria', wire_model: 'test/works-audio-lyria', provider: 'fal', kind: 'audio',
+    label: 'Lyria (works)', unit: 'clip', unit_cost_usd: 0.1, max_count: 1,
+    supports_refs: false, proven: true,
+    wire: { negative_prompt: 'vocals, singing, speech, choir, distortion, clipping' },
+    duration_seconds: 32.77,
+  },
+  {
+    id: 'test/works-stable25', wire_model: 'test/works-audio-stable25', provider: 'fal', kind: 'audio',
+    label: 'Stable Audio 2.5 (works)', unit: 'clip', unit_cost_usd: 0.2, max_count: 1,
+    supports_refs: false, proven: true, wire: { seconds_total: 65 }, duration_seconds: 65,
+  },
+  {
     id: 'test/works-refs', provider: 'fal', kind: 'image', label: 'image-to-image (works)',
     unit: 'image', unit_cost_usd: 0.03, max_count: 4, supports_refs: true, max_refs: 1,
     proven: true, wire: { strength: 0.6 },
@@ -819,7 +831,7 @@ async function main() {
   });
 
   // ---------- ج10: مدد الصوت المثبتة ----------
-  await check('ج10: الكتالوج يعلن مدد ace-step الأربع المقيسة، كل واحدة بسعرها ومدتها', () => {
+  await check('ج10: الكتالوج يعلن مدد ace-step وLyria وStable Audio المثبتة', () => {
     const audio = genmedia.listCatalog().models.filter((m) => m.kind === 'audio' && m.proven);
     const byId = new Map(audio.map((m) => [m.id, m]));
     // القيم منسوخة حرفياً من خرج المسبار الحيّ (فرق الرصيد) — أي انحراف يكسر الطقم
@@ -836,7 +848,29 @@ async function main() {
       assert.strictEqual(m.unit_cost_usd, cost, id + ' سعر: ' + m.unit_cost_usd);
       assert.strictEqual(m.max_count, 1, id + ' max_count ليس 1');
     }
-    assert.strictEqual(audio.length, measured.length,
+    const lyria = byId.get('fal-ai/lyria2');
+    assert.ok(lyria, 'مدخل Lyria المثبت غائب');
+    assert.strictEqual(lyria.duration_seconds, 32.77, 'مدة Lyria: ' + lyria.duration_seconds);
+    assert.strictEqual(lyria.unit_cost_usd, 0.1, 'سعر Lyria: ' + lyria.unit_cost_usd);
+    assert.strictEqual(lyria.max_count, 1, 'Lyria max_count ليس 1');
+    const rawLyria = genmedia.candidatesFor('audio', { env: { FAL_KEY: FAKE_KEY }, getKey: () => '' })
+      .find((m) => m.id === 'fal-ai/lyria2');
+    assert.ok(rawLyria, 'Lyria غائبة عن المرشحين الخام');
+    assert.strictEqual(rawLyria.wire_model, 'fal-ai/lyria2', 'wire_model غير صريح');
+    assert.deepStrictEqual(rawLyria.wire,
+      { negative_prompt: 'vocals, singing, speech, choir, distortion, clipping' },
+      'معامل غير مقيس في سلك Lyria');
+    const stable = byId.get('fal-ai/stable-audio-25/text-to-audio');
+    assert.ok(stable, 'مدخل Stable Audio 2.5 المثبت غائب');
+    assert.strictEqual(stable.duration_seconds, 65, 'مدة Stable: ' + stable.duration_seconds);
+    assert.strictEqual(stable.unit_cost_usd, 0.2, 'سعر Stable: ' + stable.unit_cost_usd);
+    assert.strictEqual(stable.max_count, 1, 'Stable max_count ليس 1');
+    const rawStable = genmedia.candidatesFor('audio', { env: { FAL_KEY: FAKE_KEY }, getKey: () => '' })
+      .find((m) => m.id === 'fal-ai/stable-audio-25/text-to-audio');
+    assert.ok(rawStable, 'Stable غائب عن المرشحين الخام');
+    assert.strictEqual(rawStable.wire_model, 'fal-ai/stable-audio-25/text-to-audio', 'Stable wire_model غير صريح');
+    assert.deepStrictEqual(rawStable.wire, { seconds_total: 65 }, 'معامل غير مقيس في سلك Stable');
+    assert.strictEqual(audio.length, measured.length + 2,
       'مدخل صوت غير مقيس تسرّب إلى الكتالوج: ' + audio.map((m) => m.id).join(','));
     // السعر خطي عند $0.0002/ث في نقاط القياس الأربع
     for (const [id, seconds, cost] of measured) {
@@ -860,6 +894,38 @@ async function main() {
     assert.strictEqual(readEntries(cwd)[0].model, 'test/works-audio-63s');
   });
 
+  await check('ج10: Lyria يرسل wire_model الصريح والمعامل المقيس بلا duration', async () => {
+    const cwd = freshCwd('audio-lyria');
+    const before = seen.submits.length;
+    const res = await genmedia.generate(
+      { cwd, kind: 'audio', prompt: 'موسيقى سينمائية', model: 'test/works-lyria' }, ctxFor());
+    assert.strictEqual(res.ok, true, 'فشل Lyria المزيّف: ' + res.error_code);
+    const sent = seen.submits.slice(before)[0];
+    assert.strictEqual(sent.modelId, 'test/works-audio-lyria', 'مسار Lyria: ' + sent.modelId);
+    assert.deepStrictEqual(sent.body, {
+      negative_prompt: 'vocals, singing, speech, choir, distortion, clipping',
+      prompt: 'موسيقى سينمائية',
+    });
+    assert.ok(!Object.prototype.hasOwnProperty.call(sent.body, 'duration'), 'تسرّب duration غير مقيس');
+    assert.ok(!Object.prototype.hasOwnProperty.call(sent.body, 'seconds_total'), 'تسرّب seconds_total غير مقيس');
+    assert.strictEqual(res.model, 'test/works-lyria');
+    assert.strictEqual(res.cost_usd_estimate, 0.1);
+  });
+
+  await check('ج10: Stable Audio يرسل seconds_total المقيس ومسار السلك الصريح', async () => {
+    const cwd = freshCwd('audio-stable25');
+    const before = seen.submits.length;
+    const res = await genmedia.generate(
+      { cwd, kind: 'audio', prompt: 'موسيقى سينمائية طويلة', model: 'test/works-stable25' }, ctxFor());
+    assert.strictEqual(res.ok, true, 'فشل Stable المزيّف: ' + res.error_code);
+    const sent = seen.submits.slice(before)[0];
+    assert.strictEqual(sent.modelId, 'test/works-audio-stable25', 'مسار Stable: ' + sent.modelId);
+    assert.deepStrictEqual(sent.body, { seconds_total: 65, prompt: 'موسيقى سينمائية طويلة' });
+    assert.ok(!Object.prototype.hasOwnProperty.call(sent.body, 'duration'), 'تسرّب duration غير مقيس');
+    assert.strictEqual(res.model, 'test/works-stable25');
+    assert.strictEqual(res.cost_usd_estimate, 0.2);
+  });
+
   await check('ج10: مدة غير مقيسة لا تُمرَّر — لا حقل duration في الطلب ولا معرّف مخترع', async () => {
     const cwd = freshCwd('audio-unmeasured');
     const before = seen.submits.length;
@@ -881,7 +947,9 @@ async function main() {
     const plan = genmedia.estimate({ kind: 'audio', prompt: 'x' }, ctxFor());
     assert.strictEqual(plan.ok, true);
     assert.strictEqual(plan.model, 'test/works-audio', 'رأس التوجيه: ' + plan.model);
-    assert.deepStrictEqual(plan.alternatives, ['test/works-audio-63s'], 'البدائل: ' + plan.alternatives.join(','));
+    assert.deepStrictEqual(plan.alternatives,
+      ['test/works-audio-63s', 'test/works-lyria', 'test/works-stable25'],
+      'البدائل: ' + plan.alternatives.join(','));
     // وفي الكتالوج الحقيقي الترتيب أرخص-فأرخص أيضاً
     const chain = genmedia.routeChain('audio', { env: { FAL_KEY: FAKE_KEY }, getKey: () => '' }, false);
     assert.strictEqual(chain[0].id, 'fal-ai/ace-step');
