@@ -739,6 +739,9 @@ ipcMain.handle('satr:genProviders', async () => {
   return { ok: true, providers };
 });
 
+// رقم إصدار التطبيق لقسم ⚙ (ملاحظة مالك 2026-08-05) — قراءة فقط بلا مدخلات
+ipcMain.handle('satr:appVersion', () => ({ ok: true, version: String(app.getVersion()) }));
+
 ipcMain.handle('satr:preflight', async () => {
   const [node, npm] = await Promise.all([
     probeVersion('node', ['--version']),

@@ -7,6 +7,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('satr', {
   preflight: () => ipcRenderer.invoke('satr:preflight'),
+  appVersion: () => ipcRenderer.invoke('satr:appVersion'), // رقم إصدار التطبيق لقسم ⚙ — قراءة فقط
   features: () => ipcRenderer.invoke('satr:features'),
   activityList: (cwd) => ipcRenderer.invoke('satr:activityList', { cwd }),
   activityClear: (cwd, confirmed) => ipcRenderer.invoke('satr:activityClear', { cwd, confirmed }),

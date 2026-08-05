@@ -255,8 +255,15 @@ class SatrTopbar extends HTMLElement {
       $('eeAuditBox').textContent = 'سجل التدقيق — ' + ((a && a.todayCount) || 0) + ' حدثاً اليوم، في: ' + ((a && a.path) || '');
     } catch (e) { $('eeAuditBox').textContent = ''; }
   }
-  settingsBtn.addEventListener('click', () => {
+  let appVersionLoaded = false; // يُجلب مرة واحدة لعمر الصفحة — القيمة ثابتة
+  settingsBtn.addEventListener('click', async () => {
     if (!settingsPop.hidden) { refreshActivity(); refreshEeStats(); }
+    if (!settingsPop.hidden && !appVersionLoaded && window.satr.appVersion) {
+      try {
+        const r = await window.satr.appVersion();
+        if (r && r.ok && r.version) { $('appVersionLabel').textContent = 'v' + r.version; appVersionLoaded = true; }
+      } catch (e) { /* يبقى «—» — لا كسر للوحة */ }
+    }
   });
   initEeSection();
 
