@@ -40,3 +40,6 @@ desktop.ini
 /promo/frames/
 /promo/.frames/
 /dist-installer-*/
+
+# وثيقة الاستراتيجية الداخلية — محلية لا تُنشر (قرار 2026-08-06)
+/docs/MONETIZATION.md

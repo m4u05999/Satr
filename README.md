@@ -5,9 +5,9 @@
 **البيت العربي لأدوات الذكاء الاصطناعي في سطر الأوامر — يعرض العربية بشكل مثالي حيث تعجز الطرفية.**
 
 <p align="center">
-  <a href="LICENSE"><img alt="الرخصة: MIT" src="https://img.shields.io/badge/License-MIT-D9A441"></a>
+  <a href="LICENSE"><img alt="الرخصة: FSL-1.1-MIT" src="https://img.shields.io/badge/License-FSL--1.1--MIT-D9A441"></a>
   <img alt="المنصّة: Windows" src="https://img.shields.io/badge/Platform-Windows-2D7DD2">
-  <img alt="الإصدار" src="https://img.shields.io/badge/version-2.10.0-7FB069">
+  <img alt="الإصدار" src="https://img.shields.io/badge/version-2.14.0-7FB069">
 </p>
 
 ---
@@ -102,13 +102,13 @@ ConPTY) وفوقه **عارضان يتبادلان بذكاء**:
 ## التثبيت (للمستخدمين)
 
 في [صفحة الإصدارات (Releases)](https://github.com/m4u05999/Satr/releases/latest)، انزل إلى
-قسم **«Assets»** ونزّل **`Satr-Setup-2.10.0.exe`** — ثم شغّله (واجهة التثبيت عربية بالكامل).
+قسم **«Assets»** ونزّل **`Satr-Setup-2.14.0.exe`** — ثم شغّله (واجهة التثبيت عربية بالكامل).
 إن لم يكن Claude Code مثبّتاً، يرشدك معالج أول التشغيل لتثبيته وتسجيل الدخول.
 
 > [!WARNING]
-> **لا تنزّل «Source code (zip/tar.gz)»** — هذا أرشيف اسمه `Satr-2.10.0.zip` (بشرطة)
+> **لا تنزّل «Source code (zip/tar.gz)»** — هذا أرشيف اسمه `Satr-2.14.0.zip` (بشرطة)
 > يحوي **شفرة المصدر** (مجلدات `electron` و`src` وملف `package.json`…) **وليس فيه
-> التطبيق**. ملف التطبيق فيه كلمة **Setup**: `Satr-Setup-2.10.0.exe` تحت **Assets**.
+> التطبيق**. ملف التطبيق فيه كلمة **Setup**: `Satr-Setup-2.14.0.exe` تحت **Assets**.
 
 ### ⚠ المتصفح يمنع التنزيل؟ («isn't commonly downloaded» / غير آمن)
 
@@ -116,20 +116,20 @@ ConPTY) وفوقه **عارضان يتبادلان بذكاء**:
 إصدار جديد يبدأ بسمعة صفر لدى Google Safe Browsing، فقد **يمنع المتصفح تنزيل ملف `.exe`**
 قبل اكتماله. هذا حاجز سمعة تلقائي لا علاقة له بأمان الملف. ثلاثة حلول بترتيب السهولة:
 
-1. **نزّل `Satr-Setup-2.10.0.zip`** (تحت Assets، بكلمة Setup — لا «Source code») بدل الـ
+1. **نزّل `Satr-Setup-2.14.0.zip`** (تحت Assets، بكلمة Setup — لا «Source code») بدل الـ
    `.exe` — تمرّ من الحاجز غالباً؛ فُكّ الضغط فتجد **المثبّت `.exe` مباشرة** بداخله، وشغّله.
 2. **في تحذير التنزيل**: اضغط السهم `⌄` بجانب التحذير ← **«الاحتفاظ» (Keep)** ← ثم
    «الاحتفاظ رغم ذلك» (Keep anyway). (في بعض المتصفحات يلزم فتح «التنزيلات» ثم Keep.)
 3. **تنزيل مباشر يتجاوز المتصفح كلياً** — الصق في PowerShell:
    ```powershell
-   irm "https://github.com/m4u05999/Satr/releases/latest/download/Satr-Setup-2.10.0.exe" -OutFile "$HOME\Downloads\Satr.Setup.exe"
+   irm "https://github.com/m4u05999/Satr/releases/latest/download/Satr-Setup-2.14.0.exe" -OutFile "$HOME\Downloads\Satr.Setup.exe"
    ```
 
 **تحقّق من سلامة الملف (اختياري)** — احسب بصمة SHA-256 للملف وقارنها بالبصمة المنشورة في
 **ملاحظات الإصدار** على [صفحة الإصدارات](https://github.com/m4u05999/Satr/releases/latest)
 (تُدرَج آلياً مع كل نسخة عبر خط النشر):
 ```powershell
-(Get-FileHash "$HOME\Downloads\Satr-Setup-2.10.0.exe" -Algorithm SHA256).Hash
+(Get-FileHash "$HOME\Downloads\Satr-Setup-2.14.0.exe" -Algorithm SHA256).Hash
 ```
 
 ### تنبيه: تحذير Windows SmartScreen (عند التشغيل)
@@ -140,8 +140,8 @@ ConPTY) وفوقه **عارضان يتبادلان بذكاء**:
 1. اضغط **«مزيد من المعلومات» (More info)**.
 2. ثم اضغط **«تشغيل على أي حال» (Run anyway)**.
 
-يمكنك دائماً مراجعة الكود المصدري هنا بنفسك للتأكّد — فالمشروع مفتوح المصدر بالكامل.
-والحلّ الجذري (توقيع رقمي / التحديث التلقائي) على خارطة الطريق.
+يمكنك دائماً مراجعة الكود المصدري هنا بنفسك للتأكّد — فالشفرة عامة بالكامل
+(source-available). والتحديث التلقائي مدمج منذ 2.4.1؛ التوقيع الرقمي على خارطة الطريق.
 
 ### نصيحة أمان مهمة (git)
 
@@ -188,6 +188,18 @@ npm run dist       # بناء مثبّت ويندوز NSIS في مجلد dist/
 
 ## الرخصة
 
-[رخصة MIT](LICENSE) — © 2026 محمد عبدالرحيم.
+[رخصة FSL-1.1-MIT](LICENSE) (‏Functional Source License) — © 2026 محمد عبدالرحيم.
+
+**بالعربية الواضحة:** الكود متاح للجميع قراءةً وتعديلاً واستخداماً **مجاناً لأي غرض** —
+فرداً كنت أو شركة — عدا شيء واحد: لا يجوز أخذ الكود لبناء منتج أو خدمة **تنافس «سطر»**
+أو إعادة بيعه. وكل إصدار يتحول **تلقائياً إلى رخصة MIT الكاملة بعد سنتين** من نشره.
+
+**In plain English:** the source is public and free to use, modify and
+self-host for any purpose — except building a competing product or reselling
+it. Each release automatically becomes MIT-licensed two years after it ships
+(see the Grant of Future License in [LICENSE](LICENSE)).
+
+الإصدارات المنشورة حتى v2.10.0 صدرت تحت رخصة MIT وتبقى كذلك؛ الانتقال إلى FSL يسري
+من v2.14.0 فصاعداً.
 
 </div>
