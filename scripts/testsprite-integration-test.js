@@ -32,6 +32,15 @@ assert.strictEqual(testsprite.requested('اختبر المشروع بTestSprite'
 assert.strictEqual(testsprite.requested('استخدم تست سبرايت'), true);
 assert.strictEqual(testsprite.requested('مقتطف تقرير قصير عن البناء السابق.\nاختبر المشروع بTestSprite'), true,
   'الطلب الحقيقي بعد لصق قصير داخل أول 400 محرف يبقى مفعّلاً.');
+// نية جولة الموقع: طلب TestSprite الصريح + ذكر site/الموقع في مقدمة الرسالة.
+assert.strictEqual(testsprite.siteRequested('اختبر موقع سطر عبر TestSprite'), true);
+assert.strictEqual(testsprite.siteRequested('استخدم TestSprite لاختبار صفحة الهبوط'), true);
+assert.strictEqual(testsprite.siteRequested('استخدم TestSprite على wallet.html وenterprise.html'), true);
+assert.strictEqual(testsprite.siteRequested('test the landing site with TestSprite'), true);
+assert.strictEqual(testsprite.siteRequested('اختبر المشروع عبر TestSprite'), false,
+  'طلب اختبار التطبيق العادي لا يتحول جولة موقع.');
+assert.strictEqual(testsprite.siteRequested('اختبر صفحة الهبوط يدوياً'), false,
+  'ذكر الموقع بلا طلب TestSprite صريح لا يفعّل الجولة.');
 assert.strictEqual(testsprite.needsClarification('أريد اختبار'), true);
 assert.strictEqual(testsprite.needsClarification('أريد اختبار المشروع كاملاً'), false);
 assert.deepStrictEqual(testsprite.extractTestIds('شغّل TC005 ثم tc006 وTC005'), ['TC005', 'TC006']);
@@ -70,6 +79,23 @@ const direct = testsprite.chatPrompt('نفّذ TC005 وTC006 عبر TestSprite',
 });
 assert(direct.includes('TC005, TC006'));
 assert(direct.includes('النطاق محدد بما يكفي'));
+
+// عقد جولة الموقع: منفذ site، الصفحات الثلاث، بلا test:full وبلا محاكاة، وbootstrap دائماً.
+const siteRun = testsprite.siteChatPrompt('اختبر موقع سطر عبر TestSprite', {
+  url: 'http://127.0.0.1:4620', cwd: projectRoot,
+});
+assert(siteRun.includes('localPort=4620'));
+assert(siteRun.includes('/enterprise.html') && siteRun.includes('/wallet.html'));
+assert(siteRun.includes('projectName="satr-site"'));
+assert(siteRun.includes('لا تشغّل npm run test:full'));
+assert(!siteRun.includes('mock-satr'), 'عقد الموقع لا يذكر محاكاة window.satr.');
+assert(siteRun.includes('استدعِ testsprite_bootstrap دائماً'),
+  'تهيئة قديمة لسطح الواجهة يجب ألا تمنع bootstrap جولة الموقع.');
+assert(siteRun.includes('mailto') && siteRun.includes('reduced-motion'));
+assert(siteRun.includes('لا تدّعِ اختبار تطبيق سطر'));
+assert.strictEqual(testsprite.siteChatPrompt('اختبر الموقع', { url: 'https://example.com', cwd: 'D:\\sater' }), 'اختبر الموقع');
+assert.strictEqual(testsprite.siteRequested(siteRun.slice(siteRun.indexOf('<satr_testsprite_run>'))), false,
+  'إعادة لصق كتلة عقد الموقع لا تعيد تفعيل الجولة ذاتياً.');
 
 const tempRoot = path.join(projectRoot, 'testsprite_tests', 'tmp');
 fs.mkdirSync(tempRoot, { recursive: true });
@@ -139,6 +165,11 @@ assert(agent.includes("require('./testspriteharness')") && agent.includes('tests
 assert(agent.includes('testsprite.watchResults') && codexSource.includes('testsprite.watchResults')
   && app.includes("ev.type === 'testsprite_progress'"),
   'تقدم TestSprite لا يُراقب من ملف النتائج أو لا يظهر في الواجهة.');
+assert(agent.includes('testsprite.siteRequested(prompt)') && agent.includes('testspriteHarness.startSite()')
+  && agent.includes('testsprite.siteChatPrompt')
+  && codexSource.includes('testsprite.siteRequested(prompt)') && codexSource.includes('testspriteHarness.startSite()')
+  && codexSource.includes('testsprite.siteChatPrompt'),
+  'جولة الموقع (site/) غير موصولة في المحركين.');
 assert(codexSource.includes("it.type === 'mcpToolCall'") && codexSource.includes("t === 'mcpToolCall'"),
   'بطاقات أدوات MCP الخارجية لا تظهر بدءاً ونتيجةً في محادثة Codex.');
 assert(topbar.includes('r.integrations'), 'تكامل TestSprite غير ظاهر في مركز المفاتيح.');

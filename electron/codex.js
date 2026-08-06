@@ -862,10 +862,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     if (launch) {
       appServerArgs.push(...launch.args);
       Object.assign(spawnEnv, launch.env);
-      if (testspriteHarness.supportsProject(cwd)) {
+      // جولة الموقع (site/) لها سطح وعقد مستقلان؛ وإلا فالمسار القائم لواجهة التطبيق.
+      const testspriteSiteRound = testsprite.siteRequested(prompt) && testspriteHarness.supportsSite(cwd);
+      if (testspriteSiteRound || testspriteHarness.supportsProject(cwd)) {
         try {
-          testspriteHarnessHost = await testspriteHarness.start();
-          effectivePrompt = testsprite.chatPrompt(prompt, { url: testspriteHarnessHost.url, cwd });
+          testspriteHarnessHost = testspriteSiteRound
+            ? await testspriteHarness.startSite()
+            : await testspriteHarness.start();
+          effectivePrompt = testspriteSiteRound
+            ? testsprite.siteChatPrompt(prompt, { url: testspriteHarnessHost.url, cwd })
+            : testsprite.chatPrompt(prompt, { url: testspriteHarnessHost.url, cwd });
           testspriteProgressWatcher = testsprite.watchResults(cwd, {
             testIds: testsprite.extractTestIds(prompt),
             onUpdate: emit,
@@ -876,11 +882,14 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
             type: 'assistant',
             message: { role: 'assistant', content: [{
               type: 'text',
-              text: '🧪 بدأ «سطر» سطح TestSprite المؤقت داخل هذا الدور؛ سيوقفه تلقائياً عند الانتهاء.',
+              text: testspriteSiteRound
+                ? '🧪 بدأ «سطر» خادم الموقع (site/) لجولة TestSprite داخل هذا الدور؛ سيوقفه تلقائياً عند الانتهاء.'
+                : '🧪 بدأ «سطر» سطح TestSprite المؤقت داخل هذا الدور؛ سيوقفه تلقائياً عند الانتهاء.',
             }] },
           });
         } catch (error) {
-          const code = error && error.code === 'EADDRINUSE' ? 'المنفذ 4173 مستخدم' : String((error && error.message) || error);
+          const busyPort = testspriteSiteRound ? testspriteHarness.DEFAULT_SITE_PORT : testspriteHarness.DEFAULT_PORT;
+          const code = error && error.code === 'EADDRINUSE' ? ('المنفذ ' + busyPort + ' مستخدم') : String((error && error.message) || error);
           emit({
             type: 'assistant',
             message: { role: 'assistant', content: [{

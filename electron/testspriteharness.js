@@ -6,9 +6,12 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
+const SITE = path.join(ROOT, 'site');
 const CLIENT = path.join(__dirname, 'testspriteharness-client.js');
 const HOST = '127.0.0.1';
 const DEFAULT_PORT = 4173;
+// منفذ سطح site/ مستقل عن 4600 (site:serve اليدوي) كي لا يتصادما، وبعيد عن 4173.
+const DEFAULT_SITE_PORT = 4620;
 const INJECT_BEFORE = '<script src="vendor/xterm.js"></script>';
 const MOCK_TAG = '<script src="/__testsprite__/mock-satr.js"></script>';
 
@@ -30,14 +33,14 @@ function harnessIndex() {
     .replace(INJECT_BEFORE, MOCK_TAG + '\n' + INJECT_BEFORE);
 }
 
-function safeAsset(pathname) {
+function safeAsset(pathname, base = SRC) {
   let decoded;
   try { decoded = decodeURIComponent(pathname); } catch (error) { return null; }
   if (!decoded || decoded.includes('\0')) return null;
   const relative = decoded.replace(/^\/+/, '').replace(/\//g, path.sep);
-  const target = path.resolve(SRC, relative);
-  const prefix = SRC.endsWith(path.sep) ? SRC : SRC + path.sep;
-  if (target !== SRC && !target.startsWith(prefix)) return null;
+  const target = path.resolve(base, relative);
+  const prefix = base.endsWith(path.sep) ? base : base + path.sep;
+  if (target !== base && !target.startsWith(prefix)) return null;
   try {
     const stat = fs.lstatSync(target);
     if (stat.isSymbolicLink() || !stat.isFile()) return null;
@@ -89,6 +92,33 @@ function createHarnessServer() {
   });
 }
 
+// خادم سطح site/ الثابت: الملفات كما هي بلا أي حقن (لا mock ولا window.satr —
+// الموقع لا يحتاجهما)، نفس حواجز safeAsset (لا traversal/symlink، GET/HEAD فقط).
+function createSiteServer() {
+  return http.createServer((req, res) => {
+    const method = req.method || 'GET';
+    const headOnly = method === 'HEAD';
+    if (method !== 'GET' && !headOnly) {
+      send(res, 405, 'text/plain; charset=utf-8', 'Method Not Allowed', headOnly);
+      return;
+    }
+    let pathname;
+    try { pathname = new URL(req.url || '/', 'http://localhost').pathname; }
+    catch (error) { send(res, 400, 'text/plain; charset=utf-8', 'Bad Request', headOnly); return; }
+
+    if (pathname === '/__testsprite__/health') {
+      send(res, 200, MIME['.json'], JSON.stringify({ ok: true, harness: 'satr', version: 1, surface: 'site' }), headOnly);
+      return;
+    }
+    const asset = safeAsset(pathname === '/' ? '/index.html' : pathname, SITE);
+    if (!asset) {
+      send(res, 404, 'text/plain; charset=utf-8', 'Not Found', headOnly);
+      return;
+    }
+    send(res, 200, MIME[path.extname(asset).toLowerCase()] || 'application/octet-stream', fs.readFileSync(asset), headOnly);
+  });
+}
+
 function parsePort(argv, env) {
   const index = argv.indexOf('--port');
   const raw = index === -1 ? env.TESTSPRITE_PORT : argv[index + 1];
@@ -112,7 +142,7 @@ function supportsProject(cwd) {
   } catch (error) { return false; }
 }
 
-function probe(port) {
+function probe(port, surface) {
   return new Promise((resolve) => {
     const req = http.get({ host: HOST, port, path: '/__testsprite__/health', timeout: 1000 }, (res) => {
       const chunks = [];
@@ -120,7 +150,9 @@ function probe(port) {
       res.on('end', () => {
         try {
           const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          resolve(res.statusCode === 200 && body.ok === true && body.harness === 'satr' && body.version === 1);
+          const matches = res.statusCode === 200 && body.ok === true && body.harness === 'satr' && body.version === 1;
+          // سطح site يشترط بصمته الصريحة؛ بلا surface يبقى عقد الواجهة القائم كما هو.
+          resolve(matches && (surface ? body.surface === surface : body.surface === undefined));
         } catch (error) { resolve(false); }
       });
     });
@@ -129,14 +161,10 @@ function probe(port) {
   });
 }
 
-function start(port = DEFAULT_PORT) {
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    return Promise.reject(new Error('invalid_testsprite_port'));
-  }
-  const server = createHarnessServer();
+function listenServer(server, port, surface) {
   return new Promise((resolve, reject) => {
     const fail = async (error) => {
-      if (error && error.code === 'EADDRINUSE' && await probe(port)) {
+      if (error && error.code === 'EADDRINUSE' && await probe(port, surface)) {
         resolve({ port, url: `http://${HOST}:${port}`, owned: false, async close() {} });
         return;
       }
@@ -162,7 +190,32 @@ function start(port = DEFAULT_PORT) {
   });
 }
 
+function start(port = DEFAULT_PORT) {
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    return Promise.reject(new Error('invalid_testsprite_port'));
+  }
+  return listenServer(createHarnessServer(), port, undefined);
+}
+
+function supportsSite(cwd) {
+  if (!supportsProject(cwd)) return false;
+  try {
+    const root = fs.realpathSync(cwd);
+    return fs.statSync(path.join(root, 'site', 'index.html')).isFile()
+      && fs.statSync(path.join(root, 'site', 'enterprise.html')).isFile()
+      && fs.statSync(path.join(root, 'site', 'wallet.html')).isFile();
+  } catch (error) { return false; }
+}
+
+function startSite(port = DEFAULT_SITE_PORT) {
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    return Promise.reject(new Error('invalid_testsprite_port'));
+  }
+  return listenServer(createSiteServer(), port, 'site');
+}
+
 module.exports = {
-  ROOT, SRC, CLIENT, HOST, DEFAULT_PORT,
-  createHarnessServer, harnessIndex, safeAsset, parsePort, supportsProject, probe, start,
+  ROOT, SRC, SITE, CLIENT, HOST, DEFAULT_PORT, DEFAULT_SITE_PORT,
+  createHarnessServer, createSiteServer, harnessIndex, safeAsset, parsePort,
+  supportsProject, supportsSite, probe, start, startSite,
 };

@@ -1323,6 +1323,16 @@ result`)، فالواجهة لا تتغيّر.
   الـharness قبل app-server ويحقن تلقائياً عنوانه وتسلسل MCP ثم `npm run test:full` في مدخل
   الدور. يرتبط المقبض بعمر الدور ويُغلق عند النجاح/الفشل/الإيقاف؛ إن كان harness «سطر» يعمل
   أصلاً على `4173` يعاد استخدامه بلا امتلاك أو قتل. لا IPC ولا أمر `/` جديدان.
+- **جولة الموقع (site/) — 2026-08-06**: ذكر «الموقع/صفحة الهبوط/site/landing أو
+  enterprise.html/wallet.html» داخل طلب TestSprite الصريح نفسه (`testsprite.siteRequested`)
+  يحوّل الدور إلى جولة موقع: خادم `site/` الثابت على `127.0.0.1:4620`
+  (`testspriteharness.startSite` — نفس حواجز safeAsset، بلا حقن mock، بصمة health
+  تحمل `surface:'site'` فلا يُقبل خادم الواجهة بديلاً عند EADDRINUSE والعكس)، وعقد
+  `siteChatPrompt` نطاقه الصفحات الثلاث حصراً: bootstrap يُستدعى دائماً (تهيئة الواجهة
+  السابقة لمنفذ آخر)، تغطية الروابط/mailto/الأسعار LTR/التجاوب/reduced-motion/صفر
+  console-CSP، **وبلا `test:full`** (الموقع مستقل عن Electron). الفرع موصول في
+  المحرّكين agent.js وcodex.js، ويغطيه `test:testsprite` (النية والعقد وفحص التوصيل)
+  و`test:testsprite-harness` (خادم site وحواجزه وتمايز البصمة).
 - **الاختبار**: العقد والحواجز ودورة ملكية الخادم والواجهة الحية في
   `npm run test:testsprite-ready`. الطريقة الأساسية من الدردشة والتشخيص اليدوي في
   `docs/TESTSPRITE.md`.

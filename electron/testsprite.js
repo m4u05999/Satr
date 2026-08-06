@@ -63,6 +63,17 @@ function requested(prompt) {
   return intent.explicit;
 }
 
+// نية «جولة الموقع»: طلب TestSprite الصريح نفسه + ذكر صفحات site/ في مقدمة الرسالة.
+// «الموقع» وحدها مقصودة: في جملة طلب اختبار TestSprite لا لبس بينها وبين التطبيق.
+function siteRequested(prompt) {
+  if (!requested(prompt)) return false;
+  const text = String(prompt || '').replace(INJECTED_RUN_BLOCK_RE, '').trim().slice(0, INTENT_PREFIX_LIMIT);
+  const arabic = normalizeIntentText(text);
+  return /\b(?:site|landing)\b/i.test(text)
+    || /(?:enterprise|wallet)\.html/i.test(text)
+    || /(?:الموقع|موقع\s*سطر|صفح(?:[هة]|ات)\s*الهبوط|الصفحات\s*(?:العام[هة]|التسويقي[هة]))/.test(arabic);
+}
+
 function needsClarification(prompt) {
   if (typeof prompt !== 'string') return true;
   if (/\bTC\d{3,}\b/i.test(prompt)) return false;
@@ -261,9 +272,43 @@ ${bootstrapInstruction}
 </satr_testsprite_run>`;
 }
 
+// عقد جولة الموقع (site/): سطح ثابت بلا محاكاة window.satr، والنطاق الصفحات الثلاث
+// حصراً. bootstrap يُستدعى دائماً بقيم هذه الجولة (تهيئة سابقة على منفذ الواجهة لا
+// تصلح لمنفذ الموقع)، ولا يُشغَّل test:full — الموقع مستقل عن Electron.
+function siteChatPrompt(prompt, context) {
+  const url = context && context.url;
+  const cwd = context && context.cwd;
+  if (typeof url !== 'string' || !/^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(url)) return String(prompt || '');
+  if (typeof cwd !== 'string' || !cwd) return String(prompt || '');
+  const port = new URL(url).port;
+  const requestedIds = extractTestIds(prompt);
+  const resultSelection = requestedIds.length
+    ? `راقب الحالات المحددة فقط: ${requestedIds.join(', ')}.`
+    : 'عند testIds=[] راقب كل الحالات التي تكتبها الدفعة الحالية.';
+  return String(prompt || '') + `
+
+<satr_testsprite_run>
+هذه جولة اختبار «موقع سطر» الثابت (مجلد site/ — صفحة الهبوط وصفحتا العروض)، لا تطبيق سطر نفسه.
+بدأ «سطر» خادم الموقع لهذا الدور على ${url}/ ويخدم ثلاث صفحات: / و/enterprise.html و/wallet.html. لا تشغّل خادماً محلياً آخر ولا تفتح لوحة النتائج؛ صفحة إعداد bootstrap الأولية مستثناة عند الحاجة.
+استخدم أدوات MCP التابعة لخادم testsprite فعلياً؛ لا تستبدلها بتحليل يدوي.
+النطاق محدد (الصفحات الثلاث)؛ لا تسأل أسئلة توضيح وابدأ مباشرة.
+نفّذ بالتسلسل:
+1. testsprite_check_account_info، وتوقف إن فشل الاتصال أو أعادت الأداة حالة مفتاح غير صالح.
+2. استدعِ testsprite_bootstrap دائماً في هذه الجولة — حتى لو وُجدت تهيئة سابقة فهي لسطح آخر — بالقيم: localPort=${port}, pathname="/", type="frontend", projectPath=${JSON.stringify(cwd)}, testScope="codebase", serverMode="development". قد يفتح نموذج إعداد أولياً؛ انتظر حفظ المستخدم له قبل المتابعة.
+3. testsprite_generate_code_summary.
+4. testsprite_generate_standardized_prd.
+5. testsprite_generate_frontend_test_plan مع needLogin=false، ووجّه الخطة إلى صفحات الموقع الثلاث حصراً.
+6. testsprite_generate_code_and_execute مع projectName="satr-site" وserverMode="development" وtestIds المطابقة لاختيار المستخدم. اطلب تغطية: الصفحات الثلاث تُحمَّل بلا أخطاء، الروابط الداخلية بينها (الرأس والتذييل) تعمل، رابط التنزيل يشير إلى GitHub Releases، أزرار البريد mailto موجودة وصحيحة الصيغة على صفحتي enterprise وwallet، الأسعار والأرقام تظهر LTR داخل النص العربي RTL، التجاوب على عرض موبايل ضيق، احترام prefers-reduced-motion، وصفر أخطاء console/CSP. لا تدّعِ اختبار تطبيق سطر أو Electron/IPC/PTY — هذه صفحات ويب ثابتة فقط.
+7. عندما تعيد الأداة أمر Terminal: سجّل أولاً mtime الحالي لـtestsprite_tests/tmp/test_results.json، ثم شغّل الأمر في الخلفية وراقب الملف كل 5 ثوانٍ. ${resultSelection} لا تعتبر صمت CLI أو بقاء العملية دليلاً على العمل؛ يكتمل TestSprite عندما يتغير الملف بعد خط الأساس وتظهر كل الحالات المطلوبة بحالة PASSED أو FAILED أو SKIPPED. عندها أوقف غلاف CLI العالق إن بقي، ولا تنتظر خروجه، ثم تابع التقرير.
+8. لا تشغّل npm run test:full في هذا الدور — جولة الموقع مستقلة عن طقم التطبيق الأصلي.
+لا تعدّل site/ أو كود الإنتاج، لا تضف اعتماديات، لا تنشئ commit. يُسمح فقط بملفات TestSprite داخل .testsprite/ وبمخرجات الاختبارات المؤقتة.
+في التقرير اعرض Passed/Failed/Skipped وأول سبب جذري لكل فشل وgit status --short، وبيّن أن التغطية صفحات site/ الثلاث فقط. لا تصلح الإخفاقات في هذا الدور.
+</satr_testsprite_run>`;
+}
+
 module.exports = {
   KEY_NAME, SERVER_NAME, PACKAGE, COMMAND, ARGS, CODEX_ENABLED_TOOLS, MISSING_KEY_MESSAGE,
-  isValidApiKey, classifyRequest, requested, needsClarification, extractTestIds, publicInfo,
+  isValidApiKey, classifyRequest, requested, siteRequested, needsClarification, extractTestIds, publicInfo,
   claudeConfig, codexLaunch, configPath, resultPath, resultSnapshot, summarizeResults, watchResults,
-  completedConfig, scrubConfig, chatPrompt,
+  completedConfig, scrubConfig, chatPrompt, siteChatPrompt,
 };
