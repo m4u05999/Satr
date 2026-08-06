@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <title>محفظة التوليد — دراسة من سطر</title>
+  <meta name="description" content="فكرة محفظة توليد مسبقة الدفع داخل «سطر»: بلا حساب مزوّد ولا مفتاح API. ليست منتجاً بعد؛ سجّل اهتمامك إن كنت تريدها.">
+  <meta property="og:title" content="محفظة التوليد — دراسة من سطر">
+  <meta property="og:description" content="ولّد من سطر برصيد جاهز، بهامش معلن وBYOK مجاني دائماً. تُبنى إذا طلبها المستخدمون.">
+  <meta property="og:type" content="website">
+  <link rel="stylesheet" href="vendor/fonts.css">
+  <link rel="stylesheet" href="css/site.css">
+</head>
+<body class="market-page wallet-page">
+
+<div class="grain" aria-hidden="true"></div>
+
+<header class="site-header">
+  <a class="brand" href="index.html">سطر</a>
+  <nav aria-label="التنقل الرئيسي">
+    <a href="index.html">الرئيسية</a>
+    <a href="#wallet-tiers">فئات المحفظة</a>
+    <a href="#catalog">كتالوج الأسعار</a>
+    <a class="nav-cta" href="https://github.com/m4u05999/Satr/releases/latest" rel="noopener">التنزيل المجاني</a>
+  </nav>
+</header>
+
+<main class="market-main">
+  <section class="market-hero" aria-labelledby="wallet-title">
+    <div class="wrap market-hero-grid">
+      <div>
+        <span class="market-eyebrow">قيد الدراسة — يُبنى إذا طلبته أنتم</span>
+        <h1 class="market-title" id="wallet-title">ولّد من سطر برصيد جاهز.</h1>
+        <p class="market-lead">بلا حساب مزوّد ولا مفتاح <bdi dir="ltr">API</bdi>. تشحن رصيداً صغيراً مرة واحدة، وتعرف سعر كل صورة أو فيديو أو مقطع موسيقي قبل الموافقة.</p>
+        <div class="market-actions">
+          <a class="btn btn-gold" href="mailto:satrapp2026@gmail.com?subject=%D8%A3%D8%B1%D9%8A%D8%AF%20%D9%85%D8%AD%D9%81%D8%B8%D8%A9%20%D8%A7%D9%84%D8%AA%D9%88%D9%84%D9%8A%D8%AF">سجّل اهتمامك</a>
+          <a class="btn btn-ghost" href="#catalog">رؤية الأسعار المقترحة</a>
+        </div>
+        <p class="market-note">لا يوجد منتج أو رصيد للبيع الآن — هذه صفحة قياس طلب فقط.</p>
+      </div>
+
+      <aside class="wallet-demo" aria-label="تصور لفئات محفظة التوليد">
+        <span class="wallet-label">رصيد توليد مقترح</span>
+        <div class="wallet-balance">$10.00</div>
+        <p class="wallet-caption">شراء لمرة واحدة · صلاحية <bdi dir="ltr">12</bdi> شهراً</p>
+        <div class="wallet-chips" aria-hidden="true">
+          <span class="wallet-chip">$5</span>
+          <span class="wallet-chip wallet-chip-active">$10</span>
+          <span class="wallet-chip">$25</span>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section class="market-section market-section-alt" id="wallet-tiers" aria-labelledby="tiers-title">
+    <div class="wrap">
+      <div class="market-heading">
+        <span class="market-eyebrow">فئات بسيطة، بلا اشتراك</span>
+        <h2 id="tiers-title">اختر سقفك مسبقاً.</h2>
+        <p>إن بُنيت المحفظة، تكون كل فئة شراءً لمرة واحدة بصلاحية اثني عشر شهراً.</p>
+      </div>
+
+      <div class="wallet-tier-grid">
+        <article class="wallet-tier">
+          <strong>$5</strong>
+          <span>شراء لمرة واحدة</span>
+        </article>
+        <article class="wallet-tier wallet-tier-featured">
+          <strong>$10</strong>
+          <span>شراء لمرة واحدة</span>
+        </article>
+        <article class="wallet-tier">
+          <strong>$25</strong>
+          <span>شراء لمرة واحدة</span>
+        </article>
+      </div>
+      <p class="wallet-terms">كل فئة مقترحة بصلاحية <bdi dir="ltr">12</bdi> شهراً — لا تجديد تلقائي.</p>
+    </div>
+  </section>
+
+  <section class="market-section" id="catalog" aria-labelledby="catalog-title">
+    <div class="wrap">
+      <div class="market-heading">
+        <span class="market-eyebrow">الكتالوج المقيس × <bdi dir="ltr">1.4</bdi></span>
+        <h2 id="catalog-title">سعر كل عملية أمامك.</h2>
+        <p>هذه أسعار العرض المقترحة للمحفظة، محسوبة من كتالوج المزوّد المقيس مع هامش واضح.</p>
+      </div>
+
+      <div class="catalog-table-wrap">
+        <table class="catalog-table">
+          <thead>
+            <tr>
+              <th scope="col">نوع التوليد</th>
+              <th scope="col">النموذج</th>
+              <th scope="col">السعر المعروض</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>صورة</td>
+              <td><bdi dir="ltr">flux</bdi></td>
+              <td><bdi dir="ltr">$0.004</bdi></td>
+            </tr>
+            <tr>
+              <td>صورة</td>
+              <td><bdi dir="ltr">GPT Image</bdi></td>
+              <td><bdi dir="ltr">$0.028</bdi></td>
+            </tr>
+            <tr>
+              <td>فيديو</td>
+              <td><bdi dir="ltr">ltx</bdi></td>
+              <td><bdi dir="ltr">$0.028</bdi></td>
+            </tr>
+            <tr>
+              <td>فيديو</td>
+              <td><bdi dir="ltr">wan</bdi></td>
+              <td><bdi dir="ltr">$0.35</bdi></td>
+            </tr>
+            <tr>
+              <td>موسيقى</td>
+              <td><bdi dir="ltr">ace-step</bdi></td>
+              <td><bdi dir="ltr">$0.003–$0.034</bdi></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="catalog-meta">
+        <p>الهامش معلن: سعر المزوّد المقيس + <bdi dir="ltr">40%</bdi>، وسعر <bdi dir="ltr">BYOK</bdi> يبقى مجانياً داخل سطر دائماً</p>
+        <p class="catalog-date">الكتالوج: <bdi dir="ltr">2026-08-02</bdi></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="market-section market-section-alt" aria-labelledby="study-title">
+    <div class="wrap">
+      <div class="market-heading">
+        <span class="market-eyebrow">اختبار طلب، لا متجر</span>
+        <h2 id="study-title">لن نأخذ مالاً قبل أن نتأكد.</h2>
+        <p>المحفظة فكرة قيد الدراسة. نختبر الاهتمام بالبريد أولاً، ثم نفحص شروط المزوّد ووسائل الدفع قبل أي بناء أو بيع.</p>
+      </div>
+
+      <div class="market-grid">
+        <article class="market-card">
+          <span class="market-card-index">01 · TODAY</span>
+          <h3>لا دفع اليوم</h3>
+          <p>لا <bdi class="market-tech" dir="ltr">Paddle</bdi>، ولا طلب مسبق، ولا بطاقة دفع. زر الاهتمام يفتح البريد فقط.</p>
+        </article>
+        <article class="market-card">
+          <span class="market-card-index">02 · ALWAYS</span>
+          <h3><bdi class="market-tech" dir="ltr">BYOK</bdi> مجاني دائماً</h3>
+          <p>إن كنت تملك مفتاح المزوّد، يبقى التوليد به مجانياً داخل «سطر» بلا عمولة وسيط.</p>
+        </article>
+        <article class="market-card">
+          <span class="market-card-index">03 · IF ASKED</span>
+          <h3>نبني عند وجود طلب</h3>
+          <p>رسالتك هي الإشارة التي تحدد إن كانت راحة الرصيد الجاهز تستحق البناء فعلاً.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="market-section market-cta" aria-labelledby="wallet-cta-title">
+    <div class="wrap">
+      <span class="market-eyebrow">قيد الدراسة — يُبنى إذا طلبته أنتم</span>
+      <h2 id="wallet-cta-title">هل تريد محفظة توليد جاهزة؟</h2>
+      <p>لا شراء ولا التزام. افتح رسالة قصيرة، وسنعرف أن الفكرة تستحق الخطوة التالية.</p>
+      <div class="market-actions">
+        <a class="btn btn-gold" href="mailto:satrapp2026@gmail.com?subject=%D8%A3%D8%B1%D9%8A%D8%AF%20%D9%85%D8%AD%D9%81%D8%B8%D8%A9%20%D8%A7%D9%84%D8%AA%D9%88%D9%84%D9%8A%D8%AF">سجّل اهتمامك</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <span>«سطر» — شفرة عامة <bdi dir="ltr">source-available (FSL)</bdi></span>
+  <nav aria-label="روابط التذييل">
+    <a href="index.html">الرئيسية</a>
+    ·
+    <a href="enterprise.html">رخصة المنظمة</a>
+    ·
+    <a href="https://github.com/m4u05999/Satr" rel="noopener">GitHub</a>
+  </nav>
+</footer>
+
+</body>
+</html>

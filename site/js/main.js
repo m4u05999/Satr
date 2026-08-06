@@ -198,20 +198,6 @@ function initStatic() {
   if (cursor) cursor.style.opacity = '1';
 }
 
-// ---------- التنزيل: آخر إصدار من GitHub ----------
-async function initDownload() {
-  const btn = document.getElementById('dlBtn');
-  const versionEl = document.getElementById('dlVersion');
-  try {
-    const res = await fetch('https://api.github.com/repos/m4u05999/Satr/releases/latest');
-    if (!res.ok) return;
-    const release = await res.json();
-    if (release.tag_name) versionEl.textContent = release.tag_name + ' — أحدث إصدار';
-    const exe = (release.assets || []).find((a) => a.name && a.name.endsWith('.exe'));
-    if (exe) btn.href = exe.browser_download_url;
-  } catch (e) { /* الرابط الاحتياطي (صفحة الإصدارات) يبقى */ }
-}
-
 // ---------- زر نسخ winget ----------
 function initCopy() {
   const btn = document.getElementById('wingetCopy');
@@ -228,5 +214,4 @@ function initCopy() {
 
 if (REDUCED) initStatic();
 else initAnimations();
-initDownload();
 initCopy();
