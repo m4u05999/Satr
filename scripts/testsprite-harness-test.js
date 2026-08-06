@@ -95,6 +95,11 @@ async function main() {
     assert.strictEqual(siteRoot.status, 200);
     assert(siteRoot.body.includes('سطر'));
     assert(!siteRoot.body.includes('mock-satr'), 'خادم site يحقن محاكاة لا يحتاجها الموقع.');
+    // ‏regression جولة TestSprite الأولى: baseURL بشرطة مزدوجة (4620//) يجب أن يخدم index.
+    const doubleSlash = await request(sitePort, '//');
+    assert.strictEqual(doubleSlash.status, 200, 'المسار // حجب الصفحة الرئيسية.');
+    assert(doubleSlash.body.includes('سطر'));
+    assert.strictEqual((await request(sitePort, '//enterprise.html')).status, 200);
     for (const page of ['/enterprise.html', '/wallet.html']) {
       const res = await request(sitePort, page);
       assert.strictEqual(res.status, 200, page + ' غير مخدومة.');

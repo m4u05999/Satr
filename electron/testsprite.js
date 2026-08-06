@@ -20,7 +20,9 @@ const CODEX_ENABLED_TOOLS = [
   'testsprite_check_account_info',
 ];
 const MISSING_KEY_MESSAGE = 'تكامل TestSprite مطلوب، لكن مفتاحه غير مضبوط. أضف مفتاحاً جديداً من ⚙ ← مفاتيح المزوّدين والتكاملات.';
-const TERMINAL_STATUSES = new Set(['PASSED', 'FAILED', 'SKIPPED']);
+// درس الجولة الأولى: TestSprite قد يعيد حالات حجب/إلغاء — بلا اعتبارها نهائية يعلق
+// المراقب إلى الأبد على جولة لن تتقدم.
+const TERMINAL_STATUSES = new Set(['PASSED', 'FAILED', 'SKIPPED', 'BLOCKED', 'CANCELLED', 'INFRA_ERROR']);
 const INTENT_PREFIX_LIMIT = 400;
 const INJECTED_RUN_BLOCK_RE = /<satr_testsprite_run\b[^>]*>[\s\S]*?<\/satr_testsprite_run\s*>/gi;
 
@@ -158,6 +160,7 @@ function summarizeResults(results, testIds) {
     passed: count('PASSED'),
     failed: count('FAILED'),
     skipped: count('SKIPPED'),
+    blocked: count('BLOCKED') + count('CANCELLED') + count('INFRA_ERROR'),
     complete: ids.length > 0 && statuses.every((status) => TERMINAL_STATUSES.has(status)),
   };
 }

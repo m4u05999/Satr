@@ -131,6 +131,14 @@ assert.deepStrictEqual(
 assert.strictEqual(testsprite.summarizeResults([
   { title: 'TC005-Theme', testStatus: 'PASSED' },
 ], ['TC005', 'TC006']).complete, false);
+// درس الجولة الأولى: BLOCKED/CANCELLED/INFRA_ERROR نهائية — المراقب لا يعلق عليها.
+const blockedRun = testsprite.summarizeResults([
+  { title: 'TC007-Wallet', testStatus: 'BLOCKED' },
+  { title: 'TC008-Links', testStatus: 'PASSED' },
+], ['TC007', 'TC008']);
+assert.strictEqual(blockedRun.complete, true, 'جولة فيها BLOCKED لا تُعتبر منتهية فيعلق المراقب.');
+assert.strictEqual(blockedRun.blocked, 1);
+assert.strictEqual(blockedRun.completed, 2);
 
 const progressEvents = [];
 const watcher = testsprite.watchResults(projectRoot, {

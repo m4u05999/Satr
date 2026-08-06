@@ -102,9 +102,14 @@ function createSiteServer() {
       send(res, 405, 'text/plain; charset=utf-8', 'Method Not Allowed', headOnly);
       return;
     }
+    // درس جولة TestSprite الأولى: bootstrap قد يبني baseURL بشرطة مزدوجة (4620//)
+    // فتصل المسارات "//" — الشرطتان البادئتان تُفسَّران authority في WHATWG URL
+    // (خطأ تحليل ⇒ 400)، فنطويها على الخام قبل التحليل ثم نطوي البقية بعده.
+    const rawUrl = String(req.url || '/').replace(/^\/{2,}/, '/');
     let pathname;
-    try { pathname = new URL(req.url || '/', 'http://localhost').pathname; }
+    try { pathname = new URL(rawUrl, 'http://localhost').pathname; }
     catch (error) { send(res, 400, 'text/plain; charset=utf-8', 'Bad Request', headOnly); return; }
+    pathname = pathname.replace(/\/{2,}/g, '/');
 
     if (pathname === '/__testsprite__/health') {
       send(res, 200, MIME['.json'], JSON.stringify({ ok: true, harness: 'satr', version: 1, surface: 'site' }), headOnly);
