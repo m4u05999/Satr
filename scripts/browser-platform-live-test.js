@@ -1,17 +1,29 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 const http = require('http');
+const path = require('path');
 const { app, BrowserWindow } = require('electron');
 const preview = require('../electron/preview');
 const browserpolicy = require('../electron/browserpolicy');
 
 const TRANSFER_SECRET = 'sk-proj-transferabcdefghijklmnopqrstuvwxyz';
 const USER_SECRET = 'sk-proj-userenteredabcdefghijklmnopqrstuvwxyz';
+const FONT_PATH = path.join(__dirname, '..', 'site', 'vendor', 'fonts', 'ibm-plex-sans-arabic-arabic-400-normal.woff2');
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function startServer() {
   const server = http.createServer((request, response) => {
+    if (request.url === '/real-network-failure') {
+      request.socket.destroy();
+      return;
+    }
+    if (request.url.startsWith('/cache-probe-font.woff2')) {
+      response.writeHead(200, { 'content-type': 'font/woff2' });
+      response.end(fs.readFileSync(FONT_PATH));
+      return;
+    }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     if (request.url === '/source') {
       response.end(`<!doctype html><html lang="ar"><head><title>Brevo</title></head><body>
@@ -70,6 +82,21 @@ async function main() {
 
     assert.strictEqual(preview.navigate(url + '/target').ok, true);
     assert((await preview.waitFor({ selector: '#target' }, 5000)).found, 'لم تجهز صفحة الهدف');
+
+    const cacheProbe = await preview.evaluate("new FontFace('SatrCacheProbe', 'url(/cache-probe-font.woff2?v=' + Date.now() + ')').load().then(function(font){ return font.status; }).catch(function(){ return 'failed'; })");
+    assert(cacheProbe.ok && cacheProbe.value === 'loaded', 'مسبار الخط لم ينجح عبر network fallback');
+    await preview.evaluate("fetch('/real-network-failure').catch(function(){ return 'failed'; })");
+    await delay(150);
+    const networkErrors = preview.getNetwork().netErrors;
+    assert(!networkErrors.some((entry) => entry.error === 'net::ERR_CACHE_MISS' && entry.type === 'font'),
+      'cache miss التمهيدي للخط ظهر كخطأ قابل للإصلاح');
+    assert(!events.some((event) => event.type === 'neterr' && event.error === 'net::ERR_CACHE_MISS' && event.resourceType === 'font'),
+      'cache miss التمهيدي للخط وصل إلى موجة أخطاء الواجهة');
+    assert(networkErrors.some((entry) => entry.url.endsWith('/real-network-failure') && entry.error !== 'net::ERR_CACHE_MISS'),
+      'إصلاح ضجيج cache أخفى خطأ شبكة حقيقياً');
+    assert(events.some((event) => event.type === 'neterr' && event.url.endsWith('/real-network-failure')),
+      'خطأ الشبكة الحقيقي لم يصل إلى الواجهة');
+
     const filled = await preview.fillForm([
       { ref: '#host', value: 'smtp-relay.brevo.com' },
       { ref: '#port', value: '587' },
@@ -104,7 +131,7 @@ async function main() {
     await delay(600);
     const exposed = JSON.stringify({ events, console: preview.getConsole(), network: preview.getNetwork(), stored, moved, requested });
     assert(!exposed.includes(TRANSFER_SECRET) && !exposed.includes(USER_SECRET), 'ظهر سر في حدث IPC أو نتيجة أو سجل');
-    console.log('browser-platform-live: نجح — نقل عبر صفحتين، إدخال مستخدم، تعبئة جماعية، وبوابة submit بلا تسريب.');
+    console.log('browser-platform-live: نجح — نقل آمن، بوابة submit، وتصفية cache probe للخط مع إبقاء فشل الشبكة الحقيقي.');
   } finally {
     preview.destroy();
     if (!win.isDestroyed()) win.destroy();

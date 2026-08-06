@@ -163,8 +163,10 @@ function wireNetwork() {
     const wr = session.fromPartition(PARTITION).webRequest;
     wr.onErrorOccurred((details) => {
       if (handoffActive || sensitiveOperation) return;
-      // ERR_ABORTED = أُلغي بتنقّل جديد (ليس خطأً) — نتجاهله كي لا نضجّ سجل الوكيل
-      if (!details || details.error === 'net::ERR_ABORTED') return;
+      // ‏Blink يجرّب cache-only للخط قبل fallback الشبكي؛ ERR_CACHE_MISS هنا تمهيدي
+      // وقد يتبعه GET ناجح. نبقيه لبقية الأنواع كي لا نخفي cache-only fetch حقيقية.
+      if (!details || details.error === 'net::ERR_ABORTED'
+          || (details.error === 'net::ERR_CACHE_MISS' && details.resourceType === 'font')) return;
       const entry = {
         url: String(details.url || '').slice(0, 500),
         error: String(details.error || ''),
@@ -311,7 +313,7 @@ function wireEvents(wc) {
 function ensureView(win, send) {
   hostWin = win;
   sender = send;
-  if (view && !view.webContents.isDestroyed()) return view;
+  if (view && view.webContents && !view.webContents.isDestroyed()) return view;
   wirePermissions();
   wireNetwork();
   wireDownloads();
@@ -439,7 +441,7 @@ function effectiveBounds(bounds) {
 }
 function setBounds(b) {
   lastBounds = b;
-  if (view && !view.webContents.isDestroyed()) view.setBounds(effectiveBounds(b));
+  if (view && view.webContents && !view.webContents.isDestroyed()) view.setBounds(effectiveBounds(b));
   return { ok: true };
 }
 
@@ -543,7 +545,7 @@ const PICK_SCRIPT = `(function(){
 })()`;
 
 async function startPick() {
-  if (!view || view.webContents.isDestroyed()) return { error: 'closed' };
+  if (!view || !view.webContents || view.webContents.isDestroyed()) return { error: 'closed' };
   try {
     const pick = await view.webContents.executeJavaScript(PICK_SCRIPT, true);
     return { ok: true, pick: pick || null }; // null = أُلغي (Escape/إلغاء)
@@ -552,7 +554,7 @@ async function startPick() {
 
 // إلغاء وضع التحديد من الواجهة (زر «تحديد» ثانيةً أو إغلاق) — يحلّ الـ Promise بـ null
 async function cancelPick() {
-  if (view && !view.webContents.isDestroyed()) {
+  if (view && view.webContents && !view.webContents.isDestroyed()) {
     try { await view.webContents.executeJavaScript('window.__satrPick && window.__satrPick.cancel && window.__satrPick.cancel()', true); } catch (e) {}
   }
   return { ok: true };
@@ -565,7 +567,7 @@ async function cancelPick() {
 // **أمان**: المحتوى المُستخرَج من صفحة غير موثوقة ⇒ نصّ مغلّف يقرؤه النموذج (حقن
 // برومبت محتمل موثّق — قراءة فقط، الوكيل يطلبه عمداً ليفحص).
 function currentWC() {
-  return externalWC() || ((view && !view.webContents.isDestroyed()) ? view.webContents : null);
+  return externalWC() || ((view && view.webContents && !view.webContents.isDestroyed()) ? view.webContents : null);
 }
 
 function externalWC() {
@@ -1542,7 +1544,7 @@ function close() {
   invalidateSnapshotRefs();
   if (!view) return { ok: true };
   try { if (hostWin && !hostWin.isDestroyed()) hostWin.contentView.removeChildView(view); } catch (e) {}
-  try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {}
+  try { if (view.webContents && !view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {}
   view = null;
   viewportOverride = null;
   netThrottled = false; // عرض جديد يبدأ بلا محاكاة شبكة (debugger مات مع الإغلاق)
