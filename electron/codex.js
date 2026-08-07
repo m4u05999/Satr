@@ -30,7 +30,7 @@ const codexmcp = require('./codexmcp');  // خادم MCP‏ streamable-HTTP دا
 const keys = require('./keys');
 const memory = require('./memory'); // ذاكرة مشروع شخصية — حقن قرائي مقصوص (تكافؤ agent.js)
 const testsprite = require('./testsprite');
-const testspriteHarness = require('./testspriteharness');
+const testspritejobs = require('./testspritejobs');
 const envbrief = require('./envbrief');
 const execguard = require('./execguard');
 const browserpolicy = require('./browserpolicy');
@@ -741,6 +741,44 @@ function shouldAutoApproveMcp(access, browserControl, permissionMode, remembered
   return remembered === true && neverAlways !== true;
 }
 
+const TESTSPRITE_JOB_STATES = new Set([
+  'preparing', 'awaiting_setup', 'running', 'completed', 'cancelled', 'failed',
+]);
+
+function safeTestSpriteJobCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 999999999) : 0;
+}
+
+function buildTestSpriteContinuationPrompt(prompt, snapshot) {
+  const state = snapshot && TESTSPRITE_JOB_STATES.has(snapshot.state) ? snapshot.state : 'running';
+  const port = snapshot && Number.isInteger(snapshot.port) && snapshot.port >= 1 && snapshot.port <= 65535
+    ? snapshot.port : null;
+  const summary = snapshot && snapshot.summary && typeof snapshot.summary === 'object' ? snapshot.summary : {};
+  const block = `<satr_testsprite_run>
+جولة TestSprite نشطة: state=${state}; port=${port == null ? 'null' : port}; summary={total=${safeTestSpriteJobCount(summary.total)},completed=${safeTestSpriteJobCount(summary.completed)},passed=${safeTestSpriteJobCount(summary.passed)},failed=${safeTestSpriteJobCount(summary.failed)},skipped=${safeTestSpriteJobCount(summary.skipped)},blocked=${safeTestSpriteJobCount(summary.blocked)}}.
+أكمل الجولة النشطة عبر أدوات testsprite ولا تبدأ bootstrap جديداً.
+</satr_testsprite_run>`;
+  return String(prompt || '') + '\n\n' + block;
+}
+
+async function prepareTestSpriteJob(prompt, cwd, siteRound) {
+  const started = await testspritejobs.startJob({ cwd, kind: siteRound ? 'site' : 'app', prompt });
+  if (started && started.ok === true) {
+    return {
+      ...started,
+      effectivePrompt: siteRound
+        ? testsprite.siteChatPrompt(prompt, { url: started.url, cwd })
+        : testsprite.chatPrompt(prompt, { url: started.url, cwd }),
+    };
+  }
+  if (started && started.error === 'busy') {
+    let snapshot = {};
+    try { snapshot = await testspritejobs.status(); } catch (e) { /* متابعة محافظة بلا إسقاط الدور */ }
+    return { ...started, snapshot, effectivePrompt: buildTestSpriteContinuationPrompt(prompt, snapshot) };
+  }
+  return { ...(started || { ok: false, error: 'failed' }), effectivePrompt: String(prompt || '') };
+}
+
 /**
  * عميل JSON-RPC خفيف فوق `codex app-server` (stdio، أسطر JSON مفصولة بـ \n).
  * يبثّ ServerRequest (أذونات) وnotifications (أحداث)، ويستقبل ردودنا.
@@ -765,8 +803,6 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // codex اتصل، طلب tools/list، وأبلغ satr_preview=ready. أي فشل هنا لا يكسر الدور —
   // Codex يعمل بلا رؤية ويب (تدهور رشيق). open_preview يبثّ preview_open للواجهة لتفتح اللوحة.
   let mcpHost = null;
-  let testspriteHarnessHost = null;
-  let testspriteProgressWatcher = null;
   let effectivePrompt = prompt;
   const actionBudget = browserBudget && typeof browserBudget.check === 'function'
     ? browserBudget : browserpolicy.createActionBudget();
@@ -863,41 +899,37 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       appServerArgs.push(...launch.args);
       Object.assign(spawnEnv, launch.env);
       // جولة الموقع (site/) لها سطح وعقد مستقلان؛ وإلا فالمسار القائم لواجهة التطبيق.
-      const testspriteSiteRound = testsprite.siteRequested(prompt) && testspriteHarness.supportsSite(cwd);
-      if (testspriteSiteRound || testspriteHarness.supportsProject(cwd)) {
-        try {
-          testspriteHarnessHost = testspriteSiteRound
-            ? await testspriteHarness.startSite()
-            : await testspriteHarness.start();
-          effectivePrompt = testspriteSiteRound
-            ? testsprite.siteChatPrompt(prompt, { url: testspriteHarnessHost.url, cwd })
-            : testsprite.chatPrompt(prompt, { url: testspriteHarnessHost.url, cwd });
-          testspriteProgressWatcher = testsprite.watchResults(cwd, {
-            testIds: testsprite.extractTestIds(prompt),
-            onUpdate: emit,
-          });
-          emit({ type: 'testsprite_progress', phase: 'preparing', total: testsprite.extractTestIds(prompt).length,
-            completed: 0, passed: 0, failed: 0, skipped: 0 });
+      const testspriteSiteRound = testsprite.siteRequested(prompt);
+      try {
+        const job = await prepareTestSpriteJob(prompt, cwd, testspriteSiteRound);
+        effectivePrompt = job.effectivePrompt;
+        if (job.ok) {
           emit({
             type: 'assistant',
             message: { role: 'assistant', content: [{
               type: 'text',
               text: testspriteSiteRound
-                ? '🧪 بدأ «سطر» خادم الموقع (site/) لجولة TestSprite داخل هذا الدور؛ سيوقفه تلقائياً عند الانتهاء.'
-                : '🧪 بدأ «سطر» سطح TestSprite المؤقت داخل هذا الدور؛ سيوقفه تلقائياً عند الانتهاء.',
+                ? '🧪 بدأت جولة TestSprite للموقع (site/) وتستمر مستقلةً عن عمر هذا الدور حتى تكتمل أو تُلغى.'
+                : '🧪 بدأت جولة TestSprite للتطبيق وتستمر مستقلةً عن عمر هذا الدور حتى تكتمل أو تُلغى.',
             }] },
           });
-        } catch (error) {
-          const busyPort = testspriteSiteRound ? testspriteHarness.DEFAULT_SITE_PORT : testspriteHarness.DEFAULT_PORT;
-          const code = error && error.code === 'EADDRINUSE' ? ('المنفذ ' + busyPort + ' مستخدم') : String((error && error.message) || error);
+        } else if (job.error !== 'busy') {
           emit({
             type: 'assistant',
             message: { role: 'assistant', content: [{
               type: 'text',
-              text: '⚠️ تعذّر بدء سطح TestSprite التلقائي: ' + code + '. لم يبدأ اختبار الواجهة.',
+              text: '⚠️ تعذّر بدء جولة TestSprite التلقائية. لم يبدأ اختبار الواجهة.',
             }] },
           });
         }
+      } catch (error) {
+        emit({
+          type: 'assistant',
+          message: { role: 'assistant', content: [{
+            type: 'text',
+            text: '⚠️ تعذّر بدء جولة TestSprite التلقائية. لم يبدأ اختبار الواجهة.',
+          }] },
+        });
       }
     } else emit({ type: 'stderr', text: testsprite.MISSING_KEY_MESSAGE });
   }
@@ -1597,15 +1629,6 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     try { proc.stdin.end(); } catch {}
     setTimeout(() => { try { proc.kill(); } catch {} }, 500);
     if (mcpHost) { try { mcpHost.stop(); } catch {} mcpHost = null; } // أوقِف خادم رؤية الويب MCP
-    if (testspriteHarnessHost) {
-      const host = testspriteHarnessHost;
-      testspriteHarnessHost = null;
-      host.close().catch(() => {});
-    }
-    if (testspriteProgressWatcher) {
-      testspriteProgressWatcher.stop();
-      testspriteProgressWatcher = null;
-    }
     if (testspriteRequested) {
       testsprite.scrubConfig(cwd);
       setTimeout(() => testsprite.scrubConfig(cwd), 750);
@@ -1816,5 +1839,5 @@ module.exports = {
   // C4: الحساب والاستهلاك — accountLoginUrl لـmain.js وحدها (الرابط لا يعبر IPC)
   accountUsage, accountRateLimits, normalizeRateLimits,
   accountLoginStart, accountLoginUrl, accountLoginAwait, accountLoginCancel,
-  _internals: { projectPath, isInternalMcpApprovalElicitation },
+  _internals: { projectPath, isInternalMcpApprovalElicitation, prepareTestSpriteJob },
 };

@@ -1319,21 +1319,29 @@ result`)، فالواجهة لا تتغيّر.
   `http://127.0.0.1:4173/`. النواة الموزّعة في `electron/testspriteharness.js` وعميل المحاكاة
   الخارجي في `electron/testspriteharness-client.js` (كلاهما يدخلان حزمة Electron)؛ سكربت CLI
   غلاف تشخيصي فقط. لا يغيّر `src/index.html` على القرص، ويعطّل الكتابة/المحركات/الأسرار.
-- **التشغيل من الدردشة**: في دور Codex الصريح لـTestSprite داخل مشروع «سطر»، يبدأ المضيف
-  الـharness قبل app-server ويحقن تلقائياً عنوانه وتسلسل MCP ثم `npm run test:full` في مدخل
-  الدور. يرتبط المقبض بعمر الدور ويُغلق عند النجاح/الفشل/الإيقاف؛ إن كان harness «سطر» يعمل
-  أصلاً على `4173` يعاد استخدامه بلا امتلاك أو قتل. لا IPC ولا أمر `/` جديدان.
+- **التشغيل من الدردشة — مدير الجولة v1 (قرار المالك 2026-08-06)**: عند نية TestSprite
+  الصريحة يستدعي محركا SDK وCodex ‏`testspritejobs.startJob({cwd, kind, prompt})`؛ المدير وحده
+  يملك الـharness ومراقب النتائج وتستمر الجولة مستقلة عن عمر الدور حتى حالة نهائية أو إلغاء.
+  يحقن المحرك عقد `chatPrompt`/`siteChatPrompt` القائم بعنوان المدير. إن كانت جولة نشطة يعيد
+  المدير `busy` فلا يبدأ المحرك جولة ثانية؛ يحقن بدلاً منها كتلة متابعة قصيرة داخل
+  `<satr_testsprite_run>` تحمل `state/summary/port` وتمنع bootstrap جديداً. تبقى تنقية
+  `testsprite_tests/tmp/config.json` عند بدء الدور ونهايته دفاعاً إضافياً.
+- **الحالة والتحكم**: المدير يبث حدث `testsprite_job` ذي `schema_version:1` عبر `emitToWindow`
+  مستقلاً عن token الدور. القراءة عبر `satr:testspriteJobStatus` بلا مدخلات، والإلغاء عبر
+  `satr:testspriteJobCancel {jobId, confirmed:true}` فقط؛ معرّف الجولة محصور بالنمط
+  `^tsj_[0-9]{1,15}_[a-z0-9]{1,10}$`. الإغلاق العام يستدعي `cleanupBeforeQuit()`، ولا restart/resume.
 - **جولة الموقع (site/) — 2026-08-06**: ذكر «الموقع/صفحة الهبوط/site/landing أو
   enterprise.html/wallet.html» داخل طلب TestSprite الصريح نفسه (`testsprite.siteRequested`)
   يحوّل الدور إلى جولة موقع: خادم `site/` الثابت على `127.0.0.1:4620`
-  (`testspriteharness.startSite` — نفس حواجز safeAsset، بلا حقن mock، بصمة health
+  (`testspritejobs.startJob` مع `kind:'site'` — نفس حواجز safeAsset، بلا حقن mock، بصمة health
   تحمل `surface:'site'` فلا يُقبل خادم الواجهة بديلاً عند EADDRINUSE والعكس)، وعقد
   `siteChatPrompt` نطاقه الصفحات الثلاث حصراً: bootstrap يُستدعى دائماً (تهيئة الواجهة
   السابقة لمنفذ آخر)، تغطية الروابط/mailto/الأسعار LTR/التجاوب/reduced-motion/صفر
   console-CSP، **وبلا `test:full`** (الموقع مستقل عن Electron). الفرع موصول في
   المحرّكين agent.js وcodex.js، ويغطيه `test:testsprite` (النية والعقد وفحص التوصيل)
   و`test:testsprite-harness` (خادم site وحواجزه وتمايز البصمة).
-- **الاختبار**: العقد والحواجز ودورة ملكية الخادم والواجهة الحية في
+- **الاختبار**: `npm run test:testsprite` يغطي توصيل المدير بالمحركين و`busy` وقائمة سماح
+  قناتي IPC، والعقد والحواجز ودورة ملكية الخادم والواجهة الحية في
   `npm run test:testsprite-ready`. الطريقة الأساسية من الدردشة والتشخيص اليدوي في
   `docs/TESTSPRITE.md`.
 

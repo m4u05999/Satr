@@ -47,6 +47,7 @@ const previewrecording = require('./previewrecording'); // تنزيل تسجيل
 const promocapture = require('./promocapture'); // نافذة التقاط المنتج المرئية + تسجيل 30fps في renderer
 const promostudio = require('./promostudio'); // storyboard محلي منقّى + حل أصول Downloads للاستوديو
 const testsprite = require('./testsprite'); // تكامل TestSprite MCP — مفتاح مشفّر، لا يظهر كمحرّك
+const testspritejobs = require('./testspritejobs'); // جولة TestSprite معمّرة ومستقلة عن token الدور
 const claudeauth = require('./claudeauth');
 const adapters = require('./adapters');
 const renderertrust = require('./renderertrust');
@@ -424,6 +425,15 @@ ipcMain.handle('satr:activityClear', (event, payload) => {
 ipcMain.handle('satr:providers', () => ({
   providers: [kimi.publicInfo(), ...adapters.list()], integrations: [testsprite.publicInfo()],
 }));
+
+const SAFE_TESTSPRITE_JOB_ID = /^tsj_[0-9]{1,15}_[a-z0-9]{1,10}$/;
+ipcMain.handle('satr:testspriteJobStatus', () => testspritejobs.status());
+ipcMain.handle('satr:testspriteJobCancel', (event, payload) => {
+  if (!payload || payload.confirmed !== true) return { ok: false, error: 'confirmation_required' };
+  const jobId = typeof payload.jobId === 'string' ? payload.jobId : '';
+  if (!SAFE_TESTSPRITE_JOB_ID.test(jobId)) return { ok: false, error: 'bad_job_id' };
+  return testspritejobs.cancel(jobId);
+});
 
 // حالة توفّر Codex (المرحلة 4): مثبَّت؟ ومسجَّل الدخول؟ — لإرشاد مضمّن حين يُختار المحرك
 // codex وهو غير جاهز (لا يحجب الإطلاق — Claude يبقى بوابة الإطلاق الوحيدة). force=true
@@ -1077,6 +1087,7 @@ bgprocs.setNotifier(emitBgProcsMerged);
 kimi.keepalive.setNotifier(emitBgProcsMerged);
 kimi.keepalive.setLateEventSink((evt) => emitToWindow(evt));
 termjobs.setNotifier((event) => emitToWindow(event));
+testspritejobs.setNotifier((event) => emitToWindow(event));
 
 // رقم تسلسلي للتشغيل: أحداث متأخرة من تشغيل أُلغي (proc_done مثلاً)
 // لا يجوز أن تصل للواجهة فتُنهي رسالة التشغيل الجديد قبل أوانها
@@ -3467,6 +3478,7 @@ async function cleanupBeforeQuit() {
   await Promise.allSettled([
     orchestrator.stopAll(), opsBrainstorm.stopAll(), opsPlanner.stopAll(), executor.stopAll(),
     executionTeam.stopAll(), loopRunner.stopAll(), reviewer.stopAll(), integration.stopAll(), promocapture.stopAll(),
+    testspritejobs.cleanupBeforeQuit(),
   ]);
   if (integration.latestPreview()) await integration.stopAll();
   bgprocs.killAll();

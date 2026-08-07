@@ -30,7 +30,7 @@ const memory = require('./memory'); // ذاكرة مشروع شخصية بموا
 const claudeElicitation = require('./elicitation'); // إدخال موصّلات MCP غير السري بحوار عربي fail-closed
 const keys = require('./keys');
 const testsprite = require('./testsprite');
-const testspriteHarness = require('./testspriteharness');
+const testspritejobs = require('./testspritejobs');
 const envbrief = require('./envbrief');
 const adapterTools = require('./tools');
 
@@ -758,6 +758,45 @@ function isUnsupportedElicitationResult(message) {
     return parts.some((text) => /Client does not support (?:form|url) elicitation\.?/i.test(text));
   });
 }
+
+const TESTSPRITE_JOB_STATES = new Set([
+  'preparing', 'awaiting_setup', 'running', 'completed', 'cancelled', 'failed',
+]);
+
+function safeTestSpriteJobCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 999999999) : 0;
+}
+
+function buildTestSpriteContinuationPrompt(prompt, snapshot) {
+  const state = snapshot && TESTSPRITE_JOB_STATES.has(snapshot.state) ? snapshot.state : 'running';
+  const port = snapshot && Number.isInteger(snapshot.port) && snapshot.port >= 1 && snapshot.port <= 65535
+    ? snapshot.port : null;
+  const summary = snapshot && snapshot.summary && typeof snapshot.summary === 'object' ? snapshot.summary : {};
+  const block = `<satr_testsprite_run>
+جولة TestSprite نشطة: state=${state}; port=${port == null ? 'null' : port}; summary={total=${safeTestSpriteJobCount(summary.total)},completed=${safeTestSpriteJobCount(summary.completed)},passed=${safeTestSpriteJobCount(summary.passed)},failed=${safeTestSpriteJobCount(summary.failed)},skipped=${safeTestSpriteJobCount(summary.skipped)},blocked=${safeTestSpriteJobCount(summary.blocked)}}.
+أكمل الجولة النشطة عبر أدوات testsprite ولا تبدأ bootstrap جديداً.
+</satr_testsprite_run>`;
+  return String(prompt || '') + '\n\n' + block;
+}
+
+async function prepareTestSpriteJob(prompt, cwd, siteRound) {
+  const started = await testspritejobs.startJob({ cwd, kind: siteRound ? 'site' : 'app', prompt });
+  if (started && started.ok === true) {
+    return {
+      ...started,
+      effectivePrompt: siteRound
+        ? testsprite.siteChatPrompt(prompt, { url: started.url, cwd })
+        : testsprite.chatPrompt(prompt, { url: started.url, cwd }),
+    };
+  }
+  if (started && started.error === 'busy') {
+    let snapshot = {};
+    try { snapshot = await testspritejobs.status(); } catch (e) { /* متابعة محافظة بلا إسقاط الدور */ }
+    return { ...started, snapshot, effectivePrompt: buildTestSpriteContinuationPrompt(prompt, snapshot) };
+  }
+  return { ...(started || { ok: false, error: 'failed' }), effectivePrompt: String(prompt || '') };
+}
+
 /**
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
@@ -789,8 +828,6 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const pendingTaskCreates = new Map(); // tool_use_id لـTaskCreate → input حتى تصل نتيجته ذات id
   const startedClaudeTaskIds = new Set(); // task_started المرصودة في Query نفسها؛ يحجب إشعار الاستئناف الكاذب
   let effectivePrompt = prompt;
-  let testspriteHarnessHost = null;
-  let testspriteProgressWatcher = null;
   let closeInput;
   const inputClosed = new Promise((resolve) => { closeInput = resolve; });
 
@@ -1930,32 +1967,26 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       options.mcpServers = Object.assign({}, options.mcpServers);
       options.mcpServers[testsprite.SERVER_NAME] = config;
       // جولة الموقع (site/) لها سطح وعقد مستقلان؛ وإلا فالمسار القائم لواجهة التطبيق.
-      const testspriteSiteRound = testsprite.siteRequested(prompt) && testspriteHarness.supportsSite(cwd);
-      if (testspriteSiteRound || testspriteHarness.supportsProject(cwd)) {
-        try {
-          testspriteHarnessHost = testspriteSiteRound
-            ? await testspriteHarness.startSite()
-            : await testspriteHarness.start();
-          effectivePrompt = testspriteSiteRound
-            ? testsprite.siteChatPrompt(prompt, { url: testspriteHarnessHost.url, cwd })
-            : testsprite.chatPrompt(prompt, { url: testspriteHarnessHost.url, cwd });
-          const requestedIds = testsprite.extractTestIds(prompt);
-          testspriteProgressWatcher = testsprite.watchResults(cwd, { testIds: requestedIds, onUpdate: emit });
-          emit({ type: 'testsprite_progress', phase: 'preparing', total: requestedIds.length,
-            completed: 0, passed: 0, failed: 0, skipped: 0 });
+      const testspriteSiteRound = testsprite.siteRequested(prompt);
+      try {
+        const job = await prepareTestSpriteJob(prompt, cwd, testspriteSiteRound);
+        effectivePrompt = job.effectivePrompt;
+        if (job.ok) {
           emit({ type: 'assistant', message: { role: 'assistant', content: [{
             type: 'text',
             text: testspriteSiteRound
-              ? '🧪 بدأ «سطر» خادم الموقع (site/) لجولة TestSprite داخل هذا الدور؛ سيوقفه تلقائياً عند الانتهاء.'
-              : '🧪 بدأ «سطر» سطح TestSprite المؤقت داخل هذا الدور؛ سيوقفه تلقائياً عند الانتهاء.',
+              ? '🧪 بدأت جولة TestSprite للموقع (site/) وتستمر مستقلةً عن عمر هذا الدور حتى تكتمل أو تُلغى.'
+              : '🧪 بدأت جولة TestSprite للتطبيق وتستمر مستقلةً عن عمر هذا الدور حتى تكتمل أو تُلغى.',
           }] } });
-        } catch (error) {
-          const busyPort = testspriteSiteRound ? testspriteHarness.DEFAULT_SITE_PORT : testspriteHarness.DEFAULT_PORT;
-          const code = error && error.code === 'EADDRINUSE' ? ('المنفذ ' + busyPort + ' مستخدم') : String((error && error.message) || error);
+        } else if (job.error !== 'busy') {
           emit({ type: 'assistant', message: { role: 'assistant', content: [{
-            type: 'text', text: '⚠️ تعذّر بدء سطح TestSprite التلقائي: ' + code + '. لم يبدأ اختبار الواجهة.',
+            type: 'text', text: '⚠️ تعذّر بدء جولة TestSprite التلقائية. لم يبدأ اختبار الواجهة.',
           }] } });
         }
+      } catch (error) {
+        emit({ type: 'assistant', message: { role: 'assistant', content: [{
+          type: 'text', text: '⚠️ تعذّر بدء جولة TestSprite التلقائية. لم يبدأ اختبار الواجهة.',
+        }] } });
       }
     } else emit({ type: 'stderr', text: testsprite.MISSING_KEY_MESSAGE });
   }
@@ -2032,12 +2063,6 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       closeInput();
       turnAllowed.clear();
       preview.clearSecretTransfers();
-      if (testspriteProgressWatcher) { testspriteProgressWatcher.stop(); testspriteProgressWatcher = null; }
-      if (testspriteHarnessHost) {
-        const host = testspriteHarnessHost;
-        testspriteHarnessHost = null;
-        host.close().catch(() => {});
-      }
       if (testspriteRequested) testsprite.scrubConfig(cwd);
       elicitationController.declineAll();
       for (const [id, p] of pending) {
@@ -2140,12 +2165,6 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       turnAllowed.clear();
       preview.clearSensitiveState();
       if (testspriteRequested) testsprite.scrubConfig(cwd);
-      if (testspriteProgressWatcher) { testspriteProgressWatcher.stop(); testspriteProgressWatcher = null; }
-      if (testspriteHarnessHost) {
-        const host = testspriteHarnessHost;
-        testspriteHarnessHost = null;
-        host.close().catch(() => {});
-      }
       elicitationController.declineAll();
       for (const [id, p] of pending) {
         pending.delete(id);
@@ -2467,4 +2486,5 @@ module.exports = {
   sanitizeQuestions,
   buildQuestionAnswer,
   createSessionControls,
+  prepareTestSpriteJob,
 };

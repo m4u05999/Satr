@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('satr', {
   activityList: (cwd) => ipcRenderer.invoke('satr:activityList', { cwd }),
   activityClear: (cwd, confirmed) => ipcRenderer.invoke('satr:activityClear', { cwd, confirmed }),
   providers: () => ipcRenderer.invoke('satr:providers'),
+  testspriteJobStatus: () => ipcRenderer.invoke('satr:testspriteJobStatus'),
+  testspriteJobCancel: (jobId) => ipcRenderer.invoke('satr:testspriteJobCancel', { jobId, confirmed: true }),
   claudeModels: () => ipcRenderer.invoke('satr:claudeModels'),
   claudeAccount: () => ipcRenderer.invoke('satr:claudeAccount'),
   codexStatus: () => ipcRenderer.invoke('satr:codexStatus'),
