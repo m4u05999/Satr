@@ -88,6 +88,7 @@
     "test:sdk-polish": "node scripts/sdk-polish-test.js",
     "test:sdk-polish-probe": "node scripts/sdk-polish-probe.js",
     "test:testsprite": "node scripts/testsprite-integration-test.js",
+    "test:testspritejobs": "node scripts/testspritejobs-test.js",
     "testsprite:harness": "node scripts/testsprite-harness.js",
     "test:testsprite-harness": "node scripts/testsprite-harness-test.js",
     "test:testsprite-harness-live": "electron scripts/testsprite-harness-live-test.js",
