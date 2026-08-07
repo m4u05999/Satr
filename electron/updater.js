@@ -7,8 +7,12 @@
  * القرارات المثبّتة:
  *  - **لا يعمل إلا في النسخة المحزومة** (app.isPackaged): في التطوير لا معنى للتحديث،
  *    وelectron-updater يرمي بلا dev-app-update.yml — فنتخطّاه صامتاً في npm start.
- *  - **التوقيع شرط تشغيل**: قناة التحديث معطّلة افتراضياً، ولا تُفعّل إلا إذا صرّح البناء
- *    بأنه موقّع. موافقة المستخدم على التنزيل لا تعوّض التحقق من هوية الناشر.
+ *  - **قناة الثقة هي HTTPS + sha512** (درس علة 2026-08-08): شرطُ «signed === true»
+ *    الذي دخل مع 2.10.0 لم يمرره أحد من main فقتل القناة بصمت في كل النسخ حتى
+ *    2.14.1 (اكتشفه المالك حياً). التحديث يُجلب من GitHub عبر HTTPS وتُطابَق بصمة
+ *    sha512 من latest.yml — نفس سلسلة ثقة التنزيل الأول للمثبّت غير الموقّع، فالشرط
+ *    لم يكن يضيف حماية فعلية فوقها. حين يتوفر توقيع مستقبلاً يُمرَّر signed:false
+ *    صراحةً لأي بناء يُراد تعطيل قناته.
  *  - **موافقة صريحة في كل خطوة** (قرار المالك 2026-07-12): لا تنزيل ولا تثبيت تلقائيان.
  *    autoDownload=false ⇒ نُشعر «تتوفّر نسخة» وننتظر «نزّل الآن» (downloadUpdate).
  *    autoInstallOnAppQuit=false ⇒ إغلاق التطبيق لا يثبّت شيئاً؛ التثبيت حصراً بزرّ
@@ -20,7 +24,7 @@ let autoUpdater = null;
 
 // يُهيّأ من main.js بدالة بثّ للواجهة (obj → satr:event) — نفس نمط بقية المحرّكات
 function shouldEnableUpdates(app, options = {}) {
-  return !!(app && app.isPackaged) && options.edition !== 'enterprise' && options.signed === true;
+  return !!(app && app.isPackaged) && options.edition !== 'enterprise' && options.signed !== false;
 }
 
 function initUpdater(app, emit, options = {}) {

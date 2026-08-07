@@ -80,8 +80,12 @@ function testUpdaterContract() {
     const updater = require('../electron/updater');
     assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: false }), false);
     assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'enterprise' }), false);
-    assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community' }), false);
+    // درس علة 2026-08-08: القناة تعمل بلا signed (ثقة HTTPS+sha512 — نفس ثقة
+    // التنزيل الأول)؛ اشتراط signed===true غير الممرَّر كان يقتلها بصمت منذ 2.10.0.
+    assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community' }), true);
     assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: true }), true);
+    assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: false }), false,
+      'التعطيل الصريح signed:false يبقى محترماً');
 
     const emitted = [];
     updater.initUpdater({ isPackaged: true }, (event) => emitted.push(event), { edition: 'community', signed: true });
