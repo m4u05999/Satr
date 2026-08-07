@@ -52,6 +52,8 @@ const SUITE = [
   'test:sdk-background',
   'test:sdk-polish',
   'test:testsprite-ready',
+  'test:testspritejobs',
+  'test:testsprite-job-live',
   'test:viewer-security',
   'test:askquestion',
   'test:autogate',
