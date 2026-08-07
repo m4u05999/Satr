@@ -28,7 +28,6 @@ const SUMMARY_FIELDS = Object.freeze(['total', 'completed', 'passed', 'failed', 
 const HEARTBEAT_MS = 15000;
 // مطلب «لا صمت غير مفسر >30s»: نبضة كل 15ث فأقصى صمت نصف دورتين.
 const BROADCAST_MAX_SILENCE_MS = 30000;
-const SCRUB_INTERVAL_MS = 60000;
 // ثلاث نبضات متتالية بلا استجابة (~45 ثانية) = سقوط بلا استرجاع، لا تعثّر عابر.
 const HARNESS_PROBE_FAILURES = 3;
 
@@ -64,7 +63,6 @@ function create(deps) {
   // الجولة الحالية، أو آخر جولة منتهية (تبقى للعرض/الترطيب بعد الاكتمال).
   let job = null;
   let heartbeatTimer = null;
-  let scrubTimer = null;
   let lastBroadcastAt = 0;
   let ticking = false;
 
@@ -97,7 +95,11 @@ function create(deps) {
     try { notifier(payload); } catch { /* فشل المستهلك لا يكسر الجولة */ }
   }
 
-  // حزمة TestSprite قد تكتب API_KEY في config المؤقت أثناء التشغيل.
+  // حزمة TestSprite قد تكتب API_KEY في config المؤقت أثناء التشغيل — لكن غلاف CLI
+  // التنفيذي **يقرأ المفتاح من هذا الملف نفسه** أثناء الجولة (مثبت حياً 2026-08-08:
+  // التنقية الدورية أثناء النشاط جوّعت CLI فأعاد CREATE_API_KEY رغم نجاح
+  // check_account_info من بيئة الدور). لذلك التنقية عند البدء والنهايات فقط —
+  // والضمانة الجوهرية أن المدير ينقّي عند **أي** نهاية حتى مع سقوط الدور.
   function scrub() {
     if (!job) return;
     try { ts.scrubConfig(job.cwd); } catch { /* أفضل جهد */ }
@@ -112,13 +114,12 @@ function create(deps) {
     job.state = next;
     job.failureCode = next === 'failed' && FAILURE_CODES.includes(failureCode) ? failureCode : null;
     job.updatedAt = now();
-    scrub(); // تنقية عند كل انتقال حالة — لا اعتماد على المؤقّت وحده
+    if (TERMINAL_SET.has(next)) scrub(); // النهايات فقط — أثناء النشاط CLI يحتاج مفتاحه
     return true;
   }
 
   function stopTimers() {
     if (heartbeatTimer) { try { clearTimer(heartbeatTimer); } catch {} heartbeatTimer = null; }
-    if (scrubTimer) { try { clearTimer(scrubTimer); } catch {} scrubTimer = null; }
   }
 
   async function closeHost(host) {
@@ -289,8 +290,6 @@ function create(deps) {
     transition(configReady(cwd) ? 'running' : 'awaiting_setup');
     heartbeatTimer = setTimer(heartbeatTick, HEARTBEAT_MS);
     if (heartbeatTimer && typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref();
-    scrubTimer = setTimer(scrub, SCRUB_INTERVAL_MS);
-    if (scrubTimer && typeof scrubTimer.unref === 'function') scrubTimer.unref();
     broadcast();
     return { ok: true, jobId: current.id, url: host && host.url };
   }
@@ -324,7 +323,7 @@ const shared = create();
 
 module.exports = {
   SCHEMA_VERSION, JOB_ID_RE, KINDS, STATES, TERMINAL_STATES, FAILURE_CODES, START_ERRORS,
-  SUMMARY_FIELDS, HEARTBEAT_MS, BROADCAST_MAX_SILENCE_MS, SCRUB_INTERVAL_MS, HARNESS_PROBE_FAILURES,
+  SUMMARY_FIELDS, HEARTBEAT_MS, BROADCAST_MAX_SILENCE_MS, HARNESS_PROBE_FAILURES,
   create,
   startJob: shared.startJob,
   status: shared.status,

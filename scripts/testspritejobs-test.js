@@ -109,11 +109,6 @@ function makeEnv(settings) {
       assert(fn, 'مؤقّت النبض غير مسجَّل');
       await fn();
     },
-    scrubTick() {
-      const fn = state.timers.get(jobs.SCRUB_INTERVAL_MS);
-      assert(fn, 'مؤقّت التنقية غير مسجَّل');
-      fn();
-    },
     watcher() { return state.watchers[state.watchers.length - 1]; },
     last() { return state.events[state.events.length - 1]; },
   };
@@ -140,7 +135,7 @@ async function testStartBothKinds() {
     assert.strictEqual(env.last().kind, kind);
     assert.strictEqual(env.state.watchers.length, 1, 'مراقب واحد للجولة');
     assert.deepStrictEqual(env.watcher().testIds, ['TC101'], 'المعرّفات مستخرجة من البرومبت');
-    assert.strictEqual(env.state.unrefs, 2, 'مؤقّتا النبض والتنقية unref');
+    assert.strictEqual(env.state.unrefs, 1, 'مؤقّت النبض unref');
   }
   ok('startJob ينجح للنوعين app/site ويبدأ السطح والمراقب المطابقين');
 }
@@ -310,26 +305,25 @@ async function testHeartbeatAndBroadcast() {
   ok('النبض: مصدران فقط، وبثّ دوري لا يتجاوز 30 ثانية أثناء running');
 }
 
-async function testPeriodicScrub() {
+async function testScrubBoundaries() {
+  // درس التشغيل الحي 2026-08-08: غلاف CLI يقرأ المفتاح من config المؤقت أثناء
+  // الجولة — التنقية أثناء النشاط تجوّعه (CREATE_API_KEY). العقد المصحح: تنقية
+  // عند البدء والنهايات فقط، ولا مؤقّت دوري ولا تنقية على انتقال وسيط.
   const env = makeEnv();
   await env.manager.startJob({ cwd: CWD, kind: 'app', prompt: PROMPT });
-  const afterStart = env.state.scrubs;
-  assert(afterStart >= 2, 'تنقية عند البدء وعند انتقال الحالة');
+  assert.strictEqual(env.state.scrubs, 1, 'تنقية واحدة عند البدء (قبل أي CLI)');
+  assert.strictEqual(env.state.timers.size, 1, 'مؤقّت النبض وحده — لا مؤقّت تنقية دوري');
 
-  env.scrubTick();
-  assert.strictEqual(env.state.scrubs, afterStart + 1, 'مؤقّت 60 ثانية ينقّي');
-
-  const beforeTransition = env.state.scrubs;
   env.watcher().emit(progress('running'));
-  assert(env.state.scrubs > beforeTransition, 'كل انتقال حالة ينقّي');
+  assert.strictEqual(env.state.scrubs, 1, 'الانتقال الوسيط لا ينقّي — CLI يحتاج مفتاحه');
 
   const beforeFinish = env.state.scrubs;
   env.watcher().emit(progress('complete'));
   assert(env.state.scrubs > beforeFinish, 'الاكتمال ينقّي عند الانتقال فوراً');
   await flush();
   assert(env.state.scrubs >= beforeFinish + 2, 'وتنقية أخيرة بعد إغلاق الخادم');
-  assert.strictEqual(env.state.timers.has(jobs.SCRUB_INTERVAL_MS), false, 'مؤقّت التنقية يتوقف بعد النهاية');
-  ok('التنقية الدورية: عند البدء وكل 60 ثانية وكل انتقال وبعد الإغلاق');
+  assert.strictEqual(env.state.timers.size, 0, 'كل المؤقّتات تتوقف بعد النهاية');
+  ok('حدود التنقية: عند البدء والنهايات فقط — لا تجويع لمفتاح CLI أثناء الجولة');
 }
 
 async function testCancelAndQuitCleanup() {
@@ -430,7 +424,7 @@ async function main() {
   await testAwaitingSetupThenRunning();
   await testStateTransitions();
   await testHeartbeatAndBroadcast();
-  await testPeriodicScrub();
+  await testScrubBoundaries();
   await testCancelAndQuitCleanup();
   await testSnapshotIsSealed();
   await testNotifierContract();
