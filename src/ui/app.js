@@ -599,6 +599,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   const memoryEl = document.querySelector('satr-memory-panel');
   const researchEl = document.querySelector('satr-research-panel');
   const opsRoomEl = document.querySelector('satr-ops-room');
+  const testspriteJobEl = document.querySelector('satr-testsprite-job');
   const opsDialogEl = document.querySelector('satr-ops-dialog');
   const verifyConfigEl = document.querySelector('satr-verify-config-dialog');
   const previewEl = document.querySelector('satr-preview-panel');
@@ -1100,6 +1101,13 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
     // وضع الحلقة المحدودة (schema v1): توجيه عرض فقط إلى غرفة العمليات.
     if (ev.type === 'loop_update') { opsRoomEl.handleEvent(ev); return; }
+    // جولة TestSprite (schema v1 — العقد المجمّد 2026-08-06 §2/§4): تُبث من main
+    // مباشرة مستقلةً عن الدور والجلسة (نمط bg_procs/loop_update) ⇒ بطاقة الحالة
+    // الدائمة أعلى المحادثة؛ المكوّن يملك العرض والإيقاف والإغلاق والتقاط الإقلاع.
+    if (ev.type === 'testsprite_job') {
+      if (testspriteJobEl && testspriteJobEl.handleEvent) testspriteJobEl.handleEvent(ev);
+      return;
+    }
     // «توليد مكتمل» (schema v1 — عقد ج9 §2): حدث منسّق لا حدث محرك (نمط
     // loop_update) ⇒ بطاقة مستقلة في المحادثة عبر chat.js؛ نقرها يفتح لوحة
     // المعرض بالمسار القائم (openGalleryPanel — تُستدعى كسولاً بعد إقلاع القشرة).

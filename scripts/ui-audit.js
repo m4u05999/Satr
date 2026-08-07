@@ -180,6 +180,19 @@ const GALLERY_PLAY_CLICK = `
   await new Promise((r) => setTimeout(r, 900)); // genMedia + Blob + objectURL
 `;
 
+// بث snapshot جولة TestSprite اصطناعي في مشهدَي البطاقة (39–40 — العقد المجمّد
+// v1 §2): يمرّ بالمسار الحقيقي كاملاً (خطّاف الـharness ⇒ app.js ⇒
+// testspriteJobEl.handleEvent — نمط بطاقة المراجعة في المشهدين 30–31).
+const TESTSPRITE_JOB_INJECT = `
+  window.__SATR_TESTSPRITE_HARNESS__.emitEvent({
+    type: "testsprite_job", schema_version: 1, job_id: "tsjob-audit-42", kind: "app",
+    state: "running", port: 4173, started_at: Date.now() - 65000, heartbeat_at: Date.now() - 3000,
+    summary: { total: 12, completed: 7, passed: 6, failed: 1, skipped: 0, blocked: 0 },
+    failure_code: null, updated_at: Date.now(),
+  });
+  await new Promise((r) => setTimeout(r, 400));
+`;
+
 const SHOTS = [
   // ---------- الأسطح اليومية ----------
   { out: '01-daily-1440', w: 1440, h: 900 },
@@ -515,6 +528,34 @@ const SHOTS = [
       const capBg = effBg(cap);
       const capFg = parseColor(getComputedStyle(cap.querySelector(".gal-prompt")).color);
       out.push("شرح العرض المكبر: نص " + fmt(capFg) + " على " + fmt(capBg) + " = " + contrast(capFg, capBg).toFixed(2) + ":1");
+      return out;
+    `,
+  },
+
+  // ---------- بطاقة حالة جولة TestSprite أعلى المحادثة (العقد المجمّد v1 §4) ----------
+  // الداكن: البطاقة بكامل محتواها عبر المسار الحقيقي (emitEvent ⇒ app.js ⇒ المكوّن)
+  { out: '39-testsprite-job', w: 1440, h: 900, js: TESTSPRITE_JOB_INJECT },
+  // الفاتح مقاساً: تباين العنوان والحالة والعدادات والنبضة على خلفية البطاقة
+  {
+    out: '40-testsprite-job-light', w: 1440, h: 900,
+    js: LIGHT + MEASURE + TESTSPRITE_JOB_INJECT + `
+      const host = document.querySelector("satr-testsprite-job");
+      if (!host || !host.hasAttribute("open")) { out.push("✗ لم تظهر بطاقة جولة TestSprite"); return out; }
+      const root = host.shadowRoot;
+      const card = root.querySelector(".card");
+      const cardBg = effBg(card);
+      const line = (el, label) => {
+        if (!el) { out.push(label + ": ✗ العنصر غائب"); return; }
+        const c = parseColor(getComputedStyle(el).color);
+        out.push(label + ": «" + el.textContent.trim() + "» " + fmt(c) + " على " + fmt(cardBg) + " = " + contrast(c, cardBg).toFixed(2) + ":1");
+      };
+      line(root.querySelector(".title"), "العنوان");
+      line(root.querySelector(".state"), "الحالة");
+      line(root.querySelector(".heart"), "النبضة");
+      const first = root.querySelector(".counter");
+      line(first, "أول عداد");
+      const stop = root.querySelector(".stop");
+      out.push("زر الإيقاف: نص " + fmt(parseColor(getComputedStyle(stop).color)) + " على " + fmt(effBg(stop)) + " = " + contrast(parseColor(getComputedStyle(stop).color), effBg(stop)).toFixed(2) + ":1");
       return out;
     `,
   },
