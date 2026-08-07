@@ -1344,6 +1344,21 @@ result`)، فالواجهة لا تتغيّر.
   قناتي IPC، والعقد والحواجز ودورة ملكية الخادم والواجهة الحية في
   `npm run test:testsprite-ready`. الطريقة الأساسية من الدردشة والتشخيص اليدوي في
   `docs/TESTSPRITE.md`.
+- **بطاقة حالة الجولة في الواجهة (العقد المجمّد v1 — قرار المالك 2026-08-06 §2/§4)**:
+  `<satr-testsprite-job>` (`src/ui/components/testsprite-job.js`) بطاقة دائمة أعلى
+  منطقة المحادثة، مستقلة عن الدور والجلسة — حدث `testsprite_job` (schema v1) يُبث من
+  main مباشرة (نمط `bg_procs`) وتلتقطه القشرة خارج token الدور إلى
+  `handleEvent`. تظهر عند snapshot نشط، وبعد حالة نهائية
+  (completed/cancelled/failed) تبقى حتى إغلاقها يدوياً بزر ✕ مع تعطيل زر الإيقاف.
+  الحالات الست بالعربية حرفياً من العقد (preparing=«تجهيز الجولة» …
+  failed=«متوقفة بسبب البنية»)، والعدادات ومنها blocked «محجوبة»، و«آخر نشاط قبل Xث»
+  من `heartbeat_at` يتحدث محلياً كل ثانية (فوق 45ث تنبيه هادئ «لا نشاط مرصود»)،
+  والمنفذ (`http://127.0.0.1:port` تبنيه الواجهة) والمعرّف LTR داخل `bdi`. زر
+  «⏹ إيقاف الجولة» ⇒ confirm عربي ⇒ `window.satr.testspriteJobCancel(job_id)`.
+  الإقلاع يلتقط جولة حية بعد reload عبر `window.satr.testspriteJobStatus()` محروساً
+  بـ `typeof` (فلا ينكسر قبل دمج قناة كودكس). الاختبار الحي
+  `npm run test:testsprite-job-live` (14 فحصاً تحت CSP) ومشهدا ui-audit 39/40
+  (داكن/فاتح مقاس التباين) يبثّان snapshot اصطناعياً.
 
 ### نواة مدير جولة TestSprite (testspritejobs.js — العقد المجمَّد v1)
 

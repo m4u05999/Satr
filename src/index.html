@@ -167,6 +167,9 @@
      عمود الدردشة يجمع الخيط والمؤلّف، بينما يبقى غلافا المكوّنين display:contents -->
 <div id="midRow">
 <div id="chatColumn">
+<!-- بطاقة حالة جولة TestSprite (العقد المجمّد v1): Shadow DOM مستقل عن الدور
+     والجلسة — يظهر أعلى منطقة المحادثة عند جولة نشطة ويبقى النهائي حتى يُغلق يدوياً -->
+<satr-testsprite-job></satr-testsprite-job>
 <!-- خيط المحادثة: مكوّن light DOM (تفكيك ت-12 — بلا Shadow: البث يعيد بناء innerHTML
      وأنماط المنطقة في base.css؛ الغلاف display:contents يبني <main> بداخله).
      مجرى أحداث satr:event يبقى orchestration في القشرة ويستدعي methods المكوّن -->
@@ -316,6 +319,7 @@
 <script type="module" src="ui/components/memory-panel.js"></script>
 <script type="module" src="ui/components/research-panel.js"></script>
 <script type="module" src="ui/components/ops-room.js"></script>
+<script type="module" src="ui/components/testsprite-job.js"></script>
 <script type="module" src="ui/components/verify-config-dialog.js"></script>
 <script type="module" src="ui/components/execution-panel.js"></script>
 <script type="module" src="ui/components/sessions-panel.js"></script>

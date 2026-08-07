@@ -70,6 +70,7 @@
     "test:envbrief": "node scripts/envbrief-test.js",
     "test:genmedia": "node scripts/genmedia-test.js",
     "test:gallery": "electron scripts/gallery-live-test.js",
+    "test:testsprite-job-live": "electron scripts/testsprite-job-live-test.js",
     "test:background-ui-live": "electron scripts/background-ui-live-test.js",
     "test:browser-member-live": "electron scripts/browser-member-live-test.js",
     "test:preview-member-live": "electron scripts/preview-member-live-test.js",
