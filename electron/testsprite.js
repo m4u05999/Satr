@@ -254,7 +254,7 @@ function chatPrompt(prompt, context) {
     : 'استخرج الحالات المطلوبة من اختيار المستخدم أو خطة الاختبار؛ وعند testIds=[] راقب كل الحالات التي تكتبها الدفعة الحالية.';
   const bootstrapInstruction = completedConfig(cwd)
     ? '2. تهيئة TestSprite مكتملة في testsprite_tests/tmp/config.json؛ لا تستدعِ testsprite_bootstrap.'
-    : `2. استدعِ testsprite_bootstrap بالقيم: localPort=${port}, pathname="/", type="frontend", projectPath=${JSON.stringify(cwd)}, testScope="codebase", serverMode="development". قد يفتح نموذج إعداد أولياً؛ انتظر حفظ المستخدم له قبل المتابعة.`;
+    : `2. استدعِ testsprite_bootstrap بالقيم: localPort=${port}, pathname="/", type="frontend", projectPath=${JSON.stringify(cwd)}, testScope="codebase", serverMode="development". قد يفتح نموذج إعداد أولياً — وقد تطلق الحزمة متصفح النظام الخارجي من تلقائها (سلوكها الداخلي): تجاهله وافتح عنوان صفحة الإعداد نفسه فوراً في معاينة سطر عبر open_preview وأكمل التعبئة فيها؛ وإن طلب النموذج رفع ملف PRD فوجّه المستخدم لرفعه بيده ولا تحاول حقنه برمجياً. انتظر حفظ النموذج قبل المتابعة.`;
   return String(prompt || '') + `
 
 <satr_testsprite_run>
@@ -297,7 +297,7 @@ function siteChatPrompt(prompt, context) {
 النطاق محدد (الصفحات الثلاث)؛ لا تسأل أسئلة توضيح وابدأ مباشرة.
 نفّذ بالتسلسل:
 1. testsprite_check_account_info، وتوقف إن فشل الاتصال أو أعادت الأداة حالة مفتاح غير صالح.
-2. استدعِ testsprite_bootstrap دائماً في هذه الجولة — حتى لو وُجدت تهيئة سابقة فهي لسطح آخر — بالقيم: localPort=${port}, pathname="/", type="frontend", projectPath=${JSON.stringify(cwd)}, testScope="codebase", serverMode="development". قد يفتح نموذج إعداد أولياً؛ انتظر حفظ المستخدم له قبل المتابعة.
+2. استدعِ testsprite_bootstrap دائماً في هذه الجولة — حتى لو وُجدت تهيئة سابقة فهي لسطح آخر — بالقيم: localPort=${port}, pathname="/", type="frontend", projectPath=${JSON.stringify(cwd)}, testScope="codebase", serverMode="development". قد يفتح نموذج إعداد أولياً — وقد تطلق الحزمة متصفح النظام الخارجي من تلقائها (سلوكها الداخلي): تجاهله وافتح عنوان صفحة الإعداد نفسه فوراً في معاينة سطر عبر open_preview وأكمل التعبئة فيها؛ وإن طلب النموذج رفع ملف PRD فوجّه المستخدم لرفعه بيده ولا تحاول حقنه برمجياً. انتظر حفظ النموذج قبل المتابعة.
 3. testsprite_generate_code_summary.
 4. testsprite_generate_standardized_prd.
 5. testsprite_generate_frontend_test_plan مع needLogin=false، ووجّه الخطة إلى صفحات الموقع الثلاث حصراً.
