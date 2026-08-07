@@ -900,8 +900,9 @@ section {
 
 .market-eyebrow,
 .status-badge {
-  display: inline-flex;
-  align-items: center;
+  /* inline-block لا inline-flex: الشارة نص فيه bdi — عناصر flex تُسقط الفراغات
+     النصية بينها فيلتصق الرقم بجاريه («·20منظمة»). */
+  display: inline-block;
   width: fit-content;
   border: 1px solid var(--gold-border);
   border-radius: 999px;
@@ -1320,8 +1321,9 @@ section {
   .feature-card:nth-child(even) { direction: rtl; }
   /* الطبقات: الدرج المائل يضيق الشاشة — أعمدة مستقيمة */
   .layer-card:nth-child(2), .layer-card:nth-child(3), .layer-card:nth-child(4) { margin-inline-start: 0; }
-  .site-header { padding: .8rem 1.2rem; }
-  .site-header nav { gap: .9rem; }
+  /* على الضيق تلتف القائمة سطراً ثانياً بدل الالتصاق بالشعار */
+  .site-header { padding: .8rem 1.2rem; flex-wrap: wrap; gap: .35rem .9rem; }
+  .site-header nav { gap: .9rem; flex-wrap: wrap; }
   .site-header .nav-generate { display: none; }
   .term-body { font-size: .8rem; }
   .market-hero { min-height: auto; padding-top: 8rem; }
@@ -1330,6 +1332,11 @@ section {
   .market-hero::before { inset-inline-end: -16rem; }
   .founder-term + .founder-term { border-inline-start: 0; border-top: 1px solid var(--border); }
   .catalog-meta { grid-template-columns: 1fr; }
+  /* درس فحص 390px: min-width كان يقص عمود السعر خارج الشاشة — المحتوى قصير
+     ويتسع بحشوات أصغر؛ يبقى شريط التمرير احتياطاً للشاشات الأضيق فقط */
+  .catalog-table { min-width: 0; }
+  .catalog-table th,
+  .catalog-table td { padding: .7rem .55rem; font-size: .85rem; }
   .market-page .site-header nav a:not(.nav-cta) { display: none; }
   .market-page .site-footer { align-items: flex-start; }
 }
