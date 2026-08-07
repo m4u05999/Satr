@@ -1337,6 +1337,50 @@ result`)، فالواجهة لا تتغيّر.
   `npm run test:testsprite-ready`. الطريقة الأساسية من الدردشة والتشخيص اليدوي في
   `docs/TESTSPRITE.md`.
 
+### نواة مدير جولة TestSprite (testspritejobs.js — العقد المجمَّد v1)
+
+`electron/testspritejobs.js` وحدة مفردة تنقل ملكية جولة TestSprite من **الدور** إلى
+**التطبيق**: كانت الـharness والمراقب يعيشان داخل دور واحد في `agent.js`/`codex.js`
+فتضيع الجولة بانتهائه، وصارت الوحدة تملكهما عبر الأدوار وتبثّ حالتها بشفافية.
+
+- **العقد**: `startJob({cwd, kind, prompt})` → `{ok:true, jobId, url}` أو `{ok:false, error}`
+  (`bad_input|busy|harness_failed|cancelled|internal_error`) · `status()` → snapshot منقّى
+  أو `{active:false}` قبل أول جولة · `cancel(jobId)` · `cleanupBeforeQuit()` ·
+  `setNotifier(fn)` (و`create(deps)` لحقن مزيّفين في الاختبار). `kind ∈ {app, site}`
+  يوجّه داخلياً إلى `testspriteharness.start()` أو `startSite()`، و`jobId` بنمط
+  `^tsj_[0-9]{1,15}_[a-z0-9]{1,10}$`.
+- **جولة نشطة واحدة**: الفحص والتسجيل **متزامنان قبل أي await** فلا يمرّ طلبان متسابقان
+  ولا يقلع خادمان؛ الثاني يعيد `busy` بمعرّف النشطة. الحالة المنتهية تبقى محفوظة للعرض
+  والترطيب، ولا تمنع جولة جديدة.
+- **الحالات الست**: `preparing → awaiting_setup → running → completed`، مع `cancelled`
+  و`failed`. `awaiting_setup` نافذة نموذج bootstrap (لا نتائج تغيّرت ولا config مكتمل)،
+  ويرفعها أول تغيّر نتائج **أو** اكتمال التهيئة. `failed` بـ`failure_code` من قائمة
+  مغلقة (`harness_lost` بعد ثلاث نبضات بلا استجابة ≈45ث، و`internal_error`) — لا نص
+  خطأ خام.
+- **النبض والبثّ**: مؤقّت unref كل 15ث يحدّث `heartbeat_at` من **مصدرين فقط**: تغيّر
+  بصمة ملف النتائج، أو نجاح probe صحة الـharness (ببصمة `site` لجولة الموقع). البثّ عند
+  كل تغيّر حالة أو تقدّم، وعلى الأقل كل 30ث أثناء الجولة الحيّة (السقف مطلب «لا صمت غير
+  مفسّر»؛ التطبيق يشمل `awaiting_setup` أيضاً لأن العقد يضع أرضية لا سقفاً).
+- **حدّ توقيت مقصود**: الحالة النهائية تُبثّ **قبل** إغلاق الخادم، لأن `server.close()`
+  ينتظر تصريف اتصالات keep-alive (ثوانٍ مع متصفح الاختبار) فلا تتأخر بطاقة الحالة عن
+  الحقيقة. التنقية الأخيرة بعد الإغلاق.
+- **التنقية**: `testsprite.scrubConfig(cwd)` عند البدء وكل انتقال حالة وكل 60ث وبعد
+  الإغلاق — لا اعتماد على تنظيف نهاية الدور وحده.
+- **ممنوع في النواة**: قراءة المفتاح أو حمله، تشغيل أوامر TestSprite بنفسها (يشغّلها
+  النموذج بأدوات الطرفية القائمة)، أو معرفة Electron/renderer. **والبرومبت الخام لا
+  يُخزَّن**: تُستخرج منه `testIds` فوراً ثم يُهمَل. لا `restart` ولا `resume` في هذا
+  العقد (لا استئناف مدّعى بلا idempotency موثّق).
+- **حدث `testsprite_job` (schema v1)**: `{type, schema_version:1, job_id, kind, state,
+  port, started_at, heartbeat_at, summary:{total, completed, passed, failed, skipped,
+  blocked}, failure_code, updated_at}` — قائمة حقول مغلقة: لا مفتاح ولا مسار مطلق ولا
+  برومبت ولا URL كامل (المنفذ يكفي والواجهة تبني `http://127.0.0.1:port` للعرض LTR).
+  حدث **منسَّق** لا حدث محرك، فلا يدخل `KNOWN_EVENT_TYPES` (نمط `loop_update`).
+- **التحقق**: `npm run test:testspritejobs` قطعي بلا شبكة ولا قرص ولا مؤقّتات حقيقية
+  (كل اعتماد محقون بمزيّف): بدء النوعين، `busy` تحت طلبين متزامنين، الانتقالات الست،
+  `awaiting_setup`، النبض بمصدريه وسقف البثّ، التنقية بمواضعها الأربعة، الإلغاء
+  وcleanup بلا إغلاق مكرر وبلا لمس خادم غير مملوك، وقائمة حقول اللقطة المغلقة مع فحص
+  تسريب المفتاح والمسار والبرومبت وURL.
+
 ### طبقة القدرات ونموذج Community + Enterprise (features.js — المرحلة 5ج)
 
 **التصميم الكامل في `docs/ARCHITECTURE.md`** (نموذج «النواة + Enterprise إضافي» بطريقة
