@@ -88,8 +88,9 @@ try {
     delete require.cache[featuresPath];
   }
   const updater = require('../electron/updater');
-  assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community' }), false);
+  assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community' }), true);
   assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: true }), true);
+  assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: false }), false);
   assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'enterprise' }), false);
   assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: false }, { edition: 'community' }), false);
   console.log('✓ Community contains no proprietary source and falls back cleanly');

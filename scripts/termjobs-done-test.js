@@ -44,8 +44,9 @@ function cleanupTemp() {
   assert.ok(!secret.includes('sk-1234567890abcdef') && secret.includes('[secret]'), 'لم يُحجب السر');
   const kv = termjobs.scrubDoneTail('api_key: abcdef123456');
   assert.ok(!kv.includes('abcdef123456') && kv.includes('api_key=[secret]'), 'لم يُحجب زوج key=value');
-  const longTail = termjobs.scrubDoneTail('ط'.repeat(20000));
-  assert.ok(longTail.length === termjobs.MAX_DONE_TAIL + 1 && longTail.endsWith('…'), 'القص ليس 8000+علامة');
+  const longTail = termjobs.scrubDoneTail('بداية-' + 'ط'.repeat(20000) + '-نهاية');
+  assert.ok(longTail.length === termjobs.MAX_DONE_TAIL + 1 && longTail.startsWith('…'), 'القص ليس 8000+علامة');
+  assert.ok(longTail.endsWith('-نهاية'), 'القص لم يحتفظ بالنهاية الفعلية للخرج');
 
   // 1) مهمة محدودة تخرج طبيعياً: الحدث بكامل حقوله والذيل يلتقط الخرج
   const job1 = termjobs.startJob(temp, 'node -e "console.log(\'DONE_MARK_123\')"', 'مسبار منتهٍ');
@@ -60,21 +61,28 @@ function cleanupTemp() {
   assert.strictEqual(done1.label, 'مسبار منتهٍ');
   assert.ok(done1.tail.includes('DONE_MARK_123'), 'الذيل لا يحمل خرج المهمة');
 
-  // 2) حجب الأسرار في الذيل الملتقط
+  // 2) كود الفشل الأصلي يصل للواجهة ولا يتحول إلى نجاح بسبب exit العاري
+  const failedJob = termjobs.startJob(temp, 'node -e "process.exit(7)"', 'مهمة فاشلة');
+  assert(failedJob.ok, failedJob.message || failedJob.error);
+  const failedDone = await waitFor(() => doneEvent(failedJob.id), 'bg_term_done للمهمة الفاشلة');
+  assert.strictEqual(failedDone.exitCode, 7, 'غلاف الصدفة أخفى كود فشل المهمة');
+
+  // 3) حجب الأسرار في الذيل الملتقط
   const job2 = termjobs.startJob(temp, 'node -e "console.log(\'the key sk-a1b2c3d4e5f6g7h8 leaked\')"', 'مهمة سرية');
   assert(job2.ok, job2.message || job2.error);
   const done2 = await waitFor(() => doneEvent(job2.id), 'bg_term_done للمهمة السرية');
   assert.ok(!done2.tail.includes('sk-a1b2c3d4e5f6g7h8'), 'تسرّب السر إلى الذيل');
   assert.ok(done2.tail.includes('[secret]'), 'لا علامة حجب في الذيل');
 
-  // 3) القص: خرج ضخم يُقص عند 8000 محرف بعلامة
-  const job3 = termjobs.startJob(temp, 'node -e "console.log(\'x\'.repeat(40000))"', 'مهمة ضخمة');
+  // 4) القص: خرج ضخم يحتفظ بنهاية الخرج عند 8000 محرف بعلامة
+  const job3 = termjobs.startJob(temp, 'node -e "console.log(\'x\'.repeat(40000) + \'TAIL_MARK_789\')"', 'مهمة ضخمة');
   assert(job3.ok, job3.message || job3.error);
   const done3 = await waitFor(() => doneEvent(job3.id), 'bg_term_done للمهمة الضخمة');
   assert.ok(done3.tail.length <= termjobs.MAX_DONE_TAIL + 1, 'الذيل تجاوز 8000+علامة: ' + done3.tail.length);
-  assert.ok(done3.tail.endsWith('…'), 'الذيل المقصوص بلا علامة');
+  assert.ok(done3.tail.startsWith('…'), 'الذيل المقصوص بلا علامة');
+  assert.ok(done3.tail.includes('TAIL_MARK_789'), 'الذيل المقصوص لا يحمل نهاية الخرج');
 
-  // 4) الخوادم الطويلة بلا تغيير: لا bg_term_done ما دامت حية
+  // 5) الخوادم الطويلة بلا تغيير: لا bg_term_done ما دامت حية
   const job4 = termjobs.startJob(temp, 'node -e "setInterval(()=>{}, 200)"', 'خادم طويل');
   assert(job4.ok, job4.message || job4.error);
   await delay(2000);
@@ -85,9 +93,9 @@ function cleanupTemp() {
 
   term.killAll();
   cleanupTemp();
-  console.log('✓ bg_term_done يلتقط ذيل المهمة المنتهية بحقول كاملة الأنواع وexitCode 0');
+  console.log('✓ bg_term_done يلتقط ذيل المهمة ويحفظ رمزي النجاح والفشل الحقيقيين');
   console.log('✓ الذيل منقّى: ANSI ومحارف تحكم تُزال، والأسرار تُحجب ببوابة K2 نفسها');
-  console.log('✓ القص عند 8000 محرف بعلامة … للخرج الضخم');
+  console.log('✓ القص عند 8000 محرف يحتفظ بالنهاية الفعلية بعلامة …');
   console.log('✓ الخوادم الطويلة الحية لا تُبث الحدث، وbg_term القائم سليم');
   process.exit(0);
 })().catch((error) => {

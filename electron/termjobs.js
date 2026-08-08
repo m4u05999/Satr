@@ -26,7 +26,7 @@ function scrubDoneTail(raw) {
     .replace(/\r/g, '')
     .trim();
   const scrubbed = scrubSecrets(text);
-  return scrubbed.length > MAX_DONE_TAIL ? scrubbed.slice(0, MAX_DONE_TAIL) + '…' : scrubbed;
+  return scrubbed.length > MAX_DONE_TAIL ? '…' + scrubbed.slice(-MAX_DONE_TAIL) : scrubbed;
 }
 
 function publicJob(job) {
@@ -54,7 +54,18 @@ function startJob(cwd, command, label, options) {
   jobs.set(job.id, job);
   if (job.recordDevServer) devservers.recordStart(job.cwd, job.command, job.label);
   const shell = String(job.shell || '').toLowerCase();
-  const line = shell.includes('cmd') ? cleanCommand + ' & exit' : cleanCommand + '; exit';
+  let line;
+  if (shell.includes('cmd')) {
+    line = cleanCommand + ' & exit';
+  } else if (shell.includes('powershell') || shell.includes('pwsh')) {
+    // PowerShell يعيد 0 مع exit العاري؛ التقط نتيجة الأمر قبل تنفيذ الغلاف نفسه.
+    line = '$global:LASTEXITCODE = $null; ' + cleanCommand
+      + '; $satrCommandOk = $?; $satrExitCode = $LASTEXITCODE'
+      + '; if ($satrCommandOk) { exit 0 }'
+      + ' elseif ($satrExitCode -is [int] -and $satrExitCode -ne 0) { exit $satrExitCode } else { exit 1 }';
+  } else {
+    line = cleanCommand + '; exit';
+  }
   const written = term.writeTerm(job.id, line + '\r');
   if (!written.ok) {
     jobs.delete(job.id);

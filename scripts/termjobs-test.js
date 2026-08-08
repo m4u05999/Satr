@@ -46,8 +46,14 @@ async function waitFor(fn, label, timeout = 12000) {
     return read.ok && /READY/.test(read.data) && read;
   }, 'خرج المهمة');
   assert(termjobs.info(started.id), 'ماتت المهمة عند محاكاة نهاية الدور');
-  const saved = devservers.info(temp);
-  assert(saved && saved.command.includes('READY') && saved.last_url === 'http://localhost:4317', 'لم يُحفظ أمر الخادم/last_url');
+  // غلاف رمز الخروج (جولة الصقل 2026-08-08) أطال صدى السطر فيلتفّ URL الصدى عند حدّ
+  // العمود ولا يُلتقط منه؛ الالتقاط الفعلي من خرج الخادم الحقيقي وقد يلحق ظهور READY
+  // (الذي يظهر في الصدى أولاً) بلحظة — فالانتظار على السجل نفسه لا على الصدى.
+  const saved = await waitFor(() => {
+    const record = devservers.info(temp);
+    return record && record.last_url === 'http://localhost:4317' && record;
+  }, 'تسجيل last_url من خرج الخادم');
+  assert(saved.command.includes('READY'), 'لم يُحفظ أمر الخادم');
   assert(term.listTerms().some((item) => item.id === started.id && item.isJob && item.cwd === path.resolve(temp)), 'termList لا يعيد وصف المهمة');
   assert(term.readBuffer(started.id, 32).data.length > 0, 'readBuffer tail فارغ');
   assert(termjobs.stop(started.id).ok, 'فشل إيقاف المهمة');

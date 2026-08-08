@@ -260,8 +260,9 @@ class SatrFileViewer extends HTMLElement {
     }
     this._pre.appendChild(frag);
     this._applyDir(); // يطبّق صنف rtl-doc (مرآة الأرقام + الالتفاف) حسب الاتجاه المحسوم
-    const kb = (r.bytes / 1024).toFixed(r.bytes < 10240 ? 1 : 0);
-    this._meta.textContent = kb + ' KB · ' + lines.length + (clipped || r.truncated ? '+' : '') + ' سطر';
+    // حارس ضد bytes غير الرقمي (جولة الصقل 2026-08-08): مصدر ناقص يُسقط الحجم بدل «NaN KB»
+    const kb = Number.isFinite(r.bytes) ? (r.bytes / 1024).toFixed(r.bytes < 10240 ? 1 : 0) + ' KB · ' : '';
+    this._meta.textContent = kb + lines.length + (clipped || r.truncated ? '+' : '') + ' سطر';
     if (r.truncated || clipped) {
       this._note.textContent = '✂️ الملف أطول من حدّ العرض — يُعرض أوله فقط (' +
         (r.truncated ? '256 ك.ب' : MAX_VIEW_LINES + ' سطر') + ')';

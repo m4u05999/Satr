@@ -37,14 +37,18 @@ const ownSheet = sheet(`
   .gal-thumb .gal-ico { font-size: 24px; }
   /* صناديق المعلومات النصية (فيديو/صوت/فشل) فوقها نص فعلاً — بقاؤها على --bg-deep
      الثابتة جعل نصها --text-dim/--red باهتاً في الفاتح (~1.9:1). تُنقل إلى سطح ثيمة
-     يُقلب (--surface-3) فيصير تباينها بمرتبة ميتا البطاقة المقبولة — بلا token جديد */
-  .gal-video, .gal-audio, .gal-failed { background: var(--surface-3); cursor: default; }
+     يُقلب (--surface-3)، ونصّها عبر --media-note/--ops-review-alert (جولة الصقل
+     2026-08-08): --text-dim/--red العامان كانا 4.31/3.59:1 على --surface-3 الفاتح */
+  .gal-video, .gal-audio, .gal-failed {
+    background: var(--surface-3); cursor: default;
+    color: var(--media-note, var(--text-dim));
+  }
   .gal-play { font-size: 11px; padding: 2px var(--space-2); }
-  .gal-media-err { color: var(--red); font-size: 12px; }
+  .gal-media-err { color: var(--ops-review-alert, var(--red)); font-size: 12px; }
   /* المشغّل داخل صندوق المعلومات: سطح وسائط --bg-deep (لا نص فوقه — لا جزيرة) */
   .gal-player { width: 100%; height: 100%; object-fit: contain; background: var(--bg-deep); display: block; }
   .gal-audio-player { width: 100%; }
-  .gal-failed { color: var(--red); }
+  .gal-failed { color: var(--ops-review-alert, var(--red)); }
   .gal-body { padding: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1h); flex: 1; }
   .gal-prompt {
     font-size: 12px; color: var(--text); line-height: 1.5; overflow: hidden;

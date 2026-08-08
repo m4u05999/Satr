@@ -41,7 +41,8 @@ const ownSheet = sheet(`
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   .title { font-weight: 600; color: var(--text); }
   .kind { color: var(--text-faint); font-size: 12px; }
-  .state { font-weight: 600; color: var(--gold); }
+  /* --ops-review-title لا --gold: الذهب العام 4.26:1 على --surface الفاتح (جولة الصقل) */
+  .state { font-weight: 600; color: var(--ops-review-title, var(--gold)); }
   .card[data-state="completed"] .state { color: var(--green); }
   .card[data-state="failed"] .state { color: var(--red); }
   .card[data-state="cancelled"] .state { color: var(--text-dim); }

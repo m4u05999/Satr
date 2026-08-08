@@ -25,6 +25,20 @@ class SatrComposer extends HTMLElement {
     let slashIndex = 0, slashFiltered = [];
     let activeDraftCwd = $('cwd').value.trim();
 
+    // placeholder قصير حين يضيق المحرّر (جولة الصقل 2026-08-08): النص الطويل يلتف
+    // لسطرين وmin-height تقص ثانيهما — دون التضحية بالتلميح الكامل في العرض الواسع.
+    const FULL_PLACEHOLDER = input.getAttribute('placeholder') || '';
+    const SHORT_PLACEHOLDER = 'اكتب طلبك… (/ للأوامر، @ للملفات)';
+    if (typeof ResizeObserver === 'function' && FULL_PLACEHOLDER) {
+      const placeholderRo = new ResizeObserver(() => {
+        const w = input.clientWidth;
+        if (!w) return; // مخفي — لا قرار
+        const want = w < 700 ? SHORT_PLACEHOLDER : FULL_PLACEHOLDER;
+        if (input.getAttribute('placeholder') !== want) input.setAttribute('placeholder', want);
+      });
+      placeholderRo.observe(input);
+    }
+
     // حارس غياب الترميز: fixtures الاختبارات الحية قد تحمل نسخة مؤلّف بلا شريحة الاقتراح،
     // وغيابها لا يجوز أن يُسقط تهيئة المكوّن ودواله العامة.
     function clearPromptSuggestion() {

@@ -265,6 +265,21 @@ class SatrTopbar extends HTMLElement {
       } catch (e) { /* يبقى «—» — لا كسر للوحة */ }
     }
   });
+  // فحص يدوي للتحديثات — النتيجة النهائية تصل توست update (none/available/check_failed)؛
+  // السطر الجانبي هنا يعكس فقط أن الطلب انطلق أو أن التحديث غير مفعّل (تطوير/Enterprise).
+  const checkUpdatesBtn = $('checkUpdatesBtn');
+  const checkUpdatesStatus = $('checkUpdatesStatus');
+  let checkStatusTimer = 0;
+  if (checkUpdatesBtn) checkUpdatesBtn.addEventListener('click', async () => {
+    clearTimeout(checkStatusTimer);
+    try {
+      const r = window.satr.checkUpdates ? await window.satr.checkUpdates() : { ok: false };
+      checkUpdatesStatus.textContent = (r && r.ok)
+        ? 'جارٍ الفحص…'
+        : 'التحديث التلقائي غير مفعّل في هذا التشغيل.';
+    } catch (e) { checkUpdatesStatus.textContent = 'تعذّر بدء الفحص.'; }
+    checkStatusTimer = setTimeout(() => { checkUpdatesStatus.textContent = ''; }, 6000);
+  });
   initEeSection();
 
     // الواجهة العامة للقشرة

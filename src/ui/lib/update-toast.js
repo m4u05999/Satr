@@ -22,6 +22,11 @@ export function createUpdateToast(elements, satr) {
     } else if (event.phase === 'ready') {
       text.textContent = 'التحديث' + (event.version ? ' (' + event.version + ')' : '') + ' جاهز للتثبيت.';
       download.hidden = true; restart.hidden = false; toast.hidden = false;
+    } else if (event.phase === 'none') {
+      // ردّ الفحص اليدوي فقط (updater.js لا يبثّه للفحوص التلقائية الصامتة)
+      showTransientNotice('أنت على أحدث نسخة من سطر.');
+    } else if (event.phase === 'check_failed') {
+      showTransientNotice('تعذّر الفحص عن تحديثات — تحقق من اتصال الشبكة.');
     } else if (event.phase === 'error') {
       toast.hidden = true;
     }

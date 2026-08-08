@@ -29,6 +29,7 @@ desktop.ini
 
 # مخرجات TestSprite المولّدة محلياً (حالات/تقارير/روابط تشغيل خارجية)
 /testsprite_tests/
+/.testsprite/
 
 # checkout خاص اختياري للتطوير المحلي؛ كود Enterprise لا يدخل مستودع Community
 /enterprise/

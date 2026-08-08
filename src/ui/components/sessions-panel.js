@@ -30,14 +30,21 @@ const ownSheet = sheet(`
   }
 `);
 
-// عمر الجلسة بصيغة عربية مقروءة
+// عمر الجلسة بصيغة عربية سليمة: مفرد/مثنى/جمع 3–10/تمييز 11+ (جولة الصقل 2026-08-08 —
+// كانت «قبل 1 س» و«قبل 2 يوم» أرقاماً واختصارات بلا مثنى)
+function agoUnit(n, one, two, few, many) {
+  if (n === 1) return 'قبل ' + one;
+  if (n === 2) return 'قبل ' + two;
+  if (n <= 10) return 'قبل ' + n + ' ' + few;
+  return 'قبل ' + n + ' ' + many;
+}
 function fmtAge(ms) {
   const m = Math.round((Date.now() - ms) / 60000);
   if (m < 1) return 'الآن';
-  if (m < 60) return 'قبل ' + m + ' د';
+  if (m < 60) return agoUnit(m, 'دقيقة', 'دقيقتين', 'دقائق', 'دقيقة');
   const h = Math.round(m / 60);
-  if (h < 24) return 'قبل ' + h + ' س';
-  return 'قبل ' + Math.round(h / 24) + ' يوم';
+  if (h < 24) return agoUnit(h, 'ساعة', 'ساعتين', 'ساعات', 'ساعة');
+  return agoUnit(Math.round(h / 24), 'يوم', 'يومين', 'أيام', 'يوماً');
 }
 
 class SatrSessionsPanel extends HTMLElement {

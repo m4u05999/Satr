@@ -70,10 +70,18 @@ function testUpdaterContract() {
   delete require.cache[updaterPath];
 
   const originalSetTimeout = global.setTimeout;
+  const originalSetInterval = global.setInterval;
+  const originalDateNow = Date.now;
   const scheduled = [];
+  const intervals = [];
   global.setTimeout = (callback, timeout) => {
     scheduled.push({ callback, timeout });
     return { unref() {} };
+  };
+  global.setInterval = (callback, timeout) => {
+    const item = { callback, timeout, unrefed: false };
+    intervals.push(item);
+    return { unref() { item.unrefed = true; } };
   };
 
   try {
@@ -86,14 +94,49 @@ function testUpdaterContract() {
     assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: true }), true);
     assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: false }), false,
       'التعطيل الصريح signed:false يبقى محترماً');
+    // قبل init: الفحص اليدوي يعيد unavailable بدل الانفجار (وضع التطوير)
+    assert.deepStrictEqual(updater.checkNow(), { ok: false, error: 'unavailable' });
 
     const emitted = [];
-    updater.initUpdater({ isPackaged: true }, (event) => emitted.push(event), { edition: 'community', signed: true });
+    const fakeApp = new EventEmitter();
+    fakeApp.isPackaged = true;
+    updater.initUpdater(fakeApp, (event) => emitted.push(event), { edition: 'community', signed: true });
     assert.strictEqual(fake.autoDownload, false);
     assert.strictEqual(fake.autoInstallOnAppQuit, false);
     assert.deepStrictEqual(scheduled.map((item) => item.timeout), [8000]);
+    assert.deepStrictEqual(intervals.map((item) => item.timeout), [4 * 60 * 60 * 1000],
+      'الفحص الدوري كل 4 ساعات غائب.');
+    assert.strictEqual(intervals[0].unrefed, true, 'مؤقّت الفحص الدوري يجب ألا يمنع إغلاق التطبيق (unref).');
     assert.deepStrictEqual(calls, { check: 0, download: 0, quit: 0 });
 
+    // ① الفحوص التلقائية: إقلاع + خنق التركيز + الدوري — كلها صامتة بلا حدث
+    scheduled[0].callback();
+    assert.strictEqual(calls.check, 1, 'فحص الإقلاع لم يعمل.');
+    fakeApp.emit('browser-window-focus');
+    assert.strictEqual(calls.check, 1, 'فحص التركيز تجاهل نافذة الخنق (30 دقيقة).');
+    Date.now = () => originalDateNow() + 31 * 60 * 1000;
+    fakeApp.emit('browser-window-focus');
+    assert.strictEqual(calls.check, 2, 'فحص التركيز لم يعمل بعد انقضاء الخنق.');
+    intervals[0].callback();
+    assert.strictEqual(calls.check, 3, 'الفحص الدوري لم يعمل.');
+    fake.emit('update-not-available');
+    assert.deepStrictEqual(emitted, [], 'فحص تلقائي صامت بثّ «لا جديد» للمستخدم.');
+
+    // ② الفحص اليدوي: none عند «لا جديد» وcheck_failed عند الخطأ — بلا نص خام
+    assert.deepStrictEqual(updater.checkNow(), { ok: true });
+    assert.strictEqual(calls.check, 4);
+    fake.emit('update-not-available');
+    assert.deepStrictEqual(emitted, [{ type: 'update', phase: 'none' }]);
+    assert.deepStrictEqual(updater.checkNow(), { ok: true });
+    assert.strictEqual(calls.check, 5);
+    const silencedError = console.error;
+    console.error = () => {};
+    try { fake.emit('error', new Error('OFFLINE_RAW_DETAIL')); } finally { console.error = silencedError; }
+    assert.deepStrictEqual(emitted[1], { type: 'update', phase: 'check_failed' });
+    assert(!JSON.stringify(emitted).includes('OFFLINE_RAW_DETAIL'), 'تسرّب خطأ الفحص اليدوي الخام.');
+    emitted.length = 0;
+
+    // ③ خرائط الأحداث الأربعة كما كانت (بلا manualPending ⇒ error صامت)
     fake.emit('update-available', { version: '3.2.1' });
     fake.emit('download-progress', { percent: 67.6 });
     fake.emit('update-downloaded', { version: '3.2.1' });
@@ -107,16 +150,26 @@ function testUpdaterContract() {
       { type: 'update', phase: 'error' },
     ]);
     assert(!JSON.stringify(emitted).includes('RAW_UPDATER_SECRET'), 'تسرّبت رسالة updater الخام إلى الحدث.');
-    assert.deepStrictEqual(calls, { check: 0, download: 0, quit: 0 });
+
+    // ④ بعد «تتوفّر نسخة» تتوقف الفحوص التلقائية؛ اليدوي وحده يتجاوز
+    intervals[0].callback();
+    fakeApp.emit('browser-window-focus');
+    assert.strictEqual(calls.check, 5, 'استمر فحص تلقائي بعد معرفة التحديث — إزعاج متكرر.');
+    assert.deepStrictEqual(updater.checkNow(), { ok: true });
+    assert.strictEqual(calls.check, 6, 'الفحص اليدوي يجب أن يتجاوز حارس updateKnown.');
+    Date.now = originalDateNow;
 
     updater.downloadUpdate();
     assert.strictEqual(calls.download, 1);
     assert.strictEqual(calls.quit, 0);
     updater.quitAndInstall();
     assert.strictEqual(calls.quit, 1);
-    return ['updater-flags', 'updater-events', 'updater-guards', 'explicit-consent'];
+    return ['updater-flags', 'updater-events', 'updater-guards', 'explicit-consent',
+      'periodic-focus-checks', 'manual-check-contract'];
   } finally {
     global.setTimeout = originalSetTimeout;
+    global.setInterval = originalSetInterval;
+    Date.now = originalDateNow;
     delete require.cache[updaterPath];
     if (previousUpdater) require.cache[updaterPath] = previousUpdater;
     if (previousDependency) require.cache[dependencyPath] = previousDependency;
@@ -168,12 +221,14 @@ async function main() {
       'progress',
       'ready-restart',
       'silent-error',
+      'manual-check-feedback',
       'dismiss',
       'zero-csp-violations',
     ]);
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console أثناء اختبار واجهة التحديث.');
     assert.deepStrictEqual(contractChecks, [
       'updater-flags', 'updater-events', 'updater-guards', 'explicit-consent',
+      'periodic-focus-checks', 'manual-check-contract',
     ]);
     console.log('update-ui: نجح — عقد updater والموافقة الصريحة وتوست Chromium غير الحاجب؛ صفر CSP.');
   } finally {

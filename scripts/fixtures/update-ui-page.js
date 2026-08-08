@@ -79,6 +79,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       'error سرّب نص الخطأ الخام إلى التوست.');
     checks.push('silent-error');
 
+    // ردّا الفحص اليدوي (جولة الصقل 2026-08-08): none = أحدث نسخة، check_failed = تعذّر
+    handleUpdateEvent({ type: 'update', phase: 'none' });
+    assert(!toast.hidden && text.textContent.includes('أحدث نسخة') && download.hidden && restart.hidden,
+      'none لم يعرض إشعار «أنت على أحدث نسخة» العابر بلا أزرار.');
+    handleUpdateEvent({ type: 'update', phase: 'check_failed' });
+    assert(!toast.hidden && text.textContent.includes('تعذّر الفحص') && download.hidden && restart.hidden,
+      'check_failed لم يعرض إشعار تعذّر الفحص العابر.');
+    checks.push('manual-check-feedback');
+
     handleUpdateEvent({ type: 'update', phase: 'available', version: '3.2.2' });
     dismiss.click();
     assert(toast.hidden, 'زر الإخفاء لم يخف التوست.');
