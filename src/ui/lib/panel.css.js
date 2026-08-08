@@ -59,5 +59,9 @@ export const panelSheet = sheet(controlsText + `
   .panel-search input { width: 100%; }
   .panel-list { flex: 1; overflow-y: auto; }
   .panel-list .hint { padding: var(--space-4); color: var(--text-dim); font-size: 13px; text-align: center; }
+  /* عزل اتجاه code المضمّن في نصوص اللوحات العربية (جولة الصقل 2026-08-08): بلا هذه
+     القاعدة يرث code اتجاه rtl فتتشوه المسارات بصرياً — الشرطة الختامية تقفز قبل
+     D: و~ تنعكس للطرف الآخر (قياس هندسي مثبّت في لوحة الوكلاء قبل الإصلاح) */
+  code { direction: ltr; unicode-bidi: isolate; }
   .panel-head button.refresh { font-size: 12px; padding: 3px var(--space-2h); color: var(--text); }
 `);

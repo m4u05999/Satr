@@ -254,7 +254,9 @@ src/ui/app.js        ← قشرة الإقلاع والتوجيه (وحدة ES �
                        (orchestration يستدعي methods كتلة newAssistantBlock من مكوّن المحادثة)
                        + send/compact + COMMANDS + الاستئناف + التصدير + التحديث التلقائي
 src/ui/lib/          ← وحدات ES مشتركة للمكوّنات: sheet.js (مساعد adoptedStyleSheets — آلية
-                       أنماط المكوّنات الحصرية) + panel.css.js (ورقة اللوحات الجانبية) +
+                       أنماط المكوّنات الحصرية) + panel.css.js (ورقة اللوحات الجانبية —
+                       منذ جولة الصقل 2026-08-08 تعزل code المضمّن LTR/isolate كي لا تتشوه
+                       المسارات داخل النص العربي؛ يحرسه مشهد ui:audit ‏41 هندسياً) +
                        diff.js (buildDiff بعقدها الثلاثي: محادثة/عارض/git) + diff.css.js
                        (المصدر الوحيد لأنماط بطاقة الفرق منذ ت-12: تُعتمد على المستند من
                        chat.js للـ light DOM وعلى shadowRoot في git/العارض) + highlight.js

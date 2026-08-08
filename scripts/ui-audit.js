@@ -560,6 +560,37 @@ const SHOTS = [
     `,
   },
 
+  // ---------- عزل اتجاه code المضمّن في لوحات Shadow (جولة الصقل 2026-08-08) ----------
+  // الحالة الفارغة للوحة الوكلاء: مساراتها كانت تتشوه (الشرطة الختامية تقفز قبل D:
+  // و~ تنعكس للطرف الآخر) قبل قاعدة code في panelSheet. القياس هندسي عبر Range —
+  // firstX < lastX يثبت الرسم LTR فعلاً؛ اللقطة البصرية دليل ثانٍ لا المعيار.
+  {
+    out: '41-agents-empty-code-dir', w: 1440, h: 900,
+    js: `
+      const out = [];
+      const panel = document.querySelector("satr-agents-panel");
+      panel.open("D:/sater/satr-2");
+      await new Promise((r) => setTimeout(r, 400));
+      const codes = [...panel.shadowRoot.querySelectorAll(".hint code")];
+      if (!codes.length) { out.push("\\u2717 لا عناصر code في الحالة الفارغة"); return out; }
+      let bad = 0;
+      for (const c of codes) {
+        const t = c.firstChild;
+        if (!t || t.length < 2) continue;
+        const r1 = document.createRange(); r1.setStart(t, 0); r1.setEnd(t, 1);
+        const rN = document.createRange(); rN.setStart(t, t.length - 1); rN.setEnd(t, t.length);
+        const firstX = Math.round(r1.getBoundingClientRect().left);
+        const lastX = Math.round(rN.getBoundingClientRect().left);
+        const dir = getComputedStyle(c).direction;
+        const ok = dir === "ltr" && firstX < lastX;
+        if (!ok) bad++;
+        out.push((ok ? "\\u2713" : "\\u2717") + " code «" + c.textContent.slice(0, 28) + "» dir=" + dir + " firstX=" + firstX + " lastX=" + lastX);
+      }
+      out.push(bad ? ("\\u2717 " + bad + " عنصر code بلا عزل اتجاه — قاعدة panelSheet سقطت") : "\\u2713 كل عناصر code معزولة LTR — المسارات تُقرأ سليمة");
+      return out;
+    `,
+  },
+
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
 ];
