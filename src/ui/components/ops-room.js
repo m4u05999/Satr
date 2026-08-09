@@ -29,7 +29,7 @@ const roomSheet = sheet(`
     flex: 0 0 var(--space-7); resize: none;
   }
   :host([compact]) .action-bar, :host([compact]) .guided-path,
-  :host([compact]) .room-nav, :host([compact]) .status-row,
+  :host([compact]) .status-row,
   :host([compact]) .timeout-row, :host([compact]) .next-step,
   :host([compact]) .station-title, :host([compact]) .panel-list { display: none; }
   :host([compact]) .panel-head {
@@ -92,21 +92,9 @@ const roomSheet = sheet(`
   .status-row .stop { color: var(--red); white-space: nowrap; }
   .status-row .verify-config-recovery { color: var(--gold); border-color: var(--gold-border); white-space: nowrap; }
   .status-row .verify-config-recovery[hidden] { display: none; }
+  .status-row[hidden] { display: none; }
   .timeout-row[hidden] { display: none; }
   .timeout-row .extend { color: var(--gold); border-color: var(--gold-border); white-space: nowrap; }
-  .room-nav {
-    display: none;
-  }
-  .room-nav button {
-    flex: 1; display: inline-flex; align-items: center; justify-content: center;
-    gap: var(--space-1); white-space: nowrap; padding: var(--space-1) var(--space-2);
-  }
-  .room-nav button[aria-selected="true"] { color: var(--gold); border-color: var(--gold); }
-  .group-badge {
-    padding-inline: var(--space-1); border: 1px solid var(--gold-border);
-    border-radius: var(--radius-pill); color: var(--gold); font-size: .68rem;
-  }
-  .group-badge[data-alert="true"] { color: var(--red); border-color: var(--red); }
   .guided-path {
     position: relative; display: flex; align-items: stretch; gap: var(--space-2);
     padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border);
@@ -155,16 +143,6 @@ const roomSheet = sheet(`
   .action-bar[data-attention] .next-step { color: var(--text); }
   .next-step::before { content: 'التالي: '; color: var(--gold); font-weight: 600; }
   .panel-list { min-height: 0; padding: var(--space-3); overflow-y: auto; overscroll-behavior: contain; }
-  .group-view { display: grid; gap: var(--space-3); }
-  .group-view[hidden] { display: none; }
-  .subnav { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
-  .subnav button {
-    flex: 1; white-space: nowrap; padding: var(--space-1) var(--space-2);
-    color: var(--text-dim); background: transparent; border-color: transparent; font-size: .72rem;
-  }
-  .subnav button[aria-selected="true"] {
-    color: var(--gold); border-color: var(--border); background: var(--surface-2);
-  }
   .view { display: grid; gap: var(--space-3); }
   .view[hidden] { display: none; }
   .empty {
@@ -389,17 +367,13 @@ const dialogSheet = sheet(`
   }
 `);
 
-const GROUPS = [
-  { id: 'work', label: 'العمل', views: [['brainstorm', 'العصف'], ['tasks', 'المهام والنشاط']] },
-  { id: 'results', label: 'النتائج', views: [['diffs', 'الفروقات'], ['evidence', 'الأدلة'], ['review', 'المراجعة']] },
-  { id: 'log', label: 'السجل', views: [['decisions', 'القرارات'], ['discussion', 'النقاش'], ['history', 'التاريخ']] },
-];
+const VIEW_IDS = ['tasks', 'brainstorm', 'diffs', 'evidence', 'review', 'history', 'decisions', 'discussion'];
 
 const STATION_VIEWS = {
   setup: 'tasks', execute: 'tasks', review: 'review', verify: 'evidence', merge: 'diffs',
 };
 const MORE_VIEWS = [
-  ['brainstorm', 'العصف'], ['decisions', 'القرارات'], ['discussion', 'النقاش'], ['history', 'التاريخ'],
+  ['history', 'التاريخ'], ['decisions', 'القرارات'], ['discussion', 'النقاش'],
 ];
 const DRAWER_MEDIA = '(max-width: 44rem)';
 const LAYOUT_STORAGE_PREFIX = 'satr_ops_layout:';
@@ -707,6 +681,16 @@ function activityLabel(activity) {
   return '';
 }
 
+function roomStatusMessage(state, derived) {
+  if (state.status) return state.status;
+  if (state.pending) return 'جارٍ تنفيذ الانتقال المطلوب…';
+  if (state.loop && derived.loopActive) {
+    return LOOP_STATES[state.loop.state] || visibleLifecycleLabel(state.loop.state);
+  }
+  if (state.team) return TEAM_STATES[state.team.state] || visibleLifecycleLabel(state.team.state);
+  return '';
+}
+
 function syncActivityElement(element, agent, now) {
   const activity = deriveAgentActivity(agent, now);
   element.dataset.activity = activity.kind;
@@ -817,8 +801,6 @@ class SatrOpsRoom extends HTMLElement {
     const moreMenu = makeElement('div', 'more-menu'); moreMenu.hidden = true; moreMenu.setAttribute('role', 'menu');
     moreWrap.appendChild(moreButton); moreWrap.appendChild(moreMenu);
     guidedPath.appendChild(stationStrip); guidedPath.appendChild(moreWrap);
-    const nav = makeElement('nav', 'room-nav'); nav.setAttribute('role', 'tablist');
-    nav.setAttribute('aria-label', 'أقسام غرفة العمليات');
     const statusRow = makeElement('div', 'status-row');
     const status = makeElement('div', 'status'); status.setAttribute('aria-live', 'polite');
     const verifyConfigRecovery = makeElement('button', 'verify-config-recovery', 'افتح إعداد التحقق');
@@ -835,11 +817,10 @@ class SatrOpsRoom extends HTMLElement {
     resizeHandle.setAttribute('role', 'separator'); resizeHandle.setAttribute('aria-orientation', 'vertical');
     resizeHandle.setAttribute('aria-label', 'تغيير عرض غرفة العمليات؛ السهم الأيسر يوسّع والأيمن يضيّق');
     resizeHandle.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight Home End');
-    for (const element of [head, guidedPath, nav, statusRow, timeoutRow, stationTitle, list, actionBar, resizeHandle]) {
+    for (const element of [head, guidedPath, statusRow, timeoutRow, stationTitle, list, actionBar, resizeHandle]) {
       root.appendChild(element);
     }
     this._root = root;
-    this._nav = nav;
     this._list = list;
     this._status = status;
     this._statusRow = statusRow;
@@ -864,10 +845,7 @@ class SatrOpsRoom extends HTMLElement {
     };
     this._state = createOpsRoomState();
     this._cwd = '';
-    this._group = 'work';
     this._view = 'tasks';
-    this._groupViews = { work: 'tasks', results: 'diffs', log: 'history' };
-    this._groupSeen = { work: '', results: '', log: '' };
     this._currentStationKey = '';
     this._displayedStationKey = '';
     this._displayedMoreView = '';
@@ -940,50 +918,17 @@ class SatrOpsRoom extends HTMLElement {
 
   _buildViews() {
     this._views = {};
-    this._groups = {};
-    this._groupButtons = {};
-    this._groupBadges = {};
-    this._subnavButtons = {};
-    for (const group of GROUPS) {
-      const button = document.createElement('button'); button.type = 'button'; button.role = 'tab';
-      const label = document.createElement('span'); label.textContent = group.label; button.appendChild(label);
-      const badge = document.createElement('span'); badge.className = 'group-badge'; badge.hidden = true;
-      button.appendChild(badge); button.addEventListener('click', () => this._selectGroup(group.id));
-      this._nav.appendChild(button); this._groupButtons[group.id] = button; this._groupBadges[group.id] = badge;
-
-      const groupView = document.createElement('section'); groupView.className = 'group-view'; groupView.dataset.group = group.id;
-      const subnav = document.createElement('nav'); subnav.className = 'subnav'; subnav.role = 'tablist';
-      subnav.setAttribute('aria-label', 'تفاصيل قسم ' + group.label); groupView.appendChild(subnav);
-      this._groups[group.id] = groupView; this._subnavButtons[group.id] = {};
-      for (const [id, viewLabel] of group.views) {
-        const subButton = document.createElement('button'); subButton.type = 'button'; subButton.role = 'tab';
-        subButton.textContent = viewLabel; subButton.addEventListener('click', () => this._selectView(id));
-        subnav.appendChild(subButton); this._subnavButtons[group.id][id] = subButton;
-        const view = document.createElement('section'); view.className = 'view'; view.dataset.view = id;
-        groupView.appendChild(view); this._views[id] = view;
-      }
-      this._list.appendChild(groupView);
+    for (const id of VIEW_IDS) {
+      const view = document.createElement('section'); view.className = 'view'; view.dataset.view = id;
+      this._list.appendChild(view); this._views[id] = view;
     }
-    this._updateNavigation();
+    this._updateView();
   }
 
-  _groupForView(id) {
-    return GROUPS.find((group) => group.views.some(([viewId]) => viewId === id));
-  }
-
-  _show(id, persist = true) {
-    const group = this._groupForView(id);
-    if (!group || !this._views[id]) return false;
-    this._group = group.id; this._view = id; this._groupViews[group.id] = id;
-    this._updateNavigation(); this._markGroupSeen(group.id); this._renderGroupBadges();
-    if (persist) this._saveLayoutPreferences();
+  _show(id) {
+    if (!this._views[id]) return false;
+    this._view = id; this._updateView();
     return true;
-  }
-
-  _selectGroup(id) {
-    if (!this._groups[id]) return;
-    this._group = id; this._view = this._groupViews[id];
-    this._updateNavigation(); this._markGroupSeen(id); this._renderGroupBadges(); this._saveLayoutPreferences();
   }
 
   _selectView(id) {
@@ -1000,6 +945,12 @@ class SatrOpsRoom extends HTMLElement {
 
   _toggleMoreMenu() {
     const open = this._moreMenu.hidden;
+    // عند مغادرة المحطات يكون التاريخ هو الوجهة الافتراضية للمزيد؛ لذلك تكفي نقرة
+    // واحدة بعد إعادة التشغيل لعرضه، وتبقى القائمة مفتوحة لاختيار القرار أو النقاش.
+    if (open && !this._displayedMoreView && this._show('history')) {
+      this._stationUserView = true; this._displayedStationKey = ''; this._displayedMoreView = 'history';
+      this._renderStations(deriveStations(this._state), deriveOpsRoomState(this._state));
+    }
     this._moreMenu.hidden = !open;
     this._moreButton.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
@@ -1016,6 +967,13 @@ class SatrOpsRoom extends HTMLElement {
     this._renderStations(deriveStations(this._state), deriveOpsRoomState(this._state));
   }
 
+  _openSetupBrainstorm() {
+    if (!this._show('brainstorm')) return;
+    this._stationUserView = true; this._displayedStationKey = 'setup'; this._displayedMoreView = '';
+    this._closeMoreMenu();
+    this._renderStations(deriveStations(this._state), deriveOpsRoomState(this._state));
+  }
+
   _selectStation(key) {
     const stations = deriveStations(this._state);
     const station = stations.find((item) => item.key === key);
@@ -1025,6 +983,7 @@ class SatrOpsRoom extends HTMLElement {
       const guidance = key === 'merge' ? mergeGateLabel(this._state, derived)
         : text(derived.nextAction && derived.nextAction.label);
       setMixedTechnicalText(this._status, guidance);
+      this._statusRow.hidden = !guidance;
       return;
     }
     this._stationUserView = true; this._displayedStationKey = key; this._displayedMoreView = '';
@@ -1045,18 +1004,8 @@ class SatrOpsRoom extends HTMLElement {
     }
   }
 
-  _updateNavigation() {
-    for (const group of GROUPS) {
-      const activeGroup = group.id === this._group;
-      this._groups[group.id].hidden = !activeGroup;
-      this._groupButtons[group.id].setAttribute('aria-selected', activeGroup ? 'true' : 'false');
-      const selectedView = this._groupViews[group.id];
-      for (const [viewId] of group.views) {
-        const activeView = viewId === selectedView;
-        this._views[viewId].hidden = !activeView;
-        this._subnavButtons[group.id][viewId].setAttribute('aria-selected', activeView ? 'true' : 'false');
-      }
-    }
+  _updateView() {
+    for (const [id, view] of Object.entries(this._views)) view.hidden = id !== this._view;
   }
 
   _layoutStorageKey() {
@@ -1065,20 +1014,13 @@ class SatrOpsRoom extends HTMLElement {
   }
 
   _loadLayoutPreferences() {
-    this._group = 'work'; this._view = 'tasks';
-    this._groupViews = { work: 'tasks', results: 'diffs', log: 'history' };
+    this._view = 'tasks';
     this._preferredCompact = false; this._preferredWidth = 0;
     this._layoutSheet.replaceSync(':host {}');
     let saved = null;
     const key = this._layoutStorageKey();
     try { if (key) saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
     if (saved && typeof saved === 'object') {
-      if (this._groups[saved.group]) this._group = saved.group;
-      for (const group of GROUPS) {
-        const selected = saved.views && saved.views[group.id];
-        if (group.views.some(([viewId]) => viewId === selected)) this._groupViews[group.id] = selected;
-      }
-      this._view = this._groupViews[this._group];
       this._preferredCompact = saved.compact === true;
       if (Number.isFinite(saved.width) && saved.width > 0) {
         const rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
@@ -1089,7 +1031,7 @@ class SatrOpsRoom extends HTMLElement {
     } else {
       try { this._preferredCompact = localStorage.getItem('satr_ops_compact') === '1'; } catch {}
     }
-    this._updateNavigation(); this._syncResponsiveMode();
+    this._updateView(); this._syncResponsiveMode();
   }
 
   _saveLayoutPreferences() {
@@ -1098,8 +1040,6 @@ class SatrOpsRoom extends HTMLElement {
     const payload = {
       compact: this._preferredCompact === true,
       width: this._preferredWidth || 0,
-      group: this._group,
-      views: { ...this._groupViews },
     };
     try { localStorage.setItem(key, JSON.stringify(payload)); } catch {}
   }
@@ -1396,6 +1336,10 @@ class SatrOpsRoom extends HTMLElement {
     planButton.textContent = planRunning ? 'أوقف التخطيط' : 'اقترح تقسيم المهمة';
     planButton.addEventListener('click', () => planRunning ? this._stopPlan() : this._startPlan());
     planRow.appendChild(planButton);
+    const brainstormButton = document.createElement('button'); brainstormButton.type = 'button';
+    brainstormButton.className = 'setup-brainstorm'; brainstormButton.textContent = '🧠 عصف';
+    brainstormButton.addEventListener('click', () => this._openSetupBrainstorm());
+    planRow.appendChild(brainstormButton);
     const planHint = document.createElement('span'); planHint.className = 'setup-note'; planRow.appendChild(planHint);
     if (this._plan) {
       const planStatus = document.createElement('span'); planStatus.className = 'setup-note';
@@ -1963,66 +1907,8 @@ class SatrOpsRoom extends HTMLElement {
     if (derived && derived.nextAction) this._stationStrip.dataset.nextAction = text(derived.nextAction.key);
   }
 
-  _groupSignature(groupId) {
-    const team = this._state.team;
-    if (groupId === 'work') {
-      const loop = this._state.loop;
-      if (!team && !loop && !this._plan && !this._brainstorm) return '';
-      return [team && team.id, team && team.state, team && team.updated_at,
-        loop && loop.loop_id, loop && loop.state, loop && loop.updated_at,
-        this._plan && this._plan.id, this._plan && this._plan.state,
-        this._brainstorm && this._brainstorm.id, this._brainstorm && this._brainstorm.state].join(':');
-    }
-    if (groupId === 'results') {
-      const fileCount = ((team && team.agents) || []).reduce((total, agent) =>
-        total + ((agent.changes && agent.changes.files && agent.changes.files.length) || 0), 0);
-      if (!fileCount && !this._state.review && !this._state.verification) return '';
-      return [team && team.artifact_id, fileCount, this._state.review && this._state.review.id,
-        this._state.review && this._state.review.state, this._state.review && this._state.review.updated_at,
-        this._state.verification && this._state.verification.artifact_id,
-        this._state.verification && this._state.verification.state].join(':');
-    }
-    const lastEntry = this._state.entries[this._state.entries.length - 1];
-    const lastHistory = this._history[this._history.length - 1];
-    return lastEntry || lastHistory ? [lastEntry && lastEntry.id, lastEntry && lastEntry.created_at,
-      lastHistory && lastHistory.room_id, lastHistory && lastHistory.updated_at].join(':') : '';
-  }
-
-  _groupAlerts() {
-    const team = this._state.team;
-    const work = !!(team && ['failed', 'timed_out', 'conflict', 'cleanup_failed'].includes(team.state))
-      || !!(this._state.loop && ['failed_after_n', 'budget_exhausted', 'failed'].includes(this._state.loop.state))
-      || ((team && team.agents) || []).some((agent) => agent && ['failed', 'timed_out', 'cleanup_failed'].includes(agent.state))
-      || !!(this._plan && this._plan.state === 'failed')
-      || ((this._brainstorm && this._brainstorm.workers) || []).some((worker) => worker && worker.state === 'failed');
-    const reviewItems = (this._state.review && this._state.review.reviews) || [];
-    const results = !!(this._state.verification && this._state.verification.state === 'failed')
-      || !!(this._state.review && ['failed', 'timed_out'].includes(this._state.review.state))
-      || reviewItems.some((item) => item && item.verdict && item.verdict.decision !== 'approve');
-    return { work, results, log: false };
-  }
-
-  _markGroupSeen(groupId) {
-    if (this._groupSeen && this._groupSeen[groupId] != null) this._groupSeen[groupId] = this._groupSignature(groupId);
-  }
-
-  _renderGroupBadges() {
-    this._markGroupSeen(this._group);
-    const alerts = this._groupAlerts();
-    for (const group of GROUPS) {
-      const signature = this._groupSignature(group.id);
-      const unseen = !!(signature && signature !== this._groupSeen[group.id]);
-      const badge = this._groupBadges[group.id];
-      const value = alerts[group.id] ? 'تنبيه' : unseen ? 'جديد' : '';
-      badge.textContent = value; badge.hidden = !value;
-      badge.toggleAttribute('data-alert', alerts[group.id] === true);
-      this._groupButtons[group.id].setAttribute('aria-label', group.label + (value ? ' — ' + value : ''));
-    }
-  }
-
-  _renderCompactState(derived) {
-    const alerts = this._groupAlerts();
-    const hasAlert = alerts.work || alerts.results;
+  _renderCompactState(derived, stations) {
+    const hasAlert = stations.some((station) => station.alert);
     const running = derived.loopActive || derived.teamActive || derived.reviewActive || derived.verificationActive;
     const merged = !!(this._state.team && this._state.team.merged);
     this._compactState.textContent = hasAlert ? '!' : this._primaryAction ? '←' : running ? '…' : merged ? '✓' : '•';
@@ -2045,16 +1931,12 @@ class SatrOpsRoom extends HTMLElement {
     this._buttons.stop.hidden = !derived.canStop;
     this._verifyConfigRecovery.hidden = this._state.status !== ERROR_LABELS.review_skill_unavailable;
     this._verifyConfigRecovery.disabled = !this._cwd;
-    const statusMessage = this._state.status || (this._state.pending ? 'جارٍ تنفيذ الانتقال المطلوب…'
-      : this._state.loop && derived.loopActive
-        ? (LOOP_STATES[this._state.loop.state] || visibleLifecycleLabel(this._state.loop.state))
-        : this._state.team
-          ? (TEAM_STATES[this._state.team.state] || visibleLifecycleLabel(this._state.team.state))
-        : 'حدّد المهام والملكية، ثم ابدأ انتقال التنفيذ صراحةً.');
+    const statusMessage = roomStatusMessage(this._state, derived);
     setMixedTechnicalText(this._status, statusMessage);
+    this._statusRow.hidden = !statusMessage;
     this._renderHistory(); this._renderBrainstorm(); this._renderDecisions(); this._renderTasks(); this._renderDiscussion();
     this._renderEvidence(); this._renderDiffs(); this._renderReview();
-    this._renderStations(stations, derived); this._renderGroupBadges(); this._renderCompactState(derived);
+    this._renderStations(stations, derived); this._renderCompactState(derived, stations);
   }
 
   _confirm(options) {
@@ -2435,9 +2317,9 @@ class SatrOpsRoom extends HTMLElement {
     try {
       const result = await window.satr.opsRoomHistory(this._cwd);
       this._history = result && Array.isArray(result.rooms) ? result.rooms : [];
-      this._renderHistory(); this._renderGroupBadges();
+      this._renderHistory();
     } catch {
-      this._history = []; this._renderHistory(); this._renderGroupBadges();
+      this._history = []; this._renderHistory();
     }
   }
 
@@ -2493,7 +2375,6 @@ class SatrOpsRoom extends HTMLElement {
     this._clock = setInterval(() => this._refreshCountdowns(), 1000);
     this._history = []; this._brainstorm = null; this._plan = null; this._planDraft = '';
     this._diffCache.clear();
-    this._groupSeen = { work: '', results: '', log: '' };
     this._currentStationKey = ''; this._displayedStationKey = ''; this._displayedMoreView = '';
     this._stationUserView = false; this._closeMoreMenu();
     this._state = createOpsRoomState(); this._render();
@@ -2639,13 +2520,13 @@ class SatrOpsRoom extends HTMLElement {
   handleEvent(event) {
     if (!event) return;
     if (event.type === 'ops_brainstorm_update' && event.run) {
-      this._brainstorm = event.run; this._renderBrainstorm(); this._renderGroupBadges();
-      this._renderCompactState(deriveOpsRoomState(this._state)); return;
+      this._brainstorm = event.run; this._renderBrainstorm();
+      this._renderCompactState(deriveOpsRoomState(this._state), deriveStations(this._state)); return;
     }
     if (event.type === 'ops_plan_update' && event.run) {
       this._plan = event.run; this._renderTasks();
       if (event.run.state === 'completed') this._applyPlan();
-      this._renderGroupBadges(); this._renderCompactState(deriveOpsRoomState(this._state));
+      this._renderCompactState(deriveOpsRoomState(this._state), deriveStations(this._state));
       return;
     }
     this._dispatch({ type: 'event', event });

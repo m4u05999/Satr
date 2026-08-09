@@ -606,26 +606,33 @@ function testJudgesHelpers(component) {
   'technical paths and code in Arabic status messages must be isolated in LTR code elements');
 
   const loadLayoutPreferences = new Function(
-    'localStorage', 'GROUPS', 'getComputedStyle', 'document',
+    'localStorage', 'getComputedStyle', 'document',
     'return function () {' + methodBody(component, '  _loadLayoutPreferences()') + '};',
   );
   const storedLayouts = new Map();
   const layoutStorage = { getItem: (key) => storedLayouts.get(key) || null };
   const layoutHost = {
-    _groups: { work: {}, results: {}, log: {} }, _layoutStorageKey: () => 'layout',
-    _layoutSheet: { replaceSync: () => {} }, _updateNavigation: () => {}, _syncResponsiveMode: () => {},
+    _layoutStorageKey: () => 'layout', _layoutSheet: { replaceSync: () => {} },
+    _updateView: () => {}, _syncResponsiveMode: () => {},
   };
-  const loadLayout = loadLayoutPreferences(layoutStorage, [
-    { id: 'work', views: [['brainstorm'], ['tasks']] },
-    { id: 'results', views: [['diffs'], ['evidence'], ['review']] },
-    { id: 'log', views: [['decisions'], ['discussion'], ['history']] },
-  ], () => ({ fontSize: '16px' }), { documentElement: {} });
+  const loadLayout = loadLayoutPreferences(layoutStorage,
+    () => ({ fontSize: '16px' }), { documentElement: {} });
   loadLayout.call(layoutHost);
-  assert.strictEqual(layoutHost._groupViews.log, 'history', 'history must be the default log view without a saved choice');
-  storedLayouts.set('layout', JSON.stringify({ group: 'log', views: { log: 'decisions' } }));
+  assert.strictEqual(layoutHost._view, 'tasks', 'guided setup must remain the initial content view');
+  storedLayouts.set('layout', JSON.stringify({ compact: true, width: 640, group: 'log', views: { log: 'decisions' } }));
   loadLayout.call(layoutHost);
-  assert(layoutHost._groupViews.log === 'decisions' && layoutHost._view === 'decisions',
-    'a valid manual log-view choice must survive restart');
+  assert(layoutHost._preferredCompact === true && layoutHost._preferredWidth === 640
+    && layoutHost._view === 'tasks' && layoutHost._groupViews == null,
+  'layout restore must preserve width/compact while discarding removed tab preferences');
+
+  const roomStatusMessage = new Function(
+    'LOOP_STATES', 'TEAM_STATES', 'visibleLifecycleLabel',
+    'return function (state, derived) {' + methodBody(component, 'function roomStatusMessage(state, derived)') + '};',
+  )({ working: 'ينفّذ الإصلاح' }, { running: 'ينفّذ…' }, (value) => value);
+  assert.strictEqual(roomStatusMessage({}, {}), '', 'an empty room must keep the inherited status row silent');
+  assert.strictEqual(roomStatusMessage({ pending: true }, {}), 'جارٍ تنفيذ الانتقال المطلوب…');
+  assert.strictEqual(roomStatusMessage({ team: { state: 'running' } }, {}), 'ينفّذ…',
+    'real transition states must remain visible after empty-room silence');
 
   const syncSetupActions = new Function('deriveOpsRoomState', 'text',
     'return function () {' + methodBody(component, '  _syncSetupActions()') + '};')(
@@ -672,7 +679,7 @@ function testJudgesHelpers(component) {
 
   const renderStations = new Function('MORE_VIEWS', 'text',
     'return function (stations, derived) {' + methodBody(component, '  _renderStations(stations, derived)') + '};')(
-    [['brainstorm', 'العصف'], ['decisions', 'القرارات'], ['discussion', 'النقاش'], ['history', 'التاريخ']],
+    [['history', 'التاريخ'], ['decisions', 'القرارات'], ['discussion', 'النقاش']],
     safeText,
   );
   const renderedStations = [
@@ -716,7 +723,8 @@ function testJudgesHelpers(component) {
   );
   const shownViews = [];
   const routeHost = {
-    _state: {}, _status: new FakeElement('div'), _displayedStationKey: '', _displayedMoreView: '',
+    _state: {}, _status: new FakeElement('div'), _statusRow: new FakeElement('div'),
+    _displayedStationKey: '', _displayedMoreView: '',
     _show: (id) => { shownViews.push(id); return true; }, _closeMoreMenu: () => {}, _renderStations: () => {},
   };
   selectStation.call(routeHost, 'setup');
@@ -738,18 +746,38 @@ function testJudgesHelpers(component) {
   assert(routeHost._status.textContent.includes('نجاح التحقق'),
     'a future merge station must reuse the existing merge gate guidance');
 
-  const toggleMoreMenu = new Function('return function () {'
-    + methodBody(component, '  _toggleMoreMenu()') + '};')();
-  const menuHost = { _moreMenu: new FakeElement('div'), _moreButton: new FakeElement('button') };
+  const toggleMoreMenu = new Function('deriveStations', 'deriveOpsRoomState', 'return function () {'
+    + methodBody(component, '  _toggleMoreMenu()') + '};')(() => renderedStations, () => ({}));
+  const oneClickViews = [];
+  const menuHost = {
+    _state: {}, _moreMenu: new FakeElement('div'), _moreButton: new FakeElement('button'),
+    _displayedMoreView: '', _show: (id) => { oneClickViews.push(id); return true; }, _renderStations: () => {},
+  };
   menuHost._moreMenu.hidden = true;
   toggleMoreMenu.call(menuHost);
   assert.strictEqual(menuHost._moreMenu.hidden, false);
   assert.strictEqual(menuHost._moreButton.attributes['aria-expanded'], 'true',
     'the More control must expose its open state accessibly');
+  assert.deepStrictEqual(oneClickViews, ['history']);
+  assert(menuHost._displayedMoreView === 'history' && menuHost._displayedStationKey === '',
+    'one More click from the guided path must display history while leaving its menu open');
+
+  const buildMoreMenu = new Function('document', 'MORE_VIEWS',
+    'return function () {' + methodBody(component, '  _buildMoreMenu()') + '};')(
+    document, [['history', 'التاريخ'], ['decisions', 'القرارات'], ['discussion', 'النقاش']],
+  );
+  const moreMenuHost = {
+    _moreMenu: new FakeElement('div'), _selectMoreView: () => {},
+  };
+  buildMoreMenu.call(moreMenuHost);
+  assert.deepStrictEqual(moreMenuHost._moreMenu.children.map((button) => button.textContent),
+    ['التاريخ', 'القرارات', 'النقاش'], 'history must lead the one-click More menu after restart');
+  assert(!moreMenuHost._moreMenu.children.some((button) => button.textContent === 'العصف'),
+    'brainstorm must leave More after moving into setup');
 
   const selectMoreView = new Function('MORE_VIEWS', 'deriveStations', 'deriveOpsRoomState',
     'return function (id) {' + methodBody(component, '  _selectMoreView(id)') + '};')(
-    [['brainstorm', 'العصف'], ['decisions', 'القرارات'], ['discussion', 'النقاش'], ['history', 'التاريخ']],
+    [['history', 'التاريخ'], ['decisions', 'القرارات'], ['discussion', 'النقاش']],
     () => renderedStations, () => ({ nextAction: { key: 'wait' } }),
   );
   const moreHost = {
@@ -758,7 +786,21 @@ function testJudgesHelpers(component) {
   };
   selectMoreView.call(moreHost, 'history');
   assert(shownViews.includes('history') && moreHost.closed && moreHost._displayedMoreView === 'history',
-    'the More menu must open a legacy section through the existing view surface');
+    'the More menu must open history through the flat view surface');
+
+  const openSetupBrainstorm = new Function('deriveStations', 'deriveOpsRoomState',
+    'return function () {' + methodBody(component, '  _openSetupBrainstorm()') + '};')(
+    () => renderedStations, () => ({ nextAction: { key: 'wait' } }),
+  );
+  const brainstormViews = [];
+  const brainstormHost = {
+    _state: {}, _show: (id) => { brainstormViews.push(id); return true; },
+    _closeMoreMenu: () => {}, _renderStations: () => {},
+  };
+  openSetupBrainstorm.call(brainstormHost);
+  assert.deepStrictEqual(brainstormViews, ['brainstorm']);
+  assert(brainstormHost._displayedStationKey === 'setup' && brainstormHost._displayedMoreView === '',
+    'the setup brainstorm tool must remain owned by setup, so clicking setup returns to the form');
 
   const syncStationView = new Function('STATION_VIEWS',
     'return function (stations) {' + methodBody(component, '  _syncStationView(stations)') + '};')(
@@ -1188,9 +1230,10 @@ function testDesignGuard() {
   'ops room must expose the manual verification config wizard without a slash command');
   assert(!component.includes('innerHTML') && !component.includes('insertAdjacentHTML'),
     'ops room must construct UI with safe DOM methods only');
-  for (const group of ["id: 'work', label: 'العمل'", "id: 'results', label: 'النتائج'", "id: 'log', label: 'السجل'"]) {
-    assert(component.includes(group), 'missing calm ops-room group ' + group);
-  }
+  assert(!component.includes('room-nav') && !component.includes('className = \'subnav\'')
+    && !component.includes('group-view') && !component.includes('group-badge')
+    && !component.includes('_groupViews') && !component.includes('_groupSeen'),
+  'removed group tabs, sub-tabs, and their seen/preference state must not survive in DOM, CSS, or logic');
   assert(component.includes('deriveOpsRoomState, deriveStations,') && component.includes('opsRoomReducer, STATION_KEYS,'),
     'guided path must consume the pure station derivation and fixed key order');
   assert(component.includes('for (const key of STATION_KEYS)')
@@ -1201,10 +1244,10 @@ function testDesignGuard() {
   assert(component.includes("parts.button.setAttribute('aria-label', station.label + ' — ' + statusLabel)")
     && component.includes("parts.marker.textContent = station.alert ? '⚠' : station.completed ? '✓' : station.current ? '●' : '○'"),
   'station buttons must expose Arabic state labels and the approved visual markers');
-  assert(component.includes('.room-nav {') && component.includes('display: none;')
-    && component.includes("const moreButton = makeElement('button', 'more-toggle', 'المزيد ⌄')")
-    && component.includes("['history', 'التاريخ']"),
-  'legacy group tabs must be visually hidden while legacy sections remain reachable through More');
+  assert(component.includes("const moreButton = makeElement('button', 'more-toggle', 'المزيد ⌄')")
+    && component.includes("const MORE_VIEWS = [\n  ['history', 'التاريخ'], ['decisions', 'القرارات'], ['discussion', 'النقاش']")
+    && !component.includes("['brainstorm', 'العصف']"),
+  'More must expose history first, then decisions/discussion, without the setup-owned brainstorm tool');
   assert(component.includes('@media (max-width: 44rem)')
     && component.includes('.station-strip { grid-template-columns: minmax(0, 1fr); }')
     && !component.includes('.stage-indicator'),
@@ -1214,7 +1257,7 @@ function testDesignGuard() {
   assert(component.includes("const actionBar = makeElement('div', 'action-bar')")
     && component.includes('actionBar.appendChild(nextStep); actionBar.appendChild(primaryReason); actionBar.appendChild(previewButton);')
     && component.includes('actionBar.appendChild(previewStopButton); actionBar.appendChild(primaryButton);')
-    && component.includes('[head, guidedPath, nav, statusRow, timeoutRow, stationTitle, list, actionBar, resizeHandle]')
+    && component.includes('[head, guidedPath, statusRow, timeoutRow, stationTitle, list, actionBar, resizeHandle]')
     && !component.includes('room-actions'),
   'primary nextAction must live in the bottom action bar after scrollable content');
   assert(component.includes("const primaryReason = makeElement('span', 'primary-reason')")
@@ -1275,6 +1318,10 @@ function testDesignGuard() {
     'compact ops room must reclaim width through spacing tokens');
   assert(component.includes("makeElement('div', 'status-row')") && component.includes("makeElement('div', 'timeout-row')"),
     'stop and timeout extension must remain visible in their live context');
+  assert(component.includes('const statusMessage = roomStatusMessage(this._state, derived)')
+    && component.includes('this._statusRow.hidden = !statusMessage')
+    && !component.includes('حدّد المهام والملكية، ثم ابدأ انتقال التنفيذ صراحةً.'),
+  'an empty room must hide the redundant status row while real state messages keep using it');
   assert(component.includes("observable.className = 'observable-activity'")
     && component.includes('syncActivityElement(observable, agent, Date.now())')
     && component.includes('لم يصل نشاط أداة أو ملف قابل للرصد منذ'),
@@ -1284,6 +1331,10 @@ function testDesignGuard() {
   const secondarySetup = setupCard.indexOf('setup.appendChild(note); setup.appendChild(planRow);');
   assert(workerInputs !== -1 && secondarySetup !== -1 && workerInputs < secondarySetup,
     'worker task and ownership inputs must precede secondary setup guidance and planning actions');
+  assert(setupCard.includes("brainstormButton.className = 'setup-brainstorm'")
+    && setupCard.includes("brainstormButton.textContent = '🧠 عصف'")
+    && setupCard.includes("this._openSetupBrainstorm()"),
+  'setup must expose brainstorm beside task splitting through the existing isolated brainstorm view');
   const renderTasks = component.slice(component.indexOf('  _renderTasks() {'),
     component.indexOf('\n  _renderDiscussion()', component.indexOf('  _renderTasks() {')));
   assert(component.includes('INHERIT_TEMPLATE_TEAM_STATES')
@@ -1294,9 +1345,6 @@ function testDesignGuard() {
     && component.includes('.task { min-height: calc(var(--space-7) + var(--space-6)); }')
     && component.includes('min-height: calc(var(--space-7) + var(--space-3));'),
   'task and ownership fields must grow with token-based usable heights');
-  assert(component.includes('color: var(--text-dim); background: transparent; border-color: transparent;')
-    && component.includes('.subnav button[aria-selected="true"]'),
-  'local subnavigation must stay visually secondary');
   assert(component.includes("resizeHandle.setAttribute('role', 'separator')")
     && component.includes("resizeHandle.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight Home End')"),
   'custom ops-room resize handle must expose separator keyboard semantics');
@@ -1307,8 +1355,10 @@ function testDesignGuard() {
     && component.includes("this.setAttribute('aria-modal', 'true')"),
   'narrow ops-room mode must become an accessible drawer');
   assert(component.includes("const LAYOUT_STORAGE_PREFIX = 'satr_ops_layout:'")
-    && component.includes('views: { ...this._groupViews }'),
-  'ops-room width and section preferences must be scoped per project');
+    && component.includes('compact: this._preferredCompact === true')
+    && component.includes('width: this._preferredWidth || 0')
+    && !component.includes('views: { ...this._groupViews }'),
+  'ops-room width and compact preferences must remain project-scoped after removing section preferences');
   assert(component.includes("this._layoutSheet.replaceSync(':host { --ops-room-width: '")
     && !component.includes('.style.'),
   'user resize width must use a validated constructable stylesheet, not inline style');
@@ -1384,7 +1434,14 @@ function testDesignGuard() {
   const chat = read('src/ui/components/chat.js');
   assert(chat.includes('🏗 نفّذ في غرفة العمليات') && chat.includes("new CustomEvent('ops-room-open'"));
   assert(!app.includes("cmd: '/غرفة-العمليات'") && !app.includes("en: '/ops-room'"));
-  assert(app.includes('opsRoomEl.seedTask(taskSeed)') && component.includes('seedTask(task)'));
+  const seedTask = component.slice(component.indexOf('  seedTask(task) {'), component.indexOf('\n  close()', component.indexOf('  seedTask(task) {')));
+  const openHistory = component.slice(component.indexOf('  async _openHistory(item) {'),
+    component.indexOf('\n  async _restoreHistory(', component.indexOf('  async _openHistory(item) {')));
+  const restoreHistory = component.slice(component.indexOf('  async _restoreHistory(item) {'),
+    component.indexOf('\n  async _deleteHistoryArtifact(', component.indexOf('  async _restoreHistory(item) {')));
+  assert(app.includes('opsRoomEl.seedTask(taskSeed)') && seedTask.includes("this._selectView('tasks')")
+    && restoreHistory.includes("this._selectView('tasks')") && openHistory.includes("this._selectView('decisions')"),
+  'seed, artifact restore, and history-open routes must still land on station/More-owned flat views');
   assert(component.includes('previous.length || 1') && component.includes('شاهدها تعمل ← دمج'));
   assert(component.includes('window.satr.executionPreviewStart') && component.includes('derived.showPreview'));
   const renderDiffs = component.slice(component.indexOf('  _renderDiffs() {'), component.indexOf('\n  async _loadFileDiff'));
