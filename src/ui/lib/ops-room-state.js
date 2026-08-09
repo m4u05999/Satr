@@ -298,3 +298,57 @@ export function deriveStations(state) {
     current: index === currentIndex,
   }));
 }
+
+// ---------- الوضع الآلي (الدفعة ج — تصميم معتمد 2026-08-10) ----------
+// سائق نقي فوق deriveOpsRoomState: يقترح الخطوة الوسطى التالية التي يجوز تنفيذها
+// آلياً، أو سبب توقف يعيد المستخدم للمسار الموجّه. لا يغيّر أي بوابة:
+// قائمة الأفعال الآلية مغلقة (مراجعة/تثبيت/تشغيل) — لا start ولا merge أبداً.
+
+export const AUTO_STEP_ACTIONS = Object.freeze(['review', 'prepare', 'verify']);
+const AUTO_EXECUTION_ALERT_STATES = new Set(['failed', 'timed_out', 'conflict', 'cleanup_failed']);
+
+/**
+ * يعيد { step, stop }:
+ * - step ∈ AUTO_STEP_ACTIONS ⇒ نفّذ هذه الخطوة الآن آلياً.
+ * - stop === 'merge_gate' ⇒ وصلت السلسلة بوابة الدمج البشرية (نهاية إيجابية).
+ * - stop آخر ⇒ توقف fail-closed بسببه (الواجهة تترجمه وتطفئ العلم).
+ * - الاثنان فارغان ⇒ انتظار (مرحلة جارية أو انتقال معلّق).
+ * context.failedStep: خطوة فشل استدعاؤها سابقاً — لا تُعاد آلياً (لا حلقة إعادة محاولة).
+ */
+export function deriveAutoStep(state, context) {
+  const current = state || createOpsRoomState();
+  const derived = deriveOpsRoomState(current);
+  const ctx = context && typeof context === 'object' ? context : {};
+  const team = current.team;
+  const review = current.review;
+  const loop = current.loop;
+  const wait = { step: '', stop: '' };
+  // بوابة الدمج البشرية: الغاية الإيجابية للسلسلة — تُفحص أولاً كي لا يحجبها انتقال معلّق.
+  if (derived.canMerge || (team && team.merged)) return { step: '', stop: 'merge_gate' };
+  if (current.pending) return wait;
+  if (derived.loopActive) return wait;
+  // قرار محمد (3): حلقة انتهت بغير نجاح لا تستهلك مراجعة آلية — تسليم للمسار الموجّه.
+  // يشمل الأثر الجزئي المسلَّم من حلقة موقوفة (الفريق المستعاد يصل completed لكن
+  // لقطة الحلقة تبقى بحالتها الطرفية غير الناجحة).
+  if (loop && TERMINAL_LOOP_STATES.has(loop.state) && loop.state !== 'passed') {
+    return { step: '', stop: 'loop_not_passed' };
+  }
+  if (team && AUTO_EXECUTION_ALERT_STATES.has(team.state)) return { step: '', stop: 'execution_alert' };
+  if (team && team.state === 'stopped') return { step: '', stop: 'execution_stopped' };
+  if (review && review.state === 'completed' && !derived.reviewApproved) {
+    return { step: '', stop: 'review_not_approved' };
+  }
+  if (review && ['failed', 'timed_out', 'stopped'].includes(review.state) && !derived.reviewApproved) {
+    return { step: '', stop: 'review_incomplete' };
+  }
+  if (current.verification && current.verification.state === 'failed'
+    && current.verification.artifact_id === derived.artifactId) {
+    return { step: '', stop: 'verification_failed' };
+  }
+  const action = derived.nextAction.action;
+  if (AUTO_STEP_ACTIONS.includes(action)) {
+    if (ctx.failedStep === action) return { step: '', stop: 'step_error' };
+    return { step: action, stop: '' };
+  }
+  return wait;
+}

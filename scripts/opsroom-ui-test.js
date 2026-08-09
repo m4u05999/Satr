@@ -1669,10 +1669,86 @@ async function testDeriveStations() {
   assert.strictEqual(currentKey(mergedStations), 'merge', 'merged summary card stays on the merge station');
 }
 
+// الوضع الآلي (ج — خطوة القائد): deriveAutoStep سائق نقي — قائمة أفعال مغلقة
+// (مراجعة/تثبيت/تشغيل)، لا start ولا merge أبداً، وتوقف fail-closed عند أي عارض.
+async function testDeriveAutoStep() {
+  const {
+    createOpsRoomState, opsRoomReducer, deriveAutoStep, AUTO_STEP_ACTIONS,
+  } = await loadStateModule();
+  const artifact = 'a'.repeat(64);
+  const base = fixture(artifact);
+  const stepOf = (parts, context) => deriveAutoStep(
+    opsRoomReducer(createOpsRoomState(), { type: 'hydrate', ...parts }), context);
+  const loopOf = (state) => ({
+    loop_id: 'loop-ui-test', team_id: base.team.id, room_id: base.team.room_id, state,
+  });
+
+  assert.deepStrictEqual([...AUTO_STEP_ACTIONS], ['review', 'prepare', 'verify'],
+    'auto allowlist is closed: review/prepare/verify only — never start or merge');
+  assert(Object.isFrozen(AUTO_STEP_ACTIONS), 'auto allowlist must be frozen');
+
+  assert.deepStrictEqual(deriveAutoStep(createOpsRoomState()), { step: '', stop: '' },
+    'empty room: nextAction is start — the driver never auto-starts');
+
+  assert.deepStrictEqual(stepOf({ team: base.team }), { step: 'review', stop: '' },
+    'completed artifact without review ⇒ auto review');
+  assert.deepStrictEqual(stepOf({ team: base.team, review: base.review }), { step: 'prepare', stop: '' },
+    'approved review without verification ⇒ auto prepare');
+  assert.deepStrictEqual(stepOf({
+    team: base.team, review: base.review,
+    verification: { ...base.verification, state: 'pending_confirmation' },
+  }), { step: 'verify', stop: '' }, 'pinned verification ⇒ auto run');
+  assert.deepStrictEqual(stepOf({ team: base.team, review: base.review, verification: base.verification }),
+    { step: '', stop: 'merge_gate' }, 'merge-ready chain stops at the human gate — no auto merge');
+  assert.deepStrictEqual(stepOf({
+    team: { ...base.team, merged: true }, review: base.review, verification: base.verification,
+  }), { step: '', stop: 'merge_gate' }, 'merged team reports the gate as reached');
+
+  const pendingState = opsRoomReducer(
+    opsRoomReducer(createOpsRoomState(), { type: 'hydrate', team: base.team }),
+    { type: 'pending', action: 'review' });
+  assert.deepStrictEqual(deriveAutoStep(pendingState), { step: '', stop: '' },
+    'a pending transition waits — one step per settled update');
+
+  assert.deepStrictEqual(stepOf({ team: { ...base.team, state: 'running' }, loop: loopOf('working') }),
+    { step: '', stop: '' }, 'an active loop drives itself — the driver waits');
+  assert.deepStrictEqual(stepOf({ team: base.team, loop: loopOf('passed') }), { step: 'review', stop: '' },
+    'a passed loop hands off ⇒ auto review continues');
+  for (const state of ['failed_after_n', 'budget_exhausted', 'failed']) {
+    assert.deepStrictEqual(stepOf({ team: base.team, loop: loopOf(state) }),
+      { step: '', stop: 'loop_not_passed' },
+      'terminal non-passed loop must stop automation (' + state + ')');
+  }
+  assert.deepStrictEqual(stepOf({ team: base.team, loop: loopOf('stopped') }),
+    { step: '', stop: 'loop_not_passed' },
+    'a stopped loop delivering a completed restored team must NOT auto-review (owner decision 3)');
+
+  assert.deepStrictEqual(stepOf({ team: { ...base.team, state: 'failed' } }),
+    { step: '', stop: 'execution_alert' }, 'failed execution stops automation');
+  assert.deepStrictEqual(stepOf({ team: { ...base.team, state: 'stopped' } }),
+    { step: '', stop: 'execution_stopped' }, 'user-stopped execution stops automation');
+
+  const rejected = judgesFixture(artifact);
+  assert.deepStrictEqual(stepOf({ team: rejected.team, review: rejected.review }),
+    { step: '', stop: 'review_not_approved' }, 'non-approved verdicts stop automation');
+  assert.deepStrictEqual(stepOf({ team: base.team, review: { ...base.review, state: 'stopped', reviews: [] } }),
+    { step: '', stop: 'review_incomplete' }, 'a review the user stopped is never auto-restarted');
+
+  assert.deepStrictEqual(stepOf({
+    team: base.team, review: base.review, verification: { ...base.verification, state: 'failed' },
+  }), { step: '', stop: 'verification_failed' }, 'failed verification stops automation');
+
+  assert.deepStrictEqual(stepOf({ team: base.team }, { failedStep: 'review' }),
+    { step: '', stop: 'step_error' }, 'a step that failed to invoke is never retried in a loop');
+  assert.deepStrictEqual(stepOf({ team: base.team, review: base.review }, { failedStep: 'review' }),
+    { step: 'prepare', stop: '' }, 'failedStep only blocks its own step, not the next stage');
+}
+
 async function main() {
   await testReducer();
   await testLifecycleLabels();
   await testDeriveStations();
+  await testDeriveAutoStep();
   testDesignGuard();
   console.log('opsroom-ui: reducer, gates, event order, stale artifacts, CSP and design guard passed');
 }
