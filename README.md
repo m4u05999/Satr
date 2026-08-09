@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="الرخصة: FSL-1.1-MIT" src="https://img.shields.io/badge/License-FSL--1.1--MIT-D9A441"></a>
   <img alt="المنصّة: Windows" src="https://img.shields.io/badge/Platform-Windows-2D7DD2">
-  <img alt="الإصدار" src="https://img.shields.io/badge/version-2.14.3-7FB069">
+  <img alt="الإصدار" src="https://img.shields.io/badge/version-2.15.0-7FB069">
 </p>
 
 ---
@@ -102,13 +102,13 @@ ConPTY) وفوقه **عارضان يتبادلان بذكاء**:
 ## التثبيت (للمستخدمين)
 
 في [صفحة الإصدارات (Releases)](https://github.com/m4u05999/Satr/releases/latest)، انزل إلى
-قسم **«Assets»** ونزّل **`Satr-Setup-2.14.3.exe`** — ثم شغّله (واجهة التثبيت عربية بالكامل).
+قسم **«Assets»** ونزّل **`Satr-Setup-2.15.0.exe`** — ثم شغّله (واجهة التثبيت عربية بالكامل).
 إن لم يكن Claude Code مثبّتاً، يرشدك معالج أول التشغيل لتثبيته وتسجيل الدخول.
 
 > [!WARNING]
-> **لا تنزّل «Source code (zip/tar.gz)»** — هذا أرشيف اسمه `Satr-2.14.3.zip` (بشرطة)
+> **لا تنزّل «Source code (zip/tar.gz)»** — هذا أرشيف اسمه `Satr-2.15.0.zip` (بشرطة)
 > يحوي **شفرة المصدر** (مجلدات `electron` و`src` وملف `package.json`…) **وليس فيه
-> التطبيق**. ملف التطبيق فيه كلمة **Setup**: `Satr-Setup-2.14.3.exe` تحت **Assets**.
+> التطبيق**. ملف التطبيق فيه كلمة **Setup**: `Satr-Setup-2.15.0.exe` تحت **Assets**.
 
 ### ⚠ المتصفح يمنع التنزيل؟ («isn't commonly downloaded» / غير آمن)
 
@@ -116,20 +116,20 @@ ConPTY) وفوقه **عارضان يتبادلان بذكاء**:
 إصدار جديد يبدأ بسمعة صفر لدى Google Safe Browsing، فقد **يمنع المتصفح تنزيل ملف `.exe`**
 قبل اكتماله. هذا حاجز سمعة تلقائي لا علاقة له بأمان الملف. ثلاثة حلول بترتيب السهولة:
 
-1. **نزّل `Satr-Setup-2.14.3.zip`** (تحت Assets، بكلمة Setup — لا «Source code») بدل الـ
+1. **نزّل `Satr-Setup-2.15.0.zip`** (تحت Assets، بكلمة Setup — لا «Source code») بدل الـ
    `.exe` — تمرّ من الحاجز غالباً؛ فُكّ الضغط فتجد **المثبّت `.exe` مباشرة** بداخله، وشغّله.
 2. **في تحذير التنزيل**: اضغط السهم `⌄` بجانب التحذير ← **«الاحتفاظ» (Keep)** ← ثم
    «الاحتفاظ رغم ذلك» (Keep anyway). (في بعض المتصفحات يلزم فتح «التنزيلات» ثم Keep.)
 3. **تنزيل مباشر يتجاوز المتصفح كلياً** — الصق في PowerShell:
    ```powershell
-   irm "https://github.com/m4u05999/Satr/releases/latest/download/Satr-Setup-2.14.3.exe" -OutFile "$HOME\Downloads\Satr.Setup.exe"
+   irm "https://github.com/m4u05999/Satr/releases/latest/download/Satr-Setup-2.15.0.exe" -OutFile "$HOME\Downloads\Satr.Setup.exe"
    ```
 
 **تحقّق من سلامة الملف (اختياري)** — احسب بصمة SHA-256 للملف وقارنها بالبصمة المنشورة في
 **ملاحظات الإصدار** على [صفحة الإصدارات](https://github.com/m4u05999/Satr/releases/latest)
 (تُدرَج آلياً مع كل نسخة عبر خط النشر):
 ```powershell
-(Get-FileHash "$HOME\Downloads\Satr-Setup-2.14.3.exe" -Algorithm SHA256).Hash
+(Get-FileHash "$HOME\Downloads\Satr-Setup-2.15.0.exe" -Algorithm SHA256).Hash
 ```
 
 ### تنبيه: تحذير Windows SmartScreen (عند التشغيل)
