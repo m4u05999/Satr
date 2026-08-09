@@ -653,6 +653,131 @@ function testJudgesHelpers(component) {
   assert.strictEqual(guidanceHost._nextStep.textContent, 'إرشاد الخطوة التالية من السلم.',
     'the blocking reason must yield back to the ladder label, not hide recovery guidance (timeout/merged)');
 
+  // ب‑1: شريط المحطات يُبنى من المفاتيح الخمسة، ويعرض حالات deriveStations نفسها
+  // بسمات data وبأسماء عربية آمنة، من دون بناء HTML نصي.
+  const stationKeys = ['setup', 'execute', 'review', 'verify', 'merge'];
+  const buildStations = new Function('document', 'STATION_KEYS',
+    'return function () {' + methodBody(component, '  _buildStations()') + '};')(document, stationKeys);
+  const stationClicks = [];
+  const stationHost = {
+    _stationStrip: new FakeElement('nav'), _selectStation: (key) => stationClicks.push(key),
+  };
+  buildStations.call(stationHost);
+  assert.deepStrictEqual(stationHost._stationStrip.children.map((button) => button.dataset.station), stationKeys,
+    'guided path must build five station buttons in deriveStations order');
+  assert(stationHost._stationStrip.children.every((button) => button.tagName === 'button'),
+    'every guided station must be a real button');
+  stationHost._stationStrip.children[2].listeners.click();
+  assert.deepStrictEqual(stationClicks, ['review'], 'station buttons must route through the shared station selector');
+
+  const renderStations = new Function('MORE_VIEWS', 'text',
+    'return function (stations, derived) {' + methodBody(component, '  _renderStations(stations, derived)') + '};')(
+    [['brainstorm', 'العصف'], ['decisions', 'القرارات'], ['discussion', 'النقاش'], ['history', 'التاريخ']],
+    safeText,
+  );
+  const renderedStations = [
+    { key: 'setup', label: 'إعداد', completed: true, current: false, alert: false },
+    { key: 'execute', label: 'تنفيذ', completed: false, current: true, alert: false },
+    { key: 'review', label: 'مراجعة', completed: false, current: false, alert: true },
+    { key: 'verify', label: 'تحقق', completed: false, current: false, alert: false },
+    { key: 'merge', label: 'دمج', completed: false, current: false, alert: false },
+  ];
+  const renderedHost = {
+    _stationButtons: stationHost._stationButtons, _displayedStationKey: 'execute', _displayedMoreView: '',
+    _stationTitle: new FakeElement('div'), _moreButton: new FakeElement('button'),
+    _stationStrip: stationHost._stationStrip,
+    _stationStatusLabel: (station) => station.alert ? 'تحتاج الانتباه'
+      : station.completed ? 'مكتملة' : station.current ? 'الحالية' : 'لاحقة',
+  };
+  renderStations.call(renderedHost, renderedStations, { nextAction: { key: 'team_running' } });
+  assert.deepStrictEqual(stationKeys.map((key) => renderedHost._stationButtons[key].button.dataset.state),
+    ['completed', 'current', 'pending', 'pending', 'pending'],
+  'station data-state values must mirror derived completion/current/pending states');
+  assert.strictEqual(renderedHost._stationButtons.review.button.dataset.alert, 'true',
+    'station alerts must be exposed as a data attribute');
+  assert.deepStrictEqual(stationKeys.map((key) => renderedHost._stationButtons[key].marker.textContent),
+    ['✓', '●', '⚠', '○', '○'], 'station markers must expose completed/current/alert/future states');
+  assert(stationKeys.every((key) => /[\u0600-\u06ff]/.test(renderedHost._stationButtons[key].button.attributes['aria-label'] || '')),
+    'every station button must carry an Arabic aria-label with its state');
+  assert(renderedHost._stationTitle.textContent.startsWith('المحطة: تنفيذ'),
+    'the displayed station must have a compact Arabic heading');
+
+  let selectableStations = renderedStations;
+  const selectStation = new Function(
+    'deriveStations', 'deriveOpsRoomState', 'mergeGateLabel', 'setMixedTechnicalText', 'STATION_VIEWS', 'text',
+    'return function (key) {' + methodBody(component, '  _selectStation(key)') + '};',
+  )(
+    () => selectableStations,
+    () => ({ nextAction: { key: 'team_running', label: 'التنفيذ لم يكتمل بعد.' } }),
+    () => 'المتبقي: نجاح التحقق وموافقة المراجعات.',
+    (target, value) => { target.textContent = value; },
+    { setup: 'tasks', execute: 'tasks', review: 'review', verify: 'evidence', merge: 'diffs' },
+    safeText,
+  );
+  const shownViews = [];
+  const routeHost = {
+    _state: {}, _status: new FakeElement('div'), _displayedStationKey: '', _displayedMoreView: '',
+    _show: (id) => { shownViews.push(id); return true; }, _closeMoreMenu: () => {}, _renderStations: () => {},
+  };
+  selectStation.call(routeHost, 'setup');
+  assert.deepStrictEqual(shownViews, ['tasks'], 'a completed setup station must route to the existing tasks view');
+  selectableStations = renderedStations.map((station) => ({
+    ...station, completed: true, current: station.key === 'merge', alert: false,
+  }));
+  shownViews.length = 0;
+  for (const key of stationKeys) selectStation.call(routeHost, key);
+  assert.deepStrictEqual(shownViews, ['tasks', 'tasks', 'review', 'evidence', 'diffs'],
+    'completed/current station clicks must reuse the approved existing views');
+  selectableStations = renderedStations;
+  shownViews.length = 0;
+  selectStation.call(routeHost, 'review');
+  assert.deepStrictEqual(shownViews, [], 'a future station must not move the current view');
+  assert.strictEqual(routeHost._status.textContent, 'التنفيذ لم يكتمل بعد.',
+    'a future station must show existing nextAction guidance');
+  selectStation.call(routeHost, 'merge');
+  assert(routeHost._status.textContent.includes('نجاح التحقق'),
+    'a future merge station must reuse the existing merge gate guidance');
+
+  const toggleMoreMenu = new Function('return function () {'
+    + methodBody(component, '  _toggleMoreMenu()') + '};')();
+  const menuHost = { _moreMenu: new FakeElement('div'), _moreButton: new FakeElement('button') };
+  menuHost._moreMenu.hidden = true;
+  toggleMoreMenu.call(menuHost);
+  assert.strictEqual(menuHost._moreMenu.hidden, false);
+  assert.strictEqual(menuHost._moreButton.attributes['aria-expanded'], 'true',
+    'the More control must expose its open state accessibly');
+
+  const selectMoreView = new Function('MORE_VIEWS', 'deriveStations', 'deriveOpsRoomState',
+    'return function (id) {' + methodBody(component, '  _selectMoreView(id)') + '};')(
+    [['brainstorm', 'العصف'], ['decisions', 'القرارات'], ['discussion', 'النقاش'], ['history', 'التاريخ']],
+    () => renderedStations, () => ({ nextAction: { key: 'wait' } }),
+  );
+  const moreHost = {
+    _state: {}, _show: (id) => { shownViews.push(id); return true; }, _closeMoreMenu: () => { moreHost.closed = true; },
+    _renderStations: () => {}, closed: false,
+  };
+  selectMoreView.call(moreHost, 'history');
+  assert(shownViews.includes('history') && moreHost.closed && moreHost._displayedMoreView === 'history',
+    'the More menu must open a legacy section through the existing view surface');
+
+  const syncStationView = new Function('STATION_VIEWS',
+    'return function (stations) {' + methodBody(component, '  _syncStationView(stations)') + '};')(
+    { setup: 'tasks', execute: 'tasks', review: 'review', verify: 'evidence', merge: 'diffs' },
+  );
+  const syncViews = [];
+  const syncHost = {
+    _currentStationKey: 'execute', _stationUserView: true, _displayedStationKey: 'setup', _displayedMoreView: '',
+    _show: (id) => syncViews.push(id), _closeMoreMenu: () => {},
+  };
+  syncStationView.call(syncHost, renderedStations);
+  assert.deepStrictEqual(syncViews, [], 'manual station choice must survive renders within the same current station');
+  syncStationView.call(syncHost, renderedStations.map((station) => ({
+    ...station, current: station.key === 'review', completed: station.key === 'setup' || station.key === 'execute',
+  })));
+  assert.deepStrictEqual(syncViews, ['review']);
+  assert.strictEqual(syncHost._stationUserView, false,
+    'a current-station transition must resume automatic guided routing');
+
   class FakeCustomEvent {
     constructor(type, options) { this.type = type; this.detail = options && options.detail; this.bubbles = options && options.bubbles; }
   }
@@ -1066,18 +1191,30 @@ function testDesignGuard() {
   for (const group of ["id: 'work', label: 'العمل'", "id: 'results', label: 'النتائج'", "id: 'log', label: 'السجل'"]) {
     assert(component.includes(group), 'missing calm ops-room group ' + group);
   }
-  assert(component.includes("const STAGES = ['الإعداد', 'التنفيذ', 'التحقق', 'الاعتماد']"),
-    'presentational ops-room stages missing');
-  assert(component.includes('.stage-indicator li::before')
-    && component.includes('.stage-indicator li:not(:last-child)::after')
-    && component.includes('padding: var(--space-1) var(--space-3)'),
-  'ops-room stages must remain a compact descriptive progress rail');
+  assert(component.includes('deriveOpsRoomState, deriveStations,') && component.includes('opsRoomReducer, STATION_KEYS,'),
+    'guided path must consume the pure station derivation and fixed key order');
+  assert(component.includes('for (const key of STATION_KEYS)')
+    && component.includes("button.dataset.station = key")
+    && component.includes("parts.button.dataset.state = state")
+    && component.includes("parts.button.dataset.alert = 'true'"),
+  'guided path must build five derived station buttons with semantic data states');
+  assert(component.includes("parts.button.setAttribute('aria-label', station.label + ' — ' + statusLabel)")
+    && component.includes("parts.marker.textContent = station.alert ? '⚠' : station.completed ? '✓' : station.current ? '●' : '○'"),
+  'station buttons must expose Arabic state labels and the approved visual markers');
+  assert(component.includes('.room-nav {') && component.includes('display: none;')
+    && component.includes("const moreButton = makeElement('button', 'more-toggle', 'المزيد ⌄')")
+    && component.includes("['history', 'التاريخ']"),
+  'legacy group tabs must be visually hidden while legacy sections remain reachable through More');
+  assert(component.includes('@media (max-width: 44rem)')
+    && component.includes('.station-strip { grid-template-columns: minmax(0, 1fr); }')
+    && !component.includes('.stage-indicator'),
+  'the five guided stations must stack vertically below 44rem');
   assert(component.includes('const action = derived.nextAction && derived.nextAction.action'),
     'primary action must come directly from derived nextAction');
   assert(component.includes("const actionBar = makeElement('div', 'action-bar')")
     && component.includes('actionBar.appendChild(nextStep); actionBar.appendChild(primaryReason); actionBar.appendChild(previewButton);')
     && component.includes('actionBar.appendChild(previewStopButton); actionBar.appendChild(primaryButton);')
-    && component.includes('[head, stageIndicator, nav, statusRow, timeoutRow, list, actionBar, resizeHandle]')
+    && component.includes('[head, guidedPath, nav, statusRow, timeoutRow, stationTitle, list, actionBar, resizeHandle]')
     && !component.includes('room-actions'),
   'primary nextAction must live in the bottom action bar after scrollable content');
   assert(component.includes("const primaryReason = makeElement('span', 'primary-reason')")
@@ -1313,7 +1450,7 @@ function testDesignGuard() {
   assert(!repairTask.includes('executionTeamStart') && !repairTask.includes('_startExecution('),
     'repair must fill the setup form without starting execution');
   const primaryRenderer = component.slice(component.indexOf('  _renderPrimaryAction(derived) {'),
-    component.indexOf('\n  _stagePresentation(', component.indexOf('  _renderPrimaryAction(derived) {')));
+    component.indexOf('\n  _stationLifecycleState(', component.indexOf('  _renderPrimaryAction(derived) {')));
   assert(primaryRenderer.includes("key === 'merged' && available ? 'ابدأ مهمة جديدة'")
     && primaryRenderer.includes("'ابدأ فريقاً جديداً'"),
   'merged work must offer a new task while retry states retain the new-team label');

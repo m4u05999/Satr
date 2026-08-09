@@ -6,8 +6,8 @@ import { cardSheet } from '../lib/card.css.js';
 import { buildDiff } from '../lib/diff.js';
 import { diffSheet } from '../lib/diff.css.js';
 import {
-  createOpsRoomState, deriveAgentActivity, deriveOpsRoomState, INHERIT_TEMPLATE_TEAM_STATES,
-  opsRoomReducer,
+  createOpsRoomState, deriveAgentActivity, deriveOpsRoomState, deriveStations,
+  INHERIT_TEMPLATE_TEAM_STATES, opsRoomReducer, STATION_KEYS,
 } from '../lib/ops-room-state.js';
 import {
   LIFECYCLE_LABELS, lifecycleLabel, countLabel, truncateWords,
@@ -28,10 +28,10 @@ const roomSheet = sheet(`
     width: var(--space-7); min-width: var(--space-7); max-width: var(--space-7);
     flex: 0 0 var(--space-7); resize: none;
   }
-  :host([compact]) .action-bar, :host([compact]) .stage-indicator,
+  :host([compact]) .action-bar, :host([compact]) .guided-path,
   :host([compact]) .room-nav, :host([compact]) .status-row,
   :host([compact]) .timeout-row, :host([compact]) .next-step,
-  :host([compact]) .panel-list { display: none; }
+  :host([compact]) .station-title, :host([compact]) .panel-list { display: none; }
   :host([compact]) .panel-head {
     flex: 1; flex-direction: column; justify-content: flex-start;
     padding: var(--space-2); gap: var(--space-3);
@@ -61,7 +61,7 @@ const roomSheet = sheet(`
   .resize-handle:focus-visible { outline: 2px solid var(--gold); outline-offset: var(--space-1); }
   .panel-head { gap: var(--space-3); }
   .verify-config { color: var(--gold); border-color: var(--gold-border); }
-  .panel-head-actions, .action-bar, .room-nav, .setup-actions {
+  .panel-head-actions, .action-bar, .setup-actions {
     display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   }
   .compact-state {
@@ -95,8 +95,7 @@ const roomSheet = sheet(`
   .timeout-row[hidden] { display: none; }
   .timeout-row .extend { color: var(--gold); border-color: var(--gold-border); white-space: nowrap; }
   .room-nav {
-    flex-wrap: nowrap; overflow-x: auto; padding: var(--space-2) var(--space-3);
-    border-bottom: 1px solid var(--border); background: var(--surface-2);
+    display: none;
   }
   .room-nav button {
     flex: 1; display: inline-flex; align-items: center; justify-content: center;
@@ -108,32 +107,41 @@ const roomSheet = sheet(`
     border-radius: var(--radius-pill); color: var(--gold); font-size: .68rem;
   }
   .group-badge[data-alert="true"] { color: var(--red); border-color: var(--red); }
-  .stage-indicator {
-    position: relative; list-style: none; display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-0);
-    padding: var(--space-1) var(--space-3); border-bottom: 1px solid var(--border);
-    background: var(--surface-2);
+  .guided-path {
+    position: relative; display: flex; align-items: stretch; gap: var(--space-2);
+    padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border);
+    background: var(--surface-2); z-index: var(--z-local);
   }
-  .stage-indicator li {
-    position: relative; display: flex; align-items: center; justify-content: center;
-    gap: var(--space-1); padding-block: var(--space-1); color: var(--text-dim);
-    text-align: center; font-size: .66rem;
+  .station-strip {
+    flex: 1; min-width: 0; display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-1);
   }
-  .stage-indicator li::before {
-    content: ''; width: var(--space-2); height: var(--space-2); flex: none;
-    border-radius: var(--radius-pill); background: var(--border-strong);
-    z-index: var(--z-local);
+  .station-strip button {
+    min-width: 0; display: inline-flex; align-items: center; justify-content: center;
+    gap: var(--space-1); padding: var(--space-1); color: var(--text-dim);
+    white-space: nowrap; font-size: .68rem;
   }
-  .stage-indicator li:not(:last-child)::after {
-    content: ''; position: absolute; top: 50%; inset-inline-start: calc(50% + var(--space-3));
-    width: calc(100% - var(--space-5)); border-block-start: 1px solid var(--border);
+  .station-strip button[data-state="completed"] { color: var(--green); border-color: var(--green-border); }
+  .station-strip button[data-state="current"],
+  .station-strip button[data-current="true"] { color: var(--gold); border-color: var(--gold-border); }
+  .station-strip button[data-alert="true"] { color: var(--ops-review-alert); border-color: var(--ops-review-alert); }
+  .station-strip button[data-selected="true"] { background: var(--surface-3); font-weight: 700; }
+  .station-marker { font-weight: 700; }
+  .more-wrap { position: relative; flex: none; }
+  .more-toggle { height: 100%; white-space: nowrap; }
+  .more-menu {
+    position: absolute; inset-block-start: calc(100% + var(--space-1)); inset-inline-end: var(--space-0);
+    min-width: 11rem; display: grid; gap: var(--space-1); padding: var(--space-2);
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--surface); box-shadow: var(--shadow-dock); z-index: var(--z-sticky);
   }
-  .stage-indicator li[data-state="completed"] { color: var(--green); }
-  .stage-indicator li[data-state="completed"]::before { background: var(--green); }
-  .stage-indicator li[data-state="current"] { color: var(--gold); font-weight: 600; }
-  .stage-indicator li[data-state="current"]::before { background: var(--gold); }
-  .stage-indicator li[data-alert="true"] { color: var(--red); }
-  .stage-indicator li[data-alert="true"]::before { background: var(--red); }
+  .more-menu[hidden] { display: none; }
+  .more-menu button { text-align: start; white-space: nowrap; }
+  .station-title {
+    padding: var(--space-2) var(--space-3); color: var(--text-dim);
+    border-bottom: 1px solid var(--border); font-size: .72rem; font-weight: 600;
+    unicode-bidi: plaintext;
+  }
   .status {
     flex: 1; min-width: 0; min-height: var(--space-6); padding: var(--space-2) var(--space-3);
     color: var(--text-dim); font-size: .78rem;
@@ -340,11 +348,12 @@ const roomSheet = sheet(`
     .setup-head { align-items: flex-start; flex-direction: column; }
     .model-fields { grid-template-columns: minmax(0, 1fr); }
     .loop-fields { grid-template-columns: minmax(0, 1fr); }
-    /* في الشاشة الضيقة كانت الرؤوس المتراكمة تلتهم 41% من الطول قبل أول محتوى:
-       الشريط العلوي ثم رأس الغرفة ثم المراحل ثم التبويبات ثم الإرشاد ثم التبويبات
-       الفرعية. مؤشر المراحل والإرشاد وصفيّان — يُطويان هنا ويبقى شريط الفعل
-       والتنقّل، فما يُخفى لا يمنع انتقالاً ولا يخفي حالة لا تظهر في مكان آخر. */
-    .stage-indicator, .next-step { display: none; }
+    /* قرار المسار الموجّه: المحطات تبقى ظاهرة وتتكدس عمودياً داخل drawer. */
+    .guided-path { align-items: stretch; }
+    .station-strip { grid-template-columns: minmax(0, 1fr); }
+    .station-strip button { justify-content: flex-start; }
+    .more-toggle { height: auto; }
+    .next-step { display: none; }
   }
 `);
 
@@ -386,7 +395,12 @@ const GROUPS = [
   { id: 'log', label: 'السجل', views: [['decisions', 'القرارات'], ['discussion', 'النقاش'], ['history', 'التاريخ']] },
 ];
 
-const STAGES = ['الإعداد', 'التنفيذ', 'التحقق', 'الاعتماد'];
+const STATION_VIEWS = {
+  setup: 'tasks', execute: 'tasks', review: 'review', verify: 'evidence', merge: 'diffs',
+};
+const MORE_VIEWS = [
+  ['brainstorm', 'العصف'], ['decisions', 'القرارات'], ['discussion', 'النقاش'], ['history', 'التاريخ'],
+];
 const DRAWER_MEDIA = '(max-width: 44rem)';
 const LAYOUT_STORAGE_PREFIX = 'satr_ops_layout:';
 const MODEL_STORAGE_PREFIX = 'satr_ops_models::';
@@ -794,7 +808,15 @@ class SatrOpsRoom extends HTMLElement {
     primaryReason.setAttribute('aria-live', 'polite');
     actionBar.appendChild(nextStep); actionBar.appendChild(primaryReason); actionBar.appendChild(previewButton);
     actionBar.appendChild(previewStopButton); actionBar.appendChild(primaryButton);
-    const stageIndicator = makeElement('ol', 'stage-indicator'); stageIndicator.setAttribute('aria-label', 'مراحل غرفة العمليات');
+    const guidedPath = makeElement('div', 'guided-path');
+    const stationStrip = makeElement('nav', 'station-strip');
+    stationStrip.setAttribute('aria-label', 'محطات غرفة العمليات');
+    const moreWrap = makeElement('div', 'more-wrap');
+    const moreButton = makeElement('button', 'more-toggle', 'المزيد ⌄'); moreButton.type = 'button';
+    moreButton.setAttribute('aria-expanded', 'false'); moreButton.setAttribute('aria-haspopup', 'menu');
+    const moreMenu = makeElement('div', 'more-menu'); moreMenu.hidden = true; moreMenu.setAttribute('role', 'menu');
+    moreWrap.appendChild(moreButton); moreWrap.appendChild(moreMenu);
+    guidedPath.appendChild(stationStrip); guidedPath.appendChild(moreWrap);
     const nav = makeElement('nav', 'room-nav'); nav.setAttribute('role', 'tablist');
     nav.setAttribute('aria-label', 'أقسام غرفة العمليات');
     const statusRow = makeElement('div', 'status-row');
@@ -807,12 +829,13 @@ class SatrOpsRoom extends HTMLElement {
     const timeoutWarning = makeElement('div', 'timeout-warning'); timeoutWarning.setAttribute('aria-live', 'polite');
     const extendButton = makeElement('button', 'extend', 'مدّد المهلة مرة'); extendButton.type = 'button';
     timeoutRow.appendChild(timeoutWarning); timeoutRow.appendChild(extendButton);
+    const stationTitle = makeElement('div', 'station-title'); stationTitle.setAttribute('aria-live', 'polite');
     const list = makeElement('div', 'panel-list');
     const resizeHandle = makeElement('div', 'resize-handle'); resizeHandle.tabIndex = 0;
     resizeHandle.setAttribute('role', 'separator'); resizeHandle.setAttribute('aria-orientation', 'vertical');
     resizeHandle.setAttribute('aria-label', 'تغيير عرض غرفة العمليات؛ السهم الأيسر يوسّع والأيمن يضيّق');
     resizeHandle.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight Home End');
-    for (const element of [head, stageIndicator, nav, statusRow, timeoutRow, list, actionBar, resizeHandle]) {
+    for (const element of [head, guidedPath, nav, statusRow, timeoutRow, stationTitle, list, actionBar, resizeHandle]) {
       root.appendChild(element);
     }
     this._root = root;
@@ -827,7 +850,10 @@ class SatrOpsRoom extends HTMLElement {
     this._primaryButton = primaryButton;
     this._primaryReason = primaryReason;
     this._compactState = compactState;
-    this._stageIndicator = stageIndicator;
+    this._stationStrip = stationStrip;
+    this._stationTitle = stationTitle;
+    this._moreButton = moreButton;
+    this._moreMenu = moreMenu;
     this._resizeHandle = resizeHandle;
     this._closeButton = closeButton;
     this._verifyConfigButton = verifyConfigButton;
@@ -842,6 +868,10 @@ class SatrOpsRoom extends HTMLElement {
     this._view = 'tasks';
     this._groupViews = { work: 'tasks', results: 'diffs', log: 'history' };
     this._groupSeen = { work: '', results: '', log: '' };
+    this._currentStationKey = '';
+    this._displayedStationKey = '';
+    this._displayedMoreView = '';
+    this._stationUserView = false;
     this._primaryAction = '';
     this._preferredCompact = false;
     this._preferredWidth = 0;
@@ -856,7 +886,8 @@ class SatrOpsRoom extends HTMLElement {
     this._notified = new Set();
     this._diffCache = new Map();
     this._clock = null;
-    this._buildStages();
+    this._buildStations();
+    this._buildMoreMenu();
     this._buildViews();
     closeButton.addEventListener('click', () => this.close());
     verifyConfigButton.addEventListener('click', () => this._openVerifyConfig());
@@ -868,6 +899,7 @@ class SatrOpsRoom extends HTMLElement {
     this._buttons.previewStop.addEventListener('click', () => this._stopPreview());
     this._buttons.extend.addEventListener('click', () => this._extendTimeout());
     this._buttons.stop.addEventListener('click', () => this._stop());
+    moreButton.addEventListener('click', () => this._toggleMoreMenu());
     resizeHandle.addEventListener('pointerdown', (event) => this._beginResize(event));
     resizeHandle.addEventListener('pointermove', (event) => this._moveResize(event));
     resizeHandle.addEventListener('pointerup', (event) => this._endResize(event));
@@ -879,11 +911,26 @@ class SatrOpsRoom extends HTMLElement {
     this._syncResponsiveMode();
   }
 
-  _buildStages() {
-    this._stageItems = STAGES.map((label) => {
-      const item = document.createElement('li'); item.textContent = label;
-      this._stageIndicator.appendChild(item); return item;
-    });
+  _buildStations() {
+    this._stationButtons = {};
+    for (const key of STATION_KEYS) {
+      const button = document.createElement('button'); button.type = 'button';
+      button.dataset.station = key;
+      const marker = document.createElement('span'); marker.className = 'station-marker'; marker.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span'); label.className = 'station-label';
+      button.appendChild(marker); button.appendChild(label);
+      button.addEventListener('click', () => this._selectStation(key));
+      this._stationStrip.appendChild(button); this._stationButtons[key] = { button, marker, label };
+    }
+  }
+
+  _buildMoreMenu() {
+    this._moreViewButtons = {};
+    for (const [id, label] of MORE_VIEWS) {
+      const button = document.createElement('button'); button.type = 'button'; button.role = 'menuitem';
+      button.textContent = label; button.addEventListener('click', () => this._selectMoreView(id));
+      this._moreMenu.appendChild(button); this._moreViewButtons[id] = button;
+    }
   }
 
   _openVerifyConfig() {
@@ -924,6 +971,15 @@ class SatrOpsRoom extends HTMLElement {
     return GROUPS.find((group) => group.views.some(([viewId]) => viewId === id));
   }
 
+  _show(id, persist = true) {
+    const group = this._groupForView(id);
+    if (!group || !this._views[id]) return false;
+    this._group = group.id; this._view = id; this._groupViews[group.id] = id;
+    this._updateNavigation(); this._markGroupSeen(group.id); this._renderGroupBadges();
+    if (persist) this._saveLayoutPreferences();
+    return true;
+  }
+
   _selectGroup(id) {
     if (!this._groups[id]) return;
     this._group = id; this._view = this._groupViews[id];
@@ -931,10 +987,62 @@ class SatrOpsRoom extends HTMLElement {
   }
 
   _selectView(id) {
-    const group = this._groupForView(id);
-    if (!group || !this._views[id]) return;
-    this._group = group.id; this._view = id; this._groupViews[group.id] = id;
-    this._updateNavigation(); this._markGroupSeen(group.id); this._renderGroupBadges(); this._saveLayoutPreferences();
+    if (!this._show(id)) return;
+    const stations = deriveStations(this._state);
+    const current = stations.find((station) => station.current);
+    const displayed = current && STATION_VIEWS[current.key] === id ? current
+      : stations.find((station) => station.completed && STATION_VIEWS[station.key] === id);
+    this._stationUserView = true;
+    this._displayedStationKey = displayed ? displayed.key : '';
+    this._displayedMoreView = MORE_VIEWS.some(([viewId]) => viewId === id) ? id : '';
+    this._renderStations(stations, deriveOpsRoomState(this._state));
+  }
+
+  _toggleMoreMenu() {
+    const open = this._moreMenu.hidden;
+    this._moreMenu.hidden = !open;
+    this._moreButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  _closeMoreMenu() {
+    this._moreMenu.hidden = true;
+    this._moreButton.setAttribute('aria-expanded', 'false');
+  }
+
+  _selectMoreView(id) {
+    if (!MORE_VIEWS.some(([viewId]) => viewId === id) || !this._show(id)) return;
+    this._stationUserView = true; this._displayedStationKey = ''; this._displayedMoreView = id;
+    this._closeMoreMenu();
+    this._renderStations(deriveStations(this._state), deriveOpsRoomState(this._state));
+  }
+
+  _selectStation(key) {
+    const stations = deriveStations(this._state);
+    const station = stations.find((item) => item.key === key);
+    if (!station) return;
+    if (!station.completed && !station.current) {
+      const derived = deriveOpsRoomState(this._state);
+      const guidance = key === 'merge' ? mergeGateLabel(this._state, derived)
+        : text(derived.nextAction && derived.nextAction.label);
+      setMixedTechnicalText(this._status, guidance);
+      return;
+    }
+    this._stationUserView = true; this._displayedStationKey = key; this._displayedMoreView = '';
+    this._show(STATION_VIEWS[key], false); this._closeMoreMenu();
+    this._renderStations(stations, deriveOpsRoomState(this._state));
+  }
+
+  _syncStationView(stations) {
+    const current = stations.find((station) => station.current) || stations[0];
+    if (!current) return;
+    if (current.key !== this._currentStationKey) {
+      this._currentStationKey = current.key; this._stationUserView = false;
+      this._displayedStationKey = current.key; this._displayedMoreView = '';
+      this._show(STATION_VIEWS[current.key], false); this._closeMoreMenu();
+    } else if (!this._stationUserView && !this._displayedStationKey) {
+      this._displayedStationKey = current.key; this._displayedMoreView = '';
+      this._show(STATION_VIEWS[current.key], false);
+    }
   }
 
   _updateNavigation() {
@@ -1806,32 +1914,53 @@ class SatrOpsRoom extends HTMLElement {
     if (available && action !== 'start') this._primaryButton.disabled = false;
   }
 
-  _stagePresentation(derived) {
-    const team = this._state.team;
-    const failedTeam = !!(team && ['failed', 'timed_out', 'conflict', 'cleanup_failed'].includes(team.state));
-    const reviewItems = (this._state.review && this._state.review.reviews) || [];
-    const failedReview = !!(this._state.review && ['failed', 'timed_out'].includes(this._state.review.state))
-      || reviewItems.some((item) => item && item.verdict && item.verdict.decision !== 'approve');
-    const failedVerification = !!(this._state.verification && this._state.verification.state === 'failed');
-    let current = 0;
-    if (team && !failedTeam && !['stopped', 'interrupted'].includes(team.state)) current = 1;
-    if (derived.canReview || this._state.review || this._state.verification) current = 2;
-    if (derived.canMerge || team && team.merged) current = 3;
-    return { current, alerts: new Set([
-      ...(failedTeam ? [1] : []),
-      ...(failedReview || failedVerification ? [2] : []),
-    ]) };
+  _stationLifecycleState(key) {
+    if (key === 'setup') return this._state.team ? 'completed' : '';
+    if (key === 'execute') return text(this._state.team && this._state.team.state);
+    if (key === 'review') return text(this._state.review && this._state.review.state);
+    if (key === 'verify') return text(this._state.verification && this._state.verification.state);
+    if (key === 'merge') return this._state.team && this._state.team.merged ? 'completed' : '';
+    return '';
   }
 
-  _renderStages(derived) {
-    const presentation = this._stagePresentation(derived);
-    this._stageItems.forEach((item, index) => {
-      const state = index < presentation.current ? 'completed' : index === presentation.current ? 'current' : 'pending';
-      const alert = presentation.alerts.has(index);
-      item.dataset.state = state; item.toggleAttribute('data-alert', alert);
-      item.setAttribute('aria-label', STAGES[index] + ' — ' + (alert ? 'تحتاج الانتباه'
-        : state === 'completed' ? 'مكتملة' : state === 'current' ? 'المرحلة الحالية' : 'لاحقة'));
-    });
+  _stationStatusLabel(station) {
+    const lifecycleState = this._stationLifecycleState(station.key);
+    const lifecycle = lifecycleState && Object.prototype.hasOwnProperty.call(LIFECYCLE_LABELS, lifecycleState)
+      ? lifecycleLabel(lifecycleState) : '';
+    if (station.alert) return lifecycle ? 'تحتاج الانتباه — ' + lifecycle : 'تحتاج الانتباه';
+    if (lifecycle) return lifecycle;
+    if (station.completed) return 'مكتملة';
+    if (station.current) return 'الحالية';
+    return 'لاحقة';
+  }
+
+  _renderStations(stations, derived) {
+    for (const station of stations) {
+      const parts = this._stationButtons[station.key];
+      if (!parts) continue;
+      const state = station.completed ? 'completed' : station.current ? 'current' : 'pending';
+      const statusLabel = this._stationStatusLabel(station);
+      parts.button.dataset.state = state;
+      if (station.alert) parts.button.dataset.alert = 'true'; else delete parts.button.dataset.alert;
+      if (station.current) parts.button.dataset.current = 'true'; else delete parts.button.dataset.current;
+      if (station.key === this._displayedStationKey) parts.button.dataset.selected = 'true';
+      else delete parts.button.dataset.selected;
+      if (station.current) parts.button.setAttribute('aria-current', 'step');
+      else parts.button.removeAttribute('aria-current');
+      parts.button.setAttribute('aria-label', station.label + ' — ' + statusLabel);
+      parts.marker.textContent = station.alert ? '⚠' : station.completed ? '✓' : station.current ? '●' : '○';
+      parts.label.textContent = station.label;
+    }
+    const displayed = stations.find((station) => station.key === this._displayedStationKey);
+    if (displayed) {
+      this._stationTitle.textContent = 'المحطة: ' + displayed.label + ' — ' + this._stationStatusLabel(displayed);
+    } else {
+      const more = MORE_VIEWS.find(([id]) => id === this._displayedMoreView);
+      this._stationTitle.textContent = more ? 'المزيد: ' + more[1] : '';
+    }
+    this._moreButton.toggleAttribute('data-selected', Boolean(this._displayedMoreView));
+    this._moreButton.setAttribute('aria-label', this._displayedMoreView ? 'المزيد — القسم المعروض' : 'المزيد من أقسام غرفة العمليات');
+    if (derived && derived.nextAction) this._stationStrip.dataset.nextAction = text(derived.nextAction.key);
   }
 
   _groupSignature(groupId) {
@@ -1905,6 +2034,8 @@ class SatrOpsRoom extends HTMLElement {
 
   _render() {
     const derived = deriveOpsRoomState(this._state);
+    const stations = deriveStations(this._state);
+    this._syncStationView(stations);
     this._renderPrimaryAction(derived);
     this._buttons.preview.hidden = !derived.showPreview || derived.previewNeedsCleanup;
     this._buttons.preview.disabled = !derived.previewActive && !derived.canPreview;
@@ -1923,7 +2054,7 @@ class SatrOpsRoom extends HTMLElement {
     setMixedTechnicalText(this._status, statusMessage);
     this._renderHistory(); this._renderBrainstorm(); this._renderDecisions(); this._renderTasks(); this._renderDiscussion();
     this._renderEvidence(); this._renderDiffs(); this._renderReview();
-    this._renderStages(derived); this._renderGroupBadges(); this._renderCompactState(derived);
+    this._renderStations(stations, derived); this._renderGroupBadges(); this._renderCompactState(derived);
   }
 
   _confirm(options) {
@@ -2363,6 +2494,8 @@ class SatrOpsRoom extends HTMLElement {
     this._history = []; this._brainstorm = null; this._plan = null; this._planDraft = '';
     this._diffCache.clear();
     this._groupSeen = { work: '', results: '', log: '' };
+    this._currentStationKey = ''; this._displayedStationKey = ''; this._displayedMoreView = '';
+    this._stationUserView = false; this._closeMoreMenu();
     this._state = createOpsRoomState(); this._render();
     let team = null; let review = null; let verification = null; let preview = null; let room = null; let loop = null;
     const loopLatestAvailable = typeof window.satr.loopLatest === 'function';
