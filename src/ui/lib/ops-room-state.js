@@ -249,3 +249,52 @@ export function isCurrentArtifact(value, state) {
   const artifactId = state && state.team && state.team.artifact_id;
   return !!(artifactId && value && value.artifact_id === artifactId);
 }
+
+// ---------- المسار الموجّه (الدفعة ب — تصميم معتمد 2026-08-09) ----------
+// اشتقاق عرض نقي لشريط المحطات الخمس فوق deriveOpsRoomState — لا يغيّر أي بوابة.
+// محطة «منجزة» قد تكون «الحالية» أيضاً (بعد الدمج تُعرض خلاصته وزر مهمة جديدة).
+
+export const STATION_KEYS = ['setup', 'execute', 'review', 'verify', 'merge'];
+export const STATION_LABELS = {
+  setup: 'إعداد', execute: 'تنفيذ', review: 'مراجعة', verify: 'تحقق', merge: 'دمج',
+};
+const EXECUTE_ALERT_STATES = new Set(['failed', 'timed_out', 'conflict', 'cleanup_failed']);
+
+export function deriveStations(state) {
+  const current = state || createOpsRoomState();
+  const derived = deriveOpsRoomState(current);
+  const team = current.team;
+  const review = current.review;
+  const verification = current.verification;
+  const merged = !!(team && team.merged);
+  const completed = {
+    setup: !!team,
+    execute: !!(team && team.state === 'completed'),
+    review: derived.reviewApproved,
+    verify: derived.verificationPassed,
+    merge: merged,
+  };
+  const alerts = {
+    setup: false,
+    execute: !!(team && EXECUTE_ALERT_STATES.has(team.state)),
+    // مراجعة لم تكتمل أحكامها (بما فيها التي أوقفها المستخدم) أو حكم غير موافق —
+    // «الإيقاف ليس حكماً» (أ‑2 البند 27) لكنه يستحق الانتباه لأن الطريق يمر به.
+    review: !!(review && (['failed', 'timed_out', 'stopped'].includes(review.state)
+      || (review.state === 'completed' && !derived.reviewApproved))),
+    verify: !!(verification && verification.state === 'failed'
+      && verification.artifact_id === derived.artifactId),
+    merge: false,
+  };
+  let currentIndex = 0;
+  if (merged || derived.canMerge || derived.showPreview) currentIndex = 4;
+  else if (derived.verificationActive || derived.canPrepareVerification || derived.canRunVerification) currentIndex = 3;
+  else if (derived.reviewActive || derived.canReview || alerts.review) currentIndex = 2;
+  else if (team) currentIndex = 1;
+  return STATION_KEYS.map((key, index) => ({
+    key,
+    label: STATION_LABELS[key],
+    completed: completed[key],
+    alert: alerts[key],
+    current: index === currentIndex,
+  }));
+}

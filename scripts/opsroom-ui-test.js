@@ -1403,9 +1403,68 @@ async function testLifecycleLabels() {
     'code-point truncation must never split a surrogate pair');
 }
 
+// المسار الموجّه (ب — خطوة القائد): deriveStations اشتقاق عرض نقي — خمس محطات بحالاتها
+// وواحدة حالية، من derived flags القائمة حصراً؛ لا يغيّر أي بوابة أو nextAction.
+async function testDeriveStations() {
+  const {
+    createOpsRoomState, opsRoomReducer, deriveStations, STATION_KEYS,
+  } = await loadStateModule();
+  const artifact = 'a'.repeat(64);
+  const base = fixture(artifact);
+  const stationsOf = (parts) => deriveStations(opsRoomReducer(createOpsRoomState(), { type: 'hydrate', ...parts }));
+  const currentKey = (stations) => stations.find((station) => station.current).key;
+  const byKey = (stations) => Object.fromEntries(stations.map((station) => [station.key, station]));
+
+  const empty = deriveStations(createOpsRoomState());
+  assert.deepStrictEqual(empty.map((station) => station.key), STATION_KEYS, 'station order is fixed');
+  assert.strictEqual(currentKey(empty), 'setup', 'no team ⇒ setup is current');
+  assert(empty.every((station) => !station.completed && !station.alert), 'empty room has no progress or alerts');
+
+  const running = stationsOf({ team: { ...base.team, state: 'running' } });
+  assert.strictEqual(currentKey(running), 'execute', 'running team ⇒ execute is current');
+  assert.strictEqual(byKey(running).setup.completed, true, 'a team existing completes setup');
+
+  const failed = stationsOf({ team: { ...base.team, state: 'failed' } });
+  assert.strictEqual(currentKey(failed), 'execute', 'failed team keeps the execute card (retry lives there)');
+  assert.strictEqual(byKey(failed).execute.alert, true, 'failure marks the execute station');
+  const stopped = stationsOf({ team: { ...base.team, state: 'stopped' } });
+  assert.strictEqual(byKey(stopped).execute.alert, false, 'user stop is intent, not an execute alert');
+
+  const readyForReview = stationsOf({ team: base.team });
+  assert.strictEqual(currentKey(readyForReview), 'review', 'completed artifact ⇒ review is current');
+  assert.strictEqual(byKey(readyForReview).execute.completed, true);
+
+  const stoppedReview = stationsOf({ team: base.team, review: { ...base.review, state: 'stopped', reviews: [] } });
+  assert.strictEqual(currentKey(stoppedReview), 'review', 'stopped review keeps review current (retry — item 28)');
+  assert.strictEqual(byKey(stoppedReview).review.alert, true, 'incomplete review verdicts warrant attention');
+
+  const rejected = judgesFixture(artifact);
+  const rejectedStations = stationsOf({ team: rejected.team, review: rejected.review });
+  assert.strictEqual(currentKey(rejectedStations), 'review', 'non-approved verdicts keep the review card current');
+  assert.strictEqual(byKey(rejectedStations).review.alert, true);
+
+  const approved = stationsOf({ team: base.team, review: base.review });
+  assert.strictEqual(currentKey(approved), 'verify', 'approved review ⇒ verify is current');
+  assert.strictEqual(byKey(approved).review.completed, true);
+
+  const verified = stationsOf({ team: base.team, review: base.review, verification: base.verification });
+  assert.strictEqual(currentKey(verified), 'merge', 'passed verification ⇒ merge is current');
+  const failedVerification = stationsOf({
+    team: base.team, review: base.review, verification: { ...base.verification, state: 'failed' },
+  });
+  assert.strictEqual(byKey(failedVerification).verify.alert, true, 'failed verification marks the verify station');
+
+  const mergedStations = stationsOf({
+    team: { ...base.team, merged: true }, review: base.review, verification: base.verification,
+  });
+  assert(mergedStations.every((station) => station.completed), 'merged flow completes every station');
+  assert.strictEqual(currentKey(mergedStations), 'merge', 'merged summary card stays on the merge station');
+}
+
 async function main() {
   await testReducer();
   await testLifecycleLabels();
+  await testDeriveStations();
   testDesignGuard();
   console.log('opsroom-ui: reducer, gates, event order, stale artifacts, CSP and design guard passed');
 }
