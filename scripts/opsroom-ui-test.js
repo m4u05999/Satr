@@ -1105,8 +1105,40 @@ function testDesignGuard() {
     && verifyPreload.includes('executionPreviewStop'));
 }
 
+// عقد lifecycle-labels المشترك (خطوة القائد قبل أ‑2): الخريطة تغطي المفاتيح الملزمة،
+// وصيغ العدد العربية، والقص على حدود الكلمات بنقاط Unicode بلا كسر surrogate pairs.
+async function testLifecycleLabels() {
+  const source = read('src/ui/lib/lifecycle-labels.js');
+  const url = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
+  const { LIFECYCLE_LABELS, lifecycleLabel, countLabel, truncateWords } = await import(url + '#' + Date.now());
+  for (const key of ['running', 'completed', 'approve', 'reject', 'changes_required', 'stopped',
+    'stopping', 'starting', 'queued', 'preparing', 'pending_confirmation', 'passed', 'failed',
+    'timed_out', 'interrupted', 'cleanup_failed', 'conflict', 'capturing', 'paused', 'active']) {
+    assert(typeof LIFECYCLE_LABELS[key] === 'string' && LIFECYCLE_LABELS[key]
+      && !/[a-z]/i.test(LIFECYCLE_LABELS[key]),
+    'lifecycle label for ' + key + ' must be a non-empty Arabic string');
+  }
+  assert.strictEqual(lifecycleLabel('completed'), LIFECYCLE_LABELS.completed);
+  assert.strictEqual(lifecycleLabel('unknown_raw_state'), 'unknown_raw_state',
+    'unknown states must pass through untouched — no invented label');
+  const files = { one: 'ملف واحد', two: 'ملفان', plural: 'ملفات', many: 'ملفاً' };
+  assert.strictEqual(countLabel(1, files), 'ملف واحد');
+  assert.strictEqual(countLabel(2, files), 'ملفان');
+  assert.strictEqual(countLabel(5, files), '5 ملفات');
+  assert.strictEqual(countLabel(13, files), '13 ملفاً');
+  assert.strictEqual(countLabel(0, { ...files, zero: 'لا ملفات' }), 'لا ملفات');
+  assert.strictEqual(truncateWords('نص قصير', 50), 'نص قصير', 'short text stays intact');
+  const truncated = truncateWords('أصلح فرز القائمة في صفحة المنتجات كاملة', 20);
+  assert(truncated.endsWith('…') && [...truncated].length <= 21 && !/\s…$/.test(truncated),
+    'long text must cut at a word boundary with a trailing ellipsis');
+  const surrogate = truncateWords('🙂🙂🙂🙂🙂 كلمة أخيرة', 7);
+  assert(!/[\uD800-\uDBFF]$/.test(surrogate.replace(/…$/, '')),
+    'code-point truncation must never split a surrogate pair');
+}
+
 async function main() {
   await testReducer();
+  await testLifecycleLabels();
   testDesignGuard();
   console.log('opsroom-ui: reducer, gates, event order, stale artifacts, CSP and design guard passed');
 }
