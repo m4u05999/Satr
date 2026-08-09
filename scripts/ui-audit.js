@@ -642,6 +642,50 @@ const SHOTS = [
     `,
   },
 
+  // ---------- المسار الموجّه ب‑3: تدرّج حالات شريط المحطات (مشهد مقاس) ----------
+  // أربع مراحل عبر مسار القشرة الحقيقي: تنفيذ جارٍ ⇒ فشل ⇒ مراجعة موقوفة ⇒ بوابة دمج
+  // جاهزة؛ يطبع حالة كل محطة (state/alert) بعد كل مرحلة واللقطة على المرحلة الأخيرة.
+  {
+    out: '43-ops-b3-station-states', w: 1440, h: 900,
+    js: `
+      const out = [];
+      document.getElementById('cwd').value = 'D:/fixture-project';
+      document.querySelector('#opsRoomToggle').click();
+      await new Promise((r) => setTimeout(r, 250));
+      const AID = 'b3'.repeat(32);
+      const team = (id, state, merged) => ({
+        id, room_id: 'ops-room-b3-scene', state, merged: !!merged, merge_supported: true,
+        artifact_id: AID, producer_engines: ['sdk'], mode: 'mergeable', timeout_ms: 300000,
+        created_at: Date.now() - 60000, updated_at: Date.now(), duration_ms: 30000,
+        agents: [{ id: 'executor-1', label: 'عامل 1', task: 'حسّن الفرز', engine: 'sdk',
+          ownership: ['src/app.js'], state, summary: '', duration_ms: 30000,
+          cost: { usd: 0.01 }, permissions: { write_limit: 30, write_used: 1, denied: 0 } }],
+      });
+      const emit = (ev) => window.__SATR_TESTSPRITE_HARNESS__.emitEvent(ev);
+      const root = document.querySelector('satr-ops-room').shadowRoot;
+      const bar = (label) => {
+        const cells = [...root.querySelectorAll('.station-strip button')].map((b) =>
+          b.dataset.station + ':' + b.dataset.state + (b.hasAttribute('data-alert') ? ':⚠' : ''));
+        out.push(label + ' ⇒ ' + cells.join(' · '));
+      };
+      emit({ type: 'execution_team_update', team: team('execution-team-b3-run', 'running') });
+      await new Promise((r) => setTimeout(r, 250)); bar('تنفيذ جارٍ');
+      emit({ type: 'execution_team_update', team: team('execution-team-b3-fail', 'failed') });
+      await new Promise((r) => setTimeout(r, 250)); bar('فشل التنفيذ');
+      emit({ type: 'execution_team_update', team: team('execution-team-b3-done', 'completed') });
+      emit({ type: 'execution_review_update', review: { team_id: 'execution-team-b3-done',
+        artifact_id: AID, state: 'stopped', required_review_engines: ['sdk', 'codex'], reviews: [] } });
+      await new Promise((r) => setTimeout(r, 250)); bar('مراجعة موقوفة');
+      emit({ type: 'execution_review_update', review: { team_id: 'execution-team-b3-done',
+        artifact_id: AID, state: 'completed', required_review_engines: ['sdk'],
+        reviews: [{ engine: 'sdk', artifact_id: AID, state: 'completed',
+          verdict: { schema_version: 1, decision: 'approve' } }] } });
+      emit({ type: 'execution_verification_update', verification: { artifact_id: AID, state: 'passed' } });
+      await new Promise((r) => setTimeout(r, 250)); bar('بوابة الدمج جاهزة');
+      return out;
+    `,
+  },
+
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
 ];

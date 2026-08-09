@@ -982,8 +982,14 @@ class SatrOpsRoom extends HTMLElement {
       const derived = deriveOpsRoomState(this._state);
       const guidance = key === 'merge' ? mergeGateLabel(this._state, derived)
         : text(derived.nextAction && derived.nextAction.label);
-      setMixedTechnicalText(this._status, guidance);
-      this._statusRow.hidden = !guidance;
+      // ب‑3: لغير بوابة الدمج نصُّ المحطة اللاحقة هو nextAction نفسه الذي يحمله شريط
+      // الفعل السفلي (أو يجُبّه مانعه الحاجب) — عرضه فوق أيضاً ازدواج؛ بوابة الدمج
+      // وحدها تضيف معلومة (ما تبقى تفصيلاً) فتُعرض دائماً.
+      const actionBarSpeaks = !!(this._nextStep && !this._nextStep.hidden
+        && this._nextStep.textContent);
+      const echoed = actionBarSpeaks && key !== 'merge';
+      setMixedTechnicalText(this._status, echoed ? '' : guidance);
+      this._statusRow.hidden = echoed || !guidance;
       return;
     }
     this._stationUserView = true; this._displayedStationKey = key; this._displayedMoreView = '';

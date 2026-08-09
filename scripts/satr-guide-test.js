@@ -69,7 +69,9 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
     'asarUnpack يطابق نمطي المهارتين المضمّنتين');
     const bundledFiles = fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile());
     const bundledBytes = bundledFiles.reduce((total, entry) => total + fs.statSync(path.join(dir, entry.name)).size, 0);
-    ok(bundledFiles.length === 3 && bundledFiles.every((entry) => entry.name.endsWith('.md')) && bundledBytes < 32 * 1024,
+    // السقف حارس ضد التضخم/الثنائي لا ضد نمو النثر مع الميزات — بلغ 32KiB حده عند
+    // توثيق «المسار الموجّه» (ب‑3) فرُفع بهامش صغير؛ يبقى هامشياً بمعيار الحزمة.
+    ok(bundledFiles.length === 3 && bundledFiles.every((entry) => entry.name.endsWith('.md')) && bundledBytes < 40 * 1024,
       'المهارة المضمّنة ثلاثة ملفات Markdown وحجمها هامشي');
     builtinContext = skills.resolveSelection(path.join(temp, 'empty-project'), 'all', { home, builtinRoot });
   } finally {

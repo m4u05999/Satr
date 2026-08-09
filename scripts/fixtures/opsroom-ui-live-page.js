@@ -101,6 +101,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(nextStep.textContent.includes('راقب النشاط'), 'حالة التنفيذ لا تعرض إرشاد الانتظار الصادق.');
     checks.push('recent-observable-activity', 'elapsed-and-deadline', 'truthful-running-guidance');
 
+    // ب‑3: شريط المسار الموجّه حي — خمسة أزرار بترتيبها، إعداد منجزة وتنفيذ حالية،
+    // ولكل زر aria-label عربي يحمل حالته.
+    const stationButtons = [...root.querySelectorAll('.station-strip button')];
+    assert(stationButtons.length === 5, 'شريط المحطات لا يحمل خمسة أزرار.');
+    assert(stationButtons.map((b) => b.dataset.station).join(',') === 'setup,execute,review,verify,merge',
+      'ترتيب المحطات انحرف عن deriveStations.');
+    assert(stationButtons[0].dataset.state === 'completed' && stationButtons[1].dataset.state === 'current',
+      'حالتا الإعداد/التنفيذ لا تعكسان فريقاً جارياً.');
+    assert(stationButtons.every((b) => /[؀-ۿ]/.test(b.getAttribute('aria-label') || '')),
+      'أزرار المحطات بلا aria-label عربي.');
+    checks.push('guided-path-live-bar');
+
     window.__opsroomUiLiveProgress = 'quiet';
     currentTeam = team('running', agent('running', Date.now() - 125000), startedAt);
     room.handleEvent({ type: 'execution_team_update', team: currentTeam });
@@ -128,7 +140,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert([...root.querySelectorAll('.live-activity')].some((element) => element.textContent.includes('التعافي المقترح')),
       'إرشاد التعافي المصنّف غير ظاهر.');
     assert(notices.length === 1, `تكرر إشعار الحالة النهائية ${notices.length} مرة.`);
-    checks.push('timeout-recovery-guidance', 'explicit-retry', 'deduplicated-terminal-notice');
+    const timedOutExecute = root.querySelector('.station-strip button[data-station="execute"]');
+    assert(timedOutExecute.hasAttribute('data-alert'), 'انتهاء المهلة لا يعلّم محطة التنفيذ ⚠ (ب‑3).');
+    checks.push('timeout-recovery-guidance', 'explicit-retry', 'deduplicated-terminal-notice', 'timeout-station-alert');
 
     assert(violations.length === 0, 'رُصد securitypolicyviolation أثناء اختبار غرفة العمليات.');
     checks.push('zero-csp-violations');

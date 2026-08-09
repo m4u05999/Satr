@@ -745,6 +745,20 @@ function testJudgesHelpers(component) {
   selectStation.call(routeHost, 'merge');
   assert(routeHost._status.textContent.includes('نجاح التحقق'),
     'a future merge station must reuse the existing merge gate guidance');
+  // ب‑3: حين يتكلم شريط الفعل السفلي لا تكرر بوابةُ المحطة اللاحقة المعنى سطراً علوياً؛
+  // بوابة الدمج وحدها تضيف تفصيل «ما تبقى» فتُعرض دائماً.
+  routeHost._nextStep = new FakeElement('div');
+  routeHost._nextStep.hidden = false;
+  routeHost._nextStep.textContent = 'اكتب مهمة وملكية ملفات لكل عامل.';
+  routeHost._status.textContent = ''; routeHost._statusRow.hidden = true;
+  selectStation.call(routeHost, 'review');
+  assert.strictEqual(routeHost._status.textContent, '',
+    'a speaking action bar must silence the duplicate future-station guidance (B3)');
+  assert.strictEqual(routeHost._statusRow.hidden, true,
+    'the silenced gate row must stay hidden (B3)');
+  selectStation.call(routeHost, 'merge');
+  assert(routeHost._status.textContent.includes('نجاح التحقق'),
+    'the merge gate detail must survive a speaking action bar (B3)');
 
   const toggleMoreMenu = new Function('deriveStations', 'deriveOpsRoomState', 'return function () {'
     + methodBody(component, '  _toggleMoreMenu()') + '};')(() => renderedStations, () => ({}));
