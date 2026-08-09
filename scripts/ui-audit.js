@@ -686,6 +686,92 @@ const SHOTS = [
     `,
   },
 
+  // ---------- الوضع الآلي ج: حوار الموافقة الواحدة (المسار الحقيقي من زر الدردشة) ----------
+  // يحاكي قناتي الحلقة فقط (loopPreflight) ثم يمر بالمسار الحقيقي كاملاً:
+  // addUserMsg ⇒ زر «🏗» ⇒ ops-room-open{auto} ⇒ startAutoRun ⇒ حوار satr-ops-dialog.
+  {
+    out: '44-ops-c-auto-dialog', w: 1440, h: 900,
+    js: `
+      const out = [];
+      document.getElementById('cwd').value = 'D:/fixture-project';
+      window.satr.loopPreflight = async () => ({ ok: true, head: 'f'.repeat(40), checks: [
+        { id: 'test', label: 'اختبارات المتجر', command: 'node test.js', timeout_seconds: 60 },
+      ] });
+      document.querySelector('satr-chat').addUserMsg('أصلح حساب نسبة الخصم في السلة وتأكد من نجاح الاختبارات');
+      await new Promise((r) => setTimeout(r, 200));
+      document.querySelector('.msg-ops-room').click();
+      await new Promise((r) => setTimeout(r, 800));
+      const dialog = document.querySelector('satr-ops-dialog');
+      if (!dialog || !dialog.hasAttribute('open')) { out.push('حوار الموافقة غائب — عطب في مسار startAutoRun'); return out; }
+      const droot = dialog.shadowRoot;
+      const desc = droot.querySelector('.description').textContent;
+      out.push('عنوان الحوار: «' + droot.querySelector('h2').textContent
+        + '» · زر التأكيد: «' + droot.querySelector('.confirm').textContent + '»');
+      out.push('الحدود المعلنة: 3 دورات=' + desc.includes('3 دورات') + ' · 400,000 رمز=' + desc.includes('400,000')
+        + ' · 300 ثانية=' + desc.includes('300 ثانية') + ' · لا دمج تلقائي=' + desc.includes('لن يندمج شيء تلقائياً'));
+      out.push('أوامر التحقق المعروضة: '
+        + [...droot.querySelectorAll('.items .item')].map((el) => el.textContent).join(' · '));
+      return out;
+    `,
+  },
+
+  // ---------- الوضع الآلي ج: السائق يقود المراجعة بلا نقرة + شارة «⚡ آلي» (فاتح مقاس) ----------
+  // موافقة ⇒ حلقة passed اصطناعية ⇒ يثبت أن executionReviewStart استُدعيت آلياً،
+  // ويقيس تباين الشارة وزر الإطفاء في الوضع الفاتح.
+  {
+    out: '45-ops-c-auto-drive-light', w: 1440, h: 900,
+    js: LIGHT + MEASURE + `
+      document.getElementById('cwd').value = 'D:/fixture-project';
+      const AID = 'c5'.repeat(32);
+      const autoCalls = [];
+      window.satr.loopPreflight = async () => ({ ok: true, head: 'f'.repeat(40), checks: [
+        { id: 'test', label: 'اختبارات المتجر', command: 'node test.js', timeout_seconds: 60 },
+      ] });
+      window.satr.loopStart = async () => ({ ok: true, loop: {
+        loop_id: 'loop-c-scene', team_id: 'execution-team-c-auto', room_id: 'testsprite-harness',
+        state: 'preparing', iteration: 0, max_iterations: 3,
+      } });
+      window.satr.executionReviewStart = async () => { autoCalls.push('review'); return { ok: true, review: {
+        id: 'execution-review-c-auto', team_id: 'execution-team-c-auto', artifact_id: AID, state: 'running',
+        required_review_engines: ['sdk', 'codex'], reviews: [],
+      } }; };
+      document.querySelector('satr-chat').addUserMsg('أصلح حساب نسبة الخصم في السلة');
+      await new Promise((r) => setTimeout(r, 200));
+      document.querySelector('.msg-ops-room').click();
+      await new Promise((r) => setTimeout(r, 800));
+      const dialog = document.querySelector('satr-ops-dialog');
+      if (!dialog || !dialog.hasAttribute('open')) { out.push('حوار الموافقة غائب — عطب في مسار startAutoRun'); return out; }
+      dialog.shadowRoot.querySelector('.confirm').click();
+      await new Promise((r) => setTimeout(r, 400));
+      const emit = (ev) => window.__SATR_TESTSPRITE_HARNESS__.emitEvent(ev);
+      emit({ type: 'execution_team_update', team: {
+        id: 'execution-team-c-auto', room_id: 'testsprite-harness', state: 'completed', merged: false,
+        merge_supported: true, artifact_id: AID, producer_engines: ['sdk'], mode: 'mergeable',
+        timeout_ms: 300000, created_at: Date.now() - 60000, updated_at: Date.now(), duration_ms: 45000,
+        agents: [{ id: 'executor-1', label: 'عامل 1', task: 'أصلح حساب نسبة الخصم', engine: 'sdk',
+          ownership: ['**'], state: 'completed', summary: 'اكتمل', duration_ms: 45000,
+          cost: { usd: 0.02 }, permissions: { write_limit: 30, write_used: 2, denied: 0 } }],
+      } });
+      emit({ type: 'loop_update', loop_id: 'loop-c-scene', team_id: 'execution-team-c-auto',
+        room_id: 'testsprite-harness', state: 'passed', iteration: 1, max_iterations: 3 });
+      await new Promise((r) => setTimeout(r, 500));
+      out.push('استُدعيت المراجعة آلياً بلا نقرة: ' + (autoCalls.length === 1 ? 'نعم' : 'لا (' + autoCalls.length + ')'));
+      const root = document.querySelector('satr-ops-room').shadowRoot;
+      const badge = root.querySelector('.auto-mode-badge');
+      const stopAuto = root.querySelector('.auto-mode-stop');
+      out.push('الشارة ظاهرة: ' + !!(badge && !badge.hidden) + ' · زر الإطفاء ظاهر: ' + !!(stopAuto && !stopAuto.hidden));
+      if (badge && !badge.hidden) {
+        const badgeContrast = contrast(parseColor(getComputedStyle(badge).color), effBg(badge));
+        out.push('تباين شارة «آلي» في الفاتح: ' + badgeContrast.toFixed(2) + ':1');
+      }
+      if (stopAuto && !stopAuto.hidden) {
+        const stopContrast = contrast(parseColor(getComputedStyle(stopAuto).color), effBg(stopAuto));
+        out.push('تباين زر الإطفاء في الفاتح: ' + stopContrast.toFixed(2) + ':1');
+      }
+      return out;
+    `,
+  },
+
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
 ];

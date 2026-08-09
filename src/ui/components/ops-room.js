@@ -1,12 +1,12 @@
-// غرفة العمليات: لوحة عمل عربية تعرض الحقيقة العامة المنقّاة فقط، وتترك كل انتقال
-// تشغيلي لنقرة مستخدم صريحة. لا patch ولا خرج أوامر كامل يدخل هذا المكوّن.
+// غرفة العمليات: لوحة عمل عربية تعرض الحقيقة العامة المنقّاة فقط. الوضع الآلي يقود
+// الانتقالات الوسطى بعد موافقة واحدة، وتبقى بوابة الدمج صريحة. لا patch ولا خرج أوامر كامل يدخل هذا المكوّن.
 import { sheet } from '../lib/sheet.js';
 import { panelSheet, controlsSheet } from '../lib/panel.css.js';
 import { cardSheet } from '../lib/card.css.js';
 import { buildDiff } from '../lib/diff.js';
 import { diffSheet } from '../lib/diff.css.js';
 import {
-  createOpsRoomState, deriveAgentActivity, deriveOpsRoomState, deriveStations,
+  createOpsRoomState, deriveAgentActivity, deriveAutoStep, deriveOpsRoomState, deriveStations,
   INHERIT_TEMPLATE_TEAM_STATES, opsRoomReducer, STATION_KEYS,
 } from '../lib/ops-room-state.js';
 import {
@@ -90,6 +90,17 @@ const roomSheet = sheet(`
     padding-inline-end: var(--space-3); border-bottom: 1px solid var(--border);
   }
   .status-row .stop { color: var(--red); white-space: nowrap; }
+  /* لون الشارة عبر --ops-review-title: ذهب مقروء AA في الفاتح وgold في الداكن (نمط بطاقات المراجعة) */
+  .auto-mode-badge {
+    display: inline-flex; align-items: center; padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--gold-border); border-radius: var(--radius-pill);
+    color: var(--ops-review-title, var(--gold)); background: var(--gold-soft);
+    font-size: .72rem; font-weight: 700; white-space: nowrap;
+  }
+  .auto-mode-stop {
+    color: var(--ops-review-title, var(--gold)); border-color: var(--gold-border); white-space: nowrap;
+  }
+  .auto-mode-badge[hidden], .auto-mode-stop[hidden] { display: none; }
   .status-row .verify-config-recovery { color: var(--gold); border-color: var(--gold-border); white-space: nowrap; }
   .status-row .verify-config-recovery[hidden] { display: none; }
   .status-row[hidden] { display: none; }
@@ -388,6 +399,16 @@ const PRIMARY_ACTIONS = {
   verify: { label: 'شغّل الاختبارات', can: 'canRunVerification', method: '_runVerification' },
   merge: { label: 'ادمج الأثر', can: 'canMerge', method: '_merge' },
 };
+const AUTO_STOP_LABELS = Object.freeze({
+  merge_gate: 'أوصلك الوضع الآلي بوابة الدمج — راجع النتيجة والأحكام ثم ادمج الأثر بتأكيدك أو ارفضه.',
+  loop_not_passed: 'توقفت المتابعة الآلية: لم تنجح الحلقة — راجع سببها من بطاقتها وقرر الخطوة بنفسك.',
+  execution_alert: 'توقفت المتابعة الآلية: تعثّر التنفيذ — راجع سببه وإرشاد التعافي.',
+  execution_stopped: 'توقفت المتابعة الآلية بعد إيقاف التنفيذ.',
+  review_not_approved: 'توقفت المتابعة الآلية: المراجعة لم توافق — راجع التقرير وقرر الخطوة بنفسك.',
+  review_incomplete: 'توقفت المتابعة الآلية: لم تكتمل أحكام المراجعة — أعد المراجعة يدوياً متى شئت.',
+  verification_failed: 'توقفت المتابعة الآلية: فشل التحقق التكاملي — راجع صفوف الفحوص.',
+  step_error: 'توقفت المتابعة الآلية بعد تعذّر خطوة — أكمل من المسار الموجّه.',
+});
 
 const TEAM_STATES = {
   preparing: 'يجهّز النسخ المعزولة…', queued: 'في الانتظار', running: 'ينفّذ…',
@@ -803,10 +824,15 @@ class SatrOpsRoom extends HTMLElement {
     guidedPath.appendChild(stationStrip); guidedPath.appendChild(moreWrap);
     const statusRow = makeElement('div', 'status-row');
     const status = makeElement('div', 'status'); status.setAttribute('aria-live', 'polite');
+    const autoModeBadge = makeElement('span', 'auto-mode-badge', '⚡ آلي'); autoModeBadge.hidden = true;
+    const autoModeStop = makeElement('button', 'auto-mode-stop', 'أوقف المتابعة الآلية'); autoModeStop.type = 'button';
+    autoModeStop.title = 'يوقف المتابعة الآلية فقط؛ لإيقاف المرحلة الجارية استخدم زر إيقاف المرحلة القائم.';
+    autoModeStop.hidden = true;
     const verifyConfigRecovery = makeElement('button', 'verify-config-recovery', 'افتح إعداد التحقق');
     verifyConfigRecovery.type = 'button'; verifyConfigRecovery.hidden = true;
     const stopButton = makeElement('button', 'stop', 'إيقاف المرحلة'); stopButton.type = 'button'; stopButton.hidden = true;
-    statusRow.appendChild(status); statusRow.appendChild(verifyConfigRecovery); statusRow.appendChild(stopButton);
+    statusRow.appendChild(status); statusRow.appendChild(autoModeBadge); statusRow.appendChild(autoModeStop);
+    statusRow.appendChild(verifyConfigRecovery); statusRow.appendChild(stopButton);
     const timeoutRow = makeElement('div', 'timeout-row'); timeoutRow.hidden = true;
     const timeoutWarning = makeElement('div', 'timeout-warning'); timeoutWarning.setAttribute('aria-live', 'polite');
     const extendButton = makeElement('button', 'extend', 'مدّد المهلة مرة'); extendButton.type = 'button';
@@ -824,6 +850,8 @@ class SatrOpsRoom extends HTMLElement {
     this._list = list;
     this._status = status;
     this._statusRow = statusRow;
+    this._autoModeBadge = autoModeBadge;
+    this._autoModeStop = autoModeStop;
     this._timeoutRow = timeoutRow;
     this._timeoutWarning = timeoutWarning;
     this._nextStep = nextStep;
@@ -864,6 +892,9 @@ class SatrOpsRoom extends HTMLElement {
     this._notified = new Set();
     this._diffCache = new Map();
     this._clock = null;
+    this._autoMode = false;
+    this._autoFailedStep = '';
+    this._autoInFlight = false;
     this._buildStations();
     this._buildMoreMenu();
     this._buildViews();
@@ -877,6 +908,11 @@ class SatrOpsRoom extends HTMLElement {
     this._buttons.previewStop.addEventListener('click', () => this._stopPreview());
     this._buttons.extend.addEventListener('click', () => this._extendTimeout());
     this._buttons.stop.addEventListener('click', () => this._stop());
+    this._autoModeStop.addEventListener('click', () => {
+      if (!this._autoMode) return;
+      this._autoMode = false;
+      this._dispatch({ type: 'status', status: 'أُطفئت المتابعة الآلية — أكمل من المسار الموجّه.' });
+    });
     moreButton.addEventListener('click', () => this._toggleMoreMenu());
     resizeHandle.addEventListener('pointerdown', (event) => this._beginResize(event));
     resizeHandle.addEventListener('pointermove', (event) => this._moveResize(event));
@@ -1939,10 +1975,38 @@ class SatrOpsRoom extends HTMLElement {
     this._verifyConfigRecovery.disabled = !this._cwd;
     const statusMessage = roomStatusMessage(this._state, derived);
     setMixedTechnicalText(this._status, statusMessage);
-    this._statusRow.hidden = !statusMessage;
+    this._autoModeBadge.hidden = !this._autoMode;
+    this._autoModeStop.hidden = !this._autoMode;
+    this._statusRow.hidden = !statusMessage && !this._autoMode;
     this._renderHistory(); this._renderBrainstorm(); this._renderDecisions(); this._renderTasks(); this._renderDiscussion();
     this._renderEvidence(); this._renderDiffs(); this._renderReview();
     this._renderStations(stations, derived); this._renderCompactState(derived, stations);
+    this._driveAutoStep();
+  }
+
+  _driveAutoStep() {
+    if (!this._autoMode || this._autoInFlight) return;
+    const auto = deriveAutoStep(this._state, { failedStep: this._autoFailedStep });
+    if (auto.stop) {
+      this._autoMode = false;
+      this._dispatch({ type: 'status', status: AUTO_STOP_LABELS[auto.stop] || AUTO_STOP_LABELS.step_error });
+      return;
+    }
+    if (!auto.step) return;
+    this._autoInFlight = true;
+    let operation = null;
+    if (auto.step === 'review') operation = this._startReview();
+    else if (auto.step === 'prepare') operation = this._prepareVerification();
+    else if (auto.step === 'verify') operation = this._runVerification({ auto: true });
+    Promise.resolve(operation).then((succeeded) => {
+      this._autoInFlight = false;
+      if (succeeded !== true) this._autoFailedStep = auto.step;
+      this._render();
+    }, () => {
+      this._autoInFlight = false;
+      this._autoFailedStep = auto.step;
+      this._render();
+    });
   }
 
   _confirm(options) {
@@ -1953,6 +2017,62 @@ class SatrOpsRoom extends HTMLElement {
         },
       }));
     });
+  }
+
+  async startAutoRun(task) {
+    this.seedTask(task);
+    const taskText = text(task).trim().slice(0, 4000);
+    if (!this._cwd) {
+      this._dispatch({ type: 'status', status: BAD_INPUT_LABELS.execution });
+      return false;
+    }
+    const derived = deriveOpsRoomState(this._state);
+    if (derived.loopActive || derived.teamActive || derived.reviewActive
+      || derived.verificationActive || this._state.pending) {
+      this._dispatch({ type: 'status', status: 'يوجد تشغيل جارٍ في الغرفة — أكمل من المسار الموجّه أو أوقفه أولاً.' });
+      return false;
+    }
+    if (typeof window.satr.loopPreflight !== 'function' || typeof window.satr.loopStart !== 'function') {
+      this._dispatch({ type: 'status', status: 'وضع الحلقة المحدودة غير متاح في هذه النسخة حالياً.' });
+      return false;
+    }
+    let preflight = null;
+    try { preflight = await window.satr.loopPreflight(this._cwd); } catch {}
+    if (!preflight || !preflight.ok) {
+      this._dispatch({ type: 'status', status: errorLabel(preflight, 'execution',
+        'تعذّر فحص إعداد التحقق للحلقة — راجع .satr/verify.json المعتمد في HEAD.') });
+      return false;
+    }
+    const excerpt = truncateWords(taskText, 160);
+    const confirmed = await this._confirm({
+      kind: 'auto-start', title: 'تنفيذ آلي بموافقة واحدة', confirmLabel: 'ابدأ التنفيذ الآلي',
+      description: 'المهمة: «' + excerpt + '»\nسينفّذ عامل واحد داخل نسخة معزولة: حتى 3 دورات، بميزانية 400,000 رمز تقديرية، ومهلة 300 ثانية لكل دورة. بعد نجاح الحلقة تُجرى المراجعة المستقلة والتحقق التكاملي تلقائياً بلا أسئلة إضافية. لن يندمج شيء تلقائياً — الدمج يبقى بتأكيدك الصريح.',
+      items: (preflight.checks || []).map((check) => check.command).filter((command) => typeof command === 'string'),
+    });
+    if (!confirmed) return false;
+    this._dispatch({ type: 'pending', action: 'loop-start' });
+    let result = null;
+    const models = this._modelOverrides(['worker']);
+    try {
+      const loop = { max_iterations: 3, budget_tokens: 400000, timeout_seconds: 300 };
+      result = models && this._supportsModels(window.satr.loopStart, 6)
+        ? await window.satr.loopStart(this._cwd, taskText, ['**'], loop, true, models)
+        : await window.satr.loopStart(this._cwd, taskText, ['**'], loop, true);
+    } catch {}
+    if (!result || !result.ok) {
+      this._dispatch({ type: 'settled', status: errorLabel(result, 'execution',
+        'تعذّر بدء الحلقة المحدودة — راجع المهمة والملكية وإعداد التحقق ثم أعد المحاولة.') });
+      return false;
+    }
+    this._autoMode = true;
+    this._autoFailedStep = '';
+    this._autoInFlight = true;
+    this._dispatch({ type: 'settled', status: 'بدأ التنفيذ الآلي — سيتابع المراجعة والتحقق حتى بوابة الدمج.' });
+    if (result.loop) this._dispatch({ type: 'event', event: { ...result.loop, type: 'loop_update' } });
+    if (result.loop && result.loop.room_id) await this._loadRoom(result.loop.room_id);
+    this._autoInFlight = false;
+    this._render();
+    return true;
   }
 
   async _startExecution() {
@@ -2061,7 +2181,7 @@ class SatrOpsRoom extends HTMLElement {
 
   async _startReview() {
     const derived = deriveOpsRoomState(this._state);
-    if (!derived.canReview) return;
+    if (!derived.canReview) return false;
     this._dispatch({ type: 'pending', action: 'review' });
     let result = null;
     const models = this._modelOverrides(['sdk', 'codex']);
@@ -2073,28 +2193,32 @@ class SatrOpsRoom extends HTMLElement {
     this._dispatch({ type: 'settled', ...(result && result.review ? { review: result.review } : {}),
       status: result && result.ok ? 'بدأت المراجعات المستقلة.'
         : errorLabel(result, 'review', 'تعذّر بدء المراجعة — حدّث الغرفة وتحقق من اكتمال الأثر ثم أعد المحاولة.') });
+    return !!(result && result.ok);
   }
 
   async _prepareVerification() {
     const derived = deriveOpsRoomState(this._state);
-    if (!derived.canPrepareVerification) return;
+    if (!derived.canPrepareVerification) return false;
     this._dispatch({ type: 'pending', action: 'prepare' });
     let result = null;
     try { result = await window.satr.executionVerificationPrepare(this._state.team.id, this._state.review.id); } catch {}
     this._dispatch({ type: 'settled', ...(result && result.verification ? { verification: result.verification } : {}),
       status: result && result.ok ? 'ثُبّتت اختبارات الأثر وتنتظر تأكيد التشغيل.'
         : errorLabel(result, 'verification', 'تعذّر تثبيت التحقق — راجع المراجعات وملف .satr/verify.json ثم أعد المحاولة.') });
+    return !!(result && result.ok);
   }
 
-  async _runVerification() {
+  async _runVerification(options) {
     const derived = deriveOpsRoomState(this._state);
-    if (!derived.canRunVerification) return;
-    const confirmed = await this._confirm({
-      kind: 'verify', title: 'تأكيد تشغيل الاختبارات', confirmLabel: 'شغّل الاختبارات',
-      description: 'ستعمل الأوامر المعتمدة في HEAD داخل worktree تكاملي معزول فقط.',
-      items: (this._state.verification.checks || []).map((check) => check.command).filter(Boolean),
-    });
-    if (!confirmed) return;
+    if (!derived.canRunVerification) return false;
+    if (!(options && options.auto === true)) {
+      const confirmed = await this._confirm({
+        kind: 'verify', title: 'تأكيد تشغيل الاختبارات', confirmLabel: 'شغّل الاختبارات',
+        description: 'ستعمل الأوامر المعتمدة في HEAD داخل worktree تكاملي معزول فقط.',
+        items: (this._state.verification.checks || []).map((check) => check.command).filter(Boolean),
+      });
+      if (!confirmed) return false;
+    }
     this._dispatch({ type: 'pending', action: 'verify' });
     let result = null;
     try {
@@ -2105,6 +2229,7 @@ class SatrOpsRoom extends HTMLElement {
     this._dispatch({ type: 'settled', ...(result && result.verification ? { verification: result.verification } : {}),
       status: result && result.ok ? 'اكتمل تشغيل التحقق.'
         : errorLabel(result, 'verification', 'تعذّر تشغيل التحقق التكاملي — ثبّت التحقق للأثر الحالي ثم أعد المحاولة.') });
+    return !!(result && result.ok);
   }
 
   async _merge() {
@@ -2202,6 +2327,7 @@ class SatrOpsRoom extends HTMLElement {
         this._state = opsRoomReducer(this._state, {
           type: 'hydrate', room: loaded.room, team: this._state.team,
           review: this._state.review, verification: this._state.verification, preview: this._state.preview,
+          loop: this._state.loop,
         });
         this._render();
       }
@@ -2372,7 +2498,15 @@ class SatrOpsRoom extends HTMLElement {
   }
 
   async open(cwd) {
-    this._cwd = typeof cwd === 'string' ? cwd : '';
+    // إعادة فتح اللوحة على المشروع نفسه تُبقي المتابعة الآلية حية؛ تغيّر المشروع
+    // وحده يطفئها (لا قتل صامت لمجرد التبديل بين الأسطح — درس «لا صمت غير مفسّر»).
+    const nextCwd = typeof cwd === 'string' ? cwd : '';
+    if (nextCwd !== this._cwd) {
+      this._autoMode = false;
+      this._autoFailedStep = '';
+      this._autoInFlight = false;
+    }
+    this._cwd = nextCwd;
     this._verifyConfigButton.disabled = !this._cwd;
     this._loadLayoutPreferences();
     this._loadModelPreferences();

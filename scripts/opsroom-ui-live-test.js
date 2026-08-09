@@ -65,10 +65,14 @@ async function main() {
       'seeded-chat-task', 'single-agent-default', 'recent-observable-activity',
       'elapsed-and-deadline', 'truthful-running-guidance',
       'quiet-without-stall-claim', 'timeout-recovery-guidance', 'explicit-retry',
-      'deduplicated-terminal-notice', 'zero-csp-violations',
+      'deduplicated-terminal-notice',
+      // ج «الوضع الآلي»: عقد dedup الإشعار النهائي يبقى مؤكداً داخل الصفحة قبل هذه
+      // الكتلة (سيناريو الوضع الآلي يضيف إشعارات لاحقة مشروعة فسقط عدّ المجموع هنا).
+      'auto-single-approval', 'auto-driver-review-no-click',
+      'auto-full-chain-to-merge-gate', 'auto-never-merges',
+      'zero-csp-violations',
     ]) assert(result.checks.includes(check), 'غاب فحص غرفة العمليات الحي: ' + check);
-    assert.strictEqual(result.notices.length, 1, 'الإشعار النهائي لم يُدمج إلى إشعار واحد.');
-    console.log('opsroom-ui-live: نجح — نشاط مرصود حديث/هادئ، مدة ومهلة، تعافٍ صريح، وإشعار نهائي واحد؛ صفر CSP.');
+    console.log('opsroom-ui-live: نجح — نشاط مرصود، تعافٍ صريح، إشعار نهائي واحد، والوضع الآلي حتى بوابة الدمج بلا دمج آلي؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

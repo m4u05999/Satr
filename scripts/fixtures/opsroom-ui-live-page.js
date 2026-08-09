@@ -144,6 +144,85 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(timedOutExecute.hasAttribute('data-alert'), 'انتهاء المهلة لا يعلّم محطة التنفيذ ⚠ (ب‑3).');
     checks.push('timeout-recovery-guidance', 'explicit-retry', 'deduplicated-terminal-notice', 'timeout-station-alert');
 
+    // ج «الوضع الآلي»: موافقة واحدة ⇒ السائق يقود مراجعة/تثبيت/تشغيل بلا نقرات،
+    // ويتوقف عند بوابة الدمج البشرية بلا أي استدعاء دمج، وتنطفئ الشارة عندها.
+    window.__opsroomUiLiveProgress = 'auto-mode';
+    const AUTO_AID = 'ab'.repeat(32);
+    const satrCalls = [];
+    window.satr.loopPreflight = async () => ({ ok: true, head: 'f'.repeat(40), checks: [
+      { id: 'test', label: 'اختبار', command: 'node test.js', timeout_seconds: 60 },
+    ] });
+    window.satr.loopStart = async (cwd, task, ownership, loop, confirmed) => {
+      satrCalls.push('loopStart:' + JSON.stringify(ownership) + ':' + loop.max_iterations + ':'
+        + loop.budget_tokens + ':' + loop.timeout_seconds + ':' + confirmed);
+      return { ok: true, loop: {
+        loop_id: 'loop-live-auto', team_id: 'execution-team-live-auto',
+        room_id: 'ops-room-live-test', state: 'preparing',
+      } };
+    };
+    window.satr.executionReviewStart = async () => {
+      satrCalls.push('review');
+      return { ok: true, review: {
+        id: 'execution-review-live-auto', team_id: 'execution-team-live-auto', artifact_id: AUTO_AID,
+        state: 'running', required_review_engines: ['sdk'], reviews: [],
+      } };
+    };
+    window.satr.executionVerificationPrepare = async () => {
+      satrCalls.push('prepare');
+      return { ok: true, verification: { artifact_id: AUTO_AID, state: 'pending_confirmation', checks: [
+        { id: 'test', label: 'اختبار', command: 'node test.js' },
+      ] } };
+    };
+    window.satr.executionVerificationRun = async () => {
+      satrCalls.push('verify');
+      return { ok: true, verification: { artifact_id: AUTO_AID, state: 'passed', checks: [] } };
+    };
+    window.satr.executionMerge = async () => { satrCalls.push('merge'); return { ok: false }; };
+    const confirmKinds = [];
+    room.addEventListener('ops-confirm-request', (event) => {
+      confirmKinds.push(event.detail.kind);
+      event.detail.resolve(true);
+    });
+    currentTeam = null;
+    await room.open('C:\\fixture');
+    const autoStarted = await room.startAutoRun('مهمة الوضع الآلي الحية.');
+    await frames(3);
+    assert(autoStarted === true, 'رفض startAutoRun البدء رغم اكتمال الشروط.');
+    assert(confirmKinds.length === 1 && confirmKinds[0] === 'auto-start',
+      'الوضع الآلي لم يمر بموافقة واحدة مسبقة نوع auto-start (المرصود: ' + confirmKinds.join(',') + ').');
+    assert(satrCalls[0] === 'loopStart:["**"]:3:400000:300:true',
+      'حدود الحلقة الافتراضية أو الملكية انحرفت: ' + satrCalls[0]);
+    const autoBadge = root.querySelector('.auto-mode-badge');
+    assert(autoBadge && !autoBadge.hidden, 'شارة «⚡ آلي» غائبة بعد بدء الوضع الآلي.');
+    room.handleEvent({ type: 'execution_team_update', team: {
+      id: 'execution-team-live-auto', room_id: 'ops-room-live-test', state: 'completed',
+      merged: false, merge_supported: true, artifact_id: AUTO_AID, producer_engines: ['sdk'],
+      mode: 'mergeable', timeout_ms: 300000, created_at: Date.now() - 60000, updated_at: Date.now(),
+      duration_ms: 45000, agents: [agent('completed', Date.now() - 1000, { ownership: ['**'] })],
+    } });
+    room.handleEvent({ type: 'loop_update', loop_id: 'loop-live-auto',
+      team_id: 'execution-team-live-auto', room_id: 'ops-room-live-test', state: 'passed' });
+    await frames(4);
+    assert(satrCalls.includes('review'), 'السائق لم يستدع المراجعة آلياً بعد نجاح الحلقة.');
+    checks.push('auto-single-approval', 'auto-driver-review-no-click');
+    room.handleEvent({ type: 'execution_review_update', review: {
+      id: 'execution-review-live-auto', team_id: 'execution-team-live-auto', artifact_id: AUTO_AID,
+      state: 'completed', required_review_engines: ['sdk'],
+      reviews: [{ engine: 'sdk', artifact_id: AUTO_AID, state: 'completed',
+        verdict: { schema_version: 1, decision: 'approve', source: 'explicit' } }],
+    } });
+    await frames(6);
+    assert(satrCalls.includes('prepare') && satrCalls.includes('verify'),
+      'السائق لم يكمل تثبيت التحقق وتشغيله آلياً: ' + satrCalls.join(','));
+    assert(!satrCalls.includes('merge'), 'خرق أمني: استُدعي الدمج آلياً بلا تأكيد بشري.');
+    assert(confirmKinds.every((kind) => kind === 'auto-start'),
+      'ظهر حوار وسيط رغم الموافقة الواحدة: ' + confirmKinds.join(','));
+    assert(autoBadge.hidden, 'الشارة لم تنطفئ عند بلوغ بوابة الدمج.');
+    const mergeGateAction = root.querySelector('.primary-action');
+    assert(mergeGateAction && mergeGateAction.textContent === 'ادمج الأثر',
+      'بوابة الدمج البشرية غير معروضة بعد توقف السائق.');
+    checks.push('auto-full-chain-to-merge-gate', 'auto-never-merges');
+
     assert(violations.length === 0, 'رُصد securitypolicyviolation أثناء اختبار غرفة العمليات.');
     checks.push('zero-csp-violations');
     window.__opsroomUiLiveProgress = 'complete';

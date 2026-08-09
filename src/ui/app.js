@@ -2008,13 +2008,16 @@ import { createUpdateToast } from './lib/update-toast.js';
     surfaceCoordinator.openPanel('research', document.activeElement, () => researchEl.open($('cwd').value.trim()));
   }
 
-  function openOpsRoom(source, taskSeed) {
+  function openOpsRoom(source, taskSeed, auto) {
     $('opsRoomToggle').classList.add('active');
     surfaceCoordinator.openPanel('ops-room', source || document.activeElement,
       () => {
         const opened = opsRoomEl.open($('cwd').value.trim());
-        if (typeof taskSeed === 'string' && taskSeed.trim() && opsRoomEl.seedTask) {
-          Promise.resolve(opened).then(() => opsRoomEl.seedTask(taskSeed));
+        if (typeof taskSeed === 'string' && taskSeed.trim()) {
+          Promise.resolve(opened).then(() => {
+            if (auto === true && typeof opsRoomEl.startAutoRun === 'function') opsRoomEl.startAutoRun(taskSeed);
+            else if (opsRoomEl.seedTask) opsRoomEl.seedTask(taskSeed);
+          });
         }
       });
   }
@@ -2044,7 +2047,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   });
   document.addEventListener('ops-room-open', (event) => {
     const detail = event.detail && typeof event.detail === 'object' ? event.detail : {};
-    openOpsRoom(event.target, typeof detail.task === 'string' ? detail.task : lastUserTurn.prompt);
+    openOpsRoom(event.target, typeof detail.task === 'string' ? detail.task : lastUserTurn.prompt, detail.auto === true);
   });
 
   researchEl.addEventListener('research-source', (event) => {

@@ -1744,11 +1744,65 @@ async function testDeriveAutoStep() {
     { step: 'prepare', stop: '' }, 'failedStep only blocks its own step, not the next stage');
 }
 
+// الوضع الآلي (ج — عقود السطح الثابتة): السائق يستهلك deriveAutoStep حصراً بلا منطق
+// موازٍ، لا مسار آلي للدمج أو بدء التنفيذ، والعلم لا يُخزَّن على القرص.
+function testAutoModeSurface() {
+  const component = read('src/ui/components/ops-room.js');
+  const chat = read('src/ui/components/chat.js');
+  const shell = read('src/ui/app.js');
+
+  // القطع من سطر التعريف أولاً كي لا يلتقط indexOf موضع الاستدعاء داخل _render.
+  const driverDefinition = component.indexOf('\n  _driveAutoStep()');
+  assert(driverDefinition !== -1, 'missing _driveAutoStep definition');
+  const driver = methodBody(component.slice(driverDefinition), '_driveAutoStep()');
+  assert(driver.includes('deriveAutoStep(this._state'),
+    'driver must consume deriveAutoStep — no parallel gating logic');
+  assert(!driver.includes('_merge') && !driver.includes('_startExecution'),
+    'the auto driver must never reach merge or execution start');
+  assert(driver.includes('this._startReview()') && driver.includes('this._prepareVerification()')
+    && driver.includes('this._runVerification({ auto: true })'),
+    'driver invokes exactly the three middle steps');
+
+  const labelsStart = component.indexOf('const AUTO_STOP_LABELS');
+  assert(labelsStart !== -1, 'AUTO_STOP_LABELS closed map missing');
+  const labelsSource = component.slice(labelsStart, component.indexOf('});', labelsStart));
+  for (const code of ['merge_gate', 'loop_not_passed', 'execution_alert', 'execution_stopped',
+    'review_not_approved', 'review_incomplete', 'verification_failed', 'step_error']) {
+    assert(labelsSource.includes(code + ':'), 'AUTO_STOP_LABELS must translate ' + code);
+  }
+  assert(driver.includes('AUTO_STOP_LABELS[auto.stop] || AUTO_STOP_LABELS.step_error'),
+    'unknown stop codes must fall back fail-closed');
+
+  const autoRun = methodBody(component, 'async startAutoRun(task)');
+  assert(autoRun.includes("['**']"), 'auto mode runs a single worker owning the whole project');
+  assert(autoRun.includes('max_iterations: 3') && autoRun.includes('budget_tokens: 400000')
+    && autoRun.includes('timeout_seconds: 300'), 'fixed approved defaults (owner decision 4)');
+  assert(autoRun.includes("kind: 'auto-start'") && autoRun.includes('لن يندمج شيء تلقائياً'),
+    'the single approval dialog must state the human merge gate');
+  assert(autoRun.indexOf('this.seedTask(task)') === autoRun.search(/\S/),
+    'seeding must happen first so cancel leaves the task seeded (owner decision 2)');
+
+  const verify = methodBody(component, 'async _runVerification(options)');
+  assert(verify.includes('options && options.auto === true') && verify.includes('this._confirm'),
+    'only the auto driver skips the verify confirm — the manual dialog must remain');
+
+  const openBody = methodBody(component, 'async open(cwd)');
+  assert(openBody.includes('this._autoMode = false') && openBody.includes('nextCwd !== this._cwd'),
+    'switching projects resets automation, while reopening the same project preserves it');
+  assert(!/localStorage[^\r\n]*[Aa]uto|[Aa]uto[^\r\n]*localStorage/.test(component),
+    'auto flag must never persist to disk (restart drops to the guided path)');
+
+  assert(chat.includes('auto: true'), 'chat button must request the auto path');
+  assert(shell.includes('startAutoRun') && shell.includes('opsRoomEl.seedTask'),
+    'shell must call startAutoRun with a seedTask fallback');
+}
+
 async function main() {
   await testReducer();
   await testLifecycleLabels();
   await testDeriveStations();
   await testDeriveAutoStep();
+  testAutoModeSurface();
   testDesignGuard();
   console.log('opsroom-ui: reducer, gates, event order, stale artifacts, CSP and design guard passed');
 }

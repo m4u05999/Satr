@@ -590,11 +590,11 @@ class SatrChat extends HTMLElement {
     const label = document.createElement('span'); label.textContent = 'أنت'; who.appendChild(label);
     const ops = document.createElement('button'); ops.type = 'button'; ops.className = 'msg-ops-room';
     ops.textContent = '🏗 نفّذ في غرفة العمليات';
-    ops.title = 'افتح غرفة العمليات وابذر نص هذه الرسالة كمهمة بلا تشغيل تلقائي';
+    ops.title = 'النقر يفتح الغرفة ويعرض موافقة واحدة على تنفيذ آلي (تنفيذ ← مراجعة ← تحقق). الإلغاء يُبقي المهمة مبذورة يدوياً، والدمج يبقى بتأكيد صريح.';
     ops.addEventListener('click', () => {
       component.dispatchEvent(new CustomEvent('ops-room-open', {
         bubbles: true,
-        detail: { task: text || '' },
+        detail: { task: text || '', auto: true },
       }));
     });
     const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'msg-user-edit'; edit.textContent = '✏️';
