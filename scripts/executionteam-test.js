@@ -277,12 +277,56 @@ async function main() {
     }, project, () => {});
     assert.strictEqual(invalidDraft.error, 'draft_single_engine_only');
 
+    // انحدار «سياق فارغ في ذيل الـpatch»: حين يكون آخر سطر سياق في الـhunk سطراً
+    // فارغاً، أي قصّ لذيل الأثر يُنقص أسطر الـhunk فيرفضه git apply بـcorrupt patch.
+    const tailProject = path.join(temp, 'tail-project');
+    await fsp.mkdir(path.join(tailProject, 'src'), { recursive: true });
+    await fsp.writeFile(path.join(tailProject, 'src', 'tail.js'),
+      'export function f() {\n  const v = 1;\n  return v;\n}\n\nexport const tail = 2;\n', 'utf8');
+    await git(tailProject, ['init']);
+    await git(tailProject, ['add', '.']);
+    await git(tailProject, ['-c', 'user.name=Satr Test', '-c', 'user.email=satr@example.invalid', 'commit', '-m', 'fixture']);
+    const tailManager = worktrees.createManager({ root: path.join(temp, 'tail-store') });
+    managers.push(tailManager);
+    const tailRunner = {
+      engine: 'sdk-test',
+      start(input, cwd, emit) {
+        const target = path.join(cwd, 'src', 'tail.js');
+        const timer = setTimeout(() => {
+          emit({ type: 'permission_request', id: 'tail-write', tool: 'Edit', input: { file_path: target } });
+          fs.writeFileSync(target, fs.readFileSync(target, 'utf8').replace('const v = 1;', 'const v = 9;'), 'utf8');
+          emit({ type: 'file_edit', id: 'tail-edit', rel: 'src/tail.js', added: 1, removed: 1 });
+          emit({ type: 'result', total_cost_usd: 0.01 });
+          emit({ type: 'proc_done', code: 0 });
+        }, 30);
+        return {
+          resolvePermission() { return true; },
+          stop() { clearTimeout(timer); return Promise.resolve(); },
+        };
+      },
+    };
+    const tailTeam = executionTeamModule.create({ worktrees: tailManager, runner: tailRunner, timeoutMs: TEST_EXECUTION_TIMEOUT_MS });
+    const tailStarted = await tailTeam.start({ agents: [{ task: 'عدّل ذيل الدالة', ownership: ['src/tail.js'] }] }, tailProject, () => {});
+    assert.strictEqual(tailStarted.ok, true);
+    const tailDone = await waitFor(() => {
+      const snapshot = tailTeam.latest(tailProject);
+      return snapshot && snapshot.state === 'completed' ? snapshot : null;
+    }, WAIT_TIMEOUT_MS, 'tail completion');
+    const tailArtifact = tailTeam.artifact(tailDone.id);
+    assert(tailArtifact && tailArtifact.patch.includes('src/tail.js'));
+    assert(tailArtifact.patch.endsWith('\n \n'), 'trailing blank context line must survive artifact assembly');
+    const tailPatchFile = path.join(temp, 'tail-artifact.patch');
+    await fsp.writeFile(tailPatchFile, tailArtifact.patch, 'utf8');
+    await git(tailProject, ['apply', '--check', '--whitespace=nowarn', '--', tailPatchFile]);
+    await git(tailProject, ['apply', '--numstat', '--', tailPatchFile]);
+
     console.log('✓ three isolated executors run concurrently with declared ownership');
     console.log('✓ overlapping ownership is rejected before worktree creation');
     console.log('✓ edits outside ownership fail closed and preserve the source repo');
     console.log('✓ touching the same file is reported as a team conflict');
     console.log('✓ collective interrupt stops all executors and removes worktrees');
     console.log('✓ single-engine draft remains permanently non-mergeable and cannot expose an artifact');
+    console.log('✓ artifact patch keeps a trailing blank context line and passes git apply');
   } finally {
     for (const manager of managers) await manager.removeAll().catch(() => {});
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });

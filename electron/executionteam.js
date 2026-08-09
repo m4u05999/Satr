@@ -140,7 +140,9 @@ function buildArtifact(team) {
   const head = artifacts[0].head;
   const sourceRoot = artifacts[0].sourceRoot;
   if (artifacts.some((item) => item.head !== head || path.resolve(item.sourceRoot) !== path.resolve(sourceRoot))) return null;
-  const patch = artifacts.map((item) => item.patch.trimEnd()).filter(Boolean).join('\n') + '\n';
+  // ممنوع قصّ ذيل الـpatch: سطر السياق الأخير قد يكون فارغاً وقصّه يُنقص أسطر الـhunk فيرفضه git apply
+  const patch = artifacts.map((item) => (item.patch.endsWith('\n') ? item.patch : item.patch + '\n'))
+    .filter((text) => text.trim()).join('');
   const producerEngines = ['sdk', 'codex'].filter((engine) => team.agents.some((worker) => {
     const workerEngine = cleanText(worker.snapshot && worker.snapshot.engine, 32) || cleanText(worker.engine, 32);
     return workerEngine === engine || workerEngine.startsWith(engine + '-');
