@@ -25,6 +25,7 @@ import { buildDiff } from '../lib/diff.js';
 import { diffSheet } from '../lib/diff.css.js';
 import { cardSheet } from '../lib/card.css.js';
 import { addUsageResult, emptyUsageSummary, formatUsage, formatUsageSummary, formatUsageSummaryFull } from '../lib/usage-summary.js';
+import { lifecycleLabel } from '../lib/lifecycle-labels.js';
 
 // حسم ازدواج أنماط بطاقة الفرق (الموثّق منذ ت-5): نسخة base.css حُذفت مع هذه الدفعة،
 // وdiffSheet تُعتمد هنا على **المستند** نفسه (adoptedStyleSheets على المستند — تحقق §1
@@ -783,21 +784,27 @@ class SatrChat extends HTMLElement {
     if (!entry || typeof entry.id !== 'string' || opsEntryIds.has(entry.id)) return;
     opsEntryIds.add(entry.id); hideEmpty();
     const card = document.createElement('article'); card.className = 'work-card ops-event-card';
-    card.dataset.state = entry.type || '';
-    const head = document.createElement('div'); head.className = 'work-card-head';
-    const title = document.createElement('div'); title.className = 'work-card-title';
     const labels = {
       decision: 'قرار في غرفة العمليات', phase_gate: 'انتقال مرحلي', review: 'تحديث مراجعة',
       verification: 'تحديث تحقق', proposal: 'مقترح محدود', note: 'ملاحظة تشغيلية',
     };
-    title.textContent = labels[entry.type] || 'حدث غرفة العمليات';
-    const state = document.createElement('div'); state.className = 'work-card-state'; state.textContent = entry.type || 'حدث';
+    const typeLabel = labels[entry.type] || 'حدث غرفة العمليات';
+    const fullText = typeof entry.text === 'string' ? entry.text : '';
+    const summaryText = fullText.length > 180 ? fullText.slice(0, 180) + '…' : fullText;
+    const normalize = (s) => String(s || '').trim().replace(/\s+/g, ' ');
+    const stateLabel = entry.state ? lifecycleLabel(entry.state) : '';
+    card.dataset.state = entry.state || entry.type || '';
+    const head = document.createElement('div'); head.className = 'work-card-head';
+    const title = document.createElement('div'); title.className = 'work-card-title';
+    title.textContent = typeLabel;
+    const state = document.createElement('div'); state.className = 'work-card-state';
+    state.textContent = stateLabel === String(entry.state || '') ? '' : stateLabel;
     const toggle = document.createElement('button'); toggle.className = 'work-card-toggle'; toggle.type = 'button';
     toggle.textContent = 'التفاصيل'; toggle.setAttribute('aria-expanded', 'false');
     head.appendChild(title); head.appendChild(state); head.appendChild(toggle); card.appendChild(head);
     const summary = document.createElement('div'); summary.className = 'work-card-summary'; summary.dir = 'auto';
-    const fullText = typeof entry.text === 'string' ? entry.text : '';
-    summary.textContent = fullText.length > 180 ? fullText.slice(0, 180) + '…' : fullText;
+    summary.textContent = summaryText;
+    summary.hidden = !summaryText || normalize(summaryText) === normalize(typeLabel);
     card.appendChild(summary);
     const body = document.createElement('div'); body.className = 'work-card-body'; body.hidden = true; body.dir = 'auto';
     body.textContent = fullText; card.appendChild(body);
@@ -825,6 +832,7 @@ class SatrChat extends HTMLElement {
   let taskLedgerCollapsed = true;
   try { taskLedgerCollapsed = localStorage.getItem('satr_ledger_collapsed') !== '0'; } catch (e) {}
 
+  // صيغ مؤنثة عمداً (المهمة/الخطة) — الخريطة المشتركة مذكّرة الأفعال فلا تصلح هنا.
   function taskStateText(state) {
     if (state === 'paused') return 'متوقفة';
     if (state === 'completed') return 'مكتملة';
@@ -944,6 +952,7 @@ class SatrChat extends HTMLElement {
     checkpointSession = null;
   }
 
+  // نصوص checkpoint السياقية أدق من الخريطة المشتركة («تحقق ناجح» لا «نجح» المجردة).
   function checkpointStateText(state) {
     if (state === 'open') return 'يجمع التعديلات';
     if (state === 'passed') return 'تحقق ناجح';

@@ -42,6 +42,9 @@ function publicChecks(checks, includeCommands) {
       value.exit_code = Number.isInteger(check.exit_code) ? check.exit_code : null;
       value.timed_out = !!check.timed_out;
       value.duration_ms = Math.max(0, Number(check.duration_ms) || 0);
+      // البند 23: تمرير exit_label العربية متى وفّرها verify (additive بقائمة سماح) كي
+      // تصل الحدث والتخزين المقصوص بلا كسر schema؛ غيابه يُبقي الصف كما كان حرفياً.
+      if (typeof check.exit_label === 'string' && check.exit_label) value.exit_label = check.exit_label;
     }
     return value;
   });
@@ -283,6 +286,8 @@ function create(options) {
       artifact_id: artifact.artifact_id,
       state: 'starting',
       url: '',
+      // البند 20: جذر مصدر المعاينة الحية — أساس تمييزها عن غياب الخادم لكل cwd.
+      sourceRoot: path.resolve(artifact.sourceRoot),
       controller: new AbortController(),
       worktreeId: '',
       jobId: '',
@@ -401,7 +406,15 @@ function create(options) {
     return { ok: true };
   }
 
-  return { preflight, prepare, run, stop, preparePreview, stopPreview, latestPreview, stopAll, latest, gate };
+  // البند 20: هل توجد مهمة معاينة تكاملية مؤقتة حية (تُقلع أو تعمل) لهذا cwd؟ الحقيقة
+  // هنا من سجل المعاينة النشطة وجذر مصدره — لا استنتاج من أسماء مهام termjobs.
+  function previewActiveFor(cwd) {
+    if (typeof cwd !== 'string' || !cwd.trim() || !activePreview) return false;
+    if (activePreview.state !== 'starting' && activePreview.state !== 'running') return false;
+    return activePreview.sourceRoot === path.resolve(cwd);
+  }
+
+  return { preflight, prepare, run, stop, preparePreview, stopPreview, latestPreview, previewActiveFor, stopAll, latest, gate };
 }
 
 const singleton = create();
@@ -415,6 +428,7 @@ module.exports = {
   preparePreview: singleton.preparePreview,
   stopPreview: singleton.stopPreview,
   latestPreview: singleton.latestPreview,
+  previewActiveFor: singleton.previewActiveFor,
   stopAll: singleton.stopAll,
   latest: singleton.latest,
   gate: singleton.gate,

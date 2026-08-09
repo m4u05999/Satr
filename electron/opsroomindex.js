@@ -16,11 +16,37 @@ const SCHEMA_VERSION = 1;
 const FILE = path.join(os.homedir(), '.satr', 'opsroom', 'index.json');
 const MAX_ENTRIES = 300;
 const SAFE_STATE = new Set(['preparing', 'running', 'stopping', 'interrupted', 'completed', 'failed', 'timed_out', 'stopped', 'conflict', 'cleanup_failed']);
+// البند 30: نوعا التشغيل الظاهران في قائمة التاريخ (فريق يدوي أو حلقة محدودة).
+const SAFE_RUN_KIND = new Set(['team', 'loop']);
+const MAX_TASK_EXCERPT = 80;
 
 function cleanText(value, max) {
   return typeof value === 'string'
     ? value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, max)
     : '';
+}
+
+// البند 30: مقتطف مهمة للقراءة البشرية. تنقية بمُسنِد نقاط Unicode لا بتعبير نمطي
+// فيه محارف تحكم حرفية (درس loopfailure.js/verify.js: الحرفي يُتلف الملف عند تحريره)،
+// والقصّ بنقاط Unicode لا بوحدات UTF-16 كي لا يُكسر زوج بديل عند الحد.
+function isUnsafeExcerptPoint(code) {
+  if (code <= 0x1f) return true; // C0 (تشمل الصفر والسطر الجديد والإرجاع والجدولة)
+  if (code >= 0x7f && code <= 0x9f) return true; // DEL + C1
+  if (code === 0x061c || code === 0x200e || code === 0x200f) return true; // ALM/LRM/RLM
+  if (code >= 0x202a && code <= 0x202e) return true; // LRE/RLE/PDF/LRO/RLO
+  if (code >= 0x2066 && code <= 0x2069) return true; // LRI/RLI/FSI/PDI
+  return false;
+}
+
+function excerptText(value, maxPoints) {
+  if (typeof value !== 'string') return '';
+  let cleaned = '';
+  for (const char of value) {
+    if (!isUnsafeExcerptPoint(char.codePointAt(0))) cleaned += char;
+  }
+  const folded = cleaned.replace(/\s+/g, ' ').trim();
+  const points = [...folded];
+  return points.length <= maxPoints ? folded : points.slice(0, maxPoints).join('');
 }
 
 function projectKey(cwd) {
@@ -43,6 +69,10 @@ function sanitizeEntry(value) {
     || !Number.isFinite(value.updated_at) || value.updated_at < 0) return null;
   const artifactId = cleanText(value.artifact_id, 64);
   if (artifactId && !opsroom.SAFE_ARTIFACT_ID.test(artifactId)) return null;
+  // البند 30: حقلان اختياريان additive منقّيان fail-closed — قيمة فاسدة تُسقط الحقل
+  // وحده لا المدخل، وschema يبقى v1 (القراءة القديمة لملف بلا الحقلين تستمر).
+  const taskExcerpt = excerptText(value.task_excerpt, MAX_TASK_EXCERPT);
+  const runKind = SAFE_RUN_KIND.has(value.run_kind) ? value.run_kind : '';
   return {
     room_id: value.room_id,
     team_id: value.team_id,
@@ -51,6 +81,8 @@ function sanitizeEntry(value) {
     state: value.state,
     updated_at: value.updated_at,
     ...(artifactId ? { artifact_id: artifactId } : {}),
+    ...(taskExcerpt ? { task_excerpt: taskExcerpt } : {}),
+    ...(runKind ? { run_kind: runKind } : {}),
     restorable: value.restorable === true,
     merged: value.merged === true,
   };
@@ -109,6 +141,9 @@ function list(cwd, options) {
     state: entry.state,
     updated_at: entry.updated_at,
     artifact_id: entry.artifact_id || '',
+    // البند 30: حقلا العرض يُدرجان فقط عند وجودهما فيبقى شكل القائمة القديم حرفياً.
+    ...(entry.task_excerpt ? { task_excerpt: entry.task_excerpt } : {}),
+    ...(entry.run_kind ? { run_kind: entry.run_kind } : {}),
     restorable: entry.restorable,
     merged: entry.merged,
   }));
@@ -153,5 +188,5 @@ function markArtifactsUnavailable(artifacts, options) {
 }
 
 module.exports = {
-  SCHEMA_VERSION, FILE, MAX_ENTRIES, projectKey, upsert, list, find, interruptStale, markArtifactsUnavailable,
+  SCHEMA_VERSION, FILE, MAX_ENTRIES, MAX_TASK_EXCERPT, projectKey, upsert, list, find, interruptStale, markArtifactsUnavailable,
 };

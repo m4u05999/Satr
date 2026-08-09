@@ -28,6 +28,8 @@ export const LIFECYCLE_LABELS = {
   paused: 'متوقف مؤقتاً',
   active: 'نشط',
   idle: 'خامل',
+  partial: 'جزئي',
+  cleaning: 'ينظّف',
   budget_exhausted: 'نفدت الميزانية',
   failed_after_n: 'لم ينجح ضمن الدورات',
 };

@@ -9,6 +9,9 @@ import {
   createOpsRoomState, deriveAgentActivity, deriveOpsRoomState, INHERIT_TEMPLATE_TEAM_STATES,
   opsRoomReducer,
 } from '../lib/ops-room-state.js';
+import {
+  LIFECYCLE_LABELS, lifecycleLabel, countLabel, truncateWords,
+} from '../lib/lifecycle-labels.js';
 
 const roomSheet = sheet(`
   :host {
@@ -246,6 +249,7 @@ const roomSheet = sheet(`
   }
   .path, .command { flex: 1; min-width: 0; }
   .counts { direction: ltr; font-family: var(--mono); color: var(--text-dim); white-space: nowrap; }
+  .check-result { unicode-bidi: plaintext; color: var(--text-dim); }
   .summary { white-space: pre-wrap; unicode-bidi: plaintext; }
   .loop-card { display: grid; gap: var(--space-3); }
   .loop-head, .loop-metrics, .loop-actions {
@@ -366,6 +370,8 @@ const dialogSheet = sheet(`
   }
   .items[hidden] { display: none; }
   .item { direction: ltr; unicode-bidi: plaintext; font-family: var(--mono); overflow-wrap: anywhere; }
+  .item-details summary { cursor: pointer; color: var(--text-dim); }
+  .item-details .item { margin-block-start: var(--space-2); }
   .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
   .confirm { color: var(--green); border-color: var(--green-border); }
   @media (prefers-reduced-motion: no-preference) {
@@ -416,6 +422,17 @@ const LOOP_STOP_REASONS = {
   pass: 'نجح التحقق', iterations: 'نفدت الدورات', budget: 'نفدت الميزانية',
   user: 'أوقفها المستخدم', error: 'حدث خطأ',
 };
+const ACTOR_LABELS = {
+  system: 'النظام', user: 'المستخدم', reviewer: 'المراجع', advisor: 'المستشار',
+};
+const ENTRY_TYPE_LABELS = {
+  proposal: 'مقترح', decision: 'قرار', phase_gate: 'انتقال مرحلي', review: 'مراجعة',
+  verification: 'تحقق', note: 'ملاحظة',
+};
+const RUN_KIND_LABELS = { team: 'فريق', loop: 'حلقة' };
+const FILE_COUNT_FORMS = { one: 'ملف واحد', two: 'ملفان', plural: 'ملفات', many: 'ملفاً' };
+const TECHNICAL_PARTS = /(\.satr[\\/][A-Za-z0-9._\\/-]*[A-Za-z0-9_-]|\b(?:HEAD|Git|worktree|commit|push|patch|preview)\b)/g;
+const TECHNICAL_PART = /^(?:\.satr[\\/][A-Za-z0-9._\\/-]*[A-Za-z0-9_-]|HEAD|Git|worktree|commit|push|patch|preview)$/;
 
 const TERMINAL_AGENT_STATES = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
 const TOOL_LABELS = {
@@ -525,9 +542,73 @@ function makeElement(tagName, className, label) {
   return element;
 }
 
+function visibleLifecycleLabel(value, fallback) {
+  const state = text(value);
+  return Object.prototype.hasOwnProperty.call(LIFECYCLE_LABELS, state)
+    ? lifecycleLabel(state) : (fallback || 'حالة غير معروفة');
+}
+
+function actorLabel(value) {
+  const actor = text(value);
+  if (ACTOR_LABELS[actor]) return ACTOR_LABELS[actor];
+  if (actor === 'sdk' || actor === 'codex') return engineLabel(actor);
+  return actor;
+}
+
+function fingerprintLabel(value) {
+  const fingerprint = text(value);
+  return /^[a-f0-9]{64}$/i.test(fingerprint) ? [...fingerprint].slice(0, 12).join('') : fingerprint;
+}
+
+function setMixedTechnicalText(container, value) {
+  container.textContent = '';
+  for (const part of text(value).split(TECHNICAL_PARTS).filter(Boolean)) {
+    if (!TECHNICAL_PART.test(part)) {
+      container.appendChild(document.createTextNode(part)); continue;
+    }
+    const code = document.createElement('code'); code.dir = 'ltr'; code.textContent = part;
+    container.appendChild(code);
+  }
+}
+
 function timeLabel(value) {
   const timestamp = Number(value);
-  return timestamp > 0 ? new Date(timestamp).toLocaleString('ar-SA') : 'وقت غير متاح';
+  return timestamp > 0 ? new Intl.DateTimeFormat('en-GB-u-ca-gregory-nu-latn', {
+    dateStyle: 'medium', timeStyle: 'short',
+  }).format(new Date(timestamp)) : 'وقت غير متاح';
+}
+
+function checkResultLabel(check) {
+  const current = check || {};
+  const exitLabel = text(current.exit_label).trim();
+  if (exitLabel) return { value: exitLabel, technical: false };
+  if (current.exit_code != null) return { value: 'exit=' + String(current.exit_code), technical: true };
+  if (text(current.command)) return { value: current.command, technical: true };
+  return { value: 'لم تتوفر نتيجة بعد', technical: false };
+}
+
+function mergeGateLabel(state, derived) {
+  const current = state || {};
+  if (derived.canMerge) return 'بوابة الدمج جاهزة؛ بقي التأكيد الصريح لتطبيق الأثر.';
+  if (current.team && current.team.merged) return 'دُمج الأثر سابقاً ولا توجد خطوة دمج متبقية.';
+  const remaining = [];
+  if (!derived.reviewApproved) {
+    const reviewState = current.review && current.review.state;
+    if (!current.review) remaining.push('بدء المراجعات المستقلة');
+    else if (reviewState === 'stopped') remaining.push('إعادة المراجعة للأثر نفسه');
+    else if (reviewState === 'running') remaining.push('اكتمال المراجعات المستقلة');
+    else remaining.push('موافقة المراجعات على الأثر الحالي');
+  }
+  if (!derived.verificationPassed) {
+    const verification = current.verification;
+    if (derived.reviewApproved && !verification) remaining.push('تثبيت تحقق الأثر الحالي');
+    else if (verification && verification.state === 'pending_confirmation') remaining.push('تشغيل الاختبارات المعتمدة');
+    else if (verification && verification.state === 'running') remaining.push('اكتمال التحقق التكاملي');
+    else if (verification && verification.state === 'failed') remaining.push('معالجة فشل التحقق وإعادة تشغيله');
+    else remaining.push('نجاح التحقق التكاملي للأثر الحالي');
+  }
+  return remaining.length ? 'بوابة الدمج مغلقة. المتبقي: ' + remaining.join('، ') + '.'
+    : 'بوابة الدمج مغلقة حتى تكتمل الخطوة الحالية.';
 }
 
 function integerLabel(value) {
@@ -544,7 +625,7 @@ function engineLabel(value) {
   if (value === 'codex') return 'Codex';
   if (value === 'system') return 'النظام';
   if (value === 'user') return 'المستخدم';
-  return value || 'غير محدد';
+  return value || '';
 }
 
 function reviewSections(summary, recommendation) {
@@ -569,19 +650,11 @@ function reviewSections(summary, recommendation) {
 }
 
 function reviewDecisionLabel(decision) {
-  if (decision === 'approve') return 'موافقة';
-  if (decision === 'changes_required') return 'تغييرات مطلوبة';
-  if (decision === 'reject') return 'رفض';
-  return decision || 'بلا حكم';
+  return decision ? visibleLifecycleLabel(decision, 'حكم غير معروف') : 'بلا حكم';
 }
 
 function reviewStateLabel(state) {
-  if (state === 'completed') return 'مكتملة';
-  if (state === 'running') return 'قيد المراجعة';
-  if (state === 'failed') return 'فشلت';
-  if (state === 'timed_out') return 'انتهت المهلة';
-  if (state === 'stopped') return 'توقفت';
-  return state || 'غير متاحة';
+  return state ? visibleLifecycleLabel(state) : 'غير متاحة';
 }
 
 function truncatePoints(value, maximum, suffix) {
@@ -658,6 +731,14 @@ class SatrOpsDialog extends HTMLElement {
     const items = Array.isArray(data.items) ? data.items.filter((item) => typeof item === 'string' && item) : [];
     this._items.hidden = !items.length;
     for (const item of items) {
+      if (/^[a-f0-9]{64}$/i.test(item)) {
+        const details = document.createElement('details'); details.className = 'item-details';
+        const summary = document.createElement('summary'); summary.textContent = 'بصمة الأثر ';
+        const prefix = document.createElement('bdi'); prefix.className = 'item'; prefix.textContent = fingerprintLabel(item);
+        summary.appendChild(prefix);
+        const full = document.createElement('div'); full.className = 'item'; full.textContent = item;
+        details.appendChild(summary); details.appendChild(full); this._items.appendChild(details); continue;
+      }
       const row = document.createElement('div');
       row.className = 'item'; row.textContent = item; this._items.appendChild(row);
     }
@@ -759,7 +840,7 @@ class SatrOpsRoom extends HTMLElement {
     this._cwd = '';
     this._group = 'work';
     this._view = 'tasks';
-    this._groupViews = { work: 'tasks', results: 'diffs', log: 'decisions' };
+    this._groupViews = { work: 'tasks', results: 'diffs', log: 'history' };
     this._groupSeen = { work: '', results: '', log: '' };
     this._primaryAction = '';
     this._preferredCompact = false;
@@ -877,7 +958,7 @@ class SatrOpsRoom extends HTMLElement {
 
   _loadLayoutPreferences() {
     this._group = 'work'; this._view = 'tasks';
-    this._groupViews = { work: 'tasks', results: 'diffs', log: 'decisions' };
+    this._groupViews = { work: 'tasks', results: 'diffs', log: 'history' };
     this._preferredCompact = false; this._preferredWidth = 0;
     this._layoutSheet.replaceSync(':host {}');
     let saved = null;
@@ -1050,20 +1131,30 @@ class SatrOpsRoom extends HTMLElement {
 
   _card(options) {
     const data = options || {};
+    const artifact = text(data.artifact);
+    const hasFingerprintDetails = /^[a-f0-9]{64}$/i.test(artifact);
     const card = document.createElement('article');
     card.className = 'work-card'; card.dataset.state = text(data.state);
     const head = document.createElement('div'); head.className = 'work-card-head';
     const title = document.createElement('div'); title.className = 'work-card-title'; title.textContent = text(data.title);
-    const state = document.createElement('div'); state.className = 'work-card-state'; state.textContent = text(data.stateLabel || data.state);
+    const state = document.createElement('div'); state.className = 'work-card-state';
+    state.textContent = text(data.stateLabel) || visibleLifecycleLabel(data.state);
     head.appendChild(title); head.appendChild(state);
     let body = null;
-    if (typeof data.body === 'function') {
+    if (typeof data.body === 'function' || hasFingerprintDetails) {
       const toggle = document.createElement('button');
       toggle.className = 'work-card-toggle'; toggle.type = 'button'; toggle.textContent = 'التفاصيل';
       toggle.setAttribute('aria-expanded', 'false');
       head.appendChild(toggle);
       body = document.createElement('div'); body.className = 'work-card-body'; body.hidden = true;
-      data.body(body);
+      if (typeof data.body === 'function') data.body(body);
+      if (hasFingerprintDetails) {
+        const artifactRow = document.createElement('div'); artifactRow.className = 'agent-meta';
+        const artifactTitle = document.createElement('span'); artifactTitle.textContent = 'بصمة الأثر الكاملة';
+        const artifactValue = document.createElement('bdi'); artifactValue.className = 'artifact';
+        artifactValue.textContent = artifact; artifactRow.appendChild(artifactTitle); artifactRow.appendChild(artifactValue);
+        body.appendChild(artifactRow);
+      }
       toggle.addEventListener('click', () => {
         body.hidden = !body.hidden; toggle.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
       });
@@ -1073,19 +1164,18 @@ class SatrOpsRoom extends HTMLElement {
     summary.dir = 'auto'; summary.textContent = text(data.summary) || 'لا توجد خلاصة إضافية.'; card.appendChild(summary);
     if (body) card.appendChild(body);
     const foot = document.createElement('div'); foot.className = 'work-card-foot';
-    const values = [
-      ['الفاعل', text(data.actor) || 'system', false],
-      ['المحرك', engineLabel(data.engine), false],
-      ['الأثر', text(data.artifact) || 'غير متاح', true],
-      ['الوقت', timeLabel(data.time), false],
-    ];
+    const values = [];
+    if (text(data.actor)) values.push(['الفاعل', actorLabel(data.actor), false]);
+    if (text(data.engine)) values.push(['المحرك', engineLabel(data.engine), false]);
+    if (artifact) values.push(['الأثر', fingerprintLabel(artifact), true]);
+    if (Number(data.time) > 0) values.push(['الوقت', timeLabel(data.time), true]);
     for (const [label, value, technical] of values) {
       const item = document.createElement('span'); item.textContent = label + ': ';
       const content = document.createElement('bdi'); content.textContent = value;
-      if (technical) content.className = 'work-card-tech';
+      if (technical) { content.className = 'work-card-tech'; content.dir = 'ltr'; }
       item.appendChild(content); foot.appendChild(item);
     }
-    card.appendChild(foot);
+    if (values.length) card.appendChild(foot);
     return card;
   }
 
@@ -1268,19 +1358,24 @@ class SatrOpsRoom extends HTMLElement {
       const ownership = worker.querySelector('.ownership').value.split(/[,\r\n]+/).some((item) => item.trim());
       return !task || !ownership;
     }) : true;
+    let primaryReason = '';
     if (this._primaryAction === 'start') {
       this._primaryButton.disabled = !derived.canStart || !this._cwd || incomplete;
-      const reason = !this._cwd ? 'افتح مجلد مشروع أولاً.'
+      primaryReason = !this._cwd ? 'افتح مجلد مشروع أولاً.'
         : incomplete ? 'اكتب مهمة وملكية ملفات لكل عامل.' : '';
-      this._primaryButton.title = reason;
-      this._primaryReason.textContent = reason;
-      this._primaryReason.hidden = !reason;
-      this._actionBar.toggleAttribute('data-attention', Boolean(reason));
+      this._primaryButton.title = primaryReason;
+      // إرشاد واحد: المانع الحاجب يفوز، وإلا يعود نص الخطوة التالية من nextAction —
+      // الإخفاء الكلي كان يدهس إرشاد التعافي (انتهاء المهلة/ما بعد الدمج).
+      this._nextStep.textContent = primaryReason
+        || text(derived.nextAction && derived.nextAction.label);
+      this._nextStep.hidden = !this._nextStep.textContent;
+      this._primaryReason.textContent = ''; this._primaryReason.hidden = true;
+      this._actionBar.toggleAttribute('data-attention', Boolean(primaryReason));
     }
     if (!this._setup) return;
     const planRunning = this._plan && this._plan.state === 'running';
     const missingTask = !this._setup.inputs[0].querySelector('.task').value.trim();
-    const planHint = !this._cwd ? 'افتح مجلد مشروع لتشغيل المخطط.'
+    const planHint = primaryReason ? '' : !this._cwd ? 'افتح مجلد مشروع لتشغيل المخطط.'
       : missingTask ? 'اكتب المهمة الكبيرة في حقل العامل الأول.' : '';
     this._setup.planButton.disabled = !planRunning && Boolean(planHint);
     this._setup.planButton.title = planHint;
@@ -1318,7 +1413,7 @@ class SatrOpsRoom extends HTMLElement {
     iteration.textContent = integerLabel(loop.iteration) + '/' + integerLabel(loop.max_iterations);
     title.appendChild(iteration);
     const state = document.createElement('span'); state.className = 'loop-state';
-    state.textContent = LOOP_STATES[loop.state] || loop.state;
+    state.textContent = LOOP_STATES[loop.state] || visibleLifecycleLabel(loop.state);
     head.appendChild(title); head.appendChild(state); card.appendChild(head);
     const progress = document.createElement('progress'); progress.className = 'loop-progress';
     progress.max = Math.max(1, Number(loop.max_iterations) || 1);
@@ -1363,7 +1458,8 @@ class SatrOpsRoom extends HTMLElement {
     metrics.appendChild(cost); metrics.appendChild(budget); card.appendChild(metrics);
     if (derived.loopTerminal) {
       const guidance = document.createElement('div'); guidance.className = 'loop-guidance';
-      const reason = LOOP_STOP_REASONS[loop.stop_reason] || LOOP_STATES[loop.state] || loop.state;
+      const reason = LOOP_STOP_REASONS[loop.stop_reason] || LOOP_STATES[loop.state]
+        || visibleLifecycleLabel(loop.state);
       guidance.textContent = 'سبب التوقف: ' + reason + '. ' + (loop.state === 'passed'
         ? 'راجع الأثر ثم امشِ بوابة الدمج كالمعتاد.'
         : 'راجع الأثر الجزئي وسجل الغرفة، ثم قرر الخطوة التالية عبر البوابات المعتادة.');
@@ -1392,7 +1488,8 @@ class SatrOpsRoom extends HTMLElement {
     if (!team) { if (!derived.canStart && !this._state.loop) this._empty(view, 'لا يوجد فريق تنفيذ.'); return; }
     for (const agent of team.agents || []) {
       const card = this._card({
-        title: agent.label || 'عامل', state: agent.state, stateLabel: TEAM_STATES[agent.state] || agent.state,
+        title: agent.label || 'عامل', state: agent.state,
+        stateLabel: TEAM_STATES[agent.state] || visibleLifecycleLabel(agent.state),
         summary: agent.error || agent.summary || (agent.last_tool
           ? 'آخر نشاط آمن: ' + (TOOL_LABELS[agent.last_tool] || agent.last_tool) : 'ينفّذ داخل worktree معزول.'),
         actor: agent.label || agent.id,
@@ -1457,7 +1554,7 @@ class SatrOpsRoom extends HTMLElement {
     if (verification) {
       view.appendChild(this._card({
         title: 'التحقق التكاملي', state: verification.state,
-        stateLabel: verification.state === 'passed' ? 'نجح' : verification.state === 'failed' ? 'فشل' : verification.state,
+        stateLabel: visibleLifecycleLabel(verification.state),
         summary: verification.artifact_id === deriveOpsRoomState(this._state).artifactId
           ? 'نتيجة التحقق مرتبطة بالأثر الحالي.' : 'هذه النتيجة تخص أثراً قديماً ولا تفتح الدمج.',
         actor: 'system', engine: 'system', artifact: verification.artifact_id,
@@ -1466,9 +1563,11 @@ class SatrOpsRoom extends HTMLElement {
           for (const check of verification.checks || []) {
             const row = document.createElement('div'); row.className = 'check-row';
             const label = document.createElement('span'); label.textContent = check.label + ' [' + check.id + ']';
-            const result = document.createElement('span'); result.className = 'counts';
-            result.textContent = check.command || ('exit=' + (check.exit_code == null ? 'unknown' : check.exit_code)
-              + (check.timed_out ? ' · timeout' : '') + ' · ' + (check.duration_ms || 0) + 'ms');
+            const presented = checkResultLabel(check);
+            const result = document.createElement('bdi'); result.className = presented.technical ? 'counts' : 'check-result';
+            result.dir = presented.technical ? 'ltr' : 'auto';
+            result.textContent = presented.value + (check.timed_out ? ' · ' + lifecycleLabel('timed_out') : '')
+              + ' · ' + (check.duration_ms || 0) + 'ms';
             row.appendChild(label); row.appendChild(result); body.appendChild(row);
           }
         },
@@ -1492,7 +1591,8 @@ class SatrOpsRoom extends HTMLElement {
         removed: value.removed + (Number(item.file.removed) || 0),
       }), { added: 0, removed: 0 });
       const summary = document.createElement('div'); summary.className = 'gate-summary';
-      summary.textContent = 'سيُدمج ' + files.length + ' ملفاً: +' + totals.added + ' −' + totals.removed;
+      summary.textContent = 'سيُدمج ' + countLabel(files.length, FILE_COUNT_FORMS)
+        + ': +' + totals.added + ' −' + totals.removed;
       view.appendChild(summary);
     }
     for (const agent of (team && team.agents) || []) {
@@ -1500,8 +1600,8 @@ class SatrOpsRoom extends HTMLElement {
       if (!Array.isArray(changes.files) || !changes.files.length) continue;
       view.appendChild(this._card({
         title: 'فروقات ' + (agent.label || agent.id), state: agent.state,
-        stateLabel: changes.files.length + ' ملفات',
-        summary: 'انقر ملفاً لطلب فرقه وحده من العملية الرئيسية؛ لا يُبث patch الكامل إلى الواجهة.',
+        stateLabel: countLabel(changes.files.length, FILE_COUNT_FORMS),
+        summary: 'اختر ملفاً لعرض التغييرات التي تخصه ومراجعتها على حدة.',
         actor: agent.label || agent.id, engine: agent.engine || 'sdk', artifact: team.artifact_id, time: team.updated_at,
         body: (body) => {
           for (const file of changes.files) {
@@ -1620,15 +1720,18 @@ class SatrOpsRoom extends HTMLElement {
     const view = this._views.review; view.textContent = '';
     const derived = deriveOpsRoomState(this._state);
     const review = this._state.review;
-    this._renderMergedReport(view, review && review.merged_report);
+    const reviewStopped = !!(review && review.state === 'stopped');
+    if (!reviewStopped) this._renderMergedReport(view, review && review.merged_report);
     for (const item of (review && review.reviews) || []) {
-      const decision = item.verdict && item.verdict.decision;
+      const decision = reviewStopped ? '' : item.verdict && item.verdict.decision;
       const sections = reviewSections(item.summary, item.recommendation);
       view.appendChild(this._card({
-        title: 'مراجعة ' + engineLabel(item.engine), state: decision || item.state,
-        stateLabel: decision === 'approve' ? 'موافقة' : decision === 'changes_required' ? 'تغييرات مطلوبة'
-          : decision === 'reject' ? 'رفض' : item.state,
-        summary: item.error || 'حكم مراجعة عمياء قراءة فقط؛ افتح التفاصيل لرؤية المخاطر والملاحظات والتوصية.', actor: 'reviewer',
+        title: 'مراجعة ' + engineLabel(item.engine), state: reviewStopped ? 'stopped' : decision || item.state,
+        stateLabel: reviewStopped ? 'أوقفها المستخدم قبل اكتمال الأحكام'
+          : decision ? reviewDecisionLabel(decision) : reviewStateLabel(item.state),
+        summary: reviewStopped ? 'أوقفها المستخدم قبل اكتمال الأحكام؛ يمكنك إعادة المراجعة للأثر نفسه.'
+          : item.error || 'حكم مراجعة عمياء قراءة فقط؛ افتح التفاصيل لرؤية المخاطر والملاحظات والتوصية.',
+        actor: 'reviewer',
         engine: item.engine, artifact: item.artifact_id, time: item.updated_at,
         body: (body) => {
           if (Array.isArray(item.lenses)) {
@@ -1642,8 +1745,10 @@ class SatrOpsRoom extends HTMLElement {
               const state = document.createElement('span'); state.className = 'review-lens-state';
               state.textContent = reviewStateLabel(lens && lens.state);
               const verdict = document.createElement('span'); verdict.className = 'review-lens-verdict';
-              verdict.textContent = reviewDecisionLabel(lens && lens.verdict && lens.verdict.decision);
-              head.appendChild(title); head.appendChild(state); head.appendChild(verdict); section.appendChild(head);
+              if (!reviewStopped) verdict.textContent = reviewDecisionLabel(lens && lens.verdict && lens.verdict.decision);
+              head.appendChild(title); head.appendChild(state);
+              if (!reviewStopped) head.appendChild(verdict);
+              section.appendChild(head);
               this._appendReviewSections(section, reviewSections(lens && lens.summary));
               lenses.appendChild(section);
             }
@@ -1655,9 +1760,7 @@ class SatrOpsRoom extends HTMLElement {
       }));
     }
     const gate = document.createElement('div'); gate.className = 'gate-summary';
-    gate.textContent = derived.canMerge
-      ? 'بوابة الدمج مفتوحة: كل المراجعات وافقت ونجح التحقق للأثر نفسه. يبقى التأكيد الصريح مطلوباً.'
-      : 'بوابة الدمج مغلقة حتى توافق كل المراجعات وينجح التحقق التكاملي للأثر نفسه.';
+    gate.textContent = mergeGateLabel(this._state, derived);
     view.appendChild(gate);
     const entries = this._state.entries.filter((entry) => entry.type === 'review' || entry.type === 'phase_gate');
     for (const entry of entries) view.appendChild(this._entryCard(entry));
@@ -1667,7 +1770,8 @@ class SatrOpsRoom extends HTMLElement {
     return this._card({
       title: entry.type === 'decision' ? 'قرار مستخدم' : entry.type === 'review' ? 'حدث مراجعة'
         : entry.type === 'verification' ? 'حدث تحقق' : entry.type === 'phase_gate' ? 'انتقال مرحلي' : 'ملاحظة تشغيلية',
-      state: entry.type, stateLabel: entry.type, summary: entry.text, actor: entry.actor,
+      state: entry.type, stateLabel: ENTRY_TYPE_LABELS[entry.type] || 'حدث تشغيلي',
+      summary: entry.text, actor: entry.actor,
       engine: entry.actor, artifact: entry.artifact_id, time: entry.created_at,
     });
   }
@@ -1688,6 +1792,7 @@ class SatrOpsRoom extends HTMLElement {
     this._primaryAction = available ? action : '';
     this._actionBar.hidden = !text(derived.nextAction && derived.nextAction.label);
     this._nextStep.textContent = text(derived.nextAction && derived.nextAction.label);
+    this._nextStep.hidden = !this._nextStep.textContent;
     this._actionBar.toggleAttribute('data-attention', !available && !['wait', 'merged'].includes(key));
     this._primaryButton.hidden = !available;
     this._primaryButton.disabled = !available;
@@ -1809,10 +1914,13 @@ class SatrOpsRoom extends HTMLElement {
     this._buttons.stop.hidden = !derived.canStop;
     this._verifyConfigRecovery.hidden = this._state.status !== ERROR_LABELS.review_skill_unavailable;
     this._verifyConfigRecovery.disabled = !this._cwd;
-    this._status.textContent = this._state.status || (this._state.pending ? 'جارٍ تنفيذ الانتقال المطلوب…'
-      : this._state.loop && derived.loopActive ? (LOOP_STATES[this._state.loop.state] || this._state.loop.state)
-        : this._state.team ? (TEAM_STATES[this._state.team.state] || this._state.team.state)
+    const statusMessage = this._state.status || (this._state.pending ? 'جارٍ تنفيذ الانتقال المطلوب…'
+      : this._state.loop && derived.loopActive
+        ? (LOOP_STATES[this._state.loop.state] || visibleLifecycleLabel(this._state.loop.state))
+        : this._state.team
+          ? (TEAM_STATES[this._state.team.state] || visibleLifecycleLabel(this._state.team.state))
         : 'حدّد المهام والملكية، ثم ابدأ انتقال التنفيذ صراحةً.');
+    setMixedTechnicalText(this._status, statusMessage);
     this._renderHistory(); this._renderBrainstorm(); this._renderDecisions(); this._renderTasks(); this._renderDiscussion();
     this._renderEvidence(); this._renderDiffs(); this._renderReview();
     this._renderStages(derived); this._renderGroupBadges(); this._renderCompactState(derived);
@@ -2185,7 +2293,7 @@ class SatrOpsRoom extends HTMLElement {
     for (const worker of (this._brainstorm && this._brainstorm.workers) || []) {
       view.appendChild(this._card({
         title: 'رأي ' + engineLabel(worker.engine), state: worker.state,
-        stateLabel: worker.state === 'completed' ? 'اكتمل' : worker.state === 'running' ? 'يفكّر…' : worker.state,
+        stateLabel: worker.state === 'running' ? 'يفكّر…' : visibleLifecycleLabel(worker.state),
         summary: worker.summary || worker.error || 'ينتظر الرأي النصي المستقل.',
         actor: 'advisor', engine: worker.engine, artifact: '', time: worker.updated_at,
       }));
@@ -2233,7 +2341,7 @@ class SatrOpsRoom extends HTMLElement {
   async _deleteHistoryArtifact(item) {
     const confirmed = await this._confirm({
       kind: 'start', title: 'تأكيد حذف الأثر المحفوظ', confirmLabel: 'احذف الأثر',
-      description: 'سيُحذف patch المشفّر نهائياً من خزنة «سطر». يبقى السجل المنقّى، ولن تتاح الاستعادة بعد ذلك.',
+      description: 'سيُحذف الأثر المشفّر نهائياً من خزنة «سطر». يبقى السجل المنقّى، ولن تتاح الاستعادة بعد ذلك.',
       items: [item.artifact_id],
     });
     if (!confirmed) return;
@@ -2316,12 +2424,22 @@ class SatrOpsRoom extends HTMLElement {
   _renderHistory() {
     const view = this._views.history; view.textContent = '';
     for (const item of this._history) {
+      const taskExcerpt = truncateWords(text(item.task_excerpt).trim(), 80);
+      const runKind = RUN_KIND_LABELS[item.run_kind] || '';
+      const availability = item.merged ? 'دُمج أثر هذه الغرفة سابقاً.'
+        : item.restorable ? 'يتوفر أثر مشفّر يمكن استعادته للمراجعة والتحقق من جديد.' : 'يتوفر السجل المنقّى فقط.';
       view.appendChild(this._card({
-        title: item.room_id, state: item.state, stateLabel: TEAM_STATES[item.state] || item.state,
-        summary: item.merged ? 'دُمج أثر هذه الغرفة سابقاً.'
-          : item.restorable ? 'يتوفر أثر مشفّر يمكن استعادته للمراجعة والتحقق من جديد.' : 'يتوفر السجل المنقّى فقط.',
+        title: taskExcerpt || item.room_id, state: item.state,
+        stateLabel: TEAM_STATES[item.state] || visibleLifecycleLabel(item.state),
+        summary: (runKind ? 'نوع التشغيل: ' + runKind + '. ' : '') + availability,
         actor: 'system', engine: 'system', artifact: item.artifact_id, time: item.updated_at,
         body: (body) => {
+          if (taskExcerpt) {
+            const room = document.createElement('div'); room.className = 'agent-meta';
+            const roomTitle = document.createElement('span'); roomTitle.textContent = 'معرّف الغرفة';
+            const roomId = document.createElement('bdi'); roomId.className = 'artifact'; roomId.textContent = item.room_id;
+            room.appendChild(roomTitle); room.appendChild(roomId); body.appendChild(room);
+          }
           const actions = document.createElement('div'); actions.className = 'setup-actions';
           const open = document.createElement('button'); open.type = 'button'; open.textContent = 'فتح السجل';
           open.addEventListener('click', () => this._openHistory(item)); actions.appendChild(open);

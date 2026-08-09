@@ -152,7 +152,12 @@ async function main() {
     assert.strictEqual(previewCalls[0].options.publicCwd, '');
     assert.notStrictEqual(path.resolve(previewCalls[0].cwd), path.resolve(project));
     assert.strictEqual((await integration.preparePreview(successArtifact, true)).error, 'busy');
+    // البند 20: حقيقة المعاينة الحية لكل cwd — true أثناء التشغيل، false لغير المشروع.
+    assert.strictEqual(integration.previewActiveFor(project), true);
+    assert.strictEqual(integration.previewActiveFor(path.join(temp, 'not-a-project')), false);
+    assert.strictEqual(integration.previewActiveFor(''), false);
     assert.strictEqual((await integration.stopPreview()).ok, true);
+    assert.strictEqual(integration.previewActiveFor(project), false); // تعود false بعد الإيقاف
     assert.strictEqual(previewJobs.size, 0);
     await assertCleanWorktrees(project);
 
@@ -293,11 +298,56 @@ async function main() {
     assert((await git(project, ['status', '--porcelain'])).includes('src/app.txt'));
     await assertCleanWorktrees(project);
 
+    // ── البند 23: أكواد الخروج المعروفة تُترجم عربياً (additive بقائمة سماح) ──
+    const STOP_LABEL = 'أُوقف (Ctrl+C أو إيقاف مقصود)';
+    const CRASH_LABEL = 'انهيار: وصول غير صالح للذاكرة';
+    // الخريطة النقية: المعروف فقط، وغيره '' (لا تخمين).
+    assert.strictEqual(verify.exitLabel(-1073741510), STOP_LABEL);
+    assert.strictEqual(verify.exitLabel(-1073741819), CRASH_LABEL);
+    assert.strictEqual(verify.exitLabel(7), '');
+    assert.strictEqual(verify.exitLabel(0), '');
+    assert.strictEqual(verify.exitLabel(null), '');
+    // runChecks يضيف exit_label للكود المعروف فقط (يبقى الصف القديم حرفياً لغيره).
+    const fakeExit = (code) => ({ execute: async () => ({ ok: false, exitCode: code, timedOut: false, output: '' }) });
+    const stopRow = (await verify.runChecks('.', [{ id: 'stop', label: 'مقاطعة', command: 'x', timeout_seconds: 5 }], {}, fakeExit(-1073741510))).checks[0];
+    assert.strictEqual(stopRow.exit_label, STOP_LABEL);
+    assert.strictEqual(stopRow.exit_code, -1073741510);
+    const crashRow = (await verify.runChecks('.', [{ id: 'crash', label: 'انهيار', command: 'x', timeout_seconds: 5 }], {}, fakeExit(-1073741819))).checks[0];
+    assert.strictEqual(crashRow.exit_label, CRASH_LABEL);
+    const plainRow = (await verify.runChecks('.', [{ id: 'plain', label: 'عادي', command: 'x', timeout_seconds: 5 }], {}, fakeExit(7))).checks[0];
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(plainRow, 'exit_label'), false);
+    // بوابة integration تمرّر exit_label إلى الحدث/التخزين المقصوص (publicChecks).
+    const labelVerify = Object.assign({}, verify, {
+      runChecks: async () => ({
+        ok: true, schema_version: 1, passed: false, summary: '',
+        checks: [{ id: 'test', label: 'اختبار الأثر', command: 'x', passed: false,
+          exit_code: -1073741510, timed_out: false, duration_ms: 4, exit_label: STOP_LABEL, output: '' }],
+      }),
+    });
+    const labelIntegration = integrationModule.create({
+      worktrees: manager, termjobs: fakeTermjobs, verify: labelVerify, waitForUrl: async () => ({ ok: true }),
+    });
+    const labelArtifact = await makeArtifact(manager, project, async (worktree) => {
+      await fsp.writeFile(path.join(worktree, 'src', 'app.txt'), 'labelled\n', 'utf8');
+    });
+    assert.strictEqual((await labelIntegration.prepare(labelArtifact)).ok, true);
+    const labelled = await labelIntegration.run(labelArtifact, true);
+    assert.strictEqual(labelled.verification.checks[0].exit_label, STOP_LABEL);
+    assert.strictEqual(labelled.verification.checks[0].exit_code, -1073741510);
+    assert(!Object.prototype.hasOwnProperty.call(labelled.verification.checks[0], 'command'));
+    await assertCleanWorktrees(project);
+
     const mainSource = await fsp.readFile(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
     assert(mainSource.includes("ipcMain.handle('satr:executionPreviewStart'")
       && mainSource.includes("Object.prototype.hasOwnProperty.call(p, 'command')"));
     assert(mainSource.includes('const previewCleanup = await integration.stopPreview();'));
     assert(mainSource.includes('integration.stopAll();'));
+    // البند 20: فحص ساكن لعقد devServerInfo — يعيد integration_preview من حقيقة integration.
+    const devInfoBlock = mainSource.slice(mainSource.indexOf("ipcMain.handle('satr:devServerInfo'"),
+      mainSource.indexOf("ipcMain.handle('satr:devServerRestart'"));
+    assert(devInfoBlock.includes('integration.previewActiveFor(cwd)')
+      && devInfoBlock.includes('integration_preview: integrationPreview'),
+      'devServerInfo يجب أن يعيد integration_preview من حقيقة integration (البند 20).');
 
     console.log('✓ commands come only from verify.json at artifact HEAD and require independent confirmation');
     console.log('✓ integration worktree passes, fails, times out, stops, and is removed on every path');
@@ -306,6 +356,8 @@ async function main() {
     console.log('✓ verification is bound to artifact_id and merger keeps review, verification, HEAD, and cleanliness guards');
     console.log('✓ source remains untouched until explicit merge and no commit or history operation is created');
     console.log('✓ preview requires passed verification and confirmation, reads its command from HEAD, stays unique, and cleans up');
+    console.log('✓ known exit codes translate to Arabic exit_label additively and forward through public checks (item 23)');
+    console.log('✓ devServerInfo distinguishes a live temporary integration preview per cwd (item 20)');
   } finally {
     await manager.removeAll().catch(() => {});
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });

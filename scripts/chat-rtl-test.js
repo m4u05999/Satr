@@ -25,6 +25,8 @@ function assertStaticContract() {
   assert(!/\sstyle\s*=|\sonclick\s*=/i.test(fixture), 'يحتوي fixture سمة inline محجوبة.');
   assert(chatSource.includes('function textDir('),
     'يجب أن يملك chat.js دالة الحسم الإحصائي textDir.');
+  assert(chatSource.includes("import { lifecycleLabel } from '../lib/lifecycle-labels.js';"),
+    'يجب أن يستورد chat.js lifecycleLabel من الوحدة المشتركة.');
   assert(!/\.md p \{[^}]*plaintext/.test(baseCss) && !/\.msg\.user \.bubble \{[^}]*plaintext[^}]*\}/s.test(baseCss.replace(/\/\*[\s\S]*?\*\//g, '')),
     'يجب ألا تعود plaintext إلى فقرات .md أو فقاعة المستخدم (dir الصريح يتولى).');
   assert.strictEqual(packageJson.scripts['test:chat-rtl'], 'electron scripts/chat-rtl-test.js');
@@ -57,6 +59,81 @@ async function assertStoppedToolResult(win) {
   assert.strictEqual(result.stopped, true, 'يجب أن تبقى كتلة العمل في حالة stopped.');
 }
 
+async function assertOpsEventCard(win) {
+  const suffix = Date.now();
+  const result = await win.webContents.executeJavaScript(`((suffix) => {
+    const chat = document.querySelector('satr-chat');
+    // بطاقة بنص مختلف عن العنوان: يجب أن يظهر الملخص
+    chat.showOpsEvent({
+      id: 'ops-rtl-decision-' + suffix,
+      type: 'decision',
+      actor: 'system',
+      text: 'تم اتخاذ قرار الدمج بعد نجاح التحقق.',
+      created_at: Date.now(),
+    });
+    // بطاقة بنص يتطابق مع عنوان النوع: يجب إخفاء الملخص لإزالة التكرار
+    chat.showOpsEvent({
+      id: 'ops-rtl-verify-' + suffix,
+      type: 'verification',
+      actor: 'sdk',
+      text: 'تحديث تحقق',
+      created_at: Date.now(),
+    });
+    // بطاقة بحالة lifecycle: يجب أن تظهر الحالة معرّبة
+    chat.showOpsEvent({
+      id: 'ops-rtl-review-' + suffix,
+      type: 'review',
+      actor: 'system',
+      state: 'completed',
+      text: 'انتهت المراجعة بنجاح.',
+      created_at: Date.now(),
+    });
+    const cards = document.querySelectorAll('.ops-event-card');
+    const decision = cards[cards.length - 3];
+    const verify = cards[cards.length - 2];
+    const review = cards[cards.length - 1];
+    const visibleText = (el) => Array.from(el.querySelectorAll('*')).map((n) => n.textContent).join(' ');
+    return {
+      decisionTitle: decision.querySelector('.work-card-title').textContent,
+      decisionState: decision.querySelector('.work-card-state').textContent,
+      decisionSummary: decision.querySelector('.work-card-summary').textContent,
+      decisionSummaryHidden: decision.querySelector('.work-card-summary').hidden,
+      decisionBody: decision.querySelector('.work-card-body').textContent,
+      decisionHasRawType: visibleText(decision).includes('decision'),
+      verifyTitle: verify.querySelector('.work-card-title').textContent,
+      verifySummaryHidden: verify.querySelector('.work-card-summary').hidden,
+      verifyHasRawType: visibleText(verify).includes('verification'),
+      reviewTitle: review.querySelector('.work-card-title').textContent,
+      reviewState: review.querySelector('.work-card-state').textContent,
+      reviewHasRawType: visibleText(review).includes('review'),
+    };
+  })(${suffix})`, true);
+  assert.strictEqual(result.decisionTitle, 'قرار في غرفة العمليات',
+    'عنوان بطاقة القرار يجب أن يكون بالعربية.');
+  assert.strictEqual(result.decisionState, '',
+    'حالة البطاقة يجب ألا تعرض النوع الإنجليزي الخام.');
+  assert.strictEqual(result.decisionSummary, 'تم اتخاذ قرار الدمج بعد نجاح التحقق.',
+    'ملخص البطاقة يجب أن يعرض النص.');
+  assert.strictEqual(result.decisionSummaryHidden, false,
+    'يجب ألا يُخفى الملخص حين يختلف عن العنوان.');
+  assert.strictEqual(result.decisionBody, 'تم اتخاذ قرار الدمج بعد نجاح التحقق.',
+    'جسم البطاقة المطوي يجب أن يحتوي على النص الكامل.');
+  assert.strictEqual(result.decisionHasRawType, false,
+    'يجب ألا يظهر النوع الإنجليزي الخام في بطاقة ops.');
+  assert.strictEqual(result.verifyTitle, 'تحديث تحقق',
+    'عنوان بطاقة التحقق يجب أن يكون بالعربية.');
+  assert.strictEqual(result.verifySummaryHidden, true,
+    'يجب إخفاء الملخص عند تطابقه مع العنوان لإزالة التكرار.');
+  assert.strictEqual(result.verifyHasRawType, false,
+    'يجب ألا يظهر النوع الإنجليزي الخام في بطاقة التحقق.');
+  assert.strictEqual(result.reviewTitle, 'تحديث مراجعة',
+    'عنوان بطاقة المراجعة يجب أن يكون بالعربية.');
+  assert.strictEqual(result.reviewState, 'اكتمل',
+    'حالة lifecycle يجب أن تُعرّب عبر lifecycleLabel.');
+  assert.strictEqual(result.reviewHasRawType, false,
+    'يجب ألا يظهر النوع الإنجليزي الخام في بطاقة المراجعة.');
+}
+
 async function waitForResult(win) {
   const deadline = Date.now() + TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -80,7 +157,8 @@ async function main() {
     assert(result.pass, 'فشل اختبار الاتجاه:\n' + (result.error || '') +
       '\nviolations: ' + JSON.stringify(result.violations || []));
     await assertStoppedToolResult(win);
-    console.log('chat-rtl: نجح — الحسم الإحصائي للفقرات والقوائم وفقاعة المستخدم؛ الكود LTR؛ عنوان الإيقاف ثابت بعد نتيجة أداة متأخرة؛ صفر CSP.');
+    await assertOpsEventCard(win);
+    console.log('chat-rtl: نجح — الحسم الإحصائي للفقرات والقوائم وفقاعة المستخدم؛ الكود LTR؛ عنوان الإيقاف ثابت بعد نتيجة أداة متأخرة؛ بطاقات ops معرّبة بلا تكرار ولا نص lifecycle خام؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

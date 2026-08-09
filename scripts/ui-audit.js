@@ -600,6 +600,7 @@ const SHOTS = [
     out: '42-ops-a1-no-deadend', w: 1440, h: 900,
     js: `
       const out = [];
+      document.getElementById('cwd').value = 'D:/fixture-project'; // الـharness يتركه فارغاً
       document.querySelector('#opsRoomToggle').click();
       await new Promise((r) => setTimeout(r, 250));
       const AID = 'a1'.repeat(32);

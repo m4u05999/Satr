@@ -106,6 +106,49 @@ async function main() {
     assert.strictEqual(flipped.find((item) => item.room_id === roomId).restorable, false);
     assert.strictEqual(flipped.find((item) => item.room_id === twinRoomId).restorable, false);
 
+    // ── البند 30: حقلا العرض الاختياريان task_excerpt/run_kind (additive، fail-closed) ──
+    // بناء المدخلات بـ fromCharCode لا بـ \u الحرفية (تنقية بنقاط Unicode لا تحتاج مصدراً هشّاً).
+    const RLO = String.fromCharCode(0x202e), LRM = String.fromCharCode(0x200e), RLM = String.fromCharCode(0x200f);
+    const isUnsafePoint = (code) => code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+      || code === 0x061c || code === 0x200e || code === 0x200f
+      || (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
+    const longExcerpt = 'ابدأ' + RLO + '   المهمة' + RLM + ' ' + 'ط'.repeat(200);
+    assert.strictEqual(opsroomindex.upsert(project, {
+      room_id: 'ops-room-a2-note30', team_id: 'execution-team-a2-note30', state: 'completed',
+      task_excerpt: longExcerpt, run_kind: 'loop',
+    }, { file: indexFile }).ok, true);
+    const note30 = opsroomindex.list(project, { file: indexFile }).find((item) => item.room_id === 'ops-room-a2-note30');
+    assert.strictEqual(note30.run_kind, 'loop');
+    assert.strictEqual([...note30.task_excerpt].length, opsroomindex.MAX_TASK_EXCERPT, 'قصّ المقتطف بنقاط Unicode');
+    assert(![...note30.task_excerpt].some((ch) => isUnsafePoint(ch.codePointAt(0))), 'إزالة التحكّم وBidi من المقتطف');
+    assert(!/\s{2,}/.test(note30.task_excerpt), 'طيّ الفراغات في المقتطف');
+
+    // قصّ آمن لا يكسر زوجاً بديلاً عند الحد (79 محرفاً + إيموجي = 80 نقطة، والتالي يسقط)
+    const emoji = String.fromCodePoint(0x1f600);
+    assert.strictEqual(opsroomindex.upsert(project, {
+      room_id: 'ops-room-a2-surrogate', team_id: 'execution-team-a2-surrogate', state: 'completed',
+      task_excerpt: 'x'.repeat(opsroomindex.MAX_TASK_EXCERPT - 1) + emoji + 'y', run_kind: 'team',
+    }, { file: indexFile }).ok, true);
+    const surr = opsroomindex.list(project, { file: indexFile }).find((item) => item.room_id === 'ops-room-a2-surrogate');
+    assert.strictEqual([...surr.task_excerpt].length, opsroomindex.MAX_TASK_EXCERPT);
+    assert(surr.task_excerpt.endsWith(emoji), 'المقتطف لا يقطع زوجاً بديلاً عند الحد');
+    assert.strictEqual(surr.run_kind, 'team');
+
+    // fail-closed: run_kind فاسد أو task_excerpt غير نصّي يُسقط الحقل وحده لا المدخل
+    assert.strictEqual(opsroomindex.upsert(project, {
+      room_id: 'ops-room-a2-bad', team_id: 'execution-team-a2-bad', state: 'completed',
+      task_excerpt: 12345, run_kind: 'bogus',
+    }, { file: indexFile }).ok, true);
+    const bad = opsroomindex.list(project, { file: indexFile }).find((item) => item.room_id === 'ops-room-a2-bad');
+    assert.strictEqual(bad.state, 'completed');
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(bad, 'run_kind'), false);
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(bad, 'task_excerpt'), false);
+
+    // التوافق الخلفي: مدخل قديم بلا الحقلين يبقى شكل قائمته حرفياً (لا مفاتيح جديدة)
+    const legacy = opsroomindex.list(project, { file: indexFile }).find((item) => item.room_id === roomId);
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(legacy, 'run_kind'), false);
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(legacy, 'task_excerpt'), false);
+
     // عقد ساكن على main.js (نمط assertStaticContract): مسار الدمج يعلّم البصمة المشتركة
     // بعد حذف الملف المشفّر، ومسار الاستعادة يعلّمها عند غياب/فساد الملف فقط.
     const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
@@ -122,7 +165,18 @@ async function main() {
       && restoreBlock.includes('opsroomindex.markArtifactsUnavailable'),
       'يجب أن يعلّم مسار الاستعادة البصمة عند غياب/فساد ملف الأثر (البند 29 — دفاع ثانٍ).');
 
+    // البند 30: updateOpsRoomIndex يشتق run_kind من مطابقة فريق الحلقة الحالية (حقيقة)
+    // لا من تخمين، ويمرّر مقتطف مهمة العامل الأول والحقلين إلى upsert.
+    const idxBlock = mainSource.slice(mainSource.indexOf('function updateOpsRoomIndex('),
+      mainSource.indexOf('function savedOpsArtifactKey('));
+    assert(idxBlock.includes('loopRunner.latest(cwd)') && idxBlock.includes("=== team.id ? 'loop' : 'team'"),
+      'run_kind يجب أن يُشتق من مطابقة فريق الحلقة الحالية لا من تخمين (البند 30).');
+    assert(idxBlock.includes('team.agents[0]') && idxBlock.includes('task_excerpt: taskExcerpt')
+      && idxBlock.includes('run_kind: runKind'),
+      'updateOpsRoomIndex يجب أن يمرّر task_excerpt وrun_kind إلى upsert (البند 30).');
+
     console.log('✓ artifact vault fails closed without encryption and never stores plaintext patch');
+    console.log('✓ index entries carry sanitized task_excerpt/run_kind additively and fail closed (item 30)');
     console.log('✓ project history is filtered without exposing its internal project fingerprint');
     console.log('✓ restored artifacts reopen review state without patch IPC or stale verification');
     console.log('✓ retention pruning and explicit deletion close stale restore entries');

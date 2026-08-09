@@ -632,12 +632,15 @@ class SatrPreviewPanel extends HTMLElement {
       const cwd = cwdEl ? cwdEl.value.trim() : '';
       let info = null;
       try { if (cwd) info = await window.satr.devServerInfo(cwd); } catch (e) {}
-      serverState.classList.toggle('running', !!(info && info.running));
+      serverState.classList.toggle('running', !!(info && (info.running || info.integration_preview)));
       if (info && info.running) {
         serverText.textContent = 'الخادم يعمل'; serverRestart.hidden = true;
       } else if (info && info.record) {
         serverText.textContent = 'الخادم متوقف'; serverRestart.hidden = false;
         restartRecord = { cwd, ...info.record };
+      } else if (info && info.integration_preview) {
+        // البند 20: معاينة تكاملية مؤقتة حية (worktree) — لا خادم مشروع مسجّل.
+        serverText.textContent = 'معاينة تكاملية مؤقتة تعمل'; serverRestart.hidden = true;
       } else {
         serverText.textContent = 'لا خادم مسجّل'; serverRestart.hidden = true;
       }

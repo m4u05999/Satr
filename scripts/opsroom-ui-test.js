@@ -129,6 +129,8 @@ function testJudgesHelpers(component) {
       this.listeners = {};
       this.attributes = {};
       this.dir = '';
+      this.hidden = false;
+      this.disabled = false;
     }
 
     appendChild(child) {
@@ -142,6 +144,15 @@ function testJudgesHelpers(component) {
 
     setAttribute(name, value) {
       this.attributes[name] = String(value);
+    }
+
+    removeAttribute(name) {
+      delete this.attributes[name];
+    }
+
+    toggleAttribute(name, force) {
+      if (force === false) delete this.attributes[name];
+      else this.attributes[name] = '';
     }
   }
   const document = {
@@ -159,6 +170,16 @@ function testJudgesHelpers(component) {
     };
     visit(root);
     return matches;
+  };
+  const flattenedText = (root, includeHidden = true) => {
+    const values = [];
+    const visit = (element) => {
+      if (!element || (!includeHidden && element.hidden)) return;
+      if (element.textContent) values.push(element.textContent);
+      for (const child of element.children || []) visit(child);
+    };
+    visit(root);
+    return values.join(' ');
   };
   const storageValues = new Map();
   const localStorage = {
@@ -301,19 +322,24 @@ function testJudgesHelpers(component) {
   const reviewSections = new Function('text',
     'return function (summary, recommendation) {'
       + methodBody(component, 'function reviewSections(summary, recommendation)') + '};')(safeText);
-  const reviewStateLabel = new Function('return function (state) {'
-    + methodBody(component, 'function reviewStateLabel(state)') + '};')();
-  const reviewDecisionLabel = new Function('return function (decision) {'
-    + methodBody(component, 'function reviewDecisionLabel(decision)') + '};')();
+  const polishLifecycle = {
+    completed: 'اكتمل', running: 'يعمل', failed: 'فشل', timed_out: 'انتهت المهلة', stopped: 'أوقفه المستخدم',
+    approve: 'موافقة', changes_required: 'تعديلات مطلوبة', reject: 'رفض', passed: 'نجح',
+  };
+  const visibleLifecycleLabel = (state, fallback) => polishLifecycle[state] || fallback || 'حالة غير معروفة';
+  const reviewStateLabel = new Function('visibleLifecycleLabel', 'return function (state) {'
+    + methodBody(component, 'function reviewStateLabel(state)') + '};')(visibleLifecycleLabel);
+  const reviewDecisionLabel = new Function('visibleLifecycleLabel', 'return function (decision) {'
+    + methodBody(component, 'function reviewDecisionLabel(decision)') + '};')(visibleLifecycleLabel);
   const appendReviewSections = new Function('document',
     'return function (container, sections) {'
       + methodBody(component, '  _appendReviewSections(container, sections)') + '};')(document);
   const renderReview = new Function(
     'document', 'deriveOpsRoomState', 'reviewSections', 'engineLabel', 'text',
-    'LENS_LABELS', 'reviewStateLabel', 'reviewDecisionLabel',
+    'LENS_LABELS', 'reviewStateLabel', 'reviewDecisionLabel', 'mergeGateLabel',
     'return function () {' + methodBody(component, '  _renderReview()') + '};',
   )(document, () => ({ canMerge: false }), reviewSections, engineLabel, safeText,
-    lensLabels, reviewStateLabel, reviewDecisionLabel);
+    lensLabels, reviewStateLabel, reviewDecisionLabel, () => 'بوابة اختبار');
   const renderHost = {
     _views: { review: new FakeElement('div') },
     _state: { review: judgesFixture('e'.repeat(64)).review, entries: [] },
@@ -347,6 +373,28 @@ function testJudgesHelpers(component) {
     'legacy review items without lenses must retain the old renderer path');
   assert(elementsByClass(renderHost._views.review, 'review-section').length > 0,
     'legacy review items without lenses must still render their ordinary sections');
+  const stoppedCards = [];
+  let stoppedMergedReports = 0;
+  renderHost._views.review = new FakeElement('div');
+  renderHost._state.review = { ...judgesFixture('f'.repeat(64)).review, state: 'stopped' };
+  renderHost._renderMergedReport = () => { stoppedMergedReports++; };
+  renderHost._card = (options) => {
+    stoppedCards.push(options);
+    const card = new FakeElement('article');
+    if (typeof options.body === 'function') {
+      const body = new FakeElement('div'); options.body(body); card.appendChild(body);
+    }
+    return card;
+  };
+  renderReview.call(renderHost);
+  assert.strictEqual(stoppedMergedReports, 0,
+    'a user-stopped review must not present an incomplete merged judgment');
+  assert(stoppedCards.length === 2 && stoppedCards.every((options) =>
+    options.stateLabel === 'أوقفها المستخدم قبل اكتمال الأحكام'
+      && !/تعديلات مطلوبة|changes_required/.test(options.stateLabel + ' ' + options.summary)),
+  'stopped review cards must explain the user stop instead of presenting changes_required as a judgment');
+  assert.strictEqual(elementsByClass(renderHost._views.review, 'review-lens-verdict').length, 0,
+    'stopped review lenses must hide their incomplete verdict badges');
 
   const loopReviewLabels = {
     idle: 'بانتظار المراجع', running: 'جارية', approve: 'اعتمدت',
@@ -354,6 +402,7 @@ function testJudgesHelpers(component) {
   };
   const renderLoop = new Function(
     'document', 'LOOP_STATES', 'LOOP_REVIEW_STATES', 'LOOP_STOP_REASONS', 'integerLabel', 'usdLabel', 'truncatePoints',
+    'visibleLifecycleLabel',
     'return function (view, derived) {' + methodBody(component, '  _renderLoop(view, derived)') + '};',
   )(
     document,
@@ -363,6 +412,7 @@ function testJudgesHelpers(component) {
     (value) => String(Number(value) || 0),
     (value) => '$' + (Number(value) || 0).toFixed(2),
     truncatePoints,
+    visibleLifecycleLabel,
   );
   const loopRenderHost = { _state: { loop: null, pending: '' }, _stopLoop: () => {} };
   for (const [reviewState, label] of Object.entries(loopReviewLabels)) {
@@ -396,6 +446,212 @@ function testJudgesHelpers(component) {
   assert(adversarialSummary.textContent.startsWith('<img src=x onerror=alert(1)>')
     && adversarialSummary.children.length === 0,
   'adversarial loop review summary must remain inert text without breaking the card');
+
+  const timeLabel = new Function('return function (value) {'
+    + methodBody(component, 'function timeLabel(value)') + '};')();
+  const fingerprintLabel = new Function('text', 'return function (value) {'
+    + methodBody(component, 'function fingerprintLabel(value)') + '};')(safeText);
+  const actorLabel = new Function('text', 'ACTOR_LABELS', 'engineLabel', 'return function (value) {'
+    + methodBody(component, 'function actorLabel(value)') + '};')(
+    safeText, { system: 'النظام', user: 'المستخدم', reviewer: 'المراجع', advisor: 'المستشار' }, engineLabel,
+  );
+  const cardRenderer = new Function(
+    'document', 'text', 'visibleLifecycleLabel', 'actorLabel', 'fingerprintLabel', 'timeLabel', 'engineLabel',
+    'return function (options) {' + methodBody(component, '  _card(options)') + '};',
+  )(document, safeText, visibleLifecycleLabel, actorLabel, fingerprintLabel, timeLabel, engineLabel);
+  const fingerprint = 'a1'.repeat(32);
+  const fingerprintCard = cardRenderer({
+    title: 'بطاقة أثر', state: 'completed', actor: 'system', artifact: fingerprint, time: Date.UTC(2024, 5, 15, 12),
+  });
+  const visibleFingerprintText = flattenedText(fingerprintCard, false);
+  assert(visibleFingerprintText.includes(fingerprint.slice(0, 12)) && !visibleFingerprintText.includes(fingerprint),
+    'artifact cards must expose only the 12-character fingerprint prefix while collapsed');
+  const hiddenFingerprintBody = elementsByClass(fingerprintCard, 'work-card-body')[0];
+  assert(hiddenFingerprintBody && hiddenFingerprintBody.hidden && flattenedText(hiddenFingerprintBody).includes(fingerprint),
+    'artifact cards must retain the full fingerprint behind the details toggle');
+  const timeValue = elementsByClass(fingerprintCard, 'work-card-tech').find((element) => /2024/.test(element.textContent));
+  assert(timeValue && timeValue.dir === 'ltr' && !/[٠-٩۰-۹]/.test(timeValue.textContent),
+    'card time metadata must use Gregorian Latin digits inside an LTR bdi');
+  const emptyMetadataCard = cardRenderer({ title: 'بلا بيانات', state: 'completed' });
+  assert.strictEqual(elementsByClass(emptyMetadataCard, 'work-card-foot').length, 0,
+    'empty actor, engine, artifact, and time metadata must omit the footer instead of placeholders');
+  assert(flattenedText(cardRenderer({ title: 'حالة إضافية', state: 'partial' })).includes('حالة غير معروفة')
+    && !flattenedText(cardRenderer({ title: 'حالة إضافية', state: 'partial' })).includes('partial'),
+  'unknown additive lifecycle states must fail closed to Arabic instead of leaking raw tokens');
+  for (const [actor, label] of Object.entries({
+    system: 'النظام', user: 'المستخدم', reviewer: 'المراجع', advisor: 'المستشار',
+  })) {
+    const actorCard = cardRenderer({ title: 'فاعل', state: 'completed', actor });
+    assert(flattenedText(actorCard).includes(label) && !flattenedText(actorCard).includes('الفاعل: ' + actor),
+      'actor metadata must localize ' + actor);
+  }
+  const formattedTime = timeLabel(Date.UTC(2024, 5, 15, 12));
+  assert(/2024/.test(formattedTime) && !/[٠-٩۰-۹]/.test(formattedTime),
+    'timeLabel must remain Gregorian with Latin digits');
+
+  const openDialog = new Function('document', 'text', 'fingerprintLabel', 'queueMicrotask',
+    'return function (options) {' + methodBody(component, '  openDialog(options)') + '};',
+  )(document, safeText, fingerprintLabel, (callback) => callback());
+  const dialogHost = {
+    _resolver: null,
+    _title: new FakeElement('h2'), _description: new FakeElement('div'), _confirm: new FakeElement('button'),
+    _items: new FakeElement('div'), _cancel: { focus: () => {} }, setAttribute: () => {},
+  };
+  openDialog.call(dialogHost, { title: 'تأكيد', description: 'وصف', items: [fingerprint] });
+  const fingerprintDetails = dialogHost._items.children[0];
+  assert(fingerprintDetails && fingerprintDetails.tagName === 'details'
+    && flattenedText(fingerprintDetails.children[0]).includes(fingerprint.slice(0, 12))
+    && fingerprintDetails.children[1].textContent === fingerprint,
+  'confirmation dialogs must keep the full fingerprint inside native details behind its 12-character prefix');
+
+  const fileForms = { one: 'ملف واحد', two: 'ملفان', plural: 'ملفات', many: 'ملفاً' };
+  const arabicCount = (count, forms) => count === 1 ? forms.one : count === 2 ? forms.two
+    : count >= 3 && count <= 10 ? count + ' ' + forms.plural : count + ' ' + forms.many;
+  const renderDiffs = new Function('document', 'countLabel', 'FILE_COUNT_FORMS',
+    'return function () {' + methodBody(component, '  _renderDiffs()') + '};',
+  )(document, arabicCount, fileForms);
+  for (const [fileCount, expected] of [[1, 'ملف واحد'], [2, 'ملفان'], [5, '5 ملفات']]) {
+    const captured = [];
+    const view = new FakeElement('div');
+    const files = Array.from({ length: fileCount }, (_, index) => ({ rel: 'src/' + index + '.js', added: 1, removed: 0 }));
+    renderDiffs.call({
+      _views: { diffs: view }, _state: { team: { id: 'team', artifact_id: fingerprint, updated_at: 1,
+        agents: [{ id: 'agent', label: 'عامل', state: 'completed', changes: { files } }] } },
+      _card: (options) => { captured.push(options); return new FakeElement('article'); },
+      _empty: () => {}, _diffCache: new Map(),
+    });
+    assert(view.children[0].textContent.includes('سيُدمج ' + expected)
+      && captured[0].stateLabel === expected,
+    'diff summaries and cards must use Arabic count inflection for ' + fileCount);
+  }
+
+  let truncateCalls = 0;
+  const renderHistory = new Function(
+    'document', 'text', 'truncateWords', 'RUN_KIND_LABELS', 'TEAM_STATES', 'visibleLifecycleLabel',
+    'return function () {' + methodBody(component, '  _renderHistory()') + '};',
+  )(document, safeText, (value) => { truncateCalls++; return value.length > 20 ? value.slice(0, 18) + '…' : value; },
+    { team: 'فريق', loop: 'حلقة' }, { completed: 'اكتمل التنفيذ' }, visibleLifecycleLabel);
+  const historyCards = [];
+  renderHistory.call({
+    _views: { history: new FakeElement('div') },
+    _history: [
+      { room_id: 'ops-room-modern', state: 'completed', task_excerpt: 'مهمة بشرية طويلة لاختبار القص الآمن',
+        run_kind: 'team', updated_at: Date.UTC(2024, 5, 15), merged: false, restorable: false },
+      { room_id: 'ops-room-loop', state: 'completed', task_excerpt: 'مهمة حلقة',
+        run_kind: 'loop', updated_at: Date.UTC(2024, 5, 16), merged: false, restorable: false },
+      { room_id: 'ops-room-legacy', state: 'completed', merged: false, restorable: false },
+    ],
+    _card: (options) => { historyCards.push(options); return new FakeElement('article'); }, _empty: () => {},
+  });
+  assert(truncateCalls === 3 && historyCards[0].title.endsWith('…')
+    && historyCards[0].summary.includes('نوع التشغيل: فريق') && historyCards[0].time > 0,
+  'modern history rows must consume task_excerpt, run_kind, truncation, and readable time inputs');
+  assert(historyCards[1].summary.includes('نوع التشغيل: حلقة'), 'loop history rows must localize run_kind');
+  assert.strictEqual(historyCards[2].title, 'ops-room-legacy',
+    'legacy history rows must fall back gracefully to room_id when additive fields are absent');
+
+  const checkResultLabel = new Function('text', 'return function (check) {'
+    + methodBody(component, 'function checkResultLabel(check)') + '};')(safeText);
+  assert.deepStrictEqual(checkResultLabel({ command: 'npm test', exit_code: -1073741510, exit_label: 'أوقفه المستخدم' }),
+    { value: 'أوقفه المستخدم', technical: false }, 'exit_label must take precedence over command and raw exit code');
+  assert.deepStrictEqual(checkResultLabel({ exit_code: -1073741510 }),
+    { value: 'exit=-1073741510', technical: true }, 'missing exit_label must retain the raw technical code');
+  const renderEvidence = new Function(
+    'document', 'deriveOpsRoomState', 'visibleLifecycleLabel', 'checkResultLabel', 'lifecycleLabel',
+    'return function () {' + methodBody(component, '  _renderEvidence()') + '};',
+  )(document, () => ({ artifactId: fingerprint }), visibleLifecycleLabel, checkResultLabel,
+    (state) => polishLifecycle[state] || state);
+  const evidenceView = new FakeElement('div');
+  renderEvidence.call({
+    _views: { evidence: evidenceView },
+    _state: { team: { updated_at: 1 }, entries: [], verification: { artifact_id: fingerprint, state: 'failed', checks: [
+      { id: 'stop', label: 'إيقاف', command: 'npm test', exit_code: -1073741510,
+        exit_label: 'أوقفه المستخدم', duration_ms: 4 },
+      { id: 'raw', label: 'خام', exit_code: 1, duration_ms: 5 },
+    ] } },
+    _card: (options) => { const card = new FakeElement('article'); const body = new FakeElement('div');
+      options.body(body); card.appendChild(body); return card; },
+    _entryCard: () => new FakeElement('article'), _empty: () => {},
+  });
+  assert(elementsByClass(evidenceView, 'check-result')[0].textContent.includes('أوقفه المستخدم')
+    && !flattenedText(evidenceView).includes('⚠️'),
+  'intentional-stop exit labels must render as friendly text without a warning icon');
+  const rawExit = elementsByClass(evidenceView, 'counts').find((element) => element.textContent.includes('exit=1'));
+  assert(rawExit && rawExit.dir === 'ltr', 'raw exit-code fallback must remain isolated LTR');
+
+  const mergeGateLabel = new Function('return function (state, derived) {'
+    + methodBody(component, 'function mergeGateLabel(state, derived)') + '};')();
+  const missingBoth = mergeGateLabel({}, { canMerge: false, reviewApproved: false, verificationPassed: false });
+  const missingVerification = mergeGateLabel({}, { canMerge: false, reviewApproved: true, verificationPassed: false });
+  const missingReview = mergeGateLabel({}, { canMerge: false, reviewApproved: false, verificationPassed: true });
+  const readyGate = mergeGateLabel({}, { canMerge: true, reviewApproved: true, verificationPassed: true });
+  assert(missingBoth.includes('المراجعات') && /تحقق/.test(missingBoth)
+    && !missingVerification.includes('المراجعات') && /تحقق/.test(missingVerification)
+    && missingReview.includes('المراجعات') && !missingReview.includes('نجاح التحقق')
+    && readyGate.includes('التأكيد الصريح') && !readyGate.includes('المتبقي:'),
+  'merge gate guidance must mention only the conditions that remain');
+  assert(mergeGateLabel({ review: { state: 'stopped' } }, {
+    canMerge: false, reviewApproved: false, verificationPassed: false,
+  }).includes('إعادة المراجعة للأثر نفسه'), 'stopped review gate must recommend retrying the same artifact');
+
+  const setMixedTechnicalText = new Function(
+    'document', 'text', 'TECHNICAL_PARTS', 'TECHNICAL_PART',
+    'return function (container, value) {' + methodBody(component, 'function setMixedTechnicalText(container, value)') + '};',
+  )(document, safeText, /(\.satr[\\/][A-Za-z0-9._\\/-]*[A-Za-z0-9_-]|\b(?:HEAD|Git|worktree|commit|push|patch|preview)\b)/g,
+    /^(?:\.satr[\\/][A-Za-z0-9._\\/-]*[A-Za-z0-9_-]|HEAD|Git|worktree|commit|push|patch|preview)$/);
+  const mixedStatus = new FakeElement('div');
+  setMixedTechnicalText(mixedStatus, 'راجع .satr/verify.json المعتمد في HEAD.');
+  assert(mixedStatus.children.filter((element) => element.tagName === 'code').length === 2
+    && mixedStatus.children.filter((element) => element.tagName === 'code').every((element) => element.dir === 'ltr'),
+  'technical paths and code in Arabic status messages must be isolated in LTR code elements');
+
+  const loadLayoutPreferences = new Function(
+    'localStorage', 'GROUPS', 'getComputedStyle', 'document',
+    'return function () {' + methodBody(component, '  _loadLayoutPreferences()') + '};',
+  );
+  const storedLayouts = new Map();
+  const layoutStorage = { getItem: (key) => storedLayouts.get(key) || null };
+  const layoutHost = {
+    _groups: { work: {}, results: {}, log: {} }, _layoutStorageKey: () => 'layout',
+    _layoutSheet: { replaceSync: () => {} }, _updateNavigation: () => {}, _syncResponsiveMode: () => {},
+  };
+  const loadLayout = loadLayoutPreferences(layoutStorage, [
+    { id: 'work', views: [['brainstorm'], ['tasks']] },
+    { id: 'results', views: [['diffs'], ['evidence'], ['review']] },
+    { id: 'log', views: [['decisions'], ['discussion'], ['history']] },
+  ], () => ({ fontSize: '16px' }), { documentElement: {} });
+  loadLayout.call(layoutHost);
+  assert.strictEqual(layoutHost._groupViews.log, 'history', 'history must be the default log view without a saved choice');
+  storedLayouts.set('layout', JSON.stringify({ group: 'log', views: { log: 'decisions' } }));
+  loadLayout.call(layoutHost);
+  assert(layoutHost._groupViews.log === 'decisions' && layoutHost._view === 'decisions',
+    'a valid manual log-view choice must survive restart');
+
+  const syncSetupActions = new Function('deriveOpsRoomState', 'text',
+    'return function () {' + methodBody(component, '  _syncSetupActions()') + '};')(
+    () => ({ canStart: true, nextAction: { key: 'start', action: 'start', label: 'إرشاد الخطوة التالية من السلم.' } }),
+    (value) => (typeof value === 'string' ? value : ''),
+  );
+  const taskField = { value: '' }; const ownershipField = { value: '' };
+  const workerInput = { querySelector: (selector) => selector === '.task' ? taskField : ownershipField };
+  const guidanceHost = {
+    _state: {}, _cwd: '', _primaryAction: 'start', _plan: null,
+    _primaryButton: new FakeElement('button'), _nextStep: new FakeElement('span'),
+    _primaryReason: new FakeElement('span'), _actionBar: new FakeElement('div'),
+    _setup: { count: { value: '1' }, inputs: [workerInput], planButton: new FakeElement('button'),
+      planHint: new FakeElement('span') },
+  };
+  syncSetupActions.call(guidanceHost);
+  assert.strictEqual([guidanceHost._nextStep, guidanceHost._primaryReason, guidanceHost._setup.planHint]
+    .filter((element) => !element.hidden && element.textContent).length, 1,
+  'incomplete setup must show one actionable guidance message, not duplicates');
+  guidanceHost._cwd = 'D:\\repo'; taskField.value = 'نفّذ المهمة'; ownershipField.value = 'src/**';
+  syncSetupActions.call(guidanceHost);
+  assert.strictEqual([guidanceHost._nextStep, guidanceHost._primaryReason, guidanceHost._setup.planHint]
+    .filter((element) => !element.hidden && element.textContent).length, 1,
+  'complete setup must keep exactly one guidance line — the nextAction ladder label');
+  assert.strictEqual(guidanceHost._nextStep.textContent, 'إرشاد الخطوة التالية من السلم.',
+    'the blocking reason must yield back to the ladder label, not hide recovery guidance (timeout/merged)');
 
   class FakeCustomEvent {
     constructor(type, options) { this.type = type; this.detail = options && options.detail; this.bubbles = options && options.bubbles; }
@@ -791,6 +1047,16 @@ function testDesignGuard() {
   'ops-room state must derive observable activity and terminal recovery guidance purely');
   const component = read('src/ui/components/ops-room.js');
   testJudgesHelpers(component);
+  assert(component.includes("from '../lib/lifecycle-labels.js'")
+    && ['LIFECYCLE_LABELS', 'lifecycleLabel', 'countLabel', 'truncateWords'].every((name) => component.includes(name)),
+  'ops room must consume all shared lifecycle and Arabic wording helpers');
+  for (const rawFallback of [
+    'LOOP_STATES[loop.state] || loop.state', 'TEAM_STATES[agent.state] || agent.state',
+    "verification.state === 'failed' ? 'فشل' : verification.state", 'stateLabel: entry.type',
+    "worker.state === 'running' ? 'يفكّر…' : worker.state", 'TEAM_STATES[item.state] || item.state',
+  ]) {
+    assert(!component.includes(rawFallback), 'visible lifecycle state must not fall back to raw token: ' + rawFallback);
+  }
   assert(component.includes('adoptedStyleSheets'), 'ops room must use constructable stylesheets');
   assert(component.includes("makeElement('button', 'verify-config', 'إعداد التحقق')")
     && component.includes("new CustomEvent('verify-config-open'"),
@@ -815,9 +1081,10 @@ function testDesignGuard() {
     && !component.includes('room-actions'),
   'primary nextAction must live in the bottom action bar after scrollable content');
   assert(component.includes("const primaryReason = makeElement('span', 'primary-reason')")
-    && component.includes("this._primaryReason.textContent = reason")
-    && component.includes("this._actionBar.toggleAttribute('data-attention', Boolean(reason))"),
-  'disabled primary action must expose its reason beside the button');
+    && component.includes('this._nextStep.textContent = primaryReason')
+    && component.includes("this._primaryReason.textContent = ''; this._primaryReason.hidden = true")
+    && component.includes("this._actionBar.toggleAttribute('data-attention', Boolean(primaryReason))"),
+  'disabled primary action must expose exactly one reason in the shared guidance slot');
   assert(component.includes("source: this._primaryAction === options.kind ? this._primaryButton : this"),
     'confirmation focus source must follow the single primary action');
   assert(component.includes("const LOOP_STATES = {") && component.includes("failed_after_n: 'فشلت بعد نفاد الدورات'")

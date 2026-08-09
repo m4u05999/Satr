@@ -986,11 +986,21 @@ const opsRoomIndexSignatures = new Map();
 
 function updateOpsRoomIndex(cwd, team, restorable) {
   if (!team || !opsroom.SAFE_ROOM_ID.test(team.room_id || '') || !opsroom.SAFE_TEAM_ID.test(team.id || '')) return;
-  const signature = [team.state, team.artifact_id || '', team.merged === true, restorable === true].join(':');
+  // البند 30: نوع التشغيل من حقيقة موجودة فعلاً (مطابقة فريق الحلقة الحالية عبر team_id)
+  // لا من تخمين؛ تعذّر التمييز الصادق ⇒ الحقل يغيب (opsroomindex يُسقط '' fail-closed).
+  let runKind = '';
+  try {
+    const loop = loopRunner.latest(cwd);
+    runKind = loop && loop.team_id && loop.team_id === team.id ? 'loop' : 'team';
+  } catch { runKind = ''; }
+  // مقتطف مهمة العامل الأول للقراءة البشرية في قائمة التاريخ (تنقية/قصّ في opsroomindex).
+  const taskExcerpt = team.agents && team.agents[0] ? team.agents[0].task || '' : '';
+  const signature = [team.state, team.artifact_id || '', team.merged === true, restorable === true, runKind].join(':');
   if (opsRoomIndexSignatures.get(team.room_id) === signature) return;
   const result = opsroomindex.upsert(cwd, {
     room_id: team.room_id, team_id: team.id, state: team.state, updated_at: team.updated_at,
     artifact_id: team.artifact_id || '', restorable: restorable === true, merged: team.merged === true,
+    task_excerpt: taskExcerpt, run_kind: runKind,
   });
   if (result.ok) opsRoomIndexSignatures.set(team.room_id, signature);
 }
@@ -2114,7 +2124,10 @@ ipcMain.handle('satr:devServerInfo', (event, p) => {
   if (!cwd) return { ok: false, error: 'bad_cwd' };
   const record = devservers.info(cwd);
   const running = termjobs.list().some((job) => path.resolve(job.cwd) === cwd);
-  return { ok: true, record, running };
+  // البند 20: علم مستقل — مهمة معاينة تكاملية مؤقتة حية لهذا cwd (الحقيقة عند integration،
+  // ولا تُسجَّل في devservers فلا تلوّث سجلّ خادم المشروع).
+  const integrationPreview = integration.previewActiveFor(cwd);
+  return { ok: true, record, running, integration_preview: integrationPreview };
 });
 ipcMain.handle('satr:devServerRestart', (event, p) => {
   const cwd = sanitizeMemoryCwd(p && p.cwd);

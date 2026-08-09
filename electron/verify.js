@@ -25,6 +25,18 @@ const MAX_PREVIEW_URL = 2048;
 const MAX_OUTPUT = 6000;
 const MAX_EXEC_OUTPUT = 64 * 1024;
 const MAX_MODEL_RESULT = 32 * 1024;
+// البند 23: خريطة أكواد الخروج المعروفة فقط (وما تثبته حصراً). القيم NTSTATUS التي
+// يعرضها ConPTY/الصدفة على ويندوز كأرقام سالبة مبهمة؛ نترجمها بلا وسم ⚠️ للإيقاف
+// المقصود (القرار البصري عند العارض). أي كود آخر لا يُترجَم فيبقى الرقم الخام LTR.
+const EXIT_CODE_LABELS = new Map([
+  [-1073741510, 'أُوقف (Ctrl+C أو إيقاف مقصود)'], // 0xC000013A — مقاطعة مقصودة من سطر
+  [-1073741819, 'انهيار: وصول غير صالح للذاكرة'], // 0xC0000005 — Access Violation
+]);
+
+/** وسم عربي لكود خروج معروف، أو '' لغير المعروف (لا تخمين، لا كسر schema). */
+function exitLabel(code) {
+  return Number.isInteger(code) && EXIT_CODE_LABELS.has(code) ? EXIT_CODE_LABELS.get(code) : '';
+}
 // مهارة المراجعة النوعية (الجولة السابعة): حقل اختياري كلياً — غيابه يعني السلوك
 // القائم حرفياً. رمز الخطأ موحّد للقراءة والكتابة، والحقل خارج عدّ MAX_CHECKS.
 const SAFE_REVIEW_SKILL_NAME = /^[A-Za-z0-9._-]{1,64}$/;
@@ -391,15 +403,19 @@ async function runChecks(cwd, checks, ctx, options) {
     let output = String(outcome.output || outcome.error || '').trim();
     if (output.length > MAX_OUTPUT) output = output.slice(0, MAX_OUTPUT) + '\n…(قُصّ الخرج)';
     const passed = !!outcome.ok && outcome.exitCode === 0 && !outcome.timedOut;
+    const exitCode = Number.isInteger(outcome.exitCode) ? outcome.exitCode : null;
+    const label = exitLabel(exitCode);
     results.push({
       id: check.id,
       label: check.label,
       command: check.command,
       passed,
-      exit_code: Number.isInteger(outcome.exitCode) ? outcome.exitCode : null,
+      exit_code: exitCode,
       timed_out: !!outcome.timedOut,
       duration_ms: Date.now() - started,
       output,
+      // البند 23: additive — يظهر فقط لكود معروف فيبقى الصف القديم حرفياً لغيره.
+      ...(label ? { exit_label: label } : {}),
     });
   }
   const passed = results.length > 0 && results.every((result) => result.passed);
@@ -464,5 +480,6 @@ module.exports = {
   formatConfig,
   formatResult,
   normalizePreview,
+  exitLabel,
   SAFE_CHECK_ID,
 };
