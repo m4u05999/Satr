@@ -29,6 +29,32 @@ function assertStaticContract() {
     'يجب ألا تعود plaintext إلى فقرات .md أو فقاعة المستخدم (dir الصريح يتولى).');
   assert.strictEqual(packageJson.scripts['test:chat-rtl'], 'electron scripts/chat-rtl-test.js');
   assert(fullSuite.includes("'test:chat-rtl'"), 'غاب test:chat-rtl من full-suite.');
+  assert(chatSource.includes("!worklog.classList.contains('stopped')")
+    && chatSource.includes("!worklog.classList.contains('failed')")
+    && chatSource.includes("!worklog.classList.contains('done')"),
+  'يجب أن يحمي toolDone عنوان الحالة الطرفية من نتيجة أداة متأخرة.');
+}
+
+async function assertStoppedToolResult(win) {
+  const result = await win.webContents.executeJavaScript(`(() => {
+    const chat = document.querySelector('satr-chat');
+    const block = chat.newAssistantBlock('اختبار الإيقاف');
+    block.addTool('late-tool-result', 'قراءة', { path: 'src/ui/components/chat.js' });
+    block.stopped();
+    block.toolDone('late-tool-result', false);
+    const title = block.el.querySelector('.work-title');
+    const toolState = block.el.querySelector('.tool .state');
+    return {
+      title: title && title.textContent,
+      toolState: toolState && toolState.textContent,
+      stopped: block.el.querySelector('.worklog').classList.contains('stopped'),
+    };
+  })()`, true);
+  assert.strictEqual(result.title, 'أُوقِف الدور',
+    'نتيجة الأداة المتأخرة يجب ألا تدهس عنوان الإيقاف.');
+  assert.strictEqual(result.toolState, '✓',
+    'بطاقة الأداة يجب أن تستقبل نتيجتها المتأخرة رغم ثبات عنوان الإيقاف.');
+  assert.strictEqual(result.stopped, true, 'يجب أن تبقى كتلة العمل في حالة stopped.');
 }
 
 async function waitForResult(win) {
@@ -53,7 +79,8 @@ async function main() {
     const result = await waitForResult(win);
     assert(result.pass, 'فشل اختبار الاتجاه:\n' + (result.error || '') +
       '\nviolations: ' + JSON.stringify(result.violations || []));
-    console.log('chat-rtl: نجح — الحسم الإحصائي للفقرات والقوائم وفقاعة المستخدم؛ الكود LTR؛ صفر CSP.');
+    await assertStoppedToolResult(win);
+    console.log('chat-rtl: نجح — الحسم الإحصائي للفقرات والقوائم وفقاعة المستخدم؛ الكود LTR؛ عنوان الإيقاف ثابت بعد نتيجة أداة متأخرة؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

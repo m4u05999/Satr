@@ -591,6 +591,56 @@ const SHOTS = [
     `,
   },
 
+  // ---------- صقل غرفة العمليات أ‑1: لا طريق مسدود (البنود 24/28/22+2) ----------
+  // مرحلتان عبر مسار القشرة الحقيقي (خطّاف الـharness — نمط المشهدين 30–31):
+  // (1) فريق مكتمل + مراجعة أوقفها المستخدم ⇒ زر «ابدأ المراجعة» يعود (البند 28)؛
+  // (2) فريق مدموج بمراجعته الموافقة وتحققه الناجح ⇒ زر «ابدأ مهمة جديدة» ونموذج
+  // نظيف بعنوان «فريق تنفيذ جديد» لا «إعادة المحاولة» (البندان 24 و22+2).
+  {
+    out: '42-ops-a1-no-deadend', w: 1440, h: 900,
+    js: `
+      const out = [];
+      document.querySelector('#opsRoomToggle').click();
+      await new Promise((r) => setTimeout(r, 250));
+      const AID = 'a1'.repeat(32);
+      const baseTeam = (id, merged) => ({
+        id, room_id: 'ops-room-a1-scene', state: 'completed', merged, merge_supported: true,
+        artifact_id: AID, producer_engines: ['sdk'], mode: 'mergeable', timeout_ms: 300000,
+        created_at: Date.now() - 60000, updated_at: Date.now(), duration_ms: 45000,
+        agents: [{ id: 'executor-1', label: 'عامل 1', task: 'أصلح فرز القائمة', engine: 'sdk',
+          ownership: ['src/app.js'], state: 'completed', summary: 'اكتمل', duration_ms: 45000,
+          cost: { usd: 0.02 }, permissions: { write_limit: 30, write_used: 2, denied: 0 },
+          changes: { files: [{ rel: 'src/app.js', kind: 'mod', added: 3, removed: 1 }], added: 3, removed: 1 } }],
+      });
+      const emit = (ev) => window.__SATR_TESTSPRITE_HARNESS__.emitEvent(ev);
+      const root = document.querySelector('satr-ops-room').shadowRoot;
+      const read = (label) => {
+        const btn = root.querySelector('.primary-action');
+        const bar = root.querySelector('.next-step');
+        out.push(label + ' — الزر: «' + (btn && !btn.hidden ? btn.textContent : 'غائب')
+          + '» · الإرشاد: ' + (bar ? bar.textContent : 'غائب'));
+      };
+      // المرحلة 1 — البند 28
+      emit({ type: 'execution_team_update', team: baseTeam('execution-team-a1-one', false) });
+      emit({ type: 'execution_review_update', review: { team_id: 'execution-team-a1-one',
+        artifact_id: AID, state: 'stopped', required_review_engines: ['sdk', 'codex'], reviews: [] } });
+      await new Promise((r) => setTimeout(r, 300));
+      read('بعد إيقاف المراجعة');
+      // المرحلة 2 — البندان 24 و22+2 (فريق جديد يصفّر المراجعة، بحالة ما بعد الدمج الواقعية)
+      emit({ type: 'execution_team_update', team: baseTeam('execution-team-a1-two', true) });
+      emit({ type: 'execution_review_update', review: { team_id: 'execution-team-a1-two',
+        artifact_id: AID, state: 'completed', required_review_engines: ['sdk'],
+        reviews: [{ engine: 'sdk', artifact_id: AID, state: 'completed',
+          verdict: { schema_version: 1, decision: 'approve' } }] } });
+      emit({ type: 'execution_verification_update', verification: { artifact_id: AID, state: 'passed' } });
+      await new Promise((r) => setTimeout(r, 300));
+      read('بعد الدمج');
+      const setupTitle = root.querySelector('.setup-head strong');
+      out.push('عنوان النموذج بعد الدمج: «' + (setupTitle ? setupTitle.textContent : 'غائب') + '» (المعيار: فريق تنفيذ جديد)');
+      return out;
+    `,
+  },
+
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
 ];

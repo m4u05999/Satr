@@ -7,6 +7,10 @@ const TERMINAL_LOOP_STATES = new Set([
   'passed', 'failed_after_n', 'budget_exhausted', 'failed', 'stopped',
 ]);
 
+export const INHERIT_TEMPLATE_TEAM_STATES = new Set([
+  'failed', 'timed_out', 'stopped', 'conflict', 'cleanup_failed',
+]);
+
 export const OBSERVABLE_ACTIVITY_QUIET_MS = 60 * 1000;
 
 export function deriveAgentActivity(agent, currentTime) {
@@ -166,8 +170,10 @@ export function deriveOpsRoomState(state) {
   const busy = !!current.pending;
   const canStart = !loopActive && !busy && (!team || teamTerminal) && !reviewActive && !verificationActive;
   const canStop = !loopActive && !busy && (!!(team && !teamTerminal) || reviewActive || verificationActive);
-  const canReview = !loopActive && !busy && !!(team && team.state === 'completed' && team.merge_supported
-    && artifactId && !current.review);
+  const reviewIncomplete = !!(current.review
+    && ['stopped', 'failed', 'timed_out'].includes(current.review.state));
+  const canReview = !loopActive && !busy && !!(team && team.state === 'completed'
+    && team.merge_supported && artifactId && (!current.review || reviewIncomplete));
   const canPrepareVerification = !loopActive && !busy && !!(team && team.merge_supported && reviewApproved
     && !verificationCurrent);
   const canRunVerification = !busy && verificationCurrent
@@ -182,8 +188,12 @@ export function deriveOpsRoomState(state) {
   else if (canMerge) nextAction = { key: 'merge', action: 'merge', label: 'نجح التحقق ووافقت المراجعات؛ الخطوة التالية دمج الأثر بتأكيد صريح.' };
   else if (canRunVerification) nextAction = { key: 'verify', action: 'verify', label: 'ثُبّتت الاختبارات؛ الخطوة التالية تشغيلها بتأكيد صريح.' };
   else if (canPrepareVerification) nextAction = { key: 'prepare', action: 'prepare', label: 'وافقت المراجعات؛ الخطوة التالية تثبيت تحقق الأثر الحالي.' };
-  else if (canReview) nextAction = { key: 'review', action: 'review', label: 'اكتمل التنفيذ؛ الخطوة التالية بدء المراجعات المستقلة.' };
-  else if (team && team.merged) nextAction = { key: 'merged', action: '', label: 'طُبّق الأثر على شجرة العمل بلا commit.' };
+  else if (canReview) nextAction = { key: 'review', action: 'review', label: reviewIncomplete
+    ? 'لم تكتمل أحكام المراجعة السابقة؛ الخطوة التالية إعادة المراجعة للأثر نفسه.'
+    : 'اكتمل التنفيذ؛ الخطوة التالية بدء المراجعات المستقلة.' };
+  else if (team && team.merged) nextAction = canStart
+    ? { key: 'merged', action: 'start', label: 'طُبّق الأثر على شجرة العمل بلا commit — راجع النتيجة والتزم بها متى شئت، ثم ابدأ مهمة جديدة.' }
+    : { key: 'merged', action: '', label: 'طُبّق الأثر على شجرة العمل بلا commit.' };
   else if (canStart && team && team.state === 'timed_out') nextAction = {
     key: 'retry_timeout', action: 'start',
     label: 'انتهت المهلة؛ ضيّق المهمة أو اختر مهلة أطول، ثم ابدأ فريقاً جديداً صراحةً.',

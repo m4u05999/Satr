@@ -2946,6 +2946,13 @@ ipcMain.handle('satr:executionMerge', async (event, payload) => {
   const marked = executionTeam.markMerged(p.teamId);
   opsartifacts.remove(artifact.artifact_id, { projectRoot: artifact.sourceRoot });
   savedOpsArtifacts.delete(savedOpsArtifactKey(artifact.sourceRoot, artifact.artifact_id));
+  // البند 29: بصمة الأثر مشتقة من HEAD+patch فقد تتشاركها غرف أخرى في الفهرس؛
+  // حذف الملف المشفّر بعد الدمج يوجب تعليم كل مدخلات البصمة غير قابلة للاستعادة
+  // (نفس ما يفعله مسار الحذف اليدوي) وإلا أعلن التاريخ أثراً استعادتُه تفشل حتماً.
+  opsroomindex.markArtifactsUnavailable([{
+    artifact_id: artifact.artifact_id,
+    project_key: opsroomindex.projectKey(artifact.sourceRoot),
+  }]);
   if (marked && marked.team) updateOpsRoomIndex(artifact.sourceRoot, marked.team, false);
   recordOpsSystem(artifact.room_id, 'phase_gate', 'اكتمل انتقال الدمج للأثر المعتمد.',
     p.teamId, artifact.artifact_id, 'merge:completed');
@@ -2985,6 +2992,13 @@ ipcMain.handle('satr:opsRoomRestore', (event, payload) => {
   const loaded = opsartifacts.load(p.artifactId, { projectRoot: cwd });
   if (!loaded.ok || loaded.artifact.room_id !== p.roomId
     || path.resolve(loaded.artifact.sourceRoot) !== path.resolve(cwd)) {
+    // البند 29 (دفاع ثانٍ): ملف الأثر غاب أو فسد رغم ادعاء الفهرس — علّم البصمة غير
+    // قابلة للاستعادة كي لا يكرر التاريخ وعداً يفشل حتماً. حالات عدم التطابق لا تُعلَّم.
+    if (!loaded.ok && (loaded.error === 'artifact_unavailable' || loaded.error === 'artifact_invalid')) {
+      opsroomindex.markArtifactsUnavailable([{
+        artifact_id: p.artifactId, project_key: opsroomindex.projectKey(cwd),
+      }]);
+    }
     return { ok: false, error: loaded.error || 'artifact_mismatch' };
   }
   savedOpsArtifacts.add(savedOpsArtifactKey(cwd, p.artifactId));

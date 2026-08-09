@@ -1349,7 +1349,10 @@ class SatrChat extends HTMLElement {
           el.querySelector('.state').textContent = isError ? '✗' : '✓';
           if (isError) el.classList.add('error');
         }
-        workTitle.textContent = isError ? 'واجه عائقاً ويتابع' : 'يتابع العمل';
+        if (!worklog.classList.contains('stopped') && !worklog.classList.contains('failed')
+          && !worklog.classList.contains('done')) {
+          workTitle.textContent = isError ? 'واجه عائقاً ويتابع' : 'يتابع العمل';
+        }
       },
       addScreenshot(dataUrl, kind) {
         if (!/^data:image\/png;base64,/.test(String(dataUrl || ''))) return;

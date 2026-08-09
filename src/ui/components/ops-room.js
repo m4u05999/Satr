@@ -6,7 +6,8 @@ import { cardSheet } from '../lib/card.css.js';
 import { buildDiff } from '../lib/diff.js';
 import { diffSheet } from '../lib/diff.css.js';
 import {
-  createOpsRoomState, deriveAgentActivity, deriveOpsRoomState, opsRoomReducer,
+  createOpsRoomState, deriveAgentActivity, deriveOpsRoomState, INHERIT_TEMPLATE_TEAM_STATES,
+  opsRoomReducer,
 } from '../lib/ops-room-state.js';
 
 const roomSheet = sheet(`
@@ -486,6 +487,8 @@ const ERROR_LABELS = {
   persistence_failed: 'تعذّر حفظ الأثر المشفّر — تحقق من مساحة القرص وصلاحيات مجلد التطبيق ثم أعد التنفيذ.',
   remove_failed: 'تعذّر حذف الأثر المحفوظ — أغلق أي برنامج يستخدم الملف ثم أعد المحاولة.',
   not_running: 'لم يعد الانتقال جارياً — حدّث الغرفة قبل محاولة الإيقاف مجدداً.',
+  bad_patch: 'ملف الأثر تالف أو غير صالح البنية — أعد التنفيذ لإنشاء أثر جديد.',
+  read_failed: 'تعذّرت قراءة بيانات المستودع أو الأثر — تحقق من عمل Git وصلاحيات المجلد ثم أعد المحاولة.',
 };
 
 const BAD_INPUT_LABELS = {
@@ -502,9 +505,13 @@ const BAD_INPUT_LABELS = {
 };
 
 function errorLabel(result, context, fallback) {
+  if (result == null) {
+    return 'لم يصل رد من العملية الرئيسية (خطأ داخلي أو انقطاع) — أعد المحاولة، وإن تكرر أعد تشغيل التطبيق.';
+  }
   const error = typeof result === 'string' ? result : result && result.error;
   if (error === 'bad_input') return BAD_INPUT_LABELS[context] || fallback;
-  return ERROR_LABELS[error] || fallback;
+  if (ERROR_LABELS[error]) return ERROR_LABELS[error];
+  return error ? fallback + ' (الرمز التقني: ' + error + ')' : fallback;
 }
 
 function text(value) {
@@ -1377,10 +1384,11 @@ class SatrOpsRoom extends HTMLElement {
     const view = this._views.tasks; view.textContent = '';
     this._setup = null;
     const derived = deriveOpsRoomState(this._state);
-    if (derived.canStart) view.appendChild(this._setupCard(this._state.team));
+    const team = this._state.team;
+    const template = team && INHERIT_TEMPLATE_TEAM_STATES.has(team.state) ? team : null;
+    if (derived.canStart) view.appendChild(this._setupCard(template));
     else this._syncSetupActions();
     this._renderLoop(view, derived);
-    const team = this._state.team;
     if (!team) { if (!derived.canStart && !this._state.loop) this._empty(view, 'لا يوجد فريق تنفيذ.'); return; }
     for (const agent of team.agents || []) {
       const card = this._card({
@@ -1597,10 +1605,15 @@ class SatrOpsRoom extends HTMLElement {
       row.appendChild(itemHead); row.appendChild(content); list.appendChild(row);
     }
     card.appendChild(list);
-    const repair = document.createElement('button'); repair.type = 'button'; repair.className = 'merged-repair';
-    repair.textContent = '🔧 أصلح بالملاحظات';
-    repair.addEventListener('click', () => this._repairTaskFromReport(report));
-    card.appendChild(repair); view.appendChild(card);
+    const repairable = items.some((item) => item
+      && (item.severity === 'critical' || item.severity === 'high'));
+    if (repairable) {
+      const repair = document.createElement('button'); repair.type = 'button'; repair.className = 'merged-repair';
+      repair.textContent = '🔧 أصلح بالملاحظات';
+      repair.addEventListener('click', () => this._repairTaskFromReport(report));
+      card.appendChild(repair);
+    }
+    view.appendChild(card);
   }
 
   _renderReview() {
@@ -1679,7 +1692,8 @@ class SatrOpsRoom extends HTMLElement {
     this._primaryButton.hidden = !available;
     this._primaryButton.disabled = !available;
     this._primaryButton.dataset.action = available ? action : '';
-    this._primaryButton.textContent = action === 'start' && this._state.team ? 'ابدأ فريقاً جديداً'
+    this._primaryButton.textContent = key === 'merged' && available ? 'ابدأ مهمة جديدة'
+      : action === 'start' && this._state.team ? 'ابدأ فريقاً جديداً'
       : available ? config.label : '';
     this._primaryButton.title = '';
     this._primaryReason.textContent = '';

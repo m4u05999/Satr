@@ -175,6 +175,24 @@ function testJudgesHelpers(component) {
     'return function (names) {' + methodBody(component, '  _modelOverrides(names)') + '};')(safeText);
   const supportsModels = new Function(
     'return function (method, arity) {' + methodBody(component, '  _supportsModels(method, arity)') + '};')();
+  const errorLabel = new Function('BAD_INPUT_LABELS', 'ERROR_LABELS',
+    'return function (result, context, fallback) {'
+      + methodBody(component, 'function errorLabel(result, context, fallback)') + '};')(
+    { execution: 'مدخل غير صالح' },
+    { bad_patch: 'أثر تالف', read_failed: 'تعذرت القراءة' },
+  );
+  assert.strictEqual(errorLabel(null, 'execution', 'رسالة احتياطية'),
+    'لم يصل رد من العملية الرئيسية (خطأ داخلي أو انقطاع) — أعد المحاولة، وإن تكرر أعد تشغيل التطبيق.',
+    'a missing IPC result must have its own actionable message');
+  assert.strictEqual(errorLabel({ error: 'unknown_code' }, 'execution', 'رسالة احتياطية'),
+    'رسالة احتياطية (الرمز التقني: unknown_code)',
+    'an untranslated error must preserve its technical code');
+  assert.strictEqual(errorLabel('', 'execution', 'رسالة احتياطية'), 'رسالة احتياطية',
+    'an empty string error must retain the plain fallback');
+  assert.strictEqual(errorLabel('bad_patch', 'execution', 'رسالة احتياطية'), 'أثر تالف',
+    'known bad_patch errors must use their Arabic label');
+  assert.strictEqual(errorLabel('read_failed', 'execution', 'رسالة احتياطية'), 'تعذرت القراءة',
+    'known read_failed errors must use their Arabic label');
   const modelHost = {
     _cwd: 'D:\\repo\\judge-ui',
     _models: { worker: '', sdk: '', codex: '' },
@@ -270,6 +288,15 @@ function testJudgesHelpers(component) {
     'synthetic merged report must expose an explicit repair click');
   repairButton.listeners.click();
   assert.strictEqual(repairClicks, 1, 'repair click must only invoke the form-filling handler once');
+  const lowSeverityView = new FakeElement('div');
+  renderMergedReport.call({ _repairTaskFromReport: () => { repairClicks++; } }, lowSeverityView, {
+    items: [
+      { severity: 'medium', lens: 'correctness', engine: 'sdk', text: 'بند متوسط.' },
+      { severity: 'low', lens: 'simplicity', engine: 'codex', text: 'بند منخفض.' },
+    ],
+  });
+  assert.strictEqual(elementsByClass(lowSeverityView, 'merged-repair').length, 0,
+    'medium/low-only merged reports must not expose an empty repair action');
 
   const reviewSections = new Function('text',
     'return function (summary, recommendation) {'
@@ -404,11 +431,17 @@ async function testReducer() {
   const stateModule = await loadStateModule();
   const {
     createOpsRoomState, deriveAgentActivity, opsRoomReducer, deriveOpsRoomState, isCurrentArtifact,
-    OBSERVABLE_ACTIVITY_QUIET_MS,
+    INHERIT_TEMPLATE_TEAM_STATES, OBSERVABLE_ACTIVITY_QUIET_MS,
   } = stateModule;
   const artifact = 'a'.repeat(64);
   const staleArtifact = 'b'.repeat(64);
   const current = fixture(artifact);
+
+  assert.deepStrictEqual([...INHERIT_TEMPLATE_TEAM_STATES], [
+    'failed', 'timed_out', 'stopped', 'conflict', 'cleanup_failed',
+  ], 'only failed/stopped terminal teams may seed a retry template');
+  assert.strictEqual(INHERIT_TEMPLATE_TEAM_STATES.has('completed'), false,
+    'successful completion must open a clean setup form');
 
   let state = createOpsRoomState();
   assert.strictEqual(state.loop, null, 'loop state starts empty');
@@ -469,6 +502,38 @@ async function testReducer() {
   assert.deepStrictEqual(state.entries.map((entry) => entry.id), ['ops-entry-a', 'ops-entry-b', 'ops-entry-c'], 'stable dedupe ordering');
   assert.strictEqual(deriveOpsRoomState(state).canReview, true, 'completed artifact must expose explicit review action');
   assert.strictEqual(deriveOpsRoomState(state).nextAction.action, 'review', 'completed artifact recommends review without starting it');
+
+  for (const reviewState of ['stopped', 'failed', 'timed_out']) {
+    const incompleteReview = opsRoomReducer(createOpsRoomState(), {
+      type: 'hydrate', team: current.team, review: {
+        id: 'execution-review-incomplete-' + reviewState,
+        team_id: current.team.id, artifact_id: artifact, state: reviewState,
+      },
+    });
+    const derived = deriveOpsRoomState(incompleteReview);
+    assert.strictEqual(derived.canReview, true,
+      reviewState + ' review must expose an explicit retry for the same artifact');
+    assert.strictEqual(derived.nextAction.key, 'review');
+    assert(derived.nextAction.label.includes('إعادة المراجعة للأثر نفسه'),
+      reviewState + ' review guidance must explain the same-artifact retry');
+  }
+  const completedNotApproved = judgesFixture(artifact).review;
+  const completedReviewState = opsRoomReducer(createOpsRoomState(), {
+    type: 'hydrate', team: current.team, review: completedNotApproved,
+  });
+  assert.strictEqual(deriveOpsRoomState(completedReviewState).canReview, false,
+    'a completed non-approved review must remain final');
+
+  let mergedState = opsRoomReducer(createOpsRoomState(), {
+    type: 'hydrate', team: { ...current.team, merged: true }, review: current.review,
+    verification: current.verification,
+  });
+  const mergedDerived = deriveOpsRoomState(mergedState);
+  assert.strictEqual(mergedDerived.nextAction.key, 'merged', 'merged work must retain its terminal context');
+  assert.strictEqual(mergedDerived.nextAction.action, 'start', 'merged work must expose a new-task action');
+  mergedState = opsRoomReducer(mergedState, { type: 'pending', action: 'start' });
+  assert.strictEqual(deriveOpsRoomState(mergedState).nextAction.action, '',
+    'pending merged transition must not expose a duplicate start action');
 
   let loopState = opsRoomReducer(createOpsRoomState(), {
     type: 'hydrate', room: { room_id: current.team.room_id, entries: [] }, team: current.team,
@@ -815,6 +880,12 @@ function testDesignGuard() {
   const secondarySetup = setupCard.indexOf('setup.appendChild(note); setup.appendChild(planRow);');
   assert(workerInputs !== -1 && secondarySetup !== -1 && workerInputs < secondarySetup,
     'worker task and ownership inputs must precede secondary setup guidance and planning actions');
+  const renderTasks = component.slice(component.indexOf('  _renderTasks() {'),
+    component.indexOf('\n  _renderDiscussion()', component.indexOf('  _renderTasks() {')));
+  assert(component.includes('INHERIT_TEMPLATE_TEAM_STATES')
+    && renderTasks.includes('INHERIT_TEMPLATE_TEAM_STATES.has(team.state)')
+    && renderTasks.includes('this._setupCard(template)'),
+  'setup inheritance must be restricted through the exported terminal-team contract');
   assert(component.includes('.task, .ownership { flex: 1 1 auto; }')
     && component.includes('.task { min-height: calc(var(--space-7) + var(--space-6)); }')
     && component.includes('min-height: calc(var(--space-7) + var(--space-3));'),
@@ -962,6 +1033,10 @@ function testDesignGuard() {
   assert(mergedRenderer.includes("addEventListener('click'")
     && mergedRenderer.includes('_repairTaskFromReport(report)'),
   'merged report repair must remain an explicit click');
+  assert(mergedRenderer.includes('items.some((item) => item')
+    && mergedRenderer.includes("item.severity === 'critical' || item.severity === 'high'")
+    && mergedRenderer.indexOf('if (repairable)') < mergedRenderer.indexOf("repair.className = 'merged-repair'"),
+  'merged report repair must only be created for critical/high findings');
   const repairTask = component.slice(component.indexOf('  _repairTaskFromReport('),
     component.indexOf('\n  _renderMergedReport(', component.indexOf('  _repairTaskFromReport(')));
   assert(repairTask.includes("item.severity === 'critical' || item.severity === 'high'")
@@ -970,6 +1045,16 @@ function testDesignGuard() {
   'repair must seed only critical/high notes through the 2000-code-point bound');
   assert(!repairTask.includes('executionTeamStart') && !repairTask.includes('_startExecution('),
     'repair must fill the setup form without starting execution');
+  const primaryRenderer = component.slice(component.indexOf('  _renderPrimaryAction(derived) {'),
+    component.indexOf('\n  _stagePresentation(', component.indexOf('  _renderPrimaryAction(derived) {')));
+  assert(primaryRenderer.includes("key === 'merged' && available ? 'ابدأ مهمة جديدة'")
+    && primaryRenderer.includes("'ابدأ فريقاً جديداً'"),
+  'merged work must offer a new task while retry states retain the new-team label');
+  assert(component.includes("bad_patch: 'ملف الأثر تالف أو غير صالح البنية")
+    && component.includes("read_failed: 'تعذّرت قراءة بيانات المستودع أو الأثر")
+    && component.includes("fallback + ' (الرمز التقني: ' + error + ')'")
+    && component.includes('لم يصل رد من العملية الرئيسية (خطأ داخلي أو انقطاع)'),
+  'Ops Room errors must distinguish IPC loss, known failures, and untranslated technical codes');
   const truncateSource = /function truncatePoints\(value, maximum, suffix\) \{[\s\S]*?\n\}/.exec(component);
   assert(truncateSource, 'Unicode code-point truncation helper missing');
   const truncatePoints = new Function('text',

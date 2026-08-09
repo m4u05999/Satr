@@ -91,16 +91,42 @@ async function main() {
     await fsp.utimes(expiredFile, old, old);
     assert(opsartifacts.prune({ root: vault }).removed.some((item) => item.artifact_id === expiredId
       && item.project_key === opsartifacts.projectScope(project)));
+    // البند 29: بصمة الأثر مشتقة من HEAD+patch فتتشاركها غرفتان أنتجتا الفرق نفسه —
+    // تعليم البصمة يجب أن يقفل ادعاء الاستعادة في كل الغرف المتشاركة بنداء واحد.
+    const twinRoomId = 'ops-room-continuity-twin';
+    assert.strictEqual(opsroomindex.upsert(project, {
+      room_id: twinRoomId, team_id: 'execution-team-continuity-twin', state: 'completed',
+      artifact_id: artifactId, restorable: true,
+    }, { file: indexFile }).ok, true);
     assert.strictEqual(opsroomindex.markArtifactsUnavailable([{
       artifact_id: artifactId,
       project_key: opsroomindex.projectKey(project),
     }], { file: indexFile }).changed, true);
-    assert.strictEqual(opsroomindex.list(project, { file: indexFile }).find((item) => item.room_id === roomId).restorable, false);
+    const flipped = opsroomindex.list(project, { file: indexFile });
+    assert.strictEqual(flipped.find((item) => item.room_id === roomId).restorable, false);
+    assert.strictEqual(flipped.find((item) => item.room_id === twinRoomId).restorable, false);
+
+    // عقد ساكن على main.js (نمط assertStaticContract): مسار الدمج يعلّم البصمة المشتركة
+    // بعد حذف الملف المشفّر، ومسار الاستعادة يعلّمها عند غياب/فساد الملف فقط.
+    const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+    const mergeStart = mainSource.indexOf("ipcMain.handle('satr:executionMerge'");
+    const mergeBlock = mainSource.slice(mergeStart, mainSource.indexOf("ipcMain.handle('satr:opsRoomHistory'"));
+    assert(mergeStart >= 0 && mergeBlock.includes('opsartifacts.remove(artifact.artifact_id'),
+      'غاب حذف الأثر من مسار الدمج في main.js');
+    assert(mergeBlock.indexOf('opsroomindex.markArtifactsUnavailable')
+      > mergeBlock.indexOf('opsartifacts.remove(artifact.artifact_id'),
+      'يجب أن يعلّم مسار الدمج البصمة المشتركة غير قابلة للاستعادة بعد حذف الملف المشفّر (البند 29).');
+    const restoreBlock = mainSource.slice(mainSource.indexOf("ipcMain.handle('satr:opsRoomRestore'"),
+      mainSource.indexOf("ipcMain.handle('satr:opsRoomArtifactDelete'"));
+    assert(restoreBlock.includes("loaded.error === 'artifact_unavailable'")
+      && restoreBlock.includes('opsroomindex.markArtifactsUnavailable'),
+      'يجب أن يعلّم مسار الاستعادة البصمة عند غياب/فساد ملف الأثر (البند 29 — دفاع ثانٍ).');
 
     console.log('✓ artifact vault fails closed without encryption and never stores plaintext patch');
     console.log('✓ project history is filtered without exposing its internal project fingerprint');
     console.log('✓ restored artifacts reopen review state without patch IPC or stale verification');
     console.log('✓ retention pruning and explicit deletion close stale restore entries');
+    console.log('✓ merge/restore paths close every shared-fingerprint restore claim (item 29)');
   } finally {
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
