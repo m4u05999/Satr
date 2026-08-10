@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'">
   <title>سطر — البيت العربي لأدوات الذكاء الاصطناعي في سطر الأوامر</title>
   <meta name="description" content="الطرفيات تكسر العربية — حروف مقطّعة معكوسة. «سطر» يشغّل Claude Code وأدوات الذكاء الاصطناعي في واجهة عربية تعرض لغتك كما تستحق. مجاني وشفرته عامة.">
   <meta property="og:title" content="سطر — البيت العربي لأدوات الذكاء الاصطناعي">
@@ -25,6 +25,7 @@
     <a href="#graph">الجراف</a>
     <a href="#engines">المحرّكات</a>
     <a class="nav-generate" href="#generate">التوليد</a>
+    <a class="nav-pro" href="#pro">برو</a>
     <a href="https://github.com/m4u05999/Satr" rel="noopener">GitHub</a>
     <a class="nav-cta" href="#download">تنزيل</a>
   </nav>
@@ -247,6 +248,41 @@
   </div>
 </section>
 
+<!-- المشهد 6ب: سطر برو — الحجز المبكر (المرحلة 0: بيع قبل البناء) -->
+<section id="pro" aria-labelledby="pro-title">
+  <div class="wrap">
+    <span class="eyebrow" data-reveal>سطر برو · حجز مبكر</span>
+    <h2 class="section-title" id="pro-title" data-reveal>أطلق فكرتك باشتراك واحد <span class="gold">بالريال</span>.</h2>
+    <p class="section-lead" data-reveal>النسخة المجانية من «سطر» تبقى مجانية دائماً بمفاتيحك أنت. أما «سطر برو» فلمن يريد أن يبدأ فوراً: بلا مفاتيح تجهّزها، ولا حساب عند مزوّد أجنبي، ولا بطاقة تُرفض — اشتراك واحد يفتح لك النماذج والتوليد من أول دقيقة.</p>
+    <div class="pro-grid">
+      <div class="pro-features" data-reveal>
+        <ul class="pro-list">
+          <li><strong>ابدأ بلا أي إعداد</strong> — نماذج ذكاء اصطناعي جاهزة داخل «سطر»: تطلب فيبني، بلا مفتاح API ولا حساب خارجي.</li>
+          <li><strong>ولّد موادك التسويقية</strong> — صور وفيديو وصوت من المحادثة نفسها؛ رصيدك الشهري يكفي مئات الصور أو عشرات الفيديوهات.</li>
+          <li><strong>رصيد واضح، لا وهم «غير محدود»</strong> — تعرف رصيدك دائماً، وترى كلفة كل توليد قبل أن توافق عليه.</li>
+          <li><strong>لا تُحبس أبداً</strong> — نفد الرصيد؟ يرجع «سطر» فوراً إلى وضع مفاتيحك المجاني ولا يتوقف عملك.</li>
+          <li><strong>قادم في برو: النشر بزر</strong> — من الفكرة إلى موقع منشور دون مغادرة «سطر» (قيد البناء — نعِد بما نبني فقط).</li>
+        </ul>
+        <p class="pro-honesty">بكل وضوح: «سطر برو» لا يشمل اشتراكات Claude Code وCodex وKimi Code الأصلية — تلك تبقى بتسجيل دخولك لدى مزوّدها كما هي اليوم. وكل ما تستخدمه مجاناً في «سطر» الآن يبقى مجانياً.</p>
+      </div>
+      <aside class="pro-card" data-reveal aria-label="بطاقة اشتراك سطر برو">
+        <span class="pro-kicker">خطة واحدة · رصيد شهري واضح</span>
+        <div class="pro-price"><strong><bdi dir="ltr">49</bdi></strong><span> ر.س / شهر</span></div>
+        <p class="pro-founders">عرض المؤسسين المبكر: <strong><bdi dir="ltr">29</bdi> ر.س</strong> شهرياً (خصم نحو <bdi dir="ltr">40%</bdi>) لأول دفعة مشتركين — ما دام اشتراكك مستمراً.</p>
+        <form name="pro-interest" method="POST" action="/pro-thanks.html" data-netlify="true" netlify-honeypot="bot-field" class="pro-form">
+          <input type="hidden" name="form-name" value="pro-interest">
+          <input type="hidden" name="source" value="site-pro-section">
+          <p class="pro-bot" hidden aria-hidden="true"><label>لا تملأ هذا الحقل: <input name="bot-field"></label></p>
+          <label class="pro-label" for="proEmail">بريدك الإلكتروني</label>
+          <input class="pro-input" id="proEmail" name="email" type="email" required dir="ltr" autocomplete="email" placeholder="you@example.com">
+          <button class="btn btn-gold pro-submit" type="submit">سجّل اهتمامك</button>
+        </form>
+        <p class="pro-note">الدفع لم يُفعَّل بعد — التسجيل بريد فقط. المسجلون أول من يصله رابط الاشتراك بعرض المؤسسين، ولا نستخدم بريدك لغير ذلك.</p>
+      </aside>
+    </div>
+  </div>
+</section>
+
 <!-- المشهد 7: الثقة -->
 <section id="trust">
   <div class="wrap">
@@ -285,6 +321,8 @@
     <a href="https://github.com/m4u05999/Satr" rel="noopener">GitHub</a>
     ·
     <a href="https://github.com/m4u05999/Satr/releases" rel="noopener">الإصدارات</a>
+    ·
+    <a href="#pro">سطر برو</a>
     ·
     <a href="enterprise.html">رخصة المنظمة</a>
     ·

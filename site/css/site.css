@@ -141,6 +141,13 @@ body {
 
 .nav-cta:hover { background: var(--gold); color: var(--on-gold) !important; }
 
+/* رابط «برو» — الصنف الشقيق `.nav-generate` بلا تمييز في الورقة، فالتمييز هنا
+   همسة لا صيحة: لون النص الكامل بدل الخافت (مدخل تجاري لا قسم محتوى)، وذهبي
+   عند التحويم. لا يزاحم `.nav-cta` صاحبة الحضور الذهبي الكامل.
+   الخصوصية: `.site-header nav a` تغلب `.nav-pro` وحدها — نرفعها بلا !important. */
+.site-header nav a.nav-pro { color: var(--text); }
+.site-header nav a.nav-pro:hover { color: var(--gold-strong); }
+
 /* ---------- المقاطع العامة ---------- */
 section {
   position: relative;
@@ -757,6 +764,189 @@ section {
 
 .byok-story bdi { direction: ltr; font-family: var(--mono); color: var(--gold); }
 
+/* ---------- المشهد 6ب: سطر برو (حجز مبكر) ----------
+   القسم يرث إيقاع `section` العام (‏8rem) كبقية المشاهد، ويميّزه توهج ذهبي خافت
+   أعلاه فيقرأ مستقلاً حتى لو جاور مشهداً يشاركه الخلفية العميقة. */
+#pro {
+  background:
+    radial-gradient(ellipse 58% 34% at 50% 6%, rgba(217, 164, 65, .06), transparent 72%),
+    var(--bg-deep);
+}
+
+/* الوسم العلوي — مقصور على #pro عمداً: الصنف `.eyebrow` بلا قاعدة عامة في الورقة
+   (يستعمله #generate نصاً عادياً)، وتنميطه عالمياً يغيّر مشهداً معتمداً.
+   ‏inline-block ضروري كي تعمل إزاحة [data-reveal] — ‏transform يُتجاهل على inline. */
+#pro .eyebrow {
+  display: inline-block;
+  margin-bottom: .9rem;
+  color: var(--gold);
+  font-size: .85rem;
+  font-weight: 500;
+}
+/* بلا mono ولا letter-spacing بخلاف `.generate-step`: نصّ الوسم عربي خالص،
+   والخط الأحادي بلا تغطية عربية فيسقط خارج IBM Plex، والتباعد يرخي الوصل. */
+
+/* الميزات أوسع من البطاقة بنسبة قريبة من `.generate-transparency`.
+   ‏align-items: start كي لا تتمدد البطاقة إلى طول القائمة. */
+.pro-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(17rem, .72fr);
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: start;
+  margin-top: 3rem;
+}
+
+/* ---------- عمود الميزات ---------- */
+.pro-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pro-list li {
+  position: relative;
+  padding-block: .95rem;
+  padding-inline-start: 1.5rem;
+  color: var(--text-dim);
+  font-size: 1rem;
+  line-height: 1.85;
+}
+
+/* خيط فاصل خافت بدل النقاط — إيقاع قراءة هادئ بنمط `.catalog-table` */
+.pro-list li + li { border-top: 1px solid var(--border-dim); }
+
+/* السهم الذهبي هو علامة القوائم في الموقع (‏`.offer-facts`)؛ يشير يساراً في RTL
+   فيقرأ «يؤدي إلى». ‏top يساوي الحشوة العلوية ليحاذي أول سطر تماماً. */
+.pro-list li::before {
+  content: '←';
+  position: absolute;
+  inset-inline-start: 0;
+  top: .95rem;
+  color: var(--gold);
+}
+
+.pro-list strong { color: var(--text); font-weight: 600; }
+
+/* فقرة الصدق: خط ذهبي جانبي وخلفية أخفّ من `.transparency-callout` — شفافية
+   واثقة لا تحذير صارخ. بلا زوايا مستديرة مثل نظيرتها في صفحات السوق. */
+.pro-honesty {
+  margin: 1.8rem 0 0;
+  border-inline-start: 2px solid var(--gold-border);
+  padding: .95rem 1.2rem;
+  background: rgba(217, 164, 65, .05);
+  color: var(--text-dim);
+  font-size: .95rem;
+}
+
+/* ---------- بطاقة الحجز ---------- */
+/* عائلة `.offer-card` نفسها (حد ذهبي + تدرّج سطحي) مع ظل خفيف يرفعها عن الخلفية:
+   هي نداء الفعل الثاني في الصفحة. بلا المربع المائل الزخرفي (`.offer-card::after`)
+   لأنه يمرّ فوق النص الأسفل، وأسفل هذه البطاقة حقلٌ ونصّ تنويه يحتاجان صفاءً. */
+.pro-card {
+  position: relative;
+  border: 1px solid var(--gold-border);
+  border-radius: 18px;
+  padding: clamp(1.5rem, 4vw, 2.2rem);
+  background: linear-gradient(145deg, var(--gold-soft), var(--surface) 48%);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, .42);
+  overflow: hidden;
+}
+
+.pro-kicker {
+  display: block;
+  color: var(--text-faint);
+  font-size: .84rem;
+}
+
+/* بخلاف `.offer-price` لا نفرض direction: ltr — الوحدة عربية («ر.س / شهر»)
+   والرقم معزول أصلاً بـ bdi، فإبقاء الاتجاه RTL يرسي السعر على بداية البطاقة
+   مع بقية محتواها ويقرأ «‏49 ر.س / شهر» سليماً. */
+.pro-price {
+  display: flex;
+  align-items: baseline;
+  gap: .55rem;
+  margin: 1rem 0 .35rem;
+  color: var(--gold-strong);
+}
+
+.pro-price strong {
+  font-family: var(--mono);
+  font-size: clamp(2.8rem, 6vw, 4.2rem);
+  line-height: 1;
+}
+
+.pro-price span { color: var(--text-dim); font-size: 1rem; }
+
+.pro-founders {
+  margin: 0 0 1.5rem;
+  color: var(--text);
+  font-size: 1.02rem;
+  line-height: 1.85;
+}
+
+.pro-founders strong { color: var(--gold-strong); }
+.pro-founders bdi { font-family: var(--mono); }
+
+/* ---------- نموذج الاهتمام ---------- */
+/* الخيط العلوي يفصل «العرض» عن «الفعل» بنمط `.offer-facts`.
+   ‏`.pro-bot` تبقى مخفية بسمة hidden — لا قاعدة display على أبناء النموذج. */
+.pro-form {
+  display: grid;
+  gap: .55rem;
+  margin: 0;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--border);
+}
+
+.pro-label {
+  color: var(--text-dim);
+  font-size: .88rem;
+}
+
+.pro-input {
+  width: 100%;
+  padding: .75rem .95rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-deep);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: .95rem;
+  text-align: left; /* الوسم dir="ltr" — البريد يرسو يساراً */
+  transition: border-color var(--dur) var(--ease);
+}
+
+.pro-input::placeholder { color: var(--text-faint); }
+
+/* حلقة التركيز الذهبية نفسها في الورقة، بإزاحة أصغر (‏2px بدل 4px) كي لا تلامس
+   الزرّ أسفلها؛ outline لا box-shadow فتبقى مرئية في أوضاع التباين العالي. */
+.pro-input:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-color: var(--gold-border);
+}
+
+/* الزرّ يرث `.btn.btn-gold`؛ هنا فقط ما لا يرثه عنصر button */
+.pro-submit {
+  justify-content: center;
+  width: 100%;
+  margin-top: .45rem;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.pro-note {
+  margin: 1.1rem 0 0;
+  color: var(--text-faint);
+  font-size: .85rem;
+  line-height: 1.7;
+}
+
+/* ‏reduced-motion: عناصر القسم تُكشف بـ[data-reveal] وتغطيها القاعدة العامة
+   أسفل الورقة؛ والانتقال الوحيد هنا (لون حدّ الحقل) يعطّله سقف المدة العام.
+   لا استثناء إضافي مطلوب. */
+
 /* ---------- المشهد 7: الثقة ---------- */
 #trust { background: var(--bg-deep); }
 
@@ -1318,6 +1508,9 @@ section {
   .generate-story-gallery { direction: rtl; }
   .generate-frame, .generate-story-gallery .generate-frame { transform: none; }
   .graph-walls { grid-template-columns: 1fr; }
+  /* برو: عمود واحد بترتيب الوسم نفسه — الميزات تبني الاقتناع ثم تأتي البطاقة
+     بالسعر والنموذج. لا `order` مقلوب: ترتيب القراءة يبقى مطابقاً لترتيب DOM. */
+  .pro-grid { grid-template-columns: 1fr; gap: 2rem; }
   .feature-card:nth-child(even) { direction: rtl; }
   /* الطبقات: الدرج المائل يضيق الشاشة — أعمدة مستقيمة */
   .layer-card:nth-child(2), .layer-card:nth-child(3), .layer-card:nth-child(4) { margin-inline-start: 0; }
