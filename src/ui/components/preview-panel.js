@@ -340,7 +340,8 @@ class SatrPreviewPanel extends HTMLElement {
     if (this._wired) return;
     this._wired = true;
     const root = this.attachShadow({ mode: 'open' });
-    root.adoptedStyleSheets = [controlsSheet, previewSheet];
+    const layoutSheet = sheet(':host {}');
+    root.adoptedStyleSheets = [controlsSheet, previewSheet, layoutSheet];
     const wrap = document.createElement('div');
     // الغلاف يرث flex العمودي من :host عبر display:contents
     wrap.style.display = 'contents';
@@ -350,7 +351,14 @@ class SatrPreviewPanel extends HTMLElement {
     const urlIn = $('pvUrl'), box = $('pvBox'), hint = $('pvHint'), err = $('pvErr');
     const errText = $('pvErrText'), restartServerBtn = $('pvRestartServer');
     const backBtn = $('pvBack'), fwdBtn = $('pvFwd'), reloadBtn = $('pvReload'), autoBtn = $('pvAuto');
+    const resizer = $('pvResizer');
     const toggleBtn = document.getElementById('previewToggle'); // زر الشريط العلوي (light DOM)
+
+    resizer.tabIndex = 0;
+    resizer.setAttribute('role', 'separator');
+    resizer.setAttribute('aria-orientation', 'vertical');
+    resizer.setAttribute('aria-label', 'تغيير عرض المعاينة؛ السهم الأيمن يوسّع والأيسر يضيّق');
+    resizer.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight Home End');
 
     let started = false; // هل حُمّل عنوان في العرض الأصلي؟
 
@@ -364,9 +372,40 @@ class SatrPreviewPanel extends HTMLElement {
       localStorage.setItem('satr_preview_autoreload', autoReload ? '1' : '0');
     });
 
+    // عرض المعاينة رقمي ومقيّد قبل دخوله ورقة النمط؛ لا تُنشأ سمة style أثناء السحب.
+    const panelResizeBounds = () => {
+      const minimum = 280;
+      return { minimum, maximum: Math.max(minimum, window.innerWidth * 0.78) };
+    };
+    const updateResizeAccessibility = () => {
+      const bounds = panelResizeBounds();
+      const measured = this.getBoundingClientRect().width;
+      const current = Math.min(bounds.maximum, Math.max(bounds.minimum, measured || bounds.minimum));
+      resizer.setAttribute('aria-valuemin', String(Math.round(bounds.minimum)));
+      resizer.setAttribute('aria-valuemax', String(Math.round(bounds.maximum)));
+      resizer.setAttribute('aria-valuenow', String(Math.round(current)));
+      resizer.setAttribute('aria-valuetext', 'عرض المعاينة ' + Math.round(current) + ' بكسل');
+    };
+    const setPanelWidth = (value, persist) => {
+      const width = Number(value);
+      if (!Number.isFinite(width)) return;
+      const bounds = panelResizeBounds();
+      const clamped = Math.round(Math.min(bounds.maximum, Math.max(bounds.minimum, width)));
+      layoutSheet.replaceSync(':host { --pv-w: ' + clamped + 'px; }');
+      updateResizeAccessibility();
+      if (persist !== false) localStorage.setItem('satr_preview_w', String(clamped));
+    };
+    const persistPanelWidth = () => {
+      const bounds = panelResizeBounds();
+      const measured = Math.min(bounds.maximum, Math.max(bounds.minimum, this.getBoundingClientRect().width));
+      localStorage.setItem('satr_preview_w', String(Math.round(measured)));
+      updateResizeAccessibility();
+    };
+
     // عرض اللوحة المحفوظ (نمط ارتفاع الطرفية)
     const savedW = parseInt(localStorage.getItem('satr_preview_w') || '', 10);
-    if (savedW && savedW >= 280) this.style.setProperty('--pv-w', savedW + 'px');
+    if (savedW && savedW >= 280) setPanelWidth(savedW, false);
+    else updateResizeAccessibility();
 
     // ---------- إبلاغ مستطيل مساحة العرض للعملية الرئيسية ----------
     // WebContentsView تُرسم فوق pvBox — أي تغيير تخطيط (فتح الطرفية/تغيير حجم/سحب
@@ -421,7 +460,7 @@ class SatrPreviewPanel extends HTMLElement {
       boundsRaf = requestAnimationFrame(sendBounds);
     };
     new ResizeObserver(reportBounds).observe(box);
-    window.addEventListener('resize', reportBounds);
+    window.addEventListener('resize', () => { reportBounds(); updateResizeAccessibility(); });
     this.remeasure = reportBounds;
 
     // زرّ محاكاة الأجهزة: يدوّر كامل→موبايل→لوحي، يحدّث الأيقونة/الحالة ويعيد قياس العرض.
@@ -579,6 +618,7 @@ class SatrPreviewPanel extends HTMLElement {
     // الخادم (استئناف جلسة قديمة مثلاً) يظهر تنبيه واضح والحقل يبقى قابلاً لإعادة المحاولة.
     const openPanel = (autoLast = true) => {
       this.setAttribute('open', '');
+      updateResizeAccessibility();
       if (toggleBtn) toggleBtn.classList.add('active');
       if (!started && autoLast) {
         const last = loadSavedUrl();
@@ -920,23 +960,39 @@ class SatrPreviewPanel extends HTMLElement {
     });
 
     // ---------- مقبض تغيير العرض (نمط مقبض ارتفاع الطرفية) ----------
-    const resizer = $('pvResizer');
     let drag = null;
     resizer.addEventListener('pointerdown', (e) => {
-      drag = { startX: e.clientX, startW: this.getBoundingClientRect().width };
+      if (e.button !== 0) return;
+      drag = { pointerId: e.pointerId, startX: e.clientX, startW: this.getBoundingClientRect().width };
       resizer.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
     resizer.addEventListener('pointermove', (e) => {
-      if (!drag) return;
-      // اللوحة في الجهة اليسرى (RTL): السحب يميناً يوسّعها
-      const w = Math.max(280, Math.min(window.innerWidth * 0.78, drag.startW + (e.clientX - drag.startX)));
-      this.style.setProperty('--pv-w', Math.round(w) + 'px');
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      // المقبض على الحافة اليمنى الفيزيائية: السحب يميناً يوسّع اللوحة.
+      setPanelWidth(drag.startW + (e.clientX - drag.startX), false);
+      e.preventDefault();
     });
-    resizer.addEventListener('pointerup', () => {
-      if (!drag) return;
+    const endResize = (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
       drag = null;
-      localStorage.setItem('satr_preview_w', String(Math.round(this.getBoundingClientRect().width)));
+      if (resizer.hasPointerCapture(e.pointerId)) resizer.releasePointerCapture(e.pointerId);
+      persistPanelWidth();
+    };
+    resizer.addEventListener('pointerup', endResize);
+    resizer.addEventListener('pointercancel', endResize);
+    resizer.addEventListener('keydown', (e) => {
+      const bounds = panelResizeBounds();
+      const current = this.getBoundingClientRect().width;
+      const step = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--space-6')) || 1;
+      let next = null;
+      if (e.key === 'ArrowRight') next = current + step;
+      else if (e.key === 'ArrowLeft') next = current - step;
+      else if (e.key === 'Home') next = bounds.minimum;
+      else if (e.key === 'End') next = bounds.maximum;
+      if (next == null) return;
+      e.preventDefault();
+      setPanelWidth(next, true);
     });
 
     // ---------- تسجيل البرومو الأصلي (م-5) ----------
