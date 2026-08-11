@@ -372,6 +372,8 @@ class SatrPreviewPanel extends HTMLElement {
     // WebContentsView تُرسم فوق pvBox — أي تغيير تخطيط (فتح الطرفية/تغيير حجم/سحب
     // المقبض) يغيّر المستطيل، وResizeObserver يلتقطه كله. إحداثيات CSS px = DIP.
     let boundsRaf = 0;
+    let boundsWatch = 0;  // حلقة حارس المحاذاة الذاتي (rAF)
+    let lastBoundsKey = ''; // آخر مستطيل أُرسل — لا نرسل IPC إلا عند تغيّر فعلي
     const holdReasons = new Set(); // حجب مستقل للحوار وdrawer كي لا يفك أحدهما حجب الآخر
     let held = false;
     // معاينة متجاوبة: 0 = كامل عرض pvBox؛ رقم = عرض جهاز يُعرَض موسّطاً (تتفاعل media queries).
@@ -382,17 +384,41 @@ class SatrPreviewPanel extends HTMLElement {
     ];
     let deviceIdx = 0;
     try { deviceIdx = Math.max(0, Math.min(DEVICES.length - 1, parseInt(localStorage.getItem('satr_preview_device') || '0', 10) || 0)); } catch (e) {}
+    // يقيس مستطيل pvBox الفعلي (CSS px = DIP) موسّطاً بعرض الجهاز عند المحاكاة.
+    const measureBounds = () => {
+      if (!this.hasAttribute('open') || !started || held) return null;
+      const r = box.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return null;
+      const dev = DEVICES[deviceIdx].w;
+      let x = r.left, w = r.width;
+      if (dev && dev < r.width) { x = r.left + Math.round((r.width - dev) / 2); w = dev; } // توسيط بعرض الجهاز
+      return { x: Math.round(x), y: Math.round(r.top), w: Math.round(w), h: Math.round(r.height) };
+    };
+    // يرسل المستطيل للعملية الرئيسية عند **تغيّره فقط** (لا IPC مكرّر كل إطار).
+    const sendBounds = () => {
+      const b = measureBounds();
+      if (!b) return;
+      const key = b.x + ',' + b.y + ',' + b.w + ',' + b.h;
+      if (key === lastBoundsKey) return;
+      lastBoundsKey = key;
+      window.satr.previewBounds(b.x, b.y, b.w, b.h);
+    };
+    // حارس المحاذاة الذاتي: العرض الأصلي (WebContentsView) يطفو فوق pvBox، وResizeObserver
+    // يرصد تغيّر **الحجم** فقط. لكن اللوحة قد تنزاح **أفقياً بلا تغيّر حجم** (فتح/إغلاق سطح
+    // شقيق مثل غرفة العمليات أو الجوال، إعادة تدفّق العمود بـ container query، أو حجب/استعادة)
+    // فيبقى العرض في مكانه القديم طافياً فوق المحادثة. حلقة rAF خفيفة تقارن المستطيل كل إطار
+    // وترسل عند التغيّر فقط — getBoundingClientRect لعنصر واحد رخيص، وIPC محكوم بـ lastBoundsKey.
+    // الحلقة تتوقّف ذاتياً عند إغلاق اللوحة فلا تدور بلا داعٍ.
+    const watchBounds = () => {
+      if (!this.hasAttribute('open')) { boundsWatch = 0; return; }
+      sendBounds();
+      boundsWatch = requestAnimationFrame(watchBounds);
+    };
+    const ensureWatch = () => { if (!boundsWatch && this.hasAttribute('open')) boundsWatch = requestAnimationFrame(watchBounds); };
     const reportBounds = () => {
-      if (!this.hasAttribute('open') || !started || held) return;
+      ensureWatch();
       cancelAnimationFrame(boundsRaf);
-      boundsRaf = requestAnimationFrame(() => {
-        const r = box.getBoundingClientRect();
-        if (r.width < 2 || r.height < 2) return;
-        const dev = DEVICES[deviceIdx].w;
-        let x = r.left, w = r.width;
-        if (dev && dev < r.width) { x = r.left + Math.round((r.width - dev) / 2); w = dev; } // توسيط بعرض الجهاز
-        window.satr.previewBounds(Math.round(x), Math.round(r.top), Math.round(w), Math.round(r.height));
-      });
+      boundsRaf = requestAnimationFrame(sendBounds);
     };
     new ResizeObserver(reportBounds).observe(box);
     window.addEventListener('resize', reportBounds);
@@ -1056,8 +1082,8 @@ class SatrPreviewPanel extends HTMLElement {
       if (hold) holdReasons.add(reason); else holdReasons.delete(reason);
       held = holdReasons.size > 0;
       if (!started) return;
-      if (held) window.satr.previewBounds(0, 0, 0, 0); // العرض بحجم صفر ⇒ مخفي، المربع يظهر
-      else reportBounds(); // استعادة الموضع الفعلي بعد الرد
+      if (held) { window.satr.previewBounds(0, 0, 0, 0); lastBoundsKey = '0,0,0,0'; } // العرض بحجم صفر ⇒ مخفي، المربع يظهر
+      else reportBounds(); // استعادة الموضع الفعلي بعد الرد (lastBoundsKey='0,0,0,0' يضمن إعادة الإرسال)
     };
     this.holdForDialog = (hold) => setHeld('dialog', hold);
     this.holdForDrawer = (hold) => {
