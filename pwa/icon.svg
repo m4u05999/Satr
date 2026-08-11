@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#111110"/>
+  <circle cx="256" cy="256" r="196" fill="none" stroke="#D9A441" stroke-width="24"/>
+  <text x="256" y="300" text-anchor="middle" fill="#D9A441" font-size="160" font-family="'IBM Plex Sans Arabic', 'Segoe UI', 'Noto Sans Arabic', sans-serif" font-weight="600">سطر</text>
+</svg>

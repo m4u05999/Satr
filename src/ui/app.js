@@ -604,6 +604,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   const verifyConfigEl = document.querySelector('satr-verify-config-dialog');
   const previewEl = document.querySelector('satr-preview-panel');
   const promoStudioEl = document.querySelector('satr-promo-studio');
+  const mobileEl = document.querySelector('satr-mobile-panel');
   function addNotice(text) { chatEl.addNotice(text); }
 
   // منسّق الأسطح الواحد: لوحة رئيسية واحدة، سجل active/held/hidden، واستعادة تركيز
@@ -728,7 +729,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     ['sessions', 'satr-sessions-panel'], ['files', 'satr-files-panel'], ['git', 'satr-git-panel'],
     ['skills', 'satr-skills-panel'], ['agents', 'satr-agents-panel'], ['mcp', 'satr-mcp-panel'],
     ['context', 'satr-context-panel'], ['memory', 'satr-memory-panel'], ['research', 'satr-research-panel'],
-    ['gallery', 'satr-gallery-panel'],
+    ['gallery', 'satr-gallery-panel'], ['mobile', 'satr-mobile-panel'],
     ['ops-room', 'satr-ops-room'],
   ]) surfaceCoordinator.register(name, document.querySelector(selector), 'panel');
   surfaceCoordinator.register('ops-dialog', opsDialogEl, 'dialog');
@@ -934,6 +935,13 @@ import { createUpdateToast } from './lib/update-toast.js';
         requester: ev.requester || '', turnEligible: ev.turnEligible === true,
         alwaysEligible: ev.alwaysEligible !== false, alwaysLabel: ev.alwaysLabel || '',
       });
+      return;
+    }
+    // قرار الجوال حسم الطلب في main عبر resolvePermission نفسه؛ نسحب مربع سطح المكتب
+    // ولا نعرض أي حقل خام من الظرف في المحادثة.
+    if (ev.type === 'mobile_decision') {
+      closePermDialog();
+      addNotice(ev.decision === 'deny' ? '⛔ رُفض من الجوال' : '✅ أُقرّت من الجوال');
       return;
     }
     if (ev.type === 'preview_recording_saved') {
@@ -1950,6 +1958,23 @@ import { createUpdateToast } from './lib/update-toast.js';
   });
   $('galleryToggle').addEventListener('click', () => {
     if (galleryEl.hasAttribute('open')) closeGalleryPanel(); else openGalleryPanel();
+  });
+
+  // ---------- لوحة 📱 التحكم من الجوال: سطح جانبي لا أمر «/» ----------
+  function openMobilePanel() {
+    $('mobileToggle').classList.add('active');
+    $('mobileToggle').setAttribute('aria-pressed', 'true');
+    surfaceCoordinator.openPanel('mobile', $('mobileToggle'), () => mobileEl.open());
+  }
+  function closeMobilePanel() { mobileEl.close(); }
+  mobileEl.addEventListener('panel-close', () => {
+    $('mobileToggle').classList.remove('active');
+    $('mobileToggle').setAttribute('aria-pressed', 'false');
+  });
+  mobileEl.addEventListener('notice', (event) => addNotice(event.detail));
+  $('mobileToggle').setAttribute('aria-pressed', 'false');
+  $('mobileToggle').addEventListener('click', () => {
+    if (mobileEl.hasAttribute('open')) closeMobilePanel(); else openMobilePanel();
   });
 
   // ---------- تصدير المحادثة Markdown (الدفعة 4.8 «مشاركة») ----------

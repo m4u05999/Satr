@@ -1,0 +1,20 @@
+{
+  "name": "سطر — تحكم من الجوال",
+  "short_name": "سطر",
+  "description": "وافق أو ارفض أذونات الوكيل على سطح المكتب من هاتفك",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "dir": "rtl",
+  "lang": "ar",
+  "orientation": "portrait",
+  "background_color": "#111110",
+  "theme_color": "#111110",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

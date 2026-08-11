@@ -12,6 +12,8 @@
     "test:mobile-crypto": "node scripts/mobilecrypto-test.js",
     "test:mobile-envelope": "node scripts/mobileenvelope-test.js",
     "test:mobile-pair": "node scripts/mobilepair-test.js",
+    "test:mobile-link": "node scripts/mobilelink-test.js",
+    "test:pwa-crypto": "electron scripts/pwa-crypto-live-test.js",
     "test:skills": "node scripts/skills-test.js",
     "test:tasks": "node scripts/tasks-test.js",
     "test:sessionmeta": "node scripts/sessionmeta-test.js",

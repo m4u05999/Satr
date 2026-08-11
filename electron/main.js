@@ -51,6 +51,9 @@ const testspritejobs = require('./testspritejobs'); // جولة TestSprite مع�
 const claudeauth = require('./claudeauth');
 const adapters = require('./adapters');
 const renderertrust = require('./renderertrust');
+const mobilecrypto = require('./mobilecrypto');
+const mobilepair = require('./mobilepair');
+const mobileenvelope = require('./mobileenvelope');
 // الشرطة المائلة مسموحة لقيم نماذج ACP المُنطَّقة مثل kimi-code/k3 (تُمرَّر كوسيطة مستقلة لا في صدفة).
 // لاحقة [1m] (نافذة مليون رمز) مقبولة حصراً بقرار مالك 2026-07-27 — Claude Code صار
 // يعلن Fable 5 وOpus 5 بهذه الصيغة فقط؛ لا أقواس أخرى.
@@ -259,6 +262,10 @@ if (IS_WIN) { try { app.setAppUserModelId('ai.satr.app'); } catch (e) {} }
 let mainWindow = null;
 let currentCliRun = null; // مقبض محوّل غير SDK الجاري (cli الاحتياطي وما يليه) — له stop()
 let currentRun = null;    // تشغيل Agent SDK الجاري (المسار الافتراضي) — له stop()+resolvePermission
+let mobileLink = null;    // mobilelink اختياري في م1؛ غياب الملف لا يعطّل إقلاع سطح المكتب
+let mobileHandle = null;
+let mobileControlEnabled = false;
+let mobileTransition = Promise.resolve(); // يسلسل start/stop كي لا يُفتح خادمان بنقرتين متزامنتين
 
 // كل قنوات IPC مخصّصة لوثيقة «سطر» المحلية وإطارها الرئيسي فقط؛ أي مصدر آخر يفشل مغلقاً.
 const ipcMain = {
@@ -566,6 +573,18 @@ function loadGenmedia() {
   } catch { return null; }
 }
 
+function loadMobileLink() {
+  const filename = path.join(__dirname, 'mobilelink.js');
+  if (!fs.existsSync(filename)) return null;
+  try {
+    const loaded = require(filename);
+    return loaded && typeof loaded.start === 'function'
+      && typeof loaded.offerPermission === 'function'
+      && typeof loaded.withdraw === 'function'
+      && typeof loaded.status === 'function' ? loaded : null;
+  } catch { return null; }
+}
+
 function safeGenerationRel(cwd, value, generationsOnly) {
   if (typeof value !== 'string' || !value || path.isAbsolute(value) || path.win32.isAbsolute(value)) return '';
   const rel = value.replace(/\\/g, '/');
@@ -807,6 +826,13 @@ ipcMain.handle('satr:pickFolder', async () => {
 
 const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_MOBILE_DEVICE = /^(?:[a-f0-9]{16,128}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const SAFE_MOBILE_PERMISSION = /^[A-Za-z0-9_.:-]{1,256}$/;
+const SAFE_MOBILE_PAIR_ID = /^[a-f0-9]{32}$/i;
+const SAFE_MOBILE_B64URL = /^[A-Za-z0-9_-]+$/;
+const MOBILE_PERMISSION_TTL_MS = 2 * 60 * 1000;
+const MOBILE_DECISIONS = new Set(['allow', 'allow_turn', 'deny']);
+const mobilePermissionRaces = new Map(); // envelope_id → { token }؛ حارس «أول حسم يفوز»
 const SAFE_SKILL = /^[A-Za-z0-9_:.-]{1,64}$/; // اسم مهارة أو plugin:skill
 // وضع الأذونات + بوابة auto (الموجة 4) — المنطق النقي في autogate.js (قابل للاختبار
 // مستقلاً). PERMISSION_MODES يشمل 'auto'؛ nonSdkPerm يُسقط auto لـ default لغير SDK.
@@ -815,6 +841,209 @@ const { PERMISSION_MODES, nonSdkPerm } = require('./autogate');
 // لا يدخل وسائط spawn (يُمرَّر لدالة تحكّم في SDK) لكن نتحقق منه احترازاً.
 const SAFE_MCP_NAME = /^[\p{L}\p{N} ._:\/-]{1,128}$/u;
 const MCP_ACTIONS = new Set(['reconnect', 'enable', 'disable']);
+
+function safeMobileUrl(value) {
+  if (typeof value !== 'string' || value.length > 300) return '';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' || parsed.username || parsed.password
+        || parsed.pathname !== '/' || parsed.search || parsed.hash || !parsed.port) return '';
+    const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    let isLan = false;
+    if (ipv4) {
+      const octets = ipv4.slice(1).map(Number);
+      if (octets.every((part) => part >= 0 && part <= 255)) {
+        isLan = octets[0] === 10 || octets[0] === 192 && octets[1] === 168
+          || octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31
+          || octets[0] === 169 && octets[1] === 254;
+      }
+    } else {
+      isLan = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?\.local$/.test(host)
+        || /^(?:f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):[0-9a-f:]+$/.test(host);
+    }
+    if (!isLan) return '';
+    const port = Number(parsed.port);
+    return Number.isInteger(port) && port >= 1 && port <= 65535 ? parsed.origin + '/' : '';
+  } catch { return ''; }
+}
+
+function safeMobileDevices() {
+  try {
+    const devices = mobilepair.listDevices();
+    if (!Array.isArray(devices)) return [];
+    return devices.slice(0, 10).flatMap((device) => {
+      if (!device || typeof device !== 'object' || !SAFE_MOBILE_DEVICE.test(device.deviceId || '')) return [];
+      const label = cleanClaudePublicText(device.label, 48);
+      const pairedAt = Number.isFinite(device.pairedAt) && device.pairedAt >= 0 ? Math.floor(device.pairedAt) : 0;
+      const lastSeen = Number.isFinite(device.lastSeen) && device.lastSeen >= 0 ? Math.floor(device.lastSeen) : pairedAt;
+      return [{ deviceId: String(device.deviceId).toLowerCase(), label, pairedAt, lastSeen, revoked: device.revoked === true }];
+    });
+  } catch { return []; }
+}
+
+function mobileStatus() {
+  let raw = {};
+  if (mobileLink) {
+    try { raw = mobileLink.status() || {}; } catch { raw = {}; }
+  }
+  const url = safeMobileUrl(raw.url || mobileHandle && mobileHandle.url);
+  const rawPort = Number(raw.port || mobileHandle && mobileHandle.port || (url ? new URL(url).port : 0));
+  const pending = Number(raw.pending);
+  const result = {
+    enabled: mobileControlEnabled,
+    running: !!(mobileControlEnabled && mobileHandle && raw.running !== false && url),
+    deviceCount: safeMobileDevices().filter((device) => !device.revoked).length,
+    pending: Number.isInteger(pending) && pending >= 0 ? Math.min(pending, 1000) : mobilePermissionRaces.size,
+  };
+  if (url) result.url = url;
+  if (Number.isInteger(rawPort) && rawPort >= 1 && rawPort <= 65535) result.port = rawPort;
+  if (typeof raw.sas === 'string' && /^\d{6}$/.test(raw.sas)) result.sas = raw.sas;
+  return result;
+}
+
+async function startMobileLink() {
+  if (mobileHandle) { mobileControlEnabled = true; return mobileStatus(); }
+  mobileLink = mobileLink || loadMobileLink();
+  if (!mobileLink) return { ...mobileStatus(), error: 'unavailable' };
+  try {
+    const handle = await Promise.resolve(mobileLink.start({
+      crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope,
+    }, { port: 0 }));
+    const url = safeMobileUrl(handle && handle.url);
+    if (!handle || typeof handle.stop !== 'function' || !url) {
+      try { if (handle && typeof handle.stop === 'function') await Promise.resolve(handle.stop()); } catch {}
+      return { ...mobileStatus(), error: 'start_failed' };
+    }
+    mobileHandle = handle;
+    mobileControlEnabled = true;
+    return mobileStatus();
+  } catch {
+    mobileHandle = null;
+    mobileControlEnabled = false;
+    return { ...mobileStatus(), error: 'start_failed' };
+  }
+}
+
+async function stopMobileLink() {
+  mobileControlEnabled = false;
+  withdrawMobilePermissions();
+  const handle = mobileHandle;
+  mobileHandle = null;
+  if (handle && typeof handle.stop === 'function') {
+    try { await Promise.resolve(handle.stop()); } catch { /* إيقاف أفضل جهد عند الإغلاق */ }
+  } else if (mobileLink && typeof mobileLink.stop === 'function') {
+    try { await Promise.resolve(mobileLink.stop()); } catch { /* توافق مع مقبض يملك stop على الوحدة */ }
+  }
+  return mobileStatus();
+}
+
+function withdrawMobilePermission(id) {
+  mobilePermissionRaces.delete(id);
+  if (!mobileLink) return;
+  try {
+    const result = mobileLink.withdraw(id);
+    if (result && typeof result.catch === 'function') result.catch(() => {});
+  } catch { /* السحب أفضل جهد؛ حارس main أسقط الطلب محلياً بالفعل */ }
+}
+
+function withdrawMobilePermissions(token) {
+  for (const [id, race] of mobilePermissionRaces) {
+    if (token === undefined || race.token === token) withdrawMobilePermission(id);
+  }
+}
+
+function resolvePermissionThroughCurrentHandles(id, allow, always, turn) {
+  let ok = false;
+  try {
+    if (currentRun) ok = currentRun.resolvePermission(id, !!allow, !!always, !!turn);
+    if (!ok && currentCliRun && typeof currentCliRun.resolvePermission === 'function') {
+      ok = currentCliRun.resolvePermission(id, !!allow, !!always, !!turn);
+    }
+    if (!ok && pendingVerificationPermissions.has(id)) {
+      const resolve = pendingVerificationPermissions.get(id);
+      pendingVerificationPermissions.delete(id);
+      resolve(!!allow);
+      ok = true;
+    }
+  } catch { ok = false; }
+  return !!ok;
+}
+
+function offerMobilePermission(obj, context) {
+  if (!mobileControlEnabled || !mobileHandle || !mobileLink
+      || !safeMobileDevices().some((device) => !device.revoked)
+      || !SAFE_MOBILE_PERMISSION.test(String(obj.id || ''))) return;
+  const id = String(obj.id);
+  if (mobilePermissionRaces.has(id)) return;
+  const race = { token: context.token };
+  mobilePermissionRaces.set(id, race);
+  const rawReq = {
+    id, tool: obj.tool, input: obj.input, cwd: context.cwd, engine: context.engine,
+    session_id: context.sessionId,
+  };
+  const offerContext = { createdAt: Date.now(), ttlMs: MOBILE_PERMISSION_TTL_MS };
+  Promise.resolve().then(() => mobileLink.offerPermission(rawReq, offerContext)).then((decision) => {
+    // لا نثق برد القناة: قرار محصور، طلب ما زال نفسه، والدور الجاري لم يتغيّر.
+    if (!MOBILE_DECISIONS.has(decision) || mobilePermissionRaces.get(id) !== race
+        || context.token !== runSeq) return;
+    const allow = decision !== 'deny';
+    const turn = decision === 'allow_turn';
+    // هذا الاستدعاء متزامن؛ لا يمكن لحدث IPC آخر أن يتداخل بين نجاحه وحذف السباق.
+    // always=false ثابت أمني غير مشتق من القناة، مهما كانت قيمة الرد.
+    if (!resolvePermissionThroughCurrentHandles(id, allow, false, turn)) return;
+    mobilePermissionRaces.delete(id);
+    emitToWindow({ type: 'mobile_decision', envelope_id: id, decision });
+  }).catch(() => {
+    if (mobilePermissionRaces.get(id) === race) mobilePermissionRaces.delete(id);
+  });
+}
+
+function buildMobilePairingQr() {
+  const status = mobileStatus();
+  if (!status.running || !status.url) return { ok: false, error: 'not_running' };
+  let payload;
+  try { payload = mobilepair.buildPairingPayload(); } catch { return { ok: false, error: 'pairing_failed' }; }
+  if (!payload || payload.v !== 1 || !SAFE_MOBILE_PAIR_ID.test(payload.pairId || '')
+      || typeof payload.secret !== 'string' || payload.secret.length !== 43 || !SAFE_MOBILE_B64URL.test(payload.secret)
+      || typeof payload.desktopPublic !== 'string' || payload.desktopPublic.length !== 87
+      || !SAFE_MOBILE_B64URL.test(payload.desktopPublic)
+      || !Number.isFinite(payload.createdAt) || !Number.isFinite(payload.expiresAt)) {
+    return { ok: false, error: 'pairing_failed' };
+  }
+  // السر أحادي الاستخدام لا يخرج حقلاً مستقلاً؛ يُحزم داخل نص الاقتران فقط. لا مفتاح خاص هنا.
+  const publicPayload = {
+    v: 1, url: status.url, pairId: payload.pairId, secret: payload.secret,
+    desktopPublic: payload.desktopPublic, createdAt: Math.floor(payload.createdAt),
+    expiresAt: Math.floor(payload.expiresAt),
+  };
+  const encoded = Buffer.from(JSON.stringify(publicPayload), 'utf8').toString('base64url');
+  return { ok: true, qr: 'satr-mobile://pair?data=' + encoded };
+}
+
+ipcMain.handle('satr:mobileStatus', () => mobileStatus());
+ipcMain.handle('satr:mobileEnable', async (event, payload) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).length !== 1 || typeof payload.enable !== 'boolean') {
+    return { ...mobileStatus(), error: 'bad_input' };
+  }
+  const transition = mobileTransition.then(() => payload.enable ? startMobileLink() : stopMobileLink());
+  mobileTransition = transition.catch(() => {});
+  return transition;
+});
+ipcMain.handle('satr:mobilePairingStart', () => buildMobilePairingQr());
+ipcMain.handle('satr:mobileDevices', () => safeMobileDevices());
+ipcMain.handle('satr:mobileRevoke', (event, payload) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).length !== 1 || typeof payload.deviceId !== 'string'
+      || !SAFE_MOBILE_DEVICE.test(payload.deviceId)) return { ok: false, error: 'bad_input' };
+  try {
+    const result = mobilepair.revoke(payload.deviceId.toLowerCase());
+    if (result && result.ok && !safeMobileDevices().some((device) => !device.revoked)) withdrawMobilePermissions();
+    return result;
+  }
+  catch { return { ok: false, error: 'revoke_failed' }; }
+});
 
 // تنقية اختيار المهارات القادم من الواجهة قبل تمريره للـ SDK:
 // 'all' = كل المكتشفة، مصفوفة أسماء = المُفعَّل فقط (تُفلتر بـ SAFE_SKILL)،
@@ -895,6 +1124,7 @@ function sanitizeClaudePolishEvent(event) {
 
 // إيقاف أي تشغيل جارٍ أياً كان محركه (محوّل غير SDK أو تشغيل SDK)
 function stopAll(includeSdkBackground = true) {
+  withdrawMobilePermissions();
   preview.clearSensitiveState();
   promocapture.stopAll().catch(() => {});
   const stops = [];
@@ -1716,9 +1946,13 @@ async function handleSendRequest(event, payload, requestEpoch) {
       return;
     }
     if (obj.type === 'result' || obj.type === 'proc_done') {
+      withdrawMobilePermissions(token);
       const checkpoint = checkpoints.finish(runId);
       if (checkpoint) emitToWindow(checkpoint);
       promocapture.stopAll().catch(() => {});
+    }
+    if (obj.type === 'permission_request') {
+      offerMobilePermission(obj, { token, cwd, engine: runEngine, sessionId: activeSessionId });
     }
     emitToWindow(obj, lateSdkBackgroundEvent ? runEngine : undefined);
   };
@@ -2157,17 +2391,9 @@ ipcMain.handle('satr:killBgProc', (event, id) => {
 // محرك SDK (currentRun) أو محوّل بحلقة وكيل (currentCliRun منذ 2.2)
 ipcMain.handle('satr:permission', (event, p) => {
   if (!p || typeof p.id !== 'string') return { ok: false };
-  let ok = false;
-  if (currentRun) ok = currentRun.resolvePermission(p.id, !!p.allow, !!p.always, !!p.turn);
-  if (!ok && currentCliRun && typeof currentCliRun.resolvePermission === 'function') {
-    ok = currentCliRun.resolvePermission(p.id, !!p.allow, !!p.always, !!p.turn);
-  }
-  if (!ok && pendingVerificationPermissions.has(p.id)) {
-    const resolve = pendingVerificationPermissions.get(p.id);
-    pendingVerificationPermissions.delete(p.id);
-    resolve(!!p.allow);
-    ok = true;
-  }
+  const ok = resolvePermissionThroughCurrentHandles(p.id, !!p.allow, !!p.always, !!p.turn);
+  // نجاح مسار سطح المكتب يعني أنه حسم أولاً؛ نسحب الظرف قبل قبول أي رد جوال قديم.
+  if (ok && mobilePermissionRaces.has(p.id)) withdrawMobilePermission(p.id);
   // مجرى المراقبة (§4.7): قرار الإذن — عنصر أساسي في سجل التدقيق (3.4)
   try {
     notifyObservers({ type: 'permission_reply', id: p.id, allow: !!p.allow, always: !!p.always, engine: lastEngine }, { engine: lastEngine });
@@ -3504,6 +3730,8 @@ let shutdownClean = false;
 async function cleanupBeforeQuit() {
   cancelPendingSendRequest();
   await stopAll();
+  await mobileTransition.catch(() => {});
+  await stopMobileLink();
   await Promise.allSettled([
     orchestrator.stopAll(), opsBrainstorm.stopAll(), opsPlanner.stopAll(), executor.stopAll(),
     executionTeam.stopAll(), loopRunner.stopAll(), reviewer.stopAll(), integration.stopAll(), promocapture.stopAll(),

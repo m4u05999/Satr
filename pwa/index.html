@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' http: https:; img-src 'self' data:; manifest-src 'self'; font-src 'self';">
+  <meta name="theme-color" content="#111110">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <title>سطر — تحكم من الجوال</title>
+</head>
+<body>
+  <div id="app">
+    <!-- شاشة PIN -->
+    <section id="pinScreen" class="screen active">
+      <div class="brand">سطر</div>
+      <p class="tagline">أدخِل رمز PIN لفتح التحكم عن بُعد</p>
+      <div class="card">
+        <label for="pinInput">رمز PIN</label>
+        <input id="pinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="16" autocomplete="off" placeholder="••••">
+        <p id="pinHint" class="hint">الرمز الأولي: 0000 (يُحفظ محلياً على الجهاز)</p>
+      </div>
+      <button id="pinBtn" class="btn btn-gold">فتح</button>
+      <p id="pinError" class="error hidden"></p>
+    </section>
+
+    <!-- شاشة الاقتران -->
+    <section id="pairScreen" class="screen">
+      <div class="brand">سطر</div>
+      <p class="tagline">الصق حمولة الاقتران من شاشة سطر المكتبية</p>
+      <div class="card">
+        <label for="payloadInput">نص الاقتران</label>
+        <textarea id="payloadInput" placeholder="satr-mobile://..." autocomplete="off"></textarea>
+        <p class="hint">يأتي هذا النص من زر «اقتران» في تطبيق سطر على الحاسوب.</p>
+      </div>
+      <button id="pairBtn" class="btn btn-gold">اقتران</button>
+      <div id="sasBox" class="sas hidden">
+        <div>رقم التحقق المعروض على الحاسوب</div>
+        <div id="sasDigits" class="digits" dir="ltr">------</div>
+      </div>
+      <p id="pairError" class="error hidden"></p>
+    </section>
+
+    <!-- الشاشة الرئيسية -->
+    <section id="mainScreen" class="screen">
+      <div class="status-bar">
+        <span id="statusText">غير متصل</span>
+        <button id="stopBtn" class="stop">⏹ إيقاف</button>
+      </div>
+
+      <div id="decisionCard" class="card decision-card">
+        <div>
+          <div id="projectName" class="project">المشروع: —</div>
+          <div id="toolName" class="tool">—</div>
+        </div>
+        <div>
+          <span id="riskBadge" class="risk risk-unknown">غير معروف</span>
+        </div>
+        <div>
+          <label>الفعل المطلوب</label>
+          <div id="actionSummary" class="summary">—</div>
+        </div>
+        <div class="row">
+          <button id="allowBtn" class="btn btn-allow">سماح مرة</button>
+          <button id="denyBtn" class="btn btn-deny">رفض</button>
+        </div>
+        <button id="allowTurnBtn" class="btn btn-turn">سماح لهذا الدور</button>
+      </div>
+
+      <div id="emptyState" class="empty-state">
+        <div class="big" aria-hidden="true">📱</div>
+        <p>في انتظار طلب إذن من سطح المكتب…</p>
+        <p class="hint">سيظهر هنا عندما يطلب الوكيل موافقتك على فعل حساس.</p>
+      </div>
+    </section>
+  </div>
+
+  <script src="crypto.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

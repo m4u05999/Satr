@@ -1,0 +1,614 @@
+/**
+ * سطر — القناة المحلية للتحكم من الجوال (م1 — §5.1 من docs/MOBILE-CONTROL-PLAN.md).
+ *
+ * خادم HTTP مدمج على واجهة LAN (لا loopback — الجوال يجب أن يصله) يتكلم **أطر
+ * mobilecrypto المعمّاة** حصراً عدا نقطة الاقتران. صفر اعتماديات (http المدمجة)،
+ * وبحقن اعتماديات كاملة (نمط executor/runner) فيبقى قابلاً للاختبار بلا شبكة خارجية.
+ * أسلوب الخادم مقتبس من `codexmcp.js` (خادم http داخل العملية)، لكن هذه القناة تستمع
+ * على واجهة الشبكة لا على 127.0.0.1، ولذلك **لا تعتمد على Bearer** بل على التعمية
+ * طرفاً لطرف: من لا يملك مفتاح الجلسة لا يحصل على شيء مفيد.
+ *
+ * ── الحدّ الذهبي (§1) ────────────────────────────────────────────────────────
+ *  الجوال **يجيب سؤالاً بدأه سطح المكتب** — لا يولّد نصاً ولا يبدأ فعلاً. لذلك:
+ *  القرار من {allow, allow_turn, deny} حصراً؛ **لا «دائماً» ولا bypass أبداً**،
+ *  ولا يوجد مسار في هذا الملف يبني طلباً أو يعدّل واحداً.
+ *
+ * ── دورة القرار ─────────────────────────────────────────────────────────────
+ *  offerPermission(rawReq, ctx) ⇒ ظرف منقّى (envelope.build) ⇒ يُسجَّل معلّقاً بمفتاح
+ *  envelope_id (= tool_use_id) ⇒ يصل الجوال عبر long-poll مختوماً ⇒ /reply يفكّه
+ *  ويحسم الوعد. الحسم من أي طرف يسحب المعلّق فوراً.
+ *
+ *  **الوعد يُحسم إلى أحد القرارات الثلاثة أو إلى `null`** (انتهت المهلة، أو سحبه
+ *  سطح المكتب بـwithdraw، أو أُغلقت القناة). `null` تعني «لم يحسم الجوال» — لا قرار
+ *  ضمني ولا موافقة تلقائية عند الانقطاع (§6.2). الوعد **لا يُرفض أبداً**، فمن يسابقه
+ *  بـPromise.race في main.js لا يحتاج catch.
+ *
+ * ── حارس الموافقة القديمة (حرج) ─────────────────────────────────────────────
+ *  /reply يعيد التحقق أن `envelope_id` **ما زال معلّقاً** قبل الحسم. موافقة وصلت بعد
+ *  أن حسم سطح المكتب (أو بعد انتهاء المهلة) تُرفض بـ409 ولا تُطبَّق على نداء آخر —
+ *  وهذا هو سبب وجود `withdraw` أصلاً.
+ *
+ * ── عزل جلسات الأجهزة ───────────────────────────────────────────────────────
+ *  كل جهاز يشتق جلسته المستقلة عند /pair (مفتاحاه واتجاهاه وبادئتا الـnonce وعدّاداه
+ *  خاصة به). لا حالة تعمية مشتركة بين جهازين، فتسريب جهاز لا يقرأ ظروف جهاز آخر ولا
+ *  يزوّر ردّاً باسمه. الجلسات **في الذاكرة فقط ولا تُحفظ**: pairId هو ملح HKDF ويجب
+ *  ألا يتكرر عبر اشتقاقين (§4.1 — تكراره يعيد المفاتيح والبادئات بينما يبدأ العدّاد
+ *  صفراً ⇒ إعادة استعمال nonce، كارثي). لذلك إعادة تشغيل القناة توجب اقتراناً جديداً
+ *  بـQR جديد — وهو القيد الآمن لا ثغرة.
+ *
+ * ── لا تسجيل ─────────────────────────────────────────────────────────────────
+ *  لا console ولا ملف ولا حدث يحمل برومبتاً أو ظرفاً خاماً أو مفتاحاً أو سرّ اقتران.
+ */
+
+'use strict';
+
+const http = require('node:http');
+const os = require('node:os');
+
+// — ثوابت العقد —
+const POLL_TIMEOUT_MS = 45 * 1000; // §5.1: long-poll ≤ 45ث ثم 204
+const MIN_POLL_TIMEOUT_MS = 100; // للاختبار القطعي فقط
+const DEFAULT_TTL_MS = 5 * 60 * 1000;
+const MAX_TTL_MS = 60 * 60 * 1000;
+const MAX_BODY = 64 * 1024; // الظروف والردود صغيرة — أي أكبر مرفوض
+const MAX_WAITERS_PER_DEVICE = 4;
+const MAX_PENDING = 32;
+const MAX_ENVELOPE_ID = 200;
+
+// القرارات المسموحة من الجوال — قائمة مغلقة، بلا «دائماً» وبلا bypass
+const DECISIONS = new Set(['allow', 'allow_turn', 'deny']);
+
+const SAFE_DEVICE_HEX = /^[a-f0-9]{16,128}$/;
+const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** معرّف جهاز منقّى بنفس عقد mobilepair (hex ≥16 أو UUID)، مصغّر الحالة. */
+function safeDeviceId(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.toLowerCase().trim();
+  if (SAFE_DEVICE_HEX.test(normalized) || SAFE_UUID.test(normalized)) return normalized;
+  return null;
+}
+
+function clampInt(value, min, max, fallback) {
+  if (!Number.isFinite(value)) return fallback;
+  const n = Math.floor(value);
+  if (n < min) return min;
+  if (n > max) return max;
+  return n;
+}
+
+/** أول عنوان IPv4 غير داخلي — للعرض في `url` فقط (الاستماع يبقى على opts.host). */
+function lanAddress() {
+  let interfaces = null;
+  try { interfaces = os.networkInterfaces(); } catch { return '127.0.0.1'; }
+  for (const name of Object.keys(interfaces || {})) {
+    for (const info of interfaces[name] || []) {
+      if (info && info.family === 'IPv4' && !info.internal && info.address) return info.address;
+    }
+  }
+  return '127.0.0.1';
+}
+
+/**
+ * يحلّ زوج مفاتيح سطح المكتب (العام + الخاص).
+ *
+ * **ملاحظة تكامل مهمة**: `mobilepair.ensureDesktopIdentity()` لا يعيد المفتاح الخاص
+ * (عقد §4.3 صريح: «الخاص لا يُعاد أبداً»)، بينما اشتقاق جلسة الديسكتوب يحتاجه. لذلك
+ * يقبل هذا الملف الهوية **حقناً** عبر `deps.identity` (كائن أو دالة)، ويجرّب قبلها
+ * أي وصول مستقبلي يعلنه mobilepair. غياب المفتاح الخاص = فشل مغلق عند `start` بدل
+ * قناة تقبل اقتراناً ثم تعجز عن التعمية.
+ */
+function resolveIdentity(deps) {
+  const candidates = [];
+  if (typeof deps.identity === 'function') {
+    try { candidates.push(deps.identity()); } catch { /* يُتجاهل — نجرّب البديل */ }
+  } else if (deps.identity) {
+    candidates.push(deps.identity);
+  }
+  if (deps.pair && typeof deps.pair.getDesktopKeyPair === 'function') {
+    try { candidates.push(deps.pair.getDesktopKeyPair()); } catch { /* يُتجاهل */ }
+  }
+  if (deps.pair && typeof deps.pair.ensureDesktopIdentity === 'function') {
+    try { candidates.push(deps.pair.ensureDesktopIdentity()); } catch { /* يُتجاهل */ }
+  }
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate.publicKey === 'string' && typeof candidate.privateKey === 'string'
+        && candidate.publicKey && candidate.privateKey) {
+      return { publicKey: candidate.publicKey, privateKey: candidate.privateKey };
+    }
+  }
+  return null;
+}
+
+/**
+ * يبدأ القناة المحلية.
+ *
+ * @param {{crypto:object, pair:object, envelope:object, identity?:object|Function}} deps
+ * @param {{host?:string, port?:number, cors?:boolean, pollTimeoutMs?:number}} [opts]
+ * @returns {Promise<{url:string, host:string, port:number, offerPermission:Function,
+ *                    withdraw:Function, status:Function, stop:Function}>}
+ */
+function start(deps, opts) {
+  const d = deps && typeof deps === 'object' ? deps : {};
+  const o = opts && typeof opts === 'object' ? opts : {};
+  if (!d.crypto || typeof d.crypto.deriveSession !== 'function' || typeof d.crypto.seal !== 'function'
+      || typeof d.crypto.open !== 'function' || typeof d.crypto.sas !== 'function') {
+    return Promise.reject(new Error('bad_deps_crypto'));
+  }
+  if (!d.pair || typeof d.pair.completePairing !== 'function' || typeof d.pair.listDevices !== 'function') {
+    return Promise.reject(new Error('bad_deps_pair'));
+  }
+  if (!d.envelope || typeof d.envelope.build !== 'function') {
+    return Promise.reject(new Error('bad_deps_envelope'));
+  }
+
+  const identity = resolveIdentity(d);
+  // فشل مغلق: بلا مفتاح خاص لا تعمية ⇒ لا نرفع قناة توهم بأنها جاهزة
+  if (!identity) return Promise.reject(new Error('no_desktop_identity'));
+
+  const host = typeof o.host === 'string' && o.host.trim() ? o.host.trim() : '0.0.0.0';
+  const port = clampInt(o.port, 0, 65535, 0);
+  const cors = o.cors === true;
+  const pollTimeoutMs = clampInt(o.pollTimeoutMs, MIN_POLL_TIMEOUT_MS, POLL_TIMEOUT_MS, POLL_TIMEOUT_MS);
+
+  // — الحالة الحيّة (كلها في الذاكرة؛ لا شيء منها يُكتب على القرص) —
+  const sessions = new Map(); // deviceId -> { session, pairId }
+  const pendingById = new Map(); // envelope_id -> record
+  const pendingOrder = []; // نفس السجلات مرتّبة بالأقدم أولاً (FIFO للتسليم)
+  const waiters = new Map(); // deviceId -> Set<{res, timer}>
+  const sockets = new Set();
+  let stopped = false;
+  let boundPort = 0;
+
+  // ── مساعدات الرد ──────────────────────────────────────────────────────────
+  function baseHeaders() {
+    const headers = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
+    // CORS اختياري: القناة كلها معمّاة طرفاً لطرف، لكن الأصل fail-closed. يفعّله
+    // التكامل فقط إن قُدّمت PWA من أصل مختلف عن هذا الخادم.
+    if (cors) {
+      headers['access-control-allow-origin'] = '*';
+      headers['access-control-allow-headers'] = 'content-type';
+      headers['access-control-allow-methods'] = 'GET, POST, OPTIONS';
+    }
+    return headers;
+  }
+
+  function sendJson(res, status, body) {
+    if (!res || res.writableEnded) return;
+    const text = JSON.stringify(body);
+    try {
+      res.writeHead(status, Object.assign(baseHeaders(), {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(text, 'utf8'),
+      }));
+      res.end(text);
+    } catch { /* الاتصال أُغلق — لا شيء نفعله */ }
+  }
+
+  function sendEmpty(res, status) {
+    if (!res || res.writableEnded) return;
+    try { res.writeHead(status, baseHeaders()); res.end(); } catch { /* أُغلق */ }
+  }
+
+  /** يختم حمولة للجهاز ويرسلها إطاراً ثنائياً (يزيد عدّاد إرسال جلسته). */
+  function sendFrame(res, entry, payload) {
+    if (!res || res.writableEnded) return false;
+    let frame;
+    try {
+      frame = d.crypto.seal(entry.session, Buffer.from(JSON.stringify(payload), 'utf8'));
+    } catch {
+      sendJson(res, 500, { ok: false, error: 'seal_failed' });
+      return false;
+    }
+    try {
+      res.writeHead(200, Object.assign(baseHeaders(), {
+        'content-type': 'application/octet-stream',
+        'content-length': frame.length,
+      }));
+      res.end(frame);
+      return true;
+    } catch { return false; }
+  }
+
+  // ── الأجهزة ───────────────────────────────────────────────────────────────
+  function deviceRecord(deviceId) {
+    try {
+      const list = d.pair.listDevices();
+      if (!Array.isArray(list)) return null;
+      return list.find((item) => item && item.deviceId === deviceId) || null;
+    } catch { return null; }
+  }
+
+  /** جهاز قابل للاستعمال: له جلسة حيّة، وموجود في الدفتر، وغير مُبطَل. */
+  function activeEntry(deviceId) {
+    const entry = sessions.get(deviceId);
+    if (!entry) return null;
+    const record = deviceRecord(deviceId);
+    if (!record || record.revoked === true) {
+      // الإبطال فوري: نُسقط الجلسة كي لا يبقى مفتاح حيّ لجهاز مُبطَل
+      sessions.delete(deviceId);
+      dropWaiters(deviceId);
+      return null;
+    }
+    return entry;
+  }
+
+  function liveDeviceCount() {
+    let count = 0;
+    for (const deviceId of [...sessions.keys()]) {
+      if (activeEntry(deviceId)) count += 1;
+    }
+    return count;
+  }
+
+  function touch(deviceId) {
+    if (typeof d.pair.touch !== 'function') return;
+    try { d.pair.touch(deviceId); } catch { /* أفضل جهد */ }
+  }
+
+  // ── المعلّقات ─────────────────────────────────────────────────────────────
+  function removePending(record) {
+    pendingById.delete(record.id);
+    const index = pendingOrder.indexOf(record);
+    if (index !== -1) pendingOrder.splice(index, 1);
+  }
+
+  /** يحسم معلّقاً مرة واحدة ويسحبه — القرار أو `null` (لا حسم). */
+  function settle(record, decision) {
+    if (!record || record.done) return false;
+    record.done = true;
+    if (record.timer) { clearTimeout(record.timer); record.timer = null; }
+    removePending(record);
+    const value = DECISIONS.has(decision) ? decision : null;
+    try { record.resolve(value); } catch { /* لا يفشل الحسم بسبب مستهلك */ }
+    return true;
+  }
+
+  function oldestPending() {
+    for (const record of pendingOrder) {
+      if (!record.done) return record;
+    }
+    return null;
+  }
+
+  // ── منتظرو long-poll ──────────────────────────────────────────────────────
+  function removeWaiter(deviceId, waiter) {
+    const set = waiters.get(deviceId);
+    if (!set) return;
+    set.delete(waiter);
+    if (!set.size) waiters.delete(deviceId);
+    if (waiter.timer) { clearTimeout(waiter.timer); waiter.timer = null; }
+  }
+
+  function dropWaiters(deviceId) {
+    const set = waiters.get(deviceId);
+    if (!set) return;
+    for (const waiter of [...set]) {
+      removeWaiter(deviceId, waiter);
+      sendEmpty(waiter.res, 204);
+    }
+  }
+
+  /**
+   * يوقظ منتظراً واحداً لكل جهاز حين يصل ظرف جديد.
+   * التسليم لا يعلّم الظرف «مُرسَلاً»: يبقى معلّقاً حتى يردّ الجوال أو يُسحب، فإعادة
+   * الاستطلاع تعيد تسليمه (خانق فقدان الرسالة). ولأن كل تسليم ختم جديد بعدّاد أعلى،
+   * يقبله الجوال بلا اصطدام replay.
+   */
+  function wakeWaiters() {
+    if (stopped) return;
+    for (const deviceId of [...waiters.keys()]) {
+      const record = oldestPending();
+      if (!record) return;
+      const entry = activeEntry(deviceId);
+      const set = waiters.get(deviceId);
+      if (!set || !set.size) continue;
+      const waiter = set.values().next().value;
+      removeWaiter(deviceId, waiter);
+      if (!entry) { sendEmpty(waiter.res, 204); continue; }
+      sendFrame(waiter.res, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
+    }
+  }
+
+  // ── واجهة سطح المكتب ──────────────────────────────────────────────────────
+  /**
+   * يعرض طلب إذن على الأجهزة المقترنة.
+   * @returns {Promise<'allow'|'allow_turn'|'deny'|null>} — `null` = لم يحسم الجوال.
+   */
+  function offerPermission(rawReq, ctx) {
+    if (stopped) return Promise.resolve(null);
+    const context = ctx && typeof ctx === 'object' ? ctx : {};
+    const now = Date.now();
+    const ttlMs = clampInt(context.ttlMs, 1000, MAX_TTL_MS, DEFAULT_TTL_MS);
+    const createdAt = Number.isFinite(context.createdAt) && context.createdAt >= 0 ? Math.floor(context.createdAt) : now;
+
+    let envelope = null;
+    try {
+      envelope = d.envelope.build(rawReq, {
+        project: typeof context.project === 'string' ? context.project : undefined,
+        taskSummary: typeof context.taskSummary === 'string' ? context.taskSummary : undefined,
+        createdAt,
+        ttlMs,
+      });
+    } catch { return Promise.resolve(null); }
+
+    const id = envelope && typeof envelope.envelope_id === 'string' ? envelope.envelope_id : '';
+    // ظرف بلا معرّف لا يمكن ربط ردّ به ⇒ لا يُسجَّل (فشل مغلق، يبقى مربع سطح المكتب)
+    if (!id || id.length > MAX_ENVELOPE_ID) return Promise.resolve(null);
+    if (pendingOrder.length >= MAX_PENDING) return Promise.resolve(null);
+
+    // معرّف مكرّر: نسحب القديم بلا قرار كي لا يبقى ظرف قابل للإجابة عن نداء منتهٍ
+    const previous = pendingById.get(id);
+    if (previous) settle(previous, null);
+
+    return new Promise((resolve) => {
+      const record = { id, envelope, resolve, done: false, timer: null };
+      record.timer = setTimeout(() => { settle(record, null); }, ttlMs);
+      if (typeof record.timer.unref === 'function') record.timer.unref();
+      pendingById.set(id, record);
+      pendingOrder.push(record);
+      wakeWaiters();
+    });
+  }
+
+  /** سطح المكتب حسم أولاً ⇒ يُزال المعلّق فوراً (حارس الموافقة القديمة). */
+  function withdraw(envelopeId) {
+    if (typeof envelopeId !== 'string' || !envelopeId) return false;
+    const record = pendingById.get(envelopeId);
+    if (!record) return false;
+    return settle(record, null);
+  }
+
+  function status() {
+    return {
+      running: !stopped,
+      port: boundPort,
+      pending: pendingOrder.filter((record) => !record.done).length,
+      deviceCount: liveDeviceCount(),
+    };
+  }
+
+  // ── قراءة الجسم بسقف صارم ─────────────────────────────────────────────────
+  function readBody(req, res, callback) {
+    const chunks = [];
+    let size = 0;
+    let aborted = false;
+    req.on('data', (chunk) => {
+      if (aborted) return;
+      size += chunk.length;
+      if (size > MAX_BODY) {
+        aborted = true;
+        chunks.length = 0;
+        sendJson(res, 413, { ok: false, error: 'too_large' });
+        // نصرّف البقية بدل قطع المقبس فوراً: القطع أثناء كتابة العميل يولّد RST
+        // فيضيع ردّ 413 نفسه. مؤقّت الحارس يقطع من يواصل الإرسال بلا نهاية.
+        try {
+          req.resume();
+          const guard = setTimeout(() => { try { req.destroy(); } catch { /* أُغلق */ } }, 2000);
+          if (typeof guard.unref === 'function') guard.unref();
+          req.on('end', () => clearTimeout(guard));
+          req.on('close', () => clearTimeout(guard));
+        } catch { /* أُغلق */ }
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => { if (!aborted) callback(Buffer.concat(chunks, size)); });
+    req.on('error', () => { aborted = true; try { res.destroy(); } catch { /* أُغلق */ } });
+  }
+
+  // ── النقاط الثلاث ─────────────────────────────────────────────────────────
+  /** POST /pair — النقطة الوحيدة غير المعمّاة؛ تحرسها سرّية الاقتران أحادية الاستخدام. */
+  function handlePair(req, res) {
+    readBody(req, res, (body) => {
+      let parsed = null;
+      try { parsed = JSON.parse(body.toString('utf8') || 'null'); } catch { parsed = null; }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        sendJson(res, 400, { ok: false, error: 'bad_input' });
+        return;
+      }
+
+      let result;
+      try {
+        result = d.pair.completePairing({
+          pairId: parsed.pairId,
+          secretProof: parsed.secretProof,
+          mobilePublic: parsed.mobilePublic,
+          deviceId: parsed.deviceId,
+          label: parsed.label,
+        });
+      } catch { result = { ok: false, error: 'pairing_failed' }; }
+
+      if (!result || result.ok !== true) {
+        const error = result && typeof result.error === 'string' ? result.error : 'pairing_failed';
+        sendJson(res, 400, { ok: false, error });
+        return;
+      }
+
+      const deviceId = safeDeviceId(result.deviceId);
+      const pairId = typeof parsed.pairId === 'string' ? parsed.pairId.toLowerCase().trim() : '';
+      if (!deviceId || !pairId) {
+        sendJson(res, 400, { ok: false, error: 'bad_device_id' });
+        return;
+      }
+
+      let session = null;
+      let sas = '';
+      try {
+        // جلسة مستقلة لهذا الجهاز حصراً — pairId هو ملح HKDF الفريد لهذا الاقتران
+        session = d.crypto.deriveSession({
+          myPrivate: identity.privateKey,
+          theirPublic: parsed.mobilePublic,
+          pairId,
+          role: 'desktop',
+        });
+        sas = d.crypto.sas({
+          desktopPublic: identity.publicKey,
+          mobilePublic: parsed.mobilePublic,
+          pairId,
+        });
+      } catch {
+        // اشتقاق فاشل ⇒ جهاز مُسجَّل بلا قناة: نُبطله فوراً بدل تركه معلقاً
+        try { if (typeof d.pair.revoke === 'function') d.pair.revoke(deviceId); } catch { /* أفضل جهد */ }
+        sendJson(res, 400, { ok: false, error: 'derive_failed' });
+        return;
+      }
+
+      sessions.set(deviceId, { session, pairId });
+      // SAS من قيم عامة فقط (المفتاحان العامان + pairId) — يقارنه المستخدم بالشاشتين
+      sendJson(res, 200, { ok: true, deviceId, sas });
+      wakeWaiters();
+    });
+  }
+
+  /** GET /poll?device=<id> — يعلّق حتى يوجد ظرف أو تنتهي المهلة (204). */
+  function handlePoll(req, res, query) {
+    const deviceId = safeDeviceId(query.get('device'));
+    if (!deviceId) { sendJson(res, 400, { ok: false, error: 'bad_device' }); return; }
+    const entry = activeEntry(deviceId);
+    // جهاز غير مقترن أو مُبطَل: فشل مغلق بلا تمييز في الرسالة
+    if (!entry) { sendJson(res, 403, { ok: false, error: 'not_linked' }); return; }
+    touch(deviceId);
+
+    const record = oldestPending();
+    if (record) {
+      sendFrame(res, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
+      return;
+    }
+
+    const set = waiters.get(deviceId) || new Set();
+    if (!waiters.has(deviceId)) waiters.set(deviceId, set);
+    if (set.size >= MAX_WAITERS_PER_DEVICE) { sendEmpty(res, 204); return; }
+
+    const waiter = { res, timer: null };
+    waiter.timer = setTimeout(() => {
+      removeWaiter(deviceId, waiter);
+      sendEmpty(res, 204);
+    }, pollTimeoutMs);
+    if (typeof waiter.timer.unref === 'function') waiter.timer.unref();
+    set.add(waiter);
+    res.on('close', () => { removeWaiter(deviceId, waiter); });
+  }
+
+  /** POST /reply?device=<id> — إطار معمّى يحمل {envelope_id, decision}. */
+  function handleReply(req, res, query) {
+    const deviceId = safeDeviceId(query.get('device'));
+    if (!deviceId) { sendJson(res, 400, { ok: false, error: 'bad_device' }); return; }
+    const entry = activeEntry(deviceId);
+    if (!entry) { sendJson(res, 403, { ok: false, error: 'not_linked' }); return; }
+
+    readBody(req, res, (body) => {
+      // الفكّ أولاً: طلب غير مُصادق E2E لا يتعلّم شيئاً عن المعلّقات.
+      // `open` يفرض الاتجاه والـAAD والوسم وتزايد العدّاد (رفض replay).
+      let plaintext = null;
+      try { plaintext = d.crypto.open(entry.session, body); } catch {
+        sendJson(res, 400, { ok: false, error: 'bad_frame' });
+        return;
+      }
+
+      let payload = null;
+      try { payload = JSON.parse(plaintext.toString('utf8') || 'null'); } catch { payload = null; }
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        sendJson(res, 400, { ok: false, error: 'bad_payload' });
+        return;
+      }
+
+      const decision = typeof payload.decision === 'string' ? payload.decision : '';
+      // قائمة مغلقة: «دائماً» وbypass غير موجودين في هذا العقد إطلاقاً
+      if (!DECISIONS.has(decision)) { sendJson(res, 400, { ok: false, error: 'bad_decision' }); return; }
+
+      const envelopeId = typeof payload.envelope_id === 'string' ? payload.envelope_id : '';
+      if (!envelopeId || envelopeId.length > MAX_ENVELOPE_ID) {
+        sendJson(res, 400, { ok: false, error: 'bad_envelope_id' });
+        return;
+      }
+
+      // حارس الموافقة القديمة: يجب أن يكون الظرف ما زال معلّقاً لحظة الحسم
+      const record = pendingById.get(envelopeId);
+      if (!record || record.done) { sendJson(res, 409, { ok: false, error: 'not_pending' }); return; }
+
+      touch(deviceId);
+      settle(record, decision);
+      sendJson(res, 200, { ok: true });
+    });
+  }
+
+  // ── الخادم ────────────────────────────────────────────────────────────────
+  const server = http.createServer((req, res) => {
+    if (stopped) { sendJson(res, 503, { ok: false, error: 'stopped' }); return; }
+
+    let url;
+    try { url = new URL(req.url || '/', 'http://link.invalid'); } catch {
+      sendJson(res, 400, { ok: false, error: 'bad_request' });
+      return;
+    }
+    const path = url.pathname;
+
+    if (req.method === 'OPTIONS') {
+      if (!cors) { sendJson(res, 405, { ok: false, error: 'method_not_allowed' }); return; }
+      sendEmpty(res, 204);
+      return;
+    }
+    if (req.method === 'POST' && path === '/pair') { handlePair(req, res); return; }
+    if (req.method === 'GET' && path === '/poll') { handlePoll(req, res, url.searchParams); return; }
+    if (req.method === 'POST' && path === '/reply') { handleReply(req, res, url.searchParams); return; }
+    sendJson(res, 404, { ok: false, error: 'not_found' });
+  });
+
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => { sockets.delete(socket); });
+  });
+  server.on('clientError', (err, socket) => { try { socket.destroy(); } catch { /* أُغلق */ } });
+
+  function stop() {
+    if (stopped) return Promise.resolve();
+    stopped = true;
+    // كل معلّق يُحسم بلا قرار — القناة سقطت، والقرار يعود لمربع سطح المكتب
+    for (const record of [...pendingOrder]) settle(record, null);
+    for (const deviceId of [...waiters.keys()]) dropWaiters(deviceId);
+    sessions.clear();
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      try { server.close(finish); } catch { finish(); return; }
+      for (const socket of [...sockets]) { try { socket.destroy(); } catch { /* أُغلق */ } }
+      sockets.clear();
+      // شبكة أمان: لا نُعلّق الإغلاق على اتصال عنيد
+      const guard = setTimeout(finish, 2000);
+      if (typeof guard.unref === 'function') guard.unref();
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    const onError = (error) => { reject(error instanceof Error ? error : new Error('listen_failed')); };
+    server.once('error', onError);
+    server.listen(port, host, () => {
+      server.removeListener('error', onError);
+      const address = server.address();
+      boundPort = address && typeof address === 'object' ? address.port : port;
+      const wildcard = host === '0.0.0.0' || host === '::' || host === '';
+      const shown = wildcard ? lanAddress() : host;
+      resolve({
+        url: 'http://' + shown + ':' + boundPort,
+        host,
+        port: boundPort,
+        offerPermission,
+        withdraw,
+        status,
+        stop,
+      });
+    });
+  });
+}
+
+module.exports = {
+  start,
+  // ثوابت العقد (للاختبار والتكامل)
+  POLL_TIMEOUT_MS,
+  DEFAULT_TTL_MS,
+  MAX_TTL_MS,
+  MAX_BODY,
+  MAX_PENDING,
+  DECISIONS: Object.freeze([...DECISIONS]),
+};

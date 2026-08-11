@@ -148,6 +148,11 @@ contextBridge.exposeInMainWorld('satr', {
   downloadUpdate: () => ipcRenderer.invoke('satr:downloadUpdate'),
   restartUpdate: () => ipcRenderer.invoke('satr:restartUpdate'),
   checkUpdates: () => ipcRenderer.invoke('satr:checkUpdates'),
+  mobileStatus: () => ipcRenderer.invoke('satr:mobileStatus'),
+  mobileEnable: (enable) => ipcRenderer.invoke('satr:mobileEnable', { enable }),
+  mobilePairingStart: () => ipcRenderer.invoke('satr:mobilePairingStart'),
+  mobileDevices: () => ipcRenderer.invoke('satr:mobileDevices'),
+  mobileRevoke: (deviceId) => ipcRenderer.invoke('satr:mobileRevoke', { deviceId }),
   permission: (id, allow, always, turn) => ipcRenderer.invoke('satr:permission', { id, allow, always, turn }),
   answerQuestion: (id, selections) => ipcRenderer.invoke('satr:answerQuestion', { id, selections }), // AskUserQuestion (SDK)
   elicitationDone: (id, action, content) => ipcRenderer.invoke('satr:elicitationDone', { id, action, ...(content === undefined ? {} : { content }) }), // إدخال موصّلات Claude غير السري
