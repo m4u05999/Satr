@@ -158,12 +158,89 @@ touch(deviceId)                    // تحديث lastSeen
 اقتران بسر صحيح/خاطئ/منتهٍ · سقف الأجهزة والطرد · الإبطال يمنع الجهاز · التنقية
 والسقوف · عدم تسريب المفاتيح/الأسرار في listDevices.
 
-## 5) ما بعد الدفعة الأولى (قائد + دفعات لاحقة)
+## 5) الدفعة الثانية — التكامل المحلي + PWA (م1، العقود المجمّدة)
 
-التكامل في `main.js`/`preload.js` (اعتراض الإذن، القناة المحلية، IPC منقّى)، PWA
-(`pwa/`: بطاقة القرار + WebCrypto تتحقق من vectors §4.1 + الاقتران + Web Push)، الـ
-relay، الوسم «أُقرّت من الجوال» في المحادثة، وبند صفحة برو. كلها حواجزها ومراجعتها
-مستقلة. لا شيء منها في الدفعة الأولى.
+**م1 = إثبات الدورة كاملة محلياً على LAN بلا relay**: الجوال والحاسوب على الشبكة
+نفسها، الجوال يصل خادم القناة المحلي مباشرةً، وكل الحمولات معمّاة E2E (القناة المحلية
+تحاكي الـrelay حرفياً — يستبدله لاحقاً بلا تغيير عقد). ثلاث ملكيات **لا تتقاطع**.
+
+### 5.1 القناة المحلية — `electron/mobilelink.js` (+ `scripts/mobilelink-test.js`)
+
+خادم HTTP على واجهة LAN (لا loopback — الجوال يجب أن يصله)، **يتكلم أطر mobilecrypto
+المعمّاة فقط**؛ طلب غير مُصادق E2E لا يحصل على شيء. مُصمَّم بحقن اعتماديات (نمط
+executor/runner) ليبقى نقياً وقابلاً للاختبار. صفر اعتماديات (http المدمجة).
+
+```
+start(deps, opts) -> { url, port, stop() }
+  deps = { crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope }
+  opts = { host?, port?/*0=عشوائي*/ }
+offerPermission(rawReq, ctx) -> Promise<decision>  // decision: 'allow'|'allow_turn'|'deny'
+  // يبني الظرف عبر envelope.build، يسجّله معلّقاً بمفتاح envelope_id (= tool_use_id)،
+  // يبثّه لأي جهاز مقترن عبر long-poll، ويُحسم بردّ الجوال أو withdraw
+withdraw(envelopeId)          // سطح المكتب حسم أولاً ⇒ يُزال المعلّق (لا موافقة قديمة)
+status() -> { running, port, pending, deviceCount }   // لا مفاتيح ولا أسرار
+```
+**نقاط الاتصال (HTTP، كلها أطر معمّاة عدا /pair)**:
+- `POST /pair` — الجوال يرسل `{pairId, secretProof, mobilePublic, deviceId, label}` ⇒
+  `pair.completePairing`؛ النجاح يشتق جلسة (`crypto.deriveSession`) ويربطها بالجهاز.
+- `GET /poll?device=<id>` — long-poll ≤ 45ث: يعلّق حتى يوجد ظرف معلّق للجهاز المقترن،
+  فيعيد إطاراً معمّى (`crypto.seal`)؛ أو 204 عند المهلة (يعيد الجوال الطلب).
+- `POST /reply` — إطار معمّى يفكّه (`crypto.open`) ⇒ `{envelope_id, decision}`؛
+  **إعادة تحقق** أن `envelope_id` ما زال معلّقاً (وإلا يُرفض — حارس الموافقة القديمة)،
+  ثم يحسم الـPromise. `decision` من {allow, allow_turn, deny} حصراً — **لا «دائماً»**.
+**قواعد صلبة**: كل جهاز جلسته المستقلة (عدّاد/بادئة). ردّ لجهاز مُبطَل يُرفض. المعلّقات
+لها TTL (يمرّره التكامل ≤ عمر الدور) وتُسحب عند الحسم من أي طرف. عدّاد replay من
+mobilecrypto يحمي /reply و/poll. لا يسجّل الخادم برومبتاً ولا ظرفاً خاماً ولا مفتاحاً.
+**الاختبار (قطعي، بمنفذ عشوائي حقيقي + عميل http يلعب دور الجوال بـmobilecrypto
+الحقيقي)**: اقتران ناجح/فاشل · دورة offer⇒poll⇒reply⇒حسم صحيح لكل قرار · withdraw
+قبل الردّ · رفض ردّ لظرف غير معلّق (موافقة قديمة) · رفض جهاز مُبطَل · مهلة long-poll
+204 · رفض إطار مُتلاعب/replay. لا شبكة خارجية.
+
+### 5.2 تكامل سطح المكتب — `main.js` + `preload.js` + واجهة (كودكس مالك حصري لكل المشترك)
+
+يملك كودكس **وحده** كل ملفات سطح المكتب المشتركة في هذه الدفعة: `electron/main.js`،
+`electron/preload.js`، `src/index.html`، `src/ui/app.js`، ومكوّن جديد
+`src/ui/components/mobile-panel.js`. لا يلمسها منفذ آخر.
+**التنقية كلها في main.js** (القاعدة 2). **اعتراض الإذن**: حين يُبثّ `permission_request`
+ومُفعّل «التحكم من الجوال» ويوجد جهاز غير مُبطَل، يستدعي main **بالتوازي**
+`mobilelink.offerPermission(rawReq, {ttlMs})` ويسابقه مع مربع الإذن في الواجهة —
+**أول من يحسم يفوز**، والآخر يُلغى (`withdraw` أو ما يقابله في الواجهة). قرار الجوال
+يمرّ **بنفس مسار** `resolvePermission` القائم (allow/allow_turn/deny)، **بلا «دائماً»
+ولا bypass أبداً من الجوال**. كل موافقة جوال تُوسم في المحادثة «✅ أُقرّت من الجوال»
+عبر حدث على قناة `satr:event` القائمة (منسّق، لا حدث محرك).
+**IPC المنقّى** (preload يكشف المحدد فقط):
+- `satr:mobileStatus()` → `{enabled, running, url?, port?, deviceCount, pending}`
+- `satr:mobileEnable({enable})` → يبدأ/يوقف mobilelink، يعيد الحالة
+- `satr:mobilePairingStart()` → `{ok, qr}` (نص payload الاقتران المنقّى للعرض QR — من
+  `mobilepair.buildPairingPayload`، أحادي الاستخدام، صلاحية 3د). يحوي عنوان LAN.
+- `satr:mobileDevices()` → `mobilepair.listDevices()` (metadata فقط)
+- `satr:mobileRevoke({deviceId})` → `mobilepair.revoke` (تحقق `deviceId`)
+المكوّن `mobile-panel.js`: لوحة Shadow DOM بـ`adoptedStyleSheets` حصراً (لا style
+مضمّن — CSP)، تعرض مفتاح التفعيل + QR الاقتران + قائمة الأجهزة + إبطال. زر «📱» في
+الشريط (نمط 📄/±، لا أمر «/») يفتحها. **رسم QR بلا اعتمادية**: صفر مكتبة — إما رسم
+مصفوفة QR يدوياً على canvas/SVG، أو (أبسط لـم1) عرض نص payload مضغوطاً + رابط
+`satr-mobile://…` قابلاً للنسخ ليلصقه الجوال (الكاميرا/QR البصري تحسين لاحق). لا CDN.
+
+### 5.3 تطبيق الجوال — `pwa/**` (+ `scripts/pwa-crypto-live-test.js`)
+
+مجلد `pwa/` جديد كامل الملكية: `index.html` (RTL، CSP صارم، صفر مورد خارجي) ·
+`manifest.webmanifest` (قابل للتثبيت) · `sw.js` (Service Worker: Web Push wake **فارغ**
+⇒ سحب الظرف المعمّى ⇒ فكّه محلياً؛ + كاش القشرة) · `app.js` (الاقتران، long-poll،
+بطاقة القرار، إرسال القرار) · `crypto.js` (**WebCrypto يعيد إنتاج mobilecrypto حرفياً**:
+ECDH P-256 raw + HKDF بالوسمين `satr-mobile-v1` و`satr-mobile-v1-nonce` + AES-GCM بنفس
+الإطار/AAD + SAS) · أنماط بطاقة القرار المصممة حول «لحظة المقهى».
+**الشاشة الأولى = بطاقة قرار واحدة**: المشروع، الأداة (label عربي)، **الفعل الحرفي**
+(summary من الظرف)، الخطر، وزرّان كبيران **سماح مرة / رفض** + أصغر **سماح لهذا الدور**.
+تحتها: حالة الوكيل + heartbeat + ⏹ إيقاف. لا طرفية ولا فروقات. PIN عند الفتح.
+**الاختبار الحاسم (Electron حي، نمط live DOM harness)**: يحمّل `pwa/crypto.js` في سياق
+متصفح حقيقي ويتحقق مقابل `scripts/fixtures/mobilecrypto-vectors.json`: المفاتيح الثابتة
+⇒ نفس المفتاح المشتق · فكّ إطار سطح المكتب المختوم ⇒ النص المتوقع · ختم ⇒ إطار يطابق
+المتوقع بايتاً ببايت · SAS مطابق. **هذا يثبت أن القناة E2E تعمل عبر المنصتين قبل لمس
+هاتف** — أهم اختبار في الميزة كلها.
+
+### 5.4 خارج الدفعة الثانية (لاحق)
+الـrelay (يستبدل خادم LAN بلا تغيير عقد) · Web Push إنتاجي (VAPID) · tray/
+powerSaveBlocker/heartbeat الكامل · بند صفحة برو · صقل QR البصري بالكاميرا.
 
 ## 6) المخاطر القاتلة والتحييد (من العصف)
 
