@@ -143,7 +143,10 @@
   <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄 الملفات</button>
   <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">± التغييرات</button>
   <button id="galleryToggle" title="صور وفيديوهات ولّدها الوكيل في هذا المشروع">🖼 المعرض</button>
-  <button id="mobileToggle" type="button" title="إدارة التحكم من الجوال">📱 الجوال</button>
+  <!-- مخفي حتى تُجرَّب م1 حيّاً على هاتف ويُبنى الـrelay (نمط winget أعلاه):
+       الكود مدموج ومختبَر قطعياً لكن لا نعرض زرّاً لميزة لم تُثبت على جهاز حقيقي.
+       أزل hidden بعد التجربة الحية — انظر docs/MOBILE-CONTROL-PLAN.md §5.4 -->
+  <button id="mobileToggle" type="button" title="إدارة التحكم من الجوال" hidden>📱 الجوال</button>
   <div class="top-pop-wrap">
     <button id="sessionChangesToggle" type="button" title="تغييرات هذه الجلسة">Δ ملخّص الجلسة <span id="sessionChangesCount" hidden>0</span></button>
     <div id="sessionChangesPop" class="top-pop" hidden>
