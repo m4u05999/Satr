@@ -23,6 +23,7 @@ let lastBounds = null; // آخر مستطيل أبلغته الواجهة — ي
 let viewportOverride = null; // مقاس طلبه الوكيل للتحقق المتجاوب؛ يُطبّق داخل مساحة اللوحة
 let externalTargetProvider = null; // نافذة التقاط المنتج المرئية أثناء تسجيل البرومو
 const wiredWebContents = new WeakSet();
+const resizeWired = new WeakSet(); // نوافذ رُبط لها حارس إعادة تطبيق المستطيل (مرآة RTL)
 
 let snapshotSequence = 0;
 let activeSnapshotGeneration = 0;
@@ -313,6 +314,12 @@ function wireEvents(wc) {
 function ensureView(win, send) {
   hostWin = win;
   sender = send;
+  // تعويض المرآة يعتمد على عرض محتوى النافذة، فتغيّر الحجم وحده قد يُبطل الإحداثي
+  // حتى لو لم يتغيّر مستطيل اللوحة المُبلَّغ — نعيد التطبيق هنا. (مرة واحدة لكل نافذة)
+  if (isRtlUi() && !resizeWired.has(win)) {
+    resizeWired.add(win);
+    win.on('resize', () => { if (lastBounds) applyBounds(lastBounds); });
+  }
   if (view && view.webContents && !view.webContents.isDestroyed()) return view;
   wirePermissions();
   wireNetwork();
@@ -331,7 +338,7 @@ function ensureView(win, send) {
   view.setBackgroundColor('#ffffff'); // المواقع تفترض خلفية فاتحة قبل رسم أنماطها
   wireEvents(view.webContents);
   win.contentView.addChildView(view);
-  if (lastBounds) view.setBounds(effectiveBounds(lastBounds));
+  if (lastBounds) applyBounds(lastBounds);
   return view;
 }
 
@@ -439,9 +446,40 @@ function effectiveBounds(bounds) {
     height,
   };
 }
+// ── تعويض مرآة RTL (بلاغ مستخدم + مسبار حي scripts/rtl-bounds-probe.js) ──────
+// حين تكون لغة واجهة التطبيق RTL (نظام المستخدم بالعربية) يعكس Chromium إحداثي x
+// لطبقة العرض الأصلي: يضعه عند contentWidth − x − width بدل x، فيطفو العرض فوق
+// المحادثة بينما إطار اللوحة في مكانه. أثبته المسبار على Electron 33:
+//   en-US: x=0→0 و x=400→400  ·  ar: x=0→584 و x=400→184 (‏contentWidth=784)
+// المستطيل الذي تبلّغه الواجهة صحيح دائماً؛ التعويض هنا وحده — نعكسه مسبقاً
+// فيصل إلى موضعه الفعلي. القائمة تطابق لغات RTL التي يعتمدها Chromium.
+const RTL_UI_LANGS = new Set(['ar', 'he', 'iw', 'fa', 'ur', 'ps', 'sd', 'ug', 'yi', 'dv', 'ckb', 'nqo']);
+let rtlUiCache = null;
+function isRtlUi() {
+  if (rtlUiCache === null) {
+    let base = '';
+    try { base = String(app.getLocale() || '').toLowerCase().split(/[-_]/)[0]; } catch { base = ''; }
+    rtlUiCache = RTL_UI_LANGS.has(base);
+  }
+  return rtlUiCache;
+}
+
+// يحوّل مستطيل الواجهة (منطقي) إلى المستطيل الذي يجب تمريره لـsetBounds فعلياً.
+function nativeBounds(b) {
+  if (!b || !isRtlUi() || !(b.width > 0)) return b;
+  let contentWidth = 0;
+  try { if (hostWin && !hostWin.isDestroyed()) contentWidth = hostWin.getContentBounds().width; } catch { contentWidth = 0; }
+  if (!(contentWidth > 0)) return b; // بلا عرض معلوم لا نخمّن — نبقي السلوك كما هو
+  return { ...b, x: Math.max(0, Math.round(contentWidth - b.x - b.width)) };
+}
+
+function applyBounds(b) {
+  if (view && view.webContents && !view.webContents.isDestroyed()) view.setBounds(nativeBounds(effectiveBounds(b)));
+}
+
 function setBounds(b) {
   lastBounds = b;
-  if (view && view.webContents && !view.webContents.isDestroyed()) view.setBounds(effectiveBounds(b));
+  applyBounds(b);
   return { ok: true };
 }
 
@@ -1467,7 +1505,7 @@ async function setViewport(width, height) {
   if (!Number.isInteger(w) || w < 240 || w > 1920
       || (h != null && (!Number.isInteger(h) || h < 240 || h > 1200))) return { error: 'bad_viewport' };
   viewportOverride = { width: w, height: h };
-  if (view && lastBounds) view.setBounds(effectiveBounds(lastBounds));
+  if (view && lastBounds) applyBounds(lastBounds);
   await new Promise((resolve) => setTimeout(resolve, 80));
   try {
     const actual = await wc.executeJavaScript('({width:window.innerWidth,height:window.innerHeight,dpr:window.devicePixelRatio})', true);

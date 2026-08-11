@@ -1,7 +1,7 @@
 {
   "name": "satr",
   "productName": "Satr",
-  "version": "2.15.1",
+  "version": "2.15.2",
   "description": "سطر — تطبيق سطح مكتب عربي لأدوات الذكاء الاصطناعي في سطر الأوامر (Claude Code وغيرها) بدعم RTL كامل",
   "main": "electron/main.js",
   "author": "Moxa",
@@ -79,6 +79,7 @@
     "test:background-ui-live": "electron scripts/background-ui-live-test.js",
     "test:browser-member-live": "electron scripts/browser-member-live-test.js",
     "test:preview-member-live": "electron scripts/preview-member-live-test.js",
+    "test:rtl-preview": "electron scripts/rtl-preview-fix-test.js --ar",
     "gen:satr-guide": "node scripts/gen-satr-guide.js",
     "test:satr-guide": "node scripts/satr-guide-test.js",
     "test:handoff-bar-live": "electron scripts/handoff-bar-live-test.js",
