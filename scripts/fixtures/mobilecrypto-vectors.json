@@ -1,0 +1,81 @@
+{
+  "_readme": "عقد التوافق البايتي لطبقة التعمية (electron/mobilecrypto.js §4.1). على PWA أن تعيد إنتاج derived و frames حرفياً بـWebCrypto. كل الحقول الثنائية بترميز base64url بلا حشو.",
+  "version": 1,
+  "generated_by": "scripts/mobilecrypto-test.js",
+  "algorithms": {
+    "curve": "P-256 (prime256v1)",
+    "ecdh": "raw shared secret = X coordinate, 32 bytes (WebCrypto deriveBits ECDH 256)",
+    "kdf": "HKDF-SHA256(ikm=shared, salt=utf8(pair_id), info=<below>)",
+    "cipher": "AES-256-GCM, 12-byte nonce, 16-byte tag appended to ciphertext",
+    "hkdf_info_keys": "satr-mobile-v1",
+    "hkdf_info_nonce": "satr-mobile-v1-nonce",
+    "key_bytes": 64,
+    "nonce_prefix_bytes": 8
+  },
+  "frame": {
+    "layout": "version(1) || dir(1) || counter(8, big-endian) || ciphertext || tag(16)",
+    "aad": "the 10-byte header (version || dir || counter)",
+    "nonce": "prefix(4) || counter(8)",
+    "version": 1,
+    "dir_desktop_to_mobile": 1,
+    "dir_mobile_to_desktop": 2,
+    "header_len": 10,
+    "tag_len": 16,
+    "nonce_len": 12,
+    "replay_rule": "receiver accepts only strictly increasing counters (gaps allowed)"
+  },
+  "webcrypto_notes": [
+    "public key: importKey('raw', 65 bytes, {name:'ECDH', namedCurve:'P-256'})",
+    "private key: importKey('jwk', {kty:'EC', crv:'P-256', d, x, y}) where x = public[1..33], y = public[33..65]",
+    "hkdf keys: deriveBits({name:'HKDF', hash:'SHA-256', salt, info:utf8('satr-mobile-v1')}, ikm, 512) -> key_d2m||key_m2d",
+    "hkdf nonce prefixes: a SECOND deriveBits with info:utf8('satr-mobile-v1-nonce') and length 64 -> prefix_d2m||prefix_m2d",
+    "aes-gcm: additionalData = header, tagLength = 128; WebCrypto appends the tag, matching this layout",
+    "pair_id must be unique per session: it is the HKDF salt and the counter restarts at 0"
+  ],
+  "pair_id": "satr-vectors-pair-0001",
+  "keys": {
+    "desktop_private": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+    "desktop_public": "BFFcPW6545a5BNP-yn9U_c0MwemXvzddylFa0KbDtANfRTa-OlDzGPv5pUdZAqIhUCvvDVfgjFOyzApW8X2fk1Q",
+    "mobile_private": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+    "mobile_public": "BMZVnUFt-1avcU8UbZF8JKv4GLL7EhYEEpZJhIIwotJYsqbYLcbGc0zwkv-qn8AS8Q9wCNOVKgjVeX6F_qul2Xc"
+  },
+  "derived": {
+    "key_d2m": "uJ7UHzW6x7htOwOwvS_EpBA2bLPI4l11nyET992d-7Q",
+    "key_m2d": "26SdA_VK_uV6TRMqG7-606fTUzrsErD1sKwvQSas8pk",
+    "prefix_d2m": "NsSfuA",
+    "prefix_m2d": "uLkwOQ"
+  },
+  "sas": {
+    "rule": "decimal(first 20 bits of SHA-256(desktop_public || mobile_public || utf8(pair_id))) % 1e6, padded to 6",
+    "expected": "709387"
+  },
+  "frames": [
+    {
+      "note": "desktop -> mobile, counter 0",
+      "direction": "d2m",
+      "counter": 0,
+      "plaintext_utf8": "مرحباً من سطر",
+      "plaintext_b64url": "2YXYsdit2KjYp9mLINmF2YYg2LPYt9ix",
+      "frame_b64url": "AQEAAAAAAAAAAFcMIaFCNRtACU5QqPUHqsrGljfhp93EsXQ5sIu3qf4aBADgboqpPEo",
+      "frame_len": 50
+    },
+    {
+      "note": "desktop -> mobile, counter 1, empty plaintext",
+      "direction": "d2m",
+      "counter": 1,
+      "plaintext_utf8": "",
+      "plaintext_b64url": "",
+      "frame_b64url": "AQEAAAAAAAAAAdvXjaRZ-1wVZJfoatn7tOg",
+      "frame_len": 26
+    },
+    {
+      "note": "mobile -> desktop, counter 0",
+      "direction": "m2d",
+      "counter": 0,
+      "plaintext_utf8": "{\"decision\":\"allow\"}",
+      "plaintext_b64url": "eyJkZWNpc2lvbiI6ImFsbG93In0",
+      "frame_b64url": "AQIAAAAAAAAAAI1MlF8g6v9zOYOlSWa-Z6qw-HjiyBiJMNEVN9vCItQrY1qoww",
+      "frame_len": 46
+    }
+  ]
+}

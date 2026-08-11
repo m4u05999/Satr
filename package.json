@@ -9,6 +9,9 @@
   "scripts": {
     "eval:agent": "node scripts/agent-eval.js",
     "eval:agent:baseline": "node scripts/agent-eval.js --report docs/AGENT-EVAL-BASELINE.md",
+    "test:mobile-crypto": "node scripts/mobilecrypto-test.js",
+    "test:mobile-envelope": "node scripts/mobileenvelope-test.js",
+    "test:mobile-pair": "node scripts/mobilepair-test.js",
     "test:skills": "node scripts/skills-test.js",
     "test:tasks": "node scripts/tasks-test.js",
     "test:sessionmeta": "node scripts/sessionmeta-test.js",
