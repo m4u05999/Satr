@@ -3747,11 +3747,29 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') { app.quit(); return; }
   cleanupBeforeQuit().catch(() => {});
 });
+// حارس الإغلاق: `before-quit` يمنع الخروج حتى يكتمل `cleanupBeforeQuit`، وفيه
+// عشرات الانتظارات (المحرّكات، غرفة العمليات، الحلقة، TestSprite، keepalive…).
+// تعلّق أيٍّ منها كان يُبقي «سطر» حيّاً في مدير المهام إلى الأبد بلا مخرج.
+// لا نسمح لمسار تنظيف بحبس المستخدم: مهلة قصوى ثم خروج مضمون.
+// يحرسه scripts/pty-shutdown-probe.js (يفشل فعلاً عند إزالة هذا الحارس).
+const SHUTDOWN_WATCHDOG_MS = 8000;
+
 app.on('before-quit', (event) => {
   if (shutdownClean) return;
   event.preventDefault();
   if (shutdownCleanup) return;
+  const watchdog = setTimeout(() => {
+    shutdownClean = true;
+    // ترتيب إلزامي: طرفية pty حيّة تمنع خروج العملية على المستوى الأصلي، فلا
+    // ‏app.exit ولا process.exit ينفعان قبل قتلها (مثبت بمسبار pty-shutdown-probe).
+    try { term.killAll(); } catch (e) { /* أفضل جهد */ }
+    try { bgprocs.killAll(); } catch (e) { /* أفضل جهد */ }
+    try { app.exit(0); } catch (e) { /* أفضل جهد */ }
+    process.exit(0); // شبكة أخيرة إن لم يُنهِ app.exit العملية
+  }, SHUTDOWN_WATCHDOG_MS);
+  if (watchdog.unref) watchdog.unref();
   shutdownCleanup = cleanupBeforeQuit().finally(() => {
+    clearTimeout(watchdog);
     shutdownClean = true;
     app.quit();
   });
