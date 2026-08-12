@@ -97,6 +97,12 @@ function loadPwaPairingParser(pwaCrypto) {
   if (!/secretProof\s*:\s*payload\.secret\b/.test(source)) {
     throw new Error('pwa_secret_proof_contract');
   }
+  // عقد النقل الثنائي (§5.1) — ثلاثة أعطال مثبتة حياً على هاتف: القناة ترسل الظرف
+  // **بايتات خام** لا JSON، و`/reply` يقبل الإطار خاماً ويوجب `?device=`. الهاتف كان
+  // يستدعي res.json() على الظرف ويرسل JSON بلا device، فيُرفض الردّ ويحمرّ الاستقصاء.
+  if (!/arrayBuffer\(\)/.test(source)) throw new Error('pwa_poll_binary_contract');
+  if (!/reply\?device=/.test(source)) throw new Error('pwa_reply_device_contract');
+  if (!/application\/octet-stream/.test(source)) throw new Error('pwa_reply_raw_contract');
   const context = { atob, TextDecoder, Uint8Array, URLSearchParams, JSON, C: pwaCrypto };
   const b64urlToText = sourceFunction(source, 'b64urlToText', context);
   const parsePayload = sourceFunction(source, 'parsePayload', Object.assign({ b64urlToText }, context));

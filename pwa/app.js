@@ -321,7 +321,9 @@
     }));
     const frame = await C.seal(state.session, plain);
     try {
-      await postJson(`${state.serverUrl}/reply`, { frame: C.bytesToBase64url(frame) });
+      // عقد القناة (§5.1): جسم `/reply` هو **الإطار المعمّى خاماً** لا JSON، والمسار
+      // يوجب `?device=`. عطل مثبت حياً — كان الردّ يُرفض بـbad_device/bad_frame.
+      await postFrame(`${state.serverUrl}/reply?device=${encodeURIComponent(state.deviceId)}`, frame);
       hideCard();
       setStatus('تم إرسال القرار — في انتظار طلب جديد');
       if (!state.polling) startPolling();
@@ -330,11 +332,27 @@
     }
   }
 
-  async function openFrame(frameB64) {
+  async function openFrame(frame) {
     if (!state.session) return null;
-    const frame = C.base64urlToBytes(frameB64);
-    const plain = await C.open(state.session, frame);
+    // القناة ترسل الإطار **بايتات خام** (application/octet-stream)؛ نقبل النص
+    // المرمّز أيضاً تسامحاً مع أي مسار قديم.
+    const bytes = typeof frame === 'string' ? C.base64urlToBytes(frame) : new Uint8Array(frame);
+    const plain = await C.open(state.session, bytes);
     return JSON.parse(new TextDecoder().decode(plain));
+  }
+
+  /** يرسل إطاراً معمّى خاماً (عقد /reply) ويعيد ردّ JSON. */
+  async function postFrame(url, frame) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: frame
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}${text ? ': ' + text : ''}`);
+    }
+    return res.json().catch(() => ({}));
   }
 
   async function pollLoop() {
@@ -355,9 +373,11 @@
         const res = await fetch(`${state.serverUrl}/poll?device=${state.deviceId}`, { signal });
         if (res.status === 204) continue;
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (data && data.frame) {
-          const envelope = await openFrame(data.frame);
+        // عقد القناة: الظرف يصل **بايتات خام** لا JSON (كان res.json() يرمي
+        // «Unexpected token» على كل ظرف — عطل مثبت حياً على هاتف).
+        const raw = await res.arrayBuffer();
+        if (raw && raw.byteLength) {
+          const envelope = await openFrame(raw);
           if (envelope && envelope.envelope_id) {
             state.currentEnvelope = envelope;
             renderCard(envelope);
