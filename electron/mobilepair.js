@@ -250,6 +250,20 @@ function createStore(options = {}) {
     return { ok: true, deviceId: rawDeviceId };
   }
 
+  /**
+   * زوج مفاتيح سطح المكتب كاملاً (العام + **الخاص**) — للاستخدام **داخل العملية
+   * الرئيسية حصراً**: القناة المحلية (‏mobilelink) تحتاج الخاص لاشتقاق جلسة ECDH،
+   * و`ensureDesktopIdentity` لا يعيده عمداً (عقد §4.3).
+   *
+   * ⚠️ لا يُكشف عبر IPC ولا يصل renderer أبداً: `listDevices` يبقى بلا مفاتيح،
+   * ولا يمرّره `main.js` في أي ردّ. أي كشف له يهدم نموذج الأمان كاملاً.
+   */
+  function getDesktopKeyPair() {
+    ensureLoaded();
+    ensureDesktopIdentity();
+    return identity ? { publicKey: identity.publicKey, privateKey: identity.privateKey } : null;
+  }
+
   function listDevices() {
     ensureLoaded();
     return devices.map((device) => ({
@@ -284,6 +298,7 @@ function createStore(options = {}) {
 
   return {
     ensureDesktopIdentity,
+    getDesktopKeyPair,
     buildPairingPayload,
     completePairing,
     listDevices,
@@ -296,6 +311,7 @@ const store = createStore();
 
 module.exports = {
   ensureDesktopIdentity: store.ensureDesktopIdentity,
+  getDesktopKeyPair: store.getDesktopKeyPair,
   buildPairingPayload: store.buildPairingPayload,
   completePairing: store.completePairing,
   listDevices: store.listDevices,

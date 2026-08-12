@@ -127,7 +127,8 @@
     "vendor:site": "node scripts/vendor-site.js",
     "site:shots": "electron scripts/site-shots.js",
     "ui:audit": "electron scripts/ui-audit.js",
-    "test:pty-shutdown": "node scripts/pty-shutdown-probe.js"
+    "test:pty-shutdown": "node scripts/pty-shutdown-probe.js",
+    "pwa:serve": "node scripts/pwa-serve.js"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",

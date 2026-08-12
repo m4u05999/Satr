@@ -578,10 +578,10 @@ function loadMobileLink() {
   if (!fs.existsSync(filename)) return null;
   try {
     const loaded = require(filename);
-    return loaded && typeof loaded.start === 'function'
-      && typeof loaded.offerPermission === 'function'
-      && typeof loaded.withdraw === 'function'
-      && typeof loaded.status === 'function' ? loaded : null;
+    // العقد (‏docs/MOBILE-CONTROL-PLAN.md §5.1): الوحدة تصدّر `start` وحدها،
+    // و offerPermission/withdraw/status/stop على **المقبض** الذي يعيده start.
+    // (كان الفحص يشترطها على الوحدة فيرفض القناة دائماً — عطل تكامل مثبت حياً.)
+    return loaded && typeof loaded.start === 'function' ? loaded : null;
   } catch { return null; }
 }
 
@@ -884,8 +884,8 @@ function safeMobileDevices() {
 
 function mobileStatus() {
   let raw = {};
-  if (mobileLink) {
-    try { raw = mobileLink.status() || {}; } catch { raw = {}; }
+  if (mobileHandle && typeof mobileHandle.status === 'function') {
+    try { raw = mobileHandle.status() || {}; } catch { raw = {}; }
   }
   const url = safeMobileUrl(raw.url || mobileHandle && mobileHandle.url);
   const rawPort = Number(raw.port || mobileHandle && mobileHandle.port || (url ? new URL(url).port : 0));
@@ -940,9 +940,9 @@ async function stopMobileLink() {
 
 function withdrawMobilePermission(id) {
   mobilePermissionRaces.delete(id);
-  if (!mobileLink) return;
+  if (!mobileHandle || typeof mobileHandle.withdraw !== 'function') return;
   try {
-    const result = mobileLink.withdraw(id);
+    const result = mobileHandle.withdraw(id);
     if (result && typeof result.catch === 'function') result.catch(() => {});
   } catch { /* السحب أفضل جهد؛ حارس main أسقط الطلب محلياً بالفعل */ }
 }
@@ -971,7 +971,7 @@ function resolvePermissionThroughCurrentHandles(id, allow, always, turn) {
 }
 
 function offerMobilePermission(obj, context) {
-  if (!mobileControlEnabled || !mobileHandle || !mobileLink
+  if (!mobileControlEnabled || !mobileHandle || typeof mobileHandle.offerPermission !== 'function'
       || !safeMobileDevices().some((device) => !device.revoked)
       || !SAFE_MOBILE_PERMISSION.test(String(obj.id || ''))) return;
   const id = String(obj.id);
@@ -983,7 +983,8 @@ function offerMobilePermission(obj, context) {
     session_id: context.sessionId,
   };
   const offerContext = { createdAt: Date.now(), ttlMs: MOBILE_PERMISSION_TTL_MS };
-  Promise.resolve().then(() => mobileLink.offerPermission(rawReq, offerContext)).then((decision) => {
+  const handle = mobileHandle; // نثبّت المقبض: تبديل القناة أثناء الانتظار لا يخلط الردود
+  Promise.resolve().then(() => handle.offerPermission(rawReq, offerContext)).then((decision) => {
     // لا نثق برد القناة: قرار محصور، طلب ما زال نفسه، والدور الجاري لم يتغيّر.
     if (!MOBILE_DECISIONS.has(decision) || mobilePermissionRaces.get(id) !== race
         || context.token !== runSeq) return;

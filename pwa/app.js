@@ -90,22 +90,40 @@
     return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   }
 
+  // يفكّ base64url إلى نص UTF-8 (حمولة الاقتران مرمّزة هكذا في سطر المكتبية)
+  function b64urlToText(value) {
+    let s = String(value).replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    const bin = atob(s);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+
   function parsePayload(text) {
     let raw = text.trim();
     if (raw.startsWith('satr-mobile://')) {
       const q = raw.indexOf('?');
-      raw = q > -1 ? raw.slice(q + 1) : raw.slice(14);
-      try {
-        raw = decodeURIComponent(raw);
-      } catch (_e) {
-        // إبقاء النص كما هو
+      const query = q > -1 ? raw.slice(q + 1) : '';
+      // الصيغة التي يولّدها سطر المكتبية: satr-mobile://pair?data=<base64url(JSON)>
+      const params = new URLSearchParams(query);
+      const data = params.get('data');
+      if (data) {
+        try {
+          raw = b64urlToText(data);
+        } catch (_e) {
+          throw new Error('تعذّر فكّ ترميز حمولة الاقتران — انسخ النص كاملاً');
+        }
+      } else {
+        raw = q > -1 ? query : raw.slice(14);
+        try { raw = decodeURIComponent(raw); } catch (_e) { /* إبقاء النص كما هو */ }
       }
     }
     let obj;
     try {
       obj = JSON.parse(raw);
     } catch (_e) {
-      throw new Error('حمولة الاقتران ليست JSON صالحاً');
+      throw new Error('حمولة الاقتران ليست JSON صالحاً — تأكد من نسخ النص كاملاً');
     }
     if (obj.v !== 1 && obj.version !== 1) {
       throw new Error('نسخة حمولة الاقتران غير مدعومة');
@@ -185,10 +203,11 @@
     }
 
     try {
-      const proof = await computeSecretProof(secretU8);
+      // `mobilepair.completePairing` يقارن السرّ **الخام** كما ولّده سطر المكتبية
+      // (‏base64url لـ32 بايت)، لا بصمته. إرسال sha256 كان يفشل الاقتران دائماً.
       const result = await postJson(`${state.serverUrl}/pair`, {
         pairId: payload.pairId,
-        secretProof: proof,
+        secretProof: payload.secret,
         mobilePublic: keyPair.publicKey,
         deviceId: state.deviceId,
         label: 'جوالي'

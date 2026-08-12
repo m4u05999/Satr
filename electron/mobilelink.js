@@ -77,8 +77,20 @@ function clampInt(value, min, max, fallback) {
   return n;
 }
 
-/** أول عنوان IPv4 غير داخلي — للعرض في `url` فقط (الاستماع يبقى على opts.host). */
-function lanAddress() {
+/**
+ * العنوان المُعلَن للجوال (‏`url` فقط — الاستماع يبقى على opts.host).
+ *
+ * درس مثبّت (2026-08-12): «أول IPv4 غير داخلي» **خطأ على أجهزة المطوّرين**.
+ * ‏`os.networkInterfaces()` يتصدّرها غالباً محوّل افتراضي (‏WSL/Hyper-V/VirtualBox)
+ * فيُعلَن عنوان كـ`172.27.0.1` لا يصله الجوال إطلاقاً بينما البطاقة الحقيقية
+ * (‏Wi-Fi/هوتسبوت) في آخر القائمة. الجمهور المستهدف مطوّرون — أي أن العطل كان
+ * سيصيب أغلبهم.
+ *
+ * الحل: نسأل النظام عن العنوان الذي يخرج منه فعلاً — مقبس UDP «موصول» لا يرسل
+ * أي حزمة، إنما يجعل النظام يختار المسار ويكشف عنوانه المحلي. لا إنترنت مطلوباً
+ * ولا اعتمادية. عند أي فشل نعود إلى المسح القديم ثم إلى 127.0.0.1.
+ */
+function scanAddress() {
   let interfaces = null;
   try { interfaces = os.networkInterfaces(); } catch { return '127.0.0.1'; }
   for (const name of Object.keys(interfaces || {})) {
@@ -87,6 +99,35 @@ function lanAddress() {
     }
   }
   return '127.0.0.1';
+}
+
+function lanAddress() {
+  return new Promise((resolve) => {
+    let settled = false;
+    let sock = null;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      try { if (sock) sock.close(); } catch (e) { /* أفضل جهد */ }
+      resolve(value || scanAddress());
+    };
+    const timer = setTimeout(() => finish(null), 700);
+    if (timer.unref) timer.unref();
+    try {
+      sock = require('node:dgram').createSocket('udp4');
+      sock.on('error', () => { clearTimeout(timer); finish(null); });
+      // 8.8.8.8 وجهة اسمية لاختيار المسار — لا تُرسل حزمة ولا يلزم اتصال فعلي
+      sock.connect(53, '8.8.8.8', () => {
+        let addr = null;
+        try { addr = sock.address() && sock.address().address; } catch (e) { addr = null; }
+        clearTimeout(timer);
+        finish(addr && addr !== '0.0.0.0' ? addr : null);
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      finish(null);
+    }
+  });
 }
 
 /**
@@ -583,12 +624,12 @@ function start(deps, opts) {
   return new Promise((resolve, reject) => {
     const onError = (error) => { reject(error instanceof Error ? error : new Error('listen_failed')); };
     server.once('error', onError);
-    server.listen(port, host, () => {
+    server.listen(port, host, async () => {
       server.removeListener('error', onError);
       const address = server.address();
       boundPort = address && typeof address === 'object' ? address.port : port;
       const wildcard = host === '0.0.0.0' || host === '::' || host === '';
-      const shown = wildcard ? lanAddress() : host;
+      const shown = wildcard ? await lanAddress() : host;
       resolve({
         url: 'http://' + shown + ':' + boundPort,
         host,
