@@ -388,12 +388,30 @@
       payload: { secretProof: payload.secret, deviceId: state.deviceId, label: 'جوالي' }
     });
     const box = await pairBoxId(payload.pairId);
-    const res = await fetch(`${state.relayUrl}/m/${box}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: sealed
-    });
-    if (!res.ok) throw new Error(`تعذّر الوصول إلى الوسيط (HTTP ${res.status})`);
+    // إعادة محاولة قصيرة: إعادة تشغيل الوسيط (نشر أو صيانة) تُحدث نافذة 502 مدتها
+    // ثوانٍ. بلا ذلك يفشل الاقتران نهائياً ويُطلب مسح QR جديد على عطل عابر — بينما
+    // حلقة الاستقصاء تتعافى منه أصلاً. عطل مثبت حياً 2026-08-12.
+    let posted = null;
+    let lastError = '';
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt) {
+        setStatus('الوسيط لا يستجيب — إعادة المحاولة…');
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+      }
+      let res = null;
+      try {
+        res = await fetch(`${state.relayUrl}/m/${box}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: sealed
+        });
+      } catch (err) { lastError = 'تعذّر الوصول إلى الوسيط'; continue; }
+      if (res.ok) { posted = res; break; }
+      lastError = `الوسيط ردّ HTTP ${res.status}`;
+      // 4xx خطأ في الطلب لا انقطاع: لا فائدة من التكرار
+      if (res.status < 500) break;
+    }
+    if (!posted) throw new Error(lastError || 'تعذّر الوصول إلى الوسيط');
 
     // انتظار الإقرار: جلسة مؤقتة لفكّه (الجلسة الدائمة تُبنى بعد نجاح الاقتران)
     setStatus('في انتظار تأكيد سطح المكتب…');
