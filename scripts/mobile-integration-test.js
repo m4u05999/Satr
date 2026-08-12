@@ -175,6 +175,21 @@ async function run() {
     assert(link.url.startsWith('https://127.0.0.1:'), 'القناة الحقيقية HTTPS');
     equal(link.status().fingerprint, tlsMaterial.fingerprint, 'بصمة القناة هي بصمة الشهادة');
 
+    // أصول PWA: كل أصل يشير إليه index.html **يجب أن يُخدَم فعلاً**. عطل مثبت حياً
+    // (2026-08-12): وسم styles.css كان مفقوداً من index.html، فظهرت الشاشات الثلاث
+    // مكدّسة بلا تنسيق على الهاتف بينما كل الاختبارات خضراء — لأن لا أحد كان يفحص
+    // أن الصفحة تطلب أصولها وأن الخادم يخدمها.
+    const indexHtml = fs.readFileSync(path.join(appRoot, 'pwa', 'index.html'), 'utf8');
+    const referenced = [...indexHtml.matchAll(/(?:href|src)="([^"#:]+\.(?:css|js|webmanifest|svg))"/g)]
+      .map((m) => m[1]);
+    assert(referenced.includes('styles.css'), 'index.html يشير إلى ورقة الأنماط');
+    assert(referenced.includes('app.js') && referenced.includes('crypto.js'), 'index.html يشير إلى سكربتات التطبيق');
+    for (const asset of new Set(referenced)) {
+      const res = await request(link.url + '/' + asset, tlsMaterial.cert, 'GET');
+      equal(res.status, 200, 'الأصل يُخدَم من القناة: ' + asset);
+      assert(res.body && res.body.length > 0, 'الأصل غير فارغ: ' + asset);
+    }
+
     const rawPayload = store.buildPairingPayload();
     const buildPairingResult = loadMainPairingBuilder();
     const pairing = buildPairingResult(link.url + '/', rawPayload, tlsMaterial.fingerprint);
