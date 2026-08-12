@@ -326,6 +326,16 @@ async function run() {
     store.revoke(deviceId);
     equal(client.status().deviceCount, 0, 'الجهاز المُبطَل يختفي من القناة');
 
+    // ── الوصل الفعلي: من يستدعي awaitPairing؟ ───────────────────────────────
+    // العميل يعرض الدالة، لكن إن لم يستدعها `main.js` عند إنشاء رمز الاقتران فإن
+    // الهاتف يودع ظرفه ولا يقرؤه أحد أبداً — «موصول لكن غير مربوط». عطل مثبت حياً
+    // 2026-08-12: الاقتران انتهى بمهلته على «لم يؤكّد سطح المكتب الاقتران».
+    const wiringSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+    assert(/mobileHandle\.awaitPairing\(/.test(wiringSource),
+      'main.js يستدعي awaitPairing فعلاً عند إنشاء رمز الاقتران');
+    assert(/awaitPairing[\s\S]{0,400}?buildMobilePairingResult\(relayUrl/.test(wiringSource),
+      'والاستدعاء يسبق إعادة رابط الاقتران (لا بعده فيضيع السباق)');
+
     // ── تنقية عنوان الوسيط في main.js (منطق الإنتاج نفسه) ──────────────────
     // عنوان عام بلا TLS يعرّض النقل ولا يمنح crypto.subtle سياقاً آمناً على الهاتف.
     const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');

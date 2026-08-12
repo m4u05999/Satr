@@ -1259,6 +1259,12 @@ function buildMobilePairingLink() {
         || !Number.isFinite(payload.createdAt) || !Number.isFinite(payload.expiresAt)) {
       return { ok: false, error: 'pairing_failed' };
     }
+    // ⚠️ بدء انتظار الاقتران على صندوق الوسيط — بلا هذا يودع الهاتف ظرفه ولا يقرؤه
+    // أحد أبداً، فينتهي بمهلته على «لم يؤكّد سطح المكتب الاقتران» (عطل مثبت حياً
+    // 2026-08-12: العميل يعرض `awaitPairing` ولم يكن أحد يستدعيه).
+    // في القناة المحلية لا يلزم نظير: الهاتف يتصل بـ`/pair` مباشرةً ويردّ الخادم فوراً.
+    try { mobileHandle.awaitPairing(payload.pairId); }
+    catch { return { ok: false, error: 'pairing_failed' }; }
     // لا بصمة شهادة: TLS عام موثوق لا موقّع ذاتياً
     return buildMobilePairingResult(relayUrl + '/', payload, '', relayUrl);
   }
