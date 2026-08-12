@@ -406,6 +406,122 @@ test('sas — رفض المدخلات المشوّهة', () => {
   expectFail('bad_public_key', () => mc.sas());
 });
 
+// ═══════════════ 6ب) الاقتران المعمّى عبر وسيط (§7.2) ═══════════════
+// نموذج التهديد المحدَّد: وسيط ينقل الإطار ويحاول قراءة السرّ أو الاقتران بمفتاحه.
+
+const PAIR_PAYLOAD = { secretProof: 's'.repeat(43), deviceId: 'ab485809d2019244', label: 'جوالي' };
+const FIXED_PAIR_NONCE = Buffer.from('0b1c2d3e4f5a6b7c8d9e0f1a', 'hex');
+
+function sealPair(overrides) {
+  return mc.sealPairing(Object.assign({
+    mobilePrivate: M_PRIV, mobilePublic: M_PUB, desktopPublic: D_PUB,
+    pairId: PAIR_ID, payload: PAIR_PAYLOAD, nonce: FIXED_PAIR_NONCE,
+  }, overrides || {}));
+}
+
+test('sealPairing/openPairing — دورة كاملة وبنية الإطار المجمّدة', () => {
+  const frame = sealPair();
+  assert.strictEqual(frame[0], mc.VERSION, 'بايت النسخة');
+  assert.strictEqual(frame[1], mc.PAIR_KIND, 'بايت النوع 0x03');
+  assert.strictEqual(frame[2], 0x04, 'النقطة غير مضغوطة');
+  assert.strictEqual(mc.PAIR_HEADER_LEN, 79);
+  assert.ok(frame.length > mc.PAIR_HEADER_LEN + mc.TAG_LEN);
+  const out = mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame });
+  assert.strictEqual(out.mobilePublic, M_PUB, 'مفتاح الجوال يعود كما أُرسل');
+  assert.deepStrictEqual(out.payload, PAIR_PAYLOAD, 'الحمولة سليمة');
+});
+
+test('sealPairing — السرّ لا يظهر في بايتات الإطار إطلاقاً', () => {
+  const frame = sealPair();
+  // بحث نصي وثنائي: الوسيط يرى بايتات معتمة لا سرّاً
+  assert.ok(!frame.toString('latin1').includes(PAIR_PAYLOAD.secretProof), 'السرّ غير ظاهر');
+  assert.ok(!frame.toString('latin1').includes(PAIR_PAYLOAD.deviceId), 'المعرّف غير ظاهر');
+  assert.ok(!frame.toString('utf8').includes('جوالي'), 'الوسم غير ظاهر');
+  // ما يظهر صراحةً هو mobilePublic وحده (لازم للاشتقاق) — ومربوط في الـAAD
+  assert.strictEqual(frame.subarray(2, 67).toString('base64url'), M_PUB);
+});
+
+test('openPairing — الوسيط لا يستطيع تبديل mobilePublic بمفتاحه', () => {
+  // الهجوم: وسيط يستبدل المفتاح العام ليقترن هو، مع إبقاء النص المعمّى كما هو.
+  // الحماية الأولى ليست الـAAD بل اشتقاق المفتاح من المفتاح العام في الإطار نفسه:
+  // التبديل يجعل سطح المكتب يشتقّ مفتاحاً آخر فيفشل الفكّ. (أُثبت بإزالة الربط من
+  // الـAAD فمرّت كل الفحوص — الـAAD دفاع في العمق لا الحاجز الأول.)
+  const frame = sealPair();
+  const forged = Buffer.from(frame);
+  Buffer.from(T_PUB, 'base64url').copy(forged, 2);
+  expectFail('bad_tag', () => mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: forged }));
+});
+
+test('openPairing — لا فكّ بمفتاح سطح مكتب آخر (الوسيط لا يقرأ)', () => {
+  const frame = sealPair();
+  expectFail('bad_tag', () => mc.openPairing({ desktopPrivate: T_PRIV, pairId: PAIR_ID, frame }));
+});
+
+test('openPairing — pairId مختلف يكسر الفكّ (الملح مربوط)', () => {
+  const frame = sealPair();
+  expectFail('bad_tag', () => mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID + 'x', frame }));
+});
+
+test('openPairing — العبث بالنص أو الوسم أو الـnonce يُرفض', () => {
+  for (const index of [mc.PAIR_HEADER_LEN, 70, 2 + 65]) {
+    const tampered = sealPair();
+    tampered[index] ^= 0x01;
+    expectFail('bad_tag', () => mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: tampered }));
+  }
+  const shortTag = sealPair();
+  shortTag[shortTag.length - 1] ^= 0xff;
+  expectFail('bad_tag', () => mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: shortTag }));
+});
+
+test('openPairing — خلط الأنواع مرفوض (إطار جلسة ليس إطار اقتران)', () => {
+  // إطار جلسة قصير يسقط على حارس الطول أولاً (فشل مغلق سليم)
+  const shortSession = mc.seal(desktopSession(), Buffer.from('x', 'utf8'));
+  expectFail('bad_frame', () => mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: shortSession }));
+  // وإطار جلسة طويل يبلغ فحص النوع فيُرفض به — لا يُقبل مكان إطار اقتران
+  const longSession = mc.seal(desktopSession(), Buffer.alloc(200, 0x41));
+  expectFail('bad_kind', () => mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: longSession }));
+  const wrongKind = sealPair();
+  wrongKind[1] = mc.DIR_D2M;
+  expectFail('bad_kind', () => mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: wrongKind }));
+  const wrongVersion = sealPair();
+  wrongVersion[0] = 0x02;
+  expectFail('bad_version', () => mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: wrongVersion }));
+});
+
+test('sealPairing/openPairing — الحدود fail-closed', () => {
+  expectFail('bad_payload', () => sealPair({ payload: null }));
+  expectFail('bad_payload', () => sealPair({ payload: [1, 2] }));
+  expectFail('bad_payload', () => sealPair({ payload: 'نص' }));
+  expectFail('bad_payload', () => sealPair({ payload: { big: 'x'.repeat(mc.MAX_PAIR_PLAINTEXT) } }));
+  expectFail('bad_nonce', () => sealPair({ nonce: Buffer.alloc(11) }));
+  expectFail('bad_public_key', () => sealPair({ desktopPublic: b64u(Buffer.alloc(65)) }));
+  expectFail('bad_private_key', () => sealPair({ mobilePrivate: 'zz' }));
+  expectFail('bad_pair_id', () => sealPair({ pairId: '' }));
+  expectFail('bad_frame', () => mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: Buffer.alloc(10) }));
+  expectFail('bad_frame', () => mc.openPairing({
+    desktopPrivate: D_PRIV, pairId: PAIR_ID,
+    frame: Buffer.alloc(mc.PAIR_HEADER_LEN + mc.MAX_PAIR_PLAINTEXT + mc.TAG_LEN + 1),
+  }));
+});
+
+test('sealPairing — nonce عشوائي افتراضاً فلا يتكرر إطاران متطابقان', () => {
+  const a = mc.sealPairing({
+    mobilePrivate: M_PRIV, mobilePublic: M_PUB, desktopPublic: D_PUB,
+    pairId: PAIR_ID, payload: PAIR_PAYLOAD,
+  });
+  const b = mc.sealPairing({
+    mobilePrivate: M_PRIV, mobilePublic: M_PUB, desktopPublic: D_PUB,
+    pairId: PAIR_ID, payload: PAIR_PAYLOAD,
+  });
+  // المفتاح ثابت في (الزوج، desktopPublic، pairId): لولا عشوائية الـnonce لتطابق
+  // الإطاران وتكرر الـnonce تحت مفتاح واحد
+  assert.notStrictEqual(a.subarray(67, 79).toString('hex'), b.subarray(67, 79).toString('hex'));
+  assert.notStrictEqual(a.toString('base64url'), b.toString('base64url'));
+  // وكلاهما يُفكّ سليماً
+  assert.deepStrictEqual(mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: a }).payload, PAIR_PAYLOAD);
+  assert.deepStrictEqual(mc.openPairing({ desktopPrivate: D_PRIV, pairId: PAIR_ID, frame: b }).payload, PAIR_PAYLOAD);
+});
+
 // ═══════════════════════ 7) الإطارات المجمّدة + كتابة الـvectors ═══════════════════════
 
 test('vectors — الإطارات المختومة تطابق البايتات المجمّدة', () => {

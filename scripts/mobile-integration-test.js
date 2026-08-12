@@ -664,6 +664,61 @@ async function run() {
     assert(/status\.available[\s\S]{0,120}?mobileToggle'\)\.hidden = false/.test(appSource),
       'الواجهة تكشف الزر من available وحدها');
 
+    // ── الاقتران المعمّى عبر وسيط (§7.2) — توافق متقاطع حقيقي ────────────────
+    // الحلقة الأمنية الحرجة للـrelay: بلا تعمية يرى الوسيط secretProof وmobilePublic
+    // معاً فيقترن بمفتاحه بدل الهاتف ويصير صاحب قرار. هنا **الهاتف يختم بـWebCrypto
+    // وسطح المكتب يفكّ بـnode:crypto** — لا كلّ طرف يختبر نفسه.
+    const pairPayload = { secretProof: parsed.payload.secret, deviceId, label: 'جوالي' };
+    const sealedPairing = await pwaCrypto.sealPairing({
+      mobilePrivate: mobileKeys.privateKey,
+      mobilePublic: mobileKeys.publicKey,
+      desktopPublic: parsed.payload.desktopPublic,
+      pairId: parsed.payload.pairId,
+      payload: pairPayload,
+    });
+    const pairingBytes = Buffer.from(sealedPairing);
+    equal(pairingBytes[0], mobilecrypto.VERSION, 'إطار الاقتران: بايت النسخة');
+    equal(pairingBytes[1], mobilecrypto.PAIR_KIND, 'إطار الاقتران: النوع 0x03');
+    const openedPairing = mobilecrypto.openPairing({
+      desktopPrivate: desktopKeys.privateKey,
+      pairId: parsed.payload.pairId,
+      frame: pairingBytes,
+    });
+    equal(openedPairing.mobilePublic, mobileKeys.publicKey, 'سطح المكتب استخرج مفتاح الجوال');
+    equal(openedPairing.payload.secretProof, parsed.payload.secret, 'السرّ وصل سليماً');
+    equal(openedPairing.payload.deviceId, deviceId, 'المعرّف وصل سليماً');
+    equal(openedPairing.payload.label, 'جوالي', 'الوسم العربي عبر WebCrypto→node سليم');
+
+    // الاتجاه المعاكس: سطح المكتب يختم والهاتف يفكّ (العقد متماثل)
+    const nodeSealed = mobilecrypto.sealPairing({
+      mobilePrivate: mobileKeys.privateKey,
+      mobilePublic: mobileKeys.publicKey,
+      desktopPublic: parsed.payload.desktopPublic,
+      pairId: parsed.payload.pairId,
+      payload: pairPayload,
+    });
+    const pwaOpened = await pwaCrypto.openPairing({
+      desktopPrivate: desktopKeys.privateKey,
+      desktopPublic: parsed.payload.desktopPublic,
+      pairId: parsed.payload.pairId,
+      frame: new Uint8Array(nodeSealed),
+    });
+    equal(pwaOpened.payload.secretProof, parsed.payload.secret, 'node→WebCrypto يفكّ سليماً');
+    equal(pwaOpened.mobilePublic, mobileKeys.publicKey, 'ومفتاح الجوال مطابق');
+
+    // نموذج التهديد: الوسيط ينقل الإطار ويحاول القراءة أو الانتحال
+    assert(!pairingBytes.toString('latin1').includes(parsed.payload.secret),
+      'السرّ لا يظهر في بايتات ما ينقله الوسيط');
+    const substituted = Buffer.from(pairingBytes);
+    Buffer.from(lateKeys.publicKey, 'base64url').copy(substituted, 2);
+    let substitutionRejected = false;
+    try {
+      mobilecrypto.openPairing({
+        desktopPrivate: desktopKeys.privateKey, pairId: parsed.payload.pairId, frame: substituted,
+      });
+    } catch (error) { substitutionRejected = (error && error.message) === 'bad_tag'; }
+    assert(substitutionRejected, 'تبديل mobilePublic بمفتاح الوسيط يكسر الوسم');
+
     // القناة المتوقفة تردّ فوراً: يجب التوقف لا الدوران في حلقة ساخنة
     const deadSandbox = Object.assign({}, offerSandbox, {
       mobilePermissionRaces: new Map(),

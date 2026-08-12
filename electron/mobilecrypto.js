@@ -66,6 +66,12 @@ const NONCE_LEN = PREFIX_LEN + COUNTER_LEN; // 12
 const HKDF_HASH = 'sha256';
 const HKDF_INFO = 'satr-mobile-v1';
 const HKDF_NONCE_INFO = 'satr-mobile-v1-nonce';
+// الاقتران المعمّى عبر وسيط (§7.2) — وسم مستقل فلا يشترك مع مفاتيح الجلسة
+const HKDF_PAIR_INFO = 'satr-mobile-v1-pair';
+const PAIR_KIND = 0x03; // يفصل إطار الاقتران عن اتجاهَي الجلسة (0x01/0x02)
+const PAIR_NONCE_LEN = 12;
+const PAIR_HEADER_LEN = 1 + 1 + 65 + PAIR_NONCE_LEN; // 79
+const MAX_PAIR_PLAINTEXT = 4096;
 const HKDF_LEN = 64;
 const HKDF_NONCE_LEN = 2 * PREFIX_LEN;
 const CIPHER = 'aes-256-gcm';
@@ -314,12 +320,110 @@ function sas(opts) {
   return String(bits20 % 1000000).padStart(6, '0');
 }
 
+// ── الاقتران المعمّى عبر وسيط (§7.2) ────────────────────────────────────────
+// اليوم يصل `secretProof` **خاماً** إلى سطح المكتب لأن القناة محلية والطرف الآخر هو
+// سطح المكتب نفسه. مع relay في المنتصف يرى الوسيط السرّ و`mobilePublic` معاً ⇒
+// **يقترن بمفتاحه بدل الهاتف** فيصير صاحب قرار على أذونات المستخدم. لذلك تُعمَّى
+// حمولة الاقتران إلى `desktopPublic` الموجود في QR أصلاً (ECIES بمفتاح خارج القناة).
+
+/** مفتاح الاقتران: ECDH ثم HKDF بوسم مستقل عن مفاتيح الجلسة. */
+function pairingKey(privateKey, publicKey, salt) {
+  const ecdh = crypto.createECDH(CURVE);
+  try { ecdh.setPrivateKey(privateKey); } catch (_e) { throw fail('bad_private_key'); }
+  let shared;
+  try {
+    // نقطة خارج المنحنى أو نقطة اللانهاية ترفع هنا — رفض fail-closed
+    shared = ecdh.computeSecret(publicKey);
+  } catch (_e) { throw fail('bad_public_key'); }
+  return Buffer.from(crypto.hkdfSync(HKDF_HASH, shared, salt, Buffer.from(HKDF_PAIR_INFO, 'utf8'), KEY_LEN));
+}
+
+/** الـAAD يربط النسخة والنوع و`mobilePublic` و`pairId`: تبديل أيّها يكسر الوسم. */
+function pairingAad(mobilePublic, salt) {
+  return Buffer.concat([Buffer.from([VERSION, PAIR_KIND]), mobilePublic, salt]);
+}
+
+/**
+ * يبني إطار اقتران معمّى (جانب الجوال).
+ *
+ * `nonce` عشوائي **على السلك** لا مشتقّ: المفتاح دالة في (زوج الجوال،
+ * `desktopPublic`، `pairId`) وكلها ثابتة، فإعادة محاولة اقتران بالزوج نفسه تعيد
+ * المفتاح — وnonce مشتقّ حينها يتكرر تحت مفتاح واحد (كارثي في GCM). العشوائية تزيل
+ * اعتماد الأمان على سلوك المتصل. الحقن للاختبار القطعي فقط.
+ */
+function sealPairing(opts) {
+  const { mobilePrivate, mobilePublic, desktopPublic, pairId, payload } = opts || {};
+  const salt = pairIdBytes(pairId);
+  const priv = decodeKey(mobilePrivate, PRIV_LEN, 'bad_private_key');
+  const mPub = decodePublic(mobilePublic);
+  const dPub = decodePublic(desktopPublic);
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw fail('bad_payload');
+
+  let plaintext;
+  try { plaintext = Buffer.from(JSON.stringify(payload), 'utf8'); }
+  catch (_e) { throw fail('bad_payload'); }
+  if (!plaintext.length || plaintext.length > MAX_PAIR_PLAINTEXT) throw fail('bad_payload');
+
+  const nonce = opts && opts.nonce !== undefined
+    ? asBytes(opts.nonce, 'bad_nonce') : crypto.randomBytes(PAIR_NONCE_LEN);
+  if (nonce.length !== PAIR_NONCE_LEN) throw fail('bad_nonce');
+
+  const key = pairingKey(priv, dPub, salt);
+  const cipher = crypto.createCipheriv(CIPHER, key, nonce, { authTagLength: TAG_LEN });
+  cipher.setAAD(pairingAad(mPub, salt));
+  const body = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  return Buffer.concat([Buffer.from([VERSION, PAIR_KIND]), mPub, nonce, body, cipher.getAuthTag()]);
+}
+
+/**
+ * يفكّ إطار اقتران معمّى (جانب سطح المكتب) ويعيد مفتاح الجوال العام مع الحمولة.
+ * لا يعبر أي سرّ إلى رسائل الخطأ.
+ * @returns {{mobilePublic:string, payload:object}}
+ */
+function openPairing(opts) {
+  const { desktopPrivate, pairId, frame } = opts || {};
+  const salt = pairIdBytes(pairId);
+  const priv = decodeKey(desktopPrivate, PRIV_LEN, 'bad_private_key');
+  const bytes = asBytes(frame, 'bad_frame');
+  if (bytes.length < PAIR_HEADER_LEN + TAG_LEN + 1) throw fail('bad_frame');
+  if (bytes.length > PAIR_HEADER_LEN + MAX_PAIR_PLAINTEXT + TAG_LEN) throw fail('bad_frame');
+  if (bytes[0] !== VERSION) throw fail('bad_version');
+  // النوع يفصل إطار الاقتران عن إطارات الجلسة فلا يُقبل أحدهما مكان الآخر
+  if (bytes[1] !== PAIR_KIND) throw fail('bad_kind');
+
+  const mPub = Buffer.from(bytes.subarray(2, 2 + PUB_LEN));
+  if (mPub[0] !== 0x04) throw fail('bad_public_key');
+  const nonce = Buffer.from(bytes.subarray(2 + PUB_LEN, PAIR_HEADER_LEN));
+  const tag = Buffer.from(bytes.subarray(bytes.length - TAG_LEN));
+  const body = Buffer.from(bytes.subarray(PAIR_HEADER_LEN, bytes.length - TAG_LEN));
+
+  const key = pairingKey(priv, mPub, salt);
+  const decipher = crypto.createDecipheriv(CIPHER, key, nonce, { authTagLength: TAG_LEN });
+  decipher.setAAD(pairingAad(mPub, salt));
+  decipher.setAuthTag(tag);
+  let plaintext;
+  try { plaintext = Buffer.concat([decipher.update(body), decipher.final()]); }
+  catch (_e) { throw fail('bad_tag'); }
+
+  let payload;
+  try { payload = JSON.parse(plaintext.toString('utf8')); }
+  catch (_e) { throw fail('bad_payload'); }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw fail('bad_payload');
+  return { mobilePublic: toB64url(mPub), payload };
+}
+
 module.exports = {
   generateKeyPair,
   deriveSession,
   seal,
   open,
   sas,
+  sealPairing,
+  openPairing,
+  PAIR_KIND,
+  PAIR_NONCE_LEN,
+  PAIR_HEADER_LEN,
+  MAX_PAIR_PLAINTEXT,
   // ثوابت العقد (للاختبار والتكامل — لا تغيّرها دون تحديث §4.1 وملف الـvectors)
   VERSION,
   DIR_D2M,

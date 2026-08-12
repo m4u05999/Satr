@@ -34,6 +34,12 @@
   const NONCE_LEN = PREFIX_LEN + COUNTER_LEN;
   const HKDF_INFO = encoder.encode('satr-mobile-v1');
   const HKDF_NONCE_INFO = encoder.encode('satr-mobile-v1-nonce');
+  // الاقتران المعمّى عبر وسيط (§7.2) — وسم مستقل عن مفاتيح الجلسة
+  const HKDF_PAIR_INFO = encoder.encode('satr-mobile-v1-pair');
+  const PAIR_KIND = 0x03;
+  const PAIR_NONCE_LEN = 12;
+  const PAIR_HEADER_LEN = 1 + 1 + 65 + PAIR_NONCE_LEN; // 79
+  const MAX_PAIR_PLAINTEXT = 4096;
   const HKDF_LEN = 64;
   const HKDF_NONCE_LEN = 2 * PREFIX_LEN;
 
@@ -324,12 +330,103 @@
     return String(bits20 % 1000000).padStart(6, '0');
   }
 
+  // ── الاقتران المعمّى عبر وسيط (§7.2) ──────────────────────────────────────
+  // نظير `sealPairing`/`openPairing` في `electron/mobilecrypto.js` **بايتاً ببايت**.
+  // بلا هذا يرى الوسيط `secretProof` و`mobilePublic` معاً فيقترن بمفتاحه بدل الهاتف.
+
+  async function pairingKeyFrom(privU8, pubU8, myPubU8, salt) {
+    const privKey = await importPrivateKey(privU8, myPubU8);
+    const theirKey = await importPublicKeyRaw(pubU8);
+    const shared = await deriveShared(privKey, theirKey);
+    const raw = await hkdf(shared, salt, HKDF_PAIR_INFO, KEY_LEN * 8);
+    return subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+
+  function pairingAad(mobilePub, salt) {
+    return concatBytes(new Uint8Array([VERSION, PAIR_KIND]), mobilePub, salt);
+  }
+
+  /**
+   * يبني إطار اقتران معمّى إلى مفتاح سطح المكتب المقروء من QR.
+   * الـnonce عشوائي **على السلك** لا مشتقّ: المفتاح ثابت في (زوج الجوال،
+   * desktopPublic، pairId)، فإعادة المحاولة بالزوج نفسه تعيده — وnonce مشتقّ حينها
+   * يتكرر تحت مفتاح واحد (كارثي في GCM). الحقن للاختبار القطعي فقط.
+   */
+  async function sealPairing(opts) {
+    const { mobilePrivate, mobilePublic, desktopPublic, pairId, payload } = opts || {};
+    const salt = pairIdBytes(pairId);
+    const priv = decodeKey(mobilePrivate, PRIV_LEN, 'bad_private_key');
+    const mPub = decodePublic(mobilePublic);
+    const dPub = decodePublic(desktopPublic);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw fail('bad_payload');
+
+    const plaintext = utf8ToU8(JSON.stringify(payload));
+    if (!plaintext.length || plaintext.length > MAX_PAIR_PLAINTEXT) throw fail('bad_payload');
+
+    let nonce;
+    if (opts && opts.nonce !== undefined) {
+      assertBytes(opts.nonce, 'bad_nonce');
+      nonce = opts.nonce;
+    } else {
+      nonce = window.crypto.getRandomValues(new Uint8Array(PAIR_NONCE_LEN));
+    }
+    if (nonce.length !== PAIR_NONCE_LEN) throw fail('bad_nonce');
+
+    const key = await pairingKeyFrom(priv, dPub, mPub, salt);
+    const sealed = new Uint8Array(await subtle.encrypt(
+      { name: 'AES-GCM', iv: nonce, additionalData: pairingAad(mPub, salt), tagLength: TAG_LEN * 8 },
+      key,
+      plaintext
+    ));
+    return concatBytes(new Uint8Array([VERSION, PAIR_KIND]), mPub, nonce, sealed);
+  }
+
+  /** يفكّ إطار اقتران معمّى (لاكتمال العقد والاختبار المتقاطع). */
+  async function openPairing(opts) {
+    const { desktopPrivate, desktopPublic, pairId, frame } = opts || {};
+    const salt = pairIdBytes(pairId);
+    const priv = decodeKey(desktopPrivate, PRIV_LEN, 'bad_private_key');
+    const dPub = decodePublic(desktopPublic);
+    assertBytes(frame, 'bad_frame');
+    if (frame.length < PAIR_HEADER_LEN + TAG_LEN + 1) throw fail('bad_frame');
+    if (frame.length > PAIR_HEADER_LEN + MAX_PAIR_PLAINTEXT + TAG_LEN) throw fail('bad_frame');
+    if (frame[0] !== VERSION) throw fail('bad_version');
+    if (frame[1] !== PAIR_KIND) throw fail('bad_kind');
+
+    const mPub = frame.slice(2, 2 + PUB_LEN);
+    if (mPub[0] !== 0x04) throw fail('bad_public_key');
+    const nonce = frame.slice(2 + PUB_LEN, PAIR_HEADER_LEN);
+    const body = frame.slice(PAIR_HEADER_LEN);
+
+    const key = await pairingKeyFrom(priv, mPub, dPub, salt);
+    let plain;
+    try {
+      plain = new Uint8Array(await subtle.decrypt(
+        { name: 'AES-GCM', iv: nonce, additionalData: pairingAad(mPub, salt), tagLength: TAG_LEN * 8 },
+        key,
+        body
+      ));
+    } catch (_e) { throw fail('bad_tag'); }
+
+    let payload;
+    try { payload = JSON.parse(new TextDecoder().decode(plain)); }
+    catch (_e) { throw fail('bad_payload'); }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw fail('bad_payload');
+    return { mobilePublic: u8ToB64url(mPub), payload };
+  }
+
   window.SatrCrypto = {
     generateKeyPair,
     deriveSession,
     seal,
     open,
     sas,
+    sealPairing,
+    openPairing,
+    PAIR_KIND,
+    PAIR_NONCE_LEN,
+    PAIR_HEADER_LEN,
+    MAX_PAIR_PLAINTEXT,
     // مساعدات مفيدة للاختبار والتكامل
     bytesToBase64url: u8ToB64url,
     base64urlToBytes: b64urlToU8,
