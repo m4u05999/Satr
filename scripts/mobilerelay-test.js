@@ -36,6 +36,24 @@ function equal(actual, expected, message) {
   if (actual !== expected) throw new Error(message + ' — expected ' + expected + ', got ' + actual);
 }
 
+/** يستخرج دالة من مصدر main.js ويشغّلها بصندوق محقون (نمط mobile-integration-test). */
+function sourceFunction(source, name, context) {
+  const marker = 'function ' + name + '(';
+  const start = source.indexOf(marker);
+  if (start === -1) throw new Error('missing_source_function:' + name);
+  const bodyStart = source.indexOf('{', start + marker.length);
+  let depth = 0;
+  let end = -1;
+  for (let i = bodyStart; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    if (source[i] === '}') { depth -= 1; if (depth === 0) { end = i + 1; break; } }
+  }
+  if (end === -1) throw new Error('bad_source_function:' + name);
+  let sliceStart = start;
+  if (start >= 6 && source.slice(start - 6, start) === 'async ') sliceStart = start - 6;
+  return vm.runInNewContext('(' + source.slice(sliceStart, end) + ')', context, { filename: 'electron/main.js' });
+}
+
 /** يحمّل `pwa/crypto.js` الحقيقي بـWebCrypto — منطق الهاتف نفسه لا نسخة موازية. */
 function loadPwaCrypto() {
   const source = fs.readFileSync(path.join(__dirname, '..', 'pwa', 'crypto.js'), 'utf8');
@@ -307,6 +325,35 @@ async function run() {
     // ── الإبطال يقطع القناة فوراً ──────────────────────────────────────────
     store.revoke(deviceId);
     equal(client.status().deviceCount, 0, 'الجهاز المُبطَل يختفي من القناة');
+
+    // ── تنقية عنوان الوسيط في main.js (منطق الإنتاج نفسه) ──────────────────
+    // عنوان عام بلا TLS يعرّض النقل ولا يمنح crypto.subtle سياقاً آمناً على الهاتف.
+    const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+    const relayUrlFor = (value, labs) => {
+      const labsFile = path.join(tempRoot, 'labs-' + Math.random().toString(36).slice(2) + '.json');
+      if (labs !== undefined) fs.writeFileSync(labsFile, labs, 'utf8');
+      const sandbox = {
+        process: { env: value === undefined ? {} : { SATR_RELAY_URL: value } },
+        JSON, String, URL, Number,
+        fs: { readFileSync: () => fs.readFileSync(labsFile, 'utf8') },
+        path: { join: () => labsFile },
+        os: { homedir: () => tempRoot },
+      };
+      return sourceFunction(mainSource, 'mobileRelayUrl', sandbox)();
+    };
+    equal(relayUrlFor('https://relay.example'), 'https://relay.example', 'HTTPS مقبول');
+    equal(relayUrlFor('https://relay.example/'), 'https://relay.example', 'الشرطة الزائدة تُزال');
+    equal(relayUrlFor('http://relay.example'), '', 'HTTP عام مرفوض');
+    equal(relayUrlFor('http://127.0.0.1:8787'), 'http://127.0.0.1:8787', 'loopback مسموح للتطوير');
+    equal(relayUrlFor('https://u:p@relay.example'), '', 'اعتماد في العنوان مرفوض');
+    equal(relayUrlFor('https://relay.example?x=1'), '', 'استعلام مرفوض');
+    equal(relayUrlFor('ftp://relay.example'), '', 'بروتوكول آخر مرفوض');
+    equal(relayUrlFor('ليس عنواناً'), '', 'نص مشوّه مرفوض');
+    equal(relayUrlFor(undefined), '', 'بلا إعداد = الوضع المحلي');
+    equal(relayUrlFor(undefined, '{"relay_url":"https://labs.example"}'), 'https://labs.example',
+      'ملف labs مصدر ثانٍ');
+    equal(relayUrlFor(undefined, '{"relay_url":"http://labs.example"}'), '',
+      'ملف labs يخضع للتنقية نفسها');
 
     // ── توافق اشتقاق الصناديق مع منطق الهاتف الحقيقي ───────────────────────
     // الطرفان يشتقّان مستقلَّين: أي انحراف يعني هاتفاً يستقصي صندوقاً لا أحد يكتبه.

@@ -382,6 +382,9 @@ function start(deps, opts) {
   function status() {
     return {
       running: !stopped,
+      // `url` بالاسم نفسه الذي تقرؤه `mobileStatus` من القناة المحلية — نقل مختلف
+      // بلا حقل ثانٍ يتعلّمه المستهلك
+      url: relayUrl,
       relay: relayUrl,
       deviceCount: pairedDeviceIds().length,
       pending: pending.pendingCount(),

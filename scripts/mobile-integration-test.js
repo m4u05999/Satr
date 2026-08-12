@@ -251,7 +251,19 @@ async function run() {
     equal(parsed.link.pathname, '/', 'الرابط على أصل PWA نفسه');
     equal(parsed.payload.url, link.url + '/', 'عنوان API داخل الحمولة هو الأصل نفسه');
     equal(Object.keys(parsed.payload).sort().join(','),
-      'createdAt,desktopPublic,expiresAt,pairId,secret,url,v', 'حقول الحمولة المجمّدة فقط');
+      'createdAt,desktopPublic,expiresAt,pairId,secret,url,v',
+      'الوضع المحلي: الحقول السبعة المجمّدة فقط (بلا relay)');
+
+    // توسعة §7: وجود `relay` هو ما يحوّل الهاتف إلى وضع الوسيط — وغيابه لا يغيّر شيئاً
+    const relayPairing = buildPairingResult(
+      'https://relay.example/', rawPayload, '', 'https://relay.example'
+    );
+    const relayParsed = parsePairingLink(relayPairing.url);
+    equal(Object.keys(relayParsed.payload).sort().join(','),
+      'createdAt,desktopPublic,expiresAt,pairId,relay,secret,url,v',
+      'وضع الوسيط: حقل relay وحده يُضاف');
+    equal(relayParsed.payload.relay, 'https://relay.example', 'عنوان الوسيط في الحمولة');
+    assert(!('fingerprint' in relayParsed.payload), 'لا بصمة شهادة في وضع الوسيط');
     equal(parsed.payload.secret, rawPayload.secret, 'السر لم يتغير أثناء base64url');
 
     const mobileKeys = await pwaCrypto.generateKeyPair();

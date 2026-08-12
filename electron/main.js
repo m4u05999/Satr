@@ -53,6 +53,9 @@ const adapters = require('./adapters');
 const renderertrust = require('./renderertrust');
 const mobilecrypto = require('./mobilecrypto');
 const mobilepair = require('./mobilepair');
+const mobilerelay = require('./mobilerelay');
+const http = require('node:http');
+const https = require('node:https');
 const mobileenvelope = require('./mobileenvelope');
 // الشرطة المائلة مسموحة لقيم نماذج ACP المُنطَّقة مثل kimi-code/k3 (تُمرَّر كوسيطة مستقلة لا في صدفة).
 // لاحقة [1m] (نافذة مليون رمز) مقبولة حصراً بقرار مالك 2026-07-27 — Claude Code صار
@@ -827,6 +830,7 @@ ipcMain.handle('satr:pickFolder', async () => {
 const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_MOBILE_DEVICE = /^(?:[a-f0-9]{16,128}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const MOBILE_RELAY_MAX_BODY = 256 * 1024; // ردّ الوسيط بايتات معتمة صغيرة — أي أكبر مرفوض
 const SAFE_MOBILE_PERMISSION = /^[A-Za-z0-9_.:-]{1,256}$/;
 const SAFE_MOBILE_PAIR_ID = /^[a-f0-9]{32}$/i;
 const SAFE_MOBILE_B64URL = /^[A-Za-z0-9_-]+$/;
@@ -909,12 +913,40 @@ function mobileFeatureAvailable() {
   } catch { return false; }
 }
 
+/**
+ * عنوان الوسيط المُعدّ (§7) — فارغ = الوضع المحلي (LAN) كما هو اليوم.
+ *
+ * مصدران: `SATR_RELAY_URL` أو `~/.satr/labs.json` فيه `relay_url` (نظير بوابة
+ * الميزة نفسها). **HTTPS حصراً** إلا loopback للتطوير: عنوان عام بلا TLS يعرّض
+ * بيانات النقل ولا يمنح `crypto.subtle` سياقاً آمناً على الهاتف أصلاً.
+ */
+function mobileRelayUrl() {
+  let raw = typeof process.env.SATR_RELAY_URL === 'string' ? process.env.SATR_RELAY_URL : '';
+  if (!raw) {
+    try {
+      const labs = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.satr', 'labs.json'), 'utf8'));
+      raw = labs && typeof labs.relay_url === 'string' ? labs.relay_url : '';
+    } catch { raw = ''; }
+  }
+  const trimmed = String(raw || '').trim().replace(/\/+$/, '');
+  if (!trimmed || trimmed.length > 512) return '';
+  let parsed;
+  try { parsed = new URL(trimmed); } catch { return ''; }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return '';
+  const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1';
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) return '';
+  return trimmed;
+}
+
 function mobileStatus() {
   let raw = {};
   if (mobileHandle && typeof mobileHandle.status === 'function') {
     try { raw = mobileHandle.status() || {}; } catch { raw = {}; }
   }
-  const url = safeMobileUrl(raw.url || mobileHandle && mobileHandle.url);
+  // `safeMobileUrl` يخصّ عنوان LAN (يشترط منفذاً وعنواناً محلياً) فيرفض نطاق وسيط
+  // عاماً. في وضع الوسيط يكون العنوان مُتحقَّقاً منه أصلاً في `mobileRelayUrl`.
+  const relayConfigured = mobileRelayUrl();
+  const url = relayConfigured || safeMobileUrl(raw.url || mobileHandle && mobileHandle.url);
   const rawPort = Number(raw.port || mobileHandle && mobileHandle.port || (url ? new URL(url).port : 0));
   const pending = Number(raw.pending);
   const result = {
@@ -934,6 +966,47 @@ function mobileStatus() {
 // ملف تلميح صغير: المنفذ الذي رُبط آخر مرة. الجوال يحفظ عنوان القناة بمنفذه، فمنفذ
 // عشوائي كل تشغيل يجعل الجلسة المحفوظة تستيقظ على عنوان ميت ⇒ إعادة مسح QR كل مرة،
 // فيضيع استئناف الجلسات كله. تلميح لا التزام: انشغال المنفذ يسقط إلى عشوائي.
+/**
+ * ناقل الوسيط: طلبات **صادرة** فقط (http/https المدمجة، صفر اعتماديات).
+ * لا يفسّر الحمولة — بايتات معتمة تعبر كما هي. السقوف تمنع ردّاً ضخماً من إغراق
+ * الذاكرة، والمهلة تمنع تعليق حلقة الاستقصاء على اتصال ميت.
+ */
+const relayTransport = {
+  post(url, bytes) {
+    return relayRequest(url, 'POST', bytes, 20000);
+  },
+  poll(url, timeoutMs, signal) {
+    return relayRequest(url, 'GET', null, (Number(timeoutMs) || 30000) + 10000, signal);
+  },
+};
+
+function relayRequest(url, method, body, timeoutMs, signal) {
+  return new Promise((resolve, reject) => {
+    let target;
+    try { target = new URL(url); } catch { reject(new Error('bad_url')); return; }
+    const client = target.protocol === 'https:' ? https : http;
+    const req = client.request(target, {
+      method,
+      headers: body ? { 'content-type': 'application/octet-stream', 'content-length': body.length } : {},
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > MOBILE_RELAY_MAX_BODY) { req.destroy(new Error('too_large')); return; }
+        chunks.push(chunk);
+      });
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
+    if (signal && typeof signal.addEventListener === 'function') {
+      signal.addEventListener('abort', () => req.destroy(new Error('aborted')), { once: true });
+    }
+    req.end(body || undefined);
+  });
+}
+
 function mobilePortFile() {
   return path.join(os.homedir(), '.satr', 'mobile-link.json');
 }
@@ -959,6 +1032,23 @@ async function startMobileLink() {
   if (mobileHandle) { mobileControlEnabled = true; return mobileStatus(); }
   mobileLink = mobileLink || loadMobileLink();
   if (!mobileLink) return { ...mobileStatus(), error: 'unavailable' };
+  // وضع الوسيط (§7): الطرفان عميلان ولا خادم محلي. العقد الظاهر لبقية main.js
+  // مطابق حرفياً (offerPermission/withdraw/status/stop) فلا يتعلّم أحد نقلاً ثانياً.
+  const relayUrl = mobileRelayUrl();
+  if (relayUrl) {
+    try {
+      const handle = mobilerelay.start({
+        crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, transport: relayTransport,
+      }, { relayUrl });
+      mobileHandle = handle;
+      mobileControlEnabled = true;
+      return mobileStatus();
+    } catch {
+      mobileHandle = null;
+      mobileControlEnabled = false;
+      return { ...mobileStatus(), error: 'start_failed' };
+    }
+  }
   try {
     const deps = { crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, app };
     const remembered = readRememberedMobilePort();
@@ -1135,12 +1225,15 @@ function buildMobilePairingUrl(baseUrl, payload) {
   return baseUrl + '#pair=' + encoded;
 }
 
-function buildMobilePairingResult(baseUrl, payload, fingerprint) {
+function buildMobilePairingResult(baseUrl, payload, fingerprint, relayUrl) {
   const publicPayload = {
     v: 1, url: baseUrl, pairId: payload.pairId, secret: payload.secret,
     desktopPublic: payload.desktopPublic, createdAt: Math.floor(payload.createdAt),
     expiresAt: Math.floor(payload.expiresAt),
   };
+  // توسعة معلَّمة (§7): وجود `relay` هو ما يحوّل الهاتف إلى وضع الوسيط. غيابه يبقي
+  // الوضع المحلي بحقوله المجمّدة السبعة حرفياً — لا تغيير سلوكي لمن لا يستعمل وسيطاً.
+  if (typeof relayUrl === 'string' && relayUrl) publicPayload.relay = relayUrl;
   return {
     ok: true,
     url: buildMobilePairingUrl(baseUrl, publicPayload),
@@ -1151,6 +1244,24 @@ function buildMobilePairingResult(baseUrl, payload, fingerprint) {
 
 function buildMobilePairingLink() {
   const status = mobileStatus();
+  const relayUrl = mobileRelayUrl();
+  // في وضع الوسيط لا خادم محلي ولا شهادة: الـPWA تُخدَم من أصل الوسيط نفسه، وهو
+  // أيضاً أصل صناديق البريد. لذلك `url` و`relay` يتطابقان هنا، ويبقى الحقلان
+  // منفصلين كي يمكن استضافة الـPWA على أصل آخر لاحقاً بلا تغيير عقد.
+  if (relayUrl) {
+    if (!status.running) return { ok: false, error: 'not_running' };
+    let payload;
+    try { payload = mobilepair.buildPairingPayload(); } catch { return { ok: false, error: 'pairing_failed' }; }
+    if (!payload || payload.v !== 1 || !SAFE_MOBILE_PAIR_ID.test(payload.pairId || '')
+        || typeof payload.secret !== 'string' || payload.secret.length !== 43 || !SAFE_MOBILE_B64URL.test(payload.secret)
+        || typeof payload.desktopPublic !== 'string' || payload.desktopPublic.length !== 87
+        || !SAFE_MOBILE_B64URL.test(payload.desktopPublic)
+        || !Number.isFinite(payload.createdAt) || !Number.isFinite(payload.expiresAt)) {
+      return { ok: false, error: 'pairing_failed' };
+    }
+    // لا بصمة شهادة: TLS عام موثوق لا موقّع ذاتياً
+    return buildMobilePairingResult(relayUrl + '/', payload, '', relayUrl);
+  }
   if (!status.running || !status.url) return { ok: false, error: 'not_running' };
   let payload;
   try { payload = mobilepair.buildPairingPayload(); } catch { return { ok: false, error: 'pairing_failed' }; }
