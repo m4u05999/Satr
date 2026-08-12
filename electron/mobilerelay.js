@@ -278,6 +278,28 @@ function start(deps, opts) {
     return { deviceId, mobilePublic: opened.mobilePublic };
   }
 
+  /**
+   * يرسل إقرار اقتران معمّى على صندوق الجهاز — إشارة النجاح الوحيدة عبر وسيط.
+   * يحمل SAS المحسوب من قيم **عامة** فقط ليقارنه المستخدم بالشاشتين (§2).
+   */
+  async function sendPairedAck(deviceId, pairId, mobilePublic) {
+    const entry = activeSession(deviceId);
+    if (!entry) return;
+    if (!ensureSendCounter(deviceId, entry.session)) return;
+    let sas = '';
+    try {
+      sas = d.crypto.sas({ desktopPublic: identity.publicKey, mobilePublic, pairId });
+    } catch { sas = ''; }
+    let frame;
+    try {
+      frame = d.crypto.seal(entry.session, Buffer.from(JSON.stringify({
+        v: 1, type: 'paired', sas,
+      }), 'utf8'));
+    } catch { return; }
+    try { await d.transport.post(boxUrl(entry.boxes.toMobile), frame); }
+    catch { /* الوسيط ساقط: الهاتف يعيد المحاولة، والاقتران مسجَّل فعلاً */ }
+  }
+
   /** حلقة استقصاء صادرة بإعادة اتصال متزايدة — لا تلقي ولا تتوقف عند خطأ عابر. */
   function loop(name, boxOf, onFrame) {
     if (loops.has(name)) return loops.get(name);
@@ -335,6 +357,9 @@ function start(deps, opts) {
       if (!paired) return;
       const handle = loops.get(name);
       if (handle) handle.stop();
+      // إقرار معمّى: بلا ردّ HTTP (بخلاف `/pair` المحلي) يستقصي الهاتف قناةً لم
+      // يسجّلها سطح المكتب بلا إشارة فشل أبداً. الإقرار يحمل SAS ليقارنه المستخدم.
+      sendPairedAck(paired.deviceId, pairId, paired.mobilePublic).catch(() => {});
       listenDevice(paired.deviceId);
       pushPending().catch(() => {});
     });

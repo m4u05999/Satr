@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const mobilecrypto = require('../electron/mobilecrypto');
 const mobileenvelope = require('../electron/mobileenvelope');
@@ -33,6 +34,18 @@ function assert(condition, message) {
 function equal(actual, expected, message) {
   checks += 1;
   if (actual !== expected) throw new Error(message + ' — expected ' + expected + ', got ' + actual);
+}
+
+/** يحمّل `pwa/crypto.js` الحقيقي بـWebCrypto — منطق الهاتف نفسه لا نسخة موازية. */
+function loadPwaCrypto() {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'pwa', 'crypto.js'), 'utf8');
+  const webcrypto = crypto.webcrypto;
+  const sandbox = {
+    window: { crypto: webcrypto }, crypto: webcrypto,
+    TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, DataView, atob, btoa, DOMException,
+  };
+  vm.runInNewContext(source, sandbox, { filename: 'pwa/crypto.js' });
+  return sandbox.window.SatrCrypto;
 }
 
 /** وسيط أعمى مصغّر يطابق §7.4 — لا يفسّر شيئاً. */
@@ -206,6 +219,19 @@ async function run() {
     const mobileShared = ecdh.computeSecret(Buffer.from(identity.publicKey, 'base64url'));
     const mobileBoxes = mobilerelay.channelBoxes(mobileShared, payload.pairId);
 
+    // ── إقرار الاقتران: إشارة النجاح الوحيدة عبر وسيط ──────────────────────
+    const ackFrame = await waitFor(() => {
+      const queue = relay.boxes.get(mobileBoxes.toMobile);
+      return queue && queue.length ? queue.shift() : null;
+    }, 4000, 'وصول إقرار الاقتران');
+    const ack = JSON.parse(mobilecrypto.open(mobileSession, ackFrame).toString('utf8'));
+    equal(ack.type, 'paired', 'الإقرار من نوع paired');
+    assert(/^\d{6}$/.test(ack.sas), 'الإقرار يحمل SAS من ست خانات');
+    equal(ack.sas, mobilecrypto.sas({
+      desktopPublic: identity.publicKey, mobilePublic: mobileKeys.publicKey, pairId: payload.pairId,
+    }), 'SAS يطابق ما يحسبه الهاتف من قيم عامة');
+    assert(!JSON.stringify(ack).includes(payload.secret), 'الإقرار لا يحمل سرّ الاقتران');
+
     // ── دورة القرار الكاملة عبر الوسيط ─────────────────────────────────────
     for (const decision of ['allow', 'allow_turn', 'deny']) {
       const envelopeId = 'toolu_relay_' + decision;
@@ -281,6 +307,23 @@ async function run() {
     // ── الإبطال يقطع القناة فوراً ──────────────────────────────────────────
     store.revoke(deviceId);
     equal(client.status().deviceCount, 0, 'الجهاز المُبطَل يختفي من القناة');
+
+    // ── توافق اشتقاق الصناديق مع منطق الهاتف الحقيقي ───────────────────────
+    // الطرفان يشتقّان مستقلَّين: أي انحراف يعني هاتفاً يستقصي صندوقاً لا أحد يكتبه.
+    const pwa = loadPwaCrypto();
+    const pwaBoxes = await pwa.deriveChannelBoxes({
+      myPrivate: mobileKeys.privateKey,
+      myPublic: mobileKeys.publicKey,
+      theirPublic: identity.publicKey,
+      pairId: payload.pairId,
+    });
+    equal(pwaBoxes.toMobile, mobileBoxes.toMobile, 'الهاتف وسطح المكتب يشتقّان صندوق D2M نفسه');
+    equal(pwaBoxes.toDesktop, mobileBoxes.toDesktop, 'وصندوق M2D نفسه');
+
+    // ومعرّف صندوق الاقتران كما يحسبه الهاتف (SHA-256 لنفس الوسم)
+    const pwaPairBox = crypto.createHash('sha256')
+      .update('satr-relay-pair-v1' + payload.pairId, 'utf8').digest('hex').slice(0, 32);
+    equal(pwaPairBox, mobilerelay.pairBoxId(payload.pairId), 'معرّف صندوق الاقتران متطابق');
   } finally {
     await client.stop();
     await relay.stop();

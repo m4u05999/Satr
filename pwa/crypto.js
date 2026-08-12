@@ -36,6 +36,7 @@
   const HKDF_NONCE_INFO = encoder.encode('satr-mobile-v1-nonce');
   // الاقتران المعمّى عبر وسيط (§7.2) — وسم مستقل عن مفاتيح الجلسة
   const HKDF_PAIR_INFO = encoder.encode('satr-mobile-v1-pair');
+  const RELAY_CHANNEL_INFO = encoder.encode('satr-relay-channel-v1');
   const PAIR_KIND = 0x03;
   const PAIR_NONCE_LEN = 12;
   const PAIR_HEADER_LEN = 1 + 1 + 65 + PAIR_NONCE_LEN; // 79
@@ -415,6 +416,28 @@
     return { mobilePublic: u8ToB64url(mPub), payload };
   }
 
+  /**
+   * صندوقا قناة الوسيط (§7.3) — نظير `mobilerelay.channelBoxes` **بايتاً ببايت**.
+   * يشتقّهما الطرفان مستقلَّين، فيرى الوسيط معرّفَين معتمَين لا يربطهما بأحد.
+   * اتجاهان مستقلان كي لا يبتلع المرسِل رسالته.
+   */
+  async function deriveChannelBoxes(opts) {
+    const { myPrivate, myPublic, theirPublic, pairId } = opts || {};
+    const salt = pairIdBytes(pairId);
+    const priv = decodeKey(myPrivate, PRIV_LEN, 'bad_private_key');
+    const pub = decodePublic(myPublic);
+    const theirPub = decodePublic(theirPublic);
+    const privKey = await importPrivateKey(priv, pub);
+    const theirKey = await importPublicKeyRaw(theirPub);
+    const shared = await deriveShared(privKey, theirKey);
+    const okm = await hkdf(shared, salt, RELAY_CHANNEL_INFO, 32 * 8);
+    const hex = (bytes) => Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    return {
+      toMobile: hex(okm.subarray(0, 16)),
+      toDesktop: hex(okm.subarray(16, 32)),
+    };
+  }
+
   window.SatrCrypto = {
     generateKeyPair,
     deriveSession,
@@ -423,6 +446,7 @@
     sas,
     sealPairing,
     openPairing,
+    deriveChannelBoxes,
     PAIR_KIND,
     PAIR_NONCE_LEN,
     PAIR_HEADER_LEN,

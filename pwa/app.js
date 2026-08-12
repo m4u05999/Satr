@@ -29,8 +29,16 @@
     stopped: false,
     pendingPayload: null,
     // سقف عدّادات الإرسال المحجوز على القرص: كل عدّاد استُعمل فعلاً **أصغر منه**
-    sendReserved: 0
+    sendReserved: 0,
+    // وضع الوسيط (§7): عنوانه وصندوقا القناة. فارغة = الوضع المحلي (LAN).
+    relayUrl: '',
+    boxes: null
   };
+
+  /** وضع الوسيط يُشتقّ من حمولة QR: وجود `relay` يعني أن الطرفين عميلان. */
+  function usingRelay() {
+    return !!(state.relayUrl && state.boxes && state.boxes.toMobile && state.boxes.toDesktop);
+  }
 
   // ── حفظ الجلسة (IndexedDB) ───────────────────────────────────────────────
   // بلا حفظ تضيع المفاتيح مع أي إعادة تحميل أو قفل شاشة، فيُعاد مسح QR كل مرة.
@@ -94,6 +102,9 @@
       serverUrl: state.serverUrl,
       deviceId: state.deviceId,
       pairId: state.pairId,
+      // وضع الوسيط جزء من الجلسة: بلا حفظه يستيقظ الهاتف على النقل الخطأ
+      relayUrl: state.relayUrl,
+      boxes: state.boxes ? { toMobile: state.boxes.toMobile, toDesktop: state.boxes.toDesktop } : null,
       role: s.role,
       dirSend: s.dirSend,
       dirRecv: s.dirRecv,
@@ -134,6 +145,8 @@
     state.polling = false;
     if (state.pollAbort) state.pollAbort.abort();
     state.sendReserved = 0;
+    state.relayUrl = '';
+    state.boxes = null;
     await dbClear();
     hideCard();
     setError('pairError', reason || 'انتهت صلاحية الاقتران — امسح رمز QR من جديد.');
@@ -151,6 +164,11 @@
     state.serverUrl = record.serverUrl;
     state.deviceId = record.deviceId;
     state.pairId = record.pairId || '';
+    state.relayUrl = typeof record.relayUrl === 'string' ? record.relayUrl : '';
+    state.boxes = record.boxes && typeof record.boxes === 'object'
+      && /^[a-f0-9]{32}$/.test(record.boxes.toMobile || '')
+      && /^[a-f0-9]{32}$/.test(record.boxes.toDesktop || '')
+      ? { toMobile: record.boxes.toMobile, toDesktop: record.boxes.toDesktop } : null;
     state.sendReserved = record.counterSendReserved;
     state.session = {
       role: record.role,
@@ -340,6 +358,69 @@
     await doPair(payload);
   }
 
+  /** معرّف صندوق الاقتران: مُهشَّم فلا يرى الوسيط `pairId` الخام (§7.3). */
+  async function pairBoxId(pairId) {
+    const bytes = await sha256Bytes(C.utf8ToBytes('satr-relay-pair-v1' + pairId));
+    return Array.from(bytes.subarray(0, 16)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  /**
+   * اقتران عبر وسيط أعمى (§7.2): الحمولة تُعمَّى إلى مفتاح سطح المكتب المقروء من QR،
+   * فلا يرى الوسيط السرّ ولا يستطيع الاقتران بمفتاحه بدلاً من الهاتف.
+   *
+   * بلا ردّ HTTP (بخلاف `/pair` المحلي) الإشارة الوحيدة على النجاح هي **إقرار معمّى**
+   * يصل على صندوق القناة. انتظاره صراحةً يمنع «الهاتف يظن أنه مقترن» بلا نهاية.
+   */
+  async function pairViaRelay(payload, keyPair) {
+    state.relayUrl = String(payload.relay).replace(/\/+$/, '');
+    if (!/^https?:\/\//.test(state.relayUrl)) throw new Error('عنوان وسيط غير صالح');
+    state.boxes = await C.deriveChannelBoxes({
+      myPrivate: keyPair.privateKey,
+      myPublic: keyPair.publicKey,
+      theirPublic: payload.desktopPublic,
+      pairId: payload.pairId
+    });
+    const sealed = await C.sealPairing({
+      mobilePrivate: keyPair.privateKey,
+      mobilePublic: keyPair.publicKey,
+      desktopPublic: payload.desktopPublic,
+      pairId: payload.pairId,
+      payload: { secretProof: payload.secret, deviceId: state.deviceId, label: 'جوالي' }
+    });
+    const box = await pairBoxId(payload.pairId);
+    const res = await fetch(`${state.relayUrl}/m/${box}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: sealed
+    });
+    if (!res.ok) throw new Error(`تعذّر الوصول إلى الوسيط (HTTP ${res.status})`);
+
+    // انتظار الإقرار: جلسة مؤقتة لفكّه (الجلسة الدائمة تُبنى بعد نجاح الاقتران)
+    setStatus('في انتظار تأكيد سطح المكتب…');
+    const ackSession = await C.deriveSession({
+      myPrivate: keyPair.privateKey,
+      myPublic: keyPair.publicKey,
+      theirPublic: payload.desktopPublic,
+      pairId: payload.pairId,
+      role: 'mobile'
+    });
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const poll = await fetch(`${state.relayUrl}/m/${state.boxes.toMobile}`).catch(() => null);
+      if (!poll) { await new Promise((r) => setTimeout(r, 1000)); continue; }
+      if (poll.status === 204) continue;
+      if (!poll.ok) throw new Error(`الوسيط ردّ HTTP ${poll.status}`);
+      const raw = await poll.arrayBuffer();
+      if (!raw || !raw.byteLength) continue;
+      let frame;
+      try { frame = JSON.parse(new TextDecoder().decode(await C.open(ackSession, new Uint8Array(raw)))); }
+      catch (_e) { continue; }
+      if (frame && frame.type === 'paired') return;
+      // إطار غير الإقرار قبل الاقتران: تجاهل ولا تُسقط الدورة
+    }
+    throw new Error('لم يؤكّد سطح المكتب الاقتران — تحقّق أن «سطر» يعمل ثم أعد المسح.');
+  }
+
   async function doPair(payload) {
     state.serverUrl = payload.url || payload.serverUrl || '';
     if (!state.serverUrl) {
@@ -376,17 +457,21 @@
     }
 
     try {
-      // `mobilepair.completePairing` يقارن السرّ **الخام** كما ولّده سطر المكتبية
-      // (‏base64url لـ32 بايت)، لا بصمته. إرسال sha256 كان يفشل الاقتران دائماً.
-      const result = await postJson(`${state.serverUrl}/pair`, {
-        pairId: payload.pairId,
-        secretProof: payload.secret,
-        mobilePublic: keyPair.publicKey,
-        deviceId: state.deviceId,
-        label: 'جوالي'
-      });
-      if (!result || !result.ok) {
-        throw new Error((result && result.error) || 'رفض الخادم');
+      if (payload.relay) {
+        await pairViaRelay(payload, keyPair);
+      } else {
+        // `mobilepair.completePairing` يقارن السرّ **الخام** كما ولّده سطر المكتبية
+        // (‏base64url لـ32 بايت)، لا بصمته. إرسال sha256 كان يفشل الاقتران دائماً.
+        const result = await postJson(`${state.serverUrl}/pair`, {
+          pairId: payload.pairId,
+          secretProof: payload.secret,
+          mobilePublic: keyPair.publicKey,
+          deviceId: state.deviceId,
+          label: 'جوالي'
+        });
+        if (!result || !result.ok) {
+          throw new Error((result && result.error) || 'رفض الخادم');
+        }
       }
 
       state.session = await C.deriveSession({
@@ -480,7 +565,10 @@
     try {
       // عقد القناة (§5.1): جسم `/reply` هو **الإطار المعمّى خاماً** لا JSON، والمسار
       // يوجب `?device=`. عطل مثبت حياً — كان الردّ يُرفض بـbad_device/bad_frame.
-      await postFrame(`${state.serverUrl}/reply?device=${encodeURIComponent(state.deviceId)}`, frame);
+      const replyUrl = usingRelay()
+        ? `${state.relayUrl}/m/${state.boxes.toDesktop}`
+        : `${state.serverUrl}/reply?device=${encodeURIComponent(state.deviceId)}`;
+      await postFrame(replyUrl, frame);
       hideCard();
       setStatus('تم إرسال القرار — في انتظار طلب جديد');
       if (!state.polling) startPolling();
@@ -545,7 +633,12 @@
         } else {
           signal = controller.signal;
         }
-        const res = await fetch(`${state.serverUrl}/poll?device=${state.deviceId}`, { signal });
+        // وضع الوسيط: صندوق معتم بدل `/poll?device=` (§7.4). العقد الوحيد المتغيّر
+        // هو النقل؛ الظرف والتعمية والقرار كما هي حرفياً.
+        const pollUrl = usingRelay()
+          ? `${state.relayUrl}/m/${state.boxes.toMobile}`
+          : `${state.serverUrl}/poll?device=${state.deviceId}`;
+        const res = await fetch(pollUrl, { signal });
         if (res.status === 204) continue;
         // الجهاز أُبطل من سطح المكتب أو أُعيد تشغيله (جلساته في الذاكرة): الجلسة
         // المحفوظة ميتة، فننساها ونطلب اقتراناً جديداً بدل حلقة خطأ لا تنتهي.
