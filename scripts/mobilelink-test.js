@@ -1,8 +1,8 @@
 /**
  * اختبارات قطعية بلا شبكة خارجية لـ electron/mobilelink.js (§5.1).
  *
- * كل اختبار يرفع خادماً على 127.0.0.1 بمنفذ عشوائي حقيقي (port:0)، ويستعمل
- * **mobilecrypto وmobilepair وmobileenvelope الحقيقية** — لا مزيّفات. عميل http محلي
+ * كل اختبار يرفع خادماً HTTPS على 127.0.0.1 بمنفذ عشوائي حقيقي (port:0)، ويستعمل
+ * **mobilecrypto وmobilepair وmobileenvelope الحقيقية** — لا مزيّفات. عميل HTTPS محلي
  * يلعب دور الجوال: يولّد زوجه، يقترن، يشتق جلسته بـderiveSession(role:'mobile')،
  * ويفكّ/يختم الأطر بنفسه. فما يثبته الاختبار هو دورة E2E الفعلية لا محاكاتها.
  *
@@ -14,7 +14,7 @@
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const http = require('node:http');
+const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -22,8 +22,11 @@ const mobilecrypto = require('../electron/mobilecrypto');
 const mobilepair = require('../electron/mobilepair');
 const mobileenvelope = require('../electron/mobileenvelope');
 const mobilelink = require('../electron/mobilelink');
+const mobiletls = require('../electron/mobiletls');
 
 const tempRoot = path.join(os.tmpdir(), 'satr-mobilelink-test-' + process.pid + '-' + Date.now());
+const appRoot = path.resolve(__dirname, '..');
+const tlsMaterial = mobiletls.ensureCert('127.0.0.1');
 
 let passed = 0;
 let failed = 0;
@@ -44,19 +47,24 @@ function sleep(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
 }
 
-// ── عميل http بسيط يعيد الجسم خاماً (الأطر ثنائية) ──────────────────────────
+// ── عميل HTTPS بسيط يعيد الجسم خاماً (الأطر ثنائية) ─────────────────────────
 function request(port, method, urlPath, body, contentType) {
   return new Promise((resolve, reject) => {
-    const req = http.request({
+    const req = https.request({
       host: '127.0.0.1',
       port,
       method,
       path: urlPath,
+      ca: tlsMaterial.cert,
+      rejectUnauthorized: true,
       headers: body ? { 'content-type': contentType || 'application/octet-stream', 'content-length': body.length } : {},
     }, (res) => {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => { answered = true; resolve({ status: res.statusCode, body: Buffer.concat(chunks) }); });
+      res.on('end', () => {
+        answered = true;
+        resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) });
+      });
     });
     let answered = false;
     // الخادم قد يقطع الاتصال بعد ردّ الرفض (جسم ضخم) — لا نحوّل ذلك خطأ اختبار
@@ -88,7 +96,13 @@ async function newEnv(opts) {
 
   const store = mobilepair.createStore({ file });
   const link = await mobilelink.start(
-    { crypto: mobilecrypto, pair: store, envelope: mobileenvelope, identity },
+    {
+      crypto: mobilecrypto,
+      pair: store,
+      envelope: mobileenvelope,
+      identity,
+      app: { getAppPath: () => appRoot },
+    },
     Object.assign({ host: '127.0.0.1', port: 0 }, opts || {})
   );
   return { store, link, identity, file };
@@ -178,6 +192,8 @@ async function testPairing() {
     assert(ok.parsed && !('secret' in ok.parsed) && !('privateKey' in ok.parsed), 'pairing: لا سرّ ولا مفتاح في الرد');
     assertEqual(env.store.listDevices().length, 1, 'pairing: الجهاز أُضيف للدفتر');
     assertEqual(env.link.status().deviceCount, 1, 'pairing: status يعدّ الجهاز الحيّ');
+    assert(env.link.url.startsWith('https://127.0.0.1:'), 'pairing: رابط القناة HTTPS');
+    assertEqual(env.link.status().fingerprint, tlsMaterial.fingerprint, 'pairing: status يعيد بصمة الشهادة');
 
     // سرّ خاطئ ⇒ رفض ولا جهاز جديد
     const badSecret = Buffer.from(JSON.stringify({
@@ -505,8 +521,30 @@ async function testHardening() {
     const mobile = newMobile();
     await pair(env, mobile);
 
-    const notFound = await request(env.link.port, 'GET', '/');
-    assertEqual(notFound.status, 404, 'hardening: مسار مجهول 404');
+    const index = await request(env.link.port, 'GET', '/');
+    assertEqual(index.status, 200, 'static: الجذر يخدم index.html');
+    assert(index.body.equals(fs.readFileSync(path.join(appRoot, 'pwa', 'index.html'))), 'static: محتوى index.html مطابق');
+    assertEqual(index.headers['content-type'], 'text/html; charset=utf-8', 'static: نوع HTML صحيح');
+
+    const appJs = await request(env.link.port, 'GET', '/app.js');
+    assertEqual(appJs.status, 200, 'static: ملف JS مسموح');
+    assert(appJs.body.equals(fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'))), 'static: لا يُبدّل محتوى JS');
+
+    const manifest = await request(env.link.port, 'GET', '/manifest.webmanifest');
+    assertEqual(manifest.status, 200, 'static: webmanifest ضمن قائمة السماح');
+    assertEqual(manifest.headers['content-type'], 'application/manifest+json; charset=utf-8', 'static: نوع webmanifest صحيح');
+
+    const unknown = await request(env.link.port, 'GET', '/missing.js');
+    assertEqual(unknown.status, 404, 'static: ملف مفقود 404');
+
+    const blockedExtension = await request(env.link.port, 'GET', '/notes.txt');
+    assertEqual(blockedExtension.status, 404, 'static: امتداد خارج قائمة السماح مرفوض');
+
+    const traversal = await request(env.link.port, 'GET', '/..%2Felectron%2Fmain.js');
+    assertEqual(traversal.status, 404, 'static: traversal بترميز الشرطة مرفوض');
+
+    const windowsTraversal = await request(env.link.port, 'GET', '/..%5Celectron%5Cmain.js');
+    assertEqual(windowsTraversal.status, 404, 'static: traversal بشرطة ويندوز مرفوض');
 
     const wrongMethod = await request(env.link.port, 'GET', '/reply?device=' + mobile.deviceId);
     assertEqual(wrongMethod.status, 404, 'hardening: طريقة خاطئة لا تُخدم');

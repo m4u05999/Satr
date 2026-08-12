@@ -2,6 +2,7 @@
 // لا يرى المكوّن مفاتيح أو سجلات خاماً؛ كل القيم المعروضة عادت من IPC منقّى في main.js.
 import { sheet } from '../lib/sheet.js';
 import { panelSheet } from '../lib/panel.css.js';
+import { qrMatrix } from '../lib/qr.js';
 
 const ownSheet = sheet(`
   :host { width: min(440px, 52vw); }
@@ -27,6 +28,21 @@ const ownSheet = sheet(`
   }
   textarea:focus { border-color: var(--gold); }
   .sas { font: 600 18px var(--mono); direction: ltr; letter-spacing: .12em; color: var(--gold); }
+  .qr-box { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
+  .qr-code { display: block; width: 240px; height: 240px; }
+  .qr-code rect { fill: var(--text); }
+  .qr-url { width: 100%; display: flex; gap: var(--space-2); align-items: center; }
+  .qr-url input {
+    flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--radius-md); padding: var(--space-2); font: 11px/1.5 var(--mono);
+    direction: ltr; unicode-bidi: isolate; outline: none;
+  }
+  .qr-url input:focus { border-color: var(--gold); }
+  .qr-meta { width: 100%; display: flex; flex-direction: column; gap: var(--space-1); }
+  .qr-meta .hint { margin: 0; }
+  .fingerprint { direction: ltr; unicode-bidi: isolate; font-family: var(--mono); font-size: 11px; color: var(--gold); }
+  .expiry { color: var(--text-dim); font-size: 12px; }
+  .expiry.urgent { color: var(--red); }
   .devices { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
   .device { border-top: 1px solid var(--border); padding-top: var(--space-2); }
   .device:first-child { border-top: 0; padding-top: 0; }
@@ -61,9 +77,19 @@ class SatrMobilePanel extends HTMLElement {
         '</section>' +
         '<section class="card">' +
           '<div class="title">اقتران جهاز</div>' +
-          '<div class="hint">أنشئ رمز اقتران أحادي الاستخدام صالحاً لثلاث دقائق. في م1 يُعرض النص القابل للنسخ؛ QR البصري تحسين لاحق.</div>' +
-          '<div class="pair-actions"><button class="pair" type="button">إنشاء رمز اقتران</button><button class="copy" type="button" disabled>نسخ الرمز</button></div>' +
-          '<div class="pairing" hidden><textarea readonly aria-label="رمز الاقتران"></textarea></div>' +
+          '<div class="hint">أنشئ رمز اقتران أحادي الاستخدام صالحاً لثلاث دقائق. امسح الرمز بالكاميرا أو انسخ الرابط للجوال.</div>' +
+          '<div class="pair-actions"><button class="pair" type="button">إنشاء رمز اقتران</button><button class="copy" type="button" disabled>نسخ الرابط</button></div>' +
+          '<div class="pairing" hidden>' +
+            '<div class="qr-box">' +
+              '<svg class="qr-code" viewBox="0 0 0 0" aria-label="رمز QR للاقتران"></svg>' +
+              '<div class="qr-url"><input class="url-input" type="text" readonly aria-label="رابط الاقتران"><button class="copy" type="button">نسخ</button></div>' +
+              '<div class="qr-meta">' +
+                '<div class="hint">بصمة الشهادة (تحقق منها عند تحذير المتصفح): <span class="fingerprint">——</span></div>' +
+                '<div class="expiry">صالح لمدة <span class="expiry-seconds">180</span> ثانية</div>' +
+              '</div>' +
+              '<button class="regenerate" type="button" hidden>أنشئ رمزاً جديداً</button>' +
+            '</div>' +
+          '</div>' +
           '<div class="row"><span class="hint">رمز التحقق المتوقع (SAS)</span><span class="sas">——</span></div>' +
         '</section>' +
         '<section class="card">' +
@@ -78,17 +104,25 @@ class SatrMobilePanel extends HTMLElement {
     this._pair = root.querySelector('.pair');
     this._copy = root.querySelector('.copy');
     this._pairing = root.querySelector('.pairing');
-    this._payload = root.querySelector('textarea');
+    this._qrSvg = root.querySelector('.qr-code');
+    this._urlInput = root.querySelector('.url-input');
+    this._fingerprint = root.querySelector('.fingerprint');
+    this._expirySeconds = root.querySelector('.expiry-seconds');
+    this._expiryRow = root.querySelector('.expiry');
+    this._regenerate = root.querySelector('.regenerate');
     this._sas = root.querySelector('.sas');
     this._devices = root.querySelector('.devices');
     this._deviceCount = root.querySelector('.device-count');
     this._epoch = 0;
+    this._expiryTimer = null;
+    this._expiresAt = 0;
 
     root.querySelector('.close').addEventListener('click', () => this.close());
     root.querySelector('.refresh').addEventListener('click', () => this.refresh());
     this._enable.addEventListener('change', () => this._setEnabled(this._enable.checked));
     this._pair.addEventListener('click', () => this._startPairing());
     this._copy.addEventListener('click', () => this._copyPayload());
+    this._regenerate.addEventListener('click', () => this._startPairing());
   }
 
   _notice(text) {
@@ -103,10 +137,21 @@ class SatrMobilePanel extends HTMLElement {
   close() {
     this.removeAttribute('open');
     // رمز الاقتران يحمل سراً أحادي الاستخدام؛ لا نُبقيه في DOM بعد إغلاق اللوحة.
-    this._payload.value = '';
+    this._clearPairing();
+    this.dispatchEvent(new CustomEvent('panel-close'));
+  }
+
+  _clearPairing() {
+    this._stopExpiry();
+    this._expiresAt = 0;
+    this._urlInput.value = '';
+    this._qrSvg.innerHTML = '';
+    this._qrSvg.setAttribute('viewBox', '0 0 0 0');
+    this._fingerprint.textContent = '——';
     this._pairing.hidden = true;
     this._copy.disabled = true;
-    this.dispatchEvent(new CustomEvent('panel-close'));
+    this._regenerate.hidden = true;
+    this._expiryRow.classList.remove('urgent');
   }
 
   focusInitial() { this._enable.focus(); }
@@ -161,13 +206,23 @@ class SatrMobilePanel extends HTMLElement {
     this._pair.disabled = true;
     try {
       const result = await window.satr.mobilePairingStart();
-      if (!result || !result.ok || typeof result.qr !== 'string') {
+      if (!result || !result.ok) {
+        this._notice('✗ تعذّر إنشاء رمز الاقتران' + (result && result.error ? ' (' + result.error + ')' : ''));
+        return;
+      }
+      const url = result.url || result.qr;
+      if (typeof url !== 'string' || !url) {
         this._notice('✗ تعذّر إنشاء رمز الاقتران');
         return;
       }
-      this._payload.value = result.qr;
+      this._renderQr(url);
+      this._urlInput.value = url;
+      this._fingerprint.textContent = result.fingerprint || 'غير معروفة';
+      this._expiresAt = Number(result.expiresAt) || (Date.now() + 3 * 60 * 1000);
       this._pairing.hidden = false;
       this._copy.disabled = false;
+      this._regenerate.hidden = true;
+      this._startExpiry();
       this._notice('✓ أُنشئ رمز اقتران صالح لثلاث دقائق');
     } catch {
       this._notice('✗ تعذّر إنشاء رمز الاقتران');
@@ -176,15 +231,60 @@ class SatrMobilePanel extends HTMLElement {
     }
   }
 
-  async _copyPayload() {
-    if (!this._payload.value) return;
+  _renderQr(url) {
+    let matrix;
     try {
-      await navigator.clipboard.writeText(this._payload.value);
-      this._notice('✓ نُسخ رمز الاقتران');
+      matrix = qrMatrix(url);
     } catch {
-      this._payload.focus();
-      this._payload.select();
-      this._notice('حدّد الرمز لنسخه يدوياً');
+      this._qrSvg.innerHTML = '';
+      return;
+    }
+    const size = matrix.length;
+    const rects = [];
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        if (matrix[y][x]) rects.push('<rect x="' + x + '" y="' + y + '" width="1" height="1"/>');
+      }
+    }
+    this._qrSvg.setAttribute('viewBox', '0 0 ' + size + ' ' + size);
+    this._qrSvg.innerHTML = rects.join('');
+  }
+
+  _startExpiry() {
+    this._stopExpiry();
+    this._tickExpiry();
+    this._expiryTimer = setInterval(() => this._tickExpiry(), 1000);
+  }
+
+  _stopExpiry() {
+    if (this._expiryTimer) {
+      clearInterval(this._expiryTimer);
+      this._expiryTimer = null;
+    }
+  }
+
+  _tickExpiry() {
+    const remaining = Math.max(0, Math.ceil((this._expiresAt - Date.now()) / 1000));
+    this._expirySeconds.textContent = String(remaining);
+    this._expiryRow.classList.toggle('urgent', remaining <= 30);
+    if (remaining <= 0) {
+      this._stopExpiry();
+      this._qrSvg.innerHTML = '';
+      this._qrSvg.setAttribute('viewBox', '0 0 0 0');
+      this._regenerate.hidden = false;
+    }
+  }
+
+  async _copyPayload() {
+    const text = this._urlInput.value;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      this._notice('✓ نُسخ رابط الاقتران');
+    } catch {
+      this._urlInput.focus();
+      this._urlInput.select();
+      this._notice('حدّد الرابط لنسخه يدوياً');
     }
   }
 

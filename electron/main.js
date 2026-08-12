@@ -846,7 +846,7 @@ function safeMobileUrl(value) {
   if (typeof value !== 'string' || value.length > 300) return '';
   try {
     const parsed = new URL(value);
-    if (parsed.protocol !== 'http:' || parsed.username || parsed.password
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password
         || parsed.pathname !== '/' || parsed.search || parsed.hash || !parsed.port) return '';
     const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
     const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -866,6 +866,12 @@ function safeMobileUrl(value) {
     const port = Number(parsed.port);
     return Number.isInteger(port) && port >= 1 && port <= 65535 ? parsed.origin + '/' : '';
   } catch { return ''; }
+}
+
+function safeMobileFingerprint(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toUpperCase();
+  return /^(?:[A-F0-9]{64}|(?:[A-F0-9]{2}:){31}[A-F0-9]{2})$/.test(normalized) ? normalized : '';
 }
 
 function safeMobileDevices() {
@@ -908,7 +914,7 @@ async function startMobileLink() {
   if (!mobileLink) return { ...mobileStatus(), error: 'unavailable' };
   try {
     const handle = await Promise.resolve(mobileLink.start({
-      crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope,
+      crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, app,
     }, { port: 0 }));
     const url = safeMobileUrl(handle && handle.url);
     if (!handle || typeof handle.stop !== 'function' || !url) {
@@ -1000,7 +1006,26 @@ function offerMobilePermission(obj, context) {
   });
 }
 
-function buildMobilePairingQr() {
+function buildMobilePairingUrl(baseUrl, payload) {
+  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  return baseUrl + '#pair=' + encoded;
+}
+
+function buildMobilePairingResult(baseUrl, payload, fingerprint) {
+  const publicPayload = {
+    v: 1, url: baseUrl, pairId: payload.pairId, secret: payload.secret,
+    desktopPublic: payload.desktopPublic, createdAt: Math.floor(payload.createdAt),
+    expiresAt: Math.floor(payload.expiresAt),
+  };
+  return {
+    ok: true,
+    url: buildMobilePairingUrl(baseUrl, publicPayload),
+    fingerprint,
+    expiresAt: publicPayload.expiresAt,
+  };
+}
+
+function buildMobilePairingLink() {
   const status = mobileStatus();
   if (!status.running || !status.url) return { ok: false, error: 'not_running' };
   let payload;
@@ -1012,14 +1037,12 @@ function buildMobilePairingQr() {
       || !Number.isFinite(payload.createdAt) || !Number.isFinite(payload.expiresAt)) {
     return { ok: false, error: 'pairing_failed' };
   }
-  // السر أحادي الاستخدام لا يخرج حقلاً مستقلاً؛ يُحزم داخل نص الاقتران فقط. لا مفتاح خاص هنا.
-  const publicPayload = {
-    v: 1, url: status.url, pairId: payload.pairId, secret: payload.secret,
-    desktopPublic: payload.desktopPublic, createdAt: Math.floor(payload.createdAt),
-    expiresAt: Math.floor(payload.expiresAt),
-  };
-  const encoded = Buffer.from(JSON.stringify(publicPayload), 'utf8').toString('base64url');
-  return { ok: true, qr: 'satr-mobile://pair?data=' + encoded };
+  let raw = {};
+  try { raw = mobileHandle && mobileHandle.status() || {}; } catch { raw = {}; }
+  const fingerprint = safeMobileFingerprint(raw.fingerprint);
+  if (!fingerprint) return { ok: false, error: 'pairing_failed' };
+  // السر أحادي الاستخدام لا يخرج حقلاً مستقلاً؛ يُحزم داخل fragment الرابط فقط. لا مفتاح خاص هنا.
+  return buildMobilePairingResult(status.url, payload, fingerprint);
 }
 
 ipcMain.handle('satr:mobileStatus', () => mobileStatus());
@@ -1032,7 +1055,7 @@ ipcMain.handle('satr:mobileEnable', async (event, payload) => {
   mobileTransition = transition.catch(() => {});
   return transition;
 });
-ipcMain.handle('satr:mobilePairingStart', () => buildMobilePairingQr());
+ipcMain.handle('satr:mobilePairingStart', () => buildMobilePairingLink());
 ipcMain.handle('satr:mobileDevices', () => safeMobileDevices());
 ipcMain.handle('satr:mobileRevoke', (event, payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)

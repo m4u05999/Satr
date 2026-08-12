@@ -128,7 +128,10 @@
     "site:shots": "electron scripts/site-shots.js",
     "ui:audit": "electron scripts/ui-audit.js",
     "test:pty-shutdown": "node scripts/pty-shutdown-probe.js",
-    "pwa:serve": "node scripts/pwa-serve.js"
+    "pwa:serve": "node scripts/pwa-serve.js",
+    "test:mobile-tls": "node scripts/mobiletls-test.js",
+    "test:mobile-integration": "node scripts/mobile-integration-test.js",
+    "test:qr": "node scripts/qr-test.js"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",
@@ -161,7 +164,8 @@
       "!**/@anthropic-ai/claude-agent-sdk-*/**",
       "!**/node_modules/node-pty/prebuilds/darwin-*/**",
       "!**/node_modules/node-pty/prebuilds/win32-arm64/**",
-      "!**/node_modules/node-pty/{src,deps,third_party}/**"
+      "!**/node_modules/node-pty/{src,deps,third_party}/**",
+      "pwa/**/*"
     ],
     "asarUnpack": [
       ".agents/skills/satr-guide/**/*",

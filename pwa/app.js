@@ -26,7 +26,8 @@
     polling: false,
     pollAbort: null,
     currentEnvelope: null,
-    stopped: false
+    stopped: false,
+    pendingPayload: null
   };
 
   function showScreen(name) {
@@ -82,6 +83,12 @@
     }
     input.value = '';
     setError('pinError', '');
+    if (state.pendingPayload) {
+      showScreen('pair');
+      await doPair(state.pendingPayload);
+      state.pendingPayload = null;
+      return;
+    }
     showScreen('pair');
   }
 
@@ -117,6 +124,24 @@
       } else {
         raw = q > -1 ? query : raw.slice(14);
         try { raw = decodeURIComponent(raw); } catch (_e) { /* إبقاء النص كما هو */ }
+      }
+    } else if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      // الرابط الجديد: https://<ip>:<port>/#pair=<base64url(JSON)>
+      const hashIdx = raw.indexOf('#');
+      const hash = hashIdx > -1 ? raw.slice(hashIdx + 1) : '';
+      if (hash.startsWith('pair=')) {
+        try {
+          raw = b64urlToText(hash.slice(5));
+        } catch (_e) {
+          throw new Error('تعذّر فكّ ترميز حمولة الاقتران من الرابط');
+        }
+      }
+    } else if (raw.startsWith('pair=')) {
+      // نص خام مكون من pair=<base64url>
+      try {
+        raw = b64urlToText(raw.slice(5));
+      } catch (_e) {
+        throw new Error('تعذّر فكّ ترميز حمولة الاقتران');
       }
     }
     let obj;
@@ -167,7 +192,10 @@
       setError('pairError', err.message);
       return;
     }
+    await doPair(payload);
+  }
 
+  async function doPair(payload) {
     state.serverUrl = payload.url || payload.serverUrl || '';
     if (!state.serverUrl) {
       setError('pairError', 'الحمولة لا تحتوي على عنوان خادم سطر (url).');
@@ -239,6 +267,21 @@
       }, 2500);
     } catch (err) {
       setError('pairError', 'فشل الاقتران: ' + err.message);
+    }
+  }
+
+  function checkHashAutoPair() {
+    const hash = location.hash;
+    if (!hash || !hash.startsWith('#pair=')) return false;
+    try {
+      const payload = parsePayload(hash.slice(1));
+      state.pendingPayload = payload;
+      // نمسح الـhash فوراً كي لا يبقى السرّ في شريط العنوان أو سجل التصفح.
+      history.replaceState(null, document.title, location.pathname + location.search);
+      return true;
+    } catch (err) {
+      setError('pairError', err.message);
+      return false;
     }
   }
 
@@ -382,6 +425,10 @@
     }
     bindEvents();
     registerServiceWorker();
+    const autoPaired = checkHashAutoPair();
+    if (autoPaired) {
+      $('pinHint').textContent = 'أدخِل PIN لإكمال الاقتران التلقائي.';
+    }
     showScreen('pin');
   }
 

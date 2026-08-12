@@ -1,8 +1,8 @@
 /**
  * سطر — القناة المحلية للتحكم من الجوال (م1 — §5.1 من docs/MOBILE-CONTROL-PLAN.md).
  *
- * خادم HTTP مدمج على واجهة LAN (لا loopback — الجوال يجب أن يصله) يتكلم **أطر
- * mobilecrypto المعمّاة** حصراً عدا نقطة الاقتران. صفر اعتماديات (http المدمجة)،
+ * خادم HTTPS مدمج على واجهة LAN (لا loopback — الجوال يجب أن يصله) يتكلم **أطر
+ * mobilecrypto المعمّاة** حصراً عدا نقطة الاقتران. صفر اعتماديات (https المدمجة)،
  * وبحقن اعتماديات كاملة (نمط executor/runner) فيبقى قابلاً للاختبار بلا شبكة خارجية.
  * أسلوب الخادم مقتبس من `codexmcp.js` (خادم http داخل العملية)، لكن هذه القناة تستمع
  * على واجهة الشبكة لا على 127.0.0.1، ولذلك **لا تعتمد على Bearer** بل على التعمية
@@ -42,8 +42,10 @@
 
 'use strict';
 
-const http = require('node:http');
+const fs = require('node:fs');
+const https = require('node:https');
 const os = require('node:os');
+const path = require('node:path');
 
 // — ثوابت العقد —
 const POLL_TIMEOUT_MS = 45 * 1000; // §5.1: long-poll ≤ 45ث ثم 204
@@ -60,6 +62,17 @@ const DECISIONS = new Set(['allow', 'allow_turn', 'deny']);
 
 const SAFE_DEVICE_HEX = /^[a-f0-9]{16,128}$/;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const STATIC_EXTENSIONS = new Set(['.html', '.js', '.css', '.json', '.webmanifest', '.svg', '.png', '.ico']);
+const STATIC_TYPES = Object.freeze({
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+});
 
 /** معرّف جهاز منقّى بنفس عقد mobilepair (hex ≥16 أو UUID)، مصغّر الحالة. */
 function safeDeviceId(value) {
@@ -161,36 +174,75 @@ function resolveIdentity(deps) {
   return null;
 }
 
+/** جذر PWA الموثوق يأتي من Electron app.getAppPath كي يعمل داخل asar في الإنتاج. */
+function resolvePwaRoot(deps) {
+  if (!deps.app || typeof deps.app.getAppPath !== 'function') throw new Error('no_app_path');
+  let appPath = '';
+  try { appPath = deps.app.getAppPath(); } catch { throw new Error('no_app_path'); }
+  if (typeof appPath !== 'string' || !path.isAbsolute(appPath)) throw new Error('no_app_path');
+  try {
+    const root = fs.realpathSync(path.join(appPath, 'pwa'));
+    if (!fs.statSync(root).isDirectory()) throw new Error('bad_pwa_root');
+    return root;
+  } catch (error) {
+    if (error && error.message === 'bad_pwa_root') throw error;
+    throw new Error('bad_pwa_root');
+  }
+}
+
+/** يتحقق من بقاء المسار النهائي داخل الجذر بعد تتبّع الروابط الرمزية. */
+function isInsideRoot(root, filename) {
+  const relative = path.relative(root, filename);
+  return relative !== '' && relative !== '..' && !relative.startsWith('..' + path.sep)
+    && !path.isAbsolute(relative);
+}
+
 /**
  * يبدأ القناة المحلية.
  *
- * @param {{crypto:object, pair:object, envelope:object, identity?:object|Function}} deps
+ * @param {{crypto:object, pair:object, envelope:object, app:object, identity?:object|Function}} deps
  * @param {{host?:string, port?:number, cors?:boolean, pollTimeoutMs?:number}} [opts]
  * @returns {Promise<{url:string, host:string, port:number, offerPermission:Function,
  *                    withdraw:Function, status:Function, stop:Function}>}
  */
-function start(deps, opts) {
+async function start(deps, opts) {
   const d = deps && typeof deps === 'object' ? deps : {};
   const o = opts && typeof opts === 'object' ? opts : {};
   if (!d.crypto || typeof d.crypto.deriveSession !== 'function' || typeof d.crypto.seal !== 'function'
       || typeof d.crypto.open !== 'function' || typeof d.crypto.sas !== 'function') {
-    return Promise.reject(new Error('bad_deps_crypto'));
+    throw new Error('bad_deps_crypto');
   }
   if (!d.pair || typeof d.pair.completePairing !== 'function' || typeof d.pair.listDevices !== 'function') {
-    return Promise.reject(new Error('bad_deps_pair'));
+    throw new Error('bad_deps_pair');
   }
   if (!d.envelope || typeof d.envelope.build !== 'function') {
-    return Promise.reject(new Error('bad_deps_envelope'));
+    throw new Error('bad_deps_envelope');
   }
 
   const identity = resolveIdentity(d);
   // فشل مغلق: بلا مفتاح خاص لا تعمية ⇒ لا نرفع قناة توهم بأنها جاهزة
-  if (!identity) return Promise.reject(new Error('no_desktop_identity'));
+  if (!identity) throw new Error('no_desktop_identity');
 
   const host = typeof o.host === 'string' && o.host.trim() ? o.host.trim() : '0.0.0.0';
   const port = clampInt(o.port, 0, 65535, 0);
   const cors = o.cors === true;
   const pollTimeoutMs = clampInt(o.pollTimeoutMs, MIN_POLL_TIMEOUT_MS, POLL_TIMEOUT_MS, POLL_TIMEOUT_MS);
+  const wildcard = host === '0.0.0.0' || host === '::' || host === '';
+  const shown = wildcard ? await lanAddress() : host;
+  const pwaRoot = resolvePwaRoot(d);
+
+  // لا سقوط إلى HTTP: غياب mobiletls أو فشل الشهادة يمنع فتح القناة صراحةً.
+  let tls;
+  try { tls = require('./mobiletls'); } catch { throw new Error('mobile_tls_unavailable'); }
+  if (!tls || typeof tls.ensureCert !== 'function') throw new Error('mobile_tls_unavailable');
+  let tlsMaterial;
+  try { tlsMaterial = tls.ensureCert(shown); } catch { throw new Error('mobile_tls_failed'); }
+  if (!tlsMaterial || typeof tlsMaterial.key !== 'string' || !tlsMaterial.key
+      || typeof tlsMaterial.cert !== 'string' || !tlsMaterial.cert
+      || typeof tlsMaterial.fingerprint !== 'string' || !tlsMaterial.fingerprint) {
+    throw new Error('mobile_tls_failed');
+  }
+  const fingerprint = tlsMaterial.fingerprint;
 
   // — الحالة الحيّة (كلها في الذاكرة؛ لا شيء منها يُكتب على القرص) —
   const sessions = new Map(); // deviceId -> { session, pairId }
@@ -406,6 +458,7 @@ function start(deps, opts) {
       port: boundPort,
       pending: pendingOrder.filter((record) => !record.done).length,
       deviceCount: liveDeviceCount(),
+      fingerprint,
     };
   }
 
@@ -574,12 +627,68 @@ function start(deps, opts) {
     });
   }
 
+  // ── ملفات PWA الثابتة ────────────────────────────────────────────────────
+  function handleStatic(req, res) {
+    const rawPath = String(req.url || '/').split(/[?#]/, 1)[0];
+    let decoded;
+    try { decoded = decodeURIComponent(rawPath); } catch {
+      sendJson(res, 400, { ok: false, error: 'bad_request' });
+      return;
+    }
+    // على ويندوز قد تكون الشرطة الخلفية فاصلاً لمسار؛ نوحّدها قبل فحص المقاطع.
+    const normalized = decoded.replace(/\\/g, '/');
+    const parts = normalized.split('/');
+    if (normalized.includes('\0') || parts.some((part) => part === '..' || part === '.')) {
+      sendJson(res, 404, { ok: false, error: 'not_found' });
+      return;
+    }
+    const relative = normalized === '/' ? 'index.html' : normalized.replace(/^\/+/, '');
+    const extension = path.extname(relative).toLowerCase();
+    if (!relative || !STATIC_EXTENSIONS.has(extension)) {
+      sendJson(res, 404, { ok: false, error: 'not_found' });
+      return;
+    }
+
+    const candidate = path.resolve(pwaRoot, relative);
+    if (!isInsideRoot(pwaRoot, candidate)) {
+      sendJson(res, 404, { ok: false, error: 'not_found' });
+      return;
+    }
+    fs.realpath(candidate, (realpathError, filename) => {
+      if (realpathError || !isInsideRoot(pwaRoot, filename)) {
+        sendJson(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      fs.stat(filename, (statError, stat) => {
+        if (statError || !stat.isFile()) {
+          sendJson(res, 404, { ok: false, error: 'not_found' });
+          return;
+        }
+        fs.readFile(filename, (readError, body) => {
+          if (readError || res.writableEnded) {
+            if (!res.writableEnded) sendJson(res, 404, { ok: false, error: 'not_found' });
+            return;
+          }
+          try {
+            res.writeHead(200, Object.assign(baseHeaders(), {
+              'content-type': STATIC_TYPES[extension],
+              'content-length': body.length,
+            }));
+            res.end(body);
+          } catch { /* الاتصال أُغلق */ }
+        });
+      });
+    });
+  }
+
   // ── الخادم ────────────────────────────────────────────────────────────────
-  const server = http.createServer((req, res) => {
+  let server;
+  try {
+    server = https.createServer({ key: tlsMaterial.key, cert: tlsMaterial.cert }, (req, res) => {
     if (stopped) { sendJson(res, 503, { ok: false, error: 'stopped' }); return; }
 
     let url;
-    try { url = new URL(req.url || '/', 'http://link.invalid'); } catch {
+    try { url = new URL(req.url || '/', 'https://link.invalid'); } catch {
       sendJson(res, 400, { ok: false, error: 'bad_request' });
       return;
     }
@@ -593,8 +702,10 @@ function start(deps, opts) {
     if (req.method === 'POST' && path === '/pair') { handlePair(req, res); return; }
     if (req.method === 'GET' && path === '/poll') { handlePoll(req, res, url.searchParams); return; }
     if (req.method === 'POST' && path === '/reply') { handleReply(req, res, url.searchParams); return; }
+    if (req.method === 'GET') { handleStatic(req, res); return; }
     sendJson(res, 404, { ok: false, error: 'not_found' });
-  });
+    });
+  } catch { throw new Error('mobile_tls_failed'); }
 
   server.on('connection', (socket) => {
     sockets.add(socket);
@@ -624,14 +735,13 @@ function start(deps, opts) {
   return new Promise((resolve, reject) => {
     const onError = (error) => { reject(error instanceof Error ? error : new Error('listen_failed')); };
     server.once('error', onError);
-    server.listen(port, host, async () => {
+    server.listen(port, host, () => {
       server.removeListener('error', onError);
       const address = server.address();
       boundPort = address && typeof address === 'object' ? address.port : port;
-      const wildcard = host === '0.0.0.0' || host === '::' || host === '';
-      const shown = wildcard ? await lanAddress() : host;
+      const shownHost = shown.includes(':') && !shown.startsWith('[') ? '[' + shown + ']' : shown;
       resolve({
-        url: 'http://' + shown + ':' + boundPort,
+        url: 'https://' + shownHost + ':' + boundPort,
         host,
         port: boundPort,
         offerPermission,
