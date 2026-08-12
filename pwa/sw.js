@@ -4,7 +4,8 @@
  * - push فارغ: يوقظ الجهاز فقط، والتطبيق يسحب الظرف المعمّى عبر long-poll
  * - كاش القشرة: index / app.js / crypto.js / styles.css / icon / manifest
  */
-const CACHE_NAME = 'satr-pwa-v1';
+// رفع النسخة يُبطل الكاش القديم في `activate` — إلزامي مع أي تغيير في أصول القشرة.
+const CACHE_NAME = 'satr-pwa-v2';
 const SHELL_ASSETS = [
   './index.html',
   './app.js',
@@ -34,8 +35,20 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (!SHELL_ASSETS.includes(url.pathname.replace(/^\/pwa\//, './'))) return;
 
+  // الشبكة أولاً والكاش احتياط عند الانقطاع.
+  // كان `cache-first`: الهاتف يواصل تشغيل نسخة قديمة من `app.js` بعد إصلاحها على
+  // سطح المكتب، فيبدو العطل قائماً وقد أُصلح — أهدر ذلك جولة تشخيص كاملة.
+  // القناة على الشبكة المحلية والتطبيق يستقصيها أصلاً، فكلفة الشبكة أولاً معدومة.
   event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request))
+    fetch(request)
+      .then((response) => {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
+        }
+        return response;
+      })
+      .catch(() => caches.match(request).then((cached) => cached || Promise.reject(new Error('offline'))))
   );
 });
 

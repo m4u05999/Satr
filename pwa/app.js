@@ -332,6 +332,24 @@
     }
   }
 
+  /**
+   * يستخرج الظرف من إطار القناة.
+   * عقد القناة (mobilelink.sendFrame): المُرسَل **إطار يلفّ الظرف** —
+   * `{v, type:'permission_request', envelope}` — والظرف تحت `.envelope` لا مسطّحاً.
+   * قراءته مسطّحة (`frame.envelope_id`) كانت تعطي undefined فيسقط كل طلب صامتاً:
+   * الهاتف يستقصي بلا انقطاع ولا تظهر بطاقة، والظرف يبقى معلّقاً على سطح المكتب
+   * حتى TTL. عطل مثبت حياً — راجع docs/MOBILE-CONTROL-PLAN.md §5.5.
+   * القراءة صارمة بنوع واحد (فشل مغلق): نوع مجهول يُهمَل ولا يُخمَّن شكله.
+   * @returns {object|null} الظرف، أو `null` لإطار غير صالح.
+   */
+  function envelopeFromFrame(frame) {
+    if (!frame || typeof frame !== 'object') return null;
+    if (frame.type !== 'permission_request') return null;
+    const envelope = frame.envelope;
+    if (!envelope || typeof envelope !== 'object') return null;
+    return typeof envelope.envelope_id === 'string' && envelope.envelope_id ? envelope : null;
+  }
+
   async function openFrame(frame) {
     if (!state.session) return null;
     // القناة ترسل الإطار **بايتات خام** (application/octet-stream)؛ نقبل النص
@@ -377,7 +395,7 @@
         // «Unexpected token» على كل ظرف — عطل مثبت حياً على هاتف).
         const raw = await res.arrayBuffer();
         if (raw && raw.byteLength) {
-          const envelope = await openFrame(raw);
+          const envelope = envelopeFromFrame(await openFrame(raw));
           if (envelope && envelope.envelope_id) {
             state.currentEnvelope = envelope;
             renderCard(envelope);

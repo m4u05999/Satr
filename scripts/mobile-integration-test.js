@@ -86,6 +86,12 @@ function loadPwaCrypto() {
 }
 
 /** يستورد b64urlToText وparsePayload من pwa/app.js بدل إعادة صياغة التحقق هنا. */
+// منطق فكّ لفّ الإطار كما يشغّله الهاتف فعلاً — لا نسخة اختبار موازية.
+function loadPwaEnvelopeReader() {
+  const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
+  return sourceFunction(source, 'envelopeFromFrame', {});
+}
+
 function loadPwaPairingParser(pwaCrypto) {
   const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
   // نفحص **العقد لا شكل التنفيذ**: قراءة الـhash، والتعامل مع البادئة `#pair=`،
@@ -205,6 +211,15 @@ async function run() {
 
     const pwaCrypto = loadPwaCrypto();
     const parsePairingLink = loadPwaPairingParser(pwaCrypto);
+    const envelopeFromFrame = loadPwaEnvelopeReader();
+    // فشل مغلق: الشكل المسطّح (العطل نفسه) ونوع مجهول وظرف بلا معرّف كلها تُرفض
+    equal(envelopeFromFrame({ envelope_id: 'toolu_flat', risk: 'exec' }), null,
+      'الـPWA يرفض الظرف المسطّح بلا لفّ');
+    equal(envelopeFromFrame({ v: 1, type: 'other', envelope: { envelope_id: 'x' } }), null,
+      'الـPWA يرفض نوع إطار مجهول');
+    equal(envelopeFromFrame({ v: 1, type: 'permission_request', envelope: { risk: 'exec' } }), null,
+      'الـPWA يرفض ظرفاً بلا معرّف');
+    equal(envelopeFromFrame(null), null, 'الـPWA يرفض إطاراً فارغاً');
     const parsed = parsePairingLink(pairing.url);
     equal(parsed.link.protocol, 'https:', 'PWA استقبل رابط HTTPS');
     equal(parsed.link.pathname, '/', 'الرابط على أصل PWA نفسه');
@@ -247,6 +262,12 @@ async function run() {
       const opened = await pwaCrypto.open(session, new Uint8Array(polled.body));
       const message = JSON.parse(new TextDecoder().decode(opened));
       equal(message.envelope.envelope_id, envelopeId, decision + ': الظرف الصحيح');
+      // الحارس الحقيقي: نمرّر الإطار نفسه عبر دالة الـPWA الفعلية لا عبر قراءة
+      // خاصة بالاختبار. كان العميل يقرأ `message.envelope` والهاتف يقرأ مسطّحاً،
+      // فبقي الطقم أخضر بينما لا تظهر أي بطاقة على الجهاز (عطل مثبت حياً §5.5).
+      const pwaEnvelope = envelopeFromFrame(message);
+      assert(pwaEnvelope !== null, decision + ': الـPWA فكّ لفّ الإطار');
+      equal(pwaEnvelope.envelope_id, envelopeId, decision + ': الـPWA قرأ الظرف نفسه');
       const frame = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
         envelope_id: message.envelope.envelope_id,
         decision,

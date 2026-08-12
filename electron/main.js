@@ -976,12 +976,31 @@ function resolvePermissionThroughCurrentHandles(id, allow, always, turn) {
   return !!ok;
 }
 
+// تشخيص مؤقت (يُفعَّل بـSATR_MOBILE_DEBUG=1): يكتب سبب عدم عرض الطلب على الجوال.
+// لا يسجّل مدخلات الأداة ولا أي محتوى — أسماء الحواجز فقط.
+function mobileDebug(reason, extra) {
+  if (!process.env.SATR_MOBILE_DEBUG) return;
+  try {
+    fs.appendFileSync(path.join(os.homedir(), '.satr', 'mobile-debug.log'),
+      new Date().toISOString() + ' ' + reason + (extra ? ' ' + JSON.stringify(extra) : '') + '\n');
+  } catch (e) { /* أفضل جهد */ }
+}
+
 function offerMobilePermission(obj, context) {
+  const activeDevices = safeMobileDevices().filter((device) => !device.revoked).length;
+  mobileDebug('offer_called', {
+    enabled: !!mobileControlEnabled,
+    handle: !!mobileHandle,
+    offerFn: !!(mobileHandle && typeof mobileHandle.offerPermission === 'function'),
+    activeDevices,
+    idOk: SAFE_MOBILE_PERMISSION.test(String(obj.id || '')),
+    tool: String(obj.tool || '').slice(0, 60),
+  });
   if (!mobileControlEnabled || !mobileHandle || typeof mobileHandle.offerPermission !== 'function'
       || !safeMobileDevices().some((device) => !device.revoked)
-      || !SAFE_MOBILE_PERMISSION.test(String(obj.id || ''))) return;
+      || !SAFE_MOBILE_PERMISSION.test(String(obj.id || ''))) { mobileDebug('offer_blocked'); return; }
   const id = String(obj.id);
-  if (mobilePermissionRaces.has(id)) return;
+  if (mobilePermissionRaces.has(id)) { mobileDebug('offer_duplicate'); return; }
   const race = { token: context.token };
   mobilePermissionRaces.set(id, race);
   const rawReq = {
@@ -990,7 +1009,22 @@ function offerMobilePermission(obj, context) {
   };
   const offerContext = { createdAt: Date.now(), ttlMs: MOBILE_PERMISSION_TTL_MS };
   const handle = mobileHandle; // نثبّت المقبض: تبديل القناة أثناء الانتظار لا يخلط الردود
+  // قياس: لقطة القناة **قبل** إدراج هذا الظرف — deviceCount عدد الجلسات الحيّة في
+  // الذاكرة (لا أجهزة القرص)، وpending الظروف المعلّقة سابقاً. مع offer_settled
+  // تفرّق بين «رفضته القناة» (ms صغير) و«لم يُجب الهاتف» (بلوغ TTL).
+  const offerAt = Date.now();
+  if (process.env.SATR_MOBILE_DEBUG) {
+    let snap = {};
+    try { snap = (typeof handle.status === 'function' && handle.status()) || {}; } catch { snap = {}; }
+    mobileDebug('offer_passed', { pending: snap.pending, deviceCount: snap.deviceCount, running: snap.running });
+  }
   Promise.resolve().then(() => handle.offerPermission(rawReq, offerContext)).then((decision) => {
+    mobileDebug('offer_settled', {
+      decision: decision === null || decision === undefined ? 'null' : String(decision).slice(0, 20),
+      ms: Date.now() - offerAt,
+      raced: mobilePermissionRaces.get(id) !== race,
+      tokenChanged: context.token !== runSeq,
+    });
     // لا نثق برد القناة: قرار محصور، طلب ما زال نفسه، والدور الجاري لم يتغيّر.
     if (!MOBILE_DECISIONS.has(decision) || mobilePermissionRaces.get(id) !== race
         || context.token !== runSeq) return;
@@ -1001,7 +1035,9 @@ function offerMobilePermission(obj, context) {
     if (!resolvePermissionThroughCurrentHandles(id, allow, false, turn)) return;
     mobilePermissionRaces.delete(id);
     emitToWindow({ type: 'mobile_decision', envelope_id: id, decision });
-  }).catch(() => {
+  }).catch((e) => {
+    // اسم الخطأ فقط — لا رسالة ولا مدخل أداة (قد تحمل الرسالة قيمة من المدخل)
+    mobileDebug('offer_error', { name: e && e.name ? String(e.name).slice(0, 40) : 'unknown' });
     if (mobilePermissionRaces.get(id) === race) mobilePermissionRaces.delete(id);
   });
 }
