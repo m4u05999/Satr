@@ -51,7 +51,11 @@ function sourceFunction(source, name, context) {
     }
   }
   if (end === -1) throw new Error('bad_source_function:' + name);
-  return vm.runInNewContext('(' + source.slice(start, end) + ')', context, { filename: 'electron/main.js' });
+  // `async function X(` يطابق العلامة بعد البادئة؛ إسقاطها يحوّل الدالة إلى متزامنة
+  // فينكسر `await` بداخلها. نضمّ البادئة إن وُجدت.
+  let sliceStart = start;
+  if (start >= 6 && source.slice(start - 6, start) === 'async ') sliceStart = start - 6;
+  return vm.runInNewContext('(' + source.slice(sliceStart, end) + ')', context, { filename: 'electron/main.js' });
 }
 
 function loadMainPairingBuilder() {
@@ -97,6 +101,15 @@ function loadMainOffer(sandbox) {
   sandbox.runMobileOffer = runMobileOffer;
   const offerMobilePermission = sourceFunction(source, 'offerMobilePermission', sandbox);
   return { runMobileOffer, offerMobilePermission };
+}
+
+// منطق حفظ الجلسة وحجز العدّادات كما يشغّله الهاتف فعلاً (التخزين وحده مزيّف).
+function loadPwaSessionStore(sandbox) {
+  const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
+  sandbox.sessionRecord = sourceFunction(source, 'sessionRecord', sandbox);
+  sandbox.reserveSendCounters = sourceFunction(source, 'reserveSendCounters', sandbox);
+  sandbox.restoreSession = sourceFunction(source, 'restoreSession', sandbox);
+  return sandbox;
 }
 
 // منطق فكّ لفّ الإطار كما يشغّله الهاتف فعلاً — لا نسخة اختبار موازية.
@@ -441,6 +454,88 @@ async function run() {
     equal(emitted.length, 1, 'حدث واحد للواجهة');
     equal(emitted[0].type, 'mobile_decision', 'نوع الحدث mobile_decision');
     assert(!offerSandbox.mobilePermissionRaces.has('toolu_reoffer'), 'المدخل حُذف بعد الحسم');
+
+    // ── حفظ الجلسة: استحالة إعادة استعمال nonce عبر الانهيارات ───────────────
+    // العدّاد يدخل الـnonce مباشرةً في AES-GCM (‏prefix||counter). استئناف بعدّاد
+    // مصفَّر بعد إعادة تحميل = إعادة استعمال nonce على المفتاح نفسه ⇒ انهيار
+    // الأصالة والسرّية. نُثبت الخاصية على **بايتات الإطارات الحقيقية** لا على
+    // المنطق وحده: نختم بـcrypto.js الحقيقي ونستخرج العدّاد من الترويسة.
+    const durable = { record: null };
+    const storeSandbox = {
+      Promise, Number, Uint8Array, JSON,
+      state: null,
+      COUNTER_BLOCK: 8,
+      dbPut: (record) => { durable.record = record; return Promise.resolve(true); },
+      dbGet: () => Promise.resolve(durable.record),
+    };
+    loadPwaSessionStore(storeSandbox);
+    const freshSession = await pwaCrypto.deriveSession({
+      myPrivate: mobileKeys.privateKey,
+      myPublic: mobileKeys.publicKey,
+      theirPublic: parsed.payload.desktopPublic,
+      pairId: parsed.payload.pairId,
+      role: 'mobile',
+    });
+    storeSandbox.state = {
+      serverUrl: parsed.payload.url,
+      deviceId,
+      pairId: parsed.payload.pairId,
+      session: freshSession,
+      sendReserved: 0,
+    };
+    const wireCounters = [];
+    let restores = 0;
+    for (let round = 0; round < 4; round += 1) {
+      // رسائل داخل الكتلة الواحدة وعبر حدّها (‏COUNTER_BLOCK = 8)
+      for (let i = 0; i < 3 + round * 4; i += 1) {
+        await storeSandbox.reserveSendCounters();
+        const sealed = await pwaCrypto.seal(
+          storeSandbox.state.session,
+          new TextEncoder().encode('decision-' + round + '-' + i)
+        );
+        const view = new DataView(sealed.buffer, sealed.byteOffset, sealed.byteLength);
+        wireCounters.push(Number(view.getBigUint64(2, false)));
+      }
+      // انهيار: تُمحى الذاكرة بالكامل ولا يبقى إلا ما ثبت على القرص
+      storeSandbox.state = { serverUrl: '', deviceId: '', pairId: '', session: null, sendReserved: 0 };
+      assert(await storeSandbox.restoreSession(), 'استُعيدت الجلسة المحفوظة بعد الانهيار');
+      restores += 1;
+    }
+    equal(restores, 4, 'أربع دورات استعادة');
+    equal(new Set(wireCounters).size, wireCounters.length,
+      'لا يتكرر أي عدّاد إرسال على السلك عبر الانهيارات (‏nonce فريد دائماً)');
+    for (let i = 1; i < wireCounters.length; i += 1) {
+      assert(wireCounters[i] > wireCounters[i - 1], 'العدّادات تتزايد تزايداً صارماً');
+    }
+    // الحالة الأخطر: انهيار بعد الحجز مباشرةً وقبل أي ختم
+    await storeSandbox.reserveSendCounters();
+    const reservedBeforeCrash = storeSandbox.state.sendReserved;
+    storeSandbox.state = { serverUrl: '', deviceId: '', pairId: '', session: null, sendReserved: 0 };
+    assert(await storeSandbox.restoreSession(), 'استعادة بعد الحجز مباشرةً');
+    equal(storeSandbox.state.session.counterSend, reservedBeforeCrash,
+      'الاستئناف من السقف المحجوز لا من آخر عدّاد مستعمل');
+    assert(storeSandbox.state.session.counterSend > wireCounters[wireCounters.length - 1],
+      'العدّاد المستأنف أكبر من كل ما استُعمل فعلاً');
+    // المفتاح لا يُصدَّر أبداً: حتى لو سُرّب المخزن يبقى غير قابل للتصدير
+    equal(durable.record.keySend.extractable, false, 'مفتاح الإرسال المحفوظ غير قابل للتصدير');
+    equal(durable.record.keyRecv.extractable, false, 'مفتاح الاستقبال المحفوظ غير قابل للتصدير');
+    assert(!('privateKey' in durable.record) && !('myPrivate' in durable.record),
+      'لا يُحفظ المفتاح الخاص إطلاقاً');
+    // الجلسة المستعادة تعمل فعلاً مع الطرف المقابل (لا مجرد بنية سليمة)
+    const restoredFrame = await pwaCrypto.seal(
+      storeSandbox.state.session,
+      new TextEncoder().encode('ping')
+    );
+    const desktopKeys = store.getDesktopKeyPair();
+    const desktopSession = mobilecrypto.deriveSession({
+      myPrivate: desktopKeys.privateKey,
+      myPublic: desktopKeys.publicKey,
+      theirPublic: mobileKeys.publicKey,
+      pairId: parsed.payload.pairId,
+      role: 'desktop',
+    });
+    const desktopOpened = mobilecrypto.open(desktopSession, Buffer.from(restoredFrame));
+    equal(new TextDecoder().decode(desktopOpened), 'ping', 'سطح المكتب فكّ إطار الجلسة المستعادة');
 
     // القناة المتوقفة تردّ فوراً: يجب التوقف لا الدوران في حلقة ساخنة
     const deadSandbox = Object.assign({}, offerSandbox, {

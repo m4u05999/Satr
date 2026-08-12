@@ -27,8 +27,147 @@
     pollAbort: null,
     currentEnvelope: null,
     stopped: false,
-    pendingPayload: null
+    pendingPayload: null,
+    // سقف عدّادات الإرسال المحجوز على القرص: كل عدّاد استُعمل فعلاً **أصغر منه**
+    sendReserved: 0
   };
+
+  // ── حفظ الجلسة (IndexedDB) ───────────────────────────────────────────────
+  // بلا حفظ تضيع المفاتيح مع أي إعادة تحميل أو قفل شاشة، فيُعاد مسح QR كل مرة.
+  //
+  // **لا يُحفظ المفتاح الخاص إطلاقاً**: `crypto.js` يستورد مفاتيح الجلسة بـ
+  // `extractable:false`، فتُخزَّن كائنات `CryptoKey` نفسها بالاستنساخ البنيوي —
+  // يستطيع الكود استعمالها ولا يستطيع أحد تصديرها، حتى مع XSS على هذا الأصل.
+  // (‏localStorage كان سيعني مفتاحاً خاماً قابلاً للسرقة والنسخ الاحتياطي.)
+  const DB_NAME = 'satr-mobile';
+  const DB_STORE = 'session';
+  const DB_KEY = 'current';
+  // حجم كتلة الحجز: كتابة واحدة لكل 8 رسائل، وأسوأ خسارة عند الانهيار 7 عدّادات
+  // من فضاء 2^53 — لا أثر. الجوال يرسل قراراً واحداً لكل إذن فالكلفة معدومة.
+  const COUNTER_BLOCK = 8;
+
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      let req;
+      try { req = indexedDB.open(DB_NAME, 1); } catch (err) { reject(err); return; }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('idb_open_failed'));
+    });
+  }
+
+  function dbPut(record) {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).put(record, DB_KEY);
+      // الحسم على `oncomplete` لا `onsuccess`: الأخير يعني قبول الطلب لا ثباته
+      tx.oncomplete = () => { db.close(); resolve(true); };
+      tx.onabort = tx.onerror = () => { db.close(); reject(tx.error || new Error('idb_put_failed')); };
+    }));
+  }
+
+  function dbGet() {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readonly');
+      const req = tx.objectStore(DB_STORE).get(DB_KEY);
+      req.onsuccess = () => { const v = req.result; db.close(); resolve(v || null); };
+      req.onerror = () => { db.close(); reject(req.error || new Error('idb_get_failed')); };
+    }));
+  }
+
+  function dbClear() {
+    return openDb().then((db) => new Promise((resolve) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).delete(DB_KEY);
+      tx.oncomplete = tx.onabort = tx.onerror = () => { db.close(); resolve(true); };
+    })).catch(() => false);
+  }
+
+  /** يبني السجل المحفوظ من الجلسة الحيّة — نسخ المقدّمات كي لا يُخزَّن اتجاه الآخر. */
+  function sessionRecord(reserved) {
+    const s = state.session;
+    return {
+      v: 1,
+      serverUrl: state.serverUrl,
+      deviceId: state.deviceId,
+      pairId: state.pairId,
+      role: s.role,
+      dirSend: s.dirSend,
+      dirRecv: s.dirRecv,
+      keySend: s.keySend,
+      keyRecv: s.keyRecv,
+      prefixSend: new Uint8Array(s.prefixSend),
+      prefixRecv: new Uint8Array(s.prefixRecv),
+      counterSendReserved: reserved,
+      lastRecvCounter: s.lastRecvCounter
+    };
+  }
+
+  /**
+   * يحجز كتلة عدّادات إرسال **ويثبّتها على القرص قبل** أي تعمية.
+   *
+   * ⚠️ هذا حارس أمني لا تحسين: العدّاد يدخل الـnonce مباشرةً (‏prefix||counter) في
+   * AES-GCM. استئناف بعدّاد مصفَّر بعد إعادة تحميل = إعادة استعمال nonce على المفتاح
+   * نفسه ⇒ انهيار الأصالة والسرّية معاً. لذلك نكتب سقفاً **قبل** الاستعمال، ونستأنف
+   * من السقف المحفوظ فنقفز فوق كل عدّاد ربما استُعمل قبل الانهيار.
+   */
+  async function reserveSendCounters() {
+    const s = state.session;
+    if (s.counterSend < state.sendReserved) return;
+    const next = s.counterSend + COUNTER_BLOCK;
+    await dbPut(sessionRecord(next)); // ثابت على القرص قبل أول استعمال للكتلة
+    state.sendReserved = next;
+  }
+
+  /** يثبّت عدّاد الاستقبال بعد كل إطار مقبول — حارس إعادة التشغيل بعد إعادة التحميل. */
+  async function persistRecvCounter() {
+    try { await dbPut(sessionRecord(state.sendReserved)); } catch (_e) { /* أفضل جهد */ }
+  }
+
+  /** يمسح الجلسة المحفوظة ويعود لشاشة الاقتران (إبطال من سطح المكتب أو إعادة تشغيله). */
+  async function forgetSession(reason) {
+    state.session = null;
+    state.stopped = true;
+    state.polling = false;
+    if (state.pollAbort) state.pollAbort.abort();
+    state.sendReserved = 0;
+    await dbClear();
+    hideCard();
+    setError('pairError', reason || 'انتهت صلاحية الاقتران — امسح رمز QR من جديد.');
+    showScreen('pair');
+  }
+
+  /** يستعيد جلسة محفوظة إن وُجدت. الاستئناف من السقف المحجوز لا من الصفر. */
+  async function restoreSession() {
+    let record = null;
+    try { record = await dbGet(); } catch (_e) { return false; }
+    if (!record || record.v !== 1) return false;
+    if (typeof record.serverUrl !== 'string' || typeof record.deviceId !== 'string') return false;
+    if (!Number.isSafeInteger(record.counterSendReserved) || record.counterSendReserved < 0) return false;
+    if (!Number.isSafeInteger(record.lastRecvCounter) || record.lastRecvCounter < -1) return false;
+    state.serverUrl = record.serverUrl;
+    state.deviceId = record.deviceId;
+    state.pairId = record.pairId || '';
+    state.sendReserved = record.counterSendReserved;
+    state.session = {
+      role: record.role,
+      pairId: record.pairId,
+      dirSend: record.dirSend,
+      dirRecv: record.dirRecv,
+      keySend: record.keySend,
+      keyRecv: record.keyRecv,
+      prefixSend: new Uint8Array(record.prefixSend),
+      prefixRecv: new Uint8Array(record.prefixRecv),
+      // القفز إلى السقف المحجوز: أي عدّاد ربما استُعمل قبل الانهيار أصغر منه قطعاً
+      counterSend: record.counterSendReserved,
+      lastRecvCounter: record.lastRecvCounter
+    };
+    state.stopped = false;
+    return true;
+  }
 
   function showScreen(name) {
     Object.values(SCREENS).forEach((s) => s.classList.remove('active'));
@@ -87,6 +226,12 @@
       showScreen('pair');
       await doPair(state.pendingPayload);
       state.pendingPayload = null;
+      return;
+    }
+    // جلسة محفوظة ⇒ نكمل بلا إعادة مسح QR (قفل الشاشة أو إعادة التحميل لا يفقدان الاقتران)
+    if (await restoreSession()) {
+      showScreen('main');
+      startPolling();
       return;
     }
     showScreen('pair');
@@ -252,6 +397,11 @@
         role: 'mobile'
       });
 
+      state.pairId = payload.pairId;
+      // نثبّت الجلسة فوراً: انهيار قبل أول إرسال يجب أن يستأنف لا أن يعيد الاقتران
+      state.sendReserved = 0;
+      try { await dbPut(sessionRecord(0)); } catch (_e) { /* الاقتران يكمل بلا حفظ */ }
+
       const sas = await C.sas({
         desktopPublic: payload.desktopPublic,
         mobilePublic: keyPair.publicKey,
@@ -319,6 +469,13 @@
       envelope_id: state.currentEnvelope.envelope_id,
       decision: decision
     }));
+    // الحجز قبل التعمية: بلا سقف ثابت على القرص قد يعيد استئنافٌ لاحق nonce مستعملاً
+    try {
+      await reserveSendCounters();
+    } catch (_e) {
+      setStatus('تعذّر تثبيت عدّاد الأمان — لم يُرسل القرار. أعد المحاولة.');
+      return;
+    }
     const frame = await C.seal(state.session, plain);
     try {
       // عقد القناة (§5.1): جسم `/reply` هو **الإطار المعمّى خاماً** لا JSON، والمسار
@@ -390,12 +547,18 @@
         }
         const res = await fetch(`${state.serverUrl}/poll?device=${state.deviceId}`, { signal });
         if (res.status === 204) continue;
+        // الجهاز أُبطل من سطح المكتب أو أُعيد تشغيله (جلساته في الذاكرة): الجلسة
+        // المحفوظة ميتة، فننساها ونطلب اقتراناً جديداً بدل حلقة خطأ لا تنتهي.
+        if (res.status === 403) { await forgetSession(); return; }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         // عقد القناة: الظرف يصل **بايتات خام** لا JSON (كان res.json() يرمي
         // «Unexpected token» على كل ظرف — عطل مثبت حياً على هاتف).
         const raw = await res.arrayBuffer();
         if (raw && raw.byteLength) {
           const envelope = envelopeFromFrame(await openFrame(raw));
+          // عدّاد الاستقبال تقدّم داخل `open`: نثبّته كي لا يقبل استئنافٌ لاحق إطاراً
+          // قديماً أُعيد بثّه (حارس replay يبقى فعّالاً عبر إعادة التحميل).
+          await persistRecvCounter();
           if (envelope && envelope.envelope_id) {
             state.currentEnvelope = envelope;
             renderCard(envelope);
