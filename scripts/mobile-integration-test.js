@@ -624,6 +624,46 @@ async function run() {
       await link2.stop();
     }
 
+    // ── بوابة الميزة قبل الإصدار ──────────────────────────────────────────────
+    // إخفاء الزر وحده يترك الميزة مخفية لا مطفأة: القنوات تُغلق عند المصدر،
+    // والواجهة تعكس البوابة ولا تصنعها.
+    const gateSource = fs.readFileSync(path.join(appRoot, 'electron', 'main.js'), 'utf8');
+    const gateFor = (opts) => {
+      const labsFile = path.join(tempRoot, 'labs-' + Math.random().toString(36).slice(2) + '.json');
+      if (opts.labs !== undefined) fs.writeFileSync(labsFile, opts.labs, 'utf8');
+      const sandbox = {
+        app: { isPackaged: opts.packaged },
+        process: { env: opts.env || {} },
+        JSON,
+        fs: { readFileSync: () => fs.readFileSync(labsFile, 'utf8') },
+        path: { join: () => labsFile },
+        os: { homedir: () => tempRoot },
+      };
+      return sourceFunction(gateSource, 'mobileFeatureAvailable', sandbox)();
+    };
+    equal(gateFor({ packaged: false }), true, 'تشغيل التطوير يفتح الميزة بلا إعداد');
+    equal(gateFor({ packaged: true }), false, 'النسخة المثبّتة مغلقة افتراضياً');
+    equal(gateFor({ packaged: true, env: { SATR_MOBILE: '1' } }), true, 'متغيّر البيئة يفتحها');
+    equal(gateFor({ packaged: true, env: { SATR_MOBILE: 'true' } }), false, 'قيمة بيئة أخرى لا تفتحها');
+    equal(gateFor({ packaged: true, labs: '{"mobile_control":true}' }), true, 'ملف الاشتراك يفتحها');
+    equal(gateFor({ packaged: true, labs: '{"mobile_control":"yes"}' }), false, 'القيمة النصية لا تفتحها');
+    equal(gateFor({ packaged: true, labs: '{}' }), false, 'ملف بلا المفتاح لا يفتحها');
+    equal(gateFor({ packaged: true, labs: 'not json' }), false, 'ملف فاسد لا يفتحها');
+
+    // القنوات مغلقة عند المصدر، والزر مخفي في الترميز (فشل مغلق)
+    assert(/satr:mobileEnable[\s\S]{0,400}?mobileFeatureAvailable\(\)/.test(gateSource),
+      'قناة التفعيل تمرّ بالبوابة');
+    assert(/satr:mobilePairingStart[\s\S]{0,200}?mobileFeatureAvailable\(\)/.test(gateSource),
+      'قناة الاقتران تمرّ بالبوابة');
+    assert(/satr:mobileDevices[\s\S]{0,200}?mobileFeatureAvailable\(\)/.test(gateSource),
+      'قناة الأجهزة تمرّ بالبوابة');
+    const indexSource = fs.readFileSync(path.join(appRoot, 'src', 'index.html'), 'utf8');
+    assert(/<button id="mobileToggle"[^>]*\shidden\s*>/.test(indexSource),
+      'زر الجوال مخفي افتراضياً في الترميز');
+    const appSource = fs.readFileSync(path.join(appRoot, 'src', 'ui', 'app.js'), 'utf8');
+    assert(/status\.available[\s\S]{0,120}?mobileToggle'\)\.hidden = false/.test(appSource),
+      'الواجهة تكشف الزر من available وحدها');
+
     // القناة المتوقفة تردّ فوراً: يجب التوقف لا الدوران في حلقة ساخنة
     const deadSandbox = Object.assign({}, offerSandbox, {
       mobilePermissionRaces: new Map(),

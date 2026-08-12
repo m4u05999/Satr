@@ -888,6 +888,27 @@ function safeMobileDevices() {
   } catch { return []; }
 }
 
+/**
+ * بوابة ميزة «التحكم من الجوال» — قبل الإصدار العام.
+ *
+ * إخفاء الزر وحده لا يكفي: القنوات تبقى قائمة فالميزة مخفية لا مطفأة. لذلك تُغلق
+ * القنوات نفسها، والواجهة تعكس البوابة لا تصنعها.
+ *
+ * ثلاثة مصادر فتح (أيّها كفى):
+ *  1. تشغيل تطوير (‏`npm start`): مفتوحة تلقائياً — لا إعداد على جهاز المطوّر.
+ *  2. متغيّر البيئة `SATR_MOBILE=1`.
+ *  3. ملف اشتراك محلي `~/.satr/labs.json` فيه `{"mobile_control": true}` —
+ *     للنسخة المثبّتة حيث لا طرفية؛ يُكتب مرة ويبقى عبر التحديثات.
+ */
+function mobileFeatureAvailable() {
+  try { if (app && typeof app.isPackaged === 'boolean' && !app.isPackaged) return true; } catch { /* تجاهل */ }
+  if (process.env.SATR_MOBILE === '1') return true;
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.satr', 'labs.json'), 'utf8'));
+    return !!(raw && raw.mobile_control === true);
+  } catch { return false; }
+}
+
 function mobileStatus() {
   let raw = {};
   if (mobileHandle && typeof mobileHandle.status === 'function') {
@@ -897,6 +918,8 @@ function mobileStatus() {
   const rawPort = Number(raw.port || mobileHandle && mobileHandle.port || (url ? new URL(url).port : 0));
   const pending = Number(raw.pending);
   const result = {
+    // البوابة تصل الواجهة عبر القناة القائمة — لا قناة جديدة ولا حالة في renderer
+    available: mobileFeatureAvailable(),
     enabled: mobileControlEnabled,
     running: !!(mobileControlEnabled && mobileHandle && raw.running !== false && url),
     deviceCount: safeMobileDevices().filter((device) => !device.revoked).length,
@@ -1148,6 +1171,8 @@ function buildMobilePairingLink() {
 
 ipcMain.handle('satr:mobileStatus', () => mobileStatus());
 ipcMain.handle('satr:mobileEnable', async (event, payload) => {
+  // البوابة أولاً: ميزة مغلقة تُرفض عند المصدر، فلا تكفي إزالة الزر من الواجهة
+  if (!mobileFeatureAvailable()) return { ...mobileStatus(), error: 'unavailable' };
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)
       || Object.keys(payload).length !== 1 || typeof payload.enable !== 'boolean') {
     return { ...mobileStatus(), error: 'bad_input' };
@@ -1156,9 +1181,12 @@ ipcMain.handle('satr:mobileEnable', async (event, payload) => {
   mobileTransition = transition.catch(() => {});
   return transition;
 });
-ipcMain.handle('satr:mobilePairingStart', () => buildMobilePairingLink());
-ipcMain.handle('satr:mobileDevices', () => safeMobileDevices());
+ipcMain.handle('satr:mobilePairingStart', () => (
+  mobileFeatureAvailable() ? buildMobilePairingLink() : { ok: false, error: 'unavailable' }
+));
+ipcMain.handle('satr:mobileDevices', () => (mobileFeatureAvailable() ? safeMobileDevices() : []));
 ipcMain.handle('satr:mobileRevoke', (event, payload) => {
+  // الإبطال يبقى مفتوحاً عمداً حتى مع إغلاق البوابة: تقليص سلطة لا منحها
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)
       || Object.keys(payload).length !== 1 || typeof payload.deviceId !== 'string'
       || !SAFE_MOBILE_DEVICE.test(payload.deviceId)) return { ok: false, error: 'bad_input' };

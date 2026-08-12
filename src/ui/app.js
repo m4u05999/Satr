@@ -1972,6 +1972,14 @@ import { createUpdateToast } from './lib/update-toast.js';
     $('mobileToggle').setAttribute('aria-pressed', 'false');
   });
   mobileEl.addEventListener('notice', (event) => addNotice(event.detail));
+  // الزر مخفي في الترميز، وتكشفه العملية الرئيسية وحدها. فشل الجلب يُبقيه مخفياً
+  // (فشل مغلق)، والقنوات مغلقة أصلاً فالإخفاء عرضٌ لا حاجز.
+  (async () => {
+    try {
+      const status = await window.satr.mobileStatus();
+      if (status && status.available) $('mobileToggle').hidden = false;
+    } catch (_e) { /* يبقى مخفياً */ }
+  })();
   $('mobileToggle').setAttribute('aria-pressed', 'false');
   $('mobileToggle').addEventListener('click', () => {
     if (mobileEl.hasAttribute('open')) closeMobilePanel(); else openMobilePanel();
