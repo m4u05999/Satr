@@ -55,6 +55,9 @@ const MAX_TTL_MS = 60 * 60 * 1000;
 const MAX_BODY = 64 * 1024; // الظروف والردود صغيرة — أي أكبر مرفوض
 const MAX_WAITERS_PER_DEVICE = 4;
 const MAX_PENDING = 32;
+// كتلة حجز عدّادات الإرسال: كتابة قرص واحدة لكل 16 ظرفاً، وأسوأ خسارة عند الانهيار
+// 15 عدّاداً من فضاء 2^53 — لا أثر. (نظير COUNTER_BLOCK في pwa/app.js)
+const SEND_BLOCK = 16;
 const MAX_ENVELOPE_ID = 200;
 
 // القرارات المسموحة من الجوال — قائمة مغلقة، بلا «دائماً» وبلا bypass
@@ -246,6 +249,7 @@ async function start(deps, opts) {
 
   // — الحالة الحيّة (كلها في الذاكرة؛ لا شيء منها يُكتب على القرص) —
   const sessions = new Map(); // deviceId -> { session, pairId }
+  const sendCeilings = new Map(); // deviceId -> سقف عدّادات الإرسال المحجوز على القرص
   const pendingById = new Map(); // envelope_id -> record
   const pendingOrder = []; // نفس السجلات مرتّبة بالأقدم أولاً (FIFO للتسليم)
   const waiters = new Map(); // deviceId -> Set<{res, timer}>
@@ -284,8 +288,31 @@ async function start(deps, opts) {
   }
 
   /** يختم حمولة للجهاز ويرسلها إطاراً ثنائياً (يزيد عدّاد إرسال جلسته). */
-  function sendFrame(res, entry, payload) {
+  /**
+   * يضمن أن العدّاد المقبل **أصغر من سقف محجوز ثابت على القرص** قبل أي تعمية.
+   *
+   * ⚠️ حارس أمني لا تحسين: العدّاد يدخل الـnonce في AES-GCM، وجلسات سطح المكتب في
+   * الذاكرة وحدها. بلا سقف ثابت يستأنف الاشتقاق بعد إعادة التشغيل من عدّاد ربما
+   * استُعمل ⇒ إعادة استعمال nonce على المفتاح نفسه. فشل التثبيت يمنع الإرسال
+   * (فشل مغلق) بدل إرسال قد يتكرر لاحقاً.
+   */
+  function ensureSendCounter(deviceId, session) {
+    if (typeof d.pair.reserveSend !== 'function') return true; // مخزن أقدم: السلوك السابق
+    const known = sendCeilings.get(deviceId);
+    if (known !== undefined && session.counterSend < known) return true;
+    let next = null;
+    try { next = d.pair.reserveSend(deviceId, SEND_BLOCK); } catch { return false; }
+    if (!Number.isSafeInteger(next) || next <= session.counterSend) return false;
+    sendCeilings.set(deviceId, next);
+    return true;
+  }
+
+  function sendFrame(res, deviceId, entry, payload) {
     if (!res || res.writableEnded) return false;
+    if (!ensureSendCounter(deviceId, entry.session)) {
+      sendJson(res, 500, { ok: false, error: 'counter_unavailable' });
+      return false;
+    }
     let frame;
     try {
       frame = d.crypto.seal(entry.session, Buffer.from(JSON.stringify(payload), 'utf8'));
@@ -313,8 +340,39 @@ async function start(deps, opts) {
   }
 
   /** جهاز قابل للاستعمال: له جلسة حيّة، وموجود في الدفتر، وغير مُبطَل. */
+  /**
+   * يعيد اشتقاق جلسة جهاز مقترن بعد إعادة تشغيل «سطر» (الجلسات في الذاكرة وحدها).
+   *
+   * العدّادان يُستأنفان من القرص: الإرسال من **السقف المحجوز** (لا من آخر عدّاد
+   * استُعمل) فيتخطى كل ما ربما استُعمل قبل الإغلاق ⇒ لا إعادة استعمال nonce؛
+   * والاستقبال من أعلى عدّاد مقبول ⇒ يبقى حارس replay فعّالاً عبر إعادة التشغيل.
+   * سجل بلا `pairId` (اقتران يسبق هذه الدفعة) لا يُستأنف — يلزمه اقتران جديد.
+   */
+  function resumeSession(deviceId) {
+    if (typeof d.pair.resumeMaterial !== 'function') return null;
+    let material = null;
+    try { material = d.pair.resumeMaterial(deviceId); } catch { return null; }
+    // الهوية من `resolveIdentity` نفسها التي يستعملها `/pair` — مصدران مختلفان
+    // يشتقّان جلستين مختلفتين فلا يفكّ الاستئناف إطار الهاتف
+    if (!material || !material.pairId || !material.publicKey || !identity) return null;
+    let session;
+    try {
+      session = d.crypto.deriveSession({
+        myPrivate: identity.privateKey,
+        theirPublic: material.publicKey,
+        pairId: material.pairId,
+        role: 'desktop',
+      });
+    } catch { return null; }
+    session.counterSend = material.sendReserved;
+    session.lastRecvCounter = material.lastRecv;
+    const entry = { session, pairId: material.pairId };
+    sessions.set(deviceId, entry);
+    return entry;
+  }
+
   function activeEntry(deviceId) {
-    const entry = sessions.get(deviceId);
+    const entry = sessions.get(deviceId) || resumeSession(deviceId);
     if (!entry) return null;
     const record = deviceRecord(deviceId);
     if (!record || record.revoked === true) {
@@ -399,7 +457,7 @@ async function start(deps, opts) {
       const waiter = set.values().next().value;
       removeWaiter(deviceId, waiter);
       if (!entry) { sendEmpty(waiter.res, 204); continue; }
-      sendFrame(waiter.res, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
+      sendFrame(waiter.res, deviceId, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
     }
   }
 
@@ -566,7 +624,7 @@ async function start(deps, opts) {
 
     const record = oldestPending();
     if (record) {
-      sendFrame(res, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
+      sendFrame(res, deviceId, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
       return;
     }
 
@@ -598,6 +656,12 @@ async function start(deps, opts) {
       try { plaintext = d.crypto.open(entry.session, body); } catch {
         sendJson(res, 400, { ok: false, error: 'bad_frame' });
         return;
+      }
+      // تثبيت أعلى عدّاد مقبول: يبقى حارس replay فعّالاً بعد إعادة تشغيل «سطر».
+      // أفضل جهد عمداً — فشل القرص لا يُسقط قرار المستخدم، وحارس «ما زال معلّقاً»
+      // أدناه يمنع أثر أي إعادة بثّ لظرف حُسم أصلاً.
+      if (typeof d.pair.noteRecv === 'function') {
+        try { d.pair.noteRecv(deviceId, entry.session.lastRecvCounter); } catch { /* أفضل جهد */ }
       }
 
       let payload = null;

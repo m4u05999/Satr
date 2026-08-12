@@ -537,6 +537,93 @@ async function run() {
     const desktopOpened = mobilecrypto.open(desktopSession, Buffer.from(restoredFrame));
     equal(new TextDecoder().decode(desktopOpened), 'ping', 'سطح المكتب فكّ إطار الجلسة المستعادة');
 
+    // ── استئناف جلسات سطح المكتب بعد إعادة تشغيل «سطر» ───────────────────────
+    // جلسات سطح المكتب في الذاكرة وحدها: بلا استئناف يلزم اقتران جديد بعد كل
+    // إعادة تشغيل. والاستئناف الساذج أخطر من العطل — إعادة اشتقاق بعدّاد مصفَّر
+    // تعيد استعمال nonce على اتجاه D2M. نُثبت الأمرين على بايتات السلك.
+    const d2mCounters = [];
+    const readD2MCounter = (frameBytes) => {
+      const view = new DataView(frameBytes.buffer, frameBytes.byteOffset, frameBytes.byteLength);
+      return Number(view.getBigUint64(2, false));
+    };
+    const beforePending = link.offerPermission(sampleRequest('toolu_before_restart', 'allow'), { ttlMs: 30000 });
+    const beforePoll = await request(
+      new URL('poll?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert,
+      'GET'
+    );
+    equal(beforePoll.status, 200, 'ظرف قبل إعادة التشغيل');
+    d2mCounters.push(readD2MCounter(beforePoll.body));
+    link.withdraw('toolu_before_restart');
+    equal(await beforePending, null, 'سُحب الظرف قبل إعادة التشغيل');
+
+    // إعادة تشغيل حقيقية: مخزن جديد يُحمَّل من القرص + قناة جديدة بذاكرة جلسات فارغة
+    const store2 = mobilepair.createStore({ file: storeFile });
+    const link2 = await mobilelink.start({
+      crypto: mobilecrypto,
+      pair: store2,
+      envelope: mobileenvelope,
+      identity,
+      app: { getAppPath: () => appRoot },
+    }, { host: '127.0.0.1', port: 0, pollTimeoutMs: 1000 });
+    try {
+      const restartUrl = link2.url + '/';
+      const afterPending = link2.offerPermission(sampleRequest('toolu_after_restart', 'deny'), { ttlMs: 30000 });
+      const afterPoll = await request(
+        new URL('poll?device=' + encodeURIComponent(deviceId), restartUrl),
+        tlsMaterial.cert,
+        'GET'
+      );
+      equal(afterPoll.status, 200, 'الجهاز نفسه يعمل بعد إعادة التشغيل بلا اقتران جديد');
+      d2mCounters.push(readD2MCounter(afterPoll.body));
+      equal(new Set(d2mCounters).size, d2mCounters.length,
+        'عدّاد D2M لا يتكرر عبر إعادة التشغيل (‏nonce فريد)');
+      assert(d2mCounters[1] > d2mCounters[0], 'العدّاد المستأنف أعلى مما استُعمل');
+
+      // الجلسة المستأنفة تفكّ فعلاً بمفاتيح الهاتف نفسها (لا مجرد ردّ 200)
+      const afterMessage = JSON.parse(new TextDecoder().decode(
+        await pwaCrypto.open(session, new Uint8Array(afterPoll.body))
+      ));
+      const afterEnvelope = envelopeFromFrame(afterMessage);
+      assert(afterEnvelope !== null, 'الهاتف فكّ إطار الجلسة المستأنفة');
+      equal(afterEnvelope.envelope_id, 'toolu_after_restart', 'الظرف الصحيح بعد إعادة التشغيل');
+
+      // والاتجاه المعاكس: ردّ الهاتف يُفكّ ويحسم على القناة الجديدة
+      const afterReply = await request(
+        new URL('reply?device=' + encodeURIComponent(deviceId), restartUrl),
+        tlsMaterial.cert,
+        'POST',
+        Buffer.from(await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
+          envelope_id: 'toolu_after_restart',
+          decision: 'deny',
+        }))))
+      );
+      equal(afterReply.status, 200, 'ردّ الهاتف مقبول بعد إعادة التشغيل');
+      equal(await afterPending, 'deny', 'القرار حُسم عبر جلسة مستأنفة');
+
+      // سجل قديم بلا pairId لا يُستأنف: فشل مغلق يطلب اقتراناً جديداً لا تخميناً
+      equal(store2.resumeMaterial('ffffffffffffffff'), null, 'جهاز مجهول لا يُستأنف');
+      const legacyFile = path.join(tempRoot, 'legacy-devices.json');
+      fs.writeFileSync(legacyFile, JSON.stringify({
+        identity,
+        devices: [{
+          deviceId: 'aaaaaaaaaaaaaaaa', label: 'قديم', pairedAt: 1, lastSeen: 1,
+          revoked: false, publicKey: mobileKeys.publicKey,
+        }],
+      }), 'utf8');
+      const legacyStore = mobilepair.createStore({ file: legacyFile });
+      equal(legacyStore.resumeMaterial('aaaaaaaaaaaaaaaa'), null,
+        'سجل يسبق الدفعة (بلا pairId) لا يُستأنف');
+      equal(legacyStore.listDevices().length, 1, 'ويبقى معروضاً وقابلاً للإبطال');
+
+      // `listDevices` يبقى metadata عرض: لا pairId ولا مفاتيح ولا عدّادات
+      const shown = store2.listDevices()[0];
+      equal(Object.keys(shown).sort().join(','), 'deviceId,label,lastSeen,pairedAt,revoked',
+        'listDevices بلا pairId أو مفاتيح أو عدّادات');
+    } finally {
+      await link2.stop();
+    }
+
     // القناة المتوقفة تردّ فوراً: يجب التوقف لا الدوران في حلقة ساخنة
     const deadSandbox = Object.assign({}, offerSandbox, {
       mobilePermissionRaces: new Map(),

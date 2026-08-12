@@ -908,14 +908,44 @@ function mobileStatus() {
   return result;
 }
 
+// ملف تلميح صغير: المنفذ الذي رُبط آخر مرة. الجوال يحفظ عنوان القناة بمنفذه، فمنفذ
+// عشوائي كل تشغيل يجعل الجلسة المحفوظة تستيقظ على عنوان ميت ⇒ إعادة مسح QR كل مرة،
+// فيضيع استئناف الجلسات كله. تلميح لا التزام: انشغال المنفذ يسقط إلى عشوائي.
+function mobilePortFile() {
+  return path.join(os.homedir(), '.satr', 'mobile-link.json');
+}
+
+function readRememberedMobilePort() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(mobilePortFile(), 'utf8'));
+    const port = Number(raw && raw.port);
+    // ≥1024: لا منافذ ذات امتياز
+    return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : 0;
+  } catch { return 0; }
+}
+
+function rememberMobilePort(port) {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) return;
+  try {
+    fs.mkdirSync(path.dirname(mobilePortFile()), { recursive: true });
+    fs.writeFileSync(mobilePortFile(), JSON.stringify({ v: 1, port }), 'utf8');
+  } catch { /* أفضل جهد — فشله يعني منفذاً عشوائياً لا عطلاً */ }
+}
+
 async function startMobileLink() {
   if (mobileHandle) { mobileControlEnabled = true; return mobileStatus(); }
   mobileLink = mobileLink || loadMobileLink();
   if (!mobileLink) return { ...mobileStatus(), error: 'unavailable' };
   try {
-    const handle = await Promise.resolve(mobileLink.start({
-      crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, app,
-    }, { port: 0 }));
+    const deps = { crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, app };
+    const remembered = readRememberedMobilePort();
+    let handle = null;
+    if (remembered) {
+      // المنفذ المحفوظ أولاً كي تبقى الجلسات المحفوظة على الأجهزة صالحة
+      try { handle = await Promise.resolve(mobileLink.start(deps, { port: remembered })); }
+      catch { handle = null; }
+    }
+    if (!handle) handle = await Promise.resolve(mobileLink.start(deps, { port: 0 }));
     const url = safeMobileUrl(handle && handle.url);
     if (!handle || typeof handle.stop !== 'function' || !url) {
       try { if (handle && typeof handle.stop === 'function') await Promise.resolve(handle.stop()); } catch {}
@@ -923,6 +953,7 @@ async function startMobileLink() {
     }
     mobileHandle = handle;
     mobileControlEnabled = true;
+    rememberMobilePort(Number(handle.port));
     return mobileStatus();
   } catch {
     mobileHandle = null;

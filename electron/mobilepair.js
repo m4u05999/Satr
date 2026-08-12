@@ -119,6 +119,15 @@ function createStore(options = {}) {
         const label = cleanLabel(raw.label);
         const pairedAt = Number.isFinite(raw.pairedAt) ? raw.pairedAt : Date.now();
         const lastSeen = Number.isFinite(raw.lastSeen) ? raw.lastSeen : pairedAt;
+        // سجل قديم بلا pairId: يبقى صالحاً للعرض والإبطال، لكن لا يُستأنف (لا ملح
+        // HKDF ⇒ لا اشتقاق). `resumeMaterial` يرفضه فيُطلب اقتران جديد.
+        const pairId = typeof raw.pairId === 'string' && SAFE_HEX16.test(raw.pairId.toLowerCase())
+          ? raw.pairId.toLowerCase() : '';
+        // العدّادات المحفوظة حارس أمني لا راحة: قراءتها المتحفّظة تعني الأعلى دائماً.
+        const sendReserved = Number.isSafeInteger(raw.sendReserved) && raw.sendReserved >= 0
+          ? raw.sendReserved : 0;
+        const lastRecv = Number.isSafeInteger(raw.lastRecv) && raw.lastRecv >= -1
+          ? raw.lastRecv : -1;
         devices.push({
           deviceId,
           label,
@@ -126,6 +135,9 @@ function createStore(options = {}) {
           lastSeen,
           revoked: raw.revoked === true,
           publicKey,
+          pairId,
+          sendReserved,
+          lastRecv,
         });
       }
     }
@@ -243,6 +255,10 @@ function createStore(options = {}) {
       lastSeen: now,
       revoked: false,
       publicKey: mobilePublic,
+      // ملح HKDF لهذا الاقتران: بدونه لا يمكن إعادة اشتقاق الجلسة بعد إعادة التشغيل
+      pairId,
+      sendReserved: 0,
+      lastRecv: -1,
     });
 
     pending.delete(pairId);
@@ -275,6 +291,67 @@ function createStore(options = {}) {
     }));
   }
 
+  function liveDevice(deviceId) {
+    const normalized = safeDeviceId(deviceId);
+    if (!normalized) return null;
+    const device = devices.find((item) => item.deviceId === normalized);
+    if (!device || device.revoked === true) return null;
+    return device;
+  }
+
+  /**
+   * مادة استئناف جلسة جهاز بعد إعادة تشغيل «سطر» — **داخل العملية الرئيسية حصراً**
+   * (نظير `getDesktopKeyPair`): `listDevices` يبقى metadata عرض بلا مفاتيح ولا
+   * `pairId`، ولا يمرّ هذا عبر IPC ولا يصل renderer أبداً.
+   *
+   * سجل قديم بلا `pairId` (اقتران يسبق هذه الدفعة) يُرفض: الملح مفقود فلا اشتقاق،
+   * والعلاج اقتران جديد لا تخمين.
+   */
+  function resumeMaterial(deviceId) {
+    ensureLoaded();
+    const device = liveDevice(deviceId);
+    if (!device || !device.pairId) return null;
+    return {
+      pairId: device.pairId,
+      publicKey: device.publicKey,
+      sendReserved: device.sendReserved,
+      lastRecv: device.lastRecv,
+    };
+  }
+
+  /**
+   * يحجز كتلة عدّادات إرسال **ويثبّتها على القرص قبل** أي تعمية، ويعيد السقف الجديد.
+   *
+   * ⚠️ حارس أمني: العدّاد يدخل الـnonce في AES-GCM. استئنافٌ بعد إعادة التشغيل
+   * بعدّاد أقل من أي عدّاد استُعمل = إعادة استعمال nonce على المفتاح نفسه ⇒ انهيار
+   * الأصالة والسرّية. فشل الكتابة يعيد `null` **فيمتنع المتصل عن الإرسال** (فشل
+   * مغلق): إرسالٌ بلا سقف ثابت قد يتكرر بعد انهيار.
+   */
+  function reserveSend(deviceId, block) {
+    ensureLoaded();
+    const device = liveDevice(deviceId);
+    if (!device) return null;
+    const size = Number.isSafeInteger(block) && block > 0 && block <= 4096 ? block : 1;
+    const next = device.sendReserved + size;
+    if (!Number.isSafeInteger(next)) return null;
+    const previous = device.sendReserved;
+    device.sendReserved = next;
+    if (!persist()) { device.sendReserved = previous; return null; }
+    return next;
+  }
+
+  /** يثبّت أعلى عدّاد استقبال مقبول — حارس replay يعبر إعادة تشغيل «سطر». */
+  function noteRecv(deviceId, counter) {
+    ensureLoaded();
+    const device = liveDevice(deviceId);
+    if (!device) return false;
+    if (!Number.isSafeInteger(counter) || counter <= device.lastRecv) return false;
+    const previous = device.lastRecv;
+    device.lastRecv = counter;
+    if (!persist()) { device.lastRecv = previous; return false; }
+    return true;
+  }
+
   function revoke(deviceId) {
     ensureLoaded();
     const normalized = safeDeviceId(deviceId);
@@ -304,6 +381,9 @@ function createStore(options = {}) {
     listDevices,
     revoke,
     touch,
+    resumeMaterial,
+    reserveSend,
+    noteRecv,
   };
 }
 
@@ -317,6 +397,10 @@ module.exports = {
   listDevices: store.listDevices,
   revoke: store.revoke,
   touch: store.touch,
+  // داخل العملية الرئيسية حصراً (نظير getDesktopKeyPair) — لا تعبر IPC أبداً
+  resumeMaterial: store.resumeMaterial,
+  reserveSend: store.reserveSend,
+  noteRecv: store.noteRecv,
   createStore,
   PAIRING_TTL_MS,
   MAX_DEVICES,
