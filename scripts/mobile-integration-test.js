@@ -86,6 +86,19 @@ function loadPwaCrypto() {
 }
 
 /** يستورد b64urlToText وparsePayload من pwa/app.js بدل إعادة صياغة التحقق هنا. */
+/**
+ * منطق العرض/إعادة العرض كما يشغّله `main.js` فعلاً — لا نسخة اختبار موازية.
+ * السقف الأدنى لمهلة القناة 1000ms (‏clampInt في mobilelink) فلا تنفع قيمة أصغر.
+ */
+function loadMainOffer(sandbox) {
+  const source = fs.readFileSync(path.join(appRoot, 'electron', 'main.js'), 'utf8');
+  const runMobileOffer = sourceFunction(source, 'runMobileOffer', sandbox);
+  // إعادة العرض تنادي نفسها عبر النطاق العام: نضعها في الصندوق نفسه بعد الاستخراج
+  sandbox.runMobileOffer = runMobileOffer;
+  const offerMobilePermission = sourceFunction(source, 'offerMobilePermission', sandbox);
+  return { runMobileOffer, offerMobilePermission };
+}
+
 // منطق فكّ لفّ الإطار كما يشغّله الهاتف فعلاً — لا نسخة اختبار موازية.
 function loadPwaEnvelopeReader() {
   const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
@@ -294,6 +307,154 @@ async function run() {
     );
     equal(stale.status, 409, 'رد ظرف غير معلّق مرفوض');
     equal(json(stale).error, 'not_pending', 'رفض الظرف غير المعلّق صريح');
+
+    // ── الظرف المعلّق يسبق الجهاز ────────────────────────────────────────────
+    // بلا هذا تصير الميزة رهينة توقيت مثالي: الطلب يضيع إن لم يكن الهاتف متصلاً
+    // في اللحظة نفسها. الحالة الأصعب: جهاز **يقترن بعد** إدراج الظرف — يجب أن
+    // يستلمه في أول استقصاء لأن الطابور عام لا لكل جهاز.
+    const latePending = link.offerPermission(sampleRequest('toolu_late_device', 'allow'), { ttlMs: 30000 });
+    const latePayload = store.buildPairingPayload();
+    const lateLink = buildPairingResult(link.url + '/', latePayload, tlsMaterial.fingerprint);
+    const lateParsed = parsePairingLink(lateLink.url);
+    const lateKeys = await pwaCrypto.generateKeyPair();
+    const lateDeviceId = crypto.randomBytes(8).toString('hex');
+    const latePaired = await request(
+      new URL('pair', lateParsed.payload.url),
+      tlsMaterial.cert,
+      'POST',
+      Buffer.from(JSON.stringify({
+        pairId: lateParsed.payload.pairId,
+        secretProof: lateParsed.payload.secret,
+        mobilePublic: lateKeys.publicKey,
+        deviceId: lateDeviceId,
+        label: 'هاتف اقترن بعد الطلب',
+      }), 'utf8'),
+      'application/json'
+    );
+    equal(latePaired.status, 200, 'الاقتران بعد وجود ظرف معلّق نجح');
+    const lateSession = await pwaCrypto.deriveSession({
+      myPrivate: lateKeys.privateKey,
+      myPublic: lateKeys.publicKey,
+      theirPublic: lateParsed.payload.desktopPublic,
+      pairId: lateParsed.payload.pairId,
+      role: 'mobile',
+    });
+    const latePoll = await request(
+      new URL('poll?device=' + encodeURIComponent(lateDeviceId), lateParsed.payload.url),
+      tlsMaterial.cert,
+      'GET'
+    );
+    equal(latePoll.status, 200, 'الجهاز المتأخر استلم الظرف المعلّق في أول استقصاء');
+    const lateMessage = JSON.parse(new TextDecoder().decode(
+      await pwaCrypto.open(lateSession, new Uint8Array(latePoll.body))
+    ));
+    const lateEnvelope = envelopeFromFrame(lateMessage);
+    assert(lateEnvelope !== null, 'الـPWA فكّ لفّ إطار الظرف المتأخر');
+    equal(lateEnvelope.envelope_id, 'toolu_late_device', 'الظرف المتأخر هو نفسه');
+    const lateReply = await request(
+      new URL('reply?device=' + encodeURIComponent(lateDeviceId), lateParsed.payload.url),
+      tlsMaterial.cert,
+      'POST',
+      Buffer.from(await pwaCrypto.seal(lateSession, new TextEncoder().encode(JSON.stringify({
+        envelope_id: lateEnvelope.envelope_id,
+        decision: 'allow',
+      }))))
+    );
+    equal(lateReply.status, 200, 'قرار الجهاز المتأخر مقبول');
+    equal(await latePending, 'allow', 'الوعد حُسم من جهاز اقترن بعد الطلب');
+
+    // ── إعادة العرض بعد انقضاء المهلة (منطق main.js الحقيقي) ─────────────────
+    // مربع سطح المكتب ينتظر الإنسان بلا حدّ ومهلة الظرف دقيقتان: بلا إعادة عرض
+    // يُعرض الطلب مرة واحدة فقط ثم لا يراه أي جهاز يتصل بعدها أبداً.
+    const resolved = [];
+    const emitted = [];
+    const offerTrace = [];
+    const offerSandbox = {
+      Promise, Date, String, Math, JSON,
+      process: { env: {} },
+      mobileControlEnabled: true,
+      // مشدّ لا تجميل: `mobileenvelope.isRecord` يشترط أن يكون نموذج الكائن هو
+      // `Object.prototype` **الخاص بهذا الـrealm** (حارس متعمّد ضد الكائنات الغريبة
+      // والـgetters). كائنات الـvm نموذجها من realm آخر فيسقط البناء إلى ظرف بمعرّف
+      // فارغ ترفضه القناة فوراً — وهو وضع لا يقع في الإنتاج حيث يتشارك main.js
+      // والبنّاء الـrealm نفسه. النقل هنا يعيد الأمانة للإنتاج ولا يخفي شيئاً.
+      mobileHandle: {
+        offerPermission: (req, ctx) => link.offerPermission(
+          JSON.parse(JSON.stringify(req)), JSON.parse(JSON.stringify(ctx))
+        ),
+        status: () => link.status(),
+        withdraw: (envelopeId) => link.withdraw(envelopeId),
+      },
+      mobilePermissionRaces: new Map(),
+      MOBILE_DECISIONS: new Set(['allow', 'allow_turn', 'deny']),
+      MOBILE_PERMISSION_TTL_MS: 1000,
+      runSeq: 7,
+      SAFE_MOBILE_PERMISSION: /^[A-Za-z0-9_.:-]{1,256}$/,
+      safeMobileDevices: () => [{ deviceId, revoked: false }],
+      mobileDebug: (reason, extra) => { offerTrace.push(String(reason) + (extra ? ':' + JSON.stringify(extra) : '')); },
+      resolvePermissionThroughCurrentHandles: (rid, allow, always, turn) => {
+        resolved.push({ rid, allow, always, turn });
+        return true;
+      },
+      emitToWindow: (obj) => { emitted.push(obj); },
+    };
+    const mainOffer = loadMainOffer(offerSandbox);
+    mainOffer.offerMobilePermission(
+      { id: 'toolu_reoffer', tool: 'Bash', input: { command: 'echo reoffer' } },
+      { token: 7, cwd: appRoot, engine: 'sdk', sessionId: 'mobile-integration' }
+    );
+    // نافذتا مهلة كاملتان بلا أي جهاز يستقصي — الطلب يجب أن يبقى مطروحاً
+    await new Promise((r) => setTimeout(r, 2400));
+    assert(offerSandbox.mobilePermissionRaces.has('toolu_reoffer'),
+      'الطلب ما زال مطروحاً بعد انقضاء مهلتين بلا استقصاء [' + offerTrace.join('>') + ']');
+    equal(resolved.length, 0, 'لا حسم بلا قرار من الجوال');
+    assert(offerTrace.some((entry) => entry.startsWith('offer_reoffer')),
+      'إعادة العرض وقعت فعلاً بعد انقضاء المهلة');
+
+    const reofferPoll = await request(
+      new URL('poll?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert,
+      'GET'
+    );
+    equal(reofferPoll.status, 200, 'جهاز استقصى بعد انقضاء المهلة استلم الظرف المُعاد');
+    const reofferMessage = JSON.parse(new TextDecoder().decode(
+      await pwaCrypto.open(session, new Uint8Array(reofferPoll.body))
+    ));
+    const reofferEnvelope = envelopeFromFrame(reofferMessage);
+    assert(reofferEnvelope !== null, 'الـPWA فكّ لفّ الظرف المُعاد');
+    equal(reofferEnvelope.envelope_id, 'toolu_reoffer', 'الظرف المُعاد هو الطلب نفسه');
+    const reofferReply = await request(
+      new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert,
+      'POST',
+      Buffer.from(await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
+        envelope_id: 'toolu_reoffer',
+        decision: 'deny',
+      }))))
+    );
+    equal(reofferReply.status, 200, 'قرار الظرف المُعاد مقبول');
+    await new Promise((r) => setTimeout(r, 150));
+    equal(resolved.length, 1, 'الحسم وقع مرة واحدة');
+    equal(resolved[0].rid, 'toolu_reoffer', 'الحسم للطلب نفسه');
+    equal(resolved[0].allow, false, 'الرفض وصل رفضاً');
+    equal(resolved[0].always, false, 'always ثابت false مهما كان رد القناة');
+    equal(emitted.length, 1, 'حدث واحد للواجهة');
+    equal(emitted[0].type, 'mobile_decision', 'نوع الحدث mobile_decision');
+    assert(!offerSandbox.mobilePermissionRaces.has('toolu_reoffer'), 'المدخل حُذف بعد الحسم');
+
+    // القناة المتوقفة تردّ فوراً: يجب التوقف لا الدوران في حلقة ساخنة
+    const deadSandbox = Object.assign({}, offerSandbox, {
+      mobilePermissionRaces: new Map(),
+      mobileHandle: { offerPermission: () => Promise.resolve(null), status: () => ({}) },
+    });
+    const deadOffer = loadMainOffer(deadSandbox);
+    deadOffer.offerMobilePermission(
+      { id: 'toolu_dead_channel', tool: 'Bash', input: { command: 'echo dead' } },
+      { token: 7, cwd: appRoot, engine: 'sdk', sessionId: 'mobile-integration' }
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    assert(!deadSandbox.mobilePermissionRaces.has('toolu_dead_channel'),
+      'الرفض الفوري يوقف العرض بلا حلقة ساخنة');
   } finally {
     await link.stop();
   }

@@ -1007,8 +1007,28 @@ function offerMobilePermission(obj, context) {
     id, tool: obj.tool, input: obj.input, cwd: context.cwd, engine: context.engine,
     session_id: context.sessionId,
   };
-  const offerContext = { createdAt: Date.now(), ttlMs: MOBILE_PERMISSION_TTL_MS };
+  runMobileOffer(id, race, rawReq, context);
+}
+
+/**
+ * يعرض الظرف على القناة، ويعيد العرض عند انقضاء المهلة ما دام مربع سطح المكتب مفتوحاً.
+ *
+ * مربع الإذن ينتظر الإنسان بلا حدّ، بينما مهلة الظرف دقيقتان. بلا إعادة العرض يُعرض
+ * الطلب مرة واحدة ولدقيقتين فقط، ثم يبقى المربع مفتوحاً على سطح المكتب بينما لا يرى
+ * الهاتف شيئاً أبداً — فتصير الميزة رهينة أن يكون الجهاز متصلاً في تلك النافذة بالضبط
+ * (نوم الشاشة أو إغلاق التطبيق أو انقطاع الشبكة يضيّع الطلب نهائياً).
+ *
+ * إشارة «ما زال مطلوباً» هي بقاء مدخل `mobilePermissionRaces`: حسمُ سطح المكتب
+ * (`satr:permission`) ونهايةُ الدور (`withdrawMobilePermissions`) يحذفانه قبل السحب،
+ * فغيابه يعني أن أحداً لا ينتظر ⇒ نتوقف. ولا يمسّ هذا عقد القناة المجمّد.
+ */
+function runMobileOffer(id, race, rawReq, context) {
   const handle = mobileHandle; // نثبّت المقبض: تبديل القناة أثناء الانتظار لا يخلط الردود
+  if (!mobileControlEnabled || !handle || typeof handle.offerPermission !== 'function') {
+    if (mobilePermissionRaces.get(id) === race) mobilePermissionRaces.delete(id);
+    return;
+  }
+  const offerContext = { createdAt: Date.now(), ttlMs: MOBILE_PERMISSION_TTL_MS };
   // قياس: لقطة القناة **قبل** إدراج هذا الظرف — deviceCount عدد الجلسات الحيّة في
   // الذاكرة (لا أجهزة القرص)، وpending الظروف المعلّقة سابقاً. مع offer_settled
   // تفرّق بين «رفضته القناة» (ms صغير) و«لم يُجب الهاتف» (بلوغ TTL).
@@ -1019,15 +1039,29 @@ function offerMobilePermission(obj, context) {
     mobileDebug('offer_passed', { pending: snap.pending, deviceCount: snap.deviceCount, running: snap.running });
   }
   Promise.resolve().then(() => handle.offerPermission(rawReq, offerContext)).then((decision) => {
+    const elapsed = Date.now() - offerAt;
     mobileDebug('offer_settled', {
       decision: decision === null || decision === undefined ? 'null' : String(decision).slice(0, 20),
-      ms: Date.now() - offerAt,
+      ms: elapsed,
       raced: mobilePermissionRaces.get(id) !== race,
       tokenChanged: context.token !== runSeq,
     });
     // لا نثق برد القناة: قرار محصور، طلب ما زال نفسه، والدور الجاري لم يتغيّر.
-    if (!MOBILE_DECISIONS.has(decision) || mobilePermissionRaces.get(id) !== race
-        || context.token !== runSeq) return;
+    if (!MOBILE_DECISIONS.has(decision)) {
+      if (mobilePermissionRaces.get(id) !== race) return; // سُحب: حسم سطح المكتب أو انتهى الدور
+      if (context.token !== runSeq) { mobilePermissionRaces.delete(id); return; }
+      // انقضاء المهلة الحقيقي يستغرق المهلة كاملة تقريباً. الردّ الفوري يعني رفض
+      // القناة (توقّفت أو امتلأ طابورها أو تعذّر بناء الظرف) ⇒ نتوقف بدل حلقة ساخنة.
+      if (elapsed < MOBILE_PERMISSION_TTL_MS / 2) {
+        mobileDebug('offer_refused_fast');
+        mobilePermissionRaces.delete(id);
+        return;
+      }
+      mobileDebug('offer_reoffer');
+      runMobileOffer(id, race, rawReq, context);
+      return;
+    }
+    if (mobilePermissionRaces.get(id) !== race || context.token !== runSeq) return;
     const allow = decision !== 'deny';
     const turn = decision === 'allow_turn';
     // هذا الاستدعاء متزامن؛ لا يمكن لحدث IPC آخر أن يتداخل بين نجاحه وحذف السباق.
