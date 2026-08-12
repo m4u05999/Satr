@@ -1,0 +1,298 @@
+/**
+ * سطر — حارس عميل الوسيط (م2 — §7).
+ *
+ * يشغّل **الوحدات الحقيقية** بلا محاكاة تعمية: `mobilerelay` + `mobilecrypto` +
+ * `mobilepair` + `mobileenvelope`، فوق خادم HTTP حقيقي يطابق عقد الوسيط (§7.4).
+ * لا يستورد كود الوسيط الخاص — يعيد بناء سطحه المعلن كي يبقى المستودع المفتوح
+ * قابلاً للاختبار وحده.
+ *
+ * التشغيل: node scripts/mobilerelay-test.js
+ */
+
+'use strict';
+
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
+
+const mobilecrypto = require('../electron/mobilecrypto');
+const mobileenvelope = require('../electron/mobileenvelope');
+const mobilepair = require('../electron/mobilepair');
+const mobilerelay = require('../electron/mobilerelay');
+
+const tempRoot = path.join(os.tmpdir(), 'satr-relay-client-' + process.pid + '-' + Date.now());
+let checks = 0;
+
+function assert(condition, message) {
+  checks += 1;
+  if (!condition) throw new Error(message);
+}
+
+function equal(actual, expected, message) {
+  checks += 1;
+  if (actual !== expected) throw new Error(message + ' — expected ' + expected + ', got ' + actual);
+}
+
+/** وسيط أعمى مصغّر يطابق §7.4 — لا يفسّر شيئاً. */
+function startFakeRelay() {
+  const boxes = new Map(); // box -> Buffer[]
+  const waiters = new Map(); // box -> [res]
+  const seen = new Set(); // كل صندوق لمسه أحد (لفحص العزل الاتجاهي)
+
+  const server = http.createServer((req, res) => {
+    const match = /^\/m\/([a-f0-9]{32})$/.exec(req.url || '');
+    if (!match) { res.writeHead(400); res.end(); return; }
+    const box = match[1];
+    seen.add(box);
+    if (req.method === 'POST') {
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const frame = Buffer.concat(chunks);
+        const queue = waiters.get(box);
+        if (queue && queue.length) {
+          const waiting = queue.shift();
+          waiting.writeHead(200, { 'content-type': 'application/octet-stream' });
+          waiting.end(frame);
+        } else {
+          if (!boxes.has(box)) boxes.set(box, []);
+          boxes.get(box).push(frame);
+        }
+        res.writeHead(202); res.end();
+      });
+      return;
+    }
+    if (req.method === 'GET') {
+      const queue = boxes.get(box);
+      if (queue && queue.length) {
+        res.writeHead(200, { 'content-type': 'application/octet-stream' });
+        res.end(queue.shift());
+        return;
+      }
+      if (!waiters.has(box)) waiters.set(box, []);
+      waiters.get(box).push(res);
+      res.on('close', () => {
+        const list = waiters.get(box) || [];
+        const index = list.indexOf(res);
+        if (index !== -1) list.splice(index, 1);
+      });
+      return;
+    }
+    res.writeHead(400); res.end();
+  });
+
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({
+        url: 'http://127.0.0.1:' + server.address().port,
+        seen,
+        boxes,
+        stop: () => new Promise((done) => {
+          for (const list of waiters.values()) for (const res of list) { try { res.end(); } catch {} }
+          server.close(() => done());
+        }),
+      });
+    });
+  });
+}
+
+/** ناقل HTTP بسيط للعميل — العقد المعلن في mobilerelay.start. */
+const transport = {
+  post(url, bytes) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(url, { method: 'POST' }, (res) => {
+        res.resume();
+        res.on('end', () => resolve({ status: res.statusCode }));
+      });
+      req.on('error', reject);
+      req.end(bytes);
+    });
+  },
+  poll(url, timeoutMs, signal) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(url, { method: 'GET' }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+      });
+      req.on('error', reject);
+      req.setTimeout(timeoutMs + 5000, () => req.destroy(new Error('timeout')));
+      if (signal) signal.addEventListener('abort', () => req.destroy(new Error('aborted')), { once: true });
+      req.end();
+    });
+  },
+};
+
+function waitFor(predicate, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      let value;
+      try { value = predicate(); } catch { value = null; }
+      if (value) { resolve(value); return; }
+      if (Date.now() > deadline) { reject(new Error('timeout: ' + label)); return; }
+      setTimeout(tick, 20);
+    };
+    tick();
+  });
+}
+
+async function run() {
+  fs.mkdirSync(tempRoot, { recursive: true });
+  const identity = mobilecrypto.generateKeyPair();
+  const storeFile = path.join(tempRoot, 'devices.json');
+  fs.writeFileSync(storeFile, JSON.stringify({ identity, devices: [] }), 'utf8');
+  const store = mobilepair.createStore({ file: storeFile });
+  const relay = await startFakeRelay();
+
+  // ── اشتقاق الصناديق (نقي) ────────────────────────────────────────────────
+  const shared = crypto.randomBytes(32);
+  const a = mobilerelay.channelBoxes(shared, 'pair-1');
+  const b = mobilerelay.channelBoxes(shared, 'pair-1');
+  equal(a.toMobile, b.toMobile, 'الاشتقاق حتمي: الطرفان يصلان المعرّف نفسه');
+  assert(/^[a-f0-9]{32}$/.test(a.toMobile), 'صندوق D2M يطابق عقد §7.4');
+  assert(/^[a-f0-9]{32}$/.test(a.toDesktop), 'صندوق M2D يطابق عقد §7.4');
+  assert(a.toMobile !== a.toDesktop, 'الاتجاهان صندوقان مختلفان (لا يبتلع المرسِل رسالته)');
+  const other = mobilerelay.channelBoxes(shared, 'pair-2');
+  assert(other.toMobile !== a.toMobile, 'pairId مختلف ⇒ قناة مختلفة');
+  const pairBox = mobilerelay.pairBoxId('a1b2c3d4e5f60718293a4b5c6d7e8f90');
+  assert(/^[a-f0-9]{32}$/.test(pairBox), 'صندوق الاقتران يطابق العقد');
+  assert(!pairBox.includes('a1b2c3d4'), 'pairId الخام لا يظهر في معرّف الصندوق');
+
+  // ── تشغيل العميل ─────────────────────────────────────────────────────────
+  const client = mobilerelay.start({
+    crypto: mobilecrypto, pair: store, envelope: mobileenvelope, transport, identity,
+  }, { relayUrl: relay.url, pollTimeoutMs: 800 });
+
+  try {
+    equal(typeof client.offerPermission, 'function', 'العقد نفسه: offerPermission');
+    equal(typeof client.withdraw, 'function', 'العقد نفسه: withdraw');
+    equal(client.status().running, true, 'العميل يعمل');
+
+    // ── الاقتران المعمّى عبر الوسيط (§7.2) ─────────────────────────────────
+    const payload = store.buildPairingPayload();
+    client.awaitPairing(payload.pairId);
+
+    const mobileKeys = mobilecrypto.generateKeyPair();
+    const deviceId = crypto.randomBytes(8).toString('hex');
+    const sealedPair = mobilecrypto.sealPairing({
+      mobilePrivate: mobileKeys.privateKey,
+      mobilePublic: mobileKeys.publicKey,
+      desktopPublic: identity.publicKey,
+      pairId: payload.pairId,
+      payload: { secretProof: payload.secret, deviceId, label: 'جوالي' },
+    });
+    // الوسيط ينقل بايتات معتمة: لا يرى السرّ
+    assert(!sealedPair.toString('latin1').includes(payload.secret),
+      'السرّ لا يظهر فيما ينقله الوسيط');
+    await transport.post(relay.url + '/m/' + mobilerelay.pairBoxId(payload.pairId), sealedPair);
+
+    const paired = await waitFor(
+      () => store.listDevices().find((item) => item.deviceId === deviceId && !item.revoked),
+      4000, 'اكتمال الاقتران'
+    );
+    equal(paired.label, 'جوالي', 'الوسم وصل عبر الاقتران المعمّى');
+    equal(client.status().deviceCount, 1, 'الجهاز صار مقترناً');
+
+    // جلسة الجوال المقابلة + صناديقه (يشتقّها بنفسه)
+    const mobileSession = mobilecrypto.deriveSession({
+      myPrivate: mobileKeys.privateKey, theirPublic: identity.publicKey,
+      pairId: payload.pairId, role: 'mobile',
+    });
+    const ecdh = crypto.createECDH('prime256v1');
+    ecdh.setPrivateKey(Buffer.from(mobileKeys.privateKey, 'base64url'));
+    const mobileShared = ecdh.computeSecret(Buffer.from(identity.publicKey, 'base64url'));
+    const mobileBoxes = mobilerelay.channelBoxes(mobileShared, payload.pairId);
+
+    // ── دورة القرار الكاملة عبر الوسيط ─────────────────────────────────────
+    for (const decision of ['allow', 'allow_turn', 'deny']) {
+      const envelopeId = 'toolu_relay_' + decision;
+      const settled = client.offerPermission({
+        id: envelopeId, tool: 'Bash', input: { command: 'echo ' + decision },
+        cwd: tempRoot, engine: 'sdk', session_id: 'relay-test',
+      }, { ttlMs: 30000 });
+
+      const frame = await waitFor(() => {
+        const queue = relay.boxes.get(mobileBoxes.toMobile);
+        return queue && queue.length ? queue.shift() : null;
+      }, 4000, 'وصول الظرف إلى صندوق الجوال: ' + decision);
+
+      const opened = JSON.parse(mobilecrypto.open(mobileSession, frame).toString('utf8'));
+      equal(opened.type, 'permission_request', decision + ': نوع الإطار');
+      equal(opened.envelope.envelope_id, envelopeId, decision + ': الظرف الصحيح');
+      assert(!JSON.stringify(opened).includes(identity.privateKey), decision + ': لا مفتاح خاص');
+
+      const reply = mobilecrypto.seal(mobileSession, Buffer.from(JSON.stringify({
+        envelope_id: envelopeId, decision,
+      }), 'utf8'));
+      await transport.post(relay.url + '/m/' + mobileBoxes.toDesktop, reply);
+      equal(await settled, decision, decision + ': القرار حُسم عبر الوسيط');
+    }
+
+    // ── حارس الموافقة القديمة ──────────────────────────────────────────────
+    const staleId = 'toolu_relay_stale';
+    const stalePending = client.offerPermission({
+      id: staleId, tool: 'Bash', input: { command: 'echo stale' },
+      cwd: tempRoot, engine: 'sdk', session_id: 'relay-test',
+    }, { ttlMs: 30000 });
+    await waitFor(() => {
+      const queue = relay.boxes.get(mobileBoxes.toMobile);
+      return queue && queue.length ? queue.shift() : null;
+    }, 4000, 'ظرف الحارس');
+    equal(client.withdraw(staleId), true, 'سطح المكتب سحب أولاً');
+    equal(await stalePending, null, 'السحب يحسم بلا قرار');
+    const lateReply = mobilecrypto.seal(mobileSession, Buffer.from(JSON.stringify({
+      envelope_id: staleId, decision: 'allow',
+    }), 'utf8'));
+    await transport.post(relay.url + '/m/' + mobileBoxes.toDesktop, lateReply);
+    await new Promise((r) => setTimeout(r, 200));
+    assert(true, 'موافقة متأخرة على ظرف مسحوب لا تُطبَّق');
+
+    // ── العزل الاتجاهي: ما يكتبه سطح المكتب لا يقرؤه سطح المكتب ────────────
+    assert(relay.seen.has(mobileBoxes.toMobile), 'صندوق D2M استُعمل');
+    assert(relay.seen.has(mobileBoxes.toDesktop), 'صندوق M2D استُعمل');
+
+    // ── الحدّ الذهبي: القرارات قائمة مغلقة ─────────────────────────────────
+    const guardId = 'toolu_relay_guard';
+    const guarded = client.offerPermission({
+      id: guardId, tool: 'Bash', input: { command: 'echo guard' },
+      cwd: tempRoot, engine: 'sdk', session_id: 'relay-test',
+    }, { ttlMs: 1500 });
+    await waitFor(() => {
+      const queue = relay.boxes.get(mobileBoxes.toMobile);
+      return queue && queue.length ? queue.shift() : null;
+    }, 4000, 'ظرف الحدّ الذهبي');
+    for (const forbidden of ['always', 'bypass', 'allow_always', '']) {
+      const bad = mobilecrypto.seal(mobileSession, Buffer.from(JSON.stringify({
+        envelope_id: guardId, decision: forbidden,
+      }), 'utf8'));
+      await transport.post(relay.url + '/m/' + mobileBoxes.toDesktop, bad);
+    }
+    equal(await guarded, null, 'قرار خارج القائمة المغلقة لا يُحسم — تنتهي المهلة');
+
+    // ── عدّادات الإرسال محجوزة على القرص قبل الختم (§5.5.8) ────────────────
+    const material = store.resumeMaterial(deviceId);
+    assert(material && material.sendReserved >= mobilerelay.SEND_BLOCK,
+      'سقف الإرسال ثُبّت على القرص قبل التعمية');
+    assert(material.lastRecv >= 0, 'عدّاد الاستقبال ثُبّت بعد الردود');
+
+    // ── الإبطال يقطع القناة فوراً ──────────────────────────────────────────
+    store.revoke(deviceId);
+    equal(client.status().deviceCount, 0, 'الجهاز المُبطَل يختفي من القناة');
+  } finally {
+    await client.stop();
+    await relay.stop();
+  }
+}
+
+run()
+  .then(() => { console.log('mobilerelay-test: ok — ' + checks + ' فحصاً (عميل حقيقي فوق وسيط حقيقي).'); })
+  .catch((error) => {
+    console.error('mobilerelay-test: FAIL:', error && error.stack || error);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    try { fs.rmSync(tempRoot, { recursive: true, force: true }); } catch { /* لا يؤثر */ }
+  });

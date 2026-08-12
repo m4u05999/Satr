@@ -46,6 +46,7 @@ const fs = require('node:fs');
 const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
+const mobilepending = require('./mobilepending');
 
 // — ثوابت العقد —
 const POLL_TIMEOUT_MS = 45 * 1000; // §5.1: long-poll ≤ 45ث ثم 204
@@ -250,8 +251,13 @@ async function start(deps, opts) {
   // — الحالة الحيّة (كلها في الذاكرة؛ لا شيء منها يُكتب على القرص) —
   const sessions = new Map(); // deviceId -> { session, pairId }
   const sendCeilings = new Map(); // deviceId -> سقف عدّادات الإرسال المحجوز على القرص
-  const pendingById = new Map(); // envelope_id -> record
-  const pendingOrder = []; // نفس السجلات مرتّبة بالأقدم أولاً (FIFO للتسليم)
+  // نواة المعلّقات مشتركة مع عميل الوسيط (`mobilepending.js`) — تنفيذ واحد لعقد
+  // الحسم والسحب وحارس «ما زال معلّقاً»، فلا يتباعد نقلان بصمت (درس §5.5)
+  const pending = mobilepending.createPendingStore({
+    buildEnvelope: (rawReq, ctx) => d.envelope.build(rawReq, ctx),
+    onOffer: () => wakeWaiters(),
+    maxPending: MAX_PENDING,
+  });
   const waiters = new Map(); // deviceId -> Set<{res, timer}>
   const sockets = new Set();
   let stopped = false;
@@ -398,30 +404,7 @@ async function start(deps, opts) {
   }
 
   // ── المعلّقات ─────────────────────────────────────────────────────────────
-  function removePending(record) {
-    pendingById.delete(record.id);
-    const index = pendingOrder.indexOf(record);
-    if (index !== -1) pendingOrder.splice(index, 1);
-  }
-
   /** يحسم معلّقاً مرة واحدة ويسحبه — القرار أو `null` (لا حسم). */
-  function settle(record, decision) {
-    if (!record || record.done) return false;
-    record.done = true;
-    if (record.timer) { clearTimeout(record.timer); record.timer = null; }
-    removePending(record);
-    const value = DECISIONS.has(decision) ? decision : null;
-    try { record.resolve(value); } catch { /* لا يفشل الحسم بسبب مستهلك */ }
-    return true;
-  }
-
-  function oldestPending() {
-    for (const record of pendingOrder) {
-      if (!record.done) return record;
-    }
-    return null;
-  }
-
   // ── منتظرو long-poll ──────────────────────────────────────────────────────
   function removeWaiter(deviceId, waiter) {
     const set = waiters.get(deviceId);
@@ -449,7 +432,7 @@ async function start(deps, opts) {
   function wakeWaiters() {
     if (stopped) return;
     for (const deviceId of [...waiters.keys()]) {
-      const record = oldestPending();
+      const record = pending.oldest();
       if (!record) return;
       const entry = activeEntry(deviceId);
       const set = waiters.get(deviceId);
@@ -466,55 +449,12 @@ async function start(deps, opts) {
    * يعرض طلب إذن على الأجهزة المقترنة.
    * @returns {Promise<'allow'|'allow_turn'|'deny'|null>} — `null` = لم يحسم الجوال.
    */
-  function offerPermission(rawReq, ctx) {
-    if (stopped) return Promise.resolve(null);
-    const context = ctx && typeof ctx === 'object' ? ctx : {};
-    const now = Date.now();
-    const ttlMs = clampInt(context.ttlMs, 1000, MAX_TTL_MS, DEFAULT_TTL_MS);
-    const createdAt = Number.isFinite(context.createdAt) && context.createdAt >= 0 ? Math.floor(context.createdAt) : now;
-
-    let envelope = null;
-    try {
-      envelope = d.envelope.build(rawReq, {
-        project: typeof context.project === 'string' ? context.project : undefined,
-        taskSummary: typeof context.taskSummary === 'string' ? context.taskSummary : undefined,
-        createdAt,
-        ttlMs,
-      });
-    } catch { return Promise.resolve(null); }
-
-    const id = envelope && typeof envelope.envelope_id === 'string' ? envelope.envelope_id : '';
-    // ظرف بلا معرّف لا يمكن ربط ردّ به ⇒ لا يُسجَّل (فشل مغلق، يبقى مربع سطح المكتب)
-    if (!id || id.length > MAX_ENVELOPE_ID) return Promise.resolve(null);
-    if (pendingOrder.length >= MAX_PENDING) return Promise.resolve(null);
-
-    // معرّف مكرّر: نسحب القديم بلا قرار كي لا يبقى ظرف قابل للإجابة عن نداء منتهٍ
-    const previous = pendingById.get(id);
-    if (previous) settle(previous, null);
-
-    return new Promise((resolve) => {
-      const record = { id, envelope, resolve, done: false, timer: null };
-      record.timer = setTimeout(() => { settle(record, null); }, ttlMs);
-      if (typeof record.timer.unref === 'function') record.timer.unref();
-      pendingById.set(id, record);
-      pendingOrder.push(record);
-      wakeWaiters();
-    });
-  }
-
   /** سطح المكتب حسم أولاً ⇒ يُزال المعلّق فوراً (حارس الموافقة القديمة). */
-  function withdraw(envelopeId) {
-    if (typeof envelopeId !== 'string' || !envelopeId) return false;
-    const record = pendingById.get(envelopeId);
-    if (!record) return false;
-    return settle(record, null);
-  }
-
   function status() {
     return {
       running: !stopped,
       port: boundPort,
-      pending: pendingOrder.filter((record) => !record.done).length,
+      pending: pending.pendingCount(),
       deviceCount: liveDeviceCount(),
       fingerprint,
     };
@@ -622,7 +562,7 @@ async function start(deps, opts) {
     if (!entry) { sendJson(res, 403, { ok: false, error: 'not_linked' }); return; }
     touch(deviceId);
 
-    const record = oldestPending();
+    const record = pending.oldest();
     if (record) {
       sendFrame(res, deviceId, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
       return;
@@ -682,11 +622,13 @@ async function start(deps, opts) {
       }
 
       // حارس الموافقة القديمة: يجب أن يكون الظرف ما زال معلّقاً لحظة الحسم
-      const record = pendingById.get(envelopeId);
-      if (!record || record.done) { sendJson(res, 409, { ok: false, error: 'not_pending' }); return; }
+      // حارس الموافقة القديمة داخل النواة المشتركة: يشترط أن يكون الظرف ما زال معلّقاً
+      if (!pending.resolveDecision(envelopeId, decision)) {
+        sendJson(res, 409, { ok: false, error: 'not_pending' });
+        return;
+      }
 
       touch(deviceId);
-      settle(record, decision);
       sendJson(res, 200, { ok: true });
     });
   }
@@ -781,7 +723,7 @@ async function start(deps, opts) {
     if (stopped) return Promise.resolve();
     stopped = true;
     // كل معلّق يُحسم بلا قرار — القناة سقطت، والقرار يعود لمربع سطح المكتب
-    for (const record of [...pendingOrder]) settle(record, null);
+    pending.stop();
     for (const deviceId of [...waiters.keys()]) dropWaiters(deviceId);
     sessions.clear();
     return new Promise((resolve) => {
@@ -808,8 +750,8 @@ async function start(deps, opts) {
         url: 'https://' + shownHost + ':' + boundPort,
         host,
         port: boundPort,
-        offerPermission,
-        withdraw,
+        offerPermission: (rawReq, ctx) => pending.offer(rawReq, ctx),
+        withdraw: (envelopeId) => pending.withdraw(envelopeId),
         status,
         stop,
       });

@@ -131,6 +131,7 @@
     "pwa:serve": "node scripts/pwa-serve.js",
     "test:mobile-tls": "node scripts/mobiletls-test.js",
     "test:mobile-integration": "node scripts/mobile-integration-test.js",
+    "test:mobile-relay": "node scripts/mobilerelay-test.js",
     "test:qr": "node scripts/qr-test.js"
   },
   "devDependencies": {
