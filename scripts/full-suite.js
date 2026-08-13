@@ -14,6 +14,7 @@ const SUITE = [
   'test:daily-loop-ui',
   'test:sessionmeta',
   'test:tasks',
+  'test:observations',
   'test:memory',
   'test:design-guard',
   'test:repomap',

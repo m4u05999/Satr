@@ -16,6 +16,7 @@
     "test:pwa-crypto": "electron scripts/pwa-crypto-live-test.js",
     "test:skills": "node scripts/skills-test.js",
     "test:tasks": "node scripts/tasks-test.js",
+    "test:observations": "node scripts/observations-test.js",
     "test:sessionmeta": "node scripts/sessionmeta-test.js",
     "test:verify": "node scripts/verify-test.js",
     "test:verify-config-dialog": "electron scripts/verify-config-dialog-live-test.js",
