@@ -23,8 +23,14 @@ function assertStaticContract() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const fullSuite = fs.readFileSync(path.join(ROOT, 'scripts', 'full-suite.js'), 'utf8');
   assert(!/\sstyle\s*=|\sonclick\s*=/i.test(fixture), 'يحتوي fixture سمة inline محجوبة.');
-  assert(chatSource.includes('function textDir('),
-    'يجب أن يملك chat.js دالة الحسم الإحصائي textDir.');
+  // ‏2026-08-13: انتقل الحسم الإحصائي إلى `lib/text-dir.js` مصدراً واحداً بعد أن أثبت
+  // المسح أنه كان مطبَّقاً في chat.js وحده بينما 22 مكوّناً بقيت على plaintext.
+  // نفحص **العقد** (‏chat يستهلك المصدر المشترك) لا شكل التنفيذ (دالة محلية).
+  assert(chatSource.includes("from '../lib/text-dir.js'"),
+    'يجب أن يستورد chat.js الحسم الإحصائي من المصدر المشترك lib/text-dir.js.');
+  const textDirSource = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'lib', 'text-dir.js'), 'utf8');
+  assert(/export function textDir\(/.test(textDirSource) && /export function applyDir\(/.test(textDirSource),
+    'المصدر المشترك يصدّر textDir وapplyDir.');
   assert(chatSource.includes("import { lifecycleLabel } from '../lib/lifecycle-labels.js';"),
     'يجب أن يستورد chat.js lifecycleLabel من الوحدة المشتركة.');
   assert(!/\.md p \{[^}]*plaintext/.test(baseCss) && !/\.msg\.user \.bubble \{[^}]*plaintext[^}]*\}/s.test(baseCss.replace(/\/\*[\s\S]*?\*\//g, '')),

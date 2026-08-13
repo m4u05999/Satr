@@ -26,6 +26,7 @@ import { diffSheet } from '../lib/diff.css.js';
 import { cardSheet } from '../lib/card.css.js';
 import { addUsageResult, emptyUsageSummary, formatUsage, formatUsageSummary, formatUsageSummaryFull } from '../lib/usage-summary.js';
 import { lifecycleLabel } from '../lib/lifecycle-labels.js';
+import { textDir, dirAttr } from '../lib/text-dir.js';
 
 // حسم ازدواج أنماط بطاقة الفرق (الموثّق منذ ت-5): نسخة base.css حُذفت مع هذه الدفعة،
 // وdiffSheet تُعتمد هنا على **المستند** نفسه (adoptedStyleSheets على المستند — تحقق §1
@@ -294,19 +295,9 @@ class SatrChat extends HTMLElement {
     if (t.endsWith('|')) t = t.slice(0, -1);
     return t.split('|').map((c) => c.trim());
   }
-  // اتجاه نص إحصائي (نمط عارض الملفات المثبّت: عربي ≥ نصف اللاتيني ⇒ RTL) —
-  // بديل حسم «أول حرف قوي» (plaintext) الذي يكسر الفقرة العربية البادئة برمز لاتيني
-  // (لقطات مالك 2026-07-18: تقارير المراجعة التقنية تتبعثر وعلامات الترقيم تقفز)
-  function textDir(text) {
-    const ar = (text.match(/[؀-ۿݐ-ݿ]/g) || []).length;
-    const lat = (text.match(/[A-Za-z]/g) || []).length;
-    if (!ar && !lat) return '';
-    return ar * 2 >= lat ? 'rtl' : 'ltr';
-  }
-  function dirAttr(text) {
-    const dir = textDir(text);
-    return dir ? ' dir="' + dir + '"' : '';
-  }
+  // اتجاه النص الإحصائي انتقل إلى `../lib/text-dir.js` (‏2026-08-13): المسح أثبت أن
+  // العلاج طُبِّق هنا وحده بينما 22 مكوّناً آخر بقيت على `plaintext`، ونسخُ المنطق
+  // لكل مكوّن يعني تباعده بصمت — نمط الأعطال الذي يكرّره هذا المشروع كثيراً.
   function renderMD(text) {
     const out = [];
     const lines = text.split('\n');

@@ -7,6 +7,7 @@
 // Escape في حقل البحث يمسح النص أولاً (داخلي)؛ إغلاق اللوحة بـ Escape توجيه القشرة.
 import { sheet } from '../lib/sheet.js';
 import { panelSheet } from '../lib/panel.css.js';
+import { applyDir } from '../lib/text-dir.js';
 
 const ownSheet = sheet(`
   /* عرض لوحة الجلسات 400px (أضيق من افتراضي panel.css.js) */
@@ -19,8 +20,12 @@ const ownSheet = sheet(`
   .sess-actions { display: flex; gap: var(--space-1); flex: none; }
   .sess-actions button { padding: var(--space-1) var(--space-2); font-size: 11px; }
   .sess-actions .pin.active { color: var(--gold); border-color: var(--gold-border); background: var(--gold-soft); }
+  /* لا unicode-bidi: plaintext هنا: العنوان **أول رسالة مستخدم** — نفس نوع محتوى
+     فقاعة المحادثة — و«أول حرف قوي» كان يرسي «F1 — الهاتف يرنّ» وأمثالها LTR كاملة.
+     قِيس حيّاً (arabic-rtl-probe): أول محرف على بعد 0px من اليسار و281px من اليمين.
+     الحسم الآن إحصائي صريح عبر lib/text-dir.js */
   .sess .t {
-    font-size: 13.5px; unicode-bidi: plaintext; line-height: 1.55;
+    font-size: 13.5px; line-height: 1.55;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .sess .m {
@@ -103,7 +108,9 @@ class SatrSessionsPanel extends HTMLElement {
       el.className = 'sess' + (s.pinned ? ' pinned' : '');
       el.tabIndex = 0;
       const main = document.createElement('div'); main.className = 'sess-main';
-      const t = document.createElement('div'); t.className = 't'; t.textContent = s.displayTitle || s.title;
+      const t = document.createElement('div'); t.className = 't';
+      // العنوان نصّ مستخدم مختلط: يُحسم اتجاهه إحصائياً كفقاعة المحادثة تماماً
+      applyDir(t, t.textContent = s.displayTitle || s.title);
       const m = document.createElement('div'); m.className = 'm';
       // محادثة محوّل: اسم المزوّد بدل المجلد؛ المحركات الأصيلة تعرض اسمها + المجلد.
       m.textContent = (s.kind === 'chat' ? this._label(s.provider)
