@@ -55,6 +55,7 @@ const mobilecrypto = require('./mobilecrypto');
 const mobilepair = require('./mobilepair');
 const mobilerelay = require('./mobilerelay');
 const mobilestate = require('./mobilestate');
+const webpush = require('./webpush');
 const http = require('node:http');
 const https = require('node:https');
 const mobileenvelope = require('./mobileenvelope');
@@ -836,8 +837,10 @@ const SAFE_MOBILE_PERMISSION = /^[A-Za-z0-9_.:-]{1,256}$/;
 const SAFE_MOBILE_PAIR_ID = /^[a-f0-9]{32}$/i;
 const SAFE_MOBILE_B64URL = /^[A-Za-z0-9_-]+$/;
 const MOBILE_PERMISSION_TTL_MS = 2 * 60 * 1000;
+const MOBILE_PUSH_MIN_INTERVAL_MS = 10 * 1000;
 const MOBILE_DECISIONS = new Set(['allow', 'allow_turn', 'deny']);
 const mobilePermissionRaces = new Map(); // envelope_id → { token }؛ حارس «أول حسم يفوز»
+const mobilePushLastAt = new Map(); // deviceId → آخر دفعة بدأت؛ سقف 10ث لكل جهاز
 const mobileStateBoot = randomBytes(4).toString('hex'); // ثابت مرة لكل عملية سطح مكتب
 let mobileStateSeq = 0;
 let mobileRunToken = '';
@@ -897,7 +900,10 @@ function safeMobileDevices() {
       const label = cleanClaudePublicText(device.label, 48);
       const pairedAt = Number.isFinite(device.pairedAt) && device.pairedAt >= 0 ? Math.floor(device.pairedAt) : 0;
       const lastSeen = Number.isFinite(device.lastSeen) && device.lastSeen >= 0 ? Math.floor(device.lastSeen) : pairedAt;
-      return [{ deviceId: String(device.deviceId).toLowerCase(), label, pairedAt, lastSeen, revoked: device.revoked === true }];
+      return [{
+        deviceId: String(device.deviceId).toLowerCase(), label, pairedAt, lastSeen,
+        revoked: device.revoked === true, pushEnabled: device.pushEnabled === true,
+      }];
     });
   } catch { return []; }
 }
@@ -1340,6 +1346,7 @@ function runMobileOffer(id, race, rawReq, context) {
   }
   // أُدرج الظرف أولاً، ثم الحالة: wakeWaiters يرى الإذن ويعطيه الأولوية دائماً.
   if (typeof publishMobileState === 'function') publishMobileState({ phase: 'waiting_permission' });
+  pushMobilePermission(id, race);
   Promise.resolve(offered).then((decision) => {
     const elapsed = Date.now() - offerAt;
     mobileDebug('offer_settled', {
@@ -1379,6 +1386,34 @@ function runMobileOffer(id, race, rawReq, context) {
   });
 }
 
+/**
+ * نقطة الدفع الوحيدة: بعد نجاح إدراج الظرف في `runMobileOffer`. أفضل جهد مطلق؛
+ * لا await ولا أثر لأي فشل على عرض الإذن أو حسمه.
+ */
+function pushMobilePermission(envelopeId, race) {
+  if (!race || typeof race !== 'object' || !SAFE_MOBILE_PERMISSION.test(envelopeId)) return;
+  if (!race.pushedDevices) race.pushedDevices = new Set();
+  let vapid;
+  try { vapid = mobilepair.getVapidKeyPair(); } catch { return; }
+  if (!vapid) return;
+  const now = Date.now();
+  for (const device of safeMobileDevices()) {
+    if (device.revoked || !device.pushEnabled || race.pushedDevices.has(device.deviceId)) continue;
+    const previous = mobilePushLastAt.get(device.deviceId);
+    if (Number.isFinite(previous) && now - previous < MOBILE_PUSH_MIN_INTERVAL_MS) continue;
+    let subscription;
+    try { subscription = mobilepair.getPushSubscription(device.deviceId); } catch { subscription = null; }
+    if (!subscription) continue;
+    race.pushedDevices.add(device.deviceId);
+    mobilePushLastAt.set(device.deviceId, now);
+    Promise.resolve(webpush.send(subscription, vapid)).then((status) => {
+      if (status === 404 || status === 410) {
+        try { mobilepair.clearPushSubscription(device.deviceId); } catch { /* أفضل جهد */ }
+      }
+    }).catch(() => { /* الدفع أفضل جهد ومربع سطح المكتب يبقى القرار */ });
+  }
+}
+
 function buildMobilePairingUrl(baseUrl, payload) {
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   return baseUrl + '#pair=' + encoded;
@@ -1387,7 +1422,7 @@ function buildMobilePairingUrl(baseUrl, payload) {
 function buildMobilePairingResult(baseUrl, payload, fingerprint, relayUrl) {
   const publicPayload = {
     v: 1, url: baseUrl, pairId: payload.pairId, secret: payload.secret,
-    desktopPublic: payload.desktopPublic, createdAt: Math.floor(payload.createdAt),
+    desktopPublic: payload.desktopPublic, vapid: payload.vapid, createdAt: Math.floor(payload.createdAt),
     expiresAt: Math.floor(payload.expiresAt),
   };
   // توسعة معلَّمة (§7): وجود `relay` هو ما يحوّل الهاتف إلى وضع الوسيط. غيابه يبقي
@@ -1415,6 +1450,8 @@ function buildMobilePairingLink() {
         || typeof payload.secret !== 'string' || payload.secret.length !== 43 || !SAFE_MOBILE_B64URL.test(payload.secret)
         || typeof payload.desktopPublic !== 'string' || payload.desktopPublic.length !== 87
         || !SAFE_MOBILE_B64URL.test(payload.desktopPublic)
+        || typeof payload.vapid !== 'string' || payload.vapid.length !== 87
+        || !SAFE_MOBILE_B64URL.test(payload.vapid)
         || !Number.isFinite(payload.createdAt) || !Number.isFinite(payload.expiresAt)) {
       return { ok: false, error: 'pairing_failed' };
     }
@@ -1434,6 +1471,8 @@ function buildMobilePairingLink() {
       || typeof payload.secret !== 'string' || payload.secret.length !== 43 || !SAFE_MOBILE_B64URL.test(payload.secret)
       || typeof payload.desktopPublic !== 'string' || payload.desktopPublic.length !== 87
       || !SAFE_MOBILE_B64URL.test(payload.desktopPublic)
+      || typeof payload.vapid !== 'string' || payload.vapid.length !== 87
+      || !SAFE_MOBILE_B64URL.test(payload.vapid)
       || !Number.isFinite(payload.createdAt) || !Number.isFinite(payload.expiresAt)) {
     return { ok: false, error: 'pairing_failed' };
   }

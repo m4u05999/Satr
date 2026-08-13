@@ -41,18 +41,41 @@ const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 30 * 1000;
 const SEND_BLOCK = 16; // نظير mobilelink — كتابة قرص لكل 16 ظرفاً
 const MAX_DEVICES_POLLED = 10;
+const PUSH_SUBSCRIBE_MIN_INTERVAL_MS = 5 * 1000;
+const MAX_PUSH_ENDPOINT = 512;
 
 const SAFE_DEVICE_HEX = /^[a-f0-9]{16,128}$/;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SAFE_BOX = /^[a-f0-9]{32}$/;
 // رمز الدور المعتم المرافق لأمر الإيقاف (§7.7.5)
 const RUN_TOKEN_RE = /^[a-f0-9]{16}$/;
+const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
+const UNSAFE_URL_TEXT_RE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 function safeDeviceId(value) {
   if (typeof value !== 'string') return null;
   const normalized = value.toLowerCase().trim();
   if (SAFE_DEVICE_HEX.test(normalized) || SAFE_UUID.test(normalized)) return normalized;
   return null;
+}
+
+function safePushSubscription(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).length !== 3
+      || !Object.prototype.hasOwnProperty.call(value, 'endpoint')
+      || !Object.prototype.hasOwnProperty.call(value, 'p256dh')
+      || !Object.prototype.hasOwnProperty.call(value, 'auth')) return null;
+  if (typeof value.endpoint !== 'string' || !value.endpoint || value.endpoint.length > MAX_PUSH_ENDPOINT
+      || UNSAFE_URL_TEXT_RE.test(value.endpoint)) return null;
+  let endpoint;
+  try { endpoint = new URL(value.endpoint); } catch { return null; }
+  if (endpoint.protocol !== 'https:' || !endpoint.hostname || endpoint.username || endpoint.password) return null;
+  if (typeof value.p256dh !== 'string' || value.p256dh.length !== 87 || !BASE64URL_RE.test(value.p256dh)) return null;
+  const publicKey = Buffer.from(value.p256dh, 'base64url');
+  if (publicKey.length !== 65 || publicKey[0] !== 0x04) return null;
+  if (typeof value.auth !== 'string' || value.auth.length !== 22 || !BASE64URL_RE.test(value.auth)
+      || Buffer.from(value.auth, 'base64url').length !== 16) return null;
+  return { endpoint: value.endpoint, p256dh: value.p256dh, auth: value.auth };
 }
 
 /**
@@ -112,8 +135,10 @@ function start(deps, opts) {
   const sessions = new Map(); // deviceId -> { session, pairId, channelId }
   const sendCeilings = new Map(); // deviceId -> سقف محجوز على القرص
   const stateRequests = new Map(); // deviceId -> وقت آخر طلب حالة أُجيب
+  const pushSubscriptions = new Map(); // deviceId -> وقت آخر اشتراك مقبول
   const loops = new Map(); // اسم الحلقة -> { stop:Function }
   let stopped = false;
+  let lastSas = '';
 
   const pending = mobilepending.createPendingStore({
     buildEnvelope: (rawReq, ctx) => d.envelope.build(rawReq, ctx),
@@ -289,10 +314,11 @@ function start(deps, opts) {
     // معلّق (`byId.get`) والإيقاف لا ظرف له — إقحامه فيها كان يستلزم ظرفاً وهمياً.
     if (payload.type === 'stop') return requestStop(payload.run);
     if (payload.type === 'state_request') return requestState(deviceId, payload);
+    if (payload.type === 'push_subscribe') return requestPushSubscription(deviceId, payload);
     const envelopeId = typeof payload.envelope_id === 'string' ? payload.envelope_id : '';
     const decision = typeof payload.decision === 'string' ? payload.decision : '';
-    // stop/state_request نوعان مستقلان ولا يدخلان قائمة القرارات بأي صيغة.
-    if (decision === 'stop' || decision === 'state_request') return false;
+    // الأنواع المستقلة لا تدخل قائمة القرارات بأي صيغة.
+    if (decision === 'stop' || decision === 'state_request' || decision === 'push_subscribe') return false;
     // حارس الموافقة القديمة داخل النواة المشتركة
     return pending.resolveDecision(envelopeId, decision);
   }
@@ -309,6 +335,21 @@ function start(deps, opts) {
     try { answered = d.onStateRequest(deviceId) === true; } catch { answered = false; }
     if (answered) stateRequests.set(deviceId, requestedAt);
     return answered;
+  }
+
+  /** اشتراك Push نوع مستقل، مغلق الحقول ومخنوق لكل جهاز إلى قبول كل خمس ثوانٍ. */
+  function requestPushSubscription(deviceId, payload) {
+    if (Object.keys(payload).length !== 2 || payload.type !== 'push_subscribe') return false;
+    const sub = safePushSubscription(payload.sub);
+    if (!sub) return false;
+    const requestedAt = now();
+    const previous = pushSubscriptions.get(deviceId);
+    if (Number.isFinite(previous) && requestedAt - previous < PUSH_SUBSCRIBE_MIN_INTERVAL_MS) return true;
+    if (typeof d.pair.setPushSubscription !== 'function') return false;
+    let stored = false;
+    try { stored = d.pair.setPushSubscription(deviceId, sub) === true; } catch { stored = false; }
+    if (stored) pushSubscriptions.set(deviceId, requestedAt);
+    return stored;
   }
 
   /** يمرّر أمر إيقاف مُتحقَّقاً من شكله؛ مطابقة رمز الدور تجري في `main.js`. */
@@ -352,6 +393,7 @@ function start(deps, opts) {
     try {
       sas = d.crypto.sas({ desktopPublic: identity.publicKey, mobilePublic, pairId });
     } catch { sas = ''; }
+    if (/^\d{6}$/.test(sas)) lastSas = sas;
     let frame;
     try {
       frame = d.crypto.seal(entry.session, Buffer.from(JSON.stringify({
@@ -452,6 +494,7 @@ function start(deps, opts) {
       deviceCount,
       pending: pending.pendingCount(),
       loops: loops.size,
+      sas: lastSas,
     };
   }
 
@@ -464,6 +507,7 @@ function start(deps, opts) {
     sessions.clear();
     sendCeilings.clear();
     stateRequests.clear();
+    pushSubscriptions.clear();
   }
 
   listenAll();

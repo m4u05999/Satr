@@ -249,6 +249,90 @@ function assertStopWiring() {
     'الإيقاف من الجوال يستدعي stopAll نفسه');
 }
 
+/**
+ * ‏Web Push (§7.7.7) — فحوص **الوصل والاستهلاك** لا الوصول.
+ *
+ * الدرس الحاكم (§7.7.6/ك): «الحقل الذي يجتاز التحقق ولا مستهلك له أخطر من الغائب —
+ * يبدو موجوداً في الاختبارات وفي مراجعة الكود معاً». وصنف «موصول لكن غير مربوط»
+ * أوقف هذه الميزة مرتين: `awaitPairing` بلا مستدعٍ، ثم رمز الدور في الإيقاف.
+ */
+function assertPushWiring() {
+  const main = fs.readFileSync(path.join(appRoot, 'electron', 'main.js'), 'utf8');
+  const pair = fs.readFileSync(path.join(appRoot, 'electron', 'mobilepair.js'), 'utf8');
+  const link = fs.readFileSync(path.join(appRoot, 'electron', 'mobilelink.js'), 'utf8');
+  const relay = fs.readFileSync(path.join(appRoot, 'electron', 'mobilerelay.js'), 'utf8');
+  const pwa = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
+  const webpush = fs.readFileSync(path.join(appRoot, 'electron', 'webpush.js'), 'utf8');
+
+  // ── 1) مفتاح VAPID يعبر المواضع الثلاثة، وكلٌّ قائمة سماح تُسقط المجهول بصمت ──
+  assert(/function buildPairingPayload[\s\S]{0,900}?vapid\s*:/.test(pair),
+    'حمولة الاقتران تحمل vapid (الموضع 1: buildPairingPayload)');
+  assert(/function buildMobilePairingResult[\s\S]{0,900}?vapid\s*:\s*payload\.vapid/.test(main),
+    'publicPayload ينسخ vapid (الموضع 2 — قائمة حقول يدوية تُسقط غير المذكور)');
+  assert(/function buildMobilePairingLink[\s\S]{0,2200}?payload\.vapid/.test(main),
+    'التحقق قبل البناء يشمل vapid (الموضع 3)');
+
+  // ── 2) الزوج ثابت عبر التشغيلات: persist يسلسله وإلا محاه أول حفظ جهاز ──────
+  assert(/function persist[\s\S]{0,700}?vapid/.test(pair),
+    'persist يسلسل vapid — وإلا محاه أول حفظ جهاز وماتت كل الاشتراكات صامتة');
+
+  // ── 3) الطلب الصاعد مستهلَك في **النقلين** (نمط assertStopWiring) ────────────
+  equal((link.match(/'push_subscribe'/g) || []).length >= 1, true,
+    'القناة المحلية تستهلك push_subscribe');
+  equal((relay.match(/'push_subscribe'/g) || []).length >= 1, true,
+    'الوسيط يستهلك push_subscribe');
+  // ⚠️ **العقد لا شكل التنفيذ**: النقلان يخزّنان عبر `pair` المحقون أصلاً بدل
+  // معاودة جديدة من `main.js` — أبسط، ويُسقط خطر «موصول لكن غير مربوط» من الجذر
+  // لأن لا نقطة إطلاق جديدة تُنسى. المهمّ أن الاشتراك **يبلغ التخزين في الاثنين**.
+  assert(/setPushSubscription\(/.test(link) && /setPushSubscription\(/.test(relay),
+    'النقلان يخزّنان الاشتراك فعلاً — لا وصول بلا استهلاك');
+  assert(/function setPushSubscription/.test(pair) && /function getPushSubscription/.test(pair),
+    'mobilepair يملك عقد التخزين والقراءة');
+  // والقراءة قدرةُ إيقاظ هاتف: تبقى داخل العملية الرئيسية ولا تُصدَّر إلى preload
+  const preload = fs.readFileSync(path.join(appRoot, 'electron', 'preload.js'), 'utf8');
+  assert(!/getPushSubscription|push_subscribe/.test(preload),
+    'الاشتراك لا يعبر preload إلى renderer إطلاقاً');
+
+  // `DECISIONS` لم تتوسّع: push_subscribe كقرار مرفوض صراحةً في الطرفين
+  assert(/decision === 'push_subscribe'/.test(link) && /decision === 'push_subscribe'/.test(relay),
+    'push_subscribe كقرار يُرفض صراحةً في النقلين — DECISIONS لم تتوسّع');
+
+  // ── 4) **العضّة المركزية**: الدفع مستدعى فعلاً من مسار عرض الإذن ────────────
+  assert(/function runMobileOffer[\s\S]{0,2000}?pushMobilePermission\(/.test(main),
+    'الدفع مستدعى من runMobileOffer — لولاه لخُزّن الاشتراك ولم يرنّ الهاتف أبداً');
+  // أفضل جهد مطلق: `await` عليه يربط عرض الإذن بمزوّد الدفع (§6.2)
+  assert(!/await\s+pushMobilePermission\(/.test(main),
+    'لا await على الدفع — فشله لا يؤخّر عرض الإذن ولا يغيّر مساره');
+
+  // ── 5) السقفان يمنعان عاصفة إشعارات ───────────────────────────────────────
+  assert(/MOBILE_PUSH_MIN_INTERVAL_MS\s*=\s*10\s*\*\s*1000/.test(main),
+    'أرضية 10 ثوانٍ بين دفعتين لجهاز واحد');
+  assert(/pushedDevices/.test(main),
+    'دفعة واحدة لكل ظرف لكل جهاز — إعادة العرض عند المهلة لا تدفع ثانيةً');
+
+  // ── 6) الفخّ المثبت في المسبار: بلا ieee-p1363 يرفض كل مزوّد الترويسة ───────
+  assert(/dsaEncoding:\s*'ieee-p1363'/.test(webpush),
+    "توقيع JWT بـieee-p1363 — الافتراضي DER ويرفضه كل مزوّد بلا رسالة مفيدة");
+  assert(/410/.test(webpush) && /404/.test(webpush),
+    'دورة حياة الاشتراك الميت (‏404/410) مبنية');
+
+  // ── 7) لا تسريب: الاشتراك قدرةُ إيقاظ هاتف المستخدم ───────────────────────
+  assert(/function listDevices[\s\S]{0,600}?pushEnabled/.test(pair),
+    'listDevices يعلن pushEnabled منطقياً فقط');
+  assert(!/function listDevices[\s\S]{0,600}?endpoint/.test(pair),
+    'ولا يسرّب endpoint عبر IPC إطلاقاً');
+  assert(!/mobileDebug\([^)]*endpoint/.test(main), 'لا endpoint في التشخيص');
+
+  // ── 8) استهلاك الهاتف: المفتاح يبلغ `subscribe` فعلاً لا يُخزَّن وحسب ────────
+  assert(/applicationServerKey/.test(pwa), 'الهاتف يمرّر المفتاح إلى pushManager.subscribe');
+  assert(/pushManager\.subscribe/.test(pwa), 'الهاتف يشترك فعلاً — لا مستمع push ميت');
+  assert(/getNotifications\(/.test(pwa),
+    'الهاتف يغلق إشعار الظرف المحسوم — لا إشعار يتيم يفتح على لا شيء');
+  // الاشتراك بإيماءة مستخدم حصراً: لا طلب إذن تلقائي عند التحميل
+  assert(!/^\s*Notification\.requestPermission\(\)\s*;?\s*$/m.test(pwa),
+    'لا requestPermission تلقائي — iOS يوجب إيماءة وChrome يحجب التلقائي');
+}
+
 function loadPwaPairingParser(pwaCrypto) {
   const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
   // نفحص **العقد لا شكل التنفيذ**: قراءة الـhash، والتعامل مع البادئة `#pair=`،
@@ -268,7 +352,12 @@ function loadPwaPairingParser(pwaCrypto) {
   if (!/application\/octet-stream/.test(source)) throw new Error('pwa_reply_raw_contract');
   const context = { atob, TextDecoder, Uint8Array, URLSearchParams, JSON, C: pwaCrypto };
   const b64urlToText = sourceFunction(source, 'b64urlToText', context);
-  const parsePayload = sourceFunction(source, 'parsePayload', Object.assign({ b64urlToText }, context));
+  // ‏`parsePayload` كسب في F1 اعتماداً على مدقّق VAPID، ويُستخرج هو الآخر من المصدر
+  // الحقيقي لا يُستبدل بجذع: بديلٌ متساهل هنا كان سيُخضِر الحارس بينما يقبل الهاتف
+  // مفتاحاً نصف صالح — أي يحرس نسخةً من المنطق لا المنطق نفسه (درس §5.5.5).
+  const validateVapidPublicKey = sourceFunction(source, 'validateVapidPublicKey', context);
+  const parsePayload = sourceFunction(source, 'parsePayload',
+    Object.assign({ b64urlToText, validateVapidPublicKey }, context));
   return (text) => {
     // عقد §5.5.3 نفسه: fragment لا يُرسل للخادم، وقيمته تمر بالمحلل الفعلي للـPWA.
     const link = new URL(String(text));
@@ -388,9 +477,12 @@ async function run() {
     equal(parsed.link.protocol, 'https:', 'PWA استقبل رابط HTTPS');
     equal(parsed.link.pathname, '/', 'الرابط على أصل PWA نفسه');
     equal(parsed.payload.url, link.url + '/', 'عنوان API داخل الحمولة هو الأصل نفسه');
+    // ‏F1 (§7.7.7/أ، قرار مالك): `vapid` انضمّ إلى الحمولة — مفتاح إشعارات ثابت
+    // لهذا التثبيت، موضعه الطبيعي بجوار `desktopPublic`. القائمة تبقى **مغلقة**:
+    // ثمانية في الوضع المحلي، ولا يُضاف تاسع بلا تعديل هذا السطر عمداً.
     equal(Object.keys(parsed.payload).sort().join(','),
-      'createdAt,desktopPublic,expiresAt,pairId,secret,url,v',
-      'الوضع المحلي: الحقول السبعة المجمّدة فقط (بلا relay)');
+      'createdAt,desktopPublic,expiresAt,pairId,secret,url,v,vapid',
+      'الوضع المحلي: الحقول الثمانية المجمّدة فقط (بلا relay)');
 
     // توسعة §7: وجود `relay` هو ما يحوّل الهاتف إلى وضع الوسيط — وغيابه لا يغيّر شيئاً
     const relayPairing = buildPairingResult(
@@ -398,8 +490,8 @@ async function run() {
     );
     const relayParsed = parsePairingLink(relayPairing.url);
     equal(Object.keys(relayParsed.payload).sort().join(','),
-      'createdAt,desktopPublic,expiresAt,pairId,relay,secret,url,v',
-      'وضع الوسيط: حقل relay وحده يُضاف');
+      'createdAt,desktopPublic,expiresAt,pairId,relay,secret,url,v,vapid',
+      'وضع الوسيط: حقل relay وحده يُضاف فوق الثمانية');
     equal(relayParsed.payload.relay, 'https://relay.example', 'عنوان الوسيط في الحمولة');
     assert(!('fingerprint' in relayParsed.payload), 'لا بصمة شهادة في وضع الوسيط');
     equal(parsed.payload.secret, rawPayload.secret, 'السر لم يتغير أثناء base64url');
@@ -582,6 +674,7 @@ async function run() {
     assertStateWiring();
     assertStatePanelVisible();
     assertStopUsesStateRun();
+    assertPushWiring();
     const stateFromFrame = loadPwaStateReader();
     equal(typeof link.publishState, 'function', 'publishState على مقبض القناة المحلية');
 
@@ -845,6 +938,7 @@ async function run() {
     const resolved = [];
     const emitted = [];
     const offerTrace = [];
+    const pushedEnvelopes = [];
     const offerSandbox = {
       Promise, Date, String, Math, JSON,
       process: { env: {} },
@@ -875,6 +969,9 @@ async function run() {
         return true;
       },
       emitToWindow: (obj) => { emitted.push(obj); },
+      // ‏F1: راصد يحوّل فحص الوصل من ساكن إلى **برهان تشغيل** — أن مسار عرض الإذن
+      // يستدعي الدفع فعلاً. الحقل الذي يجتاز التحقق بلا مستهلك أخطر من الغائب.
+      pushMobilePermission: (envelopeId, race) => { pushedEnvelopes.push(envelopeId); },
     };
     const mainOffer = loadMainOffer(offerSandbox);
     mainOffer.offerMobilePermission(
@@ -888,6 +985,12 @@ async function run() {
     equal(resolved.length, 0, 'لا حسم بلا قرار من الجوال');
     assert(offerTrace.some((entry) => entry.startsWith('offer_reoffer')),
       'إعادة العرض وقعت فعلاً بعد انقضاء المهلة');
+
+    // ‏F1 (§7.7.7/د) — **برهان تشغيل** لا فحص نصّي: مسار عرض الإذن استدعى الدفع
+    // فعلاً. لولاه لخُزّن الاشتراك واجتاز كل تحقق ولم يرنّ الهاتف أبداً — وهو صنف
+    // «موصول لكن غير مربوط» الذي أوقف الميزة مرتين (§7.7.6/ك).
+    assert(pushedEnvelopes.includes('toolu_reoffer'),
+      'الدفع استُدعي من مسار عرض الإذن فعلاً [' + pushedEnvelopes.join(',') + ']');
 
     const reofferPoll = await request(
       new URL('poll?device=' + encodeURIComponent(deviceId), parsed.payload.url),
@@ -1083,7 +1186,9 @@ async function run() {
 
       // `listDevices` يبقى metadata عرض: لا pairId ولا مفاتيح ولا عدّادات
       const shown = store2.listDevices()[0];
-      equal(Object.keys(shown).sort().join(','), 'deviceId,label,lastSeen,pairedAt,revoked',
+      // ‏F1 (§7.7.7/ج): `pushEnabled` منطقيٌّ **وحده** — يكفي لعرض «الإشعارات مفعّلة»
+      // بلا endpoint ولا مفاتيح. الاشتراك قدرةُ إيقاظ هاتف المستخدم فلا يعبر IPC.
+      equal(Object.keys(shown).sort().join(','), 'deviceId,label,lastSeen,pairedAt,pushEnabled,revoked',
         'listDevices بلا pairId أو مفاتيح أو عدّادات');
     } finally {
       await link2.stop();

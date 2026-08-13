@@ -21,6 +21,8 @@ const MAX_FILE = 256 * 1024;
 const PUBLIC_B64URL_LEN = 87;  // 65 بايت غير مضغوط
 const PRIVATE_B64URL_LEN = 43; // 32 بايت
 const SECRET_B64URL_LEN = 43;  // 32 بايت
+const PUSH_AUTH_B64URL_LEN = 22; // 16 بايت
+const MAX_PUSH_ENDPOINT = 512;
 
 const SAFE_HEX16 = /^[a-f0-9]{32}$/i;
 const SAFE_DEVICE_HEX = /^[a-f0-9]{16,}$/i;
@@ -28,6 +30,7 @@ const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
 const BIDI_RE = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const UNSAFE_URL_TEXT_RE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 function b64url(buf) {
   return buf.toString('base64url');
@@ -38,6 +41,23 @@ function safeMobilePublic(value) {
   const decoded = Buffer.from(value, 'base64url');
   if (decoded.length !== 65 || decoded[0] !== 0x04) return null;
   return value;
+}
+
+function safePushSubscription(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).length !== 3
+      || !Object.prototype.hasOwnProperty.call(value, 'endpoint')
+      || !Object.prototype.hasOwnProperty.call(value, 'p256dh')
+      || !Object.prototype.hasOwnProperty.call(value, 'auth')) return null;
+  if (typeof value.endpoint !== 'string' || !value.endpoint || value.endpoint.length > MAX_PUSH_ENDPOINT
+      || UNSAFE_URL_TEXT_RE.test(value.endpoint)) return null;
+  let parsed;
+  try { parsed = new URL(value.endpoint); } catch { return null; }
+  if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password) return null;
+  const p256dh = safeMobilePublic(value.p256dh);
+  if (!p256dh || typeof value.auth !== 'string' || value.auth.length !== PUSH_AUTH_B64URL_LEN
+      || !BASE64URL_RE.test(value.auth) || Buffer.from(value.auth, 'base64url').length !== 16) return null;
+  return { endpoint: value.endpoint, p256dh, auth: value.auth };
 }
 
 function cleanLabel(value) {
@@ -71,6 +91,7 @@ function createStore(options = {}) {
   const io = options.fs || fs;
   let loaded = false;
   let identity = null;
+  let vapid = null;
   let devices = [];
   const pending = new Map(); // pairId -> { secret, createdAt, expiresAt }
 
@@ -78,6 +99,7 @@ function createStore(options = {}) {
     if (loaded) return;
     loaded = true;
     identity = null;
+    vapid = null;
     devices = [];
     pending.clear();
 
@@ -109,6 +131,23 @@ function createStore(options = {}) {
       }
     }
 
+    if (parsed.vapid && typeof parsed.vapid === 'object') {
+      const keys = parsed.vapid;
+      if (
+        typeof keys.publicKey === 'string' &&
+        keys.publicKey.length === PUBLIC_B64URL_LEN &&
+        BASE64URL_RE.test(keys.publicKey) &&
+        typeof keys.privateKey === 'string' &&
+        keys.privateKey.length === PRIVATE_B64URL_LEN &&
+        BASE64URL_RE.test(keys.privateKey)
+      ) {
+        vapid = {
+          publicKey: keys.publicKey,
+          privateKey: keys.privateKey,
+        };
+      }
+    }
+
     if (Array.isArray(parsed.devices)) {
       for (const raw of parsed.devices) {
         if (!raw || typeof raw !== 'object') continue;
@@ -128,6 +167,16 @@ function createStore(options = {}) {
           ? raw.sendReserved : 0;
         const lastRecv = Number.isSafeInteger(raw.lastRecv) && raw.lastRecv >= -1
           ? raw.lastRecv : -1;
+        const pushValue = raw.push && typeof raw.push === 'object' && !Array.isArray(raw.push)
+          && Object.keys(raw.push).length === 4
+          && Object.prototype.hasOwnProperty.call(raw.push, 'addedAt')
+          ? safePushSubscription({
+            endpoint: raw.push.endpoint,
+            p256dh: raw.push.p256dh,
+            auth: raw.push.auth,
+          }) : null;
+        const push = pushValue && Number.isFinite(raw.push.addedAt)
+          ? { ...pushValue, addedAt: raw.push.addedAt } : null;
         devices.push({
           deviceId,
           label,
@@ -138,6 +187,7 @@ function createStore(options = {}) {
           pairId,
           sendReserved,
           lastRecv,
+          ...(push ? { push } : {}),
         });
       }
     }
@@ -147,6 +197,7 @@ function createStore(options = {}) {
     const temp = file + '.tmp-' + process.pid + '-' + Date.now();
     const payload = {
       identity: identity ? { publicKey: identity.publicKey, privateKey: identity.privateKey } : null,
+      vapid: vapid ? { publicKey: vapid.publicKey, privateKey: vapid.privateKey } : null,
       devices,
     };
     try {
@@ -182,10 +233,19 @@ function createStore(options = {}) {
     return { publicKey: identity.publicKey };
   }
 
+  function ensureVapidKeys() {
+    ensureLoaded();
+    if (vapid) return { publicKey: vapid.publicKey };
+    vapid = generateKeyPair();
+    persist(); // أفضل جهد؛ ثبات الزوج على القرص يحفظ صلاحية الاشتراكات
+    return { publicKey: vapid.publicKey };
+  }
+
   function buildPairingPayload() {
     ensureLoaded();
     cleanupPending();
     const id = ensureDesktopIdentity();
+    const vapidKeys = ensureVapidKeys();
     const pairId = crypto.randomBytes(16).toString('hex');
     const secret = b64url(crypto.randomBytes(32));
     const createdAt = Date.now();
@@ -196,6 +256,7 @@ function createStore(options = {}) {
       pairId,
       secret,
       desktopPublic: id.publicKey,
+      vapid: vapidKeys.publicKey,
       createdAt,
       expiresAt,
     };
@@ -280,6 +341,18 @@ function createStore(options = {}) {
     return identity ? { publicKey: identity.publicKey, privateKey: identity.privateKey } : null;
   }
 
+  /**
+   * زوج VAPID كاملاً — **داخل العملية الرئيسية حصراً** لتوقيع طلبات Web Push.
+   *
+   * ⚠️ لا يُكشف عبر IPC ولا يصل renderer أبداً: حمولة الاقتران تحمل المفتاح العام
+   * وحده، و`listDevices` لا يحمل الاشتراك ولا أي مفتاح.
+   */
+  function getVapidKeyPair() {
+    ensureLoaded();
+    ensureVapidKeys();
+    return vapid ? { publicKey: vapid.publicKey, privateKey: vapid.privateKey } : null;
+  }
+
   function listDevices() {
     ensureLoaded();
     return devices.map((device) => ({
@@ -288,6 +361,7 @@ function createStore(options = {}) {
       pairedAt: device.pairedAt,
       lastSeen: device.lastSeen,
       revoked: device.revoked,
+      pushEnabled: device.revoked !== true && !!device.push,
     }));
   }
 
@@ -352,6 +426,44 @@ function createStore(options = {}) {
     return true;
   }
 
+  function setPushSubscription(deviceId, sub) {
+    ensureLoaded();
+    const device = liveDevice(deviceId);
+    const safe = safePushSubscription(sub);
+    if (!device || !safe) return false;
+    const previous = device.push;
+    device.push = { ...safe, addedAt: Date.now() };
+    if (!persist()) {
+      if (previous) device.push = previous;
+      else delete device.push;
+      return false;
+    }
+    return true;
+  }
+
+  /** قدرة إيقاظ الهاتف — داخل العملية الرئيسية حصراً، ولا تعبر IPC إطلاقاً. */
+  function getPushSubscription(deviceId) {
+    ensureLoaded();
+    const device = liveDevice(deviceId);
+    if (!device || !device.push) return null;
+    return {
+      endpoint: device.push.endpoint,
+      p256dh: device.push.p256dh,
+      auth: device.push.auth,
+      addedAt: device.push.addedAt,
+    };
+  }
+
+  function clearPushSubscription(deviceId) {
+    ensureLoaded();
+    const device = liveDevice(deviceId);
+    if (!device || !device.push) return false;
+    const previous = device.push;
+    delete device.push;
+    if (!persist()) { device.push = previous; return false; }
+    return true;
+  }
+
   function revoke(deviceId) {
     ensureLoaded();
     const normalized = safeDeviceId(deviceId);
@@ -359,6 +471,7 @@ function createStore(options = {}) {
     const device = devices.find((item) => item.deviceId === normalized);
     if (!device) return { ok: false, error: 'not_found' };
     device.revoked = true;
+    delete device.push;
     persist();
     return { ok: true };
   }
@@ -376,6 +489,8 @@ function createStore(options = {}) {
   return {
     ensureDesktopIdentity,
     getDesktopKeyPair,
+    ensureVapidKeys,
+    getVapidKeyPair,
     buildPairingPayload,
     completePairing,
     listDevices,
@@ -384,6 +499,9 @@ function createStore(options = {}) {
     resumeMaterial,
     reserveSend,
     noteRecv,
+    setPushSubscription,
+    getPushSubscription,
+    clearPushSubscription,
   };
 }
 
@@ -392,6 +510,9 @@ const store = createStore();
 module.exports = {
   ensureDesktopIdentity: store.ensureDesktopIdentity,
   getDesktopKeyPair: store.getDesktopKeyPair,
+  ensureVapidKeys: store.ensureVapidKeys,
+  // داخل العملية الرئيسية حصراً (نظير getDesktopKeyPair) — لا يعبر IPC أبداً
+  getVapidKeyPair: store.getVapidKeyPair,
   buildPairingPayload: store.buildPairingPayload,
   completePairing: store.completePairing,
   listDevices: store.listDevices,
@@ -401,6 +522,10 @@ module.exports = {
   resumeMaterial: store.resumeMaterial,
   reserveSend: store.reserveSend,
   noteRecv: store.noteRecv,
+  setPushSubscription: store.setPushSubscription,
+  // قدرة إيقاظ الهاتف داخل العملية الرئيسية حصراً — لا تعبر IPC أبداً
+  getPushSubscription: store.getPushSubscription,
+  clearPushSubscription: store.clearPushSubscription,
   createStore,
   PAIRING_TTL_MS,
   MAX_DEVICES,

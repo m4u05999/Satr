@@ -61,11 +61,15 @@ const MAX_PENDING = 32;
 // 15 عدّاداً من فضاء 2^53 — لا أثر. (نظير COUNTER_BLOCK في pwa/app.js)
 const SEND_BLOCK = 16;
 const MAX_ENVELOPE_ID = 200;
+const PUSH_SUBSCRIBE_MIN_INTERVAL_MS = 5 * 1000;
+const MAX_PUSH_ENDPOINT = 512;
 
 // القرارات المسموحة من الجوال — قائمة مغلقة، بلا «دائماً» وبلا bypass
 const DECISIONS = new Set(['allow', 'allow_turn', 'deny']);
 // رمز الدور المعتم المرافق لأمر الإيقاف (§7.7.5) — الإيقاف خارج DECISIONS عمداً
 const RUN_TOKEN_RE = /^[a-f0-9]{16}$/;
+const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
+const UNSAFE_URL_TEXT_RE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 const SAFE_DEVICE_HEX = /^[a-f0-9]{16,128}$/;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -87,6 +91,25 @@ function safeDeviceId(value) {
   const normalized = value.toLowerCase().trim();
   if (SAFE_DEVICE_HEX.test(normalized) || SAFE_UUID.test(normalized)) return normalized;
   return null;
+}
+
+function safePushSubscription(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).length !== 3
+      || !Object.prototype.hasOwnProperty.call(value, 'endpoint')
+      || !Object.prototype.hasOwnProperty.call(value, 'p256dh')
+      || !Object.prototype.hasOwnProperty.call(value, 'auth')) return null;
+  if (typeof value.endpoint !== 'string' || !value.endpoint || value.endpoint.length > MAX_PUSH_ENDPOINT
+      || UNSAFE_URL_TEXT_RE.test(value.endpoint)) return null;
+  let endpoint;
+  try { endpoint = new URL(value.endpoint); } catch { return null; }
+  if (endpoint.protocol !== 'https:' || !endpoint.hostname || endpoint.username || endpoint.password) return null;
+  if (typeof value.p256dh !== 'string' || value.p256dh.length !== 87 || !BASE64URL_RE.test(value.p256dh)) return null;
+  const publicKey = Buffer.from(value.p256dh, 'base64url');
+  if (publicKey.length !== 65 || publicKey[0] !== 0x04) return null;
+  if (typeof value.auth !== 'string' || value.auth.length !== 22 || !BASE64URL_RE.test(value.auth)
+      || Buffer.from(value.auth, 'base64url').length !== 16) return null;
+  return { endpoint: value.endpoint, p256dh: value.p256dh, auth: value.auth };
 }
 
 function clampInt(value, min, max, fallback) {
@@ -266,10 +289,12 @@ async function start(deps, opts) {
   const waiters = new Map(); // deviceId -> Set<{res, timer}>
   const sentStateSeq = new Map(); // deviceId -> آخر seq سُلّم لهذا الجهاز
   const stateRequests = new Map(); // deviceId -> وقت آخر طلب حالة أُجيب
+  const pushSubscriptions = new Map(); // deviceId -> وقت آخر اشتراك مقبول
   let latestState = null; // خانة واحدة: اللقطة الأحدث تستبدل السابقة كلياً
   const sockets = new Set();
   let stopped = false;
   let boundPort = 0;
+  let lastSas = '';
 
   // ── مساعدات الرد ──────────────────────────────────────────────────────────
   function baseHeaders() {
@@ -498,6 +523,21 @@ async function start(deps, opts) {
     return answered;
   }
 
+  /** اشتراك Push نوع مستقل، مغلق الحقول ومخنوق لكل جهاز إلى قبول كل خمس ثوانٍ. */
+  function requestPushSubscription(deviceId, payload) {
+    if (Object.keys(payload).length !== 2 || payload.type !== 'push_subscribe') return false;
+    const sub = safePushSubscription(payload.sub);
+    if (!sub) return false;
+    const requestedAt = now();
+    const previous = pushSubscriptions.get(deviceId);
+    if (Number.isFinite(previous) && requestedAt - previous < PUSH_SUBSCRIBE_MIN_INTERVAL_MS) return true;
+    if (typeof d.pair.setPushSubscription !== 'function') return false;
+    let stored = false;
+    try { stored = d.pair.setPushSubscription(deviceId, sub) === true; } catch { stored = false; }
+    if (stored) pushSubscriptions.set(deviceId, requestedAt);
+    return stored;
+  }
+
   // ── واجهة سطح المكتب ──────────────────────────────────────────────────────
   /**
    * يعرض طلب إذن على الأجهزة المقترنة.
@@ -511,6 +551,7 @@ async function start(deps, opts) {
       pending: pending.pendingCount(),
       deviceCount: liveDeviceCount(),
       fingerprint,
+      sas: lastSas,
     };
   }
 
@@ -599,6 +640,8 @@ async function start(deps, opts) {
         sendJson(res, 400, { ok: false, error: 'derive_failed' });
         return;
       }
+
+      if (/^\d{6}$/.test(sas)) lastSas = sas;
 
       sessions.set(deviceId, { session, pairId });
       // SAS من قيم عامة فقط (المفتاحان العامان + pairId) — يقارنه المستخدم بالشاشتين
@@ -693,10 +736,19 @@ async function start(deps, opts) {
         sendJson(res, 200, { ok: true });
         return;
       }
+      if (payload.type === 'push_subscribe') {
+        if (!requestPushSubscription(deviceId, payload)) {
+          sendJson(res, 400, { ok: false, error: 'bad_push_subscription' });
+          return;
+        }
+        touch(deviceId);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
 
       const decision = typeof payload.decision === 'string' ? payload.decision : '';
-      // النوعان المستقلان لا يصبحان قرارين حتى لو زُرعا في حقل decision.
-      if (decision === 'stop' || decision === 'state_request') {
+      // الأنواع المستقلة لا تصبح قرارات حتى لو زُرعت في حقل decision.
+      if (decision === 'stop' || decision === 'state_request' || decision === 'push_subscribe') {
         sendJson(res, 400, { ok: false, error: 'bad_decision' });
         return;
       }
@@ -816,6 +868,7 @@ async function start(deps, opts) {
     sessions.clear();
     sentStateSeq.clear();
     stateRequests.clear();
+    pushSubscriptions.clear();
     latestState = null;
     return new Promise((resolve) => {
       let done = false;

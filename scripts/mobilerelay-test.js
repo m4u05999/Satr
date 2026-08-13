@@ -18,6 +18,7 @@ const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
+const { EventEmitter } = require('node:events');
 
 const mobilecrypto = require('../electron/mobilecrypto');
 const mobileenvelope = require('../electron/mobileenvelope');
@@ -26,6 +27,7 @@ const mobilepair = require('../electron/mobilepair');
 const mobilelink = require('../electron/mobilelink');
 const mobiletls = require('../electron/mobiletls');
 const mobilerelay = require('../electron/mobilerelay');
+const webpush = require('../electron/webpush');
 
 const tempRoot = path.join(os.tmpdir(), 'satr-relay-client-' + process.pid + '-' + Date.now());
 const appRoot = path.resolve(__dirname, '..');
@@ -180,6 +182,119 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function pushFixture(endpoint = 'https://push.example.test/send/one') {
+  const subscriber = crypto.createECDH('prime256v1');
+  subscriber.generateKeys();
+  const auth = crypto.randomBytes(16);
+  return {
+    subscriber,
+    auth,
+    sub: {
+      endpoint,
+      p256dh: subscriber.getPublicKey().toString('base64url'),
+      auth: auth.toString('base64url'),
+    },
+  };
+}
+
+function decryptPush(fixture, payload, authOverride) {
+  const salt = payload.subarray(0, 16);
+  const idLength = payload[20];
+  const serverPublic = payload.subarray(21, 21 + idLength);
+  const encrypted = payload.subarray(21 + idLength);
+  const shared = fixture.subscriber.computeSecret(serverPublic);
+  const keyInfo = Buffer.concat([
+    Buffer.from('WebPush: info\0'), fixture.subscriber.getPublicKey(), serverPublic,
+  ]);
+  const auth = authOverride || fixture.auth;
+  const ikm = Buffer.from(crypto.hkdfSync('sha256', shared, auth, keyInfo, 32));
+  const cek = Buffer.from(crypto.hkdfSync('sha256', ikm, salt,
+    Buffer.from('Content-Encoding: aes128gcm\0'), 16));
+  const nonce = Buffer.from(crypto.hkdfSync('sha256', ikm, salt,
+    Buffer.from('Content-Encoding: nonce\0'), 12));
+  const decipher = crypto.createDecipheriv('aes-128-gcm', cek, nonce);
+  decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
+  return Buffer.concat([
+    decipher.update(encrypted.subarray(0, encrypted.length - 16)), decipher.final(),
+  ]);
+}
+
+function capturingRequest(status, capture) {
+  return (endpoint, options, callback) => {
+    const req = new EventEmitter();
+    req.setTimeout = (timeout, handler) => { capture.timeout = timeout; capture.timeoutHandler = handler; };
+    req.destroy = (error) => { if (error) req.emit('error', error); };
+    req.end = (body) => {
+      capture.endpoint = endpoint;
+      capture.options = options;
+      capture.body = Buffer.from(body);
+      const res = new EventEmitter();
+      res.statusCode = status;
+      res.resume = () => {};
+      queueMicrotask(() => {
+        callback(res);
+        queueMicrotask(() => res.emit('end'));
+      });
+    };
+    return req;
+  };
+}
+
+async function testWebPushContract() {
+  const fixture = pushFixture();
+  const vapidEcdh = crypto.createECDH('prime256v1');
+  vapidEcdh.generateKeys();
+  const vapid = {
+    publicKey: vapidEcdh.getPublicKey().toString('base64url'),
+    privateKey: vapidEcdh.getPrivateKey().toString('base64url'),
+  };
+  const capture = {};
+  const now = 1770000000000;
+  equal(await webpush.send(fixture.sub, vapid, {
+    request: capturingRequest(201, capture), now: () => now,
+  }), 201, 'webpush يعيد 201 بلا تغيير حالة');
+  assert(capture.endpoint.href === fixture.sub.endpoint, 'sub.endpoint هو عنوان طلب HTTPS الفعلي');
+  equal(capture.options.method, 'POST', 'طلب Web Push يستخدم POST');
+  equal(capture.options.headers['Content-Encoding'], 'aes128gcm', 'ترميز المحتوى aes128gcm');
+  equal(capture.options.headers['Content-Type'], 'application/octet-stream', 'نوع المحتوى ثنائي');
+  equal(capture.options.headers.TTL, '300', 'TTL يطابق مهلة الظرف');
+  equal(capture.options.headers.Urgency, 'high', 'الأولوية high');
+  equal(capture.options.headers.Topic, 'satr-perm', 'Topic يطوي إشعارات الإذن');
+  equal(capture.timeout, webpush.REQUEST_TIMEOUT_MS, 'مهلة HTTP عشر ثوانٍ');
+
+  const authorization = capture.options.headers.Authorization;
+  const match = /^vapid t=([^,]+), k=([A-Za-z0-9_-]+)$/.exec(authorization);
+  assert(match, 'Authorization بصيغة VAPID المغلقة');
+  assert(match[2] === vapid.publicKey, 'Authorization يحمل مفتاح VAPID العام');
+  const parts = match[1].split('.');
+  equal(parts.length, 3, 'JWT ثلاثة أجزاء');
+  const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  equal(claims.aud, 'https://push.example.test', 'aud هو أصل endpoint لا رابطه كاملاً');
+  equal(claims.exp, Math.floor(now / 1000) + 12 * 60 * 60, 'exp بعد 12 ساعة حرفياً');
+  equal(claims.sub, 'mailto:m4u05999@gmail.com', 'sub ثابت المنتج');
+  const rawSignature = Buffer.from(parts[2], 'base64url');
+  equal(rawSignature.length, 64, 'توقيع JWT خام 64 بايت (ieee-p1363)');
+  const publicKey = crypto.createPublicKey({
+    key: {
+      kty: 'EC', crv: 'P-256',
+      x: vapidEcdh.getPublicKey().subarray(1, 33).toString('base64url'),
+      y: vapidEcdh.getPublicKey().subarray(33, 65).toString('base64url'),
+    },
+    format: 'jwk',
+  });
+  assert(crypto.verify('sha256', Buffer.from(parts[0] + '.' + parts[1]), {
+    key: publicKey, dsaEncoding: 'ieee-p1363',
+  }, rawSignature), 'توقيع JWT يجتاز التحقق بالمفتاح العام');
+
+  const plaintext = decryptPush(fixture, capture.body);
+  equal(plaintext[plaintext.length - 1], 0x02, 'الحمولة تنتهي بمحدد السجل 0x02');
+  equal(plaintext.subarray(0, -1).toString('utf8'), 'wake-up',
+    'sub.p256dh استُهلك فعلياً لاشتقاق مفتاح حمولة wake-up');
+  let wrongAuthRejected = false;
+  try { decryptPush(fixture, capture.body, crypto.randomBytes(16)); } catch { wrongAuthRejected = true; }
+  assert(wrongAuthRejected, 'تغيير sub.auth وحده يُفشل فك الحمولة');
+}
+
 function localRequest(port, method, urlPath, body, contentType) {
   return new Promise((resolve, reject) => {
     const req = https.request({
@@ -212,12 +327,14 @@ async function pairLocal(store, link, identity) {
   }), 'utf8');
   const response = await localRequest(link.port, 'POST', '/pair', body, 'application/json');
   equal(response.status, 200, 'القناة المحلية: الاقتران نجح');
+  const paired = JSON.parse(response.body.toString('utf8'));
   mobile.session = mobilecrypto.deriveSession({
     myPrivate: keys.privateKey,
     theirPublic: identity.publicKey,
     pairId: payload.pairId,
     role: 'mobile',
   });
+  mobile.sas = paired.sas;
   return mobile;
 }
 
@@ -265,6 +382,7 @@ async function testLocalStateChannel() {
   try {
     const mobile = await pairLocal(store, link, identity);
     equal(typeof link.publishState, 'function', 'العقد المحلي يكشف publishState');
+    equal(link.status().sas, mobile.sas, 'status المحلي يعيد SAS لآخر اقتران ناجح');
 
     // منتظر موجود: نشر اللقطة يجب أن يوقظه (عضّة حذف wakeWaiters تسقط هنا).
     const waitingPoll = localPoll(link, mobile);
@@ -309,6 +427,40 @@ async function testLocalStateChannel() {
     equal(extraKey.status, 400, 'state_request بحقل ثانٍ مرفوض محلياً');
     equal(stateRequestCalls, 2, 'الطلب المشوّه لم يبلغ main');
 
+    // push_subscribe نوع مستقل: قائمتان مغلقتان، تحقق مفاتيح/HTTPS، وخنق 5ث.
+    const firstPush = pushFixture();
+    const subscribed = await localUplink(link, mobile, { type: 'push_subscribe', sub: firstPush.sub });
+    equal(subscribed.status, 200, 'اشتراك Push الصحيح مقبول محلياً');
+    equal(store.getPushSubscription(mobile.deviceId).endpoint, firstPush.sub.endpoint,
+      'endpoint خُزّن كاملاً بعد التحقق المحلي');
+    const listed = store.listDevices().find((item) => item.deviceId === mobile.deviceId);
+    equal(listed.pushEnabled, true, 'listDevices يكشف pushEnabled وحده');
+    assert(!Object.prototype.hasOwnProperty.call(listed, 'push'), 'listDevices لا يسرّب الاشتراك');
+    const throttledPush = pushFixture('https://push.example.test/send/two');
+    equal((await localUplink(link, mobile, {
+      type: 'push_subscribe', sub: throttledPush.sub,
+    })).status, 200, 'اشتراك ثانٍ خلال 5ث مخنوق بلا كشف خطأ');
+    equal(store.getPushSubscription(mobile.deviceId).endpoint, firstPush.sub.endpoint,
+      'الخنق لم يستبدل الاشتراك الأول');
+    clock += 5 * 1000;
+    await localUplink(link, mobile, { type: 'push_subscribe', sub: throttledPush.sub });
+    equal(store.getPushSubscription(mobile.deviceId).endpoint, throttledPush.sub.endpoint,
+      'اشتراك أحدث بعد 5ث يستبدل الأقدم كلياً');
+    const extraTop = await localUplink(link, mobile, {
+      type: 'push_subscribe', sub: firstPush.sub, extra: true,
+    });
+    equal(extraTop.status, 400, 'push_subscribe بحقل علوي زائد مرفوض محلياً');
+    const extraSub = await localUplink(link, mobile, {
+      type: 'push_subscribe', sub: { ...firstPush.sub, extra: true },
+    });
+    equal(extraSub.status, 400, 'push_subscribe بحقل sub زائد مرفوض محلياً');
+    const httpPush = await localUplink(link, mobile, {
+      type: 'push_subscribe', sub: { ...firstPush.sub, endpoint: 'http://push.example.test/send' },
+    });
+    equal(httpPush.status, 400, 'push_subscribe بendpoint غير HTTPS مرفوض محلياً');
+    equal(store.getPushSubscription(mobile.deviceId).endpoint, throttledPush.sub.endpoint,
+      'الفشل المغلق أبقى الاشتراك الصحيح كاملاً');
+
     const guardId = 'toolu_local_state_decision';
     const guarded = link.offerPermission({
       id: guardId, tool: 'Bash', input: { command: 'echo guard' },
@@ -319,6 +471,10 @@ async function testLocalStateChannel() {
     });
     equal(badDecision.status, 400, 'state_request كقرار يُرفض bad_decision');
     equal(JSON.parse(badDecision.body.toString('utf8')).error, 'bad_decision', 'رمز الرفض صريح');
+    const badPushDecision = await localUplink(link, mobile, {
+      envelope_id: guardId, decision: 'push_subscribe',
+    });
+    equal(badPushDecision.status, 400, 'push_subscribe كقرار يُرفض bad_decision محلياً');
     link.withdraw(guardId);
     equal(await guarded, null, 'القرار المرفوض لم يحسم الظرف');
   } finally {
@@ -381,6 +537,32 @@ async function run() {
     'LEAK_PROMPT_X', 'C:\\secret\\project', 'secret-file.txt', 'LEAK_SESSION_X',
     'LEAK_ENGINE_X', 'LEAK_EXTRA_X', '"cwd"', '"session_id"', '"engine"', '"filename"', '"thirteenth"',
   ]) assert(!serializedState.includes(forbidden), 'الإطار المسلسل يخلو من الممنوع: ' + forbidden);
+
+  // ── VAPID ثابت على القرص وحمولة الاقتران تستهلك العام وحده (§7.7.7/أ-ب) ─
+  const vapidFile = path.join(tempRoot, 'vapid-devices.json');
+  const vapidStore = mobilepair.createStore({ file: vapidFile });
+  const pairingPayload = vapidStore.buildPairingPayload();
+  assert(/^[A-Za-z0-9_-]{87}$/.test(pairingPayload.vapid), 'حمولة الاقتران تحمل VAPID العام 87 محرفاً');
+  equal(Buffer.from(pairingPayload.vapid, 'base64url')[0], 0x04, 'VAPID العام نقطة غير مضغوطة');
+  const vapidPair = vapidStore.getVapidKeyPair();
+  assert(vapidPair.publicKey === pairingPayload.vapid, 'العام المنشور هو عام الزوج المحفوظ نفسه');
+  assert(/^[A-Za-z0-9_-]{43}$/.test(vapidPair.privateKey), 'VAPID الخاص 43 محرفاً ويبقى داخلياً');
+  const persistedMobile = mobilecrypto.generateKeyPair();
+  const persistedDeviceId = crypto.randomBytes(8).toString('hex');
+  equal(vapidStore.completePairing({
+    pairId: pairingPayload.pairId,
+    secretProof: pairingPayload.secret,
+    mobilePublic: persistedMobile.publicKey,
+    deviceId: persistedDeviceId,
+    label: 'حارس الثبات',
+  }).ok, true, 'حفظ جهاز فعلي أطلق persist');
+  const diskAfterDevice = JSON.parse(fs.readFileSync(vapidFile, 'utf8'));
+  assert(diskAfterDevice.vapid && diskAfterDevice.vapid.publicKey === vapidPair.publicKey,
+    'الزوج يبقى ثابتاً بعد حفظ جهاز');
+  assert(mobilepair.createStore({ file: vapidFile }).getVapidKeyPair().privateKey === vapidPair.privateKey,
+    'زوج VAPID ثابت عبر إعادة تحميل المخزن');
+
+  await testWebPushContract();
 
   const identity = mobilecrypto.generateKeyPair();
   const storeFile = path.join(tempRoot, 'devices.json');
@@ -472,6 +654,7 @@ async function run() {
     equal(ack.sas, mobilecrypto.sas({
       desktopPublic: identity.publicKey, mobilePublic: mobileKeys.publicKey, pairId: payload.pairId,
     }), 'SAS يطابق ما يحسبه الهاتف من قيم عامة');
+    equal(client.status().sas, ack.sas, 'status الوسيط يعيد SAS لآخر اقتران ناجح');
     assert(!JSON.stringify(ack).includes(payload.secret), 'الإقرار لا يحمل سرّ الاقتران');
 
     // ── دفع الحالة عبر الوسيط بلا طلب معلّق ────────────────────────────────
@@ -515,6 +698,29 @@ async function run() {
     await postUplink({ type: 'state_request', extra: true });
     await sleep(100);
     equal(relayStateRequests, 2, 'state_request بحقل ثانٍ مرفوض عبر الوسيط');
+
+    const relayPush = pushFixture('https://push.example.test/relay/one');
+    await postUplink({ type: 'push_subscribe', sub: relayPush.sub });
+    await waitFor(() => store.getPushSubscription(deviceId), 4000, 'تخزين اشتراك Push عبر الوسيط');
+    equal(store.getPushSubscription(deviceId).endpoint, relayPush.sub.endpoint,
+      'push_subscribe الصحيح خُزّن عبر الوسيط');
+    const relayPushNext = pushFixture('https://push.example.test/relay/two');
+    await postUplink({ type: 'push_subscribe', sub: relayPushNext.sub });
+    await sleep(100);
+    equal(store.getPushSubscription(deviceId).endpoint, relayPush.sub.endpoint,
+      'اشتراك الوسيط الثاني خلال 5ث مخنوق');
+    relayNow += 5 * 1000;
+    await postUplink({ type: 'push_subscribe', sub: relayPushNext.sub });
+    await waitFor(() => store.getPushSubscription(deviceId).endpoint === relayPushNext.sub.endpoint,
+      4000, 'استبدال اشتراك الوسيط بعد الخنق');
+    await postUplink({ type: 'push_subscribe', sub: { ...relayPush.sub, extra: true } });
+    await postUplink({
+      type: 'push_subscribe', sub: { ...relayPush.sub, endpoint: 'http://push.example.test/relay' },
+    });
+    await postUplink({ type: 'push_subscribe', sub: relayPush.sub, extra: true });
+    await sleep(150);
+    equal(store.getPushSubscription(deviceId).endpoint, relayPushNext.sub.endpoint,
+      'الوسيط يرفض ذرياً الحقل الزائد وHTTP ولا يغيّر الاشتراك');
 
     // ── دورة القرار الكاملة عبر الوسيط ─────────────────────────────────────
     for (const decision of ['allow', 'allow_turn', 'deny']) {
@@ -604,7 +810,7 @@ async function run() {
       const queue = relay.boxes.get(mobileBoxes.toMobile);
       return queue && queue.length ? queue.shift() : null;
     }, 4000, 'ظرف الحدّ الذهبي');
-    for (const forbidden of ['always', 'bypass', 'allow_always', 'state_request', 'stop', '']) {
+    for (const forbidden of ['always', 'bypass', 'allow_always', 'state_request', 'push_subscribe', 'stop', '']) {
       const bad = mobilecrypto.seal(mobileSession, Buffer.from(JSON.stringify({
         envelope_id: guardId, decision: forbidden,
       }), 'utf8'));
@@ -612,6 +818,8 @@ async function run() {
     }
     equal(await guarded, null, 'قرار خارج القائمة المغلقة لا يُحسم — تنتهي المهلة');
     equal(relayStateRequests, 2, 'state_request كقرار لم يدخل مسار طلب الحالة');
+    equal(store.getPushSubscription(deviceId).endpoint, relayPushNext.sub.endpoint,
+      'push_subscribe كقرار لم يدخل مسار الاشتراك');
 
     // ── عدّادات الإرسال محجوزة على القرص قبل الختم (§5.5.8) ────────────────
     const material = store.resumeMaterial(deviceId);
@@ -622,18 +830,48 @@ async function run() {
     // ── الإبطال يقطع القناة فوراً ──────────────────────────────────────────
     store.revoke(deviceId);
     equal(client.status().deviceCount, 0, 'الجهاز المُبطَل يختفي من القناة');
+    equal(store.getPushSubscription(deviceId), null, 'إبطال الجهاز يمسح اشتراك Push');
+    const revokedOnDisk = JSON.parse(fs.readFileSync(storeFile, 'utf8')).devices
+      .find((item) => item.deviceId === deviceId);
+    assert(!Object.prototype.hasOwnProperty.call(revokedOnDisk, 'push'),
+      'الإبطال يزيل الاشتراك من القرص لا يخفيه بالقراءة فقط');
 
     // ── الوصل الفعلي: من يستدعي awaitPairing؟ ───────────────────────────────
     // العميل يعرض الدالة، لكن إن لم يستدعها `main.js` عند إنشاء رمز الاقتران فإن
     // الهاتف يودع ظرفه ولا يقرؤه أحد أبداً — «موصول لكن غير مربوط». عطل مثبت حياً
     // 2026-08-12: الاقتران انتهى بمهلته على «لم يؤكّد سطح المكتب الاقتران».
     const wiringSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+    const pairingResult = sourceFunction(wiringSource, 'buildMobilePairingResult', {
+      Math,
+      buildMobilePairingUrl: (baseUrl, value) => baseUrl + '#pair='
+        + Buffer.from(JSON.stringify(value), 'utf8').toString('base64url'),
+      Buffer,
+      JSON,
+    })('https://relay.example/', pairingPayload, '', 'https://relay.example');
+    const pairingPublic = JSON.parse(Buffer.from(pairingResult.url.split('#pair=')[1], 'base64url').toString('utf8'));
+    assert(pairingPublic.vapid === pairingPayload.vapid,
+      'المفتاح بلغ الهاتف عبر قائمة buildMobilePairingResult');
+    assert(!Object.prototype.hasOwnProperty.call(pairingPublic, 'privateKey'),
+      'حمولة الاقتران لا تحمل VAPID الخاص');
+    equal((wiringSource.match(/typeof payload\.vapid !== 'string'/g) || []).length, 2,
+      'buildMobilePairingLink يتحقق من VAPID في النقلين بالضبط');
+    assert(/pushEnabled:\s*device\.pushEnabled === true/.test(wiringSource),
+      'safeMobileDevices يستهلك pushEnabled ليمرّ عبر IPC بلا الاشتراك');
     assert(/mobileHandle\.awaitPairing\(/.test(wiringSource),
       'main.js يستدعي awaitPairing فعلاً عند إنشاء رمز الاقتران');
     assert(/awaitPairing[\s\S]{0,400}?buildMobilePairingResult\(relayUrl/.test(wiringSource),
       'والاستدعاء يسبق إعادة رابط الاقتران (لا بعده فيضيع السباق)');
     equal((wiringSource.match(/onStateRequest:\s*handleMobileStateRequest/g) || []).length, 2,
       'main.js يصل طلب الحالة بالنقلين بالضبط');
+    equal((wiringSource.match(/pushMobilePermission\(id, race\);/g) || []).length, 1,
+      'نداء Web Push مربوط مرة واحدة داخل runMobileOffer');
+    assert(/handle\.offerPermission\(rawReq, offerContext\)[\s\S]{0,500}?phase: 'waiting_permission'[\s\S]{0,120}?pushMobilePermission\(id, race\)/.test(wiringSource),
+      'نداء Web Push يقع بعد إدراج الظرف وبجوار waiting_permission');
+    assert(!/await\s+pushMobilePermission/.test(wiringSource) && !/await\s+webpush\.send/.test(wiringSource),
+      'مسار عرض الإذن لا ينتظر Web Push');
+    const webpushSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'webpush.js'), 'utf8');
+    assert(!/console\.|mobileDebug|appendFile|writeFile/.test(webpushSource),
+      'webpush لا يسجل endpoint أو مفتاحاً أو ترويسة في أي مصرف');
     assert(/function publishMobileState\([\s\S]*?handle\.publishState\(state\)/.test(wiringSource),
       'main.js ينشر عبر المقبض الموحّد لا عبر نقل بعينه');
     assert(/checkpoints\.begin[\s\S]{0,300}?beginMobileRunState\(cwd\)/.test(wiringSource),
@@ -655,8 +893,52 @@ async function run() {
     assert(/setInterval\([\s\S]{0,180}?hasLiveMobileSession\(\)[\s\S]{0,100}?publishMobileState\(\)/.test(wiringSource)
       && /mobileStateHeartbeat\.unref/.test(wiringSource), 'النبضة 20ث مربوطة بجلسة حيّة ومؤقّتها unref');
     const relaySource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'mobilerelay.js'), 'utf8');
+    const linkSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'mobilelink.js'), 'utf8');
+    equal((relaySource.match(/payload\.type === 'push_subscribe'/g) || []).length, 1,
+      'الوسيط يستهلك push_subscribe كنوع مستقل مرة');
+    equal((linkSource.match(/payload\.type === 'push_subscribe'/g) || []).length, 1,
+      'النقل المحلي يستهلك push_subscribe كنوع مستقل مرة');
+    assert(relaySource.includes("decision === 'push_subscribe'")
+      && linkSource.includes("decision === 'push_subscribe'"),
+    'push_subscribe كقرار محروس صراحةً في النقلين');
     assert(/function pushState\([\s\S]{0,900}?ensureSendCounter\(deviceId, entry\.session\)[\s\S]{0,220}?d\.crypto\.seal/.test(relaySource),
       'pushState يحجز عداد الإرسال قبل كل ختم');
+
+    // دورة 410 والسقفان من دالة الإنتاج نفسها، بلا endpoint أو مفاتيح في التشخيص.
+    let pushNow = 50000;
+    let pushCalls = 0;
+    let cleared = 0;
+    const pushSubscription = pushFixture().sub;
+    const pushRace = {};
+    const pushFunction = sourceFunction(wiringSource, 'pushMobilePermission', {
+      SAFE_MOBILE_PERMISSION: /^[A-Za-z0-9_.:-]{1,256}$/,
+      mobilepair: {
+        getVapidKeyPair: () => vapidPair,
+        getPushSubscription: () => pushSubscription,
+        clearPushSubscription: () => { cleared += 1; return true; },
+      },
+      webpush: { send: () => { pushCalls += 1; return Promise.resolve(pushCalls === 1 ? 410 : 201); } },
+      safeMobileDevices: () => [{ deviceId: persistedDeviceId, revoked: false, pushEnabled: true }],
+      mobilePushLastAt: new Map(),
+      MOBILE_PUSH_MIN_INTERVAL_MS: 10000,
+      Date: { now: () => pushNow },
+      Number,
+      Promise,
+      Set,
+    });
+    pushFunction('toolu_push_guard', pushRace);
+    await sleep(0);
+    equal(cleared, 1, 'الاشتراك الميت يُحذف عند 410');
+    pushFunction('toolu_push_guard', pushRace);
+    await sleep(0);
+    equal(pushCalls, 1, 'إعادة عرض envelope نفسه لا تدفع ثانية للجهاز');
+    pushFunction('toolu_push_second', {});
+    await sleep(0);
+    equal(pushCalls, 1, 'أرضية 10ث تمنع دفعة ثانية للجهاز');
+    pushNow += 10000;
+    pushFunction('toolu_push_third', {});
+    await sleep(0);
+    equal(pushCalls, 2, 'جهاز يقبل دفعة جديدة بعد اكتمال أرضية 10ث');
 
     // ── تنقية عنوان الوسيط في main.js (منطق الإنتاج نفسه) ──────────────────
     // عنوان عام بلا TLS يعرّض النقل ولا يمنح crypto.subtle سياقاً آمناً على الهاتف.
