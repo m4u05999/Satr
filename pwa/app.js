@@ -554,7 +554,20 @@
     if (!envelope || typeof envelope !== 'object') return false;
     const change = envelope.change;
     if (change && typeof change === 'object') return change.status === 'ok';
-    return envelope.risk !== 'write';
+    // قائمة سماح لا قائمة منع: الفعل الحرفي لهذه الفئات معروض في `summary`
+    // (مسار/أمر/URL) فالحكم ممكن. و`unknown` — أداة لم يعرفها بناء الظرف — تُقفل:
+    // «لا أعرف ما هذا» هو بالضبط وقت التأجيل إلى الحاسوب. وفئةُ خطرٍ تُضاف لاحقاً
+    // تبقى مقفلة حتى تُدرَج صراحةً (فشل مغلق بالبناء لا بالانتباه).
+    return envelope.risk === 'read' || envelope.risk === 'exec' || envelope.risk === 'browser';
+  }
+
+  /** سبب القفل أياً كان مصدره — بطاقة تغيير متعذّرة أو أداة مجهولة. */
+  function lockNoticeText(envelope) {
+    if (!envelope || typeof envelope !== 'object') return '';
+    const change = envelope.change;
+    if (change && typeof change === 'object') return changeNoticeText(change);
+    return 'أداة غير معروفة لهذا الإصدار، فلا يمكن عرض أثرها. '
+      + 'الموافقة من الجوال مقفلة — ارفض، أو وافق من الحاسوب بعد مراجعته.';
   }
 
   /** رسالة عربية ثابتة لسبب تعذّر العرض — لا نص خطأ خام ولا محتوى محجوب. */
@@ -584,11 +597,18 @@
     notice.textContent = '';
     notice.classList.add('hidden');
 
-    if (!change || typeof change !== 'object') { block.classList.add('hidden'); return; }
+    // بلا بطاقة تغيير: نُظهر الكتلة فقط لنشرح القفل (أداة مجهولة)، وإلا نخفيها.
+    if (!change || typeof change !== 'object') {
+      if (canAllowFromPhone(envelope)) { block.classList.add('hidden'); return; }
+      block.classList.remove('hidden');
+      notice.textContent = lockNoticeText(envelope);
+      notice.classList.remove('hidden');
+      return;
+    }
     block.classList.remove('hidden');
 
     if (change.status !== 'ok') {
-      notice.textContent = changeNoticeText(change);
+      notice.textContent = lockNoticeText(envelope);
       notice.classList.remove('hidden');
       return;
     }

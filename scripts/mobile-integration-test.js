@@ -400,8 +400,49 @@ async function run() {
     // القفل fail-closed من الجهتين: خطر كتابة بلا بطاقة (أداة كتابة مستقبلية لم
     // يعرفها بناء الظرف) يجب أن يُقفل لا أن يمرّ.
     equal(allowGate({ risk: 'write' }), false, 'خطر كتابة بلا بطاقة تغيير يُقفل');
-    equal(allowGate({ risk: 'exec' }), true, 'أداة غير كتابية تبقى قابلة للموافقة');
     equal(allowGate(null), false, 'ظرف فارغ يُقفل');
+
+    // قائمة سماح لا قائمة منع: الفئات المعروفة يُعرض فعلها الحرفي في summary
+    for (const risk of ['read', 'exec', 'browser']) {
+      equal(allowGate({ risk }), true, 'فئة معروفة تبقى قابلة للموافقة: ' + risk);
+    }
+    // أداة مجهولة ⇒ قفل. «لا أعرف ما هذا» هو وقت التأجيل إلى الحاسوب لا وقت الختم.
+    equal(allowGate({ risk: 'unknown' }), false, 'أداة مجهولة تُقفل');
+    equal(allowGate({}), false, 'ظرف بلا فئة خطر يُقفل');
+    equal(allowGate({ risk: 'future_class' }), false, 'فئة خطر مستقبلية تُقفل حتى تُدرَج');
+
+    // والمسار الحقيقي: أداة MCP جديدة تعبر القناة ⇒ يقفلها الهاتف
+    const unknownId = 'toolu_unknown_tool';
+    const unknownSettled = link.offerPermission({
+      id: unknownId,
+      tool: 'some_new_mcp_tool',
+      input: { anything: 'x' },
+      cwd: appRoot,
+      engine: 'sdk',
+      session_id: 'mobile-integration',
+    }, { ttlMs: 30000 });
+    const unknownPolled = await request(
+      new URL('poll?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert,
+      'GET'
+    );
+    equal(unknownPolled.status, 200, 'أداة مجهولة: وصل الظرف');
+    const unknownEnvelope = envelopeFromFrame(
+      JSON.parse(new TextDecoder().decode(await pwaCrypto.open(session, new Uint8Array(unknownPolled.body))))
+    );
+    equal(unknownEnvelope.risk, 'unknown', 'أداة مجهولة: الفئة unknown');
+    equal(allowGate(unknownEnvelope), false, 'أداة مجهولة عبر القناة: الموافقة مقفلة');
+    const unknownFrame = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
+      envelope_id: unknownId,
+      decision: 'deny',
+    })));
+    await request(
+      new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert,
+      'POST',
+      Buffer.from(unknownFrame)
+    );
+    equal(await unknownSettled, 'deny', 'أداة مجهولة: الرفض يبقى متاحاً');
 
     const staleFrame = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
       envelope_id: 'toolu_never_pending',
