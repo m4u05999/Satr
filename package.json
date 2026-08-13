@@ -134,7 +134,8 @@
     "test:mobile-tls": "node scripts/mobiletls-test.js",
     "test:mobile-integration": "node scripts/mobile-integration-test.js",
     "test:mobile-relay": "node scripts/mobilerelay-test.js",
-    "test:qr": "node scripts/qr-test.js"
+    "test:qr": "node scripts/qr-test.js",
+    "test:pwa-dom": "electron scripts/pwa-dom-live-test.js"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",
