@@ -142,10 +142,91 @@ assert.strictEqual(read.created_at, CREATED_AT);
 assert.strictEqual(read.ttl_ms, TTL_MS);
 assert.strictEqual(read.v, 1);
 
-const allowedWithDetail = allowedTop.concat('detail').sort();
+const allowedWithDetail = allowedTop.concat('detail', 'change').sort();
 assert.deepStrictEqual(Object.keys(patch).sort(), allowedWithDetail);
+
+/* ───────── بطاقة التغيير (F5) — «الحكم لا الختم» ─────────
+ * كانت بطاقة Edit/Write تحمل المسار وحده فيوافق المستخدم على ما لا يراه.
+ * العقد: أدوات الكتابة تحمل `change` دائماً، وحالتها هي ما يقفل «اسمح».
+ */
+const { buildChange, CHANGE_TOOLS, MAX_CHANGE_LINES } = require('../electron/mobileenvelope');
+
+// أدوات غير كتابية لا تحمل البطاقة أصلاً (فلا تُقفل مواقفتها)
+for (const safe of [read, exec, browser, kimi]) {
+  assert.strictEqual(safe.change, undefined, 'أداة غير كتابية حملت بطاقة تغيير');
+}
+
+// تعديل حقيقي ⇒ فرق كامل بالأسطر والعدّادات
+const edited = envelope('Edit', { file_path: 'a.js', old_string: 'let a = 1;\nlet b = 2;', new_string: 'let a = 9;\nlet b = 2;' });
+assert.strictEqual(edited.change.status, 'ok');
+assert.strictEqual(edited.change.kind, 'edit');
+assert.strictEqual(edited.change.added, 1);
+assert.strictEqual(edited.change.removed, 1);
+assert.ok(edited.change.lines.some((l) => l.t === '+' && l.text.includes('let a = 9;')), 'السطر الجديد غائب عن الفرق');
+assert.ok(edited.change.lines.some((l) => l.t === '-' && l.text.includes('let a = 1;')), 'السطر المحذوف غائب عن الفرق');
+assert.deepStrictEqual(Object.keys(edited.change).sort(), ['added', 'kind', 'lines', 'removed', 'status']);
+
+// الإزاحة معنى في الكود — لا تُطوى مسافاتها البادئة كما يفعل cleanText
+const indented = envelope('Edit', { file_path: 'a.js', old_string: '    if (x) {', new_string: '    if (y) {' });
+assert.ok(indented.change.lines.some((l) => l.t === '+' && l.text.startsWith('    if (y)')), 'الإزاحة البادئة ضاعت');
+
+// كتابة ملف ⇒ معاينة المحتوى كله إضافةً · حذف ⇒ ok بلا أسطر
+const written = envelope('Write', { file_path: 'b.js', content: 'const x = 1;\n' });
+assert.strictEqual(written.change.status, 'ok');
+assert.strictEqual(written.change.kind, 'write');
+assert.ok(written.change.lines.every((l) => l.t === '+' || l.t === '@'), 'معاينة الكتابة حملت أسطراً غير مضافة');
+const deleted = envelope('delete_file', { path: 'c.js' });
+assert.strictEqual(deleted.change.status, 'ok');
+assert.strictEqual(deleted.change.kind, 'delete');
+assert.deepStrictEqual(deleted.change.lines, []);
+
+// MultiEdit ⇒ الأزواج كلها، بفاصل بينها
+const multi = envelope('MultiEdit', { file_path: 'a.js', edits: [
+  { old_string: 'one', new_string: 'ONE' },
+  { old_string: 'two', new_string: 'TWO' },
+] });
+assert.strictEqual(multi.change.status, 'ok');
+assert.strictEqual(multi.change.added, 2);
+assert.strictEqual(multi.change.removed, 2);
+assert.ok(multi.change.lines.some((l) => l.t === '@'), 'لا فاصل بين تعديلي MultiEdit');
+
+// — fail-closed: كل تعذّر يقفل الموافقة بدل أن يمرّ —
+assert.strictEqual(envelope('apply_patch', { changes: ['x.js'] }).change.reason, 'unsupported_tool');
+assert.strictEqual(envelope('Edit', { file_path: 'a.js', old_string: 'x' }).change.reason, 'malformed');
+assert.strictEqual(envelope('MultiEdit', { file_path: 'a.js', edits: [] }).change.reason, 'malformed');
+assert.strictEqual(envelope('Write', null).change.reason, 'malformed');
+
+// سرّ داخل الفرق ⇒ لا يُعرض محجوباً بل يُقفل، ولا تعبر بايتة منه
+const secretChange = envelope('Edit', {
+  file_path: 'a.js',
+  old_string: 'const k = "old";',
+  new_string: 'const k = "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345";',
+});
+assert.strictEqual(secretChange.change.status, 'unavailable');
+assert.strictEqual(secretChange.change.reason, 'secret_redacted');
+assert.strictEqual(secretChange.change.lines, undefined, 'ظرف السرّ سرّب أسطراً');
+assert.ok(!JSON.stringify(secretChange).includes('sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345'), 'السرّ عبر الظرف');
+
+// تغيير ضخم ⇒ يُقفل ولا يُعرض جزئياً (عرض 40 من 500 = ختم أعمى من جديد)
+const huge = Array.from({ length: 400 }, (_, i) => 'line ' + i).join('\n');
+const bigChange = envelope('Write', { file_path: 'big.js', content: huge });
+assert.strictEqual(bigChange.change.status, 'unavailable');
+assert.strictEqual(bigChange.change.reason, 'too_large');
+const longLine = envelope('Edit', { file_path: 'a.js', old_string: 'a', new_string: 'b'.repeat(5000) });
+assert.strictEqual(longLine.change.reason, 'too_large');
+
+// لا يعبر ظرفٌ صالح أكثر من السقف المعلن
+for (const ok of [edited, written, multi]) {
+  assert.ok(ok.change.lines.length <= MAX_CHANGE_LINES, 'تجاوز سقف الأسطر المعلن');
+}
+
+// كل أداة كتابة معروفة تحمل البطاقة — أداة تفلت تعني زرّاً مفتوحاً بلا فرق
+for (const tool of CHANGE_TOOLS) {
+  assert.ok(envelope(tool, {}).change, 'أداة كتابة بلا بطاقة تغيير: ' + tool);
+}
 
 console.log('✓ استُخرج المسار/الأمر/URL حرفياً وصُنّفت read/write/exec/browser');
 console.log('✓ حُجبت الأسرار والنصوص غير المعلنة ونُظّفت محارف التحكم وBidi والفراغات');
 console.log('✓ طُبقت سقوف Unicode وفشل المجهول/المشوّه/الهائل مغلقاً');
 console.log('✓ لا يحتوي الظرف إلا حقول §4.2 المجمّدة');
+console.log('✓ بطاقة التغيير (F5): فرق كامل لأدوات الكتابة، وقفل مغلق للسرّ والضخم والمشوّه');

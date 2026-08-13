@@ -118,6 +118,16 @@ function loadPwaEnvelopeReader() {
   return sourceFunction(source, 'envelopeFromFrame', {});
 }
 
+/**
+ * قفل الموافقة كما يحكمه الهاتف نفسه (‏F5). نستخرج دالة `pwa/app.js` الحقيقية
+ * لا نعيد كتابة قاعدتها هنا: الحارس الذي يختبر قراءته هو — لا قراءة الهاتف —
+ * هو بالضبط ما ترك العطل الثامن يمرّ (§5.5.5).
+ */
+function loadPwaAllowGate() {
+  const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
+  return sourceFunction(source, 'canAllowFromPhone', {});
+}
+
 function loadPwaPairingParser(pwaCrypto) {
   const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
   // نفحص **العقد لا شكل التنفيذ**: قراءة الـhash، والتعامل مع البادئة `#pair=`،
@@ -319,6 +329,79 @@ async function run() {
       equal(replied.status, 200, decision + ': الرد مقبول');
       equal(await settled, decision, decision + ': الوعد حُسم بالقيمة الصحيحة');
     }
+
+    /* ───── F5: الفرق يعبر القناة الحقيقية، والقفل يحكمه منطق الهاتف نفسه ─────
+     * كل ما دون ذلك يختبر قراءة الحارس لا قراءة الهاتف — وهو ما ترك العطل
+     * الثامن يمرّ بينما 43 فحصاً خضراء (§5.5.5).
+     */
+    const allowGate = loadPwaAllowGate();
+    const writeCases = [
+      {
+        id: 'toolu_change_visible',
+        input: { file_path: 'a.js', old_string: 'let a = 1;', new_string: 'let a = 2;' },
+        allowed: true,
+        label: 'تغيير معروض كاملاً',
+      },
+      {
+        id: 'toolu_change_secret',
+        input: { file_path: 'a.js', old_string: 'k = "old";', new_string: 'k = "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345";' },
+        allowed: false,
+        label: 'تغيير يحمل سرّاً',
+      },
+      {
+        id: 'toolu_change_huge',
+        input: { file_path: 'big.js', content: Array.from({ length: 400 }, (_, i) => 'line ' + i).join('\n') },
+        tool: 'Write',
+        allowed: false,
+        label: 'تغيير أكبر من السقف',
+      },
+    ];
+    for (const testCase of writeCases) {
+      const settled = link.offerPermission({
+        id: testCase.id,
+        tool: testCase.tool || 'Edit',
+        input: testCase.input,
+        cwd: appRoot,
+        engine: 'sdk',
+        session_id: 'mobile-integration',
+      }, { ttlMs: 30000 });
+      const polled = await request(
+        new URL('poll?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+        tlsMaterial.cert,
+        'GET'
+      );
+      equal(polled.status, 200, testCase.label + ': وصل الظرف');
+      const opened = await pwaCrypto.open(session, new Uint8Array(polled.body));
+      const pwaEnvelope = envelopeFromFrame(JSON.parse(new TextDecoder().decode(opened)));
+      assert(pwaEnvelope !== null, testCase.label + ': الهاتف فكّ الإطار');
+      assert(pwaEnvelope.change, testCase.label + ': بطاقة التغيير عبرت القناة');
+      equal(allowGate(pwaEnvelope), testCase.allowed, testCase.label + ': قفل «اسمح» كما يحكمه الهاتف');
+
+      if (testCase.allowed) {
+        assert(pwaEnvelope.change.lines.some((line) => line.t === '+'),
+          testCase.label + ': الفرق وصل الهاتف بأسطره');
+      } else {
+        // لا يكفي قفل الزر: يجب ألا تعبر بايتة من المحتوى المتعذّر عرضه
+        equal(pwaEnvelope.change.status, 'unavailable', testCase.label + ': الحالة معلنة');
+        assert(!('lines' in pwaEnvelope.change), testCase.label + ': لا أسطر مع التعذّر');
+      }
+      const frame = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
+        envelope_id: testCase.id,
+        decision: 'deny',
+      })));
+      await request(
+        new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+        tlsMaterial.cert,
+        'POST',
+        Buffer.from(frame)
+      );
+      equal(await settled, 'deny', testCase.label + ': الرفض يبقى متاحاً دائماً');
+    }
+    // القفل fail-closed من الجهتين: خطر كتابة بلا بطاقة (أداة كتابة مستقبلية لم
+    // يعرفها بناء الظرف) يجب أن يُقفل لا أن يمرّ.
+    equal(allowGate({ risk: 'write' }), false, 'خطر كتابة بلا بطاقة تغيير يُقفل');
+    equal(allowGate({ risk: 'exec' }), true, 'أداة غير كتابية تبقى قابلة للموافقة');
+    equal(allowGate(null), false, 'ظرف فارغ يُقفل');
 
     const staleFrame = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
       envelope_id: 'toolu_never_pending',

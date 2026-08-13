@@ -538,6 +538,77 @@
     }
   }
 
+  /**
+   * هل يجوز لهذا الهاتف أن يوافق على هذا الظرف؟ (‏F5 — «الحكم لا الختم»)
+   *
+   * القاعدة **fail-closed من الطرفين**: بطاقة تغيير حاضرة ⇒ الحكم حالتها وحدها؛
+   * وغيابها مع خطر كتابة ⇒ **قفل** (أداة كتابة جديدة لم يعرفها بناء الظرف يجب أن
+   * تُقفل لا أن تمرّ). الرفض والإيقاف يبقيان متاحين دائماً — القفل يقلّص السماح
+   * ولا يقلّص القدرة على المنع.
+   *
+   * دالة مستقلة بلا إغلاق كي يستدعيها حارس التكامل على الظرف الحقيقي
+   * (‏درس §5.5.5: لا يكفي أن يشغّل الاختبار المسار كاملاً — يجب أن يشغّل منطق
+   * الطرف نفسه، وإلا اختبر الحارسُ قراءتَه هو لا قراءة الهاتف).
+   */
+  function canAllowFromPhone(envelope) {
+    if (!envelope || typeof envelope !== 'object') return false;
+    const change = envelope.change;
+    if (change && typeof change === 'object') return change.status === 'ok';
+    return envelope.risk !== 'write';
+  }
+
+  /** رسالة عربية ثابتة لسبب تعذّر العرض — لا نص خطأ خام ولا محتوى محجوب. */
+  function changeNoticeText(change) {
+    if (!change || typeof change !== 'object') return '';
+    if (change.status === 'ok') return '';
+    const reasons = {
+      too_large: 'التغيير أكبر من أن يُعرض على الجوال كاملاً.',
+      secret_redacted: 'التغيير يحتوي ما يشبه سرّاً، فلا يُعرض على الجوال.',
+      unsupported_tool: 'شكل هذا التغيير لا يُعرض على الجوال.',
+      malformed: 'تعذّر قراءة تفاصيل هذا التغيير.'
+    };
+    const why = reasons[change.reason] || reasons.malformed;
+    return why + ' الموافقة من الجوال مقفلة — ارفض، أو وافق من الحاسوب بعد مراجعته.';
+  }
+
+  /** يرسم أسطر الفرق نصّاً LTR؛ يبني عناصر DOM ولا يستعمل innerHTML. */
+  function renderChange(envelope) {
+    const block = $('changeBlock');
+    const stats = $('changeStats');
+    const pre = $('changeDiff');
+    const notice = $('changeNotice');
+    const change = envelope && envelope.change;
+
+    pre.textContent = '';
+    stats.textContent = '';
+    notice.textContent = '';
+    notice.classList.add('hidden');
+
+    if (!change || typeof change !== 'object') { block.classList.add('hidden'); return; }
+    block.classList.remove('hidden');
+
+    if (change.status !== 'ok') {
+      notice.textContent = changeNoticeText(change);
+      notice.classList.remove('hidden');
+      return;
+    }
+    if (change.kind === 'delete') { stats.textContent = 'حذف الملف بالكامل'; return; }
+
+    stats.textContent = '+' + (change.added || 0) + ' / −' + (change.removed || 0);
+    const lines = Array.isArray(change.lines) ? change.lines : [];
+    for (const line of lines) {
+      const row = document.createElement('div');
+      if (line.t === '@') {
+        row.className = 'dl dl-gap';
+        row.textContent = '⋯';
+      } else {
+        row.className = 'dl dl-' + (line.t === '+' ? 'add' : line.t === '-' ? 'del' : 'ctx');
+        row.textContent = line.t + ' ' + (typeof line.text === 'string' ? line.text : '');
+      }
+      pre.appendChild(row);
+    }
+  }
+
   function renderCard(envelope) {
     const card = $('decisionCard');
     $('projectName').textContent = 'المشروع: ' + (envelope.project || '—');
@@ -556,6 +627,13 @@
     badge.textContent = riskNames[risk] || riskNames.unknown;
 
     $('actionSummary').textContent = envelope.summary || '';
+    renderChange(envelope);
+
+    // قفل «اسمح» — الزرّان معطّلان بصرياً، والحارس الفعلي في sendDecision.
+    const allowed = canAllowFromPhone(envelope);
+    $('allowBtn').disabled = !allowed;
+    $('allowTurnBtn').disabled = !allowed;
+
     card.classList.add('active');
     $('emptyState').classList.add('hidden');
   }
@@ -568,6 +646,11 @@
 
   async function sendDecision(decision) {
     if (!state.currentEnvelope || !state.session) return;
+    // الحارس الفعلي لا زرٌّ معطّل: `disabled` تجميلٌ يسقط بأي استدعاء برمجي.
+    if ((decision === 'allow' || decision === 'allow_turn') && !canAllowFromPhone(state.currentEnvelope)) {
+      setStatus('الموافقة من الجوال مقفلة لهذا الطلب — لم يُرسل شيء.');
+      return;
+    }
     const plain = C.utf8ToBytes(JSON.stringify({
       envelope_id: state.currentEnvelope.envelope_id,
       decision: decision

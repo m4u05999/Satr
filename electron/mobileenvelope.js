@@ -8,10 +8,19 @@
 'use strict';
 
 const { scrubSecrets } = require('./secretscrub');
+const { computeDiff } = require('./diff');
 
 const SHORT_LIMIT = 160;
 const SUMMARY_LIMIT = 600;
 const DETAIL_LIMIT = 800;
+
+// حدود بطاقة التغيير (قرار مالك 2026-08-13). القاعدة الحاكمة: الظرف لا يعرض
+// تغييراً **جزئياً** أبداً — إمّا التغيير كاملاً أو `unavailable`، لأن عرض 40 سطراً
+// من 500 يعيد المستخدم إلى الختم الأعمى الذي جاءت هذه الدفعة لتقتله.
+const MAX_CHANGE_LINES = 40;
+const MAX_CHANGE_LINE_CHARS = 200;
+const MAX_CHANGE_BYTES = 6 * 1024;
+const MAX_CHANGE_SOURCE_CHARS = 64 * 1024;
 const MAX_INPUT_TEXT = 128 * 1024;
 const MAX_INPUT_NODES = 512;
 const MAX_INPUT_KEYS = 96;
@@ -333,6 +342,113 @@ function finiteTimestamp(value) {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
 }
 
+/* ─────────────── بطاقة التغيير (F5): «الحكم لا الختم» ───────────────
+ * كانت بطاقة `Edit`/`Write` تحمل **مسار الملف وحده**، فيوافق المستخدم من المقهى
+ * على ما لا يراه — بينما يرى على سطح المكتب بطاقة فرق كاملة. ذلك تراجع أمني لا
+ * نقص تجربة: يجعل «اسمح» أرخص من «افهم». العلاج شقّان: الفرق الحقيقي هنا،
+ * وقفل «اسمح» على الهاتف حين لا يكون `status === 'ok'` (‏canAllowFromPhone).
+ */
+
+/** أدوات الكتابة التي يجب أن يحمل ظرفها `change` — حضوره هو ما يقفل الزر. */
+const CHANGE_TOOLS = new Set([
+  'Write', 'Edit', 'MultiEdit', 'write_file', 'edit_file', 'delete_file', 'apply_patch',
+]);
+
+function changeUnavailable(reason) {
+  return { status: 'unavailable', reason };
+}
+
+/** ينظّف سطر فرق: يزيل التحكم/Bidi **ويُبقي المسافة البادئة** (الإزاحة معنى في الكود). */
+function cleanDiffLine(value) {
+  if (typeof value !== 'string') return '';
+  return value.replace(CONTROL_RE, ' ').replace(BIDI_RE, '');
+}
+
+/** السرّ يُكشف بأن التنقية غيّرت النص — فنمتنع عن العرض بدل عرض نصٍّ محجوب. */
+function carriesSecret(text) {
+  return scrubSecrets(text) !== text;
+}
+
+function changeText(value) {
+  return typeof value === 'string' ? value : null;
+}
+
+/** يستخرج أزواج (قبل، بعد) من مدخلات الأداة — بلا قرص ولا تخمين. */
+function changePairs(tool, input) {
+  if (tool === 'delete_file') return { kind: 'delete', pairs: [] };
+  if (tool === 'Write' || tool === 'write_file') {
+    const content = changeText(input.content);
+    return content == null ? null : { kind: 'write', pairs: [{ before: '', after: content }] };
+  }
+  if (tool === 'Edit' || tool === 'edit_file') {
+    const before = changeText(input.old_string);
+    const after = changeText(input.new_string);
+    return before == null || after == null ? null : { kind: 'edit', pairs: [{ before, after }] };
+  }
+  if (tool === 'MultiEdit') {
+    const edits = Array.isArray(input.edits) ? input.edits : null;
+    if (!edits || !edits.length) return null;
+    const pairs = [];
+    for (const edit of edits) {
+      if (!isRecord(edit)) return null;
+      const before = changeText(edit.old_string);
+      const after = changeText(edit.new_string);
+      if (before == null || after == null) return null;
+      pairs.push({ before, after });
+    }
+    return { kind: 'edit', pairs };
+  }
+  return null;
+}
+
+/**
+ * يبني بطاقة التغيير لأداة كتابة.
+ * @returns {object|null} `null` لأداة ليست من أدوات الكتابة (فلا يُقفل الزر)،
+ *   وإلا `{status:'ok',…}` أو `{status:'unavailable', reason}`.
+ */
+function buildChange(tool, input) {
+  if (!CHANGE_TOOLS.has(tool)) return null;
+  if (!isRecord(input)) return changeUnavailable('malformed');
+  // رقعة موحّدة: بنيتها ليست زوج (قبل/بعد) فلا نتظاهر بعرضها — فشل مغلق صريح.
+  if (tool === 'apply_patch') return changeUnavailable('unsupported_tool');
+
+  const source = changePairs(tool, input);
+  if (!source) return changeUnavailable('malformed');
+  if (source.kind === 'delete') return { status: 'ok', kind: 'delete', added: 0, removed: 0, lines: [] };
+
+  let sourceChars = 0;
+  for (const pair of source.pairs) sourceChars += pair.before.length + pair.after.length;
+  if (sourceChars > MAX_CHANGE_SOURCE_CHARS) return changeUnavailable('too_large');
+
+  // الفحص على المصدر كاملاً قبل أي بناء: تغييرٌ يحمل سرّاً **لا يُوافَق عليه من
+  // الجوال** — لا يُعرض محجوباً ثم يُطلب حكم على فراغ.
+  for (const pair of source.pairs) {
+    if (carriesSecret(pair.before) || carriesSecret(pair.after)) return changeUnavailable('secret_redacted');
+  }
+
+  const lines = [];
+  let added = 0;
+  let removed = 0;
+  let bytes = 0;
+  for (let i = 0; i < source.pairs.length; i += 1) {
+    if (i > 0) lines.push({ t: '@' });
+    const diff = computeDiff(source.pairs[i].before, source.pairs[i].after);
+    if (diff.truncated) return changeUnavailable('too_large');
+    added += diff.added;
+    removed += diff.removed;
+    for (const op of diff.lines) {
+      if (lines.length >= MAX_CHANGE_LINES) return changeUnavailable('too_large');
+      if (op.t === '@') { lines.push({ t: '@' }); continue; }
+      const text = cleanDiffLine(op.text);
+      if (text.length > MAX_CHANGE_LINE_CHARS) return changeUnavailable('too_large');
+      bytes += Buffer.byteLength(text, 'utf8') + 1;
+      if (bytes > MAX_CHANGE_BYTES) return changeUnavailable('too_large');
+      lines.push({ t: op.t, text });
+    }
+  }
+  return { status: 'ok', kind: source.kind, added, removed, lines };
+}
+
 /** يبني نسخة جديدة كلياً ولا يحتفظ بأي مرجع إلى req أو ctx. */
 function buildChecked(req, ctx) {
   const request = isRecord(req) ? req : {};
@@ -373,6 +489,12 @@ function buildChecked(req, ctx) {
     const detail = cleanText(action.detail, DETAIL_LIMIT);
     if (detail) envelope.detail = detail;
   }
+  // بطاقة التغيير تُبنى من المدخلات المُتحقَّق منها فقط؛ مدخل مرفوض ⇒ `unavailable`
+  // لا غياب، كي يبقى الزر مقفلاً بدل أن يُقرأ الغياب سماحاً.
+  const change = CHANGE_TOOLS.has(tool)
+    ? (inputOk && metadataOk ? buildChange(tool, request.input) : changeUnavailable('malformed'))
+    : null;
+  if (change) envelope.change = change;
   return envelope;
 }
 
@@ -393,4 +515,4 @@ function build(req, ctx) {
   }
 }
 
-module.exports = { build };
+module.exports = { build, buildChange, CHANGE_TOOLS, MAX_CHANGE_LINES };

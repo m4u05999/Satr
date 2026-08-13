@@ -236,6 +236,80 @@ textarea:focus {
   text-align: right;
 }
 
+/* بطاقة التغيير (F5): الفرق الحقيقي قبل القرار، والزرّ المقفل حين يتعذّر عرضه. */
+.change {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.change-stats {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-dim);
+  direction: ltr;
+  text-align: left;
+  margin-bottom: 8px;
+}
+
+.change-diff {
+  margin: 0;
+  max-height: 40vh;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.change-diff:empty {
+  display: none;
+}
+
+.dl {
+  white-space: pre;
+}
+
+.dl-add {
+  color: var(--green);
+}
+
+.dl-del {
+  color: var(--red);
+}
+
+.dl-ctx {
+  color: var(--text-faint);
+}
+
+.dl-gap {
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.change-notice {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--gold);
+  background: var(--gold-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.btn:disabled:active {
+  transform: none;
+}
+
 .risk {
   display: inline-block;
   padding: 4px 10px;
