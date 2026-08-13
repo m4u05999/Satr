@@ -5,7 +5,7 @@
  * - كاش القشرة: index / app.js / crypto.js / styles.css / icon / manifest
  */
 // رفع النسخة يُبطل الكاش القديم في `activate` — إلزامي مع أي تغيير في أصول القشرة.
-const CACHE_NAME = 'satr-pwa-v10';
+const CACHE_NAME = 'satr-pwa-v11';
 const SHELL_ASSETS = [
   './index.html',
   './app.js',

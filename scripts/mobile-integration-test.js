@@ -131,6 +131,33 @@ function loadPwaStateReader() {
 }
 
 /**
+ * حارس ساكن: لوحة الحالة **قابلة للظهور فعلاً** لا مجرد وصول بياناتها.
+ *
+ * ⚠️ عطل مثبت حياً (2026-08-13): كانت اللوحة تحمل `hidden` في الترميز، و`.hidden`
+ * تُعرَّف `display:none !important` فتغلب `.state-panel.active { display:flex }`.
+ * النتيجة: لقطات الحالة تصل وتُقبل وتُحلَّل بنجاح، ولا يظهر شيء على الهاتف أبداً.
+ *
+ * الدرس: كل فحوص قناة الحالة كانت تثبت أن اللقطة **تصل**، ولا واحد يثبت أنها
+ * **تُعرض**. البيانات صحيحة والبكسل غائب — صنفٌ لا يمسكه اختبار عقد بحال.
+ */
+function assertStatePanelVisible() {
+  const html = fs.readFileSync(path.join(appRoot, 'pwa', 'index.html'), 'utf8');
+  const match = html.match(/<div id="statePanel"[^>]*class="([^"]*)"/);
+  assert(match !== null, 'ترميز الهاتف يحوي لوحة الحالة #statePanel');
+  if (!match) return;
+  const classes = match[1].split(/\s+/).filter(Boolean);
+  assert(classes.includes('state-panel'), 'لوحة الحالة تحمل صنفها الأساسي');
+  // `.state-panel { display:none }` تكفي للإخفاء الافتراضي؛ `hidden` فوقها تجعل
+  // الإظهار مستحيلاً لأن `!important` يغلب `.active`
+  assert(!classes.includes('hidden'),
+    'لوحة الحالة لا تُولد بصنف hidden — يغلب !important صنفَ active فلا تظهر أبداً');
+
+  const css = fs.readFileSync(path.join(appRoot, 'pwa', 'styles.css'), 'utf8');
+  assert(/\.state-panel\.active\s*\{[^}]*display\s*:/.test(css),
+    'CSS يعرّف حالة الإظهار .state-panel.active');
+}
+
+/**
  * حارس ساكن: نشر الحالة **موصول فعلاً** بالنقلين وبنقاط البثّ.
  *
  * نظير `assertStopWiring` وللسبب نفسه: عقدٌ صحيح على الطرفين لا يعني وصلاً. صنف
@@ -155,6 +182,24 @@ function assertStateWiring() {
   }
   assert(/setInterval\([\s\S]{0,200}?publishMobileState\(\)/.test(source), 'نبضة دورية مربوطة');
   assert(/mobileStateHeartbeat\.unref/.test(source), 'مؤقّت النبضة unref فلا يمنع الإغلاق');
+
+  /* ⚠️ عطل مثبت حياً (2026-08-13): `finishMobileRunState` تُستدعى لـ`result` **ثم**
+   * `proc_done`، والثاني بلا كلفة. تمريره `cost_usd: null` كان يدوس القيمة الصحيحة
+   * فلا تصل الكلفة الهاتف أبداً. نثبت المنطق النقي نفسه (`mobileResultCost`) ونثبت
+   * أن الدالة لا تمرّر الحقل بلا شرط. */
+  const resultCost = sourceFunction(source, 'mobileResultCost', {});
+  equal(resultCost({ total_cost_usd: 0.1455 }), 0.1455, 'الكلفة تُقرأ من total_cost_usd');
+  equal(resultCost({ usage: { cost_usd: 0.5 } }), 0.5, 'وتُقرأ من usage.cost_usd احتياطاً');
+  equal(resultCost({ type: 'proc_done' }), null, 'proc_done بلا كلفة يعيد null');
+  equal(resultCost(null), null, 'حدث فارغ يعيد null');
+  const finishBody = source.match(/function finishMobileRunState\([\s\S]{0,900}?\n}/);
+  assert(finishBody !== null, 'main.js يعرّف finishMobileRunState');
+  if (finishBody) {
+    assert(!/publishMobileState\(\{[^}]*cost_usd:\s*mobileResultCost/.test(finishBody[0]),
+      'نهاية الدور لا تمرّر cost_usd بلا شرط — proc_done يدوس كلفة result');
+    assert(/cost !== null/.test(finishBody[0]),
+      'نهاية الدور تمرّر الكلفة فقط حين تُعرف');
+  }
 }
 
 /**
@@ -517,6 +562,7 @@ async function run() {
      * كان أخضر وحده في الأعطال الثمانية؛ الناقص دائماً هو الوصل.
      */
     assertStateWiring();
+    assertStatePanelVisible();
     const stateFromFrame = loadPwaStateReader();
     equal(typeof link.publishState, 'function', 'publishState على مقبض القناة المحلية');
 

@@ -1061,7 +1061,14 @@ function finishMobileRunState(result) {
   if (mobileStateRaw.phase === 'stopped') return;
   const failed = !!(result && (result.is_error === true || result.subtype === 'error'
     || Number(result.exit_code ?? result.code ?? 0) !== 0));
-  publishMobileState({ phase: failed ? 'error' : 'done', cost_usd: mobileResultCost(result) });
+  const update = { phase: failed ? 'error' : 'done' };
+  // ⚠️ عطل مثبت حياً (2026-08-13): تُستدعى هذه الدالة لـ`result` **ثم** `proc_done`،
+  // والثاني لا يحمل كلفة. تمرير `null` منه كان يدوس القيمة الصحيحة التي حملها
+  // `result` قبله، فلا تصل الكلفة الهاتف أبداً. لا نمسح قيمة معروفة بغياب معلومة —
+  // وتصفير الدور الجديد يقع في `beginMobileRunState` لا هنا.
+  const cost = mobileResultCost(result);
+  if (cost !== null) update.cost_usd = cost;
+  publishMobileState(update);
 }
 
 const mobileStateHeartbeat = setInterval(() => {
