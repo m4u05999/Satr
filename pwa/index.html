@@ -52,6 +52,21 @@
         <button id="stopBtn" class="stop">⏹ إيقاف</button>
       </div>
 
+      <div id="pushPanel" class="card push-panel">
+        <div id="pushSupported" class="hidden">
+          <p class="hint push-hint">
+            Web Push على iOS/iPadOS يشترط 16.4 فما فوق وتثبيت التطبيق على الشاشة الرئيسية.
+            عند التفعيل، يرى مزوّد الدفع (Google/Mozilla) عنوان IP لسطح المكتب وتوقيت كل طلب إذن — المحتوى معمّى والميتاداتا ليست كذلك.
+          </p>
+          <button id="pushEnableBtn" class="btn btn-small">فعّل إشعارات هذا الجهاز</button>
+          <p id="pushStatus" class="hint"></p>
+          <p id="pushError" class="error hidden"></p>
+        </div>
+        <div id="pushUnsupported" class="hidden">
+          <p class="hint">هذا المتصفّح أو الجهاز لا يدعم Web Push، أو التطبيق لم يُثبَّت على الشاشة الرئيسية بعد.</p>
+        </div>
+      </div>
+
       <div id="decisionCard" class="card decision-card">
         <div>
           <div id="projectName" class="project">المشروع: —</div>

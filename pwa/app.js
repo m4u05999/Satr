@@ -34,7 +34,10 @@
     sendReserved: 0,
     // وضع الوسيط (§7): عنوانه وصندوقا القناة. فارغة = الوضع المحلي (LAN).
     relayUrl: '',
-    boxes: null
+    boxes: null,
+    // مفتاح VAPID العام لاشتراك Web Push (§7.7.7/أ)
+    vapidPublic: '',
+    pushEnabled: false
   };
 
   // ── قناة الحالة (§7.7.6) ─────────────────────────────────────────────────
@@ -125,6 +128,8 @@
       // وضع الوسيط جزء من الجلسة: بلا حفظه يستيقظ الهاتف على النقل الخطأ
       relayUrl: state.relayUrl,
       boxes: state.boxes ? { toMobile: state.boxes.toMobile, toDesktop: state.boxes.toDesktop } : null,
+      vapidPublic: state.vapidPublic,
+      pushEnabled: state.pushEnabled,
       role: s.role,
       dirSend: s.dirSend,
       dirRecv: s.dirRecv,
@@ -167,6 +172,8 @@
     state.sendReserved = 0;
     state.relayUrl = '';
     state.boxes = null;
+    state.vapidPublic = '';
+    state.pushEnabled = false;
     lastBoot = '';
     lastSeq = 0;
     lastStateRequestAt = 0;
@@ -188,6 +195,8 @@
     state.serverUrl = record.serverUrl;
     state.deviceId = record.deviceId;
     state.pairId = record.pairId || '';
+    state.vapidPublic = typeof record.vapidPublic === 'string' ? record.vapidPublic : '';
+    state.pushEnabled = !!record.pushEnabled;
     state.relayUrl = typeof record.relayUrl === 'string' ? record.relayUrl : '';
     state.boxes = record.boxes && typeof record.boxes === 'object'
       && /^[a-f0-9]{32}$/.test(record.boxes.toMobile || '')
@@ -281,6 +290,7 @@
     // جلسة محفوظة ⇒ نكمل بلا إعادة مسح QR (قفل الشاشة أو إعادة التحميل لا يفقدان الاقتران)
     if (await restoreSession()) {
       showScreen('main');
+      renderPushPanel();
       startPolling();
       return;
     }
@@ -300,6 +310,17 @@
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return new TextDecoder().decode(bytes);
+  }
+
+  /** يتحقق أن المفتاح VAPID 87 محرف base64url يفكّ إلى 65 بايت ببادئة 0x04. */
+  function validateVapidPublicKey(value) {
+    if (typeof value !== 'string') return null;
+    // 65 بايت في base64url = ceil(65*4/3) = 87 محرفاً بلا حشو
+    if (value.length !== 87) return null;
+    let u8;
+    try { u8 = C.base64urlToBytes(value); } catch (_e) { return null; }
+    if (u8.length !== 65 || u8[0] !== 0x04) return null;
+    return value;
   }
 
   function parsePayload(text) {
@@ -356,6 +377,12 @@
     }
     // التحقق من أن المفتاح العام 65 بايت صالحة
     C.base64urlToBytes(obj.desktopPublic);
+    // مفتاح VAPID اختياري: سطح مكتب أقدم يبقى قابلاً للاقتران، والنصف صالح يُسقط كلياً
+    if (obj.vapid) {
+      const vapid = validateVapidPublicKey(obj.vapid);
+      if (vapid) obj.vapid = vapid;
+      else delete obj.vapid;
+    }
     return obj;
   }
 
@@ -480,6 +507,7 @@
     // إزالة شرطة مائلة زائدة
     state.serverUrl = state.serverUrl.replace(/\/$/, '');
     state.pairId = payload.pairId;
+    state.vapidPublic = payload.vapid || '';
     state.deviceId = makeDeviceId();
 
     let secretU8;
@@ -548,6 +576,7 @@
 
       setTimeout(() => {
         showScreen('main');
+        renderPushPanel();
         startPolling();
       }, 2500);
     } catch (err) {
@@ -694,6 +723,7 @@
   function hideCard() {
     $('decisionCard').classList.remove('active');
     state.currentEnvelope = null;
+    clearPermissionNotifications();
     updateEmptyState();
   }
 
@@ -709,6 +739,102 @@
     const hasCard = $('decisionCard').classList.contains('active');
     const hasState = latestState !== null;
     showEl('emptyState', !hasCard && !hasState);
+  }
+
+  // ── Web Push (§7.7.7) ────────────────────────────────────────────────────
+  function isPushSupported() {
+    return 'serviceWorker' in navigator &&
+      'PushManager' in window &&
+      'Notification' in window;
+  }
+
+  function renderPushPanel() {
+    const supported = isPushSupported();
+    showEl('pushSupported', supported);
+    showEl('pushUnsupported', !supported);
+    if (!supported) return;
+    const status = $('pushStatus');
+    if (state.pushEnabled) {
+      status.textContent = 'الإشعارات مفعّلة على هذا الجهاز.';
+      $('pushEnableBtn').classList.add('hidden');
+    } else {
+      status.textContent = '';
+      $('pushEnableBtn').classList.remove('hidden');
+    }
+  }
+
+  async function clearPermissionNotifications() {
+    if (!('serviceWorker' in navigator)) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (!reg.getNotifications) return;
+      const notes = await reg.getNotifications({ tag: 'satr-permission' });
+      notes.forEach((n) => n.close());
+    } catch (_e) { /* أفضل جهد */ }
+  }
+
+  /** يحوّل ArrayBuffer إلى Uint8Array مهما كان نوعه. */
+  function abToU8(buf) {
+    if (buf instanceof Uint8Array) return buf;
+    if (buf instanceof ArrayBuffer) return new Uint8Array(buf);
+    if (buf && typeof buf === 'object' && typeof buf.byteLength === 'number') {
+      return new Uint8Array(buf);
+    }
+    return null;
+  }
+
+  async function onPushEnable() {
+    setError('pushError', '');
+    if (!state.vapidPublic) {
+      setError('pushError', 'لا يوجد مفتاح إشعارات في هذا الاقتران — أعد الاقتران من سطح المكتب.');
+      return;
+    }
+    if (!isPushSupported()) {
+      setError('pushError', 'هذا المتصفّح لا يدعم Web Push.');
+      return;
+    }
+    let perm;
+    try { perm = await Notification.requestPermission(); }
+    catch (err) {
+      setError('pushError', 'تعذّر طلب الإذن: ' + (err && err.message || err));
+      return;
+    }
+    if (perm !== 'granted') {
+      setError('pushError', 'لم يُمنح الإذن — الإشعارات مُعطّلة.');
+      return;
+    }
+    const reg = await navigator.serviceWorker.ready;
+    let sub;
+    try {
+      const keyU8 = C.base64urlToBytes(state.vapidPublic);
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: keyU8
+      });
+    } catch (err) {
+      setError('pushError', 'تعذّر الاشتراك: ' + (err && err.message || err));
+      return;
+    }
+    const p256dhBuf = abToU8(sub.getKey('p256dh'));
+    const authBuf = abToU8(sub.getKey('auth'));
+    if (!p256dhBuf || p256dhBuf.length !== 65 || !authBuf || authBuf.length !== 16) {
+      setError('pushError', 'مفاتيح الاشتراك غير صالحة.');
+      return;
+    }
+    const payload = {
+      type: 'push_subscribe',
+      sub: {
+        endpoint: sub.endpoint,
+        p256dh: C.bytesToBase64url(p256dhBuf),
+        auth: C.bytesToBase64url(authBuf)
+      }
+    };
+    if (await sendUplink(payload, 'اشتراك الإشعارات')) {
+      state.pushEnabled = true;
+      renderPushPanel();
+      setStatus('تم تفعيل إشعارات هذا الجهاز.');
+      try { await dbPut(sessionRecord(state.sendReserved)); } catch (_e) { /* أفضل جهد */ }
+    }
   }
 
   /** قاعدة القبول: عملية سطح مكتب جديدة (boot جديد) أو seq أحدث. */
@@ -1086,9 +1212,12 @@
     $('allowTurnBtn').addEventListener('click', () => sendDecision('allow_turn'));
 
     $('stopBtn').addEventListener('click', stopAgent);
+    $('pushEnableBtn').addEventListener('click', onPushEnable);
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
+        clearPermissionNotifications();
+        renderPushPanel();
         requestStateResync();
         if (!state.polling && !state.stopped && state.session) startPolling();
       }

@@ -389,6 +389,25 @@ textarea:focus {
   display: none !important;
 }
 
+/* Web Push (§7.7.7) */
+.push-panel {
+  margin-top: 8px;
+}
+
+.push-hint {
+  margin-bottom: 12px;
+  line-height: 1.7;
+}
+
+#pushStatus {
+  margin-top: 8px;
+}
+
+#pushEnableBtn {
+  display: inline-block;
+  width: auto;
+}
+
 .mono {
   font-family: 'Cascadia Mono', 'Consolas', 'SF Mono', monospace;
   direction: ltr;
