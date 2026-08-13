@@ -158,6 +158,24 @@ function assertStatePanelVisible() {
 }
 
 /**
+ * حارس ساكن: رمز الدور في اللقطة **يُستعمل فعلاً** لتمكين الإيقاف.
+ *
+ * ⚠️ عطل مثبت حياً (2026-08-13): كان `state.currentRun` يُضبط من الظرف وحده، بينما
+ * `stateFromFrame` يتحقق من `s.run` ثم يهمله. فكان الإيقاف يتطلّب وصول طلب إذن أولاً،
+ * والهاتف يعرض «يعمل» ويقول في آنٍ «لا يوجد دور معروف لإيقافه».
+ *
+ * وهو صنف «موصول لكن غير مربوط» نفسه (§7.5هـ/3): الحقل يعبر القناة، ويجتاز التحقق،
+ * ولا مستهلك له. و§1 يعد بأن «أوقف» فعلٌ مستقل لا تابعٌ لطلب إذن.
+ */
+function assertStopUsesStateRun() {
+  const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
+  assert(/state\.currentRun\s*=\s*st\.run/.test(source),
+    'الهاتف يحدّث رمز الدور من لقطة الحالة لا من الظرف وحده');
+  assert(/state\.currentRun\s*=\s*envelope\.run/.test(source),
+    'ومن الظرف أيضاً — المصدران معاً لا أحدهما');
+}
+
+/**
  * حارس ساكن: نشر الحالة **موصول فعلاً** بالنقلين وبنقاط البثّ.
  *
  * نظير `assertStopWiring` وللسبب نفسه: عقدٌ صحيح على الطرفين لا يعني وصلاً. صنف
@@ -563,6 +581,7 @@ async function run() {
      */
     assertStateWiring();
     assertStatePanelVisible();
+    assertStopUsesStateRun();
     const stateFromFrame = loadPwaStateReader();
     equal(typeof link.publishState, 'function', 'publishState على مقبض القناة المحلية');
 
