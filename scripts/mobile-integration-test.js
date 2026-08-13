@@ -119,6 +119,45 @@ function loadPwaEnvelopeReader() {
 }
 
 /**
+ * قارئ لقطة الحالة كما يقرؤها الهاتف نفسه (‏§7.7.6/د).
+ *
+ * وجود هذه الدالة **شرط بنيوي**: `envelopeFromFrame` أحادي النوع بفشل مغلق، فلو
+ * بقي القارئ الوحيد لسقط كل إطار حالة صامتاً — وهو حرفياً عطل §5.5.5 الذي أبقى 43
+ * فحصاً خضراء بينما لا تصل بطاقة واحدة إلى الجهاز. غيابها يرمي هنا قبل أي تأكيد.
+ */
+function loadPwaStateReader() {
+  const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
+  return sourceFunction(source, 'stateFromFrame', {});
+}
+
+/**
+ * حارس ساكن: نشر الحالة **موصول فعلاً** بالنقلين وبنقاط البثّ.
+ *
+ * نظير `assertStopWiring` وللسبب نفسه: عقدٌ صحيح على الطرفين لا يعني وصلاً. صنف
+ * عطل `awaitPairing` (§7.5هـ/3) أوقف الميزة كلها بنقطة إطلاق منسيّة.
+ */
+function assertStateWiring() {
+  const source = fs.readFileSync(path.join(appRoot, 'electron', 'main.js'), 'utf8');
+  assert(/function publishMobileState\s*\(/.test(source), 'main.js يعرّف publishMobileState');
+  assert(/mobileStateBoot\s*=\s*randomBytes\(/.test(source), 'main.js يولّد boot مرة لكل عملية');
+  // النقلان يكشفان publishState بالاسم نفسه، فلا يتعلّم main.js نقلين
+  const linkSource = fs.readFileSync(path.join(appRoot, 'electron', 'mobilelink.js'), 'utf8');
+  const relaySource = fs.readFileSync(path.join(appRoot, 'electron', 'mobilerelay.js'), 'utf8');
+  assert(/publishState\s*[,:]/.test(linkSource), 'القناة المحلية تكشف publishState');
+  assert(/publishState\s*[,:]/.test(relaySource), 'الوسيط يكشف publishState');
+  // نقاط البثّ التسع من §7.7.6/ز — غياب أيٍّ منها يعمي الهاتف عن انتقال حقيقي
+  for (const [needle, label] of [
+    ["phase: 'waiting_permission'", 'عرض الإذن'],
+    ["phase: 'stopped'", 'قبول الإيقاف'],
+    ["phase: 'working'", 'بدء الدور'],
+  ]) {
+    assert(source.includes(needle), 'main.js يبثّ لقطة عند ' + label);
+  }
+  assert(/setInterval\([\s\S]{0,200}?publishMobileState\(\)/.test(source), 'نبضة دورية مربوطة');
+  assert(/mobileStateHeartbeat\.unref/.test(source), 'مؤقّت النبضة unref فلا يمنع الإغلاق');
+}
+
+/**
  * قفل الموافقة كما يحكمه الهاتف نفسه (‏F5). نستخرج دالة `pwa/app.js` الحقيقية
  * لا نعيد كتابة قاعدتها هنا: الحارس الذي يختبر قراءته هو — لا قراءة الهاتف —
  * هو بالضبط ما ترك العطل الثامن يمرّ (§5.5.5).
@@ -228,6 +267,8 @@ async function run() {
   // رمز الدور المعتم ومقبض الإيقاف: يُحقنان كما يفعل main.js، ونراقب الاستدعاء (§7.7.5)
   const CURRENT_RUN = 'a1b2c3d4e5f60718';
   const stopDeps = { onStop: () => false };
+  // عدّاد طلبات الحالة المُجابة: الخنق يُقاس بما وصل سطح المكتب فعلاً لا بما أُرسل
+  const stateReq = { answered: 0 };
   const link = await mobilelink.start({
     crypto: mobilecrypto,
     pair: store,
@@ -235,6 +276,7 @@ async function run() {
     identity,
     app: { getAppPath: () => appRoot },
     onStop: (run) => stopDeps.onStop(run),
+    onStateRequest: () => { stateReq.answered += 1; return true; },
   }, { host: '127.0.0.1', port: 0, pollTimeoutMs: 1000 });
 
   try {
@@ -468,6 +510,133 @@ async function run() {
       Buffer.from(unknownFrame)
     );
     equal(await unknownSettled, 'deny', 'أداة مجهولة: الرفض يبقى متاحاً');
+
+    /* ── قناة الحالة (§7.7.6) — فحوص الوصل ──────────────────────────────────
+     * ما لا يستطيع منفّذٌ يرى طرفاً واحداً كتابته: لقطة حقيقية يبنيها سطح المكتب،
+     * تُختم وتعبر القناة المعمّاة، ثم تُغذّى إلى **دالة الهاتف نفسها**. كل طرف
+     * كان أخضر وحده في الأعطال الثمانية؛ الناقص دائماً هو الوصل.
+     */
+    assertStateWiring();
+    const stateFromFrame = loadPwaStateReader();
+    equal(typeof link.publishState, 'function', 'publishState على مقبض القناة المحلية');
+
+    const snapshot = {
+      boot: 'aabbccdd',
+      seq: 1,
+      run: CURRENT_RUN,
+      phase: 'working',
+      project: 'satr-2',
+      task: 'بناء قناة الحالة',
+      tasks: { total: 4, pending: 1, in_progress: 1, completed: 2, blocked: 0 },
+      edits: { files: 3, added: 91, removed: 12 },
+      cost_usd: 0.1234,
+      verify: 'pass',
+    };
+    equal(link.publishState(snapshot), true, 'سطح المكتب نشر لقطة حالة');
+
+    const statePolled = await request(
+      new URL('poll?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert,
+      'GET'
+    );
+    equal(statePolled.status, 200, 'لقطة الحالة عبرت القناة بلا ظرف معلّق');
+    const stateText = new TextDecoder().decode(
+      await pwaCrypto.open(session, new Uint8Array(statePolled.body))
+    );
+    const stateMessage = JSON.parse(stateText);
+
+    // العضّة البنيوية: القارئ الصارم يرفض إطار الحالة. لولا الدالة الشقيقة لسقط
+    // كل إطار صامتاً — الهاتف يستقصي بلا انقطاع ولا يظهر شيء (عطل §5.5.5 حرفياً).
+    equal(envelopeFromFrame(stateMessage), null, 'قارئ الظرف يرفض إطار الحالة (فشل مغلق)');
+    const phoneState = stateFromFrame(stateMessage);
+    assert(phoneState !== null, 'الهاتف قبِل اللقطة بدالته الحقيقية عبر القناة');
+    equal(phoneState.phase, 'working', 'الهاتف قرأ حالة الدور');
+    equal(phoneState.run, CURRENT_RUN, 'اللقطة تحمل رمز الدور نفسه الذي يحمله الظرف');
+    equal(phoneState.project, 'satr-2', 'اسم المشروع عبر كما هو');
+    equal(phoneState.tasks.completed, 2, 'عدّادات المهام عبرت');
+    equal(phoneState.edits.added, 91, 'إحصاءات التعديلات عبرت');
+    equal(phoneState.verify, 'pass', 'نتيجة التحقق عبرت');
+
+    // القائمة المغلقة على الإطار الذي عبر فعلاً — لا على كائن بناه الاختبار
+    equal(Object.keys(phoneState).sort().join(','),
+      'boot,cost_usd,edits,phase,project,run,seq,task,tasks,ttl_ms,verify',
+      'اللقطة أحد عشر حقلاً بالضبط — لا عاشر ولا ثاني عشر');
+    // لا طابع زمني إطلاقاً: هو ما يجعل قياس الإيجار من ساعة المكتب **مستحيلاً بنيوياً**
+    for (const stamp of ['at', 'ts', 'timestamp', 'updated_at', 'now']) {
+      assert(!(stamp in phoneState), 'اللقطة بلا طابع زمني: ' + stamp);
+    }
+    // الممنوعات على النص المُسلسَل الذي عبر القناة
+    for (const forbidden of ['session_id', 'cwd', 'engine', 'filename', 'prompt', appRoot]) {
+      assert(!stateText.includes(forbidden), 'إطار الحالة لا يحمل: ' + forbidden);
+    }
+    // مسار ويندوز (`C:\`) أو أصل شبكي (`://`) — القائمة المغلقة تمنعهما بنيوياً،
+    // وهذا الفحص يمسك تسريباً داخل نصٍّ حرّ لو تسلّل يوماً عبر `project` أو `task`.
+    assert(!/[A-Za-z]:\\/.test(stateText), 'إطار الحالة بلا مسار ويندوز');
+    assert(!stateText.includes('://'), 'إطار الحالة بلا أصل شبكي');
+
+    // السرّ في عنوان المهمة يُسقط العنوان ويُبقي العدّادات صادقة (§7.7.6/أ)
+    equal(link.publishState({
+      ...snapshot, seq: 2, task: 'استعمل sk-ant-api03-0123456789abcdef0123456789abcdef',
+    }), true, 'نُشرت لقطة بعنوان يحمل سرّاً');
+    const secretPolled = await request(
+      new URL('poll?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert, 'GET'
+    );
+    const secretText = new TextDecoder().decode(
+      await pwaCrypto.open(session, new Uint8Array(secretPolled.body))
+    );
+    const secretState = stateFromFrame(JSON.parse(secretText));
+    assert(secretState !== null, 'الهاتف قبِل اللقطة بعد إسقاط العنوان');
+    equal(secretState.task, '', 'عنوان يحمل سرّاً يسقط كلياً');
+    equal(secretState.tasks.completed, 2, 'العدّادات تبقى صادقة رغم إسقاط العنوان');
+    assert(!secretText.includes('sk-ant-api03'), 'السرّ لم يعبر القناة إطلاقاً');
+
+    // الأولوية: الإذن سؤالٌ ينتظر قراراً، والحالة لا تزاحمه
+    const raceId = 'toolu_state_priority';
+    const raceSettled = link.offerPermission(sampleRequest(raceId, 'deny'), { ttlMs: 30000 });
+    equal(link.publishState({ ...snapshot, seq: 3, phase: 'waiting_permission' }), true,
+      'نُشرت لقطة بينما ظرف معلّق');
+    const racePolled = await request(
+      new URL('poll?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert, 'GET'
+    );
+    const raceMessage = JSON.parse(new TextDecoder().decode(
+      await pwaCrypto.open(session, new Uint8Array(racePolled.body))
+    ));
+    equal(raceMessage.type, 'permission_request', 'الأولوية للإذن على الحالة');
+    const raceFrame = await pwaCrypto.seal(session, new TextEncoder().encode(
+      JSON.stringify({ envelope_id: raceId, decision: 'deny' })
+    ));
+    await request(
+      new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert, 'POST', Buffer.from(raceFrame)
+    );
+    equal(await raceSettled, 'deny', 'الظرف حُسم بعد أن سبق الحالة');
+
+    // `state_request`: قراءة محضة خارج DECISIONS، ومخنوقة لكل جهاز
+    stateReq.answered = 0;
+    for (const attempt of [1, 2]) {
+      const askFrame = await pwaCrypto.seal(session, new TextEncoder().encode(
+        JSON.stringify({ type: 'state_request' })
+      ));
+      const askRes = await request(
+        new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+        tlsMaterial.cert, 'POST', Buffer.from(askFrame)
+      );
+      equal(askRes.status, 200, 'طلب الحالة ' + attempt + ' قُبل شكلاً');
+    }
+    equal(stateReq.answered, 1, 'الخنق: طلبان متتاليان يُجابان مرة واحدة');
+
+    // «state_request» كقرار يُرفض — DECISIONS لم تتوسّع (نظير «stop»)
+    const stateAsDecisionFrame = await pwaCrypto.seal(session, new TextEncoder().encode(
+      JSON.stringify({ envelope_id: 'toolu_x', decision: 'state_request' })
+    ));
+    const stateAsDecisionRes = await request(
+      new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert, 'POST', Buffer.from(stateAsDecisionFrame)
+    );
+    equal(stateAsDecisionRes.status, 400, 'state_request كقرار مرفوض');
+    equal(json(stateAsDecisionRes).error, 'bad_decision', 'ورمزه bad_decision');
 
     /* ───── §7.7.5: الإيقاف نوع رسالة مستقل، ويوقف الدور فعلاً ─────
      * كان `stopAgent()` يوقف الاستقصاء محلياً ويعلن «متوقف يدوياً» بلا إرسال بايتة،

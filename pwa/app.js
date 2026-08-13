@@ -37,6 +37,24 @@
     boxes: null
   };
 
+  // ── قناة الحالة (§7.7.6) ─────────────────────────────────────────────────
+  const PHASE_NAMES = {
+    idle: 'في الانتظار',
+    working: 'يعمل',
+    waiting_permission: 'ينتظر إذناً',
+    done: 'انتهى',
+    error: 'خطأ',
+    stopped: 'توقف'
+  };
+  const STATE_LEASE_CHECK_INTERVAL = 1000;
+  const STATE_REQUEST_MIN_INTERVAL = 2000;
+  let lastBoot = '';
+  let lastSeq = 0;
+  let latestState = null;
+  let stateReceivedAt = 0;
+  let stateLeaseTimer = null;
+  let lastStateRequestAt = 0;
+
   /** وضع الوسيط يُشتقّ من حمولة QR: وجود `relay` يعني أن الطرفين عميلان. */
   function usingRelay() {
     return !!(state.relayUrl && state.boxes && state.boxes.toMobile && state.boxes.toDesktop);
@@ -149,8 +167,12 @@
     state.sendReserved = 0;
     state.relayUrl = '';
     state.boxes = null;
+    lastBoot = '';
+    lastSeq = 0;
+    lastStateRequestAt = 0;
     await dbClear();
     hideCard();
+    hideStatePanel();
     setError('pairError', reason || 'انتهت صلاحية الاقتران — امسح رمز QR من جديد.');
     showScreen('pair');
   }
@@ -202,6 +224,14 @@
 
   function setStatus(text) {
     $('statusText').textContent = text;
+  }
+
+  function setText(id, text) {
+    $(id).textContent = text;
+  }
+
+  function showEl(id, show) {
+    $(id).classList.toggle('hidden', !show);
   }
 
   async function sha256Bytes(u8) {
@@ -658,13 +688,116 @@
     $('allowTurnBtn').disabled = !allowed;
 
     card.classList.add('active');
-    $('emptyState').classList.add('hidden');
+    updateEmptyState();
   }
 
   function hideCard() {
     $('decisionCard').classList.remove('active');
-    $('emptyState').classList.remove('hidden');
     state.currentEnvelope = null;
+    updateEmptyState();
+  }
+
+  function hideStatePanel() {
+    latestState = null;
+    stateReceivedAt = 0;
+    stopLeaseTimer();
+    $('statePanel').classList.remove('active', 'stale');
+    updateEmptyState();
+  }
+
+  function updateEmptyState() {
+    const hasCard = $('decisionCard').classList.contains('active');
+    const hasState = latestState !== null;
+    showEl('emptyState', !hasCard && !hasState);
+  }
+
+  /** قاعدة القبول: عملية سطح مكتب جديدة (boot جديد) أو seq أحدث. */
+  function acceptState(st) {
+    if (st.boot !== lastBoot || st.seq > lastSeq) {
+      lastBoot = st.boot;
+      lastSeq = st.seq;
+      return true;
+    }
+    return false;
+  }
+
+  /** يعرض الحالة «غير معروفة» حين ينتهي الإيجار (§7.7.6/ب). */
+  function renderStateUnknown() {
+    const panel = $('statePanel');
+    panel.classList.add('active', 'stale');
+    setText('statePhase', 'غير معروفة');
+    setText('stateProject', '—');
+    showEl('stateTaskWrap', false);
+    updateEmptyState();
+  }
+
+  /** يرسم لوحة الحالة من آخر لقطة مقبولة. */
+  function renderStatePanel() {
+    if (!latestState) {
+      renderStateUnknown();
+      return;
+    }
+    const age = Date.now() - stateReceivedAt;
+    if (age > latestState.ttl_ms) {
+      renderStateUnknown();
+      return;
+    }
+
+    const st = latestState;
+    const panel = $('statePanel');
+    panel.classList.add('active');
+    panel.classList.remove('stale');
+
+    setText('statePhase', PHASE_NAMES[st.phase] || 'غير معروفة');
+    setText('stateProject', st.project || '—');
+
+    const hasTask = st.task && st.task.length > 0;
+    showEl('stateTaskWrap', hasTask);
+    if (hasTask) setText('stateTask', st.task);
+
+    setText('stateTotal', String(st.tasks.total));
+    setText('statePending', String(st.tasks.pending));
+    setText('stateInProgress', String(st.tasks.in_progress));
+    setText('stateCompleted', String(st.tasks.completed));
+    setText('stateBlocked', String(st.tasks.blocked));
+
+    setText('stateEditsFiles', st.edits.files + ' ملف');
+    setText('stateEditsDiff', '+' + st.edits.added + ' / −' + st.edits.removed);
+
+    if (st.cost_usd !== null) {
+      showEl('stateCost', true);
+      setText('stateCostValue', st.cost_usd.toFixed(4));
+    } else {
+      showEl('stateCost', false);
+    }
+
+    if (st.verify) {
+      showEl('stateVerify', true);
+      const el = $('stateVerify');
+      el.className = 'state-verify ' + (st.verify === 'pass' ? 'pass' : 'fail');
+      el.textContent = st.verify === 'pass' ? 'نجح التحقق' : 'فشل التحقق';
+    } else {
+      showEl('stateVerify', false);
+    }
+
+    updateEmptyState();
+  }
+
+  function startLeaseTimer() {
+    if (stateLeaseTimer) clearInterval(stateLeaseTimer);
+    stateLeaseTimer = setInterval(() => {
+      if (!latestState) return;
+      if (Date.now() - stateReceivedAt > latestState.ttl_ms) {
+        renderStateUnknown();
+      }
+    }, STATE_LEASE_CHECK_INTERVAL);
+  }
+
+  function stopLeaseTimer() {
+    if (stateLeaseTimer) {
+      clearInterval(stateLeaseTimer);
+      stateLeaseTimer = null;
+    }
   }
 
   async function sendDecision(decision) {
@@ -726,6 +859,60 @@
     return typeof envelope.envelope_id === 'string' && envelope.envelope_id ? envelope : null;
   }
 
+  /**
+   * يستخرج لقطة الحالة من إطار القناة.
+   * دالة مستقلة بلا إغلاق كي يستدعيها حارس التكامل عبر `sourceFunction`
+   * على الإطار الحقيقي (درس §5.5.5). قائمة الحقول مغلقة: أي انحراف يعيد `null`.
+   * @returns {object|null} الحالة، أو `null` لإطار غير صالح.
+   */
+  function stateFromFrame(frame) {
+    if (!frame || typeof frame !== 'object') return null;
+    if (frame.type !== 'state') return null;
+    const s = frame.state;
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+
+    const expectedKeys = ['boot', 'seq', 'ttl_ms', 'run', 'phase', 'project', 'task', 'tasks', 'edits', 'cost_usd', 'verify'];
+    const keys = Object.keys(s);
+    if (keys.length !== expectedKeys.length) return null;
+    for (const k of expectedKeys) {
+      if (!keys.includes(k)) return null;
+    }
+
+    if (!/^[a-f0-9]{8}$/i.test(s.boot)) return null;
+    if (!Number.isInteger(s.seq) || s.seq < 1) return null;
+    if (!Number.isInteger(s.ttl_ms) || s.ttl_ms <= 0) return null;
+    if (!(s.run === '' || /^[a-f0-9]{16}$/i.test(s.run))) return null;
+    const phases = ['idle', 'working', 'waiting_permission', 'done', 'error', 'stopped'];
+    if (!phases.includes(s.phase)) return null;
+    if (typeof s.project !== 'string' || [...s.project].length > 160) return null;
+    if (typeof s.task !== 'string' || [...s.task].length > 160) return null;
+
+    if (!s.tasks || typeof s.tasks !== 'object' || Array.isArray(s.tasks)) return null;
+    const taskKeys = ['total', 'pending', 'in_progress', 'completed', 'blocked'];
+    const tasksKeys = Object.keys(s.tasks);
+    if (tasksKeys.length !== taskKeys.length) return null;
+    for (const k of taskKeys) {
+      if (!tasksKeys.includes(k)) return null;
+      const v = s.tasks[k];
+      if (!Number.isInteger(v) || v < 0 || v > 999) return null;
+    }
+
+    if (!s.edits || typeof s.edits !== 'object' || Array.isArray(s.edits)) return null;
+    const editKeys = ['files', 'added', 'removed'];
+    const editsKeys = Object.keys(s.edits);
+    if (editsKeys.length !== editKeys.length) return null;
+    for (const k of editKeys) {
+      if (!editsKeys.includes(k)) return null;
+      const v = s.edits[k];
+      if (!Number.isInteger(v) || v < 0) return null;
+    }
+
+    if (!(s.cost_usd === null || (typeof s.cost_usd === 'number' && s.cost_usd >= 0 && Number.isFinite(s.cost_usd)))) return null;
+    if (!['pass', 'fail', ''].includes(s.verify)) return null;
+
+    return s;
+  }
+
   async function openFrame(frame) {
     if (!state.session) return null;
     // القناة ترسل الإطار **بايتات خام** (application/octet-stream)؛ نقبل النص
@@ -779,17 +966,40 @@
         // «Unexpected token» على كل ظرف — عطل مثبت حياً على هاتف).
         const raw = await res.arrayBuffer();
         if (raw && raw.byteLength) {
-          const envelope = envelopeFromFrame(await openFrame(raw));
+          const frame = await openFrame(raw);
           // عدّاد الاستقبال تقدّم داخل `open`: نثبّته كي لا يقبل استئنافٌ لاحق إطاراً
           // قديماً أُعيد بثّه (حارس replay يبقى فعّالاً عبر إعادة التحميل).
           await persistRecvCounter();
-          if (envelope && envelope.envelope_id) {
-            state.currentEnvelope = envelope;
-            renderCard(envelope);
-            // لا نسحب طلباً آخر حتى يُحسم هذا
-            state.polling = false;
-            setStatus('طلب إذن معلّق');
-            return;
+          // توزيع الأطر بقائمة مغلقة (§7.7.6/د): نوع مجهول يُهمَل بلا تخمين شكله.
+          switch (frame && frame.type) {
+            case 'permission_request': {
+              const envelope = envelopeFromFrame(frame);
+              if (envelope && envelope.envelope_id) {
+                state.currentEnvelope = envelope;
+                renderCard(envelope);
+                // لا نسحب طلباً آخر حتى يُحسم هذا
+                state.polling = false;
+                setStatus('طلب إذن معلّق');
+                return;
+              }
+              break;
+            }
+            case 'paired':
+              // إقرار اقتران أو تكرار؛ لا فعل
+              break;
+            case 'state': {
+              const st = stateFromFrame(frame);
+              if (st && acceptState(st)) {
+                latestState = st;
+                stateReceivedAt = Date.now();
+                renderStatePanel();
+                startLeaseTimer();
+              }
+              break;
+            }
+            default:
+              // نوع مجهول: إهمال بلا تخمين
+              break;
           }
         }
       } catch (err) {
@@ -806,7 +1016,21 @@
 
   function startPolling() {
     if (state.polling || state.stopped) return;
+    requestStateResync();
     pollLoop();
+  }
+
+  /**
+   * يطلب إعادة بثّ الحالة الحالية (§7.7.6/ح). قراءة محضة أضعف من الإيقاف،
+   * عبر نفس المسار الصاعد `sendUplink` — لا قارئ ثانٍ يتباعد بصمت.
+   * سطح المكتب يخنقها إلى واحدة كل ثانيتين، والهاتف يخنقها محلياً أيضاً.
+   */
+  async function requestStateResync() {
+    if (!state.session) return;
+    const now = Date.now();
+    if (now - lastStateRequestAt < STATE_REQUEST_MIN_INTERVAL) return;
+    lastStateRequestAt = now;
+    await sendUplink({ type: 'state_request' }, 'طلب الحالة');
   }
 
   /**
@@ -857,6 +1081,13 @@
     $('allowTurnBtn').addEventListener('click', () => sendDecision('allow_turn'));
 
     $('stopBtn').addEventListener('click', stopAgent);
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        requestStateResync();
+        if (!state.polling && !state.stopped && state.session) startPolling();
+      }
+    });
   }
 
   function init() {

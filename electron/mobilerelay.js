@@ -29,6 +29,7 @@
 
 const crypto = require('node:crypto');
 const mobilepending = require('./mobilepending');
+const mobilestate = require('./mobilestate');
 
 // — ثوابت العقد (§7.3/§7.4) —
 const BOX_HEX_LEN = 32;
@@ -89,7 +90,7 @@ function backoff(attempt) {
 
 /**
  * @param {{crypto:object, pair:object, envelope:object, transport:object,
- *          identity?:object|Function}} deps
+ *          identity?:object|Function, onStop?:Function, onStateRequest?:Function}} deps
  *   transport.post(url, bytes) -> Promise<{status:number}>
  *   transport.poll(url, timeoutMs, signal) -> Promise<{status:number, body:Buffer}>
  * @param {{relayUrl:string, pollTimeoutMs?:number, now?:Function}} opts
@@ -106,9 +107,11 @@ function start(deps, opts) {
 
   const pollTimeoutMs = Number.isSafeInteger(o.pollTimeoutMs) && o.pollTimeoutMs > 0
     ? o.pollTimeoutMs : POLL_TIMEOUT_MS;
+  const now = typeof o.now === 'function' ? o.now : Date.now;
 
   const sessions = new Map(); // deviceId -> { session, pairId, channelId }
   const sendCeilings = new Map(); // deviceId -> سقف محجوز على القرص
+  const stateRequests = new Map(); // deviceId -> وقت آخر طلب حالة أُجيب
   const loops = new Map(); // اسم الحلقة -> { stop:Function }
   let stopped = false;
 
@@ -229,6 +232,36 @@ function start(deps, opts) {
     }
   }
 
+  /** يدفع لقطة الحالة إلى صناديق كل الأجهزة الحيّة، نظير pushPending حرفياً. */
+  async function pushState(state) {
+    if (stopped) return;
+    const safeState = mobilestate.buildState(state, state);
+    const plaintext = Buffer.from(JSON.stringify({ v: 1, type: 'state', state: safeState }), 'utf8');
+    if (plaintext.length > mobilestate.MAX_STATE_FRAME_BYTES) return;
+    for (const deviceId of pairedDeviceIds()) {
+      const entry = activeSession(deviceId);
+      if (!entry) continue;
+      // العدّاد يدخل nonce: فشل الحجز يمنع الختم والإرسال كلياً.
+      if (!ensureSendCounter(deviceId, entry.session)) continue;
+      let frame;
+      try { frame = d.crypto.seal(entry.session, plaintext); }
+      catch { continue; }
+      if (frame.length > MAX_FRAME_BYTES) continue;
+      try { await d.transport.post(boxUrl(entry.boxes.toMobile), frame); }
+      catch { /* الوسيط ساقط: الحالة قراءة محضة وستُنعشها النبضة/المزامنة التالية */ }
+    }
+  }
+
+  /** عقد موحّد مع القناة المحلية؛ الدفع غير متداخل مع منشور الإذن. */
+  function publishState(state) {
+    if (stopped) return false;
+    const safeState = mobilestate.buildState(state, state);
+    const payload = { v: 1, type: 'state', state: safeState };
+    if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > mobilestate.MAX_STATE_FRAME_BYTES) return false;
+    pushState(safeState).catch(() => {});
+    return true;
+  }
+
   function pairedDeviceIds() {
     try {
       const list = d.pair.listDevices();
@@ -255,10 +288,27 @@ function start(deps, opts) {
     // الإيقاف **نوع رسالة مستقل** لا قرار رابع: `resolveDecision` مربوطة بظرف
     // معلّق (`byId.get`) والإيقاف لا ظرف له — إقحامه فيها كان يستلزم ظرفاً وهمياً.
     if (payload.type === 'stop') return requestStop(payload.run);
+    if (payload.type === 'state_request') return requestState(deviceId, payload);
     const envelopeId = typeof payload.envelope_id === 'string' ? payload.envelope_id : '';
     const decision = typeof payload.decision === 'string' ? payload.decision : '';
+    // stop/state_request نوعان مستقلان ولا يدخلان قائمة القرارات بأي صيغة.
+    if (decision === 'stop' || decision === 'state_request') return false;
     // حارس الموافقة القديمة داخل النواة المشتركة
     return pending.resolveDecision(envelopeId, decision);
+  }
+
+  /** طلب قراءة محض، مفتاحه وحيد ومخنوق لكل جهاز إلى جواب كل ثانيتين. */
+  function requestState(deviceId, payload) {
+    if (Object.keys(payload).length !== 1 || payload.type !== 'state_request') return false;
+    const requestedAt = now();
+    const previous = stateRequests.get(deviceId);
+    if (Number.isFinite(previous)
+        && requestedAt - previous < mobilestate.STATE_REQUEST_MIN_INTERVAL_MS) return true;
+    if (typeof d.onStateRequest !== 'function') return false;
+    let answered = false;
+    try { answered = d.onStateRequest(deviceId) === true; } catch { answered = false; }
+    if (answered) stateRequests.set(deviceId, requestedAt);
+    return answered;
   }
 
   /** يمرّر أمر إيقاف مُتحقَّقاً من شكله؛ مطابقة رمز الدور تجري في `main.js`. */
@@ -392,13 +442,14 @@ function start(deps, opts) {
   }
 
   function status() {
+    const deviceCount = pairedDeviceIds().filter((deviceId) => !!activeSession(deviceId)).length;
     return {
       running: !stopped,
       // `url` بالاسم نفسه الذي تقرؤه `mobileStatus` من القناة المحلية — نقل مختلف
       // بلا حقل ثانٍ يتعلّمه المستهلك
       url: relayUrl,
       relay: relayUrl,
-      deviceCount: pairedDeviceIds().length,
+      deviceCount,
       pending: pending.pendingCount(),
       loops: loops.size,
     };
@@ -412,6 +463,7 @@ function start(deps, opts) {
     pending.stop();
     sessions.clear();
     sendCeilings.clear();
+    stateRequests.clear();
   }
 
   listenAll();
@@ -419,6 +471,7 @@ function start(deps, opts) {
   return {
     // العقد نفسه الذي يستهلكه main.js من القناة المحلية — نقل مختلف بلا عقد ثانٍ
     offerPermission: (rawReq, ctx) => pending.offer(rawReq, ctx),
+    publishState,
     withdraw: (envelopeId) => pending.withdraw(envelopeId),
     status,
     stop,

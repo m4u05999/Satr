@@ -395,3 +395,121 @@ textarea:focus {
   text-align: left;
   unicode-bidi: plaintext;
 }
+
+/* لوحة الحالة (§7.7.6) */
+.state-panel {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.state-panel.active {
+  display: flex;
+}
+
+.state-panel.stale {
+  opacity: 0.55;
+}
+
+.state-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.state-phase {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.state-panel.stale .state-phase {
+  color: var(--text-dim);
+}
+
+.state-project {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.state-task-wrap {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.state-task {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 15px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.state-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  text-align: center;
+}
+
+.state-cell {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 4px;
+}
+
+.state-cell .state-num {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.state-cell label {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
+.state-edits {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.state-diff {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--green);
+}
+
+.state-cost {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.state-verify {
+  text-align: center;
+  padding: 10px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.state-verify.pass {
+  background: rgba(113, 208, 131, 0.12);
+  color: var(--green);
+}
+
+.state-verify.fail {
+  background: rgba(229, 77, 77, 0.12);
+  color: var(--red);
+}

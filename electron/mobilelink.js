@@ -47,6 +47,7 @@ const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
 const mobilepending = require('./mobilepending');
+const mobilestate = require('./mobilestate');
 
 // — ثوابت العقد —
 const POLL_TIMEOUT_MS = 45 * 1000; // §5.1: long-poll ≤ 45ث ثم 204
@@ -206,10 +207,11 @@ function isInsideRoot(root, filename) {
 /**
  * يبدأ القناة المحلية.
  *
- * @param {{crypto:object, pair:object, envelope:object, app:object, identity?:object|Function}} deps
- * @param {{host?:string, port?:number, cors?:boolean, pollTimeoutMs?:number}} [opts]
+ * @param {{crypto:object, pair:object, envelope:object, app:object, identity?:object|Function,
+ *          onStop?:Function, onStateRequest?:Function}} deps
+ * @param {{host?:string, port?:number, cors?:boolean, pollTimeoutMs?:number, now?:Function}} [opts]
  * @returns {Promise<{url:string, host:string, port:number, offerPermission:Function,
- *                    withdraw:Function, status:Function, stop:Function}>}
+ *                    publishState:Function, withdraw:Function, status:Function, stop:Function}>}
  */
 async function start(deps, opts) {
   const d = deps && typeof deps === 'object' ? deps : {};
@@ -233,6 +235,7 @@ async function start(deps, opts) {
   const port = clampInt(o.port, 0, 65535, 0);
   const cors = o.cors === true;
   const pollTimeoutMs = clampInt(o.pollTimeoutMs, MIN_POLL_TIMEOUT_MS, POLL_TIMEOUT_MS, POLL_TIMEOUT_MS);
+  const now = typeof o.now === 'function' ? o.now : Date.now;
   const wildcard = host === '0.0.0.0' || host === '::' || host === '';
   const shown = wildcard ? await lanAddress() : host;
   const pwaRoot = resolvePwaRoot(d);
@@ -261,6 +264,9 @@ async function start(deps, opts) {
     maxPending: MAX_PENDING,
   });
   const waiters = new Map(); // deviceId -> Set<{res, timer}>
+  const sentStateSeq = new Map(); // deviceId -> آخر seq سُلّم لهذا الجهاز
+  const stateRequests = new Map(); // deviceId -> وقت آخر طلب حالة أُجيب
+  let latestState = null; // خانة واحدة: اللقطة الأحدث تستبدل السابقة كلياً
   const sockets = new Set();
   let stopped = false;
   let boundPort = 0;
@@ -425,8 +431,18 @@ async function start(deps, opts) {
     }
   }
 
+  /** يرسل أحدث لقطة إن لم يكن الجهاز قد استلم seq نفسها. */
+  function sendLatestState(res, deviceId, entry) {
+    if (!latestState || latestState.seq <= (sentStateSeq.get(deviceId) || 0)) return false;
+    const payload = { v: 1, type: 'state', state: latestState };
+    if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > mobilestate.MAX_STATE_FRAME_BYTES) return false;
+    if (!sendFrame(res, deviceId, entry, payload)) return false;
+    sentStateSeq.set(deviceId, latestState.seq);
+    return true;
+  }
+
   /**
-   * يوقظ منتظراً واحداً لكل جهاز حين يصل ظرف جديد.
+   * يوقظ منتظراً واحداً لكل جهاز حين يصل ظرف أو لقطة جديدة.
    * التسليم لا يعلّم الظرف «مُرسَلاً»: يبقى معلّقاً حتى يردّ الجوال أو يُسحب، فإعادة
    * الاستطلاع تعيد تسليمه (خانق فقدان الرسالة). ولأن كل تسليم ختم جديد بعدّاد أعلى،
    * يقبله الجوال بلا اصطدام replay.
@@ -435,15 +451,51 @@ async function start(deps, opts) {
     if (stopped) return;
     for (const deviceId of [...waiters.keys()]) {
       const record = pending.oldest();
-      if (!record) return;
       const entry = activeEntry(deviceId);
       const set = waiters.get(deviceId);
       if (!set || !set.size) continue;
       const waiter = set.values().next().value;
-      removeWaiter(deviceId, waiter);
-      if (!entry) { sendEmpty(waiter.res, 204); continue; }
-      sendFrame(waiter.res, deviceId, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
+      if (!entry) {
+        removeWaiter(deviceId, waiter);
+        sendEmpty(waiter.res, 204);
+        continue;
+      }
+      // الأولوية للإذن دائماً؛ الحالة لا تزاحم سؤالاً ينتظر قرار المستخدم.
+      if (record) {
+        removeWaiter(deviceId, waiter);
+        sendFrame(waiter.res, deviceId, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
+        continue;
+      }
+      if (latestState && latestState.seq > (sentStateSeq.get(deviceId) || 0)) {
+        removeWaiter(deviceId, waiter);
+        sendLatestState(waiter.res, deviceId, entry);
+      }
     }
+  }
+
+  /** يستبدل خانة الحالة كلياً ثم يوقظ المنتظرين؛ لا طابور للقطات القديمة. */
+  function publishState(state) {
+    if (stopped) return false;
+    const safeState = mobilestate.buildState(state, state);
+    const payload = { v: 1, type: 'state', state: safeState };
+    if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > mobilestate.MAX_STATE_FRAME_BYTES) return false;
+    latestState = safeState;
+    wakeWaiters();
+    return true;
+  }
+
+  /** طلب قراءة محض، مخنوق لكل جهاز؛ لا يدخل DECISIONS ولا ينشئ فعلاً. */
+  function requestState(deviceId, payload) {
+    if (Object.keys(payload).length !== 1 || payload.type !== 'state_request') return false;
+    const requestedAt = now();
+    const previous = stateRequests.get(deviceId);
+    if (Number.isFinite(previous)
+        && requestedAt - previous < mobilestate.STATE_REQUEST_MIN_INTERVAL_MS) return true;
+    if (typeof d.onStateRequest !== 'function') return false;
+    let answered = false;
+    try { answered = d.onStateRequest(deviceId) === true; } catch { answered = false; }
+    if (answered) stateRequests.set(deviceId, requestedAt);
+    return answered;
   }
 
   // ── واجهة سطح المكتب ──────────────────────────────────────────────────────
@@ -569,6 +621,7 @@ async function start(deps, opts) {
       sendFrame(res, deviceId, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
       return;
     }
+    if (sendLatestState(res, deviceId, entry)) return;
 
     const set = waiters.get(deviceId) || new Set();
     if (!waiters.has(deviceId)) waiters.set(deviceId, set);
@@ -627,8 +680,26 @@ async function start(deps, opts) {
         sendJson(res, 200, { ok: true });
         return;
       }
+      if (payload.type === 'state_request') {
+        if (Object.keys(payload).length !== 1) {
+          sendJson(res, 400, { ok: false, error: 'bad_payload' });
+          return;
+        }
+        if (!requestState(deviceId, payload)) {
+          sendJson(res, 503, { ok: false, error: 'state_unavailable' });
+          return;
+        }
+        touch(deviceId);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
 
       const decision = typeof payload.decision === 'string' ? payload.decision : '';
+      // النوعان المستقلان لا يصبحان قرارين حتى لو زُرعا في حقل decision.
+      if (decision === 'stop' || decision === 'state_request') {
+        sendJson(res, 400, { ok: false, error: 'bad_decision' });
+        return;
+      }
       // قائمة مغلقة: «دائماً» وbypass غير موجودين في هذا العقد إطلاقاً
       if (!DECISIONS.has(decision)) { sendJson(res, 400, { ok: false, error: 'bad_decision' }); return; }
 
@@ -743,6 +814,9 @@ async function start(deps, opts) {
     pending.stop();
     for (const deviceId of [...waiters.keys()]) dropWaiters(deviceId);
     sessions.clear();
+    sentStateSeq.clear();
+    stateRequests.clear();
+    latestState = null;
     return new Promise((resolve) => {
       let done = false;
       const finish = () => { if (!done) { done = true; resolve(); } };
@@ -768,6 +842,7 @@ async function start(deps, opts) {
         host,
         port: boundPort,
         offerPermission: (rawReq, ctx) => pending.offer(rawReq, ctx),
+        publishState,
         withdraw: (envelopeId) => pending.withdraw(envelopeId),
         status,
         stop,

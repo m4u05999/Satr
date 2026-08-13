@@ -54,6 +54,7 @@ const renderertrust = require('./renderertrust');
 const mobilecrypto = require('./mobilecrypto');
 const mobilepair = require('./mobilepair');
 const mobilerelay = require('./mobilerelay');
+const mobilestate = require('./mobilestate');
 const http = require('node:http');
 const https = require('node:https');
 const mobileenvelope = require('./mobileenvelope');
@@ -837,6 +838,15 @@ const SAFE_MOBILE_B64URL = /^[A-Za-z0-9_-]+$/;
 const MOBILE_PERMISSION_TTL_MS = 2 * 60 * 1000;
 const MOBILE_DECISIONS = new Set(['allow', 'allow_turn', 'deny']);
 const mobilePermissionRaces = new Map(); // envelope_id → { token }؛ حارس «أول حسم يفوز»
+const mobileStateBoot = randomBytes(4).toString('hex'); // ثابت مرة لكل عملية سطح مكتب
+let mobileStateSeq = 0;
+let mobileRunToken = '';
+let mobileEditedFiles = new Set();
+let mobileStateRaw = {
+  phase: 'idle', project: '', task: '',
+  tasks: { total: 0, pending: 0, in_progress: 0, completed: 0, blocked: 0 },
+  edits: { files: 0, added: 0, removed: 0 }, cost_usd: null, verify: '',
+};
 const SAFE_SKILL = /^[A-Za-z0-9_:.-]{1,64}$/; // اسم مهارة أو plugin:skill
 // وضع الأذونات + بوابة auto (الموجة 4) — المنطق النقي في autogate.js (قابل للاختبار
 // مستقلاً). PERMISSION_MODES يشمل 'auto'؛ nonSdkPerm يُسقط auto لـ default لغير SDK.
@@ -963,6 +973,102 @@ function mobileStatus() {
   return result;
 }
 
+/* ───────────── لقطة حالة الجوال (§7.7.6) ───────────── */
+function hasLiveMobileSession() {
+  if (!mobileControlEnabled || !mobileHandle || typeof mobileHandle.status !== 'function') return false;
+  try {
+    const status = mobileHandle.status() || {};
+    return status.running !== false && Number(status.deviceCount) > 0;
+  } catch { return false; }
+}
+
+/** يحدّث الأصل الداخلي ثم يبني وينشر عبر العقد الموحّد للنقلين. */
+function publishMobileState(update) {
+  if (update && typeof update === 'object' && !Array.isArray(update)) {
+    mobileStateRaw = { ...mobileStateRaw, ...update };
+  }
+  const handle = mobileHandle;
+  if (!mobileControlEnabled || !handle || typeof handle.publishState !== 'function') return false;
+  const nextSeq = mobileStateSeq + 1;
+  const state = mobilestate.buildState(mobileStateRaw, {
+    boot: mobileStateBoot,
+    seq: nextSeq,
+    run: mobileRunToken,
+  });
+  let published = false;
+  try { published = handle.publishState(state) === true; } catch { published = false; }
+  if (published) mobileStateSeq = nextSeq;
+  return published;
+}
+
+/** طلب صاعد مقروء فقط؛ النقل نفسه يفرض الشكل والخنق لكل جهاز. */
+function handleMobileStateRequest() {
+  return publishMobileState();
+}
+
+function beginMobileRunState(cwd) {
+  mobileEditedFiles = new Set();
+  publishMobileState({
+    phase: 'working',
+    project: path.basename(cwd),
+    task: '',
+    tasks: { total: 0, pending: 0, in_progress: 0, completed: 0, blocked: 0 },
+    edits: { files: 0, added: 0, removed: 0 },
+    cost_usd: null,
+    verify: '',
+  });
+}
+
+function publishMobileTaskState(ledger) {
+  const rows = ledger && Array.isArray(ledger.tasks) ? ledger.tasks : [];
+  const counts = { total: rows.length, pending: 0, in_progress: 0, completed: 0, blocked: 0 };
+  for (const item of rows) {
+    if (item && Object.prototype.hasOwnProperty.call(counts, item.status)) counts[item.status] += 1;
+  }
+  const active = rows.filter((item) => item && item.status === 'in_progress');
+  publishMobileState({ task: active.length === 1 ? active[0].title : '', tasks: counts });
+}
+
+function publishMobileFileEdit(event) {
+  const identity = event && (event.rel || event.id);
+  if (typeof identity === 'string' && identity) mobileEditedFiles.add(identity);
+  else mobileEditedFiles.add('edit-' + (mobileStateRaw.edits.files + 1));
+  const added = Number(event && event.added);
+  const removed = Number(event && event.removed);
+  publishMobileState({
+    edits: {
+      files: mobileEditedFiles.size,
+      added: mobileStateRaw.edits.added + (Number.isFinite(added) && added > 0 ? Math.floor(added) : 0),
+      removed: mobileStateRaw.edits.removed + (Number.isFinite(removed) && removed > 0 ? Math.floor(removed) : 0),
+    },
+  });
+}
+
+function publishMobileVerification(result) {
+  publishMobileState({ verify: result && result.passed === true ? 'pass' : 'fail' });
+}
+
+function mobileResultCost(result) {
+  const usage = result && result.usage && typeof result.usage === 'object' ? result.usage : {};
+  for (const value of [result && result.total_cost_usd, result && result.cost_usd, usage.cost_usd]) {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  }
+  return null;
+}
+
+function finishMobileRunState(result) {
+  // قبول الإيقاف نهائي لهذه اللقطة؛ أحداث إنهاء متأخرة لا تعيده إلى done/error.
+  if (mobileStateRaw.phase === 'stopped') return;
+  const failed = !!(result && (result.is_error === true || result.subtype === 'error'
+    || Number(result.exit_code ?? result.code ?? 0) !== 0));
+  publishMobileState({ phase: failed ? 'error' : 'done', cost_usd: mobileResultCost(result) });
+}
+
+const mobileStateHeartbeat = setInterval(() => {
+  if (hasLiveMobileSession()) publishMobileState();
+}, mobilestate.HEARTBEAT_MS);
+if (typeof mobileStateHeartbeat.unref === 'function') mobileStateHeartbeat.unref();
+
 // ملف تلميح صغير: المنفذ الذي رُبط آخر مرة. الجوال يحفظ عنوان القناة بمنفذه، فمنفذ
 // عشوائي كل تشغيل يجعل الجلسة المحفوظة تستيقظ على عنوان ميت ⇒ إعادة مسح QR كل مرة،
 // فيضيع استئناف الجلسات كله. تلميح لا التزام: انشغال المنفذ يسقط إلى عشوائي.
@@ -1040,6 +1146,7 @@ async function startMobileLink() {
       const handle = mobilerelay.start({
         crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, transport: relayTransport,
         onStop: handleMobileStop,
+        onStateRequest: handleMobileStateRequest,
       }, { relayUrl });
       mobileHandle = handle;
       mobileControlEnabled = true;
@@ -1051,7 +1158,11 @@ async function startMobileLink() {
     }
   }
   try {
-    const deps = { crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, app, onStop: handleMobileStop };
+    const deps = {
+      crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, app,
+      onStop: handleMobileStop,
+      onStateRequest: handleMobileStateRequest,
+    };
     const remembered = readRememberedMobilePort();
     let handle = null;
     if (remembered) {
@@ -1163,8 +1274,6 @@ function offerMobilePermission(obj, context) {
  * أمرٌ قديم دوراً لاحقاً بريئاً ولا يُصنع أمر استباقي لدور لم يبدأ (عدّاد متسلسل
  * كان سيسمح بالاثنين). ولا يُقبل الأمر إلا من جهاز مقترن عبر القناة المعمّاة.
  */
-let mobileRunToken = '';
-
 function currentMobileRunToken() {
   return mobileRunToken;
 }
@@ -1176,6 +1285,7 @@ function handleMobileStop(run) {
     return false;
   }
   mobileDebug('stop_accepted');
+  publishMobileState({ phase: 'stopped' });
   // نفس مسار `satr:stop` حرفياً: المحرّكات تفكّ أي إذن معلّق بالرفض عند الإيقاف،
   // فيأتي حسم المعلّقات ذرياً بلا مسار ثانٍ يتباعد عنه.
   cancelPendingSendRequest();
@@ -1215,7 +1325,15 @@ function runMobileOffer(id, race, rawReq, context) {
     try { snap = (typeof handle.status === 'function' && handle.status()) || {}; } catch { snap = {}; }
     mobileDebug('offer_passed', { pending: snap.pending, deviceCount: snap.deviceCount, running: snap.running });
   }
-  Promise.resolve().then(() => handle.offerPermission(rawReq, offerContext)).then((decision) => {
+  let offered;
+  try { offered = handle.offerPermission(rawReq, offerContext); }
+  catch {
+    if (mobilePermissionRaces.get(id) === race) mobilePermissionRaces.delete(id);
+    return;
+  }
+  // أُدرج الظرف أولاً، ثم الحالة: wakeWaiters يرى الإذن ويعطيه الأولوية دائماً.
+  if (typeof publishMobileState === 'function') publishMobileState({ phase: 'waiting_permission' });
+  Promise.resolve(offered).then((decision) => {
     const elapsed = Date.now() - offerAt;
     mobileDebug('offer_settled', {
       decision: decision === null || decision === undefined ? 'null' : String(decision).slice(0, 20),
@@ -1245,6 +1363,7 @@ function runMobileOffer(id, race, rawReq, context) {
     // always=false ثابت أمني غير مشتق من القناة، مهما كانت قيمة الرد.
     if (!resolvePermissionThroughCurrentHandles(id, allow, false, turn)) return;
     mobilePermissionRaces.delete(id);
+    if (typeof publishMobileState === 'function') publishMobileState({ phase: 'working' });
     emitToWindow({ type: 'mobile_decision', envelope_id: id, decision });
   }).catch((e) => {
     // اسم الخطأ فقط — لا رسالة ولا مدخل أداة (قد تحمل الرسالة قيمة من المدخل)
@@ -2083,6 +2202,7 @@ async function handleRewindFilesRequest(payload, sessionAgent = agent) {
 }
 
 function publishVerification({ engine, sessionId, runId, checkpointId, taskTitle, result }) {
+  publishMobileVerification(result);
   const checkpoint = runId
     ? checkpoints.recordVerification(runId, result)
     : checkpoints.recordVerificationForCheckpoint(checkpointId, result);
@@ -2165,6 +2285,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
     : prompt;
   const runId = 'run-' + token;
   checkpoints.begin({ runId, engine: runEngine, sessionId: activeSessionId, cwd });
+  beginMobileRunState(cwd);
   let sdkRunForEmit = null;
   const emit = (obj) => {
     if (!obj || typeof obj !== 'object') return;
@@ -2209,9 +2330,15 @@ async function handleSendRequest(event, payload, requestEpoch) {
     }
     if (obj.type === 'task_update') {
       const eventSessionId = SAFE_SESSION.test(obj.session_id || '') ? obj.session_id : activeSessionId;
-      if (!eventSessionId) return;
+      if (!eventSessionId) {
+        publishMobileTaskState(obj);
+        return;
+      }
       const ledger = tasks.apply({ ...obj, engine: runEngine, session_id: eventSessionId });
-      if (ledger) emitToWindow(ledger, lateSdkBackgroundEvent ? runEngine : undefined);
+      if (ledger) {
+        publishMobileTaskState(ledger);
+        emitToWindow(ledger, lateSdkBackgroundEvent ? runEngine : undefined);
+      }
       return;
     }
     if (obj.type === 'memory_candidate') {
@@ -2233,6 +2360,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
       return;
     }
     if (obj.type === 'file_edit') {
+      publishMobileFileEdit(obj);
       if (runEngine === 'sdk' && activeSessionId) sdkrewinds.clear(activeSessionId);
       const checkpoint = checkpoints.addEdit(runId, obj, activeSessionId ? activeTaskRef(runEngine, activeSessionId) : null);
       emitToWindow(obj);
@@ -2240,7 +2368,11 @@ async function handleSendRequest(event, payload, requestEpoch) {
       return;
     }
     if (obj.type === 'verification_result') {
-      if (!activeSessionId || !obj.ok) { emitToWindow(obj); return; }
+      if (!activeSessionId || !obj.ok) {
+        publishMobileVerification(obj);
+        emitToWindow(obj);
+        return;
+      }
       publishVerification({
         engine: runEngine,
         sessionId: activeSessionId,
@@ -2251,6 +2383,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
       return;
     }
     if (obj.type === 'result' || obj.type === 'proc_done') {
+      finishMobileRunState(obj);
       withdrawMobilePermissions(token);
       const checkpoint = checkpoints.finish(runId);
       if (checkpoint) emitToWindow(checkpoint);
@@ -2290,6 +2423,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
       return { started: true, engine: 'codex' };
     } catch (e) {
       currentRun = null;
+      finishMobileRunState({ is_error: true });
       return { error: 'codex_failed', message: 'تعذّر تشغيل محرك Codex: ' + String((e && e.message) || e) };
     }
   }
@@ -2314,6 +2448,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
       return { started: true, engine: kimi.ENGINE_ID };
     } catch (e) {
       currentRun = null;
+      finishMobileRunState({ is_error: true });
       return { error: 'kimi_failed', message: 'تعذّر تشغيل محرك Kimi Code: ' + String((e && e.message) || e) };
     }
   }
@@ -2352,6 +2487,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
       };
     } catch (e) {
       currentCliRun = null;
+      finishMobileRunState({ is_error: true });
       return { error: 'adapter_failed', message: 'تعذّر تشغيل المحرك: ' + String((e && e.message) || e) };
     }
   }
@@ -2393,6 +2529,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
         Promise.resolve(starting).then((run) => { if (run) stopSdkRun(run).catch(() => {}); }).catch(() => {});
         markSdkRunInFlight(false);
         currentRun = null;
+        finishMobileRunState({ is_error: true });
         return { error: 'sdk_failed', message: 'تأخر إقلاع محرك Claude ولم يبدأ الدور خلال المهلة — أعد المحاولة.' };
       }
       throw raceErr;
@@ -2414,6 +2551,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
   } catch (e) {
     markSdkRunInFlight(false);
     currentRun = null;
+    finishMobileRunState({ is_error: true });
     return { error: 'sdk_failed', message: 'تعذّر تشغيل محرك SDK: ' + String((e && e.message) || e) };
   }
 }
@@ -2698,7 +2836,10 @@ ipcMain.handle('satr:permission', (event, p) => {
   if (!p || typeof p.id !== 'string') return { ok: false };
   const ok = resolvePermissionThroughCurrentHandles(p.id, !!p.allow, !!p.always, !!p.turn);
   // نجاح مسار سطح المكتب يعني أنه حسم أولاً؛ نسحب الظرف قبل قبول أي رد جوال قديم.
-  if (ok && mobilePermissionRaces.has(p.id)) withdrawMobilePermission(p.id);
+  if (ok && mobilePermissionRaces.has(p.id)) {
+    withdrawMobilePermission(p.id);
+    publishMobileState({ phase: 'working' });
+  }
   // مجرى المراقبة (§4.7): قرار الإذن — عنصر أساسي في سجل التدقيق (3.4)
   try {
     notifyObservers({ type: 'permission_reply', id: p.id, allow: !!p.allow, always: !!p.always, engine: lastEngine }, { engine: lastEngine });
@@ -3764,7 +3905,7 @@ ipcMain.handle('satr:verifyCheckpoint', async (event, payload) => {
   const permissionId = 'verify_' + (++verificationPermissionSeq);
   const allowed = await new Promise((resolve) => {
     pendingVerificationPermissions.set(permissionId, resolve);
-    emitToWindow({
+    const permissionEvent = {
       type: 'permission_request',
       id: permissionId,
       tool: 'verify_project',
@@ -3772,6 +3913,10 @@ ipcMain.handle('satr:verifyCheckpoint', async (event, payload) => {
         checks: selected.checks.map((check) => ({ id: check.id, command: check.command })),
         task_title: latest.task_title || '',
       },
+    };
+    emitToWindow(permissionEvent);
+    offerMobilePermission(permissionEvent, {
+      token: runSeq, cwd: p.cwd, engine: p.engine, sessionId: p.sessionId,
     });
   });
   if (!allowed) return { ok: false, error: 'denied' };

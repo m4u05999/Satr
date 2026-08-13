@@ -14,16 +14,22 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 
 const mobilecrypto = require('../electron/mobilecrypto');
 const mobileenvelope = require('../electron/mobileenvelope');
+const mobilestate = require('../electron/mobilestate');
 const mobilepair = require('../electron/mobilepair');
+const mobilelink = require('../electron/mobilelink');
+const mobiletls = require('../electron/mobiletls');
 const mobilerelay = require('../electron/mobilerelay');
 
 const tempRoot = path.join(os.tmpdir(), 'satr-relay-client-' + process.pid + '-' + Date.now());
+const appRoot = path.resolve(__dirname, '..');
+const tlsMaterial = mobiletls.ensureCert('127.0.0.1');
 let checks = 0;
 
 function assert(condition, message) {
@@ -170,8 +176,212 @@ function waitFor(predicate, timeoutMs, label) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function localRequest(port, method, urlPath, body, contentType) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      host: '127.0.0.1', port, method, path: urlPath,
+      ca: tlsMaterial.cert, rejectUnauthorized: true,
+      headers: body ? {
+        'content-type': contentType || 'application/octet-stream',
+        'content-length': body.length,
+      } : {},
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end(body || undefined);
+  });
+}
+
+async function pairLocal(store, link, identity) {
+  const payload = store.buildPairingPayload();
+  const keys = mobilecrypto.generateKeyPair();
+  const mobile = { deviceId: crypto.randomBytes(8).toString('hex'), keys, session: null };
+  const body = Buffer.from(JSON.stringify({
+    pairId: payload.pairId,
+    secretProof: payload.secret,
+    mobilePublic: keys.publicKey,
+    deviceId: mobile.deviceId,
+    label: 'هاتف الحالة',
+  }), 'utf8');
+  const response = await localRequest(link.port, 'POST', '/pair', body, 'application/json');
+  equal(response.status, 200, 'القناة المحلية: الاقتران نجح');
+  mobile.session = mobilecrypto.deriveSession({
+    myPrivate: keys.privateKey,
+    theirPublic: identity.publicKey,
+    pairId: payload.pairId,
+    role: 'mobile',
+  });
+  return mobile;
+}
+
+function localPoll(link, mobile) {
+  return localRequest(link.port, 'GET', '/poll?device=' + encodeURIComponent(mobile.deviceId));
+}
+
+function localUplink(link, mobile, payload) {
+  const frame = mobilecrypto.seal(mobile.session, Buffer.from(JSON.stringify(payload), 'utf8'));
+  return localRequest(link.port, 'POST', '/reply?device=' + encodeURIComponent(mobile.deviceId), frame);
+}
+
+function openLocal(mobile, response) {
+  equal(response.status, 200, 'إطار محلي هابط ناجح');
+  return JSON.parse(mobilecrypto.open(mobile.session, response.body).toString('utf8'));
+}
+
+function sampleState(seq, overrides) {
+  return mobilestate.buildState({
+    phase: 'working', project: 'مشروع سطر', task: 'تنفيذ قناة الحالة',
+    tasks: { total: 5, pending: 1, in_progress: 1, completed: 2, blocked: 1 },
+    edits: { files: 2, added: 7, removed: 3 }, cost_usd: 0.123456, verify: '',
+    ...(overrides || {}),
+  }, { boot: 'a1b2c3d4', seq, run: 'b7c8d9e0f1a2b3c4' });
+}
+
+async function testLocalStateChannel() {
+  const identity = mobilecrypto.generateKeyPair();
+  const storeFile = path.join(tempRoot, 'local-devices.json');
+  fs.writeFileSync(storeFile, JSON.stringify({ identity, devices: [] }), 'utf8');
+  const store = mobilepair.createStore({ file: storeFile });
+  let clock = 10000;
+  let stateRequestCalls = 0;
+  let stateRequestSeq = 20;
+  let link = null;
+  link = await mobilelink.start({
+    crypto: mobilecrypto, pair: store, envelope: mobileenvelope, identity,
+    app: { getAppPath: () => appRoot },
+    onStateRequest: () => {
+      stateRequestCalls += 1;
+      stateRequestSeq += 1;
+      return link.publishState(sampleState(stateRequestSeq));
+    },
+  }, { host: '127.0.0.1', port: 0, pollTimeoutMs: 500, now: () => clock });
+  try {
+    const mobile = await pairLocal(store, link, identity);
+    equal(typeof link.publishState, 'function', 'العقد المحلي يكشف publishState');
+
+    // منتظر موجود: نشر اللقطة يجب أن يوقظه (عضّة حذف wakeWaiters تسقط هنا).
+    const waitingPoll = localPoll(link, mobile);
+    await sleep(40);
+    equal(link.publishState(sampleState(1)), true, 'النشر المحلي مع منتظر قُبل');
+    const waited = openLocal(mobile, await waitingPoll);
+    equal(waited.type, 'state', 'المنتظر استلم لقطة الحالة');
+    equal(waited.state.seq, 1, 'المنتظر استلم seq المنشورة');
+
+    // بلا منتظر: الخانة الواحدة تحتفظ بالأحدث حتى الاستقصاء التالي.
+    equal(link.publishState(sampleState(2)), true, 'النشر المحلي بلا منتظر قُبل');
+    const stored = openLocal(mobile, await localPoll(link, mobile));
+    equal(stored.type, 'state', 'اللقطة المخزنة وصلت بلا منتظر سابق');
+    equal(stored.state.seq, 2, 'الخانة تحمل الأحدث لا طابوراً قديماً');
+
+    // إن اجتمعت لقطة غير مرسلة وظرف، الإذن يسبق الحالة دائماً.
+    link.publishState(sampleState(3));
+    const permissionId = 'toolu_local_state_priority';
+    const pending = link.offerPermission({
+      id: permissionId, tool: 'Bash', input: { command: 'npm test' },
+      cwd: tempRoot, engine: 'sdk', session_id: 'state-local',
+    }, { ttlMs: 30000, run: 'b7c8d9e0f1a2b3c4' });
+    const priority = openLocal(mobile, await localPoll(link, mobile));
+    equal(priority.type, 'permission_request', 'الإذن له الأولوية على لقطة أحدث');
+    link.withdraw(permissionId);
+    equal(await pending, null, 'سحب ظرف الأولوية بلا قرار');
+    const afterPermission = openLocal(mobile, await localPoll(link, mobile));
+    equal(afterPermission.type, 'state', 'الحالة تبقى متاحة بعد سحب الإذن');
+    equal(afterPermission.state.seq, 3, 'وصلت لقطة الأولوية الصحيحة');
+
+    // state_request نوع مستقل بمفتاح وحيد وخنق لكل جهاز.
+    const firstRequest = await localUplink(link, mobile, { type: 'state_request' });
+    equal(firstRequest.status, 200, 'طلب الحالة الأول مقبول محلياً');
+    equal(stateRequestCalls, 1, 'طلب الحالة الأول أُجيب مرة');
+    const throttled = await localUplink(link, mobile, { type: 'state_request' });
+    equal(throttled.status, 200, 'الطلب المخنوق لا يكشف خطأً');
+    equal(stateRequestCalls, 1, 'طلب ثانٍ خلال ثانيتين لم يُجب');
+    clock += mobilestate.STATE_REQUEST_MIN_INTERVAL_MS;
+    await localUplink(link, mobile, { type: 'state_request' });
+    equal(stateRequestCalls, 2, 'طلب بعد نافذة الخنق أُجيب');
+    const extraKey = await localUplink(link, mobile, { type: 'state_request', extra: true });
+    equal(extraKey.status, 400, 'state_request بحقل ثانٍ مرفوض محلياً');
+    equal(stateRequestCalls, 2, 'الطلب المشوّه لم يبلغ main');
+
+    const guardId = 'toolu_local_state_decision';
+    const guarded = link.offerPermission({
+      id: guardId, tool: 'Bash', input: { command: 'echo guard' },
+      cwd: tempRoot, engine: 'sdk', session_id: 'state-local',
+    }, { ttlMs: 30000 });
+    const badDecision = await localUplink(link, mobile, {
+      envelope_id: guardId, decision: 'state_request',
+    });
+    equal(badDecision.status, 400, 'state_request كقرار يُرفض bad_decision');
+    equal(JSON.parse(badDecision.body.toString('utf8')).error, 'bad_decision', 'رمز الرفض صريح');
+    link.withdraw(guardId);
+    equal(await guarded, null, 'القرار المرفوض لم يحسم الظرف');
+  } finally {
+    await link.stop();
+  }
+}
+
 async function run() {
   fs.mkdirSync(tempRoot, { recursive: true });
+
+  // ── وحدة اللقطة النقية: القائمة المغلقة والسقوف والتنقية (§7.7.6/أ) ──────
+  const longText = 'ن'.repeat(220);
+  const built = mobilestate.buildState({
+    phase: 'working', project: longText, task: longText,
+    tasks: { total: 5000, pending: -2, in_progress: 1.9, completed: 4, blocked: Infinity },
+    edits: { files: 3.8, added: -1, removed: 9 },
+    cost_usd: 1.234567,
+    verify: 'pass',
+    prompt: 'LEAK_PROMPT_X', cwd: 'C:\\secret\\project', session_id: 'LEAK_SESSION_X',
+    engine: 'LEAK_ENGINE_X', filename: 'secret-file.txt', thirteenth: 'LEAK_EXTRA_X',
+  }, { boot: 'A1B2C3D4', seq: 7, run: 'B7C8D9E0F1A2B3C4' });
+  equal(Object.keys(built).join(','), mobilestate.STATE_KEYS.join(','), 'قائمة حقول الحالة مغلقة حرفياً');
+  equal(built.boot, 'a1b2c3d4', 'boot ثمانية hex مطبّعة');
+  equal(built.seq, 7, 'seq صحيح موجب');
+  equal(built.ttl_ms, 60000, 'TTL ثابت دقيقة');
+  equal(built.run, 'b7c8d9e0f1a2b3c4', 'رمز الدور نفسه منقّى');
+  equal(Array.from(built.project).length, 160, 'project مقصوص عند 160 نقطة Unicode');
+  equal(Array.from(built.task).length, 160, 'task مقصوص عند 160 نقطة Unicode');
+  assert(built.project.endsWith('…') && built.task.endsWith('…'), 'القص يضيف نقاط Unicode');
+  equal(built.tasks.total, 999, 'عداد المهام مقيد إلى 999');
+  equal(built.tasks.pending, 0, 'عداد سالب يصير صفراً');
+  equal(built.tasks.in_progress, 1, 'عداد كسري يُنزّل إلى صحيح');
+  equal(built.tasks.blocked, 0, 'عداد غير منتهٍ يصير صفراً');
+  equal(built.edits.files, 3, 'عداد الملفات صحيح غير سالب');
+  equal(built.cost_usd, 1.2346, 'الكلفة مقربة أربع منازل');
+  equal(built.verify, 'pass', 'قيمة التحقق من القائمة المغلقة');
+  const secretTask = mobilestate.buildState({
+    phase: 'working', task: 'نشر sk-123456789012 مع المهمة',
+    tasks: { total: 1, in_progress: 1 },
+  }, { boot: 'a1b2c3d4', seq: 8, run: 'b7c8d9e0f1a2b3c4' });
+  equal(secretTask.task, '', 'تغيير scrubSecrets يسقط عنوان المهمة كله');
+  equal(secretTask.tasks.total, 1, 'إسقاط العنوان لا يسقط عدد المهام');
+  equal(secretTask.phase, 'working', 'إسقاط العنوان لا يسقط الحالة');
+  const serializedState = JSON.stringify({ v: 1, type: 'state', state: built });
+  assert(Buffer.byteLength(serializedState, 'utf8') <= mobilestate.MAX_STATE_FRAME_BYTES,
+    'إطار الحالة دون 2KiB قبل الختم');
+  const worstFrame = JSON.stringify({
+    v: 1,
+    type: 'state',
+    state: mobilestate.buildState({
+      phase: 'waiting_permission', project: '😀'.repeat(220), task: '🧪'.repeat(220),
+      tasks: { total: 999, pending: 999, in_progress: 999, completed: 999, blocked: 999 },
+      edits: { files: Number.MAX_SAFE_INTEGER, added: Number.MAX_SAFE_INTEGER, removed: Number.MAX_SAFE_INTEGER },
+      cost_usd: Number.MAX_VALUE, verify: 'fail',
+    }, { boot: 'ffffffff', seq: Number.MAX_SAFE_INTEGER, run: 'ffffffffffffffff' }),
+  });
+  assert(Buffer.byteLength(worstFrame, 'utf8') <= mobilestate.MAX_STATE_FRAME_BYTES,
+    'أسوأ لقطة مسموحة تبقى دون 2KiB قبل الختم');
+  for (const forbidden of [
+    'LEAK_PROMPT_X', 'C:\\secret\\project', 'secret-file.txt', 'LEAK_SESSION_X',
+    'LEAK_ENGINE_X', 'LEAK_EXTRA_X', '"cwd"', '"session_id"', '"engine"', '"filename"', '"thirteenth"',
+  ]) assert(!serializedState.includes(forbidden), 'الإطار المسلسل يخلو من الممنوع: ' + forbidden);
+
   const identity = mobilecrypto.generateKeyPair();
   const storeFile = path.join(tempRoot, 'devices.json');
   fs.writeFileSync(storeFile, JSON.stringify({ identity, devices: [] }), 'utf8');
@@ -196,13 +406,23 @@ async function run() {
   // رمز الدور المعتم ومقبض الإيقاف كما يحقنهما main.js (§7.7.5)
   const CURRENT_RUN = 'b7c8d9e0f1a2b3c4';
   const stopCalls = [];
-  const client = mobilerelay.start({
+  let relayNow = 20000;
+  let relayStateRequests = 0;
+  let relayStateSeq = 30;
+  let client = null;
+  client = mobilerelay.start({
     crypto: mobilecrypto, pair: store, envelope: mobileenvelope, transport, identity,
     onStop: (run) => { stopCalls.push(run); return run === CURRENT_RUN; },
-  }, { relayUrl: relay.url, pollTimeoutMs: 800 });
+    onStateRequest: () => {
+      relayStateRequests += 1;
+      relayStateSeq += 1;
+      return client.publishState(sampleState(relayStateSeq));
+    },
+  }, { relayUrl: relay.url, pollTimeoutMs: 800, now: () => relayNow });
 
   try {
     equal(typeof client.offerPermission, 'function', 'العقد نفسه: offerPermission');
+    equal(typeof client.publishState, 'function', 'العقد نفسه: publishState');
     equal(typeof client.withdraw, 'function', 'العقد نفسه: withdraw');
     equal(client.status().running, true, 'العميل يعمل');
 
@@ -253,6 +473,48 @@ async function run() {
       desktopPublic: identity.publicKey, mobilePublic: mobileKeys.publicKey, pairId: payload.pairId,
     }), 'SAS يطابق ما يحسبه الهاتف من قيم عامة');
     assert(!JSON.stringify(ack).includes(payload.secret), 'الإقرار لا يحمل سرّ الاقتران');
+
+    // ── دفع الحالة عبر الوسيط بلا طلب معلّق ────────────────────────────────
+    equal(client.publishState(sampleState(10)), true, 'pushState قُبل عبر الوسيط');
+    const stateFrame = await waitFor(() => {
+      const queue = relay.boxes.get(mobileBoxes.toMobile);
+      return queue && queue.length ? queue.shift() : null;
+    }, 4000, 'وصول لقطة الحالة عبر الوسيط');
+    const openedState = JSON.parse(mobilecrypto.open(mobileSession, stateFrame).toString('utf8'));
+    equal(openedState.type, 'state', 'الوسيط حمل إطار state');
+    equal(openedState.state.seq, 10, 'الوسيط حمل اللقطة المطلوبة');
+    equal(Object.keys(openedState.state).join(','), mobilestate.STATE_KEYS.join(','),
+      'لقطة الوسيط بقيت بالقائمة المغلقة');
+    assert(Buffer.byteLength(JSON.stringify(openedState), 'utf8') <= mobilestate.MAX_STATE_FRAME_BYTES,
+      'لقطة الوسيط تحت سقف 2KiB قبل الختم');
+
+    const postUplink = (value) => transport.post(relay.url + '/m/' + mobileBoxes.toDesktop,
+      mobilecrypto.seal(mobileSession, Buffer.from(JSON.stringify(value), 'utf8')));
+    await postUplink({ type: 'state_request' });
+    await waitFor(() => relayStateRequests === 1, 4000, 'بلوغ طلب الحالة الأول عبر الوسيط');
+    const requestedFrame = await waitFor(() => {
+      const queue = relay.boxes.get(mobileBoxes.toMobile);
+      return queue && queue.length ? queue.shift() : null;
+    }, 4000, 'جواب طلب الحالة عبر الوسيط');
+    const requestedState = JSON.parse(mobilecrypto.open(mobileSession, requestedFrame).toString('utf8'));
+    equal(requestedState.type, 'state', 'طلب الحالة أعاد لقطة عبر الوسيط');
+    equal(requestedState.state.seq, 31, 'طلب الحالة أعاد seq جديدة');
+    await postUplink({ type: 'state_request' });
+    await sleep(150);
+    equal(relayStateRequests, 1, 'الوسيط خنق طلباً ثانياً خلال ثانيتين');
+    equal((relay.boxes.get(mobileBoxes.toMobile) || []).length, 0, 'الطلب المخنوق لم يستهلك ختم جواب');
+    relayNow += mobilestate.STATE_REQUEST_MIN_INTERVAL_MS;
+    await postUplink({ type: 'state_request' });
+    await waitFor(() => relayStateRequests === 2, 4000, 'طلب الوسيط بعد نافذة الخنق');
+    const refreshedFrame = await waitFor(() => {
+      const queue = relay.boxes.get(mobileBoxes.toMobile);
+      return queue && queue.length ? queue.shift() : null;
+    }, 4000, 'جواب المزامنة الثاني');
+    const refreshedState = JSON.parse(mobilecrypto.open(mobileSession, refreshedFrame).toString('utf8'));
+    equal(refreshedState.state.seq, 32, 'المزامنة التالية تحمل seq جديدة');
+    await postUplink({ type: 'state_request', extra: true });
+    await sleep(100);
+    equal(relayStateRequests, 2, 'state_request بحقل ثانٍ مرفوض عبر الوسيط');
 
     // ── دورة القرار الكاملة عبر الوسيط ─────────────────────────────────────
     for (const decision of ['allow', 'allow_turn', 'deny']) {
@@ -342,13 +604,14 @@ async function run() {
       const queue = relay.boxes.get(mobileBoxes.toMobile);
       return queue && queue.length ? queue.shift() : null;
     }, 4000, 'ظرف الحدّ الذهبي');
-    for (const forbidden of ['always', 'bypass', 'allow_always', '']) {
+    for (const forbidden of ['always', 'bypass', 'allow_always', 'state_request', 'stop', '']) {
       const bad = mobilecrypto.seal(mobileSession, Buffer.from(JSON.stringify({
         envelope_id: guardId, decision: forbidden,
       }), 'utf8'));
       await transport.post(relay.url + '/m/' + mobileBoxes.toDesktop, bad);
     }
     equal(await guarded, null, 'قرار خارج القائمة المغلقة لا يُحسم — تنتهي المهلة');
+    equal(relayStateRequests, 2, 'state_request كقرار لم يدخل مسار طلب الحالة');
 
     // ── عدّادات الإرسال محجوزة على القرص قبل الختم (§5.5.8) ────────────────
     const material = store.resumeMaterial(deviceId);
@@ -369,6 +632,31 @@ async function run() {
       'main.js يستدعي awaitPairing فعلاً عند إنشاء رمز الاقتران');
     assert(/awaitPairing[\s\S]{0,400}?buildMobilePairingResult\(relayUrl/.test(wiringSource),
       'والاستدعاء يسبق إعادة رابط الاقتران (لا بعده فيضيع السباق)');
+    equal((wiringSource.match(/onStateRequest:\s*handleMobileStateRequest/g) || []).length, 2,
+      'main.js يصل طلب الحالة بالنقلين بالضبط');
+    assert(/function publishMobileState\([\s\S]*?handle\.publishState\(state\)/.test(wiringSource),
+      'main.js ينشر عبر المقبض الموحّد لا عبر نقل بعينه');
+    assert(/checkpoints\.begin[\s\S]{0,300}?beginMobileRunState\(cwd\)/.test(wiringSource),
+      'بدء الدور يطلق لقطة working فعلاً');
+    assert(/handle\.offerPermission\(rawReq, offerContext\)[\s\S]{0,500}?phase: 'waiting_permission'/.test(wiringSource),
+      'عرض الإذن يطلق waiting_permission بعد إدراج الظرف');
+    assert(/resolvePermissionThroughCurrentHandles[\s\S]{0,500}?phase: 'working'/.test(wiringSource),
+      'حسم إذن الجوال يعيد الحالة إلى working');
+    assert(/obj\.type === 'task_update'[\s\S]{0,400}?publishMobileTaskState\(ledger\)/.test(wiringSource),
+      'task_update يطلق لقطة فعلاً');
+    assert(/obj\.type === 'file_edit'[\s\S]{0,160}?publishMobileFileEdit\(obj\)/.test(wiringSource),
+      'file_edit يطلق لقطة فعلاً');
+    assert(/function publishVerification[\s\S]{0,180}?publishMobileVerification\(result\)/.test(wiringSource),
+      'verification_result يطلق لقطة فعلاً');
+    assert(/obj\.type === 'result' \|\| obj\.type === 'proc_done'[\s\S]{0,180}?finishMobileRunState\(obj\)/.test(wiringSource),
+      'نهاية الدور تطلق done/error فعلاً');
+    assert(/function handleMobileStop[\s\S]{0,400}?phase: 'stopped'/.test(wiringSource),
+      'قبول الإيقاف يطلق stopped فعلاً');
+    assert(/setInterval\([\s\S]{0,180}?hasLiveMobileSession\(\)[\s\S]{0,100}?publishMobileState\(\)/.test(wiringSource)
+      && /mobileStateHeartbeat\.unref/.test(wiringSource), 'النبضة 20ث مربوطة بجلسة حيّة ومؤقّتها unref');
+    const relaySource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'mobilerelay.js'), 'utf8');
+    assert(/function pushState\([\s\S]{0,900}?ensureSendCounter\(deviceId, entry\.session\)[\s\S]{0,220}?d\.crypto\.seal/.test(relaySource),
+      'pushState يحجز عداد الإرسال قبل كل ختم');
 
     // ── تنقية عنوان الوسيط في main.js (منطق الإنتاج نفسه) ──────────────────
     // عنوان عام بلا TLS يعرّض النقل ولا يمنح crypto.subtle سياقاً آمناً على الهاتف.
@@ -419,6 +707,7 @@ async function run() {
     await client.stop();
     await relay.stop();
   }
+  await testLocalStateChannel();
 }
 
 run()

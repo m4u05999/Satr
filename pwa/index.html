@@ -77,6 +77,54 @@
         <button id="allowTurnBtn" class="btn btn-turn">سماح لهذا الدور</button>
       </div>
 
+      <!-- لوحة الحالة (§7.7.6) — تُعرض خلف بطاقة الإذن حين تصل -->
+      <div id="statePanel" class="card state-panel hidden">
+        <div class="state-header">
+          <div id="statePhase" class="state-phase">غير معروفة</div>
+        </div>
+        <div id="stateProject" class="state-project">—</div>
+
+        <div id="stateTaskWrap" class="state-task-wrap hidden">
+          <label>المهمة الجارية</label>
+          <div id="stateTask" class="state-task">—</div>
+        </div>
+
+        <div class="state-grid">
+          <div class="state-cell">
+            <span class="state-num"><bdi dir="ltr" id="stateTotal">0</bdi></span>
+            <label>الكل</label>
+          </div>
+          <div class="state-cell">
+            <span class="state-num"><bdi dir="ltr" id="statePending">0</bdi></span>
+            <label>معلّقة</label>
+          </div>
+          <div class="state-cell">
+            <span class="state-num"><bdi dir="ltr" id="stateInProgress">0</bdi></span>
+            <label>تعمل</label>
+          </div>
+          <div class="state-cell">
+            <span class="state-num"><bdi dir="ltr" id="stateCompleted">0</bdi></span>
+            <label>مكتملة</label>
+          </div>
+          <div class="state-cell">
+            <span class="state-num"><bdi dir="ltr" id="stateBlocked">0</bdi></span>
+            <label>محظورة</label>
+          </div>
+        </div>
+
+        <div class="state-edits">
+          <span id="stateEditsFiles"><bdi dir="ltr">0</bdi> ملف</span>
+          <span class="state-diff"><bdi dir="ltr" id="stateEditsDiff">+0 / −0</bdi></span>
+        </div>
+
+        <div id="stateCost" class="state-cost hidden">
+          <label>الكلفة</label>
+          <span class="mono"><bdi dir="ltr">$<span id="stateCostValue">0.0000</span></bdi></span>
+        </div>
+
+        <div id="stateVerify" class="state-verify hidden">—</div>
+      </div>
+
       <div id="emptyState" class="empty-state">
         <div class="big" aria-hidden="true">📱</div>
         <p>في انتظار طلب إذن من سطح المكتب…</p>
