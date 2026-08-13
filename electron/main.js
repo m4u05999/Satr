@@ -7,7 +7,7 @@ const { app, BrowserWindow, ipcMain: electronIpcMain, dialog, shell, desktopCapt
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { createHash, randomUUID } = require('crypto');
+const { createHash, randomUUID, randomBytes } = require('crypto');
 const { spawn } = require('child_process');
 
 const sessions = require('./sessions');
@@ -1039,6 +1039,7 @@ async function startMobileLink() {
     try {
       const handle = mobilerelay.start({
         crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, transport: relayTransport,
+        onStop: handleMobileStop,
       }, { relayUrl });
       mobileHandle = handle;
       mobileControlEnabled = true;
@@ -1050,7 +1051,7 @@ async function startMobileLink() {
     }
   }
   try {
-    const deps = { crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, app };
+    const deps = { crypto: mobilecrypto, pair: mobilepair, envelope: mobileenvelope, app, onStop: handleMobileStop };
     const remembered = readRememberedMobilePort();
     let handle = null;
     if (remembered) {
@@ -1154,6 +1155,34 @@ function offerMobilePermission(obj, context) {
   runMobileOffer(id, race, rawReq, context);
 }
 
+/* ───────────── الإيقاف من الجوال (§7.7.5) ─────────────
+ * الإيقاف **تقليص سلطة لا منحها**، وفشله الآمن هو التوقف — لذلك يسمح به §1.
+ * وكان زرّ الهاتف يوقف الاستقصاء محلياً ويعلن «متوقف يدوياً» بينما الوكيل يواصل.
+ *
+ * رمز الدور معتم وعشوائي لكل دور: يحمله الظرف، ويعيده الهاتف مع الأمر، فلا يقتل
+ * أمرٌ قديم دوراً لاحقاً بريئاً ولا يُصنع أمر استباقي لدور لم يبدأ (عدّاد متسلسل
+ * كان سيسمح بالاثنين). ولا يُقبل الأمر إلا من جهاز مقترن عبر القناة المعمّاة.
+ */
+let mobileRunToken = '';
+
+function currentMobileRunToken() {
+  return mobileRunToken;
+}
+
+/** يُستدعى من القناة عند وصول أمر إيقاف مُتحقَّق الشكل. */
+function handleMobileStop(run) {
+  if (typeof run !== 'string' || run !== mobileRunToken || !mobileRunToken) {
+    mobileDebug('stop_stale');
+    return false;
+  }
+  mobileDebug('stop_accepted');
+  // نفس مسار `satr:stop` حرفياً: المحرّكات تفكّ أي إذن معلّق بالرفض عند الإيقاف،
+  // فيأتي حسم المعلّقات ذرياً بلا مسار ثانٍ يتباعد عنه.
+  cancelPendingSendRequest();
+  stopAll(false).catch(() => { /* الإيقاف أفضل جهد — لا يُسقط القناة */ });
+  return true;
+}
+
 /**
  * يعرض الظرف على القناة، ويعيد العرض عند انقضاء المهلة ما دام مربع سطح المكتب مفتوحاً.
  *
@@ -1172,7 +1201,11 @@ function runMobileOffer(id, race, rawReq, context) {
     if (mobilePermissionRaces.get(id) === race) mobilePermissionRaces.delete(id);
     return;
   }
-  const offerContext = { createdAt: Date.now(), ttlMs: MOBILE_PERMISSION_TTL_MS };
+  const offerContext = {
+    createdAt: Date.now(),
+    ttlMs: MOBILE_PERMISSION_TTL_MS,
+    run: mobileRunToken, // رمز الدور المعتم — يعيده الهاتف مع أمر الإيقاف
+  };
   // قياس: لقطة القناة **قبل** إدراج هذا الظرف — deviceCount عدد الجلسات الحيّة في
   // الذاكرة (لا أجهزة القرص)، وpending الظروف المعلّقة سابقاً. مع offer_settled
   // تفرّق بين «رفضته القناة» (ms صغير) و«لم يُجب الهاتف» (بلوغ TTL).
@@ -2120,6 +2153,8 @@ async function handleSendRequest(event, payload, requestEpoch) {
   }
 
   const token = ++runSeq;
+  // رمز دور معتم جديد لكل تشغيل: يُبطل كل أمر إيقاف قديم قد يكون في الطريق (§7.7.5)
+  mobileRunToken = randomBytes(8).toString('hex');
   const runEngine = (payload.engine === 'codex' || payload.engine === kimi.ENGINE_ID || adapters.get(payload.engine))
     ? payload.engine : 'sdk';
   let activeSessionId = payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null;

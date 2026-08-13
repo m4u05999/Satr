@@ -26,6 +26,8 @@
     polling: false,
     pollAbort: null,
     currentEnvelope: null,
+    // رمز الدور المعتم من آخر ظرف — يُعاد مع أمر الإيقاف فلا يقتل دوراً لاحقاً
+    currentRun: '',
     stopped: false,
     pendingPayload: null,
     // سقف عدّادات الإرسال المحجوز على القرص: كل عدّاد استُعمل فعلاً **أصغر منه**
@@ -631,6 +633,7 @@
 
   function renderCard(envelope) {
     const card = $('decisionCard');
+    if (typeof envelope.run === 'string' && /^[a-f0-9]{16}$/.test(envelope.run)) state.currentRun = envelope.run;
     $('projectName').textContent = 'المشروع: ' + (envelope.project || '—');
     $('toolName').textContent = envelope.tool && envelope.tool.label ? envelope.tool.label : (envelope.tool && envelope.tool.name ? envelope.tool.name : 'أداة غير معروفة');
 
@@ -671,18 +674,26 @@
       setStatus('الموافقة من الجوال مقفلة لهذا الطلب — لم يُرسل شيء.');
       return;
     }
-    const plain = C.utf8ToBytes(JSON.stringify({
-      envelope_id: state.currentEnvelope.envelope_id,
-      decision: decision
-    }));
+    if (!(await sendUplink({ envelope_id: state.currentEnvelope.envelope_id, decision: decision }, 'القرار'))) return;
+    hideCard();
+    setStatus('تم إرسال القرار — في انتظار طلب جديد');
+    if (!state.polling) startPolling();
+  }
+
+  /**
+   * يختم حمولة صاعدة ويرسلها على صندوق الاتجاه الصحيح.
+   * مسار واحد للقرار والإيقاف: نسخُه كان يعني عقداً بقارئين يتباعدان بصمت.
+   * @returns {Promise<boolean>} نجاح الإرسال
+   */
+  async function sendUplink(payload, label) {
     // الحجز قبل التعمية: بلا سقف ثابت على القرص قد يعيد استئنافٌ لاحق nonce مستعملاً
     try {
       await reserveSendCounters();
     } catch (_e) {
-      setStatus('تعذّر تثبيت عدّاد الأمان — لم يُرسل القرار. أعد المحاولة.');
-      return;
+      setStatus('تعذّر تثبيت عدّاد الأمان — لم يُرسل ' + label + '. أعد المحاولة.');
+      return false;
     }
-    const frame = await C.seal(state.session, plain);
+    const frame = await C.seal(state.session, C.utf8ToBytes(JSON.stringify(payload)));
     try {
       // عقد القناة (§5.1): جسم `/reply` هو **الإطار المعمّى خاماً** لا JSON، والمسار
       // يوجب `?device=`. عطل مثبت حياً — كان الردّ يُرفض بـbad_device/bad_frame.
@@ -690,11 +701,10 @@
         ? `${state.relayUrl}/m/${state.boxes.toDesktop}`
         : `${state.serverUrl}/reply?device=${encodeURIComponent(state.deviceId)}`;
       await postFrame(replyUrl, frame);
-      hideCard();
-      setStatus('تم إرسال القرار — في انتظار طلب جديد');
-      if (!state.polling) startPolling();
+      return true;
     } catch (err) {
-      setStatus('فشل إرسال القرار: ' + err.message);
+      setStatus('فشل إرسال ' + label + ': ' + err.message);
+      return false;
     }
   }
 
@@ -799,11 +809,26 @@
     pollLoop();
   }
 
-  function stopAgent() {
-    state.stopped = true;
-    state.polling = false;
-    if (state.pollAbort) state.pollAbort.abort();
-    setStatus('متوقف يدوياً');
+  /**
+   * يوقف الدور الجاري على سطح المكتب فعلاً (§7.7.5).
+   *
+   * كان هذا الزرّ يوقف الاستقصاء محلياً ويكتب «متوقف يدوياً» **بلا أن يرسل بايتاً**
+   * — أي يعلن للمستخدم أنه أوقف وكيلاً ما زال يكتب في ملفاته. وهذا أسوأ من غياب
+   * الزرّ. الآن يرسل أمراً مستقلاً (‏`type:'stop'`) بقيد `run` المعتم.
+   *
+   * ولا نعلن التوقف إلا بعد قبول سطح المكتب للأمر — «طُلب الإيقاف» ≠ «توقف».
+   */
+  async function stopAgent() {
+    const run = state.currentRun;
+    if (!state.session || !run) {
+      setStatus('لا يوجد دور معروف لإيقافه — انتظر وصول طلب من سطح المكتب.');
+      return;
+    }
+    setStatus('يُطلب الإيقاف…');
+    if (!(await sendUplink({ type: 'stop', run: run }, 'أمر الإيقاف'))) return;
+    // القناة تردّ 409 عند رمز دور قديم؛ postFrame يرمي عندها فيظهر الفشل أعلاه.
+    hideCard();
+    setStatus('أُرسل أمر الإيقاف — أوقف سطح المكتب الدور.');
   }
 
   async function registerServiceWorker() {

@@ -63,6 +63,8 @@ const MAX_ENVELOPE_ID = 200;
 
 // القرارات المسموحة من الجوال — قائمة مغلقة، بلا «دائماً» وبلا bypass
 const DECISIONS = new Set(['allow', 'allow_turn', 'deny']);
+// رمز الدور المعتم المرافق لأمر الإيقاف (§7.7.5) — الإيقاف خارج DECISIONS عمداً
+const RUN_TOKEN_RE = /^[a-f0-9]{16}$/;
 
 const SAFE_DEVICE_HEX = /^[a-f0-9]{16,128}$/;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -608,6 +610,21 @@ async function start(deps, opts) {
       try { payload = JSON.parse(plaintext.toString('utf8') || 'null'); } catch { payload = null; }
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         sendJson(res, 400, { ok: false, error: 'bad_payload' });
+        return;
+      }
+
+      // الإيقاف **نوع رسالة مستقل** لا قرار رابع: `resolveDecision` مربوطة بظرف
+      // معلّق والإيقاف لا ظرف له. وهو تقليص سلطة، ففشله الآمن هو التوقف.
+      if (payload.type === 'stop') {
+        const run = typeof payload.run === 'string' ? payload.run : '';
+        if (!RUN_TOKEN_RE.test(run)) { sendJson(res, 400, { ok: false, error: 'bad_run' }); return; }
+        let stopped = false;
+        if (typeof deps.onStop === 'function') {
+          try { stopped = deps.onStop(run) === true; } catch { stopped = false; }
+        }
+        if (!stopped) { sendJson(res, 409, { ok: false, error: 'stale_run' }); return; }
+        touch(deviceId);
+        sendJson(res, 200, { ok: true });
         return;
       }
 

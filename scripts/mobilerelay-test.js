@@ -193,8 +193,12 @@ async function run() {
   assert(!pairBox.includes('a1b2c3d4'), 'pairId الخام لا يظهر في معرّف الصندوق');
 
   // ── تشغيل العميل ─────────────────────────────────────────────────────────
+  // رمز الدور المعتم ومقبض الإيقاف كما يحقنهما main.js (§7.7.5)
+  const CURRENT_RUN = 'b7c8d9e0f1a2b3c4';
+  const stopCalls = [];
   const client = mobilerelay.start({
     crypto: mobilecrypto, pair: store, envelope: mobileenvelope, transport, identity,
+    onStop: (run) => { stopCalls.push(run); return run === CURRENT_RUN; },
   }, { relayUrl: relay.url, pollTimeoutMs: 800 });
 
   try {
@@ -274,6 +278,36 @@ async function run() {
       await transport.post(relay.url + '/m/' + mobileBoxes.toDesktop, reply);
       equal(await settled, decision, decision + ': القرار حُسم عبر الوسيط');
     }
+
+    // ── الإيقاف عبر الوسيط: نوع رسالة مستقل لا قرار رابع (§7.7.5) ──────────
+    const stopId = 'toolu_relay_stop';
+    const stopPending = client.offerPermission({
+      id: stopId, tool: 'Bash', input: { command: 'sleep 1' },
+      cwd: tempRoot, engine: 'sdk', session_id: 'relay-test',
+    }, { ttlMs: 30000, run: CURRENT_RUN });
+    const stopFrame = await waitFor(() => {
+      const queue = relay.boxes.get(mobileBoxes.toMobile);
+      return queue && queue.length ? queue.shift() : null;
+    }, 4000, 'وصول ظرف الإيقاف');
+    const stopOpened = JSON.parse(mobilecrypto.open(mobileSession, stopFrame).toString('utf8'));
+    equal(stopOpened.envelope.run, CURRENT_RUN, 'رمز الدور المعتم عبر الوسيط');
+
+    await transport.post(relay.url + '/m/' + mobileBoxes.toDesktop,
+      mobilecrypto.seal(mobileSession, Buffer.from(JSON.stringify({ type: 'stop', run: CURRENT_RUN }), 'utf8')));
+    await waitFor(() => (stopCalls.length === 1 ? true : null), 4000, 'بلوغ أمر الإيقاف سطح المكتب');
+    equal(stopCalls[0], CURRENT_RUN, 'وصل رمز الدور الصحيح عبر الوسيط');
+
+    // رمز قديم يُرفض، ومشوّه لا يبلغ سطح المكتب أصلاً
+    await transport.post(relay.url + '/m/' + mobileBoxes.toDesktop,
+      mobilecrypto.seal(mobileSession, Buffer.from(JSON.stringify({ type: 'stop', run: 'ffffffffffffffff' }), 'utf8')));
+    await transport.post(relay.url + '/m/' + mobileBoxes.toDesktop,
+      mobilecrypto.seal(mobileSession, Buffer.from(JSON.stringify({ type: 'stop', run: 'bad' }), 'utf8')));
+    await waitFor(() => (stopCalls.length === 2 ? true : null), 4000, 'الرمز القديم بلغ المكتب ورُفض');
+    await new Promise((r) => setTimeout(r, 300));
+    equal(stopCalls.length, 2, 'الرمز المشوّه لم يبلغ سطح المكتب');
+    equal(stopPending instanceof Promise, true, 'الظرف بقي معلّقاً — الإيقاف ليس قراراً عليه');
+    client.withdraw(stopId);
+    equal(await stopPending, null, 'الظرف سُحب بلا قرار');
 
     // ── حارس الموافقة القديمة ──────────────────────────────────────────────
     const staleId = 'toolu_relay_stale';

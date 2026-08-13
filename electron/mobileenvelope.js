@@ -21,6 +21,9 @@ const MAX_CHANGE_LINES = 40;
 const MAX_CHANGE_LINE_CHARS = 200;
 const MAX_CHANGE_BYTES = 6 * 1024;
 const MAX_CHANGE_SOURCE_CHARS = 64 * 1024;
+
+// رمز الدور المعتم الذي يعيده الهاتف مع أمر الإيقاف (§7.7.5)
+const RUN_TOKEN_RE = /^[a-f0-9]{16}$/;
 const MAX_INPUT_TEXT = 128 * 1024;
 const MAX_INPUT_NODES = 512;
 const MAX_INPUT_KEYS = 96;
@@ -495,6 +498,9 @@ function buildChecked(req, ctx) {
     ? (inputOk && metadataOk ? buildChange(tool, request.input) : changeUnavailable('malformed'))
     : null;
   if (change) envelope.change = change;
+  // رمز الدور المعتم: يحمله الهاتف ليعيده مع أمر الإيقاف، فلا يقتل أمرٌ قديم دوراً
+  // لاحقاً بريئاً. معتم وعشوائي لكل دور — عدّادٌ متسلسل كان سيُمكّن إيقافاً استباقياً.
+  if (RUN_TOKEN_RE.test(String(context.run || ''))) envelope.run = String(context.run);
   return envelope;
 }
 

@@ -128,6 +128,25 @@ function loadPwaAllowGate() {
   return sourceFunction(source, 'canAllowFromPhone', {});
 }
 
+/**
+ * حارس ساكن: مقبض الإيقاف **موصول فعلاً** بالنقلين.
+ *
+ * نمط «موصول لكن غير مربوط» أوقف الميزة كلها من قبل: `mobilerelay` كان يعرض
+ * `awaitPairing` و`main.js` لا يناديه (§7.5هـ/3). عقدٌ صحيح على الطرفين لا يعني
+ * وصلاً — ولا يمسك الغيابَ اختبارٌ يشغّل كل طرف وحده.
+ */
+function assertStopWiring() {
+  const source = fs.readFileSync(path.join(appRoot, 'electron', 'main.js'), 'utf8');
+  assert(/function handleMobileStop\s*\(/.test(source), 'main.js يعرّف handleMobileStop');
+  const wired = source.match(/onStop\s*:\s*handleMobileStop/g) || [];
+  equal(wired.length, 2, 'main.js يصل handleMobileStop بالنقلين (محلي + وسيط)');
+  assert(/mobileRunToken = randomBytes\(/.test(source), 'main.js يولّد رمز دور معتم لكل دور');
+  assert(/run:\s*mobileRunToken/.test(source), 'main.js يمرّر رمز الدور إلى الظرف');
+  // الإيقاف يمر بمسار satr:stop نفسه لا بمسار ثانٍ يتباعد عنه
+  assert(/function handleMobileStop[\s\S]{0,900}stopAll\(false\)/.test(source),
+    'الإيقاف من الجوال يستدعي stopAll نفسه');
+}
+
 function loadPwaPairingParser(pwaCrypto) {
   const source = fs.readFileSync(path.join(appRoot, 'pwa', 'app.js'), 'utf8');
   // نفحص **العقد لا شكل التنفيذ**: قراءة الـhash، والتعامل مع البادئة `#pair=`،
@@ -206,12 +225,16 @@ async function run() {
   fs.writeFileSync(storeFile, JSON.stringify({ identity, devices: [] }), 'utf8');
   const store = mobilepair.createStore({ file: storeFile });
   const tlsMaterial = mobiletls.ensureCert('127.0.0.1');
+  // رمز الدور المعتم ومقبض الإيقاف: يُحقنان كما يفعل main.js، ونراقب الاستدعاء (§7.7.5)
+  const CURRENT_RUN = 'a1b2c3d4e5f60718';
+  const stopDeps = { onStop: () => false };
   const link = await mobilelink.start({
     crypto: mobilecrypto,
     pair: store,
     envelope: mobileenvelope,
     identity,
     app: { getAppPath: () => appRoot },
+    onStop: (run) => stopDeps.onStop(run),
   }, { host: '127.0.0.1', port: 0, pollTimeoutMs: 1000 });
 
   try {
@@ -334,6 +357,8 @@ async function run() {
      * كل ما دون ذلك يختبر قراءة الحارس لا قراءة الهاتف — وهو ما ترك العطل
      * الثامن يمرّ بينما 43 فحصاً خضراء (§5.5.5).
      */
+    assertStopWiring();
+
     const allowGate = loadPwaAllowGate();
     const writeCases = [
       {
@@ -444,6 +469,74 @@ async function run() {
     );
     equal(await unknownSettled, 'deny', 'أداة مجهولة: الرفض يبقى متاحاً');
 
+    /* ───── §7.7.5: الإيقاف نوع رسالة مستقل، ويوقف الدور فعلاً ─────
+     * كان `stopAgent()` يوقف الاستقصاء محلياً ويعلن «متوقف يدوياً» بلا إرسال بايتة،
+     * والوكيل يواصل الكتابة في ملفات المستخدم.
+     */
+    const stopCalls = [];
+    stopDeps.onStop = (run) => { stopCalls.push(run); return run === CURRENT_RUN; };
+
+    // رمز الدور يصل الهاتف داخل الظرف — بلا ذلك لا يعرف ماذا يوقف
+    const runSettled = link.offerPermission({
+      id: 'toolu_run_token', tool: 'Bash', input: { command: 'sleep 1' },
+      cwd: appRoot, engine: 'sdk', session_id: 'mobile-integration',
+    }, { ttlMs: 30000, run: CURRENT_RUN });
+    const runPolled = await request(
+      new URL('poll?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert, 'GET'
+    );
+    const runEnvelope = envelopeFromFrame(
+      JSON.parse(new TextDecoder().decode(await pwaCrypto.open(session, new Uint8Array(runPolled.body))))
+    );
+    equal(runEnvelope.run, CURRENT_RUN, 'رمز الدور المعتم وصل الهاتف داخل الظرف');
+
+    // أمر إيقاف بالرمز الصحيح ⇒ يصل سطح المكتب فعلاً
+    const stopFrame = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
+      type: 'stop', run: CURRENT_RUN,
+    })));
+    const stopped = await request(
+      new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert, 'POST', Buffer.from(stopFrame)
+    );
+    equal(stopped.status, 200, 'أمر الإيقاف قُبل');
+    equal(stopCalls.length, 1, 'سطح المكتب استُدعي مرة واحدة للإيقاف');
+    equal(stopCalls[0], CURRENT_RUN, 'وصل رمز الدور الصحيح');
+
+    // رمز دور قديم ⇒ يُرفض ولا يقتل دوراً لاحقاً بريئاً
+    const staleStop = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
+      type: 'stop', run: 'ffffffffffffffff',
+    })));
+    const staleStopRes = await request(
+      new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert, 'POST', Buffer.from(staleStop)
+    );
+    equal(staleStopRes.status, 409, 'رمز دور قديم يُرفض');
+    equal(stopCalls.length, 2, 'وصل الأمر لكن الرمز لم يطابق');
+
+    // رمز مشوّه ⇒ يُرفض **قبل** بلوغ سطح المكتب
+    const badStop = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
+      type: 'stop', run: 'not-a-run-token',
+    })));
+    const badStopRes = await request(
+      new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert, 'POST', Buffer.from(badStop)
+    );
+    equal(badStopRes.status, 400, 'رمز مشوّه يُرفض');
+    equal(stopCalls.length, 2, 'الرمز المشوّه لم يبلغ سطح المكتب أصلاً');
+
+    // الإيقاف **ليس قراراً رابعاً**: القائمة المغلقة لم تتوسّع
+    const fakeDecision = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
+      envelope_id: 'toolu_run_token', decision: 'stop',
+    })));
+    const fakeRes = await request(
+      new URL('reply?device=' + encodeURIComponent(deviceId), parsed.payload.url),
+      tlsMaterial.cert, 'POST', Buffer.from(fakeDecision)
+    );
+    equal(fakeRes.status, 400, '«stop» كقرار رابع مرفوض — القائمة المغلقة لم تتوسّع');
+
+    link.withdraw('toolu_run_token');
+    await runSettled;
+
     const staleFrame = await pwaCrypto.seal(session, new TextEncoder().encode(JSON.stringify({
       envelope_id: 'toolu_never_pending',
       decision: 'allow',
@@ -538,6 +631,8 @@ async function run() {
       MOBILE_DECISIONS: new Set(['allow', 'allow_turn', 'deny']),
       MOBILE_PERMISSION_TTL_MS: 1000,
       runSeq: 7,
+      // رمز الدور المعتم كما يضبطه main.js عند بدء كل دور (§7.7.5)
+      mobileRunToken: CURRENT_RUN,
       SAFE_MOBILE_PERMISSION: /^[A-Za-z0-9_.:-]{1,256}$/,
       safeMobileDevices: () => [{ deviceId, revoked: false }],
       mobileDebug: (reason, extra) => { offerTrace.push(String(reason) + (extra ? ':' + JSON.stringify(extra) : '')); },

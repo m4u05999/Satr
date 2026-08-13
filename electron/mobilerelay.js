@@ -44,6 +44,8 @@ const MAX_DEVICES_POLLED = 10;
 const SAFE_DEVICE_HEX = /^[a-f0-9]{16,128}$/;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SAFE_BOX = /^[a-f0-9]{32}$/;
+// رمز الدور المعتم المرافق لأمر الإيقاف (§7.7.5)
+const RUN_TOKEN_RE = /^[a-f0-9]{16}$/;
 
 function safeDeviceId(value) {
   if (typeof value !== 'string') return null;
@@ -250,10 +252,20 @@ function start(deps, opts) {
     let payload = null;
     try { payload = JSON.parse(plaintext.toString('utf8') || 'null'); } catch { return false; }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    // الإيقاف **نوع رسالة مستقل** لا قرار رابع: `resolveDecision` مربوطة بظرف
+    // معلّق (`byId.get`) والإيقاف لا ظرف له — إقحامه فيها كان يستلزم ظرفاً وهمياً.
+    if (payload.type === 'stop') return requestStop(payload.run);
     const envelopeId = typeof payload.envelope_id === 'string' ? payload.envelope_id : '';
     const decision = typeof payload.decision === 'string' ? payload.decision : '';
     // حارس الموافقة القديمة داخل النواة المشتركة
     return pending.resolveDecision(envelopeId, decision);
+  }
+
+  /** يمرّر أمر إيقاف مُتحقَّقاً من شكله؛ مطابقة رمز الدور تجري في `main.js`. */
+  function requestStop(run) {
+    if (typeof d.onStop !== 'function') return false;
+    if (typeof run !== 'string' || !RUN_TOKEN_RE.test(run)) return false;
+    try { return d.onStop(run) === true; } catch { return false; }
   }
 
   /**

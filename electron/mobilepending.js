@@ -86,6 +86,8 @@ function createPendingStore(deps) {
       envelope = d.buildEnvelope(rawReq, {
         project: typeof context.project === 'string' ? context.project : undefined,
         taskSummary: typeof context.taskSummary === 'string' ? context.taskSummary : undefined,
+        // رمز الدور المعتم (§7.7.5): يعيده الهاتف مع أمر الإيقاف. الظرف يتحقق من شكله.
+        run: typeof context.run === 'string' ? context.run : undefined,
         createdAt,
         ttlMs,
       });
