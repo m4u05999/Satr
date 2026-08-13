@@ -740,25 +740,31 @@ M2D:  { type:'stop', run:<16 hex> }     ← نوع مستقل، خارج DECISIO
 D2M: { v:1, type:'state', state:{ … } }
 ```
 
-`state` **قائمة حقول مغلقة، اثنا عشر مفتاحاً، لا ثالث عشر**:
+`state` **قائمة حقول مغلقة، أحد عشر مفتاحاً بالضبط — لا عاشر ولا ثاني عشر**:
 
 ```
-boot      8 hex     عشوائي لكل عملية سطح مكتب (يميّز إعادة التشغيل)
-seq       int ≥1    يتزايد مع كل لقطة مبثوثة (انتقالاً كانت أو نبضة)
-ttl_ms    int       ثابت 60000 — عمر الإيجار (lease)
-run       16 hex | ''   رمز الدور المعتم نفسه (§7.7.5)
-phase     'idle'|'working'|'waiting_permission'|'done'|'error'|'stopped'
-project   string ≤160 نقطة Unicode (cleanText)
-task      string ≤160 نقطة Unicode (cleanText) — عنوان المهمة الجارية وحدها، أو ''
-tasks     { total, pending, in_progress, completed, blocked }   ints 0..999
-edits     { files, added, removed }        ints — **عدد فقط، بلا أي اسم ملف**
-cost_usd  number ≥0 مقرَّب 4 منازل | null
-verify    'pass'|'fail'|''
+ 1. boot      8 hex     عشوائي لكل عملية سطح مكتب (يميّز إعادة التشغيل)
+ 2. seq       int ≥1    يتزايد مع كل لقطة مبثوثة (انتقالاً كانت أو نبضة)
+ 3. ttl_ms    int       ثابت 60000 — عمر الإيجار (lease)
+ 4. run       16 hex | ''   رمز الدور المعتم نفسه (§7.7.5)
+ 5. phase     'idle'|'working'|'waiting_permission'|'done'|'error'|'stopped'
+ 6. project   string ≤160 نقطة Unicode (cleanText)
+ 7. task      string ≤160 نقطة Unicode (cleanText) — عنوان المهمة الجارية وحدها، أو ''
+ 8. tasks     { total, pending, in_progress, completed, blocked }   ints 0..999
+ 9. edits     { files, added, removed }        ints — **عدد فقط، بلا أي اسم ملف**
+10. cost_usd  number ≥0 مقرَّب 4 منازل | null
+11. verify    'pass'|'fail'|''
 ```
+
+> **تصحيح مثبَّت (‏2026-08-13، أثناء التنفيذ)**: كُتب العدد أولاً «اثنا عشر» بينما
+> القائمة أحد عشر. أمسكه منفّذ الهاتف قبل أن يبني عليه — وهو **حرفياً** نمط الأعطال
+> الثمانية: عقدٌ بقارئين، أحدهما يعدّ 11 والآخر يضيف ثاني عشر ليطابق الرقم، فيرفض
+> الهاتف كل إطار بصمت. العدد الملزم **أحد عشر**، والقائمة المرقّمة أعلاه هي الحكم
+> عند أي تعارض مستقبلي بين نصٍّ ورقم.
 
 **الممنوع صراحةً — يحرسه الحارس بفحص نصّي على الإطار المُسلسَل**: نص المساعد
 المتدفق · ذيل الطرفية · مدخلات أو مخرجات الأدوات · البرومبت · أي مسار (مطلق أو
-نسبي) · اسم ملف · `session_id` · `cwd` · اسم المحرك · أي حقل خارج الاثني عشر.
+نسبي) · اسم ملف · `session_id` · `cwd` · اسم المحرك · أي حقل خارج الأحد عشر.
 سقف الإطار **2KiB** قبل الختم (‏`MAX_FRAME_BYTES` البالغ 64KiB ليس ترخيصاً).
 
 **عناوين المهام نصّ حرّ**: `cleanText` (‏`scrubSecrets` + إزالة تحكم/Bidi + قصّ).
