@@ -135,7 +135,9 @@
     "test:mobile-integration": "node scripts/mobile-integration-test.js",
     "test:mobile-relay": "node scripts/mobilerelay-test.js",
     "test:qr": "node scripts/qr-test.js",
-    "test:pwa-dom": "electron scripts/pwa-dom-live-test.js"
+    "test:pwa-dom": "electron scripts/pwa-dom-live-test.js",
+    "test:langmetric": "node scripts/langmetric-test.js",
+    "probe:language": "node scripts/language-probe.js"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",
