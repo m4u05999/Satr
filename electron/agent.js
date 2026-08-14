@@ -28,6 +28,7 @@ const skillCatalog = require('./skills'); // .agents قياسي + .claude توا
 const verify = require('./verify'); // تحقق صريح مستقل عن أدوات المتصفح
 const memory = require('./memory'); // ذاكرة مشروع شخصية بموافقة صريحة
 const claudeElicitation = require('./elicitation'); // إدخال موصّلات MCP غير السري بحوار عربي fail-closed
+const langanchor = require('./langanchor'); // مرساة اللغة الذيلية (OBS-001 دفعة 4)
 const keys = require('./keys');
 const testsprite = require('./testsprite');
 const testspritejobs = require('./testspritejobs');
@@ -90,6 +91,20 @@ function rememberUserMessage(sessionId, userMessageId) {
 // before = المحتوى الأصلي أو null إن كان الملف جديداً (التراجع = حذفه).
 const editSnapshots = new Map();
 const MAX_SNAPSHOTS = 40; // سقف عدد اللقطات المحفوظة (إخلاء الأقدم)
+
+// جلسات ضُغطت ولم يبدأ دورها التالي بعد (OBS-001 دفعة 4): أول دور بعد الضغط يأخذ
+// المرساة القوية لأن الملخص قد يكون إنجليزياً فيبدأ السياق الجديد ملوثاً.
+// سقف بسيط يمنع النمو بلا حدود عبر عمر التطبيق.
+const compactedSessions = new Set();
+const MAX_COMPACTED_SESSIONS = 200;
+function markCompacted(sessionId) {
+  if (!sessionId) return;
+  if (compactedSessions.size >= MAX_COMPACTED_SESSIONS) {
+    const oldest = compactedSessions.values().next().value;
+    compactedSessions.delete(oldest);
+  }
+  compactedSessions.add(sessionId);
+}
 
 function rememberSnapshot(id, snap) {
   editSnapshots.set(id, snap);
@@ -831,15 +846,27 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   let closeInput;
   const inputClosed = new Promise((resolve) => { closeInput = resolve; });
 
+  // مرساة اللغة الذيلية (OBS-001 دفعة 4): تُلحق **آخر** محتوى الدور — الحداثة تغلب
+  // الموضع صفر في السياقات الطويلة، والذيل خارج البادئة المخبَّأة فكلفة الكاش صفر.
+  // القوية للدور الأول (‏!sessionId — مصير الجلسة يتحدد عند أول ردّ) ولأول دور بعد
+  // الضغط (الملخص قد يكون إنجليزياً فيبدأ السياق الجديد ملوثاً). التشغيلات المعزولة
+  // (internalPolicy) خارجها كبقية توسعات التشغيل العادي (fallback/checkpointing).
+  const anchorText = internalPolicy
+    ? '' : langanchor.anchor({ strong: !sessionId || compactedSessions.delete(sessionId) });
+
   // محتوى رسالة المستخدم: نص بسيط، أو مصفوفة كتل (نص + صور) عند وجود صور.
   // ترتيب الكتل: النص أولاً ثم الصور — والـ SDK يقبل source.type='base64'.
   function buildContent() {
-    if (!images || !images.length) return effectivePrompt;
+    if (!images || !images.length) {
+      return anchorText ? effectivePrompt + '\n\n' + anchorText : effectivePrompt;
+    }
     const blocks = [];
     if (effectivePrompt) blocks.push({ type: 'text', text: effectivePrompt });
     for (const im of images) {
       blocks.push({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } });
     }
+    // المرساة آخر الكتل — ذيلية حتى مع الصور
+    if (anchorText) blocks.push({ type: 'text', text: anchorText });
     return blocks;
   }
 
@@ -2027,6 +2054,10 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         if (!internalPolicy && !unsupportedElicitationNotified && isUnsupportedElicitationResult(msg)) {
           unsupportedElicitationNotified = true;
           emit({ type: 'stderr', text: 'لا يدعم إصدار Claude Code المستخدم طلب إدخال الموصّلات. حدّث Claude Code أو أكمل المصادقة عبر /mcp.' });
+        }
+        // ضغط المحادثة يعلّم الجلسة: دورها التالي يبدأ بمرساة اللغة القوية
+        if (msg && msg.type === 'system' && msg.subtype === 'compact_boundary' && observedSessionId) {
+          markCompacted(observedSessionId);
         }
         emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingTaskCreates, startedClaudeTaskIds);
         const agentProgress = sdkAgentProgressEvent(msg);

@@ -208,6 +208,7 @@ const chats = require('./chats');
 const agentTools = require('./tools'); // أدوات المحوّلات (2.1/2.2) — للتراجع عن تعديلاتها
 const features = require('./features');
 const activity = require('./activity');
+const langshadow = require('./langshadow'); // حارس اللغة بوضع الظلّ (OBS-001 دفعة 5)
 const keys = require('./keys');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
@@ -1637,8 +1638,27 @@ function notifyObservers(obj, meta) {
   try { features.notify(obj, meta); } catch (e) { /* عزل Enterprise */ }
 }
 
+/**
+ * حارس اللغة بوضع الظلّ (OBS-001 دفعة 5) — نقطة الاختناق الواحدة بقرار العصف:
+ * كل رسالة مساعد **مكتملة** من أي محرك تمرّ هنا. يقيس نثر كتل النص ويسجّل أرقاماً
+ * فقط (لا نص) في سجل الظلّ؛ لا يعرض ولا يعيد توليداً ولا يترجم. شظايا stream_text
+ * خارجه عمداً (الرسالة المكتملة فقط)، وكل فشل مبتلَع فلا يمسّ الدور.
+ */
+function shadowMeasureAssistant(obj, engine) {
+  if (!obj || obj.type !== 'assistant' || !obj.message || !Array.isArray(obj.message.content)) return;
+  for (const block of obj.message.content) {
+    if (!block || block.type !== 'text' || typeof block.text !== 'string') continue;
+    langshadow.record({
+      text: block.text,
+      engine,
+      phase: block.phase === 'commentary' ? 'commentary' : 'final_answer',
+    });
+  }
+}
+
 function emitToWindow(obj, engineOverride) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:event', obj);
+  try { shadowMeasureAssistant(obj, engineOverride || lastEngine); } catch { /* ظلٌّ لا يمسّ الدور */ }
   // Community يسجل metadata مختصرة، وEnterprise يلتقط التدقيق/الاستهلاك عبر مجراه.
   // URL طلب المصادقة يصل للحوار فقط ولا يدخل سجل المراقبة (قد يحمل state/query حساسة).
   const observed = obj && obj.type === 'elicitation_request'

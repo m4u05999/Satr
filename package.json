@@ -137,7 +137,8 @@
     "test:qr": "node scripts/qr-test.js",
     "test:pwa-dom": "electron scripts/pwa-dom-live-test.js",
     "test:langmetric": "node scripts/langmetric-test.js",
-    "probe:language": "node scripts/language-probe.js"
+    "probe:language": "node scripts/language-probe.js",
+    "test:langshadow": "node scripts/langshadow-test.js"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",

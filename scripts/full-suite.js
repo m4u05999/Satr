@@ -16,6 +16,7 @@ const SUITE = [
   'test:tasks',
   'test:observations',
   'test:langmetric',
+  'test:langshadow',
   'test:memory',
   'test:design-guard',
   'test:repomap',

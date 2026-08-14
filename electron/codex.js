@@ -32,6 +32,7 @@ const memory = require('./memory'); // ذاكرة مشروع شخصية — حق
 const testsprite = require('./testsprite');
 const testspritejobs = require('./testspritejobs');
 const envbrief = require('./envbrief');
+const langanchor = require('./langanchor'); // مرساة اللغة الذيلية (OBS-001 دفعة 4)
 const execguard = require('./execguard');
 const browserpolicy = require('./browserpolicy');
 const { queryCodex } = require('./codexrpc');
@@ -244,6 +245,17 @@ function sanitizeSteerText(raw) {
 // يعطي رسالة عربية هادئة بدل رقم مختلق.
 // نستعمل `last` لا `total`: `total` تراكمي عبر الخيط فيكبر أبداً ولا يعكس الإشغال.
 const contextSnapshots = new Map();
+
+// خيوط ضُغطت ولم يبدأ دورها التالي (OBS-001 دفعة 4) — نظير compactedSessions في agent.js
+const compactedThreads = new Set();
+const MAX_COMPACTED_THREADS = 200;
+function markCompactedThread(threadId) {
+  if (!threadId) return;
+  if (compactedThreads.size >= MAX_COMPACTED_THREADS) {
+    compactedThreads.delete(compactedThreads.values().next().value);
+  }
+  compactedThreads.add(threadId);
+}
 const MAX_CONTEXT_SNAPSHOTS = 100;
 const CONTEXT_UNAVAILABLE = 'لم يصل قياس سياق من Codex بعد — أرسل رسالة في هذه الجلسة ثم حدّث اللوحة.';
 const COMPACT_COMMAND = '/compact';
@@ -1700,6 +1712,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // turn/completed، فيتولّاهما onNotification ويبقى session_id نفسه.
       if (typeof prompt === 'string' && prompt.trim() === COMPACT_COMMAND) {
         compacting = true;
+        // أول دور بعد الضغط يأخذ المرساة القوية (OBS-001 دفعة 4) — الملخص قد يكون
+        // إنجليزياً فيبدأ السياق الجديد ملوثاً؛ تكافؤ compactedSessions في agent.js.
+        markCompactedThread(threadId);
         try {
           await request('thread/compact/start', { threadId }, BOOT_REQUEST_TIMEOUT_MS);
         } catch (e) {
@@ -1730,6 +1745,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         }
       }
       if (!inputItems.length) inputItems.push({ type: 'text', text: effectivePrompt || '', text_elements: [] });
+      // مرساة اللغة الذيلية (OBS-001 دفعة 4) — آخر عنصر إدخال دائماً، بتكافؤ agent.js:
+      // القوية للدور الأول (‏!sessionId) ولأول دور بعد الضغط. السياقات المعزولة
+      // (المراجع/العصف — browserControl:false الصريح) خارجها كبقية حقن السياق أعلاه.
+      if (browserControl !== false) {
+        inputItems.push({
+          type: 'text',
+          text: langanchor.anchor({ strong: !sessionId || compactedThreads.delete(threadId) }),
+          text_elements: [],
+        });
+      }
       const turnParams = { threadId, input: inputItems, model: resolvedModel };
       const startedTurn = await request('turn/start', turnParams, BOOT_REQUEST_TIMEOUT_MS);
       turnId = startedTurn && startedTurn.turn && startedTurn.turn.id || turnId;

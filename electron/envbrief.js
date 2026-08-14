@@ -3,6 +3,7 @@
 'use strict';
 
 const runtimeenv = require('./runtimeenv');
+const langanchor = require('./langanchor');
 
 const SDK_TOOL_NAMES = Object.freeze([
   'run_in_terminal', 'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task',
@@ -84,7 +85,10 @@ function build(engine, model, options) {
   const compact = Boolean(options && options.compact);
   const sections = [
     'أنت تعمل داخل تطبيق «سطر» (Satr)، واجهة سطح مكتب عربية تشغّل الوكيل وتعرض أدواته وأذوناته للمستخدم بشفافية.',
-    'تواصل بالعربية افتراضياً في الشرح والردود، وأبقِ الكود والمسارات والأوامر والمصطلحات التقنية بالإنجليزية LTR؛ واتبع لغة أخرى إن طلبها المستخدم صراحةً.',
+    // نص عقد اللغة من مصدره الواحد (OBS-001 دفعة 4): الصياغة القديمة «في الشرح
+    // والردود» كانت تُفهَم على الإجابات فيسقط سرد العمل الوكيلي إلى الإنجليزية
+    // من أول سطر — التشخيص المقيس في docs/LANGUAGE-CONTRACT.md.
+    langanchor.CONTRACT_LINE,
     'الأدوات المتاحة فعلياً لهذا المحرك: ' + names.join(', ') + '.',
     executionPolicy(normalized),
     browserPolicy(normalized !== 'adapter'),
