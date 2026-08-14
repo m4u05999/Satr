@@ -51,8 +51,21 @@ for (const engine of ['sdk', 'codex', 'kimi-code']) {
 for (const file of [
   'electron/agent.js', 'electron/codex.js', 'electron/kimi.js',
   'electron/adapters/openai-compatible.js', 'electron/adapters/gemini.js',
+  // فجوتا العصف الثلاثي (OBS-001، 2026-08-15): هذان السطحان كانا **بلا موجز
+  // إطلاقاً** — فلا هوية «سطر» ولا تعليمة العربية. لا يخرجان من القائمة ثانية.
+  'electron/adapters/openai-responses.js', 'electron/adapters/claude-cli.js',
 ]) {
   assert(fs.readFileSync(path.join(root, file), 'utf8').includes('envbrief.build('), file + ' لا يستهلك envbrief');
+}
+
+// غلاف الذاكرة يُحقن كل دور يلتقط ذاكرة: بقاؤه عربياً جزء من عقد اللغة (OBS-001) —
+// كان «Treat it as contextual knowledge…» غرزاً إنجليزياً في كل دور.
+{
+  const memorySource = fs.readFileSync(path.join(root, 'electron', 'memory.js'), 'utf8');
+  assert(!memorySource.includes('Treat it as contextual knowledge'),
+    'غلاف الذاكرة عاد إنجليزياً — قناة تخفيف التعليمة العربية بعينها');
+  assert(memorySource.includes('ذاكرة مشروع شخصية اعتمدها المستخدم'),
+    'غلاف الذاكرة العربي غائب');
 }
 
 console.log('envbrief: نجح — جرد الأدوات الفعلي والسياسات موحّدان لكل المحركات.');

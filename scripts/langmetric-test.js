@@ -8,7 +8,9 @@
 'use strict';
 
 const assert = require('assert');
-const { arabicShare, structuralSlips, proseOf } = require('../electron/langmetric');
+const {
+  arabicShare, structuralSlips, proseOf, isSlip, METRIC_VERSION,
+} = require('../electron/langmetric');
 
 let checks = 0;
 function ok(cond, msg) { checks += 1; assert(cond, msg); }
@@ -96,6 +98,39 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
   const m = arabicShare('The WebSocket handler reconnects after every failure automatically.');
   ok(m.share !== null && m.share < 0.1,
     'الجملة الإنجليزية حول المصطلح تبقى مقيسة انزلاقاً (' + (m.share && m.share.toFixed(2)) + ')');
+}
+
+// ── 10) دالة الحكم isSlip — عتبات العصف المجمَّدة ────────────────────────────
+{
+  ok(Number.isInteger(METRIC_VERSION) && METRIC_VERSION >= 2,
+    'المقياس موسوم بإصدار (قرار العصف: لا أرقام بلا metric_version)');
+
+  // انزلاق لقطة المالك: نثر إنجليزي طويل ⇒ slip بحصّة
+  const slipped = isSlip('The review found three issues in the permission layer. '
+    + 'First the handler swallows errors, second the retry logic never fires, and '
+    + 'third the audit trail misses tool identifiers entirely across engines.');
+  ok(slipped.slip === true && slipped.reason === 'share', 'النثر الإنجليزي الطويل انزلاق صريح');
+
+  // الردّ العربي السليم ⇒ لا انزلاق
+  const fine = isSlip('راجعت الطبقات الثلاث كاملة ووجدت أن معالج الأذونات يبتلع الأخطاء، '
+    + 'وأن منطق إعادة المحاولة لا يعمل إطلاقاً، وأن سجل التدقيق لا يحمل معرّفات الأدوات. '
+    + 'اقتراحي أن نبدأ بإصلاح المعالج لأنه جذر المشكلتين الأخريين.');
+  ok(fine.slip === false && fine.reason === 'ok', 'الردّ العربي السليم لا يُتّهم');
+
+  // القصير خارج الحكم — لا إنذارات كاذبة على «Done» ونحوها
+  ok(isSlip('Done, all tests pass.').slip === false
+    && isSlip('Done, all tests pass.').reason === 'short', 'القصير خارج الحكم');
+
+  // الكودي الخالص خارج الحكم
+  ok(isSlip('```bash\nnpm test\n```').reason === 'no_prose', 'الكودي الخالص خارج الحكم');
+
+  // البنية وحدها تدين حتى لو رفعت المصطلحاتُ الحصّةَ فوق العتبة
+  const structural = isSlip('إليك الملخص الكامل للمراجعة التي أجريتها اليوم على الطبقات:\n'
+    + '## Findings and open questions from the full review\n'
+    + '| Layer | Status | Every handler checked |\n'
+    + 'وسأكمل البقية غداً بإذن الله مع تقرير التغطية الشاملة للأدوات كلها.');
+  ok(structural.slip === true && structural.reason === 'structure',
+    'بنيتان إنجليزيتان تدينان ولو كانت الحصّة الإجمالية فوق العتبة');
 }
 
 console.log('langmetric-test: ok — ' + checks

@@ -14,6 +14,7 @@ const tools = require('../tools');
 const skillCatalog = require('../skills');
 const memory = require('../memory');
 const contextBudget = require('../context');
+const envbrief = require('../envbrief');
 const usage = require('./usage');
 
 const PROVIDER = 'openai';
@@ -359,7 +360,10 @@ function start(input, cwd, emit) {
     const builtContext = await contextBudget.buildBlindContext({
       cwd,
       prompt,
-      systemParts: [skillPrompt, memoryPrompt],
+      // فجوة مثبتة سدّها العصف الثلاثي (OBS-001، 2026-08-15): كان هذا المحوّل
+      // الوحيد بلا envbrief إطلاقاً — فلا هوية «سطر» ولا تعليمة العربية تصلانه.
+      // النمط نفسه في gemini.js:226 وopenai-compatible.js:274 حرفياً.
+      systemParts: [envbrief.build('adapter', model, { compact: true }), skillPrompt, memoryPrompt],
       history,
       toolDefinitions: RESPONSE_TOOLS,
     });

@@ -19,6 +19,16 @@
 const ARABIC_RE = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/g;
 const LATIN_RE = /[A-Za-z]/g;
 
+/**
+ * وسم إصدار المقياس — **مجمَّد بقرار العصف الثلاثي (2026-08-15)**.
+ *
+ * السبب: في التشغيل الحيّ الأول عُدِّل المقياس (فرع PascalCase) **بعد** جمع
+ * الأرقام، فصُفِّرت إشارتان رجعياً — رصده النقد الخصومي «حارساً أخضر كاذباً»
+ * محتملاً. القاعدة منذئذ: كل ملف نتائج يحمل `metric_version`، وأي تغيير في
+ * الإقصاءات أو العتبات يرفع الرقم، والأرقام لا تُقارن عبر إصدارين.
+ */
+const METRIC_VERSION = 2; // ‏1 = ما قبل فرع PascalCase (التشغيل الأول 2026-08-14)
+
 const FENCED_RE = /```[\s\S]*?(?:```|$)/g;
 const INLINE_CODE_RE = /`[^`\n]*`/g;
 const URL_RE = /\bhttps?:\/\/[^\s)>\]]+/g;
@@ -80,4 +90,38 @@ function structuralSlips(text) {
   return out;
 }
 
-module.exports = { arabicShare, structuralSlips, proseOf };
+/**
+ * دالة الحكم — **عتبات العصف الثلاثي المحافظة (2026-08-15)**، لا مجرد أرقام:
+ * كان يوجد مقياس بلا حَكَم، فكلُّ مستهلكٍ سيخترع عتبته وتتباعد الأحكام بصمت.
+ *
+ * لا حكم إلا إذا اجتمع شرطان (وإلا `{slip:false, reason:'short'|'no_prose'}`):
+ *   1. النثر ≥ MIN_STRONG_CHARS حرفاً قوياً — الردود القصيرة خارج الحكم.
+ *   2. `share < SHARE_THRESHOLD` **أو** ≥ STRUCTURAL_THRESHOLD بنية إنجليزية.
+ *
+ * العتبات محافظة عمداً (حصّة 0.5 لا 0.65): حارس يُطلق إنذارات كاذبة يُعطَّل ثم
+ * لا يحرس شيئاً — درس مكرر. رفعها لاحقاً قرار معايرة على بيانات القياس الرجعي،
+ * ويرفع `METRIC_VERSION`.
+ */
+const SHARE_THRESHOLD = 0.5;
+const MIN_STRONG_CHARS = 120;
+const STRUCTURAL_THRESHOLD = 2;
+
+function isSlip(text) {
+  const measured = arabicShare(text);
+  const strong = measured.arabic + measured.latin;
+  if (measured.share === null) return { slip: false, reason: 'no_prose', ...measured };
+  if (strong < MIN_STRONG_CHARS) return { slip: false, reason: 'short', ...measured };
+  const slips = structuralSlips(text);
+  if (measured.share < SHARE_THRESHOLD) {
+    return { slip: true, reason: 'share', structural: slips.length, ...measured };
+  }
+  if (slips.length >= STRUCTURAL_THRESHOLD) {
+    return { slip: true, reason: 'structure', structural: slips.length, ...measured };
+  }
+  return { slip: false, reason: 'ok', structural: slips.length, ...measured };
+}
+
+module.exports = {
+  arabicShare, structuralSlips, proseOf, isSlip,
+  METRIC_VERSION, SHARE_THRESHOLD, MIN_STRONG_CHARS, STRUCTURAL_THRESHOLD,
+};

@@ -13,6 +13,7 @@
 const { spawn } = require('child_process');
 const skillCatalog = require('../skills');
 const memory = require('../memory');
+const envbrief = require('../envbrief');
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
@@ -25,12 +26,21 @@ function start(input, cwd, emit) {
   const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
   const portablePrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true, includePaths: true });
   const memoryPrompt = memory.retrieve(cwd, prompt).text;
-  const contextPrompt = [portablePrompt, memoryPrompt].filter(Boolean).join('\n\n');
+  const environmentPrompt = '<satr_environment>\n'
+    + envbrief.build('adapter', model || 'default', { compact: true })
+    + '\n</satr_environment>';
+  const contextPrompt = [environmentPrompt, portablePrompt, memoryPrompt].filter(Boolean).join('\n\n');
 
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (sessionId) args.push('--resume', sessionId);
   if (permissionMode && permissionMode !== 'default') args.push('--permission-mode', permissionMode);
   if (model) args.push('--model', model);
+  // فجوة مثبتة سدّها العصف الثلاثي (OBS-001، 2026-08-15): الاحتياطي CLI كان بلا
+  // envbrief — فلا هوية «سطر» ولا تعليمة العربية تصلانه. **انحراف واعٍ عن حرف
+  // توصية العصف** (--append-system-prompt): هذا المسار يعمل بـshell:true على
+  // ويندوز، ونص عربي متعدد الأسطر وسيطةً = انهيار اقتباس مثبت (درس executor.ps1:
+  // stdin لا وسيطة). فيمرّ عبر stdin داخل وسم بيئة صريح قبل <user_request> —
+  // روح التوصية (لا خلط بطلب المستخدم) محفوظة بالفاصل.
 
   // detached على ويندوز = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: الطفل يأخذ
   // مجموعة عمليات وكونسولاً خاصّين به، فأي حدث تحكّم كونسول من خادم تطوير أو غيره
