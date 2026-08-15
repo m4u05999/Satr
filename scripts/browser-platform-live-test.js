@@ -101,13 +101,14 @@ async function main() {
       { ref: '#host', value: 'smtp-relay.brevo.com' },
       { ref: '#port', value: '587' },
     ]);
-    assert.deepStrictEqual(filled, { ok: true, filled: 2 }, 'fill_form لم يعبّئ الحقلين');
+    // توسيع صريح لعقد دفعة «صقل متصفح سطر»: نتائج الأفعال تحمل dispatched:true
+    assert.deepStrictEqual(filled, { ok: true, filled: 2, dispatched: true }, 'fill_form لم يعبّئ الحقلين');
     const visible = await preview.evaluate("[document.querySelector('#host').value,document.querySelector('#port').value]");
     assert(visible.ok && /smtp-relay\.brevo\.com/.test(visible.value) && /587/.test(visible.value), 'القيم غير السرّية لم تصل للحقول');
     assert.strictEqual((await preview.fillForm([{ ref: '#target', value: TRANSFER_SECRET }])).error, 'secret', 'fill_form قبل قيمة سرّية');
 
     const moved = await preview.transferField('', '#target', stored.transfer_id);
-    assert.deepStrictEqual(moved, { ok: true, moved: true }, 'لم تُلصق القيمة المنقولة في الصفحة الثانية');
+    assert.deepStrictEqual(moved, { ok: true, moved: true, dispatched: true }, 'لم تُلصق القيمة المنقولة في الصفحة الثانية');
     assert(!JSON.stringify(moved).includes(TRANSFER_SECRET), 'نتيجة اللصق سرّبت القيمة');
     assert.strictEqual((await preview.evaluate("document.querySelector('#target').value")).error, 'secret_result', 'evaluate كشف السر المنقول');
 
