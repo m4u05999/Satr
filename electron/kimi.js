@@ -617,6 +617,7 @@ function create(deps) {
         cwd,
         extraTools: buildSatrMcpTools(cwd, shared.skillContextRef, emitShared),
         openPreview: (url) => emitShared({ type: 'preview_open', url }),
+        closePreview: () => emitShared({ type: 'preview_close' }),
         onActivity: (method, tool) => {
           if (method === 'tools/call' && tool) try { preview.emitAgentActivity(tool); } catch { /* تحسين */ }
         },

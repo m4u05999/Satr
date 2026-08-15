@@ -185,6 +185,7 @@ const alwaysAllowed = new Set();
 // الفصل مقصود: قيادة المتصفح ≠ تنفيذ أوامر على الجهاز. الأسماء مؤهَّلة بادئة خادم MCP.
 const BROWSER_AUTO_TOOLS = new Set([
   'mcp__satr-terminal__open_preview',
+  'mcp__satr-terminal__close_preview',
   'mcp__satr-terminal__read_page',
   'mcp__satr-terminal__browser_console',
   'mcp__satr-terminal__browser_network',
@@ -1405,6 +1406,21 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         return { content: [{ type: 'text', text: 'فُتحت المعاينة المدمجة على ' + url }] };
       }
     );
+    // OBS-020: أداة إغلاق المعاينة — نظيرة open_preview بالعكس. تبثّ preview_close
+    // للقشرة فتستدعي previewEl.close() (نفس مسار زر ✕ — تدمير العرض وإخفاء اللوحة).
+    const closePreviewTool = sdk.tool(
+      'close_preview',
+      'أغلق لوحة المعاينة المدمجة ودمّر عرضها الحالي. الكوكيز تبقى محفوظة في جلسة ' +
+      'المعاينة الدائمة، وإعادة فتح المعاينة لاحقاً تستعيد آخر عنوان للمشروع تلقائياً — ' +
+      'لصفحة نظيفة تماماً وجّه المستخدم إلى زر 🧹 مسح التخزين.',
+      {},
+      async () => {
+        if (preview.isHandoffActive()) return { content: [{ type: 'text', text: HANDOFF_BLOCKED }], isError: true };
+        if (!preview.currentUrl()) return { content: [{ type: 'text', text: 'المعاينة غير مفتوحة أصلاً.' }], isError: true };
+        emit({ type: 'preview_close' });
+        return { content: [{ type: 'text', text: 'أُغلقت المعاينة ودُمّر عرضها. إعادة الفتح تستعيد آخر عنوان للمشروع تلقائياً.' }] };
+      }
+    );
     // أداة read_page (م-3): snapshot نصي من الصفحة المعروضة في المعاينة — يرى الوكيل
     // ما بناه (عناوين/روابط/أزرار/حقول/نص) فيصحّح نفسه. تعمل على العرض القائم (بعد
     // open_preview). قراءة فقط — لا أفعال (نقر/كتابة م-4 خلف بوابة قرار مستقلة).
@@ -1908,7 +1924,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, closePreviewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }

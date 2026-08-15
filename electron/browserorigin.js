@@ -13,7 +13,7 @@ const READ_TOOLS = new Set([
   'browser_set_viewport', 'browser_perf',
 ]);
 const NAVIGATE_TOOLS = new Set([
-  'open_preview', 'browser_navigate', 'browser_back', 'browser_forward',
+  'open_preview', 'close_preview', 'browser_navigate', 'browser_back', 'browser_forward',
 ]);
 const ACT_TOOLS = new Set([
   'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_evaluate',
@@ -78,7 +78,7 @@ function targetForTool(name, input, currentUrl, navigationTarget) {
 
 function actionLabel(name) {
   const labels = {
-    open_preview: 'فتح المعاينة', browser_navigate: 'التنقّل', browser_back: 'الرجوع',
+    open_preview: 'فتح المعاينة', close_preview: 'إغلاق المعاينة', browser_navigate: 'التنقّل', browser_back: 'الرجوع',
     browser_forward: 'التقدّم', browser_click: 'النقر', browser_type: 'الكتابة',
     browser_select_option: 'اختيار عنصر', browser_press_key: 'ضغط مفتاح',
     browser_evaluate: 'تنفيذ JavaScript تشخيصي', browser_fill_form: 'تعبئة نموذج',

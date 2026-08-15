@@ -1062,6 +1062,12 @@ import { createUpdateToast } from './lib/update-toast.js';
       if (previewEl.openWith) previewEl.openWith(ev.url, { agent: true });
       return;
     }
+    // أداة close_preview (OBS-020): النموذج أغلق المعاينة بطلب المستخدم — نفس
+    // مسار زر ✕ (تدمير العرض وإخفاء اللوحة؛ الكوكيز باقية والتذكّر يعيد آخر عنوان)
+    if (ev.type === 'preview_close') {
+      if (previewEl.close) previewEl.close();
+      return;
+    }
     // التحديث التلقائي (17): مستقل عن الدور — إشعار لطيف أسفل النافذة
     if (ev.type === 'update') {
       handleUpdateEvent(ev);

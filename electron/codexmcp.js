@@ -155,6 +155,23 @@ function buildTools(deps) {
       },
     },
     {
+      // OBS-020: إغلاق المعاينة بطلب المستخدم — يدمّر العرض فعلاً ويبلّغ الواجهة
+      // بإغلاق اللوحة. الكوكيز تبقى في partition الدائمة، وإعادة الفتح تستعيد آخر
+      // عنوان (ميزة التذكّر) — الوصف يصارح النموذج بذلك كي لا يهلوس تفسيراً.
+      name: 'close_preview',
+      description: 'أغلق لوحة المعاينة المدمجة ودمّر عرضها الحالي. الكوكيز تبقى محفوظة في '
+        + 'جلسة المعاينة الدائمة، وإعادة فتح المعاينة لاحقاً تستعيد آخر عنوان للمشروع '
+        + 'تلقائياً — لصفحة نظيفة تماماً وجّه المستخدم إلى زر 🧹 مسح التخزين.',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => {
+        if (handoffActive()) return textResult(HANDOFF_BLOCKED, true);
+        if (!preview.currentUrl || !preview.currentUrl()) return textResult('المعاينة غير مفتوحة أصلاً.', true);
+        if (typeof deps.closePreview === 'function') deps.closePreview();
+        else preview.close();
+        return textResult('أُغلقت المعاينة ودُمّر عرضها. إعادة الفتح تستعيد آخر عنوان للمشروع تلقائياً.');
+      },
+    },
+    {
       name: 'browser_navigate',
       description: 'انتقل بلوحة المعاينة القائمة إلى عنوان http/https آخر (بلا إعادة فتح).',
       inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },

@@ -152,7 +152,7 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
    'generate_media',
    'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
-  ok(names.length === 34, 'عدد أدوات Codex MCP أصبح 34 (25 متصفح + 4 خلفية + generate_media + 4 برومو)');
+  ok(names.length === 35, 'عدد أدوات Codex MCP أصبح 35 (26 متصفح — منها close_preview ‏OBS-020 — + 4 خلفية + generate_media + 4 برومو)');
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
   const builtTools = codexmcp.buildTools({ preview, cwd: process.cwd(), genmedia, promoCapture, promoStudio });
   const built = (name) => builtTools.find((tool) => tool.name === name);

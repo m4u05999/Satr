@@ -7,7 +7,7 @@ const langanchor = require('./langanchor');
 
 const SDK_TOOL_NAMES = Object.freeze([
   'run_in_terminal', 'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task',
-  'open_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network',
+  'open_preview', 'close_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network',
   'screenshot', 'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover', 'browser_click',
   'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
   'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
@@ -67,6 +67,7 @@ function browserPolicy(hasBrowser) {
     '- افحص ما بنيته عبر read_page وbrowser_snapshot وscreenshot وbrowser_console وbrowser_network.',
     '- خذ browser_snapshot قبل التفاعل، واستعمل refs مع browser_click/browser_type. إذا تدخّل المستخدم أو تغيّر/أزيل الهدف بعد اللقطة، لا تكرر الفعل؛ خذ browser_snapshot جديدة وتحقق من الهدف.',
     '- لوحة معاينة «سطر» أضيق وأقصر من متصفح عادي؛ للحكم على تخطيط الصفحة كاملةً استعمل screenshot مع full_page:true، أو اضبط browser_set_viewport أولاً إن كنت تختبر مقاساً بعينه.',
+    '- إغلاق المعاينة: زر ✕ في اللوحة (أو أداة close_preview) يدمّر العرض فعلاً — لا يخفيه — لكن الكوكيز تبقى في partition الدائمة، وإعادة فتح 🌐 تستعيد آخر عنوان للمشروع تلقائياً (ميزة «تذكّر آخر مشروع») فقد تبدو الصفحة «عادت». لصفحة نظيفة وجّه المستخدم إلى زر 🧹 مسح التخزين، أو انتقل بنفسك لعنوان آخر. لا تدّعِ أن ✕ «يخفي فقط».',
     '- القراءة حرة في وضع تحكم المتصفح؛ أما الفعل والتنقّل وbrowser_evaluate على نطاق خارجي جديد فتحتاج ثقة المستخدم بالنطاق مرة واحدة. localhost موثوق دائماً.',
     '- الثقة بالنطاق لا تعفي الفعل الحسّاس: الإرسال والحفظ والنشر والحذف والتفويض وbrowser_evaluate تُؤكّد كل مرة، ولا تعتبر وضع تحكّم المتصفح إذناً دائماً لها.',
     '- لا تمرّر مفتاح API أو رمزاً أو كلمة مرور كنص إلى أي أداة أو إلى browser_fill_form. انقل القيمة بين الحقول عبر browser_transfer_field، أو اطلب من المستخدم إدخالها بنفسه عبر browser_request_secret؛ لا تذكر القيمة في الرد أو الذاكرة.',

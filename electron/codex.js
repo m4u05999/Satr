@@ -825,6 +825,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       preview,
       cwd,
       openPreview: (url) => emit({ type: 'preview_open', url }),
+      closePreview: () => emit({ type: 'preview_close' }),
       // أفعال المتصفح (نقر/كتابة/اختيار/مفتاح) تمرّ بمربع الإذن العربي نفسه — Codex لا
       // يبوّب نداءات MCP، فنبوّبها هنا (نفس قناة أذونات الأوامر: emit + resolvePermission).
       // الفعل الحسّاس وميزانية الأفعال يتجاوزان «الموافقة الدائمة» ووضع التحكم؛ bypassPermissions وحده يعفيهما.
