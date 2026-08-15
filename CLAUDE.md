@@ -3183,6 +3183,40 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   ويعيد innerWidth الفعلي)، `browser_perf` (read؛ navigation/resources/طلبات فاشلة)، و
   `browser_back/browser_forward` (navigate مع target من سجل NavigationHistory). تدخل
   `envbrief` و`satr-guide` وحارس الجرد تلقائياً.
+- **عقد اللقطة وحصانة العالم المعزول (دفعة «صقل متصفح سطر» — OBS-013/014،
+  2026-08-15)**: علاج تنازع التحكم بين المستخدم والوكيل (مسبار الاستنساخ أثبت أن
+  تغيير الحالة وتبديل معنى العنصر كانا **صامتين** — الوكيل رأى «حفظ» ونفّذ «حذف»
+  بـ`ok:true`). **الكشف في العملية الرئيسية حصراً** (المسبار الحاجز
+  `scripts/browser-guard-probe.js` أثبت أن `sendInputEvent` يُطلق `input-event`
+  وأن أفعال `executeJavaScript` الوكيلية لا تمر به): عدّاد إدخال ملتزم
+  (‏`mouseDown`/`rawKeyDown`/`keyDown` فقط) في `wireEvents`، وكل لقطة تحفظ
+  `leaseUserRevision`، وأي فعل `act` يمر **بفحصين** (قبل بوابة الإذن عبر
+  `preview.leaseError()` المصدَّرة — تستدعيها الأغلفة، وبعدها قبل التنفيذ) ⇒
+  تدخّلٌ بعد اللقطة يرفض الفعل `input_changed` **حجباً شاملاً v1 بقرار مالك**
+  (التخفيف لدرجتين لاحقاً بأرقام محلل السجلات). `pressKey` يمر بمسار الإدخال
+  فيستهلك العقد بنفسه (لا provenance في `input-event` — الالتباس يفشل مغلقاً).
+  **بصمة الهدف** `role+name+tag(+href/type)` بتطبيع فراغات فقط (لا حذف أرقام)
+  تُحسب في مرور `SNAPSHOT_FN` وتُخزن في main (لا تعبر للنموذج)، وحلّ الهدف +
+  المقارنة + التنفيذ في نداء `executeJavaScriptInIsolatedWorld` واحد
+  (‏`AGENT_WORLD_ID=1013` — على `WebContents` نفسه لا `WebFrameMain`؛ يقاوم صفحة
+  تخرّب `querySelector` في main world) ⇒ تباعدٌ يرفض `target_changed` بالاسمين
+  (was/now)، واختفاء السمة بعد وجودها في الجيل يشخَّص `ref_removed`. البصمة
+  **كاشف انجراف لا برهان أمني**. الإبطال يشمل الآن `endHandoff` و`startPick`
+  (عطل اكتشفه العصف الثلاثي). حدث `control_conflict` على قناة `satr:preview`
+  تعرضه اللوحة شارة عابرة غير حاجبة — أزرار المستخدم لا تُحجب أبداً. **دلالة
+  النتيجة الصادقة**: `dispatched`/`effect_observed`/`satisfied` (‏الأخير
+  لـtype/select فقط ويعود فوراً بلا مهلة عند تحققه) مع بقاء `dom_changed`
+  للتوافق، والرسائل العربية الثلاث نسخة واحدة في `codexmcp.js` يستهلكها
+  `agent.js` (‏`whyClosed` مصدَّرة). توجيه اللقطة الكاملة (قرار مالك): وصف
+  `screenshot` وenvbrief يشرحان ضيق اللوحة، و`screenshot({includePageMetrics:true})`
+  يعيد `page_metrics` فيُلحق تلميح «الصفحة أطول من المعروض N×» عند ≥3×.
+  المهلات (‏360/250/150ms) **لم تُلمس عمداً** — يحرسها عقد حي والأرقام لم تبرر
+  لمسها. محلل التوزيع `scripts/browser-session-audit.js` (قراءة فقط فوق
+  `~/.claude/projects`): من 25 جلسة — حصة اللقطات البصرية **99.7%** من البايتات
+  ووسيط دور النموذج بعد `screenshot` ‏12.1s (انظر OBS-016). الحارس القطعي
+  `test:preview-lease` (‏Electron حي، 11 عضّة مستعادة) داخل `test:full`، مع
+  توسعة `test:codexmcp` (‏147) و`test:browser-member-live` (شارة التنازع).
+  خام الدفعة كله (عصف/نقد/عقد مجمَّد/تقارير) في `D:\sater\prompts-browser-bs\`.
 - **متانة العرض والتنزيل**: partition المعاينة يعترض `will-download`، ينقّي الاسم ويختار
   مساراً فريداً داخل Downloads ثم يبث المسار الفعلي أو الفشل؛ لا حفظ صامت. خطاف
   `certificate-error` يقبل شهادة ذاتية لـ`https://localhost`/`127.0.0.1` حصراً ويرفض
