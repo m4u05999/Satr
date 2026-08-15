@@ -21,11 +21,19 @@ function gitLines(args) {
   }
 }
 
+// OBS-015: غير المتتبَّع يُحصر بمسارات المشروع المعروفة (أو ملف في الجذر مباشرة) —
+// مجلد أجنبي يضعه المستخدم في جذر المستودع (مشروع منفصل مثل hadiah/) لا يدخل حزمة
+// «سطر» أصلاً ولا يحق له كسر بوابة الإصدار. المتتبَّع المعدَّل يبقى مفحوصاً كله
+// لأنه ملك المشروع بالتعريف.
+const PROJECT_ROOTS = ['src/', 'electron/', 'scripts/', 'site/', 'pwa/', 'docs/', '.agents/', 'build/', 'enterprise/'];
+
 function changedFiles() {
-  return [...new Set([
-    ...gitLines(['diff', '--name-only', '--diff-filter=ACMRTUXB', 'HEAD', '--']),
-    ...gitLines(['ls-files', '--others', '--exclude-standard']),
-  ])].filter((relative) => {
+  const tracked = gitLines(['diff', '--name-only', '--diff-filter=ACMRTUXB', 'HEAD', '--']);
+  const untracked = gitLines(['ls-files', '--others', '--exclude-standard']).filter((relative) => {
+    const normalized = relative.replace(/\\/g, '/');
+    return !normalized.includes('/') || PROJECT_ROOTS.some((root) => normalized.startsWith(root));
+  });
+  return [...new Set([...tracked, ...untracked])].filter((relative) => {
     const normalized = relative.replace(/\\/g, '/');
     // تقارير TestSprite صفحات خارجية مولّدة وليست أصول واجهة تُشحَن مع Electron.
     if (normalized.startsWith('testsprite_tests/')) return false;
