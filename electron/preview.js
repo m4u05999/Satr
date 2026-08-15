@@ -1779,6 +1779,11 @@ function emitAgentActivity(tool) {
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
 function close() {
   clearSensitiveState();
+  // OBS-021: إغلاق المستخدم للوحة فعل قاطع — يفكّ أيضاً علم التسليم البشري إن كان
+  // عالقاً (دورة handoff انقطعت دون حسم: مهلة أداة MCP لدى codex تقطع النداء بينما
+  // dispatch في خادمنا ينتظر للأبد، والعملية المعمّرة لا تمرّ بـcleanup بين الأدوار).
+  // بدون هذا يبقى العرض الجديد بعد إعادة الفتح مرفوض الأدوات كلها «تسليم جارٍ».
+  endHandoff();
   invalidateSnapshotRefs();
   if (!view) return { ok: true };
   try { if (hostWin && !hostWin.isDestroyed()) hostWin.contentView.removeChildView(view); } catch (e) {}

@@ -208,6 +208,18 @@ async function main() {
     await preview.cancelPick();
     await picking;
 
+    // OBS-021: إغلاق اللوحة يفكّ علم تسليم عالقاً (دورة handoff انقطعت دون حسم) —
+    // مسار تعافي المستخدم البديهي؛ بدونه يبقى كل عرض جديد مرفوض الأدوات «تسليم جارٍ»
+    preview.startHandoff();
+    assert.strictEqual(preview.isHandoffActive(), true, 'startHandoff لم يرفع العلم');
+    preview.close();
+    assert.strictEqual(preview.isHandoffActive(), false,
+      'close لم يفكّ علم التسليم العالق — العرض التالي سيرفض كل الأدوات');
+    assert(preview.open(win, () => {}, url + '/one').ok, 'تعذّرت إعادة الفتح بعد الإغلاق');
+    await preview.waitFor({ selector: '#noop' }, 8000);
+    snap = await preview.snapshot();
+    assert(snap.ok, 'اللقطة بعد إعادة الفتح رُفضت رغم فكّ التسليم');
+
     // ---- الصفحة العدائية: الفعل يعمل عبر العالم المعزول ----
     assert(preview.navigate(url + '/hostile').ok, 'تعذّر الانتقال للصفحة العدائية');
     await delay(900); // waitFor يعتمد querySelector المخرَّب — ننتظر التحميل لا المحدد
