@@ -220,22 +220,16 @@ const { autoNeedsPrompt, decideAutoApproval } = require('./autogate');
 const browserguard = require('./browserguard');
 const browserorigin = require('./browserorigin');
 const browserpolicy = require('./browserpolicy');
+const {
+  whyClosed: previewErrorMessage,
+  actionProof: browserActionProof,
+  screenshotLengthHint,
+} = require('./codexmcp');
 const execguard = require('./execguard');
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
 const STALE_REF_MESSAGE = 'المرجع من لقطة قديمة — خذ browser_snapshot جديدة واستعمل ref منها.';
-
-function browserActionProof(prefix, result) {
-  const proof = 'navigated=' + !!result.navigated + ' · dom_changed=' + !!result.dom_changed;
-  const lines = [prefix, proof];
-  if (Array.isArray(result.delta) && result.delta.length) {
-    lines.push('[تغيّر DOM المختصر — refs الجديدة صالحة ضمن الجيل الحالي]', result.delta.join('\n'));
-  }
-  if (result.delta_truncated) lines.push('ملاحظة: قُصّ تغيّر DOM؛ خذ browser_snapshot قبل متابعة غير مغطاة بالـ refs الظاهرة.');
-  if (result.note) lines.push('ملاحظة: ' + result.note);
-  return lines.join('\n');
-}
 
 // تطبيع أدوات Todo/Task ورسائل Agent الفعلية في SDK إلى عقد task_update الموحّد.
 // لا نتدخل في تنفيذ الأدوات؛ نرصد رسائلها الموثّقة فقط ونترك التخزين لـ main.js.
@@ -1072,6 +1066,9 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         if (browserpolicy.hasVisibleSecret(toolName, input)) {
           return { behavior: 'deny', message: 'رُفض تمرير السر كنص. استخدم browser_transfer_field أو browser_request_secret.' };
         }
+        const lease = typeof preview.leaseError === 'function' ? preview.leaseError(toolName, input) : null;
+        const leaseCode = typeof lease === 'string' ? lease : lease && lease.error;
+        if (leaseCode) return { behavior: 'deny', message: previewErrorMessage(leaseCode, null, lease) };
         const inputError = typeof preview.browserInputError === 'function'
           ? preview.browserInputError(toolName, input) : null;
         if (inputError === 'stale_ref') return { behavior: 'deny', message: STALE_REF_MESSAGE };
@@ -1506,12 +1503,12 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     const screenshotTool = sdk.tool(
       'screenshot',
       'التقط لقطة شاشة للصفحة المعروضة في لوحة المعاينة المدمجة لتراها بصرياً وتتحقق ' +
-      'من مظهرها. افتح المعاينة أولاً (open_preview) إن لزم. مرّر full_page=true للصفحة ' +
-      'كاملةً (بالتمرير) بدل نافذة العرض المرئية فقط.',
+      'من مظهرها. لوحة معاينة «سطر» أضيق وأقصر من متصفح عادي؛ للحكم على تخطيط صفحة ' +
+      'كاملة مرّر full_page=true أو اضبط browser_set_viewport أولاً.',
       { full_page: z.boolean().optional().describe('true = الصفحة كاملةً بالتمرير؛ false/غياب = نافذة العرض المرئية') },
       async (args) => {
         const full = !!(args && args.full_page);
-        const r = full ? await preview.screenshotFull() : await preview.screenshot();
+        const r = full ? await preview.screenshotFull() : await preview.screenshot({ includePageMetrics: true });
         if (!r || !r.ok) {
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed'
@@ -1519,7 +1516,10 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
             : 'تعذّر التقاط اللقطة (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
         }
-        return { content: [{ type: 'image', data: r.base64, mimeType: 'image/png' }] };
+        const content = [{ type: 'image', data: r.base64, mimeType: 'image/png' }];
+        const hint = full ? '' : screenshotLengthHint(r);
+        if (hint) content.push({ type: 'text', text: hint });
+        return { content };
       }
     );
     // أداة browser_screenshot_element (البند 4): لقطة بصرية لعنصر واحد بـ ref/selector —
@@ -1561,7 +1561,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
             : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
             : r && r.error === 'not_found' ? 'لم يُعثر على عنصر بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.'
-            : 'تعذّر النقر (' + ((r && r.error) || 'خطأ') + ').';
+            : previewErrorMessage(r && r.error, 'تعذّر النقر', r);
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         return { content: [{ type: 'text', text: browserActionProof('نُقر على <' + (r.tag || 'عنصر') + '>' + (r.text ? ' («' + r.text + '»)' : ''), r) }] };
@@ -1584,7 +1584,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
             : r && r.error === 'not_found' ? 'لم يُعثر على حقل بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_editable' ? 'العنصر ليس حقل إدخال قابلاً للكتابة.'
             : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.'
-            : 'تعذّرت الكتابة (' + ((r && r.error) || 'خطأ') + ').';
+            : previewErrorMessage(r && r.error, 'تعذّرت الكتابة', r);
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         return { content: [{ type: 'text', text: browserActionProof('كُتب النص في <' + r.tag + '>.', r) }] };
@@ -1682,7 +1682,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
             : r && r.error === 'not_found' ? 'لم يُعثر على القائمة — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_select' ? 'العنصر ليس قائمة منسدلة <select>.'
             : r && r.error === 'no_option' ? 'لا خيار بهذه القيمة/النص في القائمة.'
-            : 'تعذّر الاختيار (' + ((r && r.error) || 'خطأ') + ').';
+            : previewErrorMessage(r && r.error, 'تعذّر الاختيار', r);
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         return { content: [{ type: 'text', text: browserActionProof('اختير «' + (r.label || '') + '».', r) }] };
@@ -1699,7 +1699,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'bad_key' ? 'مفتاح غير مدعوم (استعمل الأسماء المذكورة في وصف الأداة).'
-            : 'تعذّر الضغط (' + ((r && r.error) || 'خطأ') + ').';
+            : previewErrorMessage(r && r.error, 'تعذّر الضغط', r);
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         return { content: [{ type: 'text', text: browserActionProof('ضُغط ' + r.key + '.', r) }] };
@@ -1736,7 +1736,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
             : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
             : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
             : r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.'
-            : 'تعذّر التحويم (' + ((r && r.error) || 'خطأ') + ').';
+            : previewErrorMessage(r && r.error, 'تعذّر التحويم', r);
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         return { content: [{ type: 'text', text: 'حُوّم فوق <' + r.tag + '>.' }] };
@@ -1811,7 +1811,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
             ? 'رُفضت قيمة سرّية. استخدم browser_transfer_field أو browser_request_secret.'
             : r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
-            : 'تعذّرت تعبئة النموذج (' + ((r && r.error) || 'خطأ') + ').';
+            : previewErrorMessage(r && r.error, 'تعذّرت تعبئة النموذج', r);
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         return { content: [{ type: 'text', text: 'عُبّئ ' + r.filled + ' حقول غير سرّية. لم يُرسل النموذج.' }] };
@@ -1827,7 +1827,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       },
       async (args) => {
         const r = await preview.transferField(args && args.from_ref, args && args.to_ref, args && args.transfer_id);
-        if (!r || !r.ok) return { content: [{ type: 'text', text: r && r.error === 'stale_ref' ? STALE_REF_MESSAGE : 'تعذّر نقل القيمة السرّية (' + ((r && r.error) || 'خطأ') + ').' }], isError: true };
+        if (!r || !r.ok) return { content: [{ type: 'text', text: r && r.error === 'stale_ref'
+          ? STALE_REF_MESSAGE : previewErrorMessage(r && r.error, 'تعذّر نقل القيمة السرّية', r) }], isError: true };
         if (r.stored) return { content: [{ type: 'text', text: JSON.stringify({ ok: true, stored: true, transfer_id: r.transfer_id }) }] };
         return { content: [{ type: 'text', text: JSON.stringify({ ok: true, moved: true }) }] };
       }
@@ -1845,7 +1846,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           const why = r && r.error === 'cancelled' ? 'ألغى المستخدم إدخال السر.'
             : r && r.error === 'empty' ? 'ضغط المستخدم «تم» لكن الحقل بقي فارغاً.'
             : r && r.error === 'stale_ref' ? STALE_REF_MESSAGE
-            : 'تعذّر طلب السر (' + ((r && r.error) || 'خطأ') + ').';
+            : previewErrorMessage(r && r.error, 'تعذّر طلب السر', r);
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         return { content: [{ type: 'text', text: JSON.stringify({ ok: true, filled: true }) }] };

@@ -32,6 +32,20 @@ let activeSnapshotNextIndex = 0;
 let activeSnapshotTextBytes = 0;
 const SNAPSHOT_REF_RE = /^s([1-9][0-9]*):e([1-9][0-9]*)$/;
 const LEGACY_SNAPSHOT_REF_RE = /^e[1-9][0-9]*$/;
+let activeSnapshotFingerprints = new Map(); // ref → بصمة لحظة اللقطة (داخلية — لا تعبر للنموذج)
+const MAX_TRACKED_FINGERPRINTS = 400;
+
+// ---------- عقد اللقطة (Snapshot Lease) — علاج تنازع التحكم (OBS-013) ----------
+// المستخدم والوكيل يقودان المعاينة نفسها. إن نقر المستخدم أو ضغط مفتاحاً بعد أن أخذ
+// الوكيل لقطته فقد تبدّلت الصفحة تحت refs التي يحملها — فنرفض فعله مغلقاً ونطلب لقطة
+// جديدة. العدّاد يرتفع من أحداث الإدخال **الملتزمة** حصراً؛ وmouseMove/mouseEnter/
+// mouseLeave/mouseUp/keyUp/mouseWheel مستثناة صراحةً (التمرير والتحويم قراءة لا تفاعل).
+// أفعال الوكيل عبر executeJavaScript لا تمر بمسار input-event أصلاً (أثبته المسبار
+// الحاجز) فلا تلوّث الكاشف؛ أما pressKey فيمر فيستهلك العقد بنفسه — مقصود: عقد
+// input-event بلا provenance، والالتباس يفشل مغلقاً.
+const COMMITTED_INPUT_TYPES = new Set(['mouseDown', 'rawKeyDown', 'keyDown']);
+let userInputCounter = 0;
+let leaseUserRevision = 0;
 
 function nextSnapshotGeneration(wc) {
   snapshotSequence = snapshotSequence >= Number.MAX_SAFE_INTEGER ? 1 : snapshotSequence + 1;
@@ -39,6 +53,8 @@ function nextSnapshotGeneration(wc) {
   activeSnapshotOwnerId = wc && Number.isInteger(wc.id) ? wc.id : null;
   activeSnapshotNextIndex = 0;
   activeSnapshotTextBytes = 0;
+  activeSnapshotFingerprints = new Map();
+  leaseUserRevision = userInputCounter; // اللقطة تجدّد العقد
   return activeSnapshotGeneration;
 }
 
@@ -48,6 +64,51 @@ function invalidateSnapshotRefs(wc) {
     activeSnapshotOwnerId = null;
     activeSnapshotNextIndex = 0;
     activeSnapshotTextBytes = 0;
+    activeSnapshotFingerprints = new Map();
+  }
+}
+
+// الفحص الأول من فحصَي العقد: تستدعيه الأغلفة **قبل بوابة الإذن** كي لا يُفتح مربع بلا
+// جدوى. الفحص الثاني داخل كل فعل هنا قبل التنفيذ مباشرة — فالحماية قائمة حتى لو لم
+// يستدعِ غلافٌ هذه الدالة (fail-closed لا يعتمد على المتصل).
+function leaseError() {
+  return userInputCounter === leaseUserRevision ? null : 'input_changed';
+}
+
+// أسباب تنازع التحكم الثلاثة: تُبثّ للواجهة **بلا أي محتوى صفحة** (السبب فقط).
+function conflictError(reason, extra) {
+  emit({ type: 'control_conflict', reason });
+  return extra ? { error: reason, ...extra } : { error: reason };
+}
+
+function leaseGate() {
+  return leaseError() ? conflictError('input_changed') : null;
+}
+
+// البصمة المتوقعة لهدف الفعل: تُعرف فقط لـ ref من اللقطة النشطة على العرض نفسه.
+// مُحدِّد CSS بلا لقطة ⇒ '' ⇒ الحارس يتخطى المقارنة (سلوك ما قبل الدفعة).
+function expectedFingerprint(locator, wc) {
+  const ref = typeof locator === 'string' ? locator.trim() : '';
+  if (!SNAPSHOT_REF_RE.test(ref)) return '';
+  const target = wc || currentWC();
+  if (!target || target.id !== activeSnapshotOwnerId || !activeSnapshotGeneration) return '';
+  return activeSnapshotFingerprints.get(ref) || '';
+}
+
+// فاصل حقول البصمة — يُكتب هروباً لا محرف تحكم حرفياً في المصدر (درس loopfailure.js).
+const FINGERPRINT_SEP = '\u001f';
+
+// وسم مقروء للبصمة (بلا فاصلها الداخلي) — يظهر في رسالة «كان … وصار …» وحدها.
+function fingerprintLabel(value) {
+  return String(value || '').split(FINGERPRINT_SEP).map((part) => part.trim()).filter(Boolean).join(' ').slice(0, 160);
+}
+
+function rememberFingerprints(entries) {
+  if (!entries || typeof entries !== 'object') return;
+  for (const [ref, value] of Object.entries(entries)) {
+    if (!SNAPSHOT_REF_RE.test(ref) || typeof value !== 'string') continue;
+    if (!activeSnapshotFingerprints.has(ref) && activeSnapshotFingerprints.size >= MAX_TRACKED_FINGERPRINTS) continue;
+    activeSnapshotFingerprints.set(ref, value);
   }
 }
 
@@ -116,6 +177,9 @@ function endHandoff() {
   if (!handoffActive) return { ok: true, wasActive: false };
   handoffActive = false;
   resetLogs();
+  // المستخدم كان يقود الصفحة بيده طوال التسليم: refs اللقطة السابقة لم تعد موثوقة
+  // (عطل مكتشف — كانت تنجو من التسليم بلا إبطال).
+  invalidateSnapshotRefs();
   return { ok: true, wasActive: true };
 }
 function isHandoffActive() { return handoffActive; }
@@ -272,6 +336,11 @@ function wireEvents(wc) {
   });
   wc.on('did-navigate', nav);
   wc.on('did-navigate-in-page', nav);
+  // عدّاد عقد اللقطة: الإدخال الملتزم من المستخدم داخل العرض المعزول. المستمع مرة واحدة
+  // لكل webContents (‏wiredWebContents يحرس التكرار)، والعدّاد عام لأن المعاينة عرض واحد نشط.
+  wc.on('input-event', (_event, inputEvent) => {
+    if (inputEvent && COMMITTED_INPUT_TYPES.has(inputEvent.type)) userInputCounter += 1;
+  });
   wc.on('page-title-updated', (e, title) => emit({ type: 'title', title: String(title || '').slice(0, 200) }));
   wc.on('did-start-loading', () => emit({ type: 'loading', loading: true }));
   wc.on('did-stop-loading', () => emit({ type: 'loading', loading: false }));
@@ -584,6 +653,9 @@ const PICK_SCRIPT = `(function(){
 
 async function startPick() {
   if (!view || !view.webContents || view.webContents.isDestroyed()) return { error: 'closed' };
+  // التأشير يسلّم الصفحة للمستخدم لينقر عنصراً: refs اللقطة السابقة تسقط معه
+  // (العطل الثاني المكتشف — كان وضع التحديد لا يبطلها).
+  invalidateSnapshotRefs();
   try {
     const pick = await view.webContents.executeJavaScript(PICK_SCRIPT, true);
     return { ok: true, pick: pick || null }; // null = أُلغي (Escape/إلغاء)
@@ -660,11 +732,100 @@ function navigationTarget(direction) {
   }
 }
 
+// ---------- مصدر واحد لحلّ الهدف داخل الصفحة (كان مكرراً نصياً في أربعة عشر سكربتاً) ----------
+// الهدف إمّا ref لقطة (‏sN:eN ⇒ سمة data-satr-ref) أو مُحدِّد CSS، أو الرمزان الخاصان
+// __active__ (العنصر المركّز) و__page__ (جذر المستند — للوميض على الصفحة كلها).
+// مُحدِّد فارغ أو فاسد يجعل querySelector يرمي، وكل مستدعٍ يلتقط ويعيد bad_selector —
+// وهو سلوك النسخ الأربع عشرة قبل التوحيد حرفياً (المسارات التي كانت تعيد null للفارغ
+// غير قابلة للوصول من العملية الرئيسية لأن cleanLocator يرفض الفارغ قبلها).
+const RESOLVE_SRC = `function resolve(l){
+  if(l==='__active__')return document.activeElement;
+  if(l==='__page__')return document.documentElement;
+  l=String(l==null?'':l);
+  if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l))return document.querySelector('[data-satr-ref="'+l+'"]');
+  return document.querySelector(l);
+}`;
+
+// ---------- دلالات اللقطة المشتركة: الدور والاسم والبصمة ----------
+// مصدر واحد لـ vis()/name()/role() تستهلكه لقطة العناصر (SNAPSHOT_FN) ومسبار DOM delta
+// (PROBE_BEGIN_FN) وحارس الهدف في العالم المعزول — فلا تنجرف الحسابات الثلاثة عن بعضها.
+// البصمة = role + name + tag + (href للروابط أو type للحقول/الأزرار حيث وُجدا)، بتطبيع
+// **فراغات فقط** (لا حذف أرقام: «حذف 1» ≠ «حذف 100»). tuple كاملة بلا hash — الاسم مسقوف
+// بـ120 محرفاً أصلاً، وتصادم hash قصير خطر بلا مقابل.
+// **حدّ مصرَّح به**: البصمة **كاشف انجراف لا برهان أمني** — صفحة عدائية تقدر أن تستنسخ
+// دور واسم عنصر آخر. غايتها أن يفشل الفعل مغلقاً حين تتبدّل الصفحة تحت ref قديمة.
+const SEMANTICS_SRC = `function clean(s){ return String(s || '').replace(/\\s+/g, ' ').trim(); }
+function esc(s){ try { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s); } catch(e){ return String(s); } }
+function vis(el){
+  if (!el || el.nodeType !== 1) return false;
+  var s; try { s = getComputedStyle(el); } catch(e){ return false; }
+  if (!s || s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
+  var r = el.getBoundingClientRect();
+  return r.width >= 1 && r.height >= 1;
+}
+function name(el){
+  var n = el.getAttribute && el.getAttribute('aria-label');
+  if (n && clean(n)) return clean(n);
+  var lb = el.getAttribute && el.getAttribute('aria-labelledby');
+  if (lb) { var t = ''; lb.split(/\\s+/).forEach(function(id){ var e = document.getElementById(id); if (e) t += ' ' + (e.textContent || ''); }); if (clean(t)) return clean(t); }
+  var tag = el.tagName.toLowerCase();
+  if (tag === 'input') {
+    var ph = el.getAttribute('placeholder'); if (ph) return clean(ph);
+    if (el.id) { var l; try { l = document.querySelector('label[for="' + esc(el.id) + '"]'); } catch(e){} if (l && clean(l.textContent)) return clean(l.textContent); }
+    var nm = el.getAttribute('name'); if (nm) return clean(nm);
+    return '';
+  }
+  if (tag === 'img') return clean(el.getAttribute('alt'));
+  if (tag === 'textarea') return clean(el.getAttribute('placeholder') || el.getAttribute('name'));
+  if (tag === 'select') return clean(el.getAttribute('name') || el.getAttribute('aria-label'));
+  return clean(el.textContent).slice(0, 120);
+}
+function role(el){
+  var r = el.getAttribute && el.getAttribute('role'); if (r) return clean(r);
+  var tag = el.tagName.toLowerCase();
+  if (tag === 'a' && el.hasAttribute('href')) return 'link';
+  if (tag === 'button') return 'button';
+  if (tag === 'select') return 'combobox';
+  if (tag === 'textarea') return 'textbox';
+  if (tag === 'input') {
+    var t = (el.getAttribute('type') || 'text').toLowerCase();
+    if (t === 'submit' || t === 'button' || t === 'reset') return 'button';
+    if (t === 'checkbox') return 'checkbox';
+    if (t === 'radio') return 'radio';
+    return 'textbox';
+  }
+  if (/^h[1-6]$/.test(tag)) return 'heading';
+  return tag;
+}
+function fingerprint(el){
+  if (!el || el.nodeType !== 1) return '';
+  var tag = el.tagName.toLowerCase(), extra = '';
+  try {
+    if (tag === 'a') extra = clean(el.getAttribute('href'));
+    else if (tag === 'input' || tag === 'button') extra = clean(el.getAttribute('type'));
+  } catch(e){}
+  return role(el) + '\\u001f' + name(el) + '\\u001f' + tag + '\\u001f' + extra;
+}
+var SEL = 'a[href],button,input:not([type=hidden]),textarea,select,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=switch],[role=combobox],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';`;
+
+// حارس الهدف: يحل ref/مُحدِّداً ثم يقارن البصمة المتوقعة (التي حفظتها العملية الرئيسية
+// لحظة اللقطة) بالمحسوبة الآن، فيمنع الفعل على عنصر تبدّل تحته. يعمل داخل العالم المعزول
+// في نداء واحد مع التنفيذ — فلا تُترك نافذة بين الحل والفعل، ولا تخرّبه الصفحة.
+// غياب المتوقعة (مُحدِّد CSS بلا لقطة) يُبقي السلوك القديم: not_found بدل ref_removed.
+const TARGET_GUARD_SRC = `${RESOLVE_SRC}
+${SEMANTICS_SRC}
+function guard(loc, expect){
+  var el; try { el = resolve(loc); } catch(e){ return { err: { ok:false, reason:'bad_selector' } }; }
+  if (!el) return { err: { ok:false, reason: expect ? 'ref_removed' : 'not_found' } };
+  if (expect) { var now = fingerprint(el); if (now !== expect) return { err: { ok:false, reason:'target_changed', was: expect, now: now } }; }
+  return { el: el };
+}`;
+
 // هدف الفعل الأمني: النقر على رابط/زر إرسال يُنسب إلى وجهة الرابط أو form action لا
 // إلى الصفحة الحالية فقط، كي لا يقفز فعل معفى من origin موثوق إلى origin جديد بصمت.
 const ACTION_TARGET_FN = `function(name,loc){
-  function resolve(l){if(l==='__active__')return document.activeElement;l=String(l||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l))return document.querySelector('[data-satr-ref="'+l+'"]');return l?document.querySelector(l):document.activeElement;}
-  var el;try{el=resolve(loc);}catch(e){return null;}if(!el)return location.href;
+  ${RESOLVE_SRC}
+  var el;try{el=resolve(loc||'__active__');}catch(e){return null;}if(!el)return location.href;
   if(name==='browser_click'){
     var anchor=el.closest&&el.closest('a[href]');if(anchor&&anchor.href)return anchor.href;
     var form=el.form||(el.closest&&el.closest('form'));if(form&&form.action)return form.action;
@@ -675,9 +836,9 @@ const ACTION_TARGET_FN = `function(name,loc){
   return location.href;
 }`;
 const ACTION_CONTEXT_FN = `function(name,input){
-  function resolve(loc){if(loc==='__active__')return document.activeElement;loc=String(loc||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):document.activeElement;}
+  ${RESOLVE_SRC}
   var bare=String(name||'').replace(/^mcp__satr-terminal__/,''),data=input&&typeof input==='object'?input:{},el=null;
-  try{el=resolve(bare==='browser_press_key'?'__active__':data.ref||data.selector||'');}catch(e){return {currentUrl:location.href,badSelector:true};}
+  try{el=resolve(bare==='browser_press_key'?'__active__':data.ref||data.selector||'__active__');}catch(e){return {currentUrl:location.href,badSelector:true};}
   var form=el&&(el.form||(el.closest&&el.closest('form'))),target=location.href,formAction='',formMethod='';
   if(el){var anchor=el.closest&&el.closest('a[href]');if(anchor&&anchor.href)target=anchor.href;}
   if(form){formAction=form.action||location.href;formMethod=String(form.method||'get').toLowerCase();target=formAction;}
@@ -693,7 +854,7 @@ async function browserActionContext(name, input) {
   if (handoffActive) return null;
   const wc = currentWC();
   if (!wc) return null;
-  const inputError = browserInputError(name, input, wc);
+  const inputError = browserInputError(name, input, wc) || leaseError();
   if (inputError) return { currentUrl: wc.getURL(), targetUrl: wc.getURL(), error: inputError };
   try {
     return await wc.executeJavaScript('(' + ACTION_CONTEXT_FN + ')(' + JSON.stringify(String(name || '')) + ',' + JSON.stringify(input || {}) + ')', true);
@@ -776,53 +937,10 @@ function getNetwork() {
 // كفاءة رموز: ~مئات مقابل
 // آلاف للـDOM الخام. صفر اعتماديات، بلا preload (يطابق عزل العرض) — كله executeJavaScript.
 const SNAPSHOT_FN = `function(generation){
-  function vis(el){
-    if (!el || el.nodeType !== 1) return false;
-    var s; try { s = getComputedStyle(el); } catch(e){ return false; }
-    if (!s || s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
-    var r = el.getBoundingClientRect();
-    return r.width >= 1 && r.height >= 1;
-  }
-  function clean(s){ return String(s || '').replace(/\\s+/g, ' ').trim(); }
-  function esc(s){ try { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s); } catch(e){ return String(s); } }
-  function name(el){
-    var n = el.getAttribute && el.getAttribute('aria-label');
-    if (n && clean(n)) return clean(n);
-    var lb = el.getAttribute && el.getAttribute('aria-labelledby');
-    if (lb) { var t = ''; lb.split(/\\s+/).forEach(function(id){ var e = document.getElementById(id); if (e) t += ' ' + (e.textContent || ''); }); if (clean(t)) return clean(t); }
-    var tag = el.tagName.toLowerCase();
-    if (tag === 'input') {
-      var ph = el.getAttribute('placeholder'); if (ph) return clean(ph);
-      if (el.id) { var l; try { l = document.querySelector('label[for="' + esc(el.id) + '"]'); } catch(e){} if (l && clean(l.textContent)) return clean(l.textContent); }
-      var nm = el.getAttribute('name'); if (nm) return clean(nm);
-      return '';
-    }
-    if (tag === 'img') return clean(el.getAttribute('alt'));
-    if (tag === 'textarea') return clean(el.getAttribute('placeholder') || el.getAttribute('name'));
-    if (tag === 'select') return clean(el.getAttribute('name') || el.getAttribute('aria-label'));
-    return clean(el.textContent).slice(0, 120);
-  }
-  function role(el){
-    var r = el.getAttribute && el.getAttribute('role'); if (r) return clean(r);
-    var tag = el.tagName.toLowerCase();
-    if (tag === 'a' && el.hasAttribute('href')) return 'link';
-    if (tag === 'button') return 'button';
-    if (tag === 'select') return 'combobox';
-    if (tag === 'textarea') return 'textbox';
-    if (tag === 'input') {
-      var t = (el.getAttribute('type') || 'text').toLowerCase();
-      if (t === 'submit' || t === 'button' || t === 'reset') return 'button';
-      if (t === 'checkbox') return 'checkbox';
-      if (t === 'radio') return 'radio';
-      return 'textbox';
-    }
-    if (/^h[1-6]$/.test(tag)) return 'heading';
-    return tag;
-  }
-  var SEL = 'a[href],button,input:not([type=hidden]),textarea,select,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=switch],[role=combobox],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
+  ${SEMANTICS_SRC}
   try { Array.prototype.forEach.call(document.querySelectorAll('[data-satr-ref]'), function(e){ e.removeAttribute('data-satr-ref'); }); } catch(e){}
   var els; try { els = Array.prototype.slice.call(document.querySelectorAll(SEL)); } catch(e){ els = []; }
-  var out = [], n = 0, CAP = 200, prefix = 's' + generation + ':e';
+  var out = [], fps = {}, n = 0, CAP = 200, prefix = 's' + generation + ':e';
   for (var i = 0; i < els.length && out.length < CAP; i++) {
     var el = els[i];
     if (!vis(el)) continue;
@@ -832,8 +950,9 @@ const SNAPSHOT_FN = `function(generation){
     var line = '[' + ref + '] ' + role(el) + (nm ? ' "' + nm.replace(/"/g, "'") + '"' : '');
     if (el.disabled) line += ' (معطّل)';
     out.push(line);
+    fps[ref] = fingerprint(el);
   }
-  return { title: document.title, url: location.href, generation: generation, count: out.length, elements: out, truncated: out.length >= CAP };
+  return { title: document.title, url: location.href, generation: generation, count: out.length, elements: out, truncated: out.length >= CAP, fps: fps };
 }`;
 
 async function snapshot() {
@@ -847,8 +966,14 @@ async function snapshot() {
     if (activeSnapshotGeneration === generation && activeSnapshotOwnerId === wc.id) {
       activeSnapshotNextIndex = Math.max(0, Number(data && data.count) || 0);
       activeSnapshotTextBytes = Buffer.byteLength(((data && data.elements) || []).join('\n'), 'utf8');
+      rememberFingerprints(data && data.fps);
     }
-    return { ok: true, snap: data };
+    // البصمات داخلية بحتة: نبني اللقطة المعادة بقائمة حقول مغلقة فلا تعبر إلى النموذج.
+    return { ok: true, snap: {
+      title: data && data.title, url: data && data.url, generation,
+      count: (data && data.count) || 0, elements: (data && data.elements) || [],
+      truncated: !!(data && data.truncated),
+    } };
   } catch (e) {
     if (activeSnapshotGeneration === generation) invalidateSnapshotRefs(wc);
     return { error: 'snapshot_failed' };
@@ -899,24 +1024,35 @@ function emitScreenshotThumbnail(image, kind, locator) {
   } catch {}
 }
 
-async function screenshot() {
+// جسر تكامل الدفعة (بند «مذكور لا منفَّذ» في تقرير منفّذ ب): الأغلفة تطلب قياس
+// طول الصفحة داخل نداء اللقطة نفسه كي تلحق تلميح «الصفحة أطول من المعروض —
+// خذ full_page:true» (بند مالك — لوحة سطر أضيق من متصفح عادي). فشل القياس لا
+// يفشل اللقطة — التلميح تحسين لا شرط.
+async function screenshot(options) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
   try {
+    let pageMetrics;
+    if (options && options.includePageMetrics) {
+      try {
+        pageMetrics = await wc.executeJavaScript(
+          '({content_height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), viewport_height: window.innerHeight})', true);
+      } catch { pageMetrics = undefined; }
+    }
     const img = await wc.capturePage();
     const png = img.toPNG();
     if (!png || !png.length) return { error: 'empty' };
     emitScreenshotThumbnail(img, 'page');
-    return { ok: true, base64: png.toString('base64') };
+    return { ok: true, base64: png.toString('base64'), page_metrics: pageMetrics };
   } catch (e) { return { error: 'shot_failed' }; }
 }
 
 // لقطة عنصر واحد بـ ref/selector (البند 4): فحص بصري مركّز أرخص رموزاً من الصفحة كاملة.
 // يمرّر العنصر لنافذة العرض ثم يعيد مستطيله (إحداثيات viewport = DIP عند zoom=1) لـ capturePage.
 const RECT_FN = `function(loc){
-  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  ${RESOLVE_SRC}
   var el; try { el = resolve(loc); } catch(e){ return {err:'bad_selector'}; }
   if (!el) return {err:'not_found'};
   try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
@@ -996,7 +1132,7 @@ async function screenshotFull() {
 // ليلتقطها React/Vue (input/change events)، والنقر el.click() بعد scrollIntoView.
 // resolve: ref (^sN:eN$) ⇒ سمة data-satr-ref؛ غيره ⇒ querySelector (قد يرمي ⇒ bad_selector).
 const FLASH_FN = `function(loc){
-  function resolve(l){ if(l==='__active__') return document.activeElement; if(l==='__page__') return document.documentElement; l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
+  ${RESOLVE_SRC}
   var el; try { el=resolve(loc); } catch(e){ return {ok:false,reason:'bad_selector'}; }
   if(!el) return {ok:false,reason:'not_found'};
   try { if(loc!=='__page__') el.scrollIntoView({block:'center',inline:'center'}); } catch(e){}
@@ -1009,17 +1145,15 @@ const FLASH_FN = `function(loc){
   return {ok:true};
 }`;
 const PROBE_BEGIN_FN = `function(opt){
-  function clean(s){return String(s||'').replace(/\\s+/g,' ').trim();}
-  function esc(s){try{return(window.CSS&&CSS.escape)?CSS.escape(s):String(s);}catch(e){return String(s);}}
-  function vis(el){if(!el||el.nodeType!==1)return false;var s;try{s=getComputedStyle(el);}catch(e){return false;}if(!s||s.display==='none'||s.visibility==='hidden'||parseFloat(s.opacity)===0)return false;var r=el.getBoundingClientRect();return r.width>=1&&r.height>=1;}
-  function name(el){var n=el.getAttribute&&el.getAttribute('aria-label');if(n&&clean(n))return clean(n);var lb=el.getAttribute&&el.getAttribute('aria-labelledby');if(lb){var t='';lb.split(/\\s+/).forEach(function(id){var e=document.getElementById(id);if(e)t+=' '+(e.textContent||'');});if(clean(t))return clean(t);}var tag=el.tagName.toLowerCase();if(tag==='input'){var ph=el.getAttribute('placeholder');if(ph)return clean(ph);if(el.id){var l;try{l=document.querySelector('label[for="'+esc(el.id)+'"]');}catch(e){}if(l&&clean(l.textContent))return clean(l.textContent);}var nm=el.getAttribute('name');if(nm)return clean(nm);return '';}if(tag==='img')return clean(el.getAttribute('alt'));if(tag==='textarea')return clean(el.getAttribute('placeholder')||el.getAttribute('name'));if(tag==='select')return clean(el.getAttribute('name')||el.getAttribute('aria-label'));return clean(el.textContent).slice(0,120);}
-  function role(el){var r=el.getAttribute&&el.getAttribute('role');if(r)return clean(r);var tag=el.tagName.toLowerCase();if(tag==='a'&&el.hasAttribute('href'))return'link';if(tag==='button')return'button';if(tag==='select')return'combobox';if(tag==='textarea')return'textbox';if(tag==='input'){var t=(el.getAttribute('type')||'text').toLowerCase();if(t==='submit'||t==='button'||t==='reset')return'button';if(t==='checkbox')return'checkbox';if(t==='radio')return'radio';return'textbox';}if(/^h[1-6]$/.test(tag))return'heading';return tag;}
-  var SEL='a[href],button,input:not([type=hidden]),textarea,select,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=switch],[role=combobox],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
+  ${SEMANTICS_SRC}
   try{var old=window.__satrActionProbe;if(old){if(old.ob)old.ob.disconnect();removeEventListener('hashchange',old.nav);removeEventListener('popstate',old.nav);if(old.timer)clearTimeout(old.timer);if(old.resolve)old.resolve(old.payload?old.payload():{count:old.count||0,url:location.href});}}catch(e){}
   var generation=Math.max(0,Number(opt&&opt.generation)||0),prefix=generation?'s'+generation+':e':'',nextIndex=Math.max(0,Number(opt&&opt.nextIndex)||0);
-  var p={count:0,url:location.href,generation:generation,nextIndex:nextIndex,delta:[],deltaChars:0,deltaTruncated:false,seen:{},resolve:null,timer:null};
-  p.payload=function(){return{count:p.count||0,url:location.href,generation:p.generation,nextIndex:p.nextIndex,delta:p.delta.slice(),deltaTruncated:!!p.deltaTruncated};};
-  p.add=function(kind,el,ref){if(!ref||p.seen[kind+ref])return;p.seen[kind+ref]=1;var nm=name(el),line=kind+' ['+ref+'] '+role(el)+(nm?' "'+nm.replace(/"/g,"'")+'"':'');if(el.disabled)line+=' (معطّل)';if(p.delta.length>=40||p.deltaChars+line.length>4000){p.deltaTruncated=true;return;}p.delta.push(line);p.deltaChars+=line.length+1;};
+  var p={count:0,url:location.href,generation:generation,nextIndex:nextIndex,delta:[],deltaChars:0,deltaTruncated:false,seen:{},fps:{},fpCount:0,resolve:null,timer:null};
+  p.payload=function(){return{count:p.count||0,url:location.href,generation:p.generation,nextIndex:p.nextIndex,delta:p.delta.slice(),deltaTruncated:!!p.deltaTruncated,fps:p.fps};};
+  // كل ref يراها الوكيل في delta تُبصم لحظة توليدها (‏+ الجديدة و~ المتغيّرة) وإلا انفتح
+  // مسار غير محمي داخل الجيل نفسه. المحذوفة (‏-) لا تُبصم وتبقى بصمتها القديمة في العملية
+  // الرئيسية كي يشخّص الفعل التالي عليها ref_removed بدل not_found العامة.
+  p.add=function(kind,el,ref){if(!ref||p.seen[kind+ref])return;p.seen[kind+ref]=1;if(kind!=='-'&&p.fpCount<200){if(!(ref in p.fps))p.fpCount++;p.fps[ref]=fingerprint(el);}var nm=name(el),line=kind+' ['+ref+'] '+role(el)+(nm?' "'+nm.replace(/"/g,"'")+'"':'');if(el.disabled)line+=' (معطّل)';if(p.delta.length>=40||p.deltaChars+line.length>4000){p.deltaTruncated=true;return;}p.delta.push(line);p.deltaChars+=line.length+1;};
   p.notify=function(){if(!p.resolve)return;var done=p.resolve;p.resolve=null;if(p.timer)clearTimeout(p.timer);p.timer=null;done(p.payload());};p.nav=function(){p.notify();};
   function refs(node){var out=[];if(!node||node.nodeType!==1)return out;if(node.hasAttribute&&node.hasAttribute('data-satr-ref'))out.push(node);try{out=out.concat([].slice.call(node.querySelectorAll('[data-satr-ref]')));}catch(e){}return out;}
   function interactives(node){var out=[];if(!node||node.nodeType!==1)return out;try{if(node.matches(SEL))out.push(node);out=out.concat([].slice.call(node.querySelectorAll(SEL)));}catch(e){}return out;}
@@ -1066,16 +1200,51 @@ function boundActionDelta(lines, alreadyTruncated) {
   return { delta, truncated };
 }
 
+// الوميض تجميلي لا أمني: يبقى في main world، **وفشله لا يوقف الفعل**. كان قبل هذه الدفعة
+// يعمل مدقّقاً مسبقاً للهدف (يعيد not_found/bad_selector فيقطع الفعل)، وذلك يجعل صفحةً
+// تخرّب document.querySelector قادرةً على تعطيل الوكيل. الحارس في العالم المعزول هو
+// السلطة الآن، وهو يعيد الرمزين نفسيهما فالمخرَج للنموذج لم يتغيّر.
 async function flashLocator(wc, locator) {
   try { return await wc.executeJavaScript('(' + FLASH_FN + ')(' + JSON.stringify(String(locator)) + ')', true); }
   catch { return { ok: false, reason: 'flash_failed' }; }
+}
+
+// معرّف العالم المعزول لأفعال الوكيل. أثبت المسبار الحاجز أنه — على WebContents نفسه —
+// يقرأ DOM سليماً ويرى سمات data-satr-ref الموسومة من main world، حتى حين تخرّب الصفحة
+// document.querySelector وEventTarget.prototype.addEventListener؛ وglobals العالم المعزول
+// محجوبة عن الصفحة. لذلك يجري حل الهدف ومقارنة البصمة والتنفيذ فيه في نداء واحد.
+const AGENT_WORLD_ID = 1013;
+
+function runIsolated(wc, expression) {
+  if (typeof wc.executeJavaScriptInIsolatedWorld !== 'function') {
+    return wc.executeJavaScript(expression, true); // سقوط رشيق لبناء لا يعلن الـAPI
+  }
+  return wc.executeJavaScriptInIsolatedWorld(AGENT_WORLD_ID, [{ code: expression }], true);
+}
+
+// تركيب نداء الفعل المحروس: (‏loc, expect, …وسائط الفعل) — expect من خريطة البصمات الداخلية.
+function guardedExpression(fnSource, locator, wc, ...args) {
+  const values = [String(locator), expectedFingerprint(locator, wc)].concat(args);
+  return '(' + fnSource + ')(' + values.map((value) => JSON.stringify(value)).join(',') + ')';
+}
+
+// أسباب التنازع تُترجم هنا مرة واحدة: تُبثّ للواجهة، ويُحوَّل وسم البصمة إلى نص مقروء.
+function actionFailure(result) {
+  const reason = (result && result.reason) || 'action_failed';
+  if (reason === 'target_changed') {
+    return conflictError(reason, { was: fingerprintLabel(result.was), now: fingerprintLabel(result.now) });
+  }
+  if (reason === 'ref_removed') return conflictError(reason);
+  const extra = result && Number.isInteger(result.index) ? { index: result.index } : null;
+  return extra ? { error: reason, ...extra } : { error: reason };
 }
 
 async function observedResult(wc, beforeUrl, actionResult) {
   let observedCount = 0;
   let observedUrl = beforeUrl;
   let observedProbe = null;
-  if (!actionResult.changed) {
+  // postcondition معلوم ومحقَّق (‏type/select) ⇒ لا انتظار: النتيجة صادقة بلا نافذة الرصد.
+  if (!actionResult.changed && !actionResult.satisfied) {
     try {
       const pageWait = wc.executeJavaScript(PROBE_WAIT, true).catch(() => null);
       let mainTimer;
@@ -1102,26 +1271,34 @@ async function observedResult(wc, beforeUrl, actionResult) {
   let deltaTruncated = false;
   if (!navigated && wc.id === activeSnapshotOwnerId && Number(probe.generation) === activeSnapshotGeneration) {
     activeSnapshotNextIndex = Math.max(activeSnapshotNextIndex, Number(probe.nextIndex) || 0);
+    rememberFingerprints(probe.fps);
     const bounded = boundActionDelta(probe.delta, probe.deltaTruncated);
     delta = bounded.delta;
     deltaTruncated = bounded.truncated;
   }
+  // دلالة صادقة: dispatched أن الفعل أُرسل، effect_observed أن أثراً رُصد فعلاً،
+  // وsatisfied حيث postcondition معلوم فقط. dom_changed يبقى كما هو للتوافق الخلفي.
   return {
-    ...actionResult, ok: true, navigated, dom_changed: domChanged,
+    ...actionResult, ok: true, navigated,
+    dispatched: true, effect_observed: domChanged, dom_changed: domChanged,
     delta: delta.length ? delta : undefined,
     delta_truncated: deltaTruncated || undefined,
-    note: !navigated && !domChanged ? 'لم يُرصد تغيير في DOM أو التنقّل؛ تحقّق بلقطة جديدة.' : undefined,
+    note: !navigated && !domChanged
+      ? 'نُفِّذ الفعل ولم يُرصد أثر في DOM أو التنقّل — لا تكرره لمجرد ذلك؛ تحقق بلقطة أو browser_wait_for إن كنت تتوقع أثراً.'
+      : undefined,
   };
 }
 
 async function observeScript(wc, expression) {
   const beforeUrl = wc.getURL();
+  // المسبار يبقى في main world (المراقب يرى تحوّلات DOM أياً كان العالم الذي أحدثها)،
+  // والفعل نفسه في العالم المعزول مع حارسه.
   try { await wc.executeJavaScript(actionProbeExpression(wc), true); } catch {}
   try {
-    const result = await wc.executeJavaScript(expression, true);
+    const result = await runIsolated(wc, expression);
     if (!result || !result.ok) {
       try { await wc.executeJavaScript(PROBE_END, true); } catch {}
-      return { error: (result && result.reason) || 'action_failed' };
+      return actionFailure(result);
     }
     return observedResult(wc, beforeUrl, result);
   } catch {
@@ -1131,18 +1308,18 @@ async function observeScript(wc, expression) {
   }
 }
 
-const CLICK_FN = `function(loc){
-  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
-  var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
-  if (!el) return {ok:false, reason:'not_found'};
+const CLICK_FN = `function(loc, expect){
+  ${TARGET_GUARD_SRC}
+  var g = guard(loc, expect); if (g.err) return g.err;
+  var el = g.el;
   try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
   try { el.click(); } catch(e){ return {ok:false, reason:'click_error'}; }
   return {ok:true, tag: el.tagName.toLowerCase(), text: (el.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80)};
 }`;
-const TYPE_FN = `function(loc, text){
-  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
-  var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
-  if (!el) return {ok:false, reason:'not_found'};
+const TYPE_FN = `function(loc, expect, text){
+  ${TARGET_GUARD_SRC}
+  var g = guard(loc, expect); if (g.err) return g.err;
+  var el = g.el;
   var before = '';
   try {
     el.focus();
@@ -1167,7 +1344,9 @@ const TYPE_FN = `function(loc, text){
       el.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text}));
     } else { return {ok:false, reason:'not_editable'}; }
   } catch(e){ return {ok:false, reason:'type_error'}; }
-  return {ok:true, tag: el.tagName.toLowerCase(), changed: (el.isContentEditable ? el.innerHTML : el.value) !== before};
+  var after = el.isContentEditable ? el.innerHTML : el.value;
+  var value = el.isContentEditable ? (el.textContent || '') : el.value;
+  return {ok:true, tag: el.tagName.toLowerCase(), changed: after !== before, satisfied: value === String(text)};
 }`;
 
 async function clickElement(locator) {
@@ -1176,10 +1355,11 @@ async function clickElement(locator) {
   if (!wc) return { error: 'closed' };
   const inputError = locatorError(locator, wc);
   if (inputError) return { error: inputError };
+  const leased = leaseGate();
+  if (leased) return leased;
   await waitReady(wc);
-  const flashed = await flashLocator(wc, locator);
-  if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
-  const r = await observeScript(wc, '(' + CLICK_FN + ')(' + JSON.stringify(String(locator)) + ')');
+  await flashLocator(wc, locator);
+  const r = await observeScript(wc, guardedExpression(CLICK_FN, locator, wc));
   return r.error === 'action_failed' ? { error: 'click_failed' } : r;
 }
 
@@ -1189,11 +1369,11 @@ async function typeText(locator, text) {
   if (!wc) return { error: 'closed' };
   const inputError = locatorError(locator, wc);
   if (inputError) return { error: inputError };
+  const leased = leaseGate();
+  if (leased) return leased;
   await waitReady(wc);
-  const flashed = await flashLocator(wc, locator);
-  if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
-  const r = await observeScript(wc,
-    '(' + TYPE_FN + ')(' + JSON.stringify(String(locator)) + ',' + JSON.stringify(String(text)) + ')');
+  await flashLocator(wc, locator);
+  const r = await observeScript(wc, guardedExpression(TYPE_FN, locator, wc, String(text)));
   return r.error === 'action_failed' ? { error: 'type_failed' } : r;
 }
 
@@ -1202,21 +1382,22 @@ async function typeText(locator, text) {
 // في الصفحة نفسها لا تخرج القيمة حتى للعملية الرئيسية، وبين صفحتين تحفظ مؤقتاً تحت
 // معرّف مبهم ثم تُمسح بعد اللصق/نهاية المهمة. لا نتيجة أو حدث يحمل القيمة.
 const FILL_FIELDS_FN = `function(fields){
-  function resolve(loc){loc=String(loc||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):null;}
+  ${TARGET_GUARD_SRC}
   function writable(el){return !!el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable);}
   function set(el,value){el.focus();if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}else{el.textContent=value;el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));}}
-  var resolved=[];for(var i=0;i<fields.length;i++){var el;try{el=resolve(fields[i].ref);}catch(e){return {ok:false,reason:'bad_selector',index:i};}if(!el)return {ok:false,reason:'not_found',index:i};if(!writable(el))return {ok:false,reason:'not_editable',index:i};resolved.push(el);}
+  var resolved=[];for(var i=0;i<fields.length;i++){var g=guard(fields[i].ref,fields[i].expect||'');if(g.err){g.err.index=i;return g.err;}if(!writable(g.el))return {ok:false,reason:'not_editable',index:i};resolved.push(g.el);}
   for(var j=0;j<resolved.length;j++)set(resolved[j],String(fields[j].value));
   return {ok:true,filled:resolved.length};
 }`;
-const TRANSFER_SAME_FN = `function(fromLoc,toLoc){
-  function resolve(loc){loc=String(loc||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(loc))return document.querySelector('[data-satr-ref="'+loc+'"]');return loc?document.querySelector(loc):null;}
+const TRANSFER_SAME_FN = `function(fromLoc,fromExpect,toLoc,toExpect){
+  ${TARGET_GUARD_SRC}
   function read(el){if(el.tagName==='INPUT'||el.tagName==='TEXTAREA')return el.value;if(el.isContentEditable)return el.textContent||'';return null;}
   function write(el,value){if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true;}if(el.isContentEditable){el.textContent=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));return true;}return false;}
-  var from,to;try{from=resolve(fromLoc);to=resolve(toLoc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!from||!to)return {ok:false,reason:'not_found'};var value=read(from);if(value===null)return {ok:false,reason:'not_readable'};from.setAttribute('data-satr-secret-field','1');if(!write(to,value))return {ok:false,reason:'not_editable'};return {ok:true,moved:true};
+  var gf=guard(fromLoc,fromExpect);if(gf.err)return gf.err;var gt=guard(toLoc,toExpect);if(gt.err)return gt.err;
+  var from=gf.el,to=gt.el,value=read(from);if(value===null)return {ok:false,reason:'not_readable'};from.setAttribute('data-satr-secret-field','1');if(!write(to,value))return {ok:false,reason:'not_editable'};return {ok:true,moved:true};
 }`;
-const TRANSFER_READ_FN = `function(loc){function resolve(v){v=String(v||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):null);if(value===null)return {ok:false,reason:'not_readable'};el.setAttribute('data-satr-secret-field','1');return {ok:true,value:String(value)};}`;
-const TRANSFER_WRITE_FN = `function(loc,value){function resolve(v){v=String(v||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return {ok:true,moved:true};}if(el.isContentEditable){el.textContent=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));return {ok:true,moved:true};}return {ok:false,reason:'not_editable'};}`;
+const TRANSFER_READ_FN = `function(loc,expect){${TARGET_GUARD_SRC}var g=guard(loc,expect);if(g.err)return g.err;var el=g.el;var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):null);if(value===null)return {ok:false,reason:'not_readable'};el.setAttribute('data-satr-secret-field','1');return {ok:true,value:String(value)};}`;
+const TRANSFER_WRITE_FN = `function(loc,expect,value){${TARGET_GUARD_SRC}var g=guard(loc,expect);if(g.err)return g.err;var el=g.el;if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return {ok:true,moved:true};}if(el.isContentEditable){el.textContent=value;el.setAttribute('data-satr-secret-field','1');el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));return {ok:true,moved:true};}return {ok:false,reason:'not_editable'};}`;
 
 function cleanLocator(value) {
   const text = typeof value === 'string' ? value.trim() : '';
@@ -1238,12 +1419,16 @@ async function fillForm(fields) {
     const inputError = locatorError(ref, wc);
     if (inputError) return { error: inputError, index: cleaned.length };
     if (memory.hasSecret(value)) return { error: 'secret' };
-    cleaned.push({ ref, value });
+    cleaned.push({ ref, value, expect: expectedFingerprint(ref, wc) });
   }
+  const leased = leaseGate();
+  if (leased) return leased;
   await waitReady(wc);
   try {
-    const result = await wc.executeJavaScript('(' + FILL_FIELDS_FN + ')(' + JSON.stringify(cleaned) + ')', true);
-    return result && result.ok ? { ok: true, filled: result.filled } : { error: (result && result.reason) || 'fill_failed', index: result && result.index };
+    const result = await runIsolated(wc, '(' + FILL_FIELDS_FN + ')(' + JSON.stringify(cleaned) + ')');
+    return result && result.ok
+      ? { ok: true, filled: result.filled, dispatched: true }
+      : actionFailure(result || { reason: 'fill_failed' });
   } catch { return { error: 'fill_failed' }; }
 }
 
@@ -1257,15 +1442,20 @@ async function transferField(fromLocator, toLocator, transferId) {
   if ((!fromRef || !toRef) && !(fromRef && !toRef && !token) && !(!fromRef && toRef && token)) return { error: 'bad_input' };
   const inputError = locatorError(fromRef, wc) || locatorError(toRef, wc);
   if (inputError) return { error: inputError };
+  const leased = leaseGate();
+  if (leased) return leased;
   await waitReady(wc);
   sensitiveOperation = true;
   try {
     if (fromRef && toRef) {
-      const result = await wc.executeJavaScript('(' + TRANSFER_SAME_FN + ')(' + JSON.stringify(fromRef) + ',' + JSON.stringify(toRef) + ')', true);
-      return result && result.ok ? { ok: true, moved: true } : { error: (result && result.reason) || 'transfer_failed' };
+      const result = await runIsolated(wc, '(' + TRANSFER_SAME_FN + ')(' + JSON.stringify(fromRef) + ','
+        + JSON.stringify(expectedFingerprint(fromRef, wc)) + ',' + JSON.stringify(toRef) + ','
+        + JSON.stringify(expectedFingerprint(toRef, wc)) + ')');
+      return result && result.ok ? { ok: true, moved: true, dispatched: true } : actionFailure(result || { reason: 'transfer_failed' });
     }
     if (fromRef) {
-      const result = await wc.executeJavaScript('(' + TRANSFER_READ_FN + ')(' + JSON.stringify(fromRef) + ')', true);
+      const result = await runIsolated(wc, guardedExpression(TRANSFER_READ_FN, fromRef, wc));
+      if (result && !result.ok && (result.reason === 'target_changed' || result.reason === 'ref_removed')) return actionFailure(result);
       if (!result || !result.ok || typeof result.value !== 'string' || !result.value || result.value.length > 32768) {
         return { error: (result && result.reason) || 'empty_source' };
       }
@@ -1278,9 +1468,9 @@ async function transferField(fromLocator, toLocator, transferId) {
     pruneSecretTransfers();
     const entry = secretTransfers.get(token);
     if (!entry) return { error: 'transfer_expired' };
-    const result = await wc.executeJavaScript('(' + TRANSFER_WRITE_FN + ')(' + JSON.stringify(toRef) + ',' + JSON.stringify(entry.value) + ')', true);
+    const result = await runIsolated(wc, guardedExpression(TRANSFER_WRITE_FN, toRef, wc, entry.value));
     if (result && result.ok) secretTransfers.delete(token);
-    return result && result.ok ? { ok: true, moved: true } : { error: (result && result.reason) || 'transfer_failed' };
+    return result && result.ok ? { ok: true, moved: true, dispatched: true } : actionFailure(result || { reason: 'transfer_failed' });
   } catch { return { error: 'transfer_failed' }; }
   finally {
     sensitiveOperation = false;
@@ -1289,8 +1479,10 @@ async function transferField(fromLocator, toLocator, transferId) {
   }
 }
 
-const SECRET_MARK_FN = `function(loc){function resolve(v){v=String(v||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el;try{el=resolve(loc);}catch(e){return {ok:false,reason:'bad_selector'};}if(!el)return {ok:false,reason:'not_found'};if(!(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable))return {ok:false,reason:'not_editable'};try{el.scrollIntoView({block:'center',inline:'center'});el.focus();el.setAttribute('data-satr-secret-field','1');var old=document.querySelector('[data-satr-secret-request]');if(old)old.remove();var r=el.getBoundingClientRect(),box=document.createElement('div');box.setAttribute('data-satr-secret-request','1');box.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;border:3px solid #D9A441;border-radius:5px;box-shadow:0 0 0 4px rgba(217,164,65,.22);';box.style.left=Math.max(0,r.left)+'px';box.style.top=Math.max(0,r.top)+'px';box.style.width=Math.max(1,r.width)+'px';box.style.height=Math.max(1,r.height)+'px';document.documentElement.appendChild(box);}catch(e){}return {ok:true};}`;
-const SECRET_DONE_FN = `function(loc){function resolve(v){v=String(v||'');if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(v))return document.querySelector('[data-satr-ref="'+v+'"]');return v?document.querySelector(v):null;}var el=null;try{el=resolve(loc);}catch(e){}var box=document.querySelector('[data-satr-secret-request]');if(box)box.remove();if(!el)return {ok:false,filled:false};var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):'');el.setAttribute('data-satr-secret-field','1');return {ok:true,filled:String(value||'').length>0};}`;
+const SECRET_MARK_FN = `function(loc,expect){${TARGET_GUARD_SRC}var g=guard(loc,expect);if(g.err)return g.err;var el=g.el;if(!(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable))return {ok:false,reason:'not_editable'};try{el.scrollIntoView({block:'center',inline:'center'});el.focus();el.setAttribute('data-satr-secret-field','1');var old=document.querySelector('[data-satr-secret-request]');if(old)old.remove();var r=el.getBoundingClientRect(),box=document.createElement('div');box.setAttribute('data-satr-secret-request','1');box.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;border:3px solid #D9A441;border-radius:5px;box-shadow:0 0 0 4px rgba(217,164,65,.22);';box.style.left=Math.max(0,r.left)+'px';box.style.top=Math.max(0,r.top)+'px';box.style.width=Math.max(1,r.width)+'px';box.style.height=Math.max(1,r.height)+'px';document.documentElement.appendChild(box);}catch(e){}return {ok:true};}`;
+// تنظيف بعد إدخال المستخدم للسر: **بلا حارس بصمة عمداً** — الحقل تغيّر بفعل المستخدم
+// نفسه وهذا هو المقصود، والدالة لا تنفّذ فعلاً للوكيل بل تزيل الوسم وتعلن هل مُلئ.
+const SECRET_DONE_FN = `function(loc){${RESOLVE_SRC}var el=null;try{el=resolve(loc);}catch(e){}var box=document.querySelector('[data-satr-secret-request]');if(box)box.remove();if(!el)return {ok:false,filled:false};var value=(el.tagName==='INPUT'||el.tagName==='TEXTAREA')?el.value:(el.isContentEditable?(el.textContent||''):'');el.setAttribute('data-satr-secret-field','1');return {ok:true,filled:String(value||'').length>0};}`;
 
 async function requestSecret(locator, reason) {
   const wc = currentWC();
@@ -1300,15 +1492,18 @@ async function requestSecret(locator, reason) {
   if (!ref || !why || memory.hasSecret(why)) return { error: 'bad_input' };
   const inputError = locatorError(ref, wc);
   if (inputError) return { error: inputError };
+  const leased = leaseGate();
+  if (leased) return leased;
   if (secretRequest || handoffActive) return { error: 'active' };
+  const expect = expectedFingerprint(ref, wc);
   const state = startHandoff();
   if (!state.ok) return { error: state.error };
   sensitiveOperation = true;
   let marked;
-  try { marked = await wc.executeJavaScript('(' + SECRET_MARK_FN + ')(' + JSON.stringify(ref) + ')', true); }
+  try { marked = await runIsolated(wc, '(' + SECRET_MARK_FN + ')(' + JSON.stringify(ref) + ',' + JSON.stringify(expect) + ')'); }
   catch { marked = null; }
   finally { sensitiveOperation = false; }
-  if (!marked || !marked.ok) { endHandoff(); return { error: (marked && marked.reason) || 'request_failed' }; }
+  if (!marked || !marked.ok) { endHandoff(); return actionFailure(marked || { reason: 'request_failed' }); }
   const id = 'secret_' + crypto.randomBytes(16).toString('hex');
   return new Promise((resolve) => {
     secretRequest = { id, ref, resolve };
@@ -1353,10 +1548,10 @@ function clearSensitiveState() {
 // select/hover يُحلّان الهدف بنفس منطق ref-أو-selector (resolve مضمّن). press_key عبر
 // sendInputEvent (أحداث مفاتيح حقيقية موثوقة — تُرسل للعرض المعزول وحده، فتُطلق سلوك
 // النموذج الأصلي مثل إرسال النموذج بـ Enter، بعكس الحدث المُصطنع غير الموثوق).
-const SELECT_FN = `function(loc, val){
-  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
-  var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
-  if (!el) return {ok:false, reason:'not_found'};
+const SELECT_FN = `function(loc, expect, val){
+  ${TARGET_GUARD_SRC}
+  var g = guard(loc, expect); if (g.err) return g.err;
+  var el = g.el;
   if (el.tagName !== 'SELECT') return {ok:false, reason:'not_select'};
   var opts = Array.prototype.slice.call(el.options), match = null, i;
   for (i=0;i<opts.length;i++){ if (opts[i].value === val){ match = opts[i]; break; } }
@@ -1366,12 +1561,12 @@ const SELECT_FN = `function(loc, val){
   el.value = match.value;
   el.dispatchEvent(new Event('input', {bubbles:true}));
   el.dispatchEvent(new Event('change', {bubbles:true}));
-  return {ok:true, label: (match.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80), changed: el.value !== before};
+  return {ok:true, label: (match.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80), changed: el.value !== before, satisfied: el.value === match.value};
 }`;
-const HOVER_FN = `function(loc){
-  function resolve(l){ l=String(l); if(/^s[1-9][0-9]*:e[1-9][0-9]*$/.test(l)) return document.querySelector('[data-satr-ref="'+l+'"]'); return document.querySelector(l); }
-  var el; try { el = resolve(loc); } catch(e){ return {ok:false, reason:'bad_selector'}; }
-  if (!el) return {ok:false, reason:'not_found'};
+const HOVER_FN = `function(loc, expect){
+  ${TARGET_GUARD_SRC}
+  var g = guard(loc, expect); if (g.err) return g.err;
+  var el = g.el;
   try { el.scrollIntoView({block:'center', inline:'center'}); } catch(e){}
   try {
     var r = el.getBoundingClientRect();
@@ -1399,11 +1594,11 @@ async function selectOption(locator, value) {
   if (!wc) return { error: 'closed' };
   const inputError = locatorError(locator, wc);
   if (inputError) return { error: inputError };
+  const leased = leaseGate();
+  if (leased) return leased;
   await waitReady(wc);
-  const flashed = await flashLocator(wc, locator);
-  if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
-  const r = await observeScript(wc,
-    '(' + SELECT_FN + ')(' + JSON.stringify(String(locator)) + ',' + JSON.stringify(String(value)) + ')');
+  await flashLocator(wc, locator);
+  const r = await observeScript(wc, guardedExpression(SELECT_FN, locator, wc, String(value)));
   return r.error === 'action_failed' ? { error: 'select_failed' } : r;
 }
 
@@ -1413,12 +1608,13 @@ async function hover(locator) {
   if (!wc) return { error: 'closed' };
   const inputError = locatorError(locator, wc);
   if (inputError) return { error: inputError };
+  const leased = leaseGate();
+  if (leased) return leased;
   await waitReady(wc);
-  const flashed = await flashLocator(wc, locator);
-  if (!flashed.ok && flashed.reason !== 'flash_failed') return { error: flashed.reason };
+  await flashLocator(wc, locator);
   try {
-    const r = await wc.executeJavaScript('(' + HOVER_FN + ')(' + JSON.stringify(String(locator)) + ')', true);
-    return r && r.ok ? { ok: true, tag: r.tag } : { error: (r && r.reason) || 'hover_failed' };
+    const r = await runIsolated(wc, guardedExpression(HOVER_FN, locator, wc));
+    return r && r.ok ? { ok: true, tag: r.tag, dispatched: true } : actionFailure(r || { reason: 'hover_failed' });
   } catch (e) { return { error: 'hover_failed' }; }
 }
 
@@ -1449,6 +1645,10 @@ async function pressKey(key) {
   if (!wc) return { error: 'closed' };
   const code = KEY_MAP[String(key)];
   if (!code) return { error: 'bad_key' };
+  // العقد يُفحص قبل الإرسال؛ وبعده يرتفع العدّاد من مسار الإدخال نفسه فيستهلك العقد —
+  // فالضغطة التالية تحتاج لقطة جديدة (مقصود: عقد input-event بلا provenance).
+  const leased = leaseGate();
+  if (leased) return leased;
   await flashLocator(wc, '__active__');
   const beforeUrl = wc.getURL();
   try { await wc.executeJavaScript(actionProbeExpression(wc), true); } catch {}
@@ -1597,7 +1797,13 @@ module.exports = {
   getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText,
   selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
   fillForm, transferField, requestSecret, resolveSecretRequest, clearSecretTransfers, clearSensitiveState,
-  currentUrl, navigationTarget, browserTarget, browserActionContext, browserInputError, captureFrame, emitAgentActivity, startHandoff, endHandoff,
+  currentUrl, navigationTarget, browserTarget, browserActionContext, browserInputError, leaseError,
+  captureFrame, emitAgentActivity, startHandoff, endHandoff,
   isHandoffActive, close, destroy, isHttpUrl, setExternalTargetProvider, attachExternalWebContents,
-  _internals: { safeDownloadName, uniqueDownloadPath, effectiveBounds, isLocalHttpsUrl, locatorError },
+  _internals: {
+    safeDownloadName, uniqueDownloadPath, effectiveBounds, isLocalHttpsUrl, locatorError,
+    fingerprintLabel, AGENT_WORLD_ID, COMMITTED_INPUT_TYPES,
+    snapshotFingerprints: () => new Map(activeSnapshotFingerprints),
+    leaseState: () => ({ userInputCounter, leaseUserRevision }),
+  },
 };

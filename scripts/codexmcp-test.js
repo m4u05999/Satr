@@ -9,15 +9,20 @@
 const http = require('http');
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const codexmcp = require('../electron/codexmcp');
 const codex = require('../electron/codex');
 const tools = require('../electron/tools');
+const envbrief = require('../electron/envbrief');
+const browserAudit = require('./browser-session-audit');
 
 // preview مزيّف يحاكي عقد electron/preview.js دون WebContentsView
 const preview = {
   _fillCalls: 0,
   _clickCalls: 0,
+  _leaseError: null,
+  _screenshotMetrics: null,
   isHttpUrl: (u) => /^https?:\/\//.test(String(u)),
   navigate: () => ({ ok: true }),
   currentUrl: () => 'https://untrusted.example/page',
@@ -26,22 +31,23 @@ const preview = {
   snapshot: async () => ({ ok: true, snap: { title: 'ص', url: 'http://x', elements: ['[s3:e1] button "إرسال"'], count: 1, truncated: false } }),
   getConsole: () => ({ ok: true, logs: [{ level: 'error', message: 'oops', line: 4, source: 'app.js' }], netErrors: [] }),
   getNetwork: () => ({ ok: true, requests: [{ method: 'GET', url: 'http://x/api', status: 404, type: 'xhr', fromCache: false }], netErrors: [] }),
-  screenshot: async () => ({ ok: true, base64: Buffer.from('PNG').toString('base64') }),
+  screenshot: async () => ({ ok: true, base64: Buffer.from('PNG').toString('base64'), ...(preview._screenshotMetrics || {}) }),
   screenshotFull: async () => ({ ok: true, base64: 'AA==' }),
   screenshotElement: async () => ({ ok: true, base64: 'BB==' }),
   waitFor: async () => ({ ok: true, found: true }),
   scroll: async () => ({ ok: true, scrollY: 120, moved: 120, max: 2000 }),
   hover: async () => ({ ok: true, tag: 'a' }),
-  clickElement: async () => { preview._clickCalls += 1; return { ok: true, tag: 'button', text: 'إرسال', navigated: false, dom_changed: true }; },
-  typeText: async () => ({ ok: true, tag: 'input', navigated: false, dom_changed: true,
+  clickElement: async () => { preview._clickCalls += 1; return { ok: true, tag: 'button', text: 'إرسال', dispatched: true, effect_observed: true, navigated: false, dom_changed: true }; },
+  typeText: async () => ({ ok: true, tag: 'input', dispatched: true, effect_observed: true, satisfied: true, navigated: false, dom_changed: true,
     delta: ['+ [s3:e2] button "التالي"'], delta_truncated: true }),
-  selectOption: async () => ({ ok: true, label: 'الأول', navigated: false, dom_changed: true }),
-  pressKey: async () => ({ ok: true, key: 'Enter', navigated: false, dom_changed: false, note: 'لم يتغيّر شيء' }),
+  selectOption: async () => ({ ok: true, label: 'الأول', dispatched: true, effect_observed: true, satisfied: true, navigated: false, dom_changed: true }),
+  pressKey: async () => ({ ok: true, key: 'Enter', dispatched: true, effect_observed: false, navigated: false, dom_changed: false, note: 'لم يتغيّر شيء' }),
   browserActionContext: async (tool, input) => ({
     currentUrl: 'https://untrusted.example/page', targetUrl: 'https://untrusted.example/page',
     elementText: input && input.ref === 'delete-button' ? 'Delete' : '', tag: 'button',
   }),
   browserInputError: (_tool, input) => JSON.stringify(input || {}).includes('s1:e') ? 'stale_ref' : null,
+  leaseError: () => preview._leaseError,
   fillForm: async (fields) => { preview._fillCalls += 1; return { ok: true, filled: Array.isArray(fields) ? fields.length : 0 }; },
   transferField: async (from, to) => from && !to
     ? { ok: true, stored: true, transfer_id: 'xfer_0123456789abcdef0123456789abcdef', value: 'sk-proj-abcdefghijklmnopqrstuvwxyz' }
@@ -50,8 +56,8 @@ const preview = {
   evaluate: async () => ({ ok: true, value: '{"ready":true}', truncated: false }),
   setViewport: async (width, height) => ({ ok: true, requested: { width, height }, actual: { width, height: height || 600 } }),
   perf: async () => ({ ok: true, perf: { navigation: { load: 120 } }, failed_requests: [] }),
-  back: async () => ({ ok: true, navigated: true, dom_changed: false, url: 'https://previous.example/' }),
-  forward: async () => ({ ok: true, navigated: true, dom_changed: false, url: 'https://next.example/' }),
+  back: async () => ({ ok: true, dispatched: true, effect_observed: true, navigated: true, dom_changed: false, url: 'https://previous.example/' }),
+  forward: async () => ({ ok: true, dispatched: true, effect_observed: true, navigated: true, dom_changed: false, url: 'https://next.example/' }),
   // حالة التسليم البشري (browser_handoff) — يحاكي عقد preview.js: علم واحد + idempotent
   _handoff: false,
   startHandoff() { if (this._handoff) return { ok: false, error: 'active' }; this._handoff = true; return { ok: true }; },
@@ -163,6 +169,57 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
     && ['kind', 'prompt', 'model', 'count', 'refs', 'budget_usd'].every((field) => Object.hasOwn(adapterMediaDef.function.parameters.properties, field)),
   'generate_media مصنّفة exec في tools.js وتعلن حقول العقد');
   const agentSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'agent.js'), 'utf8');
+  const codexMcpSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'codexmcp.js'), 'utf8');
+  const leaseMessages = {
+    input_changed: 'تدخّل المستخدم في الصفحة بعد لقطتك؛ لم يُنفَّذ الفعل. خذ browser_snapshot جديدة قبل المتابعة.',
+    target_changed: 'تغيّر العنصر الهدف منذ لقطتك — كان «زر الحذف 1» وصار «زر الحذف 100»؛ لم يُنفَّذ الفعل. خذ لقطة جديدة وتحقق من نيّتك.',
+    ref_removed: 'أزيل العنصر الهدف من الصفحة بعد لقطتك (غالباً بتفاعل المستخدم أو تحديث الصفحة نفسها)؛ خذ لقطة جديدة.',
+  };
+  ok(codexmcp.whyClosed('input_changed') === leaseMessages.input_changed
+    && codexmcp.whyClosed('target_changed', null, { was: 'زر الحذف 1', now: 'زر الحذف 100' }) === leaseMessages.target_changed
+    && codexmcp.whyClosed('ref_removed') === leaseMessages.ref_removed,
+  'whyClosed يترجم رموز عقد اللقطة الثلاثة بالنص العربي الحرفي');
+  ok(/whyClosed:\s*previewErrorMessage/.test(agentSource)
+    && !agentSource.includes('تدخّل المستخدم في الصفحة بعد لقطتك')
+    && !agentSource.includes('تغيّر العنصر الهدف منذ لقطتك')
+    && !agentSource.includes('أزيل العنصر الهدف من الصفحة بعد لقطتك')
+    && codexMcpSource.includes('const LEASE_ERROR_MESSAGES'),
+  'غلاف SDK يستهلك مترجم codexmcp ولا يكرر نصوص عقد اللقطة');
+  ok(/actionProof:\s*browserActionProof/.test(agentSource) && !/function browserActionProof\(/.test(agentSource)
+    && /function actionProof\(/.test(codexMcpSource),
+  'غلافا Codex وSDK يستهلكان صياغة actionProof المشتركة');
+  ok(/satisfied=unknown/.test(codexmcp.actionProof('نقرة', {
+    dispatched: true, effect_observed: false, navigated: false, dom_changed: false,
+  })), 'actionProof يعرض satisfied=unknown حين لا يُعرف شرط النقر اللاحق');
+  const leaseCheck = agentSource.indexOf("const lease = typeof preview.leaseError === 'function'");
+  const bypassCheck = agentSource.indexOf("permissionMode === 'bypassPermissions'", leaseCheck);
+  ok(leaseCheck >= 0 && bypassCheck > leaseCheck, 'SDK يفحص عقد اللقطة قبل تجاوز/بوابة الإذن');
+  const browserBrief = envbrief.build('sdk', 'test-model');
+  ok(/أضيق وأقصر/.test(browserBrief) && /full_page:true/.test(browserBrief)
+    && /إذا تدخّل المستخدم/.test(browserBrief) && /لا تكرر الفعل/.test(browserBrief),
+  'موجز المتصفح يوجّه للقطة الكاملة وللقطة جديدة بعد تدخل المستخدم');
+  ok(/أضيق وأقصر/.test(built('screenshot').description) && /full_page=true/.test(built('screenshot').description)
+    && /browser_set_viewport/.test(built('screenshot').description)
+    && /أضيق وأقصر/.test(agentSource) && /full_page=true/.test(agentSource) && /screenshotLengthHint\(r\)/.test(agentSource),
+  'سطحا screenshot يشرحان ضيق اللوحة وSDK يستهلك التلميح الآلي المشترك');
+
+  const auditDir = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-browser-audit-'));
+  const auditFile = path.join(auditDir, 'session.jsonl');
+  const auditSecret = 'SECRET_PROMPT_MUST_NOT_APPEAR';
+  fs.writeFileSync(auditFile, [
+    { type: 'user', timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'user', content: auditSecret } },
+    { type: 'assistant', timestamp: '2026-01-01T00:00:01.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'u1', name: 'browser_click', input: { ref: 's1:e1' } }] } },
+    { type: 'user', timestamp: '2026-01-01T00:00:02.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'u1', content: 'dom_changed=false' }] } },
+    { type: 'assistant', timestamp: '2026-01-01T00:00:04.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'u2', name: 'browser_snapshot', input: {} }] } },
+    { type: 'user', timestamp: '2026-01-01T00:00:05.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'u2', content: '[s1:e1] button' }] } },
+  ].map(JSON.stringify).join('\n') + '\n', 'utf8');
+  const auditSession = await browserAudit._internals.parseSession(auditFile, { invalidLines: 0, failedFiles: 0 });
+  const auditReport = browserAudit._internals.buildReport(1, [auditSession], { invalidLines: 0, failedFiles: 0 });
+  fs.unlinkSync(auditFile);
+  fs.rmdirSync(auditDir);
+  ok(auditReport.totals.steps === 2 && auditReport.totals.model_turn_median_ms === 2000
+    && auditReport.totals.wasted_snapshot_cycles === 1 && !JSON.stringify(auditReport).includes(auditSecret),
+  'محلل السجلات يقرن الأدوات ويحسب زمن الدور والدورة المهدورة بلا حفظ نص المحادثة');
   ok(agentSource.includes("const GENERATE_MEDIA_TOOL = 'mcp__satr-terminal__generate_media'")
     && /NEVER_ALWAYS_TOOLS[^\n]+GENERATE_MEDIA_TOOL/.test(agentSource)
     && /NEVER_TURN_TOOLS[\s\S]{0,300}GENERATE_MEDIA_TOOL/.test(agentSource),
@@ -216,6 +273,16 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'screenshot', arguments: {} } });
   j = JSON.parse(r.body);
   ok(j.result.content[0].type === 'image' && j.result.content[0].mimeType === 'image/png', 'tools/call screenshot ⇒ محتوى image/png');
+  preview._screenshotMetrics = { content_height: 1800, viewport_height: 500 };
+  r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 41, method: 'tools/call', params: { name: 'screenshot', arguments: {} } });
+  j = JSON.parse(r.body);
+  ok(j.result.content[1] && /نحو 4×/.test(j.result.content[1].text) && /full_page:true/.test(j.result.content[1].text),
+    'لقطة النافذة تلحق تلميح full_page عند بلوغ طول الصفحة ثلاثة أضعاف');
+  preview._screenshotMetrics = { content_height: 1200, viewport_height: 500 };
+  r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 42, method: 'tools/call', params: { name: 'screenshot', arguments: {} } });
+  j = JSON.parse(r.body);
+  ok(j.result.content.length === 1, 'لقطة النافذة لا تعرض تلميح الطول دون نسبة 3×');
+  preview._screenshotMetrics = null;
 
   // tools/call: browser_network يُبرز 404
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'browser_network', arguments: {} } });
@@ -252,6 +319,18 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
     'stale_ref يُرفض قبل الإذن وقبل لمس DOM');
   await srv3.stop();
 
+  // تدخّل المستخدم بعد اللقطة يُرفض قبل بوابة الإذن وقبل استدعاء أداة DOM.
+  asked.length = 0;
+  preview._leaseError = { error: 'input_changed' };
+  srv3 = await codexmcp.start({ preview, requestPermission: gate(true) });
+  rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 101, method: 'tools/call', params: { name: 'browser_click', arguments: { ref: 's3:e5' } } });
+  jj = JSON.parse(rr.body);
+  ok(jj.result.isError && jj.result.content[0].text === leaseMessages.input_changed
+    && !asked.includes('browser_click') && preview._clickCalls === 0,
+  'input_changed يُرفض قبل الإذن وقبل لمس DOM');
+  preview._leaseError = null;
+  await srv3.stop();
+
   // (أ) رفض ⇒ browser_click لا يُنفَّذ ويعيد خطأ إذن
   srv3 = await codexmcp.start({ preview, requestPermission: gate(false) });
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_click', arguments: { ref: 'e5' } } });
@@ -265,7 +344,9 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   rr = await post(srv3.url, srv3.token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_type', arguments: { ref: 'e7', text: 'x' } } });
   jj = JSON.parse(rr.body);
   ok(asked.includes('browser_type') && !jj.result.isError && /كُتب النص/.test(jj.result.content[0].text), 'قبول الإذن ⇒ browser_type يُنفَّذ');
-  ok(/dom_changed=true/.test(jj.result.content[0].text), 'نتيجة الفعل تعيد دليل dom_changed للنموذج');
+  ok(/dispatched=true/.test(jj.result.content[0].text) && /effect_observed=true/.test(jj.result.content[0].text)
+    && /satisfied=true/.test(jj.result.content[0].text) && /dom_changed=true/.test(jj.result.content[0].text),
+  'نتيجة الفعل تعرض ثلاثية الإثبات وتبقي dom_changed للنموذج');
   ok(/تغيّر DOM المختصر/.test(jj.result.content[0].text) && /s3:e2/.test(jj.result.content[0].text), 'نتيجة الفعل تمرّر DOM delta والـref الجديدة للنموذج');
   ok(/قُصّ تغيّر DOM/.test(jj.result.content[0].text), 'نتيجة الفعل تطلب snapshot عند قصّ DOM delta');
   ok(askedMeta.some((item) => item.tool === 'browser_type' && item.target === 'https://untrusted.example/page'), 'codexmcp يمرّر هدف الصفحة الحالية لبوابة الفعل');

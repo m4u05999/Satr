@@ -106,6 +106,10 @@ async function main() {
     const changed = await preview.clickElement('#change');
     const changedMs = Date.now() - startedAt;
     assert(changed.ok && changed.dom_changed && !changed.navigated, 'النقر لم يعد نتيجة DOM صادقة');
+    // توسيع صريح للعقد (دفعة صقل المتصفح): dispatched/effect_observed يُضافان بجانب
+    // dom_changed الذي يبقى كما هو للتوافق الخلفي؛ والنقر العام بلا satisfied (مجهول).
+    assert(changed.dispatched === true && changed.effect_observed === true && !('satisfied' in changed),
+      'دلالة نتيجة النقر لم تتوسّع كما ينص العقد: ' + JSON.stringify(changed));
     assert(changedMs < 200, 'التغير المتزامن لم ينهِ الانتظار مبكراً: ' + changedMs + 'ms');
     const flash = await preview.evaluate("!!document.querySelector('[data-satr-agent-flash]')");
     assert(flash.ok && flash.value === 'true', 'الوميض الذهبي غير موجود داخل الصفحة بعد الفعل');

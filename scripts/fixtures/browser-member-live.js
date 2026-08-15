@@ -23,6 +23,8 @@ window.satr = {
   devServerRestart: () => Promise.resolve({ ok: true }),
   handoffDone: () => Promise.resolve({ ok: true }),
   onPreview: (callback) => { previewListeners.push(callback); return () => {}; },
+  // بوابة اختبارية لبثّ أحداث satr:preview اصطناعياً من runner الحي
+  __firePreviewEvent: (event) => previewListeners.forEach((listener) => listener(event)),
 };
 
 const violations = [];

@@ -51,11 +51,15 @@ function safeEqual(a, b) {
 function textResult(text, isError) {
   return { content: [{ type: 'text', text: String(text) }], isError: !!isError };
 }
-function imageResult(base64) {
-  return { content: [{ type: 'image', data: base64, mimeType: 'image/png' }] };
+function imageResult(base64, note) {
+  const content = [{ type: 'image', data: base64, mimeType: 'image/png' }];
+  if (note) content.push({ type: 'text', text: note });
+  return { content };
 }
 function actionProof(prefix, result) {
-  const proof = 'navigated=' + !!result.navigated + ' · dom_changed=' + !!result.dom_changed;
+  const satisfied = Object.hasOwn(result, 'satisfied') ? String(!!result.satisfied) : 'unknown';
+  const proof = 'dispatched=' + !!result.dispatched + ' · effect_observed=' + !!result.effect_observed
+    + ' · satisfied=' + satisfied + ' · navigated=' + !!result.navigated + ' · dom_changed=' + !!result.dom_changed;
   const lines = [prefix, proof];
   if (Array.isArray(result.delta) && result.delta.length) {
     lines.push('[تغيّر DOM المختصر — refs الجديدة صالحة ضمن الجيل الحالي]', result.delta.join('\n'));
@@ -65,9 +69,17 @@ function actionProof(prefix, result) {
   return lines.join('\n');
 }
 
+const LEASE_ERROR_MESSAGES = Object.freeze({
+  input_changed: () => 'تدخّل المستخدم في الصفحة بعد لقطتك؛ لم يُنفَّذ الفعل. خذ browser_snapshot جديدة قبل المتابعة.',
+  target_changed: (details) => 'تغيّر العنصر الهدف منذ لقطتك — كان «' + String((details && details.was) || '')
+    + '» وصار «' + String((details && details.now) || '') + '»؛ لم يُنفَّذ الفعل. خذ لقطة جديدة وتحقق من نيّتك.',
+  ref_removed: () => 'أزيل العنصر الهدف من الصفحة بعد لقطتك (غالباً بتفاعل المستخدم أو تحديث الصفحة نفسها)؛ خذ لقطة جديدة.',
+});
+
 // أخطاء أدوات المعاينة الموحّدة → رسالة عربية (نظير التغليف في agent.js)
-function whyClosed(err, extra) {
+function whyClosed(err, extra, details) {
   // أثناء التسليم البشري كل دوال preview.js الوكيلية تعيد {error:'handoff'} — رسالة موحّدة
+  if (Object.hasOwn(LEASE_ERROR_MESSAGES, err)) return LEASE_ERROR_MESSAGES[err](details);
   if (err === 'handoff') return HANDOFF_BLOCKED;
   if (err === 'closed') return 'المعاينة غير مفتوحة — استخدم open_preview أولاً.';
   if (err === 'stale_ref') return 'المرجع من لقطة قديمة — خذ browser_snapshot جديدة واستعمل ref منها.';
@@ -75,6 +87,17 @@ function whyClosed(err, extra) {
 }
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
+
+function screenshotLengthHint(result) {
+  const source = result && typeof result === 'object' ? result : {};
+  const metrics = source.page_metrics && typeof source.page_metrics === 'object' ? source.page_metrics
+    : source.metrics && typeof source.metrics === 'object' ? source.metrics : source;
+  const contentHeight = Number(metrics.content_height ?? metrics.contentHeight ?? metrics.scroll_height ?? metrics.scrollHeight);
+  const viewportHeight = Number(metrics.viewport_height ?? metrics.viewportHeight ?? metrics.inner_height ?? metrics.innerHeight);
+  if (!(contentHeight > 0) || !(viewportHeight > 0) || contentHeight < viewportHeight * 3) return '';
+  const ratio = Math.max(3, Math.round(contentHeight / viewportHeight));
+  return 'الصفحة أطول من المعروض نحو ' + ratio + '× — خذ `full_page:true` للحكم على التخطيط كاملاً.';
+}
 
 const PERMISSION_KEYS = new Set(['url', 'aspect', 'ref', 'text', 'value', 'key', 'selector', 'direction', 'amount', 'timeout_ms', 'full_page', 'expression', 'width', 'height', 'command', 'label', 'id', 'tail_lines', 'from_ref', 'to_ref', 'transfer_id', 'field_ref', 'reason', 'resume_hint', 'fields', 'kind', 'provider', 'model', 'count', 'cost_usd_estimate', 'session_cost_usd_estimate', 'catalog_date']);
 function permissionInput(value) {
@@ -229,13 +252,14 @@ function buildTools(deps) {
     {
       name: 'screenshot',
       description: 'التقط لقطة شاشة للصفحة المعروضة في المعاينة لتراها بصرياً وتتحقق من مظهرها. '
-        + 'مرّر full_page=true للصفحة كاملةً بالتمرير. تعيد صورة PNG.',
+        + 'لوحة معاينة «سطر» أضيق وأقصر من متصفح عادي؛ للحكم على تخطيط صفحة كاملة مرّر '
+        + 'full_page=true أو اضبط browser_set_viewport أولاً. تعيد صورة PNG.',
       inputSchema: { type: 'object', properties: { full_page: { type: 'boolean' } } },
       handler: async (args) => {
         const full = !!(args && args.full_page);
-        const r = full ? await preview.screenshotFull() : await preview.screenshot();
+        const r = full ? await preview.screenshotFull() : await preview.screenshot({ includePageMetrics: true });
         if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّر التقاط اللقطة'), true);
-        return imageResult(r.base64);
+        return imageResult(r.base64, full ? '' : screenshotLengthHint(r));
       },
     },
     {
@@ -294,7 +318,7 @@ function buildTools(deps) {
       handler: async (args) => {
         const r = await preview.hover(String((args && args.ref) || ''));
         if (!r || !r.ok) {
-          const why = r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.' : whyClosed(r && r.error, 'تعذّر التحويم');
+          const why = r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.' : whyClosed(r && r.error, 'تعذّر التحويم', r);
           return textResult(why, true);
         }
         return textResult('حُوّم فوق <' + r.tag + '>.');
@@ -311,7 +335,7 @@ function buildTools(deps) {
         const r = await preview.clickElement(String((args && args.ref) || ''));
         if (!r || !r.ok) {
           const why = r && r.error === 'not_found' ? 'لم يُعثر على عنصر بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
-            : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.' : whyClosed(r && r.error, 'تعذّر النقر');
+            : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.' : whyClosed(r && r.error, 'تعذّر النقر', r);
           return textResult(why, true);
         }
         return textResult(actionProof('نُقر على <' + (r.tag || 'عنصر') + '>' + (r.text ? ' («' + r.text + '»)' : ''), r));
@@ -330,7 +354,7 @@ function buildTools(deps) {
         if (!r || !r.ok) {
           const why = r && r.error === 'not_found' ? 'لم يُعثر على حقل بهذا المُعرّف — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_editable' ? 'العنصر ليس حقل إدخال قابلاً للكتابة.'
-            : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.' : whyClosed(r && r.error, 'تعذّرت الكتابة');
+            : r && r.error === 'bad_selector' ? 'مُعرّف/مُحدِّد غير صالح.' : whyClosed(r && r.error, 'تعذّرت الكتابة', r);
           return textResult(why, true);
         }
         return textResult(actionProof('كُتب النص في <' + r.tag + '>.', r));
@@ -349,7 +373,7 @@ function buildTools(deps) {
         if (!r || !r.ok) {
           const why = r && r.error === 'not_found' ? 'لم يُعثر على القائمة — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_select' ? 'العنصر ليس قائمة منسدلة <select>.'
-            : r && r.error === 'no_option' ? 'لا خيار بهذه القيمة/النص في القائمة.' : whyClosed(r && r.error, 'تعذّر الاختيار');
+            : r && r.error === 'no_option' ? 'لا خيار بهذه القيمة/النص في القائمة.' : whyClosed(r && r.error, 'تعذّر الاختيار', r);
           return textResult(why, true);
         }
         return textResult(actionProof('اختير «' + (r.label || '') + '».', r));
@@ -363,7 +387,7 @@ function buildTools(deps) {
       handler: async (args) => {
         const r = await preview.pressKey(String((args && args.key) || ''));
         if (!r || !r.ok) {
-          const why = r && r.error === 'bad_key' ? 'مفتاح غير مدعوم (استعمل الأسماء المذكورة في وصف الأداة).' : whyClosed(r && r.error, 'تعذّر الضغط');
+          const why = r && r.error === 'bad_key' ? 'مفتاح غير مدعوم (استعمل الأسماء المذكورة في وصف الأداة).' : whyClosed(r && r.error, 'تعذّر الضغط', r);
           return textResult(why, true);
         }
         return textResult(actionProof('ضُغط ' + r.key + '.', r));
@@ -427,7 +451,7 @@ function buildTools(deps) {
         const r = await preview.fillForm(args && args.fields);
         if (!r || !r.ok) {
           const why = r && r.error === 'secret' ? 'رُفضت قيمة سرّية. استخدم browser_transfer_field أو browser_request_secret.'
-            : whyClosed(r && r.error, 'تعذّرت تعبئة النموذج');
+            : whyClosed(r && r.error, 'تعذّرت تعبئة النموذج', r);
           return textResult(why, true);
         }
         return textResult('عُبّئ ' + r.filled + ' حقول غير سرّية. لم يُرسل النموذج.');
@@ -441,7 +465,7 @@ function buildTools(deps) {
       } },
       handler: async (args) => {
         const r = await preview.transferField(args && args.from_ref, args && args.to_ref, args && args.transfer_id);
-        if (!r || !r.ok) return textResult('تعذّر نقل القيمة السرّية (' + ((r && r.error) || 'خطأ') + ').', true);
+        if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّر نقل القيمة السرّية', r), true);
         return textResult(JSON.stringify(r.stored
           ? { ok: true, stored: true, transfer_id: r.transfer_id }
           : { ok: true, moved: true }));
@@ -459,7 +483,7 @@ function buildTools(deps) {
         if (!r || !r.ok) {
           const why = r && r.error === 'cancelled' ? 'ألغى المستخدم إدخال السر.'
             : r && r.error === 'empty' ? 'ضغط المستخدم «تم» لكن الحقل بقي فارغاً.'
-            : 'تعذّر طلب السر (' + ((r && r.error) || 'خطأ') + ').';
+            : whyClosed(r && r.error, 'تعذّر طلب السر', r);
           return textResult(why, true);
         }
         return textResult(JSON.stringify({ ok: true, filled: true }));
@@ -703,6 +727,9 @@ function start(deps) {
         if (browserpolicy.hasVisibleSecret(tool.name, input)) {
           return rpcOk(id, textResult('رُفض تمرير السر كنص. استخدم browser_transfer_field أو browser_request_secret.', true));
         }
+        const lease = typeof preview.leaseError === 'function' ? preview.leaseError(tool.name, input) : null;
+        const leaseCode = typeof lease === 'string' ? lease : lease && lease.error;
+        if (leaseCode) return rpcOk(id, textResult(whyClosed(leaseCode, null, lease), true));
         const inputError = typeof preview.browserInputError === 'function'
           ? preview.browserInputError(tool.name, input) : null;
         if (inputError) return rpcOk(id, textResult(whyClosed(inputError), true));
@@ -806,4 +833,7 @@ function start(deps) {
   });
 }
 
-module.exports = { start, buildTools, setEventSink, _internals: { safeEqual, permissionInput, PROTOCOL_VERSION } };
+module.exports = {
+  start, buildTools, setEventSink, whyClosed, actionProof, screenshotLengthHint,
+  _internals: { safeEqual, permissionInput, PROTOCOL_VERSION },
+};

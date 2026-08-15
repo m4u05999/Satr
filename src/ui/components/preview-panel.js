@@ -23,6 +23,7 @@ const previewSheet = sheet(`
   .pv-head {
     display: flex; align-items: center; gap: var(--space-1h); padding: var(--space-2) var(--space-2h);
     background: var(--surface); border-bottom: 1px solid var(--border);
+    position: relative;
   }
   .pv-head button {
     background: var(--bg); border: 1px solid var(--border); color: var(--text);
@@ -76,6 +77,18 @@ const previewSheet = sheet(`
   }
   #pvAgentLine.show { display: block; animation: pvAgentPulse 1.2s var(--ease) infinite; }
   @keyframes pvAgentPulse { 50% { opacity: .28; } }
+  /* شارة التنازع (control_conflict): تظهر في رأس اللوحة عندما يتداخل تفاعل المستخدم
+     أو تغيّر الصفحة مع خطوة وكيل جارية. عابرة غير حاجبة، لا تسرق التركيز، والأحدث
+     يجدد المؤقت. */
+  #pvConflictBadge {
+    position: absolute; top: calc(100% + var(--space-1)); inset-inline: 0; margin-inline: auto; width: max-content;
+    max-width: 85%; z-index: var(--z-local); display: none; align-items: center; gap: var(--space-1h);
+    background: var(--gold-soft); color: var(--gold-strong); border: 1px solid var(--gold-border);
+    border-radius: var(--radius-pill); padding: var(--space-1) var(--space-3);
+    font-size: 11.5px; font-weight: 600; box-shadow: var(--shadow-pop);
+    pointer-events: none; unicode-bidi: plaintext; white-space: nowrap;
+  }
+  #pvConflictBadge.show { display: flex; animation: pop var(--dur) var(--ease); }
   /* مؤشّر دائم أن «وضع تحكّم المتصفح» مفعّل (الخيار A): شارة في الرأس + توهّج حافة اللوحة.
      الحالة تُقرأ من aria-pressed لزرّ الوضع في المحرّر (MutationObserver — بلا تعديل app.js). */
   #pvCtlBadge {
@@ -246,6 +259,7 @@ const MARKUP = `
   <div id="pvAgentLine"></div>
   <div id="pvAgentTag"></div>
   <div class="pv-head">
+    <span id="pvConflictBadge"></span>
     <button id="pvClose" type="button" title="إغلاق المعاينة">✕</button>
     <button id="pvBack" type="button" title="رجوع" disabled>→</button>
     <button id="pvFwd" type="button" title="تقدم" disabled>←</button>
@@ -350,6 +364,7 @@ class SatrPreviewPanel extends HTMLElement {
     const $ = (id) => root.getElementById(id);
     const urlIn = $('pvUrl'), box = $('pvBox'), hint = $('pvHint'), err = $('pvErr');
     const errText = $('pvErrText'), restartServerBtn = $('pvRestartServer');
+    const conflictBadge = $('pvConflictBadge');
     const backBtn = $('pvBack'), fwdBtn = $('pvFwd'), reloadBtn = $('pvReload'), autoBtn = $('pvAuto');
     const resizer = $('pvResizer');
     const toggleBtn = document.getElementById('previewToggle'); // زر الشريط العلوي (light DOM)
@@ -860,6 +875,9 @@ class SatrPreviewPanel extends HTMLElement {
       } else if (ev.type === 'agent_activity') {
         // نشاط محرك Codex على المتصفح (أدواته على خادم HTTP منفصل — لا تظهر كـ tool_use)
         this.flashAgentActivity(ev.tool);
+      } else if (ev.type === 'control_conflict') {
+        // تنازع القيادة: المستخدم تفاعل مع الصفحة أو تغيّرت قبل تنفيذ خطوة الوكيل
+        this.flashConflict(ev.reason);
       } else if (ev.type === 'secret_request') {
         showSecretRequest(ev.id, ev.reason);
       } else if (ev.type === 'secret_end') {
@@ -1173,6 +1191,20 @@ class SatrPreviewPanel extends HTMLElement {
     if (ctlBtn) new MutationObserver(syncCtlMode).observe(ctlBtn, { attributes: true, attributeFilter: ['aria-pressed'] });
 
     let agentTimer = 0;
+    let conflictTimer = 0;
+    const CONFLICT_LABELS = {
+      input_changed: 'أوقفنا خطوة الوكيل لأنك تفاعلت مع الصفحة — القيادة لك.',
+      target_changed: 'أوقفنا خطوة الوكيل لأن الصفحة تغيّرت منذ لقطتها.',
+      ref_removed: 'أوقفنا خطوة الوكيل لأن الصفحة تغيّرت منذ لقطتها.',
+    };
+    this.flashConflict = (reason) => {
+      const text = CONFLICT_LABELS[reason];
+      if (!text || !conflictBadge) return;
+      conflictBadge.textContent = text;
+      conflictBadge.classList.add('show');
+      clearTimeout(conflictTimer);
+      conflictTimer = setTimeout(() => { conflictBadge.classList.remove('show'); }, 4000);
+    };
     this.flashAgentActivity = (toolName) => {
       const bare = String(toolName || '').replace('mcp__satr-terminal__', '');
       const label = ACTION_LABELS[bare];
