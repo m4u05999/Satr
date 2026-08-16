@@ -311,7 +311,9 @@ async function main() {
     assert(emitTypes.size > 0, 'تعذّر استخراج أنواع الأحداث من codex.js');
     const known = new Set(['system', 'assistant', 'user', 'result', 'stream_text', 'permission_request',
       'question_request', 'file_edit', 'task_update', 'usage_update', 'rate_limits', 'stderr',
-      'spawn_error', 'proc_done', 'preview_open', 'handoff_request', 'handoff_end', 'testsprite_progress']);
+      'spawn_error', 'proc_done', 'preview_open',
+      // preview_close: أداة close_preview — اعتراف صريح بدفعة «صقل متصفح سطر» (OBS-020)
+      'preview_close', 'handoff_request', 'handoff_end', 'testsprite_progress']);
     for (const t of emitTypes) assert(known.has(t), 'نوع حدث جديد أضافته الدفعة: ' + t);
 
     console.log('codex-account: نجح — تطبيع الاستهلاك والحدود، حجب رابط الدخول وloginId،'
