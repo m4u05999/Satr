@@ -575,6 +575,33 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
     ok(!JSON.parse(rr.body).result.isError, 'بعد موت النداء اليتيم تعود أدوات المعاينة للعمل فوراً');
   }
 
+  // OBS-021 (الجذر الثاني): browser_request_secret ينتظر حسم الواجهة مباشرةً — موت
+  // النداء أثناءه يجب أن يلغي الطلب (cancelSecretRequest) فيُفكّ علم التسليم وحده.
+  {
+    let secretResolve = null;
+    const secretPreview = Object.create(preview);
+    secretPreview.requestSecret = () => { preview.startHandoff(); return new Promise((res) => { secretResolve = res; }); };
+    secretPreview.cancelSecretRequest = () => {
+      preview.endHandoff();
+      if (secretResolve) { secretResolve({ ok: false, filled: false, error: 'cancelled' }); secretResolve = null; }
+      return { ok: true };
+    };
+    const srv6 = await codexmcp.start({ preview: secretPreview, requestPermission: allowAll });
+    const dead = new URL(srv6.url);
+    const orphan = http.request({
+      host: dead.hostname, port: dead.port, path: dead.pathname, method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + srv6.token },
+    });
+    orphan.on('error', () => {});
+    orphan.end(JSON.stringify({ jsonrpc: '2.0', id: 30, method: 'tools/call', params: { name: 'browser_request_secret', arguments: { field_ref: '#pw', reason: 'أدخل كلمة المرور بيدك' } } }));
+    for (let i = 0; i < 50 && !preview.isHandoffActive(); i++) await new Promise((res) => setTimeout(res, 10));
+    ok(preview.isHandoffActive(), 'طلب السر اليتيم فعّل علم التسليم قبل موت النداء');
+    orphan.destroy();
+    for (let i = 0; i < 100 && preview.isHandoffActive(); i++) await new Promise((res) => setTimeout(res, 10));
+    ok(!preview.isHandoffActive(), 'موت النداء أثناء طلب السر ألغاه وفكّ العلم وحده (OBS-021 الجذر الثاني)');
+    await srv6.stop();
+  }
+
   const stepP = post(srv5.url, srv5.token, { jsonrpc: '2.0', id: 28, method: 'tools/call', params: { name: 'browser_handoff_step', arguments: {
     reason: 'أكمل تأكيد DNS', resume_hint: 'خذ لقطة ثم افحص حالة المرسل',
   } } });

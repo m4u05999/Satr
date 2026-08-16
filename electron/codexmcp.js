@@ -495,8 +495,14 @@ function buildTools(deps) {
         field_ref: { type: 'string', description: 'ref أو مُحدِّد CSS للحقل' },
         reason: { type: 'string', maxLength: 300, description: 'سبب موجز بلا أي قيمة سرّية' },
       }, required: ['field_ref', 'reason'] },
-      handler: async (args) => {
-        const r = await preview.requestSecret(args && args.field_ref, args && args.reason);
+      handler: async (args, callCtx) => {
+        // OBS-021: انتظار إدخال السر يتسابق مع إجهاض النداء أيضاً — موت طلب codex
+        // أثناءه يلغي الطلب فعلاً (cancelSecretRequest ⇒ endHandoff) فلا علم عالقاً.
+        const r = await raceWithAbort(preview.requestSecret(args && args.field_ref, args && args.reason), callCtx);
+        if (callCtx && callCtx.aborted) {
+          try { preview.cancelSecretRequest(); } catch {}
+          return textResult('أُجهض النداء أثناء انتظار إدخال السر — أُلغي الطلب.', true);
+        }
         if (!r || !r.ok) {
           const why = r && r.error === 'cancelled' ? 'ألغى المستخدم إدخال السر.'
             : r && r.error === 'empty' ? 'ضغط المستخدم «تم» لكن الحقل بقي فارغاً.'

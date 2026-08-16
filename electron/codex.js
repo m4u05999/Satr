@@ -1638,7 +1638,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     for (const [permId, info] of mcpPerms) { try { info.resolve(false); } catch {} mcpPerms.delete(permId); }
     // فكّ أي تسليم بشري معلّق بالإلغاء (متابعة codexmcp تنهي التسليم وتصفّر السجلات)
     for (const [hid, info] of pendingHandoffs) { try { info.resolve(false); } catch {} pendingHandoffs.delete(hid); }
-    preview.clearSecretTransfers();
+    // OBS-021 (الجذر الثاني): browser_request_secret ينتظر حسم الواجهة مباشرةً ولا
+    // يمرّ بـpendingHandoffs — نهاية الدور الطبيعية كانت تمسح النقل فقط وتترك طلب
+    // السر معلقاً فيبقى علم التسليم مرفوعاً عبر الأدوار. clearSensitiveState تلغيه
+    // (cancelSecretRequest ⇒ endHandoff) وتمسح النقل معاً — idempotent مع stop().
+    preview.clearSensitiveState();
     try { proc.stdin.end(); } catch {}
     setTimeout(() => { try { proc.kill(); } catch {} }, 500);
     if (mcpHost) { try { mcpHost.stop(); } catch {} mcpHost = null; } // أوقِف خادم رؤية الويب MCP
