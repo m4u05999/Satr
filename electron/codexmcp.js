@@ -516,7 +516,7 @@ function buildTools(deps) {
         + 'بيانات حساسة في المحادثة وبدل إحالة المستخدم لمتصفح خارجي. أثناء التسليم كل أدوات '
         + 'المعاينة معلّقة ولا ترى الصفحة. بعد الاستلام خذ browser_snapshot جديداً وأكمل.',
       inputSchema: { type: 'object', properties: { reason: { type: 'string', description: 'ما المطلوب من المستخدم بالعربية — يظهر في شريط الاستلام' } }, required: ['reason'] },
-      handler: async (args) => {
+      handler: async (args, callCtx) => {
         if (!requestHandoff) return textResult('التسليم البشري غير متاح في هذا السياق.', true);
         const reason = String((args && args.reason) || '').replace(CONTROL_CHARS_RE, ' ').trim().slice(0, 300);
         if (!reason) return textResult('reason مطلوب — اذكر للمستخدم ما المطلوب منه.', true);
@@ -526,8 +526,10 @@ function buildTools(deps) {
             ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً ثم سلّم القيادة.'
             : 'تسليم آخر جارٍ بالفعل — انتظر نتيجته.', true);
         }
+        // OBS-021 (الجذر): إن مات نداء codex (مهلة أداة/إلغاء دور/انقطاع) قبل حسم
+        // المستخدم، يوقظنا وعد الإجهاض فيمرّ finally ويُفكّ علم التسليم — لا يتيم بعده.
         let done = false;
-        try { done = !!(await requestHandoff(reason)); }
+        try { done = !!(await raceWithAbort(requestHandoff(reason), callCtx)); }
         finally { preview.endHandoff(); } // يصفّر سجلّي console/الشبكة — لا يقرأ الوكيل ما جرى أثناء التسليم
         if (!done) return textResult('ألغى المستخدم التسليم ولم تكتمل الخطوة. لا تكرر الطلب فوراً — اسأل المستخدم عن البديل.', true);
         return textResult('استلم المستخدم وأكمل الخطوة بيده. الصفحة قد تغيّرت — خذ browser_snapshot جديداً قبل أي فعل.');
@@ -539,7 +541,7 @@ function buildTools(deps) {
       inputSchema: { type: 'object', properties: {
         reason: { type: 'string', maxLength: 300 }, resume_hint: { type: 'string', maxLength: 500 },
       }, required: ['reason', 'resume_hint'] },
-      handler: async (args) => {
+      handler: async (args, callCtx) => {
         if (!requestHandoff) return textResult('التسليم التعاوني غير متاح في هذا السياق.', true);
         const reason = String((args && args.reason) || '').replace(CONTROL_CHARS_RE, ' ').trim().slice(0, 300);
         const resumeHint = String((args && args.resume_hint) || '').replace(CONTROL_CHARS_RE, ' ').trim().slice(0, 500);
@@ -547,8 +549,8 @@ function buildTools(deps) {
         const st = preview.startHandoff();
         if (!st.ok) return textResult(st.error === 'closed' ? 'المعاينة غير مفتوحة.' : 'تسليم آخر جارٍ.', true);
         let done = false;
-        try { done = !!(await requestHandoff(reason, { mode: 'step' })); }
-        finally { preview.endHandoff(); }
+        try { done = !!(await raceWithAbort(requestHandoff(reason, { mode: 'step' }), callCtx)); }
+        finally { preview.endHandoff(); } // OBS-021: موت النداء يمرّ من هنا أيضاً — لا علم عالقاً
         if (!done) return textResult('ألغى المستخدم الخطوة ولم تكتمل.', true);
         return textResult('اكتملت الخطوة بيد المستخدم. خذ browser_snapshot جديداً ثم استأنف من: ' + resumeHint);
       },
@@ -694,6 +696,16 @@ function buildTools(deps) {
 // محارف التحكم تُنقّى من reason قبل عرضه في شريط الاستلام (نظير تنقية agent.js)
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]+/g;
 
+// OBS-021 (الجذر): سباق انتظارٍ بشري مع إجهاض النداء — إن مات طلب codex الحامل
+// للأداة (مهلة/إلغاء دور/انقطاع) قبل حسم المستخدم، يُحسم السباق بـfalse فيمرّ
+// finally القائم (endHandoff/رفض الإذن) ولا يبقى وعد يتيم يعلّق علم التسليم للأبد.
+// غياب ctx (مستهلك قديم أو نداء داخلي) = سلوك الانتظار القائم حرفياً.
+function raceWithAbort(pending, callCtx) {
+  if (!callCtx || !callCtx.abortedPromise) return pending;
+  if (callCtx.aborted) return Promise.resolve(false);
+  return Promise.race([pending, callCtx.abortedPromise.then(() => false)]);
+}
+
 // ينشئ خطأ JSON-RPC
 function rpcError(id, code, message) {
   return { jsonrpc: '2.0', id: id == null ? null : id, error: { code, message } };
@@ -717,7 +729,7 @@ function start(deps) {
   // خطّاف مراقبة اختياري (main.js يستهلكه لعرض نشاط Codex على المتصفح مثل flashAgentActivity)
   const onActivity = typeof (deps && deps.onActivity) === 'function' ? deps.onActivity : null;
 
-  async function dispatch(msg) {
+  async function dispatch(msg, callCtx) {
     // إشعار (بلا id) — لا ردّ
     if (msg == null || typeof msg !== 'object') return null;
     const { id, method, params } = msg;
@@ -771,14 +783,17 @@ function start(deps) {
           if (pageContext && pageContext.targetUrl) target = pageContext.targetUrl;
           else if (tool.browserClass === 'act' && typeof preview.browserTarget === 'function') target = await preview.browserTarget(tool.name, input) || target;
           try {
-            allowed = await requestPermission(
+            // OBS-021: انتظار الإذن البشري أيضاً يتسابق مع إجهاض النداء — موت طلب
+            // codex أثناء مربع الإذن يُحسم رفضاً فلا يبقى وعد إذن يتيماً معلقاً.
+            allowed = !!(await raceWithAbort(Promise.resolve(requestPermission(
               tool.name, displayInput, tool.access,
               tool.neverAlways === true, target, currentUrl, pageContext, input
-            );
+            )), callCtx));
           } catch (e) { allowed = false; }
         }
         if (!allowed) return rpcOk(id, textResult('رُفض الإذن — لم تُنفَّذ الأداة ' + tool.name + '.', true));
-        const result = await tool.handler(input);
+        if (callCtx && callCtx.aborted) return rpcOk(id, textResult('أُجهض النداء قبل التنفيذ.', true));
+        const result = await tool.handler(input, callCtx);
         return rpcOk(id, result);
       }
       // طرق أخرى (resources/prompts) غير مدعومة — نردّ فارغاً بلطف بدل خطأ يُسقط الاتصال
@@ -815,15 +830,24 @@ function start(deps) {
       let parsed;
       try { parsed = JSON.parse(body || 'null'); }
       catch { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(rpcError(null, -32700, 'JSON غير صالح'))); return; }
+      // OBS-021 (الجذر): إن مات هذا الطلب قبل اكتمال ردّه (مهلة أداة لدى codex،
+      // إلغاء دور، انقطاع) نرفع إشارة إجهاض تُحسم بها الانتظارات البشرية المعلقة
+      // (تسليم/إذن) داخل dispatch — فلا يبقى handler يتيماً يعلّق علم التسليم للأبد.
+      const abortState = { aborted: false, fire: null };
+      const abortedPromise = new Promise((resolveAbort) => { abortState.fire = resolveAbort; });
+      const callCtx = { get aborted() { return abortState.aborted; }, abortedPromise };
+      res.on('close', () => {
+        if (!res.writableEnded) { abortState.aborted = true; try { abortState.fire(); } catch {} }
+      });
       try {
         // دفعة (batch) أو رسالة واحدة
         if (Array.isArray(parsed)) {
           const out = [];
-          for (const m of parsed) { const r = await dispatch(m); if (r) out.push(r); }
+          for (const m of parsed) { const r = await dispatch(m, callCtx); if (r) out.push(r); }
           res.writeHead(202 - (out.length ? 2 : 0), { 'content-type': 'application/json', 'mcp-session-id': sessionId });
           res.end(out.length ? JSON.stringify(out) : '');
         } else {
-          const r = await dispatch(parsed);
+          const r = await dispatch(parsed, callCtx);
           if (r) { res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': sessionId }); res.end(JSON.stringify(r)); }
           else { res.writeHead(202, { 'mcp-session-id': sessionId }); res.end(); } // إشعار — لا جسم
         }

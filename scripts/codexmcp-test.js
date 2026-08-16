@@ -556,6 +556,25 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   jj = JSON.parse(rr.body);
   ok(jj.result.isError && /reason مطلوب/.test(jj.result.content[0].text) && !preview.isHandoffActive(), 'reason فارغ ⇒ رفض بلا تفعيل تعليق');
 
+  // OBS-021 (الجذر): موت نداء codex أثناء تسليم معلق (مهلة أداة/إلغاء دور) يجب أن
+  // يفكّ علم التسليم وحده — لا يتيم يعلّق كل أدوات المعاينة للأبد بعده.
+  {
+    const dead = new URL(srv5.url);
+    const orphan = http.request({
+      host: dead.hostname, port: dead.port, path: dead.pathname, method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + srv5.token },
+    });
+    orphan.on('error', () => {}); // التدمير المتعمد يرمي ECONNRESET — متوقع
+    orphan.end(JSON.stringify({ jsonrpc: '2.0', id: 28, method: 'tools/call', params: { name: 'browser_handoff', arguments: { reason: 'ارفع الصورة بيدك' } } }));
+    for (let i = 0; i < 50 && !preview.isHandoffActive(); i++) await new Promise((res) => setTimeout(res, 10));
+    ok(preview.isHandoffActive(), 'التسليم اليتيم فعّل العلم قبل موت النداء');
+    orphan.destroy(); // موت النداء (يحاكي قطع codex للمهلة/إلغاء الدور)
+    for (let i = 0; i < 100 && preview.isHandoffActive(); i++) await new Promise((res) => setTimeout(res, 10));
+    ok(!preview.isHandoffActive(), 'موت النداء أثناء التسليم فكّ العلم وحده (لا علوق يتيم — OBS-021)');
+    rr = await post(srv5.url, srv5.token, { jsonrpc: '2.0', id: 29, method: 'tools/call', params: { name: 'browser_navigate', arguments: { url: 'http://localhost:3000/z' } } });
+    ok(!JSON.parse(rr.body).result.isError, 'بعد موت النداء اليتيم تعود أدوات المعاينة للعمل فوراً');
+  }
+
   const stepP = post(srv5.url, srv5.token, { jsonrpc: '2.0', id: 28, method: 'tools/call', params: { name: 'browser_handoff_step', arguments: {
     reason: 'أكمل تأكيد DNS', resume_hint: 'خذ لقطة ثم افحص حالة المرسل',
   } } });
