@@ -46,12 +46,28 @@ const ANCHOR_STRONG = 'مهم — لغة هذه الجلسة: كل نثرك با
   + ' للغة أخرى يجُبّ هذا التذكير.';
 
 /**
+ * صيغة التجاوز (الدرجة 0 — 2026-08-17): حين يطلب المستخدم لغة أخرى **صراحةً**
+ * (‏`langoverride.detectExplicitRequest`) تحلّ هذه محلّ نصّ العربية بدل أن تناقضه —
+ * وفاءً بوعد `CONTRACT_LINE` نفسه: «واتبع لغة أخرى إن طلبها المستخدم صراحةً».
+ * الوسم منقّى ومقصوص في `langoverride` قبل وصوله هنا (حروف وفراغ وشرطة فقط).
+ */
+function overrideBody(tag) {
+  return 'التزم اللغة التي طلبها المستخدم صراحةً (' + tag + ') في كل نثرك؛ يبقى الكود'
+    + ' والمسارات بالإنجليزية LTR.';
+}
+
+/**
  * المرساة الذيلية — تُلحق **آخر** محتوى الدور بعد رسالة المستخدم.
- * @param {{strong?: boolean}} [options] — القوية للدور الأول ولأول دور بعد الضغط.
+ * @param {{strong?: boolean, override?: string|null}} [options] — القوية للدور الأول
+ *   ولأول دور بعد الضغط؛ و`override` وسم لغة طلبها المستخدم صراحةً فيجُبّ الاثنتين.
+ *   غياب `override` يعيد النصّ القائم **بايتاً ببايت**.
  */
 function anchor(options) {
   const strong = Boolean(options && options.strong);
-  return ANCHOR_OPEN + ' ' + (strong ? ANCHOR_STRONG : ANCHOR_NORMAL) + ' ' + ANCHOR_CLOSE;
+  const raw = options && options.override;
+  const override = typeof raw === 'string' && raw.trim() ? raw.trim() : '';
+  const body = override ? overrideBody(override) : (strong ? ANCHOR_STRONG : ANCHOR_NORMAL);
+  return ANCHOR_OPEN + ' ' + body + ' ' + ANCHOR_CLOSE;
 }
 
 module.exports = { CONTRACT_LINE, anchor, ANCHOR_OPEN, ANCHOR_CLOSE };

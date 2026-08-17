@@ -139,6 +139,8 @@
     "test:pwa-dom": "electron scripts/pwa-dom-live-test.js",
     "test:langmetric": "node scripts/langmetric-test.js",
     "probe:language": "node scripts/language-probe.js",
+    "test:langoverride": "node scripts/langoverride-test.js",
+    "test:farsi-content": "electron scripts/farsi-content-test.js",
     "test:langshadow": "node scripts/langshadow-test.js"
   },
   "devDependencies": {

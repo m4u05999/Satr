@@ -48,7 +48,12 @@ function createShadow(options) {
 
   /**
    * يقيس نص رسالة مساعد مكتملة ويسجّل السطر. يعيد الحكم للفحص لا للعرض.
-   * @param {{text:string, engine?:string, phase?:string}} entry
+   * **حقل `override` (الدرجة 0 — 2026-08-17)**: دور طلب فيه المستخدم لغة أخرى صراحةً
+   * ليس انزلاقاً بل امتثالاً، فتسجيله ملتزماً/منزلقاً يلوّث معايرة سجل الظلّ. العلم
+   * **قيمة منطقية فقط** ولا يحمل اسم اللغة ولا نصّ الطلب (قاعدة «أرقام بلا نص»)،
+   * ويُكتب حين يكون `true` فقط فتبقى السطور القائمة بقائمة حقولها المغلقة كما هي.
+   *
+   * @param {{text:string, engine?:string, phase?:string, override?:boolean}} entry
    */
   function record(entry) {
     if (!entry || typeof entry.text !== 'string' || !entry.text) return null;
@@ -66,6 +71,7 @@ function createShadow(options) {
       slip: verdict.slip === true,
       reason: verdict.reason,
     };
+    if (entry.override === true) row.override = true;
     try {
       io.mkdirSync(path.dirname(file), { recursive: true });
       io.appendFileSync(file, JSON.stringify(row) + '\n', 'utf8');

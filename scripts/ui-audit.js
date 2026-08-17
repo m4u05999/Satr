@@ -772,6 +772,36 @@ const SHOTS = [
     `,
   },
 
+  // ---------- سلامة عرض المحتوى الفارسي في المحادثة (داكن/فاتح) ----------
+  // المشاهد القائمة لا تمرّر locale، وكل SHOTS تعيد استخدام عملية Electron واحدة.
+  // ‏--lang=fa وسيط بدء يحتاج عملية مستقلة؛ نلتقط هنا بالعملية القائمة وفق حدّ الدفعة.
+  {
+    out: '46-farsi-content-safety', w: 1440, h: 900,
+    js: `
+      const bs = String.fromCharCode(92), tick = String.fromCharCode(96);
+      const filePath = 'C:' + bs + 'repo' + bs + 'src' + bs + 'app.js';
+      const text = 'پژوهش چگونه ژرف‌تر گردد؟ ۰۱۲۳۴۵۶۷۸۹ — مسیر ' + filePath + ' و npm test';
+      const chat = document.querySelector('satr-chat');
+      chat.addUserMsg(text);
+      const block = chat.newAssistantBlock('اختبار سلامة العرض');
+      block.addText(text.replace(filePath, tick + filePath + tick).replace('npm test', tick + 'npm test' + tick));
+      block.finish({});
+    `,
+  },
+  {
+    out: '47-farsi-content-safety-light', w: 1440, h: 900,
+    js: LIGHT + `
+      const bs = String.fromCharCode(92), tick = String.fromCharCode(96);
+      const filePath = 'C:' + bs + 'repo' + bs + 'src' + bs + 'app.js';
+      const text = 'پژوهش چگونه ژرف‌تر گردد؟ ۰۱۲۳۴۵۶۷۸۹ — مسیر ' + filePath + ' و npm test';
+      const chat = document.querySelector('satr-chat');
+      chat.addUserMsg(text);
+      const block = chat.newAssistantBlock('اختبار سلامة العرض');
+      block.addText(text.replace(filePath, tick + filePath + tick).replace('npm test', tick + 'npm test' + tick));
+      block.finish({});
+    `,
+  },
+
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
 ];

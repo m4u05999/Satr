@@ -29,6 +29,7 @@ const verify = require('./verify'); // تحقق صريح مستقل عن أدو�
 const memory = require('./memory'); // ذاكرة مشروع شخصية بموافقة صريحة
 const claudeElicitation = require('./elicitation'); // إدخال موصّلات MCP غير السري بحوار عربي fail-closed
 const langanchor = require('./langanchor'); // مرساة اللغة الذيلية (OBS-001 دفعة 4)
+const langoverride = require('./langoverride'); // تجاوز اللغة بطلب صريح (OBS-001 درجة 0)
 const keys = require('./keys');
 const testsprite = require('./testsprite');
 const testspritejobs = require('./testspritejobs');
@@ -97,6 +98,9 @@ const MAX_SNAPSHOTS = 40; // سقف عدد اللقطات المحفوظة (إخ
 // سقف بسيط يمنع النمو بلا حدود عبر عمر التطبيق.
 const compactedSessions = new Set();
 const MAX_COMPACTED_SESSIONS = 200;
+// تجاوز اللغة الصريح لكل جلسة (الدرجة 0 — OBS-001): المستخدم لا يعيد طلبه كل دور.
+// الحالة خريطة يملكها المحرك و`langoverride` نقية بلا حالة عامة؛ سقفها داخل الوحدة.
+const langOverrides = new Map();
 function markCompacted(sessionId) {
   if (!sessionId) return;
   if (compactedSessions.size >= MAX_COMPACTED_SESSIONS) {
@@ -846,8 +850,15 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   // القوية للدور الأول (‏!sessionId — مصير الجلسة يتحدد عند أول ردّ) ولأول دور بعد
   // الضغط (الملخص قد يكون إنجليزياً فيبدأ السياق الجديد ملوثاً). التشغيلات المعزولة
   // (internalPolicy) خارجها كبقية توسعات التشغيل العادي (fallback/checkpointing).
-  const anchorText = internalPolicy
+  // تجاوز اللغة بطلب المستخدم الصريح (الدرجة 0): يُقرأ من prompt الخام قبل أي معالجة،
+  // ويجُبّ نصّ العربية وفاءً بوعد CONTRACT_LINE نفسه. fail-closed: غياب طلب صريح = null.
+  const overrideLang = internalPolicy
+    ? null : langoverride.sessionOverride(langOverrides, sessionId, prompt);
+  // صيغة النداء العادي محفوظة حرفياً — يحرسها فحص ساكن في test:langshadow
+  const baseAnchor = internalPolicy
     ? '' : langanchor.anchor({ strong: !sessionId || compactedSessions.delete(sessionId) });
+  const anchorText = baseAnchor && overrideLang
+    ? langanchor.anchor({ override: overrideLang }) : baseAnchor;
 
   // محتوى رسالة المستخدم: نص بسيط، أو مصفوفة كتل (نص + صور) عند وجود صور.
   // ترتيب الكتل: النص أولاً ثم الصور — والـ SDK يقبل source.type='base64'.

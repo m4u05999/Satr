@@ -33,6 +33,7 @@ const testsprite = require('./testsprite');
 const testspritejobs = require('./testspritejobs');
 const envbrief = require('./envbrief');
 const langanchor = require('./langanchor'); // مرساة اللغة الذيلية (OBS-001 دفعة 4)
+const langoverride = require('./langoverride'); // تجاوز اللغة بطلب صريح (OBS-001 درجة 0)
 const execguard = require('./execguard');
 const browserpolicy = require('./browserpolicy');
 const { queryCodex } = require('./codexrpc');
@@ -249,6 +250,8 @@ const contextSnapshots = new Map();
 // خيوط ضُغطت ولم يبدأ دورها التالي (OBS-001 دفعة 4) — نظير compactedSessions في agent.js
 const compactedThreads = new Set();
 const MAX_COMPACTED_THREADS = 200;
+// تجاوز اللغة الصريح لكل خيط (الدرجة 0 — OBS-001)؛ نظير langOverrides في agent.js
+const langOverrides = new Map();
 function markCompactedThread(threadId) {
   if (!threadId) return;
   if (compactedThreads.size >= MAX_COMPACTED_THREADS) {
@@ -1754,9 +1757,15 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // القوية للدور الأول (‏!sessionId) ولأول دور بعد الضغط. السياقات المعزولة
       // (المراجع/العصف — browserControl:false الصريح) خارجها كبقية حقن السياق أعلاه.
       if (browserControl !== false) {
+        // تجاوز اللغة بطلب المستخدم الصريح (الدرجة 0): من prompt الخام، ويجُبّ نصّ
+        // العربية وفاءً بوعد CONTRACT_LINE. مفتاح الحالة threadId — Codex يصدره قبل
+        // الدور الأول فلا يحتاج خانة معلّقة كـagent.js. fail-closed إلى null.
+        const overrideLang = langoverride.sessionOverride(langOverrides, threadId || sessionId, prompt);
+        // صيغة النداء العادي محفوظة حرفياً — يحرسها فحص ساكن في test:langshadow
+        const baseAnchor = langanchor.anchor({ strong: !sessionId || compactedThreads.delete(threadId) });
         inputItems.push({
           type: 'text',
-          text: langanchor.anchor({ strong: !sessionId || compactedThreads.delete(threadId) }),
+          text: overrideLang ? langanchor.anchor({ override: overrideLang }) : baseAnchor,
           text_elements: [],
         });
       }

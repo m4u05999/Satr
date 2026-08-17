@@ -17,6 +17,8 @@ const SUITE = [
   'test:observations',
   'test:langmetric',
   'test:langshadow',
+  'test:langoverride',
+  'test:farsi-content',
   'test:memory',
   'test:design-guard',
   'test:repomap',
