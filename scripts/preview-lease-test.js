@@ -112,6 +112,19 @@ async function main() {
     const gate = await preview.browserActionContext('browser_click', { ref: tickRef });
     assert.strictEqual(gate.error, 'input_changed', 'بوابة ما قبل الإذن لم ترصد العقد المستهلَك');
 
+    // نطاق العقد كما تراه الأغلفة (بلاغ حيّ 2026-08-18): يُستدعى هنا بالشكل نفسه الذي
+    // يستدعيه به agent.js:1081 وcodexmcp.js:765 — باسم الأداة. الفحص الداخلي وحده كان
+    // أخضر بينما الغلاف يحجب كل شيء، وهو «الحارس الأخضر الكاذب» بعينه.
+    for (const act of ['browser_click', 'mcp__satr-terminal__browser_type', 'browser_press_key', 'browser_select_option']) {
+      assert.strictEqual(preview.leaseError(act), 'input_changed', 'الفعل ' + act + ' لم يعد محكوماً بالعقد');
+    }
+    for (const free of ['browser_snapshot', 'mcp__satr-terminal__browser_snapshot', 'screenshot', 'read_page',
+      'browser_console', 'open_preview', 'mcp__satr-terminal__open_preview', 'close_preview', 'browser_navigate']) {
+      assert.strictEqual(preview.leaseError(free), null,
+        free + ' محجوبة بالعقد — اللقطة والقراءة والتنقّل مخرج التنازع لا ضحيته، وحجبها يغلق الحلقة على الوكيل');
+    }
+    assert.strictEqual(preview.leaseError(), 'input_changed', 'الاستدعاء الداخلي بلا اسم فقد حكم العقد');
+
     // لقطة جديدة تجدّد العقد فيعمل الفعل نفسه
     snap = await preview.snapshot();
     tickRef = refOf(snap, 'زد');

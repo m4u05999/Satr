@@ -15,6 +15,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { WebContentsView, session, app, nativeImage } = require('electron');
 const memory = require('./memory');
+const browserorigin = require('./browserorigin'); // تصنيف أدوات المتصفح — نقي بلا تبعيات
 
 let view = null;      // WebContentsView الحيّة (تُنشأ عند الفتح وتُدمَّر عند الإغلاق)
 let hostWin = null;   // النافذة المضيفة
@@ -71,7 +72,16 @@ function invalidateSnapshotRefs(wc) {
 // الفحص الأول من فحصَي العقد: تستدعيه الأغلفة **قبل بوابة الإذن** كي لا يُفتح مربع بلا
 // جدوى. الفحص الثاني داخل كل فعل هنا قبل التنفيذ مباشرة — فالحماية قائمة حتى لو لم
 // يستدعِ غلافٌ هذه الدالة (fail-closed لا يعتمد على المتصل).
-function leaseError() {
+//
+// العقد يحكم **أفعال act وحدها**. اللقطة والقراءة والتنقّل والإغلاق هي *مخرج* التنازع
+// لا ضحيته: حجبها يغلق الحلقة على الوكيل — الرسالة تطلب لقطة جديدة واللقطة نفسها
+// مرفوضة، فلا يبقى للمستخدم إلا إعادة تشغيل التطبيق (بلاغ حيّ 2026-08-18، 20 رفضاً
+// متتالياً شمل open_preview وbrowser_snapshot وclose_preview وscreenshot معاً).
+// كان التوقيع بلا معاملات بينما يمرّر إليه غلافا agent.js وcodexmcp.js اسم الأداة
+// ظانَّين أنه يميّز — فتجاهلُه الاسمَ صامتاً هو العطل. الاستدعاء الداخلي (leaseGate)
+// يبقى بلا اسم لأنه لا يقع إلا داخل فعل أصلاً.
+function leaseError(name) {
+  if (name !== undefined && browserorigin.classifyBrowserTool(name) !== 'act') return null;
   return userInputCounter === leaseUserRevision ? null : 'input_changed';
 }
 
