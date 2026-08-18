@@ -135,6 +135,7 @@
     "test:mobile-tls": "node scripts/mobiletls-test.js",
     "test:mobile-integration": "node scripts/mobile-integration-test.js",
     "test:mobile-relay": "node scripts/mobilerelay-test.js",
+    "test:mobile": "node scripts/mobile-suite.js",
     "test:qr": "node scripts/qr-test.js",
     "test:pwa-dom": "electron scripts/pwa-dom-live-test.js",
     "test:langmetric": "node scripts/langmetric-test.js",

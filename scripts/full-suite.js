@@ -25,6 +25,7 @@ const SUITE = [
   'test:context',
   'test:orchestrator',
   'test:opsroom-all',
+  'test:mobile',
   'test:codexmcp',
   'test:genmedia',
   'test:codex-contract',

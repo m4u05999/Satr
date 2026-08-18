@@ -26,11 +26,12 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: WIN_W, height: WIN_H, show: true });
   await win.loadURL('data:text/html,' + encodeURIComponent('<body style="margin:0;background:#ffffff"></body>'));
 
-  // preview.open يقبل http/https حصراً — نخدم صفحة حمراء من خادم محلي حقيقي
+  // preview.open يقبل http/https حصراً — نخدم صفحة بلون العلامة من خادم محلي حقيقي.
+  // OBS-019: العلامة magenta لا أحمر — الأحمر شائع في الواجهات فيصادم القياس
   const http = require('node:http');
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end('<body style="margin:0;background:#ff0000"></body>');
+    res.end('<body style="margin:0;background:#ff00ff"></body>');
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
@@ -49,11 +50,16 @@ app.whenReady().then(async () => {
     const size = img.getSize();
     const bmp = img.toBitmap();
     const k = size.width / display.size.width;
-    const isRed = (i) => bmp[i + 2] > 190 && bmp[i + 1] < 90 && bmp[i] < 90;
+    // BGRA: العلامة magenta — أحمر وأزرق مرتفعان وأخضر منخفض
+    const isMark = (i) => bmp[i + 2] > 190 && bmp[i] > 190 && bmp[i + 1] < 90;
     const y = Math.round((contentBounds.y + 120) * k);
+    // OBS-019: المسح محصور بعرض نافذة الاختبار وحدها. المسح الكامل للشاشة كان
+    // يلتقط أي بكسل مطابق في نافذة أخرى (رُصد `x:1282,width:3`) فيفشل الاختبار بيئياً
+    const xFrom = Math.max(0, Math.round(contentBounds.x * k));
+    const xTo = Math.min(size.width, Math.round((contentBounds.x + contentBounds.width) * k));
     let first = -1, last = -1;
-    for (let x = 0; x < size.width; x++) {
-      if (isRed((y * size.width + x) * 4)) { if (first < 0) first = x; last = x; }
+    for (let x = xFrom; x < xTo; x++) {
+      if (isMark((y * size.width + x) * 4)) { if (first < 0) first = x; last = x; }
     }
     if (first < 0) return null;
     return { x: Math.round(first / k) - contentBounds.x, width: Math.round((last - first + 1) / k) };
@@ -61,10 +67,13 @@ app.whenReady().then(async () => {
 
   const results = [];
   let failures = 0;
+  let blind = 0;
   for (const c of CASES) {
     preview.setBounds({ x: c.x, y: 60, width: c.width, height: 240 });
+    try { win.moveTop(); } catch {}
     await new Promise((r) => setTimeout(r, 500));
     const m = await measure();
+    if (!m) blind++;
     const okX = m && Math.abs(m.x - c.x) <= 12;
     const okW = m && Math.abs(m.width - c.width) <= 12;
     if (!okX || !okW) failures++;
@@ -73,9 +82,16 @@ app.whenReady().then(async () => {
 
   const locale = app.getLocale();
   console.log(JSON.stringify({ locale, results }, null, 2));
-  console.log(failures === 0
-    ? `rtl-preview-fix-test: نجح — العرض الأصلي في موضعه الصحيح (locale=${locale})`
-    : `rtl-preview-fix-test: فشل — ${failures} حالة خارج الموضع (locale=${locale})`);
+  if (failures === 0) {
+    console.log(`rtl-preview-fix-test: نجح — العرض الأصلي في موضعه الصحيح (locale=${locale})`);
+  } else if (blind === failures) {
+    // تمييز لازم: لا علامة أصلاً ≠ علامة في المكان الخطأ (OBS-019)
+    console.log(`rtl-preview-fix-test: فشل — لم تُرصد العلامة داخل نافذة الاختبار في ${blind} حالة (locale=${locale}).`);
+    console.log('   السبب البيئي المرجّح: النافذة محجوبة بنافذة أخرى، أو الشاشة مقفلة/منامة، أو التشغيل بلا سطح مرئي.');
+  } else {
+    console.log(`rtl-preview-fix-test: فشل — ${failures} حالة خارج الموضع (locale=${locale})`
+      + (blind ? ` (منها ${blind} بلا علامة مرصودة)` : ''));
+  }
 
   try { preview.close(); } catch {}
   try { server.close(); } catch {}

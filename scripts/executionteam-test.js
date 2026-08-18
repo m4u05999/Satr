@@ -161,7 +161,9 @@ async function main() {
       { task: 'عدّل ب', ownership: ['src/b.js'] },
       { task: 'عدّل ج', ownership: ['src/c.js'] },
     ] }, project, () => {});
-    assert.strictEqual(started.ok, true);
+    // OBS-025: الفشل هنا بيئي أحياناً (worktree add تحت الحمل). `started` يحمل
+    // رمز الخطأ وخطأ كل عامل، فطباعته تفرّق التراجع الحقيقي عن عثرة البيئة
+    assert.strictEqual(started.ok, true, 'بدء الفريق المتوازي فشل: ' + JSON.stringify(started));
     const completed = await waitFor(() => {
       const snapshot = team.latest(project);
       return snapshot && snapshot.state === 'completed' ? snapshot : null;
