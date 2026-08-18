@@ -606,6 +606,17 @@ class SatrComposer extends HTMLElement {
       autoResize(); saveDraft(); closeSlash(); closeFiles(); input.focus();
     };
     this.switchDraft = switchDraft;
+    // OBS-035: إدراج نص جاهز في المحرّر **بلا إرسال**. لا يدوس ما كتبه المستخدم (يُلحق
+    // في سطر جديد) ولا يمسّ الصور المرفقة — بخلاف restoreTurn التي تستبدل الدور كاملاً.
+    this.insertPrompt = (text) => {
+      const value = String(text || '');
+      if (!value) return false;
+      const current = input.value;
+      input.value = current.trim() ? current.replace(/\s*$/, '') + '\n\n' + value : value;
+      autoResize(); saveDraft(); closeSlash(); closeFiles(); input.focus();
+      try { input.setSelectionRange(input.value.length, input.value.length); } catch (e) {}
+      return true;
+    };
     this.showPromptSuggestion = (suggestion) => {
       if (!promptSuggestion) return false;
       const text = typeof suggestion === 'string' ? suggestion.trim().slice(0, 500) : '';

@@ -71,4 +71,29 @@ assert.strictEqual(buildQuestionAnswer(q({ multiSelect: 'false' }), [{ questionI
 const injected = buildQuestionAnswer(q(), [{ questionIndex: 0, optionIndexes: [0], label: 'مزروع', answer: 'حقن' }]);
 assert.strictEqual(injected.answers['أي مسار؟'], 'ألف', 'يتجاهل النص الحرّ ويستعمل label الأصلي');
 
-console.log('askquestion-test: ok — تنقية fail-closed (رفض التجاوز/التكرار)، بناء صارم، رفض الجزئي والحقن');
+// OBS-035: سؤال بلا إجابة قرارٌ لم يُتَّخذ، لا «لا معلومة». الرسالة المحايدة السابقة
+// («لم يُختَر جواب صالح») كان النموذج يقرأها إذناً بالتخمين فيختار نيابةً عن المستخدم
+// ويمضي. الحارس على النص نفسه لأنه هو ما يصل النموذج فعلاً.
+const agentSource = require('fs').readFileSync(require('path').join(__dirname, '..', 'electron', 'agent.js'), 'utf8');
+const messageMatch = agentSource.match(/const QUESTION_UNANSWERED_MESSAGE = ([\s\S]*?);\n/);
+assert(messageMatch, 'رسالة السؤال غير المُجاب غير معرّفة في agent.js');
+const unanswered = messageMatch[1];
+for (const must of ['لا تفترض', 'لا تختر نيابةً', 'اطرح السؤال نصّاً', 'توقّف']) {
+  assert(unanswered.includes(must), 'رسالة السؤال غير المُجاب لا توجّه النموذج: ينقصها «' + must + '»');
+}
+// الفحص على شكل الكود (`message: '…'`) لا على النص المجرّد، وإلا أمسك الحارسُ تعليقاً
+// يقتبس الرسالة القديمة ليشرح سبب استبدالها — وقد وقع ذلك فعلاً عند كتابته.
+assert(!/message:\s*'لم يُختَر جواب صالح'/.test(agentSource),
+  'مسار الإجابة الفارغة ما زال يستعمل الرسالة المحايدة');
+// النطاق مقصور على مسار السؤال: `أُلغي الطلب` تبقى صحيحة في مساري الإذن والموصّل
+// (`pending.delete`) لأن الدور هناك لا يكمل أصلاً — الحارس يضيق كي لا يفرض توجيهاً في غير موضعه.
+const questionAborts = agentSource.match(/pendingQuestions\.delete\(id\)\)\s*resolve\(\{[^}]*\}/g) || [];
+assert(questionAborts.length >= 1, 'لم يُعثر على مسار إجهاض السؤال');
+for (const abort of questionAborts) {
+  assert(abort.includes('QUESTION_UNANSWERED_MESSAGE'),
+    'إجهاض السؤال يردّ برسالة غير موجِّهة: ' + abort);
+}
+const denyUses = agentSource.match(/behavior: 'deny', message: QUESTION_UNANSWERED_MESSAGE/g) || [];
+assert(denyUses.length >= 2, 'مسارا الرفض (الإجابة الفارغة وإجهاض الطلب) لا يستعملان الرسالة الموجِّهة معاً');
+
+console.log('askquestion-test: ok — تنقية fail-closed (رفض التجاوز/التكرار)، بناء صارم، رفض الجزئي والحقن، ورسالة موجِّهة للسؤال غير المُجاب');

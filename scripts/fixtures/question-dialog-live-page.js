@@ -105,6 +105,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(answered && answered.id === 'live-q2' && Array.isArray(answered.selections) && answered.selections.length === 0,
       'الإلغاء لم يرسل إجابة فارغة (deny).');
 
+    // OBS-035: «أجب بنصّي» يغلق السؤال بإجابة فارغة تماماً كالإلغاء — **بلا أي نص في
+    // IPC** (عقد «مؤشرات فقط» سليم) — ويبثّ question-write ليمهّد المحرّر في القشرة.
+    window.__questionLiveProgress = 'write';
+    answered = null;
+    const writeBtn = root.querySelector('.write');
+    assert(writeBtn, 'زر «أجب بنصّي» غير موجود.');
+    const writes = [];
+    el.addEventListener('question-write', (event) => writes.push(event.detail));
+    el.ask({ id: 'live-q3', questions: [{ question: 'أيّهما تفضّل؟', header: 'التزامن', multiSelect: false,
+      options: [{ label: 'أ', description: 'د' }, { label: 'ب', description: 'د' }] }] });
+    await frames(2);
+    assert(el.hasAttribute('open'), 'لم يفتح سؤال «أجب بنصّي».');
+    writeBtn.click();
+    await frames(3);
+    assert(!el.hasAttribute('open'), 'لم يُغلق المربع بعد «أجب بنصّي».');
+    assert(answered && answered.id === 'live-q3' && Array.isArray(answered.selections) && answered.selections.length === 0,
+      '«أجب بنصّي» لم يرسل إجابة فارغة (deny).');
+    assert(!JSON.stringify(answered.selections).includes('text'), 'تسرّب نص حر إلى IPC السؤال.');
+    assert(writes.length === 1 && writes[0].question === 'أيّهما تفضّل؟' && writes[0].header === 'التزامن',
+      'question-write لم يحمل نص السؤال ووسمه: ' + JSON.stringify(writes));
+
+    // الإلغاء العادي بعده لا يبثّ question-write (لا تسرّب حالة بين الطلبات)
+    window.__questionLiveProgress = 'write-not-leaking';
+    el.ask({ id: 'live-q4', questions: [{ question: 'س؟', header: 'ه', multiSelect: false,
+      options: [{ label: 'أ', description: 'د' }, { label: 'ب', description: 'د' }] }] });
+    await frames(2);
+    cancel.click();
+    await frames(3);
+    assert(writes.length === 1, 'الإلغاء بثّ question-write — حالة «أجب بنصّي» تسرّبت لسؤال لاحق.');
+
     // رد قديم بعد closeAll لا يغلق سؤالاً جديداً ولا يرسل notice قديماً.
     window.__questionLiveProgress = 'stale-reply';
     const notices = [];

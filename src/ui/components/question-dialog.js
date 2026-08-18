@@ -55,6 +55,8 @@ const ownSheet = sheet(`
   .q-actions .submit { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600; }
   .q-actions .submit:disabled { opacity: .5; cursor: not-allowed; }
   .q-actions .cancel { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); }
+  /* «أجب بنصّي» فعل مفيد لا رفض: أوضح من إلغاء وأخفت من الإرسال (OBS-035) */
+  .q-actions .write { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
   .q-actions button:disabled { opacity: .5; cursor: not-allowed; }
 `);
 
@@ -70,11 +72,13 @@ class SatrQuestionDialog extends HTMLElement {
         '<div class="q-msg" hidden></div>' +
         '<div class="q-actions">' +
           '<button class="submit">إرسال الإجابة</button>' +
+          '<button class="write">✏️ أجب بنصّي</button>' +
           '<button class="cancel">إلغاء</button>' +
         '</div>' +
       '</div>';
     this._list = r.querySelector('.q-list');
     this._submit = r.querySelector('.submit');
+    this._write = r.querySelector('.write');
     this._cancel = r.querySelector('.cancel');
     this._msg = r.querySelector('.q-msg');
     this._queue = [];
@@ -83,6 +87,7 @@ class SatrQuestionDialog extends HTMLElement {
     this._requestEpoch = 0; // يبطل أي رد IPC قديم بعد الإيقاف/انتهاء الدور
     this._groups = []; // لكل سؤال: { kind, multiSelect, inputs:[HTMLInputElement] }
     this._submit.addEventListener('click', () => this._send());
+    this._write.addEventListener('click', () => this._doWrite());
     this._cancel.addEventListener('click', () => this._doCancel());
     r.addEventListener('keydown', (event) => { if (event.key === 'Tab') this._trapFocus(event); });
   }
@@ -217,10 +222,22 @@ class SatrQuestionDialog extends HTMLElement {
     await this._resolve(selections, '✓ أُرسلت إجابتك على سؤال النموذج', 'تعذّر إرسال الإجابة — حاول مرة أخرى.');
   }
 
-  // إلغاء: إجابة فارغة ⇒ deny في العملية الرئيسية (النموذج يكمل بلا اختيار)
+  // إلغاء: إجابة فارغة ⇒ deny في العملية الرئيسية (النموذج يُطلب منه طرح السؤال نصّاً)
   async _doCancel() {
     if (!this._current || this._sending) return;
+    this._pendingWrite = null;
     await this._resolve([], '↩︎ أُلغيت الإجابة على سؤال النموذج', 'تعذّر الإلغاء — حاول مرة أخرى.');
+  }
+
+  // OBS-035: مخرج المستخدم حين لا يناسبه أي خيار («اشرح لي، لم أفهم»). يغلق السؤال
+  // بإجابة فارغة تماماً كالإلغاء — **النص الحر لا يمرّ عبر IPC السؤال ولا يقترب من
+  // updatedInput**، فعقد «مؤشرات فقط» يبقى سليماً بحرفه — ثم تدرج القشرة نصاً في
+  // المحرّر بلا إرسال ليكتب المستخدم جوابه دوراً عادياً.
+  async _doWrite() {
+    if (!this._current || this._sending) return;
+    const q = this._current.questions && this._current.questions[0];
+    this._pendingWrite = { question: (q && q.question) || '', header: (q && q.header) || '' };
+    await this._resolve([], '✏️ أُغلق السؤال — اكتب جوابك في المحرّر', 'تعذّر الإغلاق — حاول مرة أخرى.');
   }
 
   // ينتظر رد العملية الرئيسية (P2-b): نجاح ⇒ إغلاق؛ فشل ⇒ إبقاء الحوار وإعادة تفعيل الأزرار.
@@ -228,18 +245,23 @@ class SatrQuestionDialog extends HTMLElement {
     const req = this._current;
     const epoch = this._requestEpoch;
     this._sending = true;
-    this._submit.disabled = true; this._cancel.disabled = true; this._msg.hidden = true;
+    this._submit.disabled = true; this._cancel.disabled = true; this._write.disabled = true;
+    this._msg.hidden = true;
     let ok = false;
     try { const r = await window.satr.answerQuestion(req.id, selections); ok = !!(r && r.ok); }
     catch (e) { ok = false; }
     if (epoch !== this._requestEpoch || this._current !== req) return;
     this._sending = false;
     this._cancel.disabled = false;
+    this._write.disabled = false;
+    const write = this._pendingWrite;
+    this._pendingWrite = null; // لا يتسرّب إلى سؤال لاحق سواء نجح أو فشل
     if (ok) {
       this._current = null;
       this._list.textContent = '';
       this._setOpen(false);
       this.dispatchEvent(new CustomEvent('notice', { detail: okNotice }));
+      if (write) this.dispatchEvent(new CustomEvent('question-write', { detail: write }));
       this._showNext();
     } else {
       // السؤال لا يزال معلّقاً — أبقِ الحوار، أظهر الخطأ، أعِد تفعيل الإرسال حسب الاختيار

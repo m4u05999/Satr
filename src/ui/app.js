@@ -1302,6 +1302,13 @@ import { createUpdateToast } from './lib/update-toast.js';
   questionEl.addEventListener('perm-visible', (e) => {
     surfaceCoordinator.setDialog('question-dialog', !!e.detail);
   });
+  // OBS-035: «أجب بنصّي» — السؤال أُغلق بإجابة فارغة (النص الحر لا يمرّ عبر IPC السؤال)،
+  // وهنا نمهّد المحرّر ببادئة تربط جوابه بسؤاله. لا نفترض نيته فلا نكتب الجواب عنه.
+  questionEl.addEventListener('question-write', (e) => {
+    const raw = String((e.detail && e.detail.question) || '').replace(/\s+/g, ' ').trim();
+    const quoted = raw.length > 160 ? raw.slice(0, 160) + '…' : raw;
+    composerEl.insertPrompt(quoted ? 'بخصوص سؤالك «' + quoted + '»: ' : '');
+  });
   function closeQuestionDialog() { if (questionEl.closeAll) questionEl.closeAll(); }
 
   // ---------- إدخال موصّلات Claude: <satr-elicitation-dialog> (دفعة C) ----------

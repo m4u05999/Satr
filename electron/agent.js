@@ -235,6 +235,11 @@ const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
 const STALE_REF_MESSAGE = 'المرجع من لقطة قديمة — خذ browser_snapshot جديدة واستعمل ref منها.';
+// OBS-035: سؤال بلا إجابة ليس «لا معلومة» بل قرارٌ لم يُتَّخذ بعد. الرسالة المحايدة
+// السابقة كانت تُقرأ إذناً بالتخمين، فيختار النموذج نيابةً عن المستخدم ويمضي.
+const QUESTION_UNANSWERED_MESSAGE = 'لم يجب المستخدم عن السؤال (أغلق البطاقة أو ألغاها). '
+  + 'لا تفترض إجابة ولا تختر نيابةً عنه ولا تكمل على أساس تخمين. اطرح السؤال نصّاً في '
+  + 'ردّك — موضّحاً الفروق العملية بين الخيارات — ثم توقّف وانتظر ردّه.';
 
 // تطبيع أدوات Todo/Task ورسائل Agent الفعلية في SDK إلى عقد task_update الموحّد.
 // لا نتدخل في تنفيذ الأدوات؛ نرصد رسائلها الموثّقة فقط ونترك التخزين لـ main.js.
@@ -1014,7 +1019,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           pendingQuestions.set(id, { resolve, input });
           if (signal) {
             signal.addEventListener('abort', () => {
-              if (pendingQuestions.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
+              if (pendingQuestions.delete(id)) resolve({ behavior: 'deny', message: QUESTION_UNANSWERED_MESSAGE });
             }, { once: true });
           }
         });
@@ -2209,9 +2214,12 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       if (!q) return false;
       pendingQuestions.delete(id);
       const updatedInput = buildQuestionAnswer(q.input, selections);
+      // OBS-035: الرسالة توجّه لا تصف. «لم يُختَر جواب صالح» جملة محايدة يقرأها
+      // النموذج «لا معلومة» فيختار نيابةً عن المستخدم ويمضي — أسوأ من ألّا يسأل،
+      // لأن السؤال يوهم بأن رأيه أُخذ. القرار الذي طُلب من المستخدم يبقى له.
       q.resolve(updatedInput
         ? { behavior: 'allow', updatedInput }
-        : { behavior: 'deny', message: 'لم يُختَر جواب صالح' });
+        : { behavior: 'deny', message: QUESTION_UNANSWERED_MESSAGE });
       return true;
     },
     // رد الواجهة على طلب إدخال موصّل MCP. agent يحفظ schema/URL الأصليين ولا يثق
