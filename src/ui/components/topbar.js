@@ -261,7 +261,13 @@ class SatrTopbar extends HTMLElement {
     if (!settingsPop.hidden && !appVersionLoaded && window.satr.appVersion) {
       try {
         const r = await window.satr.appVersion();
-        if (r && r.ok && r.version) { $('appVersionLabel').textContent = 'v' + r.version; appVersionLoaded = true; }
+        if (r && r.ok && r.version) {
+          $('appVersionLabel').textContent = 'v' + r.version;
+          // OBS-026: تُعلَّم نسخة التطوير وحدها — المثبّتة هي القاعدة فلا تحتاج وسماً،
+          // ووجود الشارة يفصلها عن نسخة مثبّتة قد تحمل رقم الإصدار نفسه
+          $('appEnvBadge').hidden = r.packaged !== false;
+          appVersionLoaded = true;
+        }
       } catch (e) { /* يبقى «—» — لا كسر للوحة */ }
     }
   });

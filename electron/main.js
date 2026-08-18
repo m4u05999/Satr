@@ -774,8 +774,15 @@ ipcMain.handle('satr:genProviders', async () => {
   return { ok: true, providers };
 });
 
-// رقم إصدار التطبيق لقسم ⚙ (ملاحظة مالك 2026-08-05) — قراءة فقط بلا مدخلات
-ipcMain.handle('satr:appVersion', () => ({ ok: true, version: String(app.getVersion()) }));
+// رقم إصدار التطبيق لقسم ⚙ (ملاحظة مالك 2026-08-05) — قراءة فقط بلا مدخلات.
+// `packaged` أُضيف لـOBS-026: نسخة مثبّتة قديمة تعرض الرقم نفسه الذي يعرضه
+// `npm start`، فضاعت ثلاث تجارب حية قِيست على كود لا يحوي الميزة. علامة منطقية
+// فقط — لا مسار تنفيذ ولا اسم ملف يعبر إلى renderer.
+ipcMain.handle('satr:appVersion', () => ({
+  ok: true,
+  version: String(app.getVersion()),
+  packaged: app.isPackaged === true,
+}));
 
 ipcMain.handle('satr:preflight', async () => {
   const [node, npm] = await Promise.all([
