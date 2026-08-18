@@ -7,6 +7,8 @@
 // endHandoff/startPick، دلالة satisfied الفورية، وبقاء نافذة الرصد الكاملة بلا أثر.
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
 const { app, BrowserWindow } = require('electron');
 const preview = require('../electron/preview');
@@ -215,10 +217,38 @@ async function main() {
     preview.close();
     assert.strictEqual(preview.isHandoffActive(), false,
       'close لم يفكّ علم التسليم العالق — العرض التالي سيرفض كل الأدوات');
+    // OBS-021 (الجذر الثالث — بلاغ حي 2026-08-18): علم عالق حجب أدوات المعاينة الـ14
+    // معاً في محرك SDK حتى إعادة تشغيل التطبيق. ثلاث عضّات: الحسم idempotent ويُبلّغ عن
+    // العلوق، ومسار SDK يفكّ في finally لا في مسار النجاح، ومعالج الإرسال يفكّ دفاعياً.
+    const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'agent.js'), 'utf8');
+    const starts = agentSrc.match(/preview\.startHandoff\(\)/g) || [];
+    assert(starts.length >= 2, 'لم يُعثر على مسارَي التسليم في agent.js');
+    for (const block of agentSrc.split('preview.startHandoff()').slice(1)) {
+      const scope = block.slice(0, 1200);
+      assert(/\}\s*finally\s*\{[\s\S]{0,400}?preview\.endHandoff\(\)/.test(scope),
+        'مسار تسليم في agent.js يفكّ العلم خارج finally — موت النداء يتركه مرفوعاً للأبد');
+    }
+
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+    const sendBody = mainSrc.slice(mainSrc.indexOf('async function handleSendRequest'));
+    const releaseAt = sendBody.indexOf('preview.endHandoff()');
+    const tokenAt = sendBody.indexOf('const token = ++runSeq');
+    assert(releaseAt > 0 && tokenAt > 0 && releaseAt < tokenAt,
+      'معالج الإرسال لا يفكّ التسليم العالق قبل بدء الدور — العلوق يبقى حتى إعادة التشغيل');
+
     assert(preview.open(win, () => {}, url + '/one').ok, 'تعذّرت إعادة الفتح بعد الإغلاق');
     await preview.waitFor({ selector: '#noop' }, 8000);
     snap = await preview.snapshot();
     assert(snap.ok, 'اللقطة بعد إعادة الفتح رُفضت رغم فكّ التسليم');
+
+    // الحسم يُبلّغ عن العلوق ويبقى idempotent — عليه يقوم الفكّ الدفاعي في معالج الإرسال
+    // (يُستدعى كل دور، فلو لم يكن idempotent لأفسد تسليماً مشروعاً)
+    assert.strictEqual(preview.startHandoff().ok, true, 'startHandoff فشل رغم أن المعاينة مفتوحة');
+    assert.deepStrictEqual(preview.endHandoff(), { ok: true, wasActive: true },
+      'endHandoff لا يبلّغ أنه فكّ علماً مرفوعاً — main لا يستطيع تسجيل العلوق');
+    assert.deepStrictEqual(preview.endHandoff(), { ok: true, wasActive: false },
+      'endHandoff ليس idempotent — الاستدعاء الدفاعي المتكرر يجب أن يكون بلا أثر');
+    snap = await preview.snapshot(); // العقد جُدّد بعد الإبطال كي تكمل بقية الاختبار
 
     // ---- الصفحة العدائية: الفعل يعمل عبر العالم المعزول ----
     assert(preview.navigate(url + '/hostile').ok, 'تعذّر الانتقال للصفحة العدائية');
@@ -233,7 +263,8 @@ async function main() {
     console.log('preview-lease: نجح — عقد اللقطة يحجب بعد إدخال المستخدم، البصمة تكشف الانجراف '
       + 'وتسمّي الطرفين، ref_removed يشخّص الاختفاء، pressKey يستهلك العقد وأفعال الوكيل لا، '
       + 'الإبطال عند التسليم والتأشير، satisfied الفوري ونافذة الرصد الكاملة، والعالم المعزول '
-      + 'يقاوم صفحة تخرّب main world.');
+      + 'يقاوم صفحة تخرّب main world، وفكّ التسليم العالق (إغلاق اللوحة، finally في مسارَي '
+      + 'SDK، والفكّ الدفاعي قبل كل دور).');
   } finally {
     preview.destroy();
     if (!win.isDestroyed()) win.destroy();

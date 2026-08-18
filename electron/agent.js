@@ -1904,10 +1904,18 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         const id = 'ho_' + Math.random().toString(36).slice(2);
-        emit({ type: 'handoff_request', id, reason });
-        const done = await new Promise((resolve) => { pendingHandoffs.set(id, { resolve }); });
-        preview.endHandoff(); // يصفّر سجلّي console/الشبكة — لا يقرأ الوكيل ما جرى أثناء التسليم
-        emit({ type: 'handoff_end', id });
+        // OBS-021 (الجذر الثالث — مسار SDK): العلم مرفوع الآن، فكل خروج من هنا فصاعداً
+        // يجب أن يفكّه. بلا finally كان رميُ emit أو موتُ السياق قبل تسجيل الطلب يترك
+        // العلم مرفوعاً بلا مالك تعرفه شبكتا الأمان، فتُحجب أدوات المعاينة الـ14 للأبد.
+        let done = false;
+        try {
+          emit({ type: 'handoff_request', id, reason });
+          done = await new Promise((resolve) => { pendingHandoffs.set(id, { resolve }); });
+        } finally {
+          pendingHandoffs.delete(id);
+          preview.endHandoff(); // يصفّر سجلّي console/الشبكة — لا يقرأ الوكيل ما جرى أثناء التسليم
+          try { emit({ type: 'handoff_end', id }); } catch (e) { /* الشريط يُخفى بالحدث التالي */ }
+        }
         if (!done) return { content: [{ type: 'text', text: 'ألغى المستخدم التسليم ولم تكتمل الخطوة. لا تكرر الطلب فوراً — اسأل المستخدم عن البديل.' }], isError: true };
         return { content: [{ type: 'text', text: 'استلم المستخدم وأكمل الخطوة بيده. الصفحة قد تغيّرت — خذ browser_snapshot جديداً قبل أي فعل.' }] };
       }
@@ -1926,10 +1934,16 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         const st = preview.startHandoff();
         if (!st.ok) return { content: [{ type: 'text', text: st.error === 'closed' ? 'المعاينة غير مفتوحة.' : 'تسليم آخر جارٍ.' }], isError: true };
         const id = 'ho_step_' + Math.random().toString(36).slice(2);
-        emit({ type: 'handoff_request', id, reason, mode: 'step' });
-        const done = await new Promise((resolve) => { pendingHandoffs.set(id, { resolve }); });
-        preview.endHandoff();
-        emit({ type: 'handoff_end', id });
+        // OBS-021: نظير الأداة أعلاه — الفكّ مضمون بـfinally لا بمسار النجاح
+        let done = false;
+        try {
+          emit({ type: 'handoff_request', id, reason, mode: 'step' });
+          done = await new Promise((resolve) => { pendingHandoffs.set(id, { resolve }); });
+        } finally {
+          pendingHandoffs.delete(id);
+          preview.endHandoff();
+          try { emit({ type: 'handoff_end', id }); } catch (e) { /* الشريط يُخفى بالحدث التالي */ }
+        }
         if (!done) return { content: [{ type: 'text', text: 'ألغى المستخدم الخطوة ولم تكتمل.' }], isError: true };
         return { content: [{ type: 'text', text: 'اكتملت الخطوة بيد المستخدم. خذ browser_snapshot جديداً ثم استأنف من: ' + resumeHint }] };
       }
