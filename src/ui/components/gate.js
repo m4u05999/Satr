@@ -76,7 +76,7 @@ class SatrGate extends HTMLElement {
         '<p class="gate-sub">لحظة من فضلك</p>' +
         '<ol class="gate-steps"></ol>' +
         '<div class="gate-actions"><button class="recheck">أعد الفحص</button></div>' +
-        '<p class="gate-foot">«سطر» يشغّل Claude Code في الخلفية ويعرض محادثتك بالعربية بشكل سليم.<br>يكفي تثبيت Claude Code مرة واحدة على جهازك.</p>' +
+        '<p class="gate-foot">«سطر» يشغّل محرّك الذكاء الاصطناعي في الخلفية ويعرض محادثتك بالعربية بشكل سليم.<br>يكفي تثبيت محرّك واحد مرة واحدة على جهازك.</p>' +
       '</div>';
     this._title = r.querySelector('h1');
     this._sub = r.querySelector('.gate-sub');
@@ -113,28 +113,39 @@ class SatrGate extends HTMLElement {
     return li;
   }
 
-  // جاهز: إخفاء البوابة وإعلام القشرة (ترفع الحجب وتعرض شريط النجاح)
-  _ready(version, claude) {
+  // جاهز: إخفاء البوابة وإعلام القشرة (ترفع الحجب وتعرض شريط النجاح).
+  // `preferred`/`readyEngines` تصفان **أي** محرك جاهز — القشرة تستعملهما لتصحيح منتقي
+  // المحرك إن كان اختيار المستخدم المحفوظ غير جاهز، فلا يفشل أول طلب صامتاً.
+  _ready(r) {
+    const claude = (r && r.claude) || {};
+    const engines = (r && Array.isArray(r.engines)) ? r.engines : [];
+    const preferred = (r && r.preferred) || 'sdk';
+    const chosen = engines.find((engine) => engine.id === preferred) || null;
     this.hidden = true;
     this.dispatchEvent(new CustomEvent('gate-ready', { detail: {
-      version: version || '',
-      outdated: !!(claude && claude.outdated),
-      recommended: (claude && claude.recommended) || '',
+      version: claude.version || '',
+      outdated: !!claude.outdated,
+      recommended: claude.recommended || '',
+      preferred,
+      readyEngines: (r && Array.isArray(r.readyEngines)) ? r.readyEngines.slice() : [],
+      engineLabel: chosen ? chosen.label : 'Claude Code',
     } }));
   }
 
-  // رسم الخطوات من نتيجة الفحص حين يكون claude غير متوفّر
+  // رسم الخطوات حين لا يجهز **أي** محرك. يكفي واحد من الثلاثة ليفتح التطبيق، فالخطوات
+  // تُعرض بديلةً لا متتابعة: لكل محرك حالته وأمره الخاص (تثبيت أو تسجيل دخول).
   _render(r) {
     this.hidden = false;
-    const claudeOk = !!(r && r.claude && r.claude.ok);
-    const loggedOut = claudeOk && r.claude.authChecked && r.claude.loggedIn === false;
-    this._title.textContent = loggedOut ? 'مطلوب: تسجيل الدخول إلى Claude Code' : 'مطلوب: Claude Code';
-    this._sub.textContent = loggedOut
-      ? 'انتهت جلسة Claude Code أو سُجّل الخروج منها. سجّل الدخول ثم اضغط «أعد الفحص».'
-      : '«سطر» يحتاج Claude Code مثبّتاً على جهازك ليعمل. اتبع الخطوات ثم اضغط «أعد الفحص».';
+    const engines = (r && Array.isArray(r.engines) && r.engines.length) ? r.engines : null;
+    // محرك مثبّت لكنه غير مسجّل ⇒ رسالة أدقّ من «ثبّت»: المستخدم على بعد خطوة واحدة.
+    const anyInstalled = engines ? engines.some((engine) => engine.installed) : !!(r && r.claude && r.claude.ok);
+    this._title.textContent = anyInstalled ? 'مطلوب: تسجيل الدخول إلى محرّكك' : 'مطلوب: محرّك ذكاء اصطناعي واحد';
+    this._sub.textContent = anyInstalled
+      ? 'المحرّك مثبّت لكنه غير مسجّل الدخول. سجّل الدخول ثم اضغط «أعد الفحص».'
+      : '«سطر» يشغّل محرّكاً في الخلفية ويعرض محادثتك بالعربية. يكفي واحد من هذه المحرّكات — اختر أيّها شئت.';
     this._steps.innerHTML = '';
 
-    // الخطوة 1: Node.js (يلزم npm لتثبيت Claude Code)
+    // الخطوة الأولى: Node.js — يلزم npm لتثبيت محرّكَي Claude Code وCodex
     if (r && r.node && r.node.ok) {
       this._steps.appendChild(this._step('done', 'Node.js مثبّت', 'الإصدار ' + (r.node.version || '') + ' — جاهز.'));
     } else {
@@ -145,22 +156,33 @@ class SatrGate extends HTMLElement {
       this._steps.appendChild(this._step('todo', 'ثبّت Node.js', link));
     }
 
-    // الخطوة 2: تثبيت Claude Code عبر npm
-    this._steps.appendChild(this._step(
-      claudeOk ? 'done' : 'todo',
-      'ثبّت Claude Code',
-      claudeOk ? ('مثبّت — ' + (r.claude.version || '')) : 'افتح الطرفية (PowerShell) ونفّذ هذا الأمر مرة واحدة:',
-      claudeOk ? null : INSTALL_CMD
-    ));
+    // خطوة لكل محرك. غياب `engines` يعني استجابة preflight قديمة ⇒ نتراجع إلى مسار
+    // Claude وحده بالسلوك السابق حرفياً (تدهور رشيق، لا شاشة فارغة).
+    if (!engines) {
+      const claudeOk = !!(r && r.claude && r.claude.ok);
+      this._steps.appendChild(this._step(
+        claudeOk ? 'done' : 'todo', 'ثبّت Claude Code',
+        claudeOk ? ('مثبّت — ' + (r.claude.version || '')) : 'افتح الطرفية (PowerShell) ونفّذ هذا الأمر مرة واحدة:',
+        claudeOk ? null : INSTALL_CMD));
+      const authReady = claudeOk && (!r.claude.authChecked || r.claude.loggedIn === true);
+      this._steps.appendChild(this._step(
+        authReady ? 'done' : 'todo',
+        authReady ? 'Claude Code مسجّل الدخول' : 'سجّل الدخول إلى Claude Code',
+        authReady ? 'المصادقة جاهزة.' : 'شغّل الأمر التالي في الطرفية ثم أعد الفحص:',
+        authReady ? null : LOGIN_CMD));
+      return;
+    }
 
-    // الخطوة 3: تسجيل الدخول — preflight يفحص `claude auth status` بلا قراءة أي token.
-    const authReady = claudeOk && (!r.claude.authChecked || r.claude.loggedIn === true);
-    this._steps.appendChild(this._step(
-      authReady ? 'done' : 'todo',
-      authReady ? 'Claude Code مسجّل الدخول' : 'سجّل الدخول إلى Claude Code',
-      authReady ? 'المصادقة جاهزة.' : 'شغّل الأمر التالي في الطرفية واتبع خطوات تسجيل الدخول، ثم أعد الفحص:',
-      authReady ? null : LOGIN_CMD
-    ));
+    engines.forEach((engine, index) => {
+      const recommended = index === 0 ? ' — الموصى به' : '';
+      if (engine.state === 'logged_out') {
+        this._steps.appendChild(this._step('todo', engine.label + ' — مثبّت، يلزم تسجيل الدخول',
+          'شغّل هذا الأمر في الطرفية واتبع خطواته، ثم أعد الفحص:', engine.login));
+      } else {
+        this._steps.appendChild(this._step('todo', 'ثبّت ' + engine.label + recommended,
+          'افتح الطرفية (PowerShell) ونفّذ هذا الأمر مرة واحدة:', engine.install));
+      }
+    });
   }
 
   async _run() {
@@ -168,9 +190,12 @@ class SatrGate extends HTMLElement {
     let r = null;
     try { r = await window.satr.preflight(); } catch (e) { r = null; }
     this._btn.disabled = false; this._btn.textContent = 'أعد الفحص';
-    const claudeReady = r && r.claude && r.claude.ok
-      && (!r.claude.authChecked || r.claude.loggedIn === true);
-    if (claudeReady) this._ready(r.claude.version, r.claude);
+    // `ready` هو عقد الجاهزية الجديد (أي محرك يكفي). غيابه = preflight قديم ⇒ نعود
+    // إلى شرط Claude وحده كما كان، فلا تنكسر نسخة قديمة من العملية الرئيسية.
+    const open = (r && typeof r.ready === 'boolean')
+      ? r.ready
+      : !!(r && r.claude && r.claude.ok && (!r.claude.authChecked || r.claude.loggedIn === true));
+    if (open) this._ready(r);
     else this._render(r);
   }
 }

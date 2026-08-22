@@ -246,6 +246,57 @@ const previewSheet = sheet(`
   #pvRestartServer { color: var(--text); background: var(--surface-2); border: 1px solid var(--red-border);
     border-radius: var(--radius-md); padding: var(--space-1) var(--space-2h); cursor: pointer; }
   #pvRestartServer[hidden] { display: none; }
+  /* ---------- طبقة الصوت (الدفعة 1 — «أشرح بصوتي») ----------
+     صفّ أدوات الصوت تحت درج ⋯ مباشرةً. المؤشّر الحيّ قبل التسجيل أرخص ما يمنع
+     تسجيلة كاملة بلا صوت: يتحرّك فيرى المستخدم أنه مسموع **قبل** أن يتكلّم دقيقة. */
+  #pvAudioRow {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1h);
+    padding: var(--space-1h) var(--space-2h);
+    background: var(--surface-2); border-bottom: 1px solid var(--border-dim);
+  }
+  #pvAudioRow[hidden] { display: none; }
+  #pvAudioRow button {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius-md); padding: var(--space-1) var(--space-2h); font-size: 12px; cursor: pointer;
+  }
+  #pvAudioRow button:hover { border-color: var(--gold); }
+  #pvAudioRow button:disabled, #pvAudioRow select:disabled { opacity: .45; cursor: default; }
+  #pvAudioRow select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); font-size: 11.5px;
+    max-width: 180px;
+  }
+  #pvMic.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+  #pvMicMeter {
+    flex: none; width: 82px; height: 8px; border-radius: var(--radius-pill);
+    background: var(--bg); border: 1px solid var(--border-dim); overflow: hidden; display: none;
+  }
+  #pvMicMeter.show { display: block; }
+  #pvMicFill { display: block; height: 100%; width: 0%; background: var(--green); }
+  #pvMicMeter.hot #pvMicFill { background: var(--gold); }
+  #pvSysWrap { display: inline-flex; align-items: center; gap: var(--space-1); font-size: 11.5px;
+    color: var(--text-dim); cursor: pointer; }
+  #pvSysNote, #pvAudioNote { flex-basis: 100%; font-size: 11px; unicode-bidi: plaintext; }
+  #pvSysNote { color: var(--gold-strong); }
+  #pvAudioNote { color: var(--text-faint); }
+  #pvSysNote[hidden], #pvAudioNote[hidden] { display: none; }
+  /* شريط الموافقة: إذن صريح **لكل تسجيلة** بلا «موافقة دائمة». تسجيل الميكروفون فعل
+     حسّاس، وجلسة نافذة «سطر» بلا معالج أذونات ⇒ Electron يمنحه صامتاً (مقيس في
+     مسبار الدفعة 0)، فهذا الشريط هو البوابة الوحيدة فعلياً. */
+  #pvRecConsent {
+    display: none; flex-direction: column; gap: var(--space-1h);
+    padding: var(--space-2) var(--space-2h);
+    background: var(--gold-soft); border-bottom: 1px solid var(--gold-border);
+  }
+  #pvRecConsent.show { display: flex; animation: pop var(--dur) var(--ease); }
+  #pvRecConsent .rc-title { font-size: 12.5px; font-weight: 600; color: var(--gold-strong); }
+  #pvRecConsent .rc-body, #pvRecConsent .rc-warn { font-size: 12px; color: var(--text); unicode-bidi: plaintext; }
+  #pvRecConsent .rc-warn[hidden] { display: none; }
+  #pvRecConsent .rc-actions { display: flex; gap: var(--space-1h); }
+  #rcStart { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600;
+    border-radius: var(--radius-md); padding: var(--space-1h) var(--space-4); font-size: 12.5px; cursor: pointer; }
+  #rcCancel { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); cursor: pointer; }
   /* مقبض تغيير العرض على الحافة الملاصقة للمحادثة (inline-start = يمين في RTL) */
   #pvResizer {
     position: absolute; top: 0; bottom: 0; inset-inline-start: -3px; width: 7px;
@@ -286,6 +337,26 @@ const MARKUP = `
     <button id="pvDevtools" type="button" title="أدوات المطوّر (DevTools) — فحص كامل للصفحة في نافذة منفصلة">🔧 أدوات المطوّر</button>
     <button id="pvNet" type="button" title="محاكاة سرعة الشبكة: عادي/بطيء/سريع/غير متصل">🚦 الشبكة</button>
     <button id="pvClearStore" type="button" title="مسح تخزين الصفحة (كوكيز + localStorage + cache) وإعادة التحميل">🧹 مسح التخزين</button>
+  </div>
+  <!-- طبقة الصوت (الدفعة 1): الميكروفون يُسجَّل من اليوم الأول — صوتٌ لم يُسجَّل لا
+       يمكن إضافته إلى لقطة ماضية. صوت النظام اختياري بتحذير، ومطفأ افتراضياً دائماً. -->
+  <div id="pvAudioRow" hidden>
+    <button id="pvMic" type="button" aria-pressed="false" title="سجّل شرحك بصوتك مع الفيديو">🎙 صوتي</button>
+    <select id="pvMicDev" title="جهاز الإدخال" disabled></select>
+    <span id="pvMicMeter" title="مستوى الصوت الوارد"><span id="pvMicFill"></span></span>
+    <label id="pvSysWrap"><input id="pvSysAudio" type="checkbox"> صوت النظام</label>
+    <span id="pvSysNote" hidden></span>
+    <span id="pvAudioNote" hidden></span>
+  </div>
+  <!-- شريط الموافقة على تسجيل الصوت: يظهر قبل كل تسجيلة فيها صوت، ويُطوى بعدها -->
+  <div id="pvRecConsent">
+    <span class="rc-title">🎙 إذن تسجيل الصوت — لهذه التسجيلة وحدها</span>
+    <span class="rc-body" id="rcBody"></span>
+    <span class="rc-warn" id="rcWarn" hidden></span>
+    <div class="rc-actions">
+      <button id="rcStart" type="button">ابدأ التسجيل</button>
+      <button id="rcCancel" type="button">إلغاء</button>
+    </div>
   </div>
   <!-- شريط التسليم البشري (browser_handoff): يظهر حين يسلّم الوكيل القيادة للمستخدم -->
   <div id="pvHandoff">
@@ -653,6 +724,10 @@ class SatrPreviewPanel extends HTMLElement {
       if (picking) { window.satr.previewPickCancel(); endPickMode(); }
       closePickBar();
       if (recording) stopRec(); // م-5: أوقِف التسجيل وأنزِل ما سُجّل قبل إغلاق العرض
+      // الميكروفون لا يبقى مفتوحاً بعد إغلاق اللوحة (خصوصية): يُطفأ مجراه وتُلغى موافقته.
+      micOn = false; stopMic();
+      micBtn.classList.remove('on'); micBtn.setAttribute('aria-pressed', 'false');
+      consentOk = false; consentBar.classList.remove('show');
       window.satr.previewClose(); // يدمّر العرض الأصلي (الكوكيز تبقى في partition الدائمة)
     };
     if (toggleBtn) toggleBtn.addEventListener('click', () => {
@@ -810,6 +885,7 @@ class SatrPreviewPanel extends HTMLElement {
       const tools = $('pvTools');
       const open = tools.hidden;
       tools.hidden = !open;
+      $('pvAudioRow').hidden = !open; // صفّ الصوت جزء من أدوات التسجيل — يظهر معها
       $('pvMore').classList.toggle('on', open);
       $('pvMore').setAttribute('aria-expanded', String(open));
       reportBounds();
@@ -1021,16 +1097,177 @@ class SatrPreviewPanel extends HTMLElement {
     let recording = false, mediaRec = null, recChunks = [], recStream = null;
     let recSessionId = '', recStartedAt = 0, recFormat = null, recFinishing = false;
 
+    // ---------- طبقة الصوت (الدفعة 1 — «أشرح بصوتي») ----------
+    // ثلاثة قرارات مبنية على مسبار الدفعة 0 (probes/report-capture-audio.md) لا على الحدس:
+    // (1) `pickRecMime()` المشتركة تعلن ترميز **فيديو وحده**، فالمسار الصوتي يُسلَّم
+    //     للمسجّل ثم لا يُكتب: ملف صامت بلا خطأ ولا تحذير. هنا مرشّحات تعلن الصوت
+    //     صراحةً، وإن لم يدعمها الجهاز **نرفض البدء** بدل إخراج صمتٍ يظنّه المستخدم شرحه.
+    // (2) مساران صوتيان في مسجّل واحد ⇒ يُسقَط أحدهما **صامتاً** (طاقة الثاني قيست تحت
+    //     أرضية الضجيج). لذلك الميكروفون وصوت النظام متعارضان هنا، والواجهة تصرّح بالحدّ.
+    // (3) جلسة نافذة «سطر» بلا معالج أذونات ⇒ Electron يمنح الميكروفون صامتاً؛ فشريط
+    //     الموافقة هو البوابة الوحيدة فعلياً، ويُسأل لكل تسجيلة بلا «موافقة دائمة».
+    const AUDIO_REC_CANDIDATES = [
+      { mime: 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', container: 'video/mp4', ext: 'mp4' },
+      { mime: 'video/mp4;codecs=avc1,mp4a.40.2', container: 'video/mp4', ext: 'mp4' },
+      { mime: 'video/webm;codecs=vp9,opus', container: 'video/webm', ext: 'webm' },
+      { mime: 'video/webm;codecs=vp8,opus', container: 'video/webm', ext: 'webm' },
+    ];
+    // قيود خام: المعالجة الافتراضية (AEC/NS/AGC) تبتلع الإشارة — أُثبت في المسبار أن
+    // النغمة تختفي معها. الشرح البشري لا يحتاجها، والخام يعطي أصدق تسجيل.
+    const MIC_CONSTRAINTS = {
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+      sampleRate: 48000, channelCount: 1,
+    };
+    // نصّ التحذير حرفياً من تقرير المسبار §7 (مبرَّر بقياس: صوت النظام يلتقط عملية
+    // منفصلة تماماً بهامش ×1000 فوق أرضية الضجيج) — بلا علامات Markdown.
+    const SYS_AUDIO_SHORT = '⚠️ يسجّل صوت الجهاز كله — الإشعارات والمكالمات وكل تطبيق مفتوح، '
+      + 'لا نافذة المنتج وحدها.';
+    const SYS_AUDIO_FULL = '⚠️ صوت النظام يسجّل كل ما يصدر عن جهازك — لا نافذة المنتج وحدها. '
+      + 'ستُسجَّل الإشعارات والمكالمات والموسيقى وأي صوت من أي تطبيق مفتوح. هذا حدٌّ في ويندوز '
+      + 'لا يمكن لـ«سطر» تجاوزه: لا يوفّر النظام التقاط صوت نافذة بعينها. '
+      + 'قبل البدء: أغلق ما لا تريد سماعه، واكتم الإشعارات.';
+    const MIC_SILENCE_PEAK = 0.01; // أرضية الصمت الخام المقيسة ‏0.0018 ذروةً — هامش ‏×5
+    const MIC_SILENCE_MS = 6000;
+
+    const micBtn = $('pvMic'), micDev = $('pvMicDev'), micMeter = $('pvMicMeter'), micFill = $('pvMicFill');
+    const sysAudio = $('pvSysAudio'), sysNote = $('pvSysNote'), audioNote = $('pvAudioNote');
+    const consentBar = $('pvRecConsent'), rcBody = $('rcBody'), rcWarn = $('rcWarn');
+    let micStream = null, micCtx = null, micAnalyser = null, micBins = null, micRaf = 0;
+    let micPeak = 0, micOn = false, consentOk = false, silenceWatch = 0;
+
+    // اختيار الحاوية: بلا صوت ⇒ السلوك القائم حرفياً (pickRecMime المشتركة).
+    const pickRecFormat = (wantsAudio) => {
+      const Recorder = window.MediaRecorder;
+      const supported = (mime) => !!Recorder && typeof Recorder.isTypeSupported === 'function'
+        && Recorder.isTypeSupported(mime);
+      if (wantsAudio) {
+        for (const candidate of AUDIO_REC_CANDIDATES) {
+          if (supported(candidate.mime)) return { ...candidate, audio: true };
+        }
+      }
+      return { ...pickRecMime(), audio: false };
+    };
+
+    const setAudioNote = (text) => { audioNote.textContent = text || ''; audioNote.hidden = !text; };
+    const paintSysNote = () => {
+      sysNote.textContent = sysAudio.checked ? SYS_AUDIO_SHORT : '';
+      sysNote.hidden = !sysAudio.checked;
+    };
+
+    const pumpMeter = () => {
+      micRaf = 0;
+      if (!micAnalyser || !micBins) return;
+      micAnalyser.getFloatTimeDomainData(micBins);
+      let sum = 0;
+      for (let index = 0; index < micBins.length; index += 1) sum += micBins[index] * micBins[index];
+      const level = Math.sqrt(sum / micBins.length);
+      if (level > micPeak) micPeak = level;
+      micFill.style.width = Math.min(100, Math.round(level * 320)) + '%';
+      micMeter.classList.toggle('hot', level > 0.28);
+      micRaf = requestAnimationFrame(pumpMeter);
+    };
+
+    const stopMic = () => {
+      if (micRaf) { cancelAnimationFrame(micRaf); micRaf = 0; }
+      if (micStream) for (const track of micStream.getTracks()) { try { track.stop(); } catch (e) {} }
+      if (micCtx) { try { micCtx.close(); } catch (e) {} }
+      micStream = null; micCtx = null; micAnalyser = null; micBins = null; micPeak = 0;
+      micMeter.classList.remove('show', 'hot');
+      micFill.style.width = '0%';
+    };
+
+    // أسماء الأجهزة لا تظهر قبل أول منح؛ لذلك تُملأ القائمة بعد فتح المجرى لا قبله.
+    const listMicDevices = async (preferred) => {
+      const media = navigator.mediaDevices;
+      if (!media || typeof media.enumerateDevices !== 'function') return;
+      let devices = [];
+      try { devices = await media.enumerateDevices(); } catch (e) { return; }
+      const inputs = (devices || []).filter((device) => device && device.kind === 'audioinput');
+      micDev.textContent = '';
+      for (const device of inputs) {
+        const option = document.createElement('option');
+        option.value = device.deviceId || '';
+        option.textContent = device.label || 'ميكروفون';
+        micDev.appendChild(option);
+      }
+      micDev.disabled = inputs.length < 2;
+      if (preferred && inputs.some((device) => device.deviceId === preferred)) micDev.value = preferred;
+    };
+
+    const startMic = async (deviceId) => {
+      stopMic();
+      const audio = { ...MIC_CONSTRAINTS };
+      if (deviceId) audio.deviceId = { exact: deviceId };
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+      } catch (error) {
+        showErr('تعذّر فتح الميكروفون — تأكد من توصيله ومن أن ويندوز يسمح لـ«سطر» باستخدامه.');
+        return false;
+      }
+      const track = stream.getAudioTracks()[0];
+      if (!track) {
+        for (const item of stream.getTracks()) { try { item.stop(); } catch (e) {} }
+        showErr('لم يسلّم الجهاز مساراً صوتياً — جرّب جهاز إدخال آخر.');
+        return false;
+      }
+      micStream = stream;
+      // المؤشّر الحيّ تحسين لا شرط: فشله لا يمنع التسجيل، لكنه يفقد التحقّق المسبق.
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        micCtx = new Ctx();
+        if (micCtx.state === 'suspended') await micCtx.resume();
+        micAnalyser = micCtx.createAnalyser();
+        micAnalyser.fftSize = 1024;
+        micBins = new Float32Array(micAnalyser.fftSize);
+        micCtx.createMediaStreamSource(stream).connect(micAnalyser);
+        micMeter.classList.add('show');
+        if (!micRaf) micRaf = requestAnimationFrame(pumpMeter);
+      } catch (error) { micAnalyser = null; micBins = null; }
+      let settingsId = '';
+      try { settingsId = (track.getSettings && track.getSettings().deviceId) || ''; } catch (e) {}
+      await listMicDevices(settingsId);
+      return true;
+    };
+
+    const setMic = async (on) => {
+      if (recording) return;
+      if (on) {
+        if (sysAudio.checked) { sysAudio.checked = false; paintSysNote(); }
+        micOn = await startMic(micDev.value);
+      } else { micOn = false; stopMic(); }
+      micBtn.classList.toggle('on', micOn);
+      micBtn.setAttribute('aria-pressed', micOn ? 'true' : 'false');
+      if (!micOn) setAudioNote('');
+    };
+
+    micBtn.addEventListener('click', () => { setMic(!micOn); });
+    micDev.addEventListener('change', () => { if (micOn) setMic(true); });
+    sysAudio.addEventListener('change', async () => {
+      if (recording) { sysAudio.checked = !sysAudio.checked; return; }
+      if (sysAudio.checked && micOn) {
+        await setMic(false);
+        setAudioNote('لا يجتمع صوتك مع صوت النظام في ملف واحد — قياسٌ مثبَّت: المسجّل يُسقط '
+          + 'أحد المسارين صامتاً. أُطفئ «صوتي».');
+      } else setAudioNote('');
+      paintSysNote();
+    });
+
     const paintRecording = (active) => {
       recording = !!active;
       recBtn.classList.toggle('rec', recording);
       recBtn.textContent = recording ? '⏹' : '⏺';
       recAspect.disabled = recording;
+      micBtn.disabled = recording;
+      sysAudio.disabled = recording;
+      micDev.disabled = recording || micDev.options.length < 2;
     };
 
     const clearRecording = () => {
       if (recStream) for (const track of recStream.getTracks()) { try { track.stop(); } catch (e) {} }
+      if (silenceWatch) { clearTimeout(silenceWatch); silenceWatch = 0; }
       recStream = null; mediaRec = null; recChunks = []; recSessionId = ''; recFinishing = false;
+      consentOk = false; // الموافقة لتسجيلة واحدة — التالية تسأل من جديد
       paintRecording(false);
     };
 
@@ -1059,10 +1296,30 @@ class SatrPreviewPanel extends HTMLElement {
             minFrameRate: 30, maxFrameRate: 30,
           } },
         });
-        const format = pickRecMime();
+        const videoTrack = stream.getVideoTracks()[0];
+        if (!videoTrack) throw new Error('no_video_track');
+        // مسار صوتي **واحد** حتماً: الميكروفون أولاً (طلب المالك «أشرح بصوتي»)، وإلا
+        // صوت النظام إن سلّمه main. مساران معاً يُسقطان أحدهما صامتاً (قياس مثبَّت).
+        const systemTracks = stream.getAudioTracks();
+        const micTrack = micOn && micStream ? micStream.getAudioTracks()[0] : null;
+        const liveMic = micTrack && micTrack.readyState === 'live' ? micTrack : null;
+        const audioTracks = liveMic ? [liveMic] : (systemTracks.length ? [systemTracks[0]] : []);
+        const wantsAudio = audioTracks.length > 0;
+        if (wantsAudio && !consentOk) throw new Error('consent_missing');
+        const format = pickRecFormat(wantsAudio);
+        // العطل الذي كان يفشل صامتاً: حاوية بلا ترميز صوت ⇒ المسار يُسلَّم ولا يُكتب.
+        // نرفض البدء بدل إخراج ملف صامت يظنّ المستخدم أنه يحمل شرحه.
+        if (wantsAudio && !format.audio) {
+          for (const track of stream.getTracks()) { try { track.stop(); } catch (e) {} }
+          clearRecording();
+          await window.satr.promoCaptureReady(event.session_id, false, 'audio_codec_unavailable');
+          showErr('لا يدعم هذا الجهاز ترميز صوتٍ مع الفيديو، ولن نُخرِج تسجيلاً صامتاً تظنّه '
+            + 'يحمل شرحك. أطفئ «صوتي» و«صوت النظام» لتسجيل الصورة وحدها.');
+          return;
+        }
         const options = { videoBitsPerSecond: event.width >= 1920 || event.height >= 1920 ? 16000000 : 10000000 };
         if (format.mime) options.mimeType = format.mime;
-        const recorder = new MediaRecorder(stream, options);
+        const recorder = new MediaRecorder(new MediaStream([videoTrack, ...audioTracks]), options);
         recChunks = [];
         recStream = stream;
         mediaRec = recorder;
@@ -1093,17 +1350,32 @@ class SatrPreviewPanel extends HTMLElement {
           }
           clearRecording();
         };
-        const videoTrack = stream.getVideoTracks()[0];
-        if (!videoTrack) throw new Error('no_video_track');
         videoTrack.addEventListener('ended', finishNativeCapture, { once: true });
         recorder.start(1000);
         paintRecording(true);
+        // شبكة أمان ثانية: الترميز صار يعلن الصوت، لكن ميكروفوناً مكتوماً أو جهازاً
+        // خاطئاً ينتج تسجيلة صامتة أيضاً. المؤشّر يعمل أثناء التسجيل، فإن بقيت الذروة
+        // عند أرضية الصمت بعد ثوانٍ نقولها فوراً بدل أن يكتشفها بعد دقيقة كاملة.
+        if (liveMic && micAnalyser) {
+          micPeak = 0;
+          silenceWatch = setTimeout(() => {
+            silenceWatch = 0;
+            if (recording && micPeak < MIC_SILENCE_PEAK) {
+              showErr('لا نرصد صوتاً من الميكروفون منذ بدء التسجيل — تحقّق من الجهاز المختار '
+                + 'ومن أنه غير مكتوم، فالتسجيلة قد تخرج بلا شرحك.');
+            }
+          }, MIC_SILENCE_MS);
+        }
         await window.satr.promoCaptureReady(event.session_id, true, '');
       } catch (error) {
+        // fail-closed: تسجيل بصوت بلا موافقة صريحة لهذه التسجيلة لا يبدأ إطلاقاً.
+        const noConsent = error && error.message === 'consent_missing';
         if (stream) for (const track of stream.getTracks()) { try { track.stop(); } catch (e) {} }
         clearRecording();
-        await window.satr.promoCaptureReady(event.session_id, false, 'media_failed');
-        showErr('تعذّر بدء التقاط نافذة المنتج.');
+        await window.satr.promoCaptureReady(event.session_id, false, noConsent ? 'consent_missing' : 'media_failed');
+        showErr(noConsent
+          ? 'لم تُمنح موافقة تسجيل الصوت لهذه التسجيلة — اضغط ⏺ ثم «ابدأ التسجيل».'
+          : 'تعذّر بدء التقاط نافذة المنتج.');
       }
     };
 
@@ -1112,10 +1384,39 @@ class SatrPreviewPanel extends HTMLElement {
       window.satr.promoCaptureStop().catch(() => {});
     };
 
+    // إرسال الطلب إلى main. المعامل الرابع توسعة اختيارية: إصدار preload الذي لا يعرفه
+    // يتجاهله فيبقى السلوك القائم حرفياً (ولا يُفتح صوت النظام إلا بعد وصله فعلاً).
+    const requestCapture = async () => {
+      const result = await window.satr.promoCaptureStart(recAspect.value, normalize(urlIn.value), true,
+        { system: !!sysAudio.checked });
+      if (!result || !result.ok) {
+        consentOk = false;
+        showErr(result && result.error === 'busy' ? 'يوجد تسجيل برومو جارٍ بالفعل.' : 'تعذّر فتح نافذة التقاط المنتج.');
+      }
+    };
+
+    const hideConsent = () => { consentBar.classList.remove('show'); reportBounds(); };
+    $('rcCancel').addEventListener('click', () => { consentOk = false; hideConsent(); });
+    $('rcStart').addEventListener('click', async () => {
+      consentOk = true;
+      hideConsent();
+      await requestCapture();
+    });
+
     const startRec = async () => {
       if (!started || !normalize(urlIn.value)) { showErr('افتح المعاينة على مشروعك أولاً ثم ابدأ التسجيل.'); return; }
-      const result = await window.satr.promoCaptureStart(recAspect.value, normalize(urlIn.value), true);
-      if (!result || !result.ok) showErr(result && result.error === 'busy' ? 'يوجد تسجيل برومو جارٍ بالفعل.' : 'تعذّر فتح نافذة التقاط المنتج.');
+      consentOk = false;
+      if (!micOn && !sysAudio.checked) { await requestCapture(); return; }
+      // إذن صريح لكل تسجيلة: يذكر ما سيُسجَّل بالضبط، وبأي جهاز، وتحذير النظام كاملاً.
+      const device = micOn && micDev.selectedOptions[0] ? micDev.selectedOptions[0].textContent : '';
+      rcBody.textContent = micOn
+        ? ('سيُسجَّل صوتك من الميكروفون' + (device ? ' («' + device + '»)' : '') + ' مع صورة نافذة المنتج.')
+        : 'سيُسجَّل صوت النظام مع صورة نافذة المنتج.';
+      rcWarn.textContent = sysAudio.checked ? SYS_AUDIO_FULL : '';
+      rcWarn.hidden = !sysAudio.checked;
+      consentBar.classList.add('show');
+      reportBounds();
+      $('rcStart').focus();
     };
     recBtn.addEventListener('click', () => { if (recording) stopRec(); else startRec(); });
     $('pvStudio').addEventListener('click', () => {

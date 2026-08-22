@@ -52,6 +52,8 @@ const SUITE = [
   'test:promocapture-live',
   'test:promo-studio',
   'test:claude-auth',
+  'test:readiness',
+  'test:gate-live',
   'test:fork-rewind',
   'test:claude-models',
   'test:elicitation',

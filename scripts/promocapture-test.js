@@ -15,6 +15,9 @@ assert.strictEqual(promo.mediaSourceWindowKey('window:41:1'), 'window:41');
 assert.strictEqual(promo.mediaSourceWindowKey('screen:41:0'), '');
 
 const downloads = path.resolve('tmp-promo-downloads');
+// السجل صار دائماً؛ يبدأ الحارس بعينة نظيفة كي لا يعتمد على ترتيب تشغيلاته السابقة.
+try { fs.rmSync(downloads, { recursive: true, force: true }); } catch {}
+fs.mkdirSync(downloads, { recursive: true });
 const sessionId = 'promo_0123456789abcdef01234567';
 const filename = promo.segmentFilename(sessionId, new Date('2026-07-19T10:20:30Z'), 'mp4');
 assert.strictEqual(filename, 'satr-promo-segment-' + sessionId + '-2026-07-19-10-20-30.mp4');
@@ -120,8 +123,10 @@ class FakeWindow extends EventEmitter {
   assert(agentSource.includes('PROMO_START_TOOL') && agentSource.includes('PROMO_STOP_TOOL')
     && agentSource.includes('PROMO_READ_TOOLS'), 'SDK يصنّف أدوات البرومو ويمنع الموافقة الدائمة للفعل');
 
+  try { fs.rmSync(downloads, { recursive: true, force: true }); } catch {}
   console.log('promocapture: نجح — aspect، مصدر نافذة حصري، fallback العملية، IPC، مسار Downloads، ودورة التسجيل.');
 })().catch((error) => {
+  try { fs.rmSync(downloads, { recursive: true, force: true }); } catch {}
   console.error(error && error.stack ? error.stack : error);
   process.exit(1);
 });

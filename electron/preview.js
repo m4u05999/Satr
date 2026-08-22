@@ -25,6 +25,12 @@ let viewportOverride = null; // مقاس طلبه الوكيل للتحقق ال
 let externalTargetProvider = null; // نافذة التقاط المنتج المرئية أثناء تسجيل البرومو
 const wiredWebContents = new WeakSet();
 const resizeWired = new WeakSet(); // نوافذ رُبط لها حارس إعادة تطبيق المستطيل (مرآة RTL)
+let captureEventSink = null; // مصرف محدود لسجل الالتقاط؛ لا يرى نص الصفحة أو أسرارها
+let capturePollTimer = null;
+let capturePollBusy = false;
+let captureDocumentGeneration = 1;
+let captureNextDocumentId = 0;
+let captureDocumentIds = new Map();
 
 let snapshotSequence = 0;
 let activeSnapshotGeneration = 0;
@@ -35,6 +41,89 @@ const SNAPSHOT_REF_RE = /^s([1-9][0-9]*):e([1-9][0-9]*)$/;
 const LEGACY_SNAPSHOT_REF_RE = /^e[1-9][0-9]*$/;
 let activeSnapshotFingerprints = new Map(); // ref → بصمة لحظة اللقطة (داخلية — لا تعبر للنموذج)
 const MAX_TRACKED_FINGERPRINTS = 400;
+
+// جامع الإدخال البشري يعيش في العالم المعزول نفسه الذي نجح في م2. لا ينسخ إلا
+// الإحداثيات وref المبهم؛ حتى حقول DOM المتاحة لا تدخل الصف إطلاقاً.
+const CAPTURE_HUMAN_INSTALL = `(function(){
+  if(window.__satrCaptureHuman)return {ok:true,reused:true};
+  var state={queue:[],seen:new WeakSet(),docs:new WeakMap(),nextDoc:0};
+  function clamp(n,min,max){n=Number(n);return Number.isFinite(n)?Math.max(min,Math.min(max,Math.round(n))):0;}
+  function viewport(){return {width:Math.max(1,Math.round(innerWidth||1)),height:Math.max(1,Math.round(innerHeight||1)),dpr:Number(devicePixelRatio)||1};}
+  function refOf(target){try{var el=target&&target.closest?target.closest('[data-satr-ref]'):null,ref=el&&el.getAttribute('data-satr-ref');return /^s[1-9][0-9]*:e[1-9][0-9]*$/.test(ref||'')?ref:null;}catch(e){return null;}}
+  function rectOf(target,offset,vp){try{if(!target||!target.getBoundingClientRect)return null;var r=target.getBoundingClientRect(),o=offset();return {x:clamp(o.x+r.left,0,vp.width),y:clamp(o.y+r.top,0,vp.height),width:clamp(r.width,0,vp.width),height:clamp(r.height,0,vp.height)};}catch(e){return null;}}
+  function push(type,event,doc,offset){if(state.queue.length>=1500)return;var vp=viewport(),o=offset();state.queue.push({kind:'pointer',source:'human',action:type,target_ref:refOf(event.target),document_id:state.docs.get(doc)||'d1',rect:rectOf(event.target,offset,vp),pointer:{x:clamp(o.x+event.clientX,0,vp.width),y:clamp(o.y+event.clientY,0,vp.height),button:clamp(event.button,0,5)},viewport:vp,epoch_ms:Date.now()});}
+  function scan(doc,offset){try{var frames=doc.querySelectorAll('iframe');for(var i=0;i<frames.length;i++)attachFrame(frames[i],offset);}catch(e){}}
+  function attachFrame(frame,parentOffset){try{var ownOffset=function(){var p=parentOffset(),r=frame.getBoundingClientRect();return {x:p.x+r.left+(frame.clientLeft||0),y:p.y+r.top+(frame.clientTop||0)};};attach(frame.contentDocument,ownOffset);frame.addEventListener('load',function(){try{attach(frame.contentDocument,ownOffset);}catch(e){}},true);}catch(e){}}
+  function attach(doc,offset){if(!doc||state.seen.has(doc))return;state.seen.add(doc);state.docs.set(doc,'d'+(++state.nextDoc));doc.addEventListener('mousedown',function(e){push('mousedown',e,doc,offset);},true);doc.addEventListener('mousemove',function(e){push('mousemove',e,doc,offset);},true);scan(doc,offset);try{new MutationObserver(function(){scan(doc,offset);}).observe(doc.documentElement,{subtree:true,childList:true});}catch(e){}}
+  attach(document,function(){return {x:0,y:0};});
+  state.drain=function(){var out=state.queue.slice();state.queue.length=0;return out;};
+  window.__satrCaptureHuman=state;return {ok:true,documents:state.nextDoc};
+})()`;
+const CAPTURE_HUMAN_DRAIN = `(window.__satrCaptureHuman&&window.__satrCaptureHuman.drain?window.__satrCaptureHuman.drain():[])`;
+
+function deliverCaptureEvent(event) {
+  if (typeof captureEventSink !== 'function') return;
+  try { captureEventSink(event); } catch {}
+}
+
+function captureDocumentId(localId) {
+  const local = /^d[1-9][0-9]*$/.test(String(localId || '')) ? String(localId) : 'd1';
+  const key = captureDocumentGeneration + ':' + local;
+  if (!captureDocumentIds.has(key)) captureDocumentIds.set(key, 'd' + (++captureNextDocumentId));
+  return captureDocumentIds.get(key);
+}
+
+async function installCaptureCollector(wc) {
+  if (!captureEventSink || !wc || wc.isDestroyed()) return false;
+  try {
+    await runIsolated(wc, CAPTURE_HUMAN_INSTALL);
+    return true;
+  } catch { return false; }
+}
+
+function stopCapturePolling() {
+  if (capturePollTimer) clearInterval(capturePollTimer);
+  capturePollTimer = null;
+  capturePollBusy = false;
+}
+
+function startCapturePolling(wc) {
+  stopCapturePolling();
+  if (!captureEventSink || !wc || wc.isDestroyed()) return;
+  installCaptureCollector(wc).catch(() => {});
+  capturePollTimer = setInterval(async () => {
+    if (capturePollBusy || !captureEventSink || wc.isDestroyed() || currentWC() !== wc) return;
+    capturePollBusy = true;
+    try {
+      let events = await runIsolated(wc, CAPTURE_HUMAN_DRAIN);
+      if (!Array.isArray(events)) {
+        await installCaptureCollector(wc);
+        events = [];
+      }
+      const mainNow = performance.now();
+      const epochNow = Date.now();
+      for (const event of events) {
+        const age = Number.isFinite(event.epoch_ms) ? Math.max(0, Math.min(5000, epochNow - event.epoch_ms)) : 0;
+        deliverCaptureEvent({ ...event, document_id: captureDocumentId(event.document_id), monotonic_ms: mainNow - age });
+      }
+    } catch { await installCaptureCollector(wc); }
+    finally { capturePollBusy = false; }
+  }, 50);
+  if (typeof capturePollTimer.unref === 'function') capturePollTimer.unref();
+}
+
+function setCaptureEventSink(sink) {
+  captureEventSink = typeof sink === 'function' ? sink : null;
+  if (captureEventSink) {
+    captureDocumentGeneration = 1;
+    captureNextDocumentId = 0;
+    captureDocumentIds = new Map();
+  }
+  const wc = externalWC();
+  if (captureEventSink && wc) startCapturePolling(wc);
+  else stopCapturePolling();
+  return { ok: true };
+}
 
 // ---------- عقد اللقطة (Snapshot Lease) — علاج تنازع التحكم (OBS-013) ----------
 // المستخدم والوكيل يقودان المعاينة نفسها. إن نقر المستخدم أو ضغط مفتاحاً بعد أن أخذ
@@ -344,8 +433,19 @@ function wireEvents(wc) {
     canGoBack: wc.navigationHistory ? wc.navigationHistory.canGoBack() : wc.canGoBack(),
     canGoForward: wc.navigationHistory ? wc.navigationHistory.canGoForward() : wc.canGoForward(),
   });
-  wc.on('did-navigate', nav);
+  wc.on('did-navigate', () => {
+    nav();
+    if (captureEventSink && currentWC() === wc) {
+      captureDocumentGeneration += 1;
+      deliverCaptureEvent({ kind: 'navigation', source: 'system', action: null,
+        document_id: captureDocumentId('d1'), monotonic_ms: performance.now() });
+      installCaptureCollector(wc).catch(() => {});
+    }
+  });
   wc.on('did-navigate-in-page', nav);
+  wc.on('did-frame-finish-load', () => {
+    if (captureEventSink && currentWC() === wc) installCaptureCollector(wc).catch(() => {});
+  });
   // عدّاد عقد اللقطة: الإدخال الملتزم من المستخدم داخل العرض المعزول. المستمع مرة واحدة
   // لكل webContents (‏wiredWebContents يحرس التكرار)، والعدّاد عام لأن المعاينة عرض واحد نشط.
   wc.on('input-event', (_event, inputEvent) => {
@@ -709,6 +809,7 @@ function setExternalTargetProvider(provider, send) {
     wireDownloads();
     wireCertificates();
     wireEvents(wc);
+    if (captureEventSink) startCapturePolling(wc);
   }
   return { ok: true };
 }
@@ -721,6 +822,7 @@ function attachExternalWebContents(wc) {
   wireDownloads();
   wireCertificates();
   wireEvents(wc);
+  if (captureEventSink) startCapturePolling(wc);
   return { ok: true };
 }
 
@@ -1232,6 +1334,43 @@ function runIsolated(wc, expression) {
   return wc.executeJavaScriptInIsolatedWorld(AGENT_WORLD_ID, [{ code: expression }], true);
 }
 
+const CAPTURE_META_FN = `function(loc){
+  ${RESOLVE_SRC}
+  var el=null;try{el=resolve(loc);}catch(e){}
+  var vp={width:Math.max(1,Math.round(innerWidth||1)),height:Math.max(1,Math.round(innerHeight||1)),dpr:Number(devicePixelRatio)||1};
+  var rect=null;if(el&&el.getBoundingClientRect){var r=el.getBoundingClientRect(),x=Math.max(0,Math.min(vp.width,Math.round(r.left))),y=Math.max(0,Math.min(vp.height,Math.round(r.top)));rect={x:x,y:y,width:Math.max(0,Math.min(vp.width-x,Math.round(r.width))),height:Math.max(0,Math.min(vp.height-y,Math.round(r.height)))};}
+  return {ok:!!el,rect:rect,viewport:vp};
+}`;
+
+async function recordAgentCapture(wc, action, locator) {
+  if (!captureEventSink || !wc || wc.isDestroyed()) return;
+  let meta = null;
+  try { meta = await runIsolated(wc, '(' + CAPTURE_META_FN + ')(' + JSON.stringify(String(locator)) + ')'); } catch {}
+  deliverCaptureEvent({
+    kind: 'action', source: 'agent', action,
+    target_ref: SNAPSHOT_REF_RE.test(String(locator || '')) ? String(locator) : null,
+    document_id: captureDocumentId('d1'), rect: meta && meta.rect, pointer: null,
+    viewport: meta && meta.viewport, monotonic_ms: performance.now(),
+  });
+}
+
+// منارتان عاليـتا التباين تُلتقطان داخل الفيديو نفسه. اللون لا يحمل بيانات مستخدم،
+// والصفر هو PTS أول إطار أبيض لا لحظة بدء MediaRecorder.
+const CAPTURE_BEACON_COLORS = Object.freeze({ start: 'rgb(248,248,248)', end: 'rgb(248,248,30)' });
+async function showCaptureBeacon(wc, kind) {
+  if (!wc || wc.isDestroyed() || !Object.prototype.hasOwnProperty.call(CAPTURE_BEACON_COLORS, kind)) {
+    return { ok: false };
+  }
+  const color = CAPTURE_BEACON_COLORS[kind];
+  const expression = `(function(kind,color){
+    try{var old=document.querySelector('[data-satr-capture-beacon]');if(old)old.remove();var el=document.createElement('div');el.setAttribute('data-satr-capture-beacon',kind);el.setAttribute('aria-hidden','true');el.style.position='fixed';el.style.inset='0';el.style.zIndex='2147483647';el.style.pointerEvents='none';el.style.backgroundColor=color;document.documentElement.appendChild(el);var stamp={performance_now_ms:performance.now(),epoch_ms:Date.now()};setTimeout(function(){try{el.remove();}catch(e){}},700);return {ok:true,stamp:stamp};}catch(e){return {ok:false};}
+  })(${JSON.stringify(kind)},${JSON.stringify(color)})`;
+  try {
+    const result = await runIsolated(wc, expression);
+    return result && result.ok ? { ok: true, kind, color, stamp: result.stamp } : { ok: false };
+  } catch { return { ok: false }; }
+}
+
 // تركيب نداء الفعل المحروس: (‏loc, expect, …وسائط الفعل) — expect من خريطة البصمات الداخلية.
 function guardedExpression(fnSource, locator, wc, ...args) {
   const values = [String(locator), expectedFingerprint(locator, wc)].concat(args);
@@ -1369,6 +1508,7 @@ async function clickElement(locator) {
   if (leased) return leased;
   await waitReady(wc);
   await flashLocator(wc, locator);
+  await recordAgentCapture(wc, 'click', locator);
   const r = await observeScript(wc, guardedExpression(CLICK_FN, locator, wc));
   return r.error === 'action_failed' ? { error: 'click_failed' } : r;
 }
@@ -1383,6 +1523,7 @@ async function typeText(locator, text) {
   if (leased) return leased;
   await waitReady(wc);
   await flashLocator(wc, locator);
+  await recordAgentCapture(wc, 'type', locator); // النص نفسه لا يعبر إلى السجل.
   const r = await observeScript(wc, guardedExpression(TYPE_FN, locator, wc, String(text)));
   return r.error === 'action_failed' ? { error: 'type_failed' } : r;
 }
@@ -1608,6 +1749,7 @@ async function selectOption(locator, value) {
   if (leased) return leased;
   await waitReady(wc);
   await flashLocator(wc, locator);
+  await recordAgentCapture(wc, 'select', locator); // قيمة الخيار محظورة من السجل.
   const r = await observeScript(wc, guardedExpression(SELECT_FN, locator, wc, String(value)));
   return r.error === 'action_failed' ? { error: 'select_failed' } : r;
 }
@@ -1622,6 +1764,7 @@ async function hover(locator) {
   if (leased) return leased;
   await waitReady(wc);
   await flashLocator(wc, locator);
+  await recordAgentCapture(wc, 'hover', locator);
   try {
     const r = await runIsolated(wc, guardedExpression(HOVER_FN, locator, wc));
     return r && r.ok ? { ok: true, tag: r.tag, dispatched: true } : actionFailure(r || { reason: 'hover_failed' });
@@ -1636,6 +1779,7 @@ async function scroll(direction, amount) {
   const dir = ['up', 'down', 'top', 'bottom'].indexOf(String(direction)) >= 0 ? String(direction) : 'down';
   const amt = Number(amount) > 0 ? Math.min(Number(amount), 20000) : 0;
   await flashLocator(wc, '__page__');
+  await recordAgentCapture(wc, 'scroll', '__page__');
   try {
     const r = await wc.executeJavaScript('(' + SCROLL_FN + ')(' + JSON.stringify(dir) + ',' + JSON.stringify(amt) + ')', true);
     return r && r.ok ? { ok: true, scrollY: r.scrollY, moved: r.moved, max: r.max } : { error: 'scroll_failed' };
@@ -1815,9 +1959,11 @@ module.exports = {
   currentUrl, navigationTarget, browserTarget, browserActionContext, browserInputError, leaseError,
   captureFrame, emitAgentActivity, startHandoff, endHandoff,
   isHandoffActive, close, destroy, isHttpUrl, setExternalTargetProvider, attachExternalWebContents,
+  setCaptureEventSink, showCaptureBeacon,
   _internals: {
     safeDownloadName, uniqueDownloadPath, effectiveBounds, isLocalHttpsUrl, locatorError,
-    fingerprintLabel, AGENT_WORLD_ID, COMMITTED_INPUT_TYPES,
+    fingerprintLabel, AGENT_WORLD_ID, COMMITTED_INPUT_TYPES, CAPTURE_BEACON_COLORS,
+    CAPTURE_HUMAN_INSTALL, CAPTURE_HUMAN_DRAIN,
     snapshotFingerprints: () => new Map(activeSnapshotFingerprints),
     leaseState: () => ({ userInputCounter, leaseUserRevision }),
   },

@@ -75,12 +75,48 @@ score = 0.20*N + 0.25*V + 0.20*F + 0.20*E + 0.15*S
 {
   "claim": "الادعاء",
   "status": "fact | inference | unverified",
+  "source": "observed | file | recalled",
+  "source_ref": "electron/example.js:42 | المرحلة 2 / الفرع 3 | ",
   "evidence": ["electron/example.js:42"],
   "impact": "كيف غيّر التقييم"
 }
 ```
 
 المسار والموضع دليل، أما الاستنتاج فيجب أن يبقى موسوماً `inference`.
+
+`source` إلزامي ومنفصل عن `status`: الأول يقول **من أين جاءت** الواقعة، والثاني يقول
+**ما قوّتها**. ادعاء `source:"recalled"` يجب أن يحمل `status:"unverified"` وأن يكون
+`impact` فيه `"لا شيء — مُنع من الترجيح"`؛ أي إيصال يخالف ذلك مرفوض. و`source_ref`
+مطلوب لغير `recalled` — إيصال بلا مرجع ليس إيصالاً.
+
+## خرج المواجهة المجهّلة
+
+يُعرض على المستشار ادعاء واحد بلا هوية مصدره، فيردّ:
+
+```json
+{
+  "claim_id": "C7",
+  "verdict": "hold | retract | amend",
+  "reason": "جملة واحدة",
+  "new_claim": "النص المعدّل إن كان amend وإلا فارغ"
+}
+```
+
+ثم يُجمع الناتج في لقطة جولة واحدة:
+
+```json
+{
+  "round": 1,
+  "claims_confronted": 12,
+  "retractions": 3,
+  "amendments": 2,
+  "anonymity_held": true
+}
+```
+
+`retractions: 0` **ليس نجاحاً**. اعتبره إشارةً إلى تقارب الأطر أو فشل التجهيل، وقُلها
+في التقرير بدل تقديم الاتفاق دليلاً. و`anonymity_held: false` يُبطل الجولة: أعِدها بعد
+إزالة ما كشف الهوية، ولا تحتسب تراجعاتها.
 
 ## خرج التصحيح
 

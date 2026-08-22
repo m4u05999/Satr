@@ -193,7 +193,19 @@ contextBridge.exposeInMainWorld('satr', {
   previewFrame: () => ipcRenderer.invoke('satr:previewFrame'),           // م-5: إطار للتسجيل
   previewElementShot: (selector) => ipcRenderer.invoke('satr:previewElementShot', { selector }),
   previewClose: () => ipcRenderer.invoke('satr:previewClose'),
-  promoCaptureStart: (aspect, url, confirmed) => ipcRenderer.invoke('satr:promoCaptureStart', { aspect, url, confirmed }),
+  // المعاملان الرابع والخامس اختياريان — الاستدعاءات القائمة بثلاثة معاملات تبقى صالحة
+  // حرفياً، وغياب `audio` يعني السلوك السابق (بلا صوت نظام ولا ميكروفون).
+  promoCaptureStart: (aspect, url, confirmed, audio, cwd) => ipcRenderer.invoke('satr:promoCaptureStart', {
+    aspect, url, confirmed, audio, cwd,
+  }),
+  promoCaptureBeacon: (sessionId, kind, mediaMs) => ipcRenderer.invoke('satr:promoCaptureBeacon', {
+    sessionId, kind, mediaMs,
+  }),
+  promoCaptureMicrophoneArm: (sessionId) => ipcRenderer.invoke('satr:promoCaptureMicrophoneArm', { sessionId }),
+  promoListDownloads: (extensions) => ipcRenderer.invoke('satr:promoListDownloads', { extensions }),
+  promoProjectPick: (kind) => ipcRenderer.invoke('satr:promoProjectPick', { kind }),
+  promoProjectSave: (path, storyboard) => ipcRenderer.invoke('satr:promoProjectSave', { path, storyboard }),
+  promoProjectLoad: (path) => ipcRenderer.invoke('satr:promoProjectLoad', { path }),
   promoCaptureStop: () => ipcRenderer.invoke('satr:promoCaptureStop'),
   promoCaptureReady: (sessionId, ok, error) => ipcRenderer.invoke('satr:promoCaptureReady', { sessionId, ok, error }),
   promoCaptureCommit: (sessionId, durationMs, filename) => ipcRenderer.invoke('satr:promoCaptureCommit', {

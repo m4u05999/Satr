@@ -49,6 +49,7 @@ const promostudio = require('./promostudio'); // storyboard محلي منقّى 
 const testsprite = require('./testsprite'); // تكامل TestSprite MCP — مفتاح مشفّر، لا يظهر كمحرّك
 const testspritejobs = require('./testspritejobs'); // جولة TestSprite معمّرة ومستقلة عن token الدور
 const claudeauth = require('./claudeauth');
+const readiness = require('./readiness'); // عقد الجاهزية بحسب المحرك — البوابة لم تعد حكراً على Claude
 const adapters = require('./adapters');
 const renderertrust = require('./renderertrust');
 const mobilecrypto = require('./mobilecrypto');
@@ -785,44 +786,92 @@ ipcMain.handle('satr:appVersion', () => ({
 }));
 
 ipcMain.handle('satr:preflight', async () => {
-  const [node, npm] = await Promise.all([
+  // مفاتيح اختبار فقط: SATR_FORCE_NO_CLAUDE / _CODEX / _KIMI = 1 تحاكي غياب محرك للتحقق
+  // من البوابة دون إلغاء تثبيته فعلياً (معيار قبول المرحلة 6). لا أثر لها في الاستخدام
+  // العادي. مع عقد الجاهزية أدناه صارت تخدم الحاجز مباشرةً: تشغيل «سطر» بـ
+  // SATR_FORCE_NO_CLAUDE=1 على جهاز فيه Codex يجب أن **يفتح** البوابة على Codex.
+  const forced = (name) => process.env['SATR_FORCE_NO_' + name] === '1';
+
+  // كل الفحوص تنطلق معاً فتكون كلفة البوابة **أبطأ فحص واحد** لا مجموعها. هذا ليس
+  // تحسيناً تجميلياً: قياس حيّ على جهاز التطوير أعطى codex.accountStatus وحده 1377ms
+  // (يُطلق `codex app-server` فعلياً)، فتسلسلُها كان يضيف ثانيةً ونصفاً لكل إقلاع.
+  const claudePromise = (async () => {
+    if (forced('CLAUDE')) return { ok: false, path: null };
+    // إعادة اكتشاف claude بالقوة: المستخدم قد ثبّته للتوّ ثم ضغط «أعد الفحص»
+    const bin = agent.resolveClaudeBin(true);
+    let claude;
+    if (bin) {
+      const v = await probeVersion(bin, ['--version']);
+      claude = { ok: v.ok, version: v.version, path: bin };
+    } else {
+      // لم يُعثر على ثنائي مُحدَّد — جرّب claude الموجود في PATH مباشرةً
+      const v = await probeVersion(CLAUDE_BIN, ['--version']);
+      claude = { ok: v.ok, version: v.version, path: v.ok ? CLAUDE_BIN : null };
+    }
+    // الموجة 3 (خارطة المنصّات): توافق الإصدار. نستخرج semver من نص --version ونقارنه
+    // بحدّ الميزات الحديثة؛ إن كان أقدم نضع outdated + الإصدار الموصى به لترشد الواجهة
+    // المستخدم للتحديث (لا تحديث تلقائي — «سطر» يعتمد المثبّت العالمي عمداً).
+    if (claude.ok && claude.version) {
+      const m = String(claude.version).match(/(\d+)\.(\d+)\.(\d+)/);
+      if (m) {
+        const cur = [Number(m[1]), Number(m[2]), Number(m[3])];
+        claude.outdated = cmpVer(cur, CLAUDE_MIN_RECOMMENDED) < 0;
+        if (claude.outdated) claude.recommended = CLAUDE_MIN_RECOMMENDED.join('.');
+      }
+    }
+    if (claude.ok) {
+      const auth = await claudeauth.probe(claude.path || CLAUDE_BIN, { env: process.env });
+      claude.authChecked = auth.checked;
+      claude.loggedIn = auth.loggedIn;
+      claude.authMethod = auth.authMethod;
+    }
+    return claude;
+  })();
+
+  // ---------- الجاهزية بحسب المحرك (أسبوع خطة العصف — قرار 2026-08-23) ----------
+  // العطل المُعالَج: البوابة كانت تشترط Claude Code، فمن يملك Codex أو Kimi يُحجب بلا
+  // سبب تقني. نسأل هنا المسبارين القائمين نفسيهما اللذين يخدمان satr:codexStatus و
+  // satr:kimiStatus — لا مسار اكتشاف جديد. فشل مسبار يُقرأ «غير مثبّت» ولا يُسقط الفحص
+  // كله، لأن البوابة تُحسم بوجود **أي** محرك جاهز.
+  const codexPromise = (async () => {
+    if (forced('CODEX')) return { installed: false };
+    try {
+      const bin = codex.resolveCodexBin(true);
+      if (!bin) return { installed: false };
+      return { installed: true, auth: await codex.accountStatus() };
+    } catch { return { installed: false }; }
+  })();
+  const kimiPromise = (async () => {
+    if (forced('KIMI')) return { installed: false };
+    try {
+      const bin = kimi.resolveKimiBin(true);
+      if (!bin) return { installed: false };
+      return { installed: true, auth: kimi.authStatus() };
+    } catch { return { installed: false }; }
+  })();
+
+  const [node, npm, claude, codexState, kimiState] = await Promise.all([
     probeVersion('node', ['--version']),
     probeVersion('npm', ['--version']),
+    claudePromise, codexPromise, kimiPromise,
   ]);
-  // مفتاح اختبار فقط: SATR_FORCE_NO_CLAUDE=1 يحاكي غياب Claude Code للتحقق من البوابة
-  // دون إلغاء تثبيته فعلياً (معيار قبول المرحلة 6). لا أثر له في الاستخدام العادي.
-  if (process.env.SATR_FORCE_NO_CLAUDE === '1') {
-    return { claude: { ok: false, path: null }, node, npm };
-  }
-  // إعادة اكتشاف claude بالقوة: المستخدم قد ثبّته للتوّ ثم ضغط «أعد الفحص»
-  const bin = agent.resolveClaudeBin(true);
-  let claude;
-  if (bin) {
-    const v = await probeVersion(bin, ['--version']);
-    claude = { ok: v.ok, version: v.version, path: bin };
-  } else {
-    // لم يُعثر على ثنائي مُحدَّد — جرّب claude الموجود في PATH مباشرةً
-    const v = await probeVersion(CLAUDE_BIN, ['--version']);
-    claude = { ok: v.ok, version: v.version, path: v.ok ? CLAUDE_BIN : null };
-  }
-  // الموجة 3 (خارطة المنصّات): توافق الإصدار. نستخرج semver من نص --version ونقارنه
-  // بحدّ الميزات الحديثة؛ إن كان أقدم نضع outdated + الإصدار الموصى به لترشد الواجهة
-  // المستخدم للتحديث (لا تحديث تلقائي — «سطر» يعتمد المثبّت العالمي عمداً).
-  if (claude.ok && claude.version) {
-    const m = String(claude.version).match(/(\d+)\.(\d+)\.(\d+)/);
-    if (m) {
-      const cur = [Number(m[1]), Number(m[2]), Number(m[3])];
-      claude.outdated = cmpVer(cur, CLAUDE_MIN_RECOMMENDED) < 0;
-      if (claude.outdated) claude.recommended = CLAUDE_MIN_RECOMMENDED.join('.');
-    }
-  }
-  if (claude.ok) {
-    const auth = await claudeauth.probe(claude.path || CLAUDE_BIN, { env: process.env });
-    claude.authChecked = auth.checked;
-    claude.loggedIn = auth.loggedIn;
-    claude.authMethod = auth.authMethod;
-  }
-  return { claude, node, npm };
+
+  const snapshot = readiness.deriveReadiness({
+    // مصادقة Claude: authChecked=false تعني مسباراً عاجزاً عن الحسم لا رفضاً ⇒ null،
+    // فيبقى fail-open كما هو سلوك gate.js اليوم حرفياً.
+    sdk: { installed: claude.ok === true, loggedIn: claude.authChecked ? claude.loggedIn : null },
+    codex: codexState,
+    'kimi-code': kimiState,
+  });
+
+  // العقد القديم (claude/node/npm) يبقى حرفياً — كل مستهلك قائم يقرؤه كما كان.
+  return {
+    claude, node, npm,
+    engines: snapshot.engines,
+    ready: snapshot.ready,
+    readyEngines: snapshot.readyEngines,
+    preferred: snapshot.preferred,
+  };
 });
 
 // ---------- اختيار مجلد المشروع (نافذة نظام أصلية) ----------
@@ -2832,6 +2881,20 @@ ipcMain.handle('satr:previewClose', () => preview.close());
 // ---------- التقاط البرومو الأصلي (30fps) ----------
 // لا أمر أو source id يأتي من renderer: الوحدة تنشئ نافذة المنتج وتشتق مصدر
 // desktopCapturer بنفسها. الواجهة ترسل aspect من قائمة بيضاء وURL ‏http/https فقط.
+// تنقية نيّة الصوت في الالتقاط (الدفعة 1) — **مفتاحان معلنان حصراً**.
+// حسم تعارض عقدَي المنفّذين: طلب كودكس {system, microphone} واشترط أوبس «مفتاح واحد
+// معلن ⇒ أي مفتاح آخر bad_input». الاثنان معاً: المفتاحان معلنان، وما عداهما يُرفض
+// صراحةً لا يُتجاهل صامتاً. وغياب `audio` كلياً = السلوك القائم حرفياً (بلا صوت).
+function sanitizePromoAudio(value) {
+  if (value == null) return { ok: true, audio: { system: false, microphone: false } };
+  if (typeof value !== 'object' || Array.isArray(value)) return { ok: false };
+  for (const key of Object.keys(value)) {
+    if (key !== 'system' && key !== 'microphone') return { ok: false };
+    if (typeof value[key] !== 'boolean') return { ok: false };
+  }
+  return { ok: true, audio: { system: value.system === true, microphone: value.microphone === true } };
+}
+
 ipcMain.handle('satr:promoCaptureStart', async (event, payload) => {
   const p = payload && typeof payload === 'object' ? payload : {};
   const aspect = promocapture.sanitizeAspect(p.aspect);
@@ -2840,7 +2903,19 @@ ipcMain.handle('satr:promoCaptureStart', async (event, payload) => {
       || Object.prototype.hasOwnProperty.call(p, 'sourceId')) {
     return { ok: false, error: p.confirmed === true ? 'bad_input' : 'confirmation_required' };
   }
-  return promocapture.start({ aspect, url });
+  const audio = sanitizePromoAudio(p.audio);
+  if (!audio.ok) return { ok: false, error: 'bad_input' };
+  // ⚠️ `projectRoot` يحدد مكان كتابة سجل أحداث الالتقاط على القرص، و`projectEventRoot`
+  // يقبل أي مسار مطلق. لذلك يمرّ cwd بـ`validProjectDirectory` (نمط قنوات الكتابة
+  // القائمة): مجلد موجود فعلاً بعد `realpath`. مسار غير صالح ⇒ لا سجل، لا كتابة عمياء.
+  const projectRoot = p.cwd == null ? '' : (validProjectDirectory(p.cwd) || '');
+  return promocapture.start({
+    aspect,
+    url,
+    audio: audio.audio.system ? 'loopback' : false,
+    microphone: audio.audio.microphone,
+    projectRoot,
+  });
 });
 
 ipcMain.handle('satr:promoCaptureStop', () => promocapture.stop());
@@ -2861,6 +2936,26 @@ ipcMain.handle('satr:promoCaptureCommit', (event, payload) => {
   return promocapture.rendererCommit(p.sessionId, p.durationMs, p.filename);
 });
 
+// منارة الصفر (الدفعة 1) — الصفر الزمني للمقطع هو PTS الومضة لا `MediaRecorder.start()`.
+// أثبت مسبار م1-ب أن هذا **شرط صحة لا تحسين**: بدونه كان `p95 = 283.5ms` ومعه `51.6ms`.
+ipcMain.handle('satr:promoCaptureBeacon', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  if (!promocapture.SAFE_PROMO_SESSION.test(p.sessionId || '')
+      || p.kind !== 'start' && p.kind !== 'end'
+      || typeof p.mediaMs !== 'number' || !Number.isFinite(p.mediaMs)
+      || p.mediaMs < 0 || p.mediaMs > 86400000) {
+    return { ok: false, error: 'bad_input' };
+  }
+  return promocapture.rendererBeacon(p.sessionId, p.kind, p.mediaMs);
+});
+
+// تسليح الميكروفون: منحة قصيرة واحدة يفتحها main، ولا يمرّر renderer جهازاً ولا origin.
+ipcMain.handle('satr:promoCaptureMicrophoneArm', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  if (!promocapture.SAFE_PROMO_SESSION.test(p.sessionId || '')) return { ok: false, error: 'bad_session' };
+  return promocapture.armMicrophone(p.sessionId);
+});
+
 ipcMain.handle('satr:promoCaptureAbort', (event, payload) => {
   const p = payload && typeof payload === 'object' ? payload : {};
   if (!promocapture.SAFE_PROMO_SESSION.test(p.sessionId || '')
@@ -2878,6 +2973,53 @@ ipcMain.handle('satr:promoAssetUrl', (event, payload) => {
   const candidate = payload && typeof payload.path === 'string' ? payload.path : '';
   if (!candidate || candidate.length > 4096 || !path.isAbsolute(candidate)) return { ok: false, error: 'bad_path' };
   return promostudio.assetUrl(candidate);
+});
+
+// ── سطح الاستوديو (الدفعة 1): الاستيراد البشري والمشروع الدائم ──
+// الحصر الأمني كله داخل `promostudio.js`: مجلد التنزيلات يأتي من `configure` في main
+// ولا يمرّره renderer إطلاقاً، والمسارات تمر بـ`localAsset` + `realpath` + قائمة
+// الامتدادات. فدور هذه القنوات تنقية الشكل فقط، لا تحديد الجذر.
+
+ipcMain.handle('satr:promoListDownloads', (event, payload) => {
+  const raw = payload && Array.isArray(payload.extensions) ? payload.extensions : null;
+  if (payload && payload.extensions != null && !raw) return { ok: false, error: 'bad_input' };
+  if (raw && (raw.length > 24 || raw.some((x) => typeof x !== 'string' || !/^\.[a-z0-9]{1,8}$/i.test(x)))) {
+    return { ok: false, error: 'bad_input' };
+  }
+  return promostudio.listDownloads(raw || undefined);
+});
+
+// اختيار المسار يقع في main عبر حوار النظام — renderer لا يؤلّف مساراً ولا يقترحه.
+ipcMain.handle('satr:promoProjectPick', async (event, payload) => {
+  const kind = payload && payload.kind;
+  if (kind !== 'save' && kind !== 'open') return { ok: false, error: 'bad_input' };
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return { ok: false, error: 'no_window' };
+  const filters = [{ name: 'مشروع برومو', extensions: ['json'] }];
+  const result = kind === 'save'
+    ? await dialog.showSaveDialog(win, { filters, defaultPath: 'satr-promo-project.json' })
+    : await dialog.showOpenDialog(win, { filters, properties: ['openFile'] });
+  if (result.canceled) return { ok: false, error: 'cancelled' };
+  const picked = kind === 'save' ? result.filePath : (result.filePaths || [])[0];
+  if (typeof picked !== 'string' || !picked || !path.isAbsolute(picked)) return { ok: false, error: 'bad_path' };
+  return { ok: true, path: picked };
+});
+
+ipcMain.handle('satr:promoProjectSave', (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  if (typeof p.path !== 'string' || !p.path || p.path.length > 4096 || !path.isAbsolute(p.path)) {
+    return { ok: false, error: 'bad_path' };
+  }
+  if (!p.storyboard || typeof p.storyboard !== 'object' || Array.isArray(p.storyboard)) {
+    return { ok: false, error: 'bad_input' };
+  }
+  return promostudio.saveProject(p.storyboard, p.path);
+});
+
+ipcMain.handle('satr:promoProjectLoad', (event, payload) => {
+  const candidate = payload && typeof payload.path === 'string' ? payload.path : '';
+  if (!candidate || candidate.length > 4096 || !path.isAbsolute(candidate)) return { ok: false, error: 'bad_path' };
+  return promostudio.loadProject(candidate);
 });
 
 ipcMain.handle('satr:devServerInfo', (event, p) => {

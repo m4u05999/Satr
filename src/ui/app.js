@@ -282,6 +282,29 @@ import { createUpdateToast } from './lib/update-toast.js';
     if (gateBannerTimer) clearTimeout(gateBannerTimer);
     gateBannerTimer = setTimeout(() => { banner.style.display = 'none'; }, delay);
   }
+  // المحركات التي يحكمها عقد الجاهزية (ثنائيات مثبَّتة). محوّلات REST خارجها لأنها
+  // تعتمد مفاتيح API لا تثبيتاً، فلا نبدّلها من تحت المستخدم.
+  const GATED_ENGINES = ['sdk', 'codex', 'kimi-code'];
+  const GATED_ENGINE_LABELS = { 'sdk': 'Claude Code', 'codex': 'Codex', 'kimi-code': 'Kimi Code' };
+  let gateReadyEngines = null; // يصل من gate-ready؛ null = لم يُحسم الفحص بعد
+  // تصحيح منتقي المحرك بعد فتح البوابة: من يملك Codex وحده يجب ألّا يبقى منتقيه على
+  // sdk فيفشل أول طلب صامتاً. تُستدعى من gate-ready ومن نهاية loadProviders لأن
+  // ترتيبهما غير مضمون (كلاهما async)، وهي idempotent فالتكرار بلا أثر.
+  function applyGateEngineSwitch() {
+    if (!Array.isArray(gateReadyEngines) || !gateReadyEngines.length) return;
+    const sel = $('engine');
+    const current = sel.value;
+    if (!GATED_ENGINES.includes(current) || gateReadyEngines.includes(current)) return;
+    // لا نبدّل إلا إلى خيار موجود فعلاً في القائمة (kimi-code قد لا يكون معروضاً بعد)
+    const next = gateReadyEngines.find((id) => [...sel.options].some((o) => o.value === id));
+    if (!next || next === current) return;
+    sel.value = next;
+    localStorage.setItem('satr_engine', next);
+    sel.dispatchEvent(new Event('change')); // يعيد بناء النماذج والأوامر بالمسار القائم
+    addNotice('⚙️ ' + (GATED_ENGINE_LABELS[current] || current) + ' غير جاهز على هذا الجهاز — بُدِّل المحرك إلى '
+      + (GATED_ENGINE_LABELS[next] || next) + '.');
+  }
+
   // ---------- بوابة أول التشغيل: انتقلت لمكوّن <satr-gate> (تفكيك ت-8) ----------
   // المكوّن يفحص ويرسم ويعيد الفحص ذاتياً (يبدأ عند اتصاله)؛ عند الجهوز يخفي نفسه
   // ويُصدر «gate-ready {version}» — القشرة ترفع حجب الإرسال وتعرض شريط النجاح
@@ -289,6 +312,18 @@ import { createUpdateToast } from './lib/update-toast.js';
   document.querySelector('satr-gate').addEventListener('gate-ready', (e) => {
     gated = false;
     const b = $('banner'); const d = e.detail || {};
+    // عقد الجاهزية بحسب المحرك: البوابة تفتح على أي محرك جاهز، لا Claude وحده. غياب
+    // readyEngines يعني بوابة/preflight قديمين ⇒ نفترض sdk فيبقى السلوك السابق حرفياً.
+    const readyList = Array.isArray(d.readyEngines) && d.readyEngines.length ? d.readyEngines : ['sdk'];
+    gateReadyEngines = readyList;
+    applyGateEngineSwitch();
+    // لا نستجوب حساب Claude ونماذجه إن لم يكن جاهزاً — استدعاء لثنائي غائب يبطئ الإقلاع.
+    if (!readyList.includes('sdk')) {
+      b.className = 'ok';
+      b.textContent = '✓ ' + (d.engineLabel || 'المحرك') + ' جاهز';
+      hideGateBannerAfter(b, 4000);
+      return;
+    }
     if (d.outdated) {
       // الموجة 3: إصدار Claude Code أقدم من الموصى به — إرشاد غير حاجب (لا تحديث تلقائي؛
       // «سطر» يعتمد المثبّت العالمي عمداً). يبقى ظاهراً أطول ليلحظه المستخدم.
@@ -502,6 +537,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     if ($('engine').value === 'kimi-code') { checkKimiReady(); refreshKimiModels(); }
     restoreAdapterSession(); // 1.3: استئناف محادثة المحوّل بعد إعادة التشغيل
     lastEngine = $('engine').value;
+    applyGateEngineSwitch(); // القائمة بُنيت الآن — طبّق تصحيح المحرك إن كان الفحص سبقها
   }
   let lastEngine = null; // لتمييز مغادرة محوّل أعمى عند التبديل
   $('engine').addEventListener('change', async () => {

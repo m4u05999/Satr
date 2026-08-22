@@ -31,6 +31,11 @@ const COLOR_FILE_EXEMPT = new Map([
 const COLOR_BASELINE = new Map([
   // سطر 518: مقارنة قيمة getComputedStyle وقت التشغيل — ليست تنسيقاً
   ['src/ui/components/preview-panel.js', 1],
+  // كتلة `CANVAS_FALLBACK` وحدها (الدفعة 1 — معاينة الاستوديو): ألوان الرسم تُقرأ من
+  // tokens الثيمة أولاً كي تطابق المعاينةُ التصييرَ، لكن `getPropertyValue` قد يعيد
+  // سلسلة فارغة قبل تبنّي الأوراق و`fillStyle` الفارغ يُسقط الرسم **صامتاً**. فهذه
+  // ضرورة تقنية لا تنسيق، وجُمّعت في سطر واحد موثّق بدل تكرارها في ستة مواضع.
+  ['src/ui/components/promo-studio.js', 1],
 ]);
 
 // baseline قيم z-index الرقمية القائمة (خارج var(--z-*)): ملف → عدد

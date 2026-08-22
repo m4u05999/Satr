@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EDL probe fixture</title>
+  <style>
+    :root { background: rgb(17, 24, 39); color: #fff; font-family: Arial, sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: transparent; }
+    main {
+      position: absolute; inset: 12% 8%; padding: 32px; border-radius: 24px;
+      background: rgba(0, 0, 0, .68); box-shadow: 0 12px 50px rgba(0, 0, 0, .4);
+    }
+    h1 { margin: 0 0 24px; font-size: 34px; }
+    .agent-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+    button {
+      min-height: 72px; border: 2px solid rgba(255, 255, 255, .45); border-radius: 14px;
+      background: #243247; color: #fff; font-size: 24px; cursor: pointer;
+    }
+    .human-grid { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 18px; margin-top: 28px; }
+    .human-target { min-height: 160px; background: #334155; }
+    iframe { width: 100%; height: 160px; border: 2px solid rgba(255, 255, 255, .45); border-radius: 14px; background: #fff; }
+    #state { direction: ltr; margin-top: 22px; font: 20px monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>صفحة قياس تزامن الفعل والإطار</h1>
+    <section class="agent-grid" aria-label="أهداف الوكيل">
+      <button id="agent-0" type="button">A1</button>
+      <button id="agent-1" type="button">A2</button>
+      <button id="agent-2" type="button">A3</button>
+      <button id="agent-3" type="button">A4</button>
+      <button id="agent-4" type="button">A5</button>
+      <button id="agent-5" type="button">A6</button>
+      <button id="agent-6" type="button">A7</button>
+      <button id="agent-7" type="button">A8</button>
+      <button id="agent-8" type="button">A9</button>
+      <button id="agent-9" type="button">A10</button>
+    </section>
+    <section class="human-grid" aria-label="أهداف الإدخال البشري">
+      <button id="human-normal" class="human-target" type="button">هدف عادي</button>
+      <button id="human-stop" class="human-target" type="button">يوقف الانتشار</button>
+      <iframe id="human-frame" title="هدف داخل إطار" src="/frame"></iframe>
+    </section>
+    <div id="state">state=baseline</div>
+  </main>
+  <script src="edl-probe-page.js"></script>
+</body>
+</html>
