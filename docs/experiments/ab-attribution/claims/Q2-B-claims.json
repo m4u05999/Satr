@@ -1,0 +1,106 @@
+[
+  {
+    "claim": "accountStatus يستدعي account/read عبر queryCodex، وqueryCodex يطلق عملية codex app-server جديدة لكل طلب.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/codex.js:187",
+    "evidence": ["electron/codex.js:187", "electron/codexrpc.js:10", "electron/codexrpc.js:16"],
+    "impact": "ثبّت أن إزالة الاستدعاء من المسار الحرج أعلى أثراً من تحسين resolveCodexBin وحده، فارتفع مرشح الفحص الكسول."
+  },
+  {
+    "claim": "satr:preflight الحالي يبدأ فحص Codex دائماً ثم ينتظر نتائج المحركات كلها في Promise.all قبل اشتقاق الجاهزية.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/main.js:788",
+    "evidence": ["electron/main.js:788", "electron/main.js:836", "electron/main.js:853"],
+    "impact": "أثبت أن وجود محرك جاهز آخر لا يقصّر المسار الحالي، فصار فتح البوابة دون فحص Codex مرشحاً مباشراً."
+  },
+  {
+    "claim": "استدعاء preflight لا يحمل سبب الفحص، ومكوّن البوابة يستعمل _run نفسه عند الاتصال وعند زر «أعد الفحص»؛ لذلك لا تستطيع العملية الرئيسية حالياً تجاوز الكاش للزر فقط.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "electron/preload.js:9",
+    "evidence": ["electron/preload.js:9", "src/ui/components/gate.js:85", "src/ui/components/gate.js:88", "src/ui/components/gate.js:188"],
+    "impact": "أسقط سياسة إبطال تعتمد على النية الضمنية، وأوجب mode محدوداً أو قناة منفصلة للفحص الصريح."
+  },
+  {
+    "claim": "عقد readiness الحالي لا يمثل pending أو error؛ ويضع في readyEngines كل محرك حالته ready فقط.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/readiness.js:71",
+    "evidence": ["electron/readiness.js:71", "electron/readiness.js:85", "electron/readiness.js:99"],
+    "impact": "أسقط إدخال stale أو unknown في readyEngines، وجعل تمثيل pending شرطاً لأي فحص كسول صادق."
+  },
+  {
+    "claim": "القشرة تبدّل المحرك المحفوظ فوراً إذا غاب من readyEngines ووجد بديل جاهز.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/app.js:293",
+    "evidence": ["src/ui/app.js:293", "src/ui/app.js:297", "src/ui/app.js:299", "src/ui/app.js:302"],
+    "impact": "منع تفسير غياب Codex غير المفحوص على أنه عدم جاهزية، وأوجب عدم التصحيح أثناء pending."
+  },
+  {
+    "claim": "gate-ready يحمل لقطة readyEngines واحدة عند فتح البوابة، ولا توجد في هذا المسار قناة جاهزية لاحقة مخصصة.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/components/gate.js:119",
+    "evidence": ["src/ui/components/gate.js:119", "src/ui/components/gate.js:125", "src/ui/components/gate.js:130", "src/ui/app.js:312"],
+    "impact": "رفع كلفة مرشح الفحص الخلفي المدفوع عبر IPC، ورجّح الفحص عند الاختيار الذي يعمل بطلب قائم."
+  },
+  {
+    "claim": "اختيار Codex في الواجهة يستدعي checkCodexReady، وهذه تستدعي codexStatus الذي يجبر إعادة حل الثنائي ثم ينفذ accountStatus.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/app.js:543",
+    "evidence": ["src/ui/app.js:543", "src/ui/app.js:558", "src/ui/app.js:1628", "electron/main.js:455"],
+    "impact": "أثبت وجود نقطة طلب طبيعية للفحص الكسول، فرفع P2 وخفّض الحاجة إلى تحديث خلفي جديد."
+  },
+  {
+    "claim": "نجاح تسجيل دخول Codex الداخلي يعود إلى main.js بنتيجة success، ولذلك يمكن إبطال كاش الحالة وإعادة التحقق عند هذا الحدث.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/main.js:503",
+    "evidence": ["electron/main.js:503", "electron/main.js:516", "electron/main.js:517"],
+    "impact": "حوّل «تسجيل الدخول» من TTL فقط إلى إبطال حدثي موثوق للمسار الداخلي."
+  },
+  {
+    "claim": "التثبيت أو تسجيل الدخول الخارجيان لا يملكان في مسار البوابة حدث نجاح داخلياً؛ الواجهة تطلب تنفيذ أمر في الطرفية ثم الضغط على «أعد الفحص».",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "src/ui/components/gate.js:176",
+    "evidence": ["src/ui/components/gate.js:176", "src/ui/components/gate.js:178", "src/ui/components/gate.js:180", "src/ui/components/gate.js:182"],
+    "impact": "منع الاعتماد على الإبطال الحدثي وحده، ورجّح TTL سلبياً قصيراً مع تجاوز صريح للكاش."
+  },
+  {
+    "claim": "resolveCodexBin يملك كاشاً داخل العملية، وforce يتجاوزه؛ لذا يمكن قصر force على الفحص الصريح أو سبب تثبيت بدلاً من كل فحص عادي.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/codex.js:93",
+    "evidence": ["electron/codex.js:93", "electron/codex.js:94", "electron/codex.js:95", "electron/codex.js:129"],
+    "impact": "صحح اقتراح تجاوز كاش الثنائي في كل refresh وخفّض كلفة المسار العادي."
+  },
+  {
+    "claim": "فشل account/read لا يثبت logged_out لأن accountStatus يتراجع إلى authStatus المحلي عند الخطأ.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/codex.js:187",
+    "evidence": ["electron/codex.js:187", "electron/codex.js:199", "electron/codex.js:200", "electron/codex.js:135"],
+    "impact": "أوجب حالة unknown/error منفصلة، وأسقط سياسة تمحو نجاحاً حديثاً أو تعلن خروجاً بمجرد فشل app-server."
+  },
+  {
+    "claim": "القياس الحي لكلفة فحص واحد لا يثبت أن 5 دقائق و30 ثانية أو أي TTL آخر هو الأمثل.",
+    "status": "inference",
+    "source": "observed",
+    "source_ref": "المرحلة 6 / المواجهة المجهّلة C2",
+    "evidence": [],
+    "impact": "حوّل أعمار الكاش من قرار نهائي إلى قيم بدء قصيرة قابلة للضبط بقياس معدل تغيّر الحالة وأثرها."
+  },
+  {
+    "claim": "بعد التصحيح الخصومي، الفحص عند الطلب مع pending وgeneration يحقق إزالة spawn من الإقلاع عند وجود بديل جاهز دون الحاجة إلى قناة تحديث خلفية جديدة.",
+    "status": "inference",
+    "source": "observed",
+    "source_ref": "المرحلة 6 / الناقد الخصومي الأخير للمرشحين P1 وP2",
+    "evidence": [],
+    "impact": "حسم الترتيب لصالح P2، مع أخذ epoch وفصل error وstale من ضمانات P1."
+  }
+]

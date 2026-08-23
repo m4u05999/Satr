@@ -1,0 +1,106 @@
+[
+  {
+    "claim": "ترتيب المحركات في ENGINES هو نفسه ترتيب الأفضلية الحالي، وderiveReadiness يختار أول عنصر جاهز منه.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/readiness.js:26",
+    "evidence": ["electron/readiness.js:26", "electron/readiness.js:99", "electron/readiness.js:104"],
+    "impact": "ثبت أن الترتيب الثابت هو آلية القرار الحالية، لكن مبرره نضج المنتج لا إشارة مستخدم؛ لذلك خُفّض من سياسة دائمة إلى توصية وكاسر تعادل."
+  },
+  {
+    "claim": "القشرة تحفظ اختيار المحرك في localStorage وتعيد اختياره عند بناء قائمة المزوّدين.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/app.js:51",
+    "evidence": ["src/ui/app.js:51", "src/ui/app.js:524", "src/ui/app.js:530"],
+    "impact": "رفع مرشح احترام الاختيار المحفوظ؛ فإشارة قصد المستخدم موجودة أصلاً ولا حاجة لاستبدالها بترتيب أو تكلفة مفترضة."
+  },
+  {
+    "claim": "إذا كان الاختيار المحفوظ غير جاهز، تبدّل القشرة إلى أول جاهز وتكتب البديل فوق satr_engine.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/app.js:293",
+    "evidence": ["src/ui/app.js:293", "src/ui/app.js:299", "src/ui/app.js:302"],
+    "impact": "كان الادعاء الحاسم لصالح فصل preferredEngine الدائم عن effectiveEngine المؤقت؛ وإلا يحوّل فقد اشتراك عابر البديل إلى تفضيل دائم."
+  },
+  {
+    "claim": "إذا كان المحرك المختار ضمن readyEngines فلا تغيّره القشرة.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/app.js:297",
+    "evidence": ["src/ui/app.js:297"],
+    "impact": "أبقى السلوك القائم للمستخدم ذي الاختيار الصالح، وحصر التغيير المقترح في البدء بلا تفضيل وحالات التعذر."
+  },
+  {
+    "claim": "تعذّر حسم المصادقة يُمثّل loggedIn=null لكنه يُصنّف ready حالياً.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/readiness.js:64",
+    "evidence": ["electron/readiness.js:64", "electron/readiness.js:72", "electron/readiness.js:75"],
+    "impact": "أسقط مساواة الجهوزية الحالية بأهلية اشتراك مؤكدة، ومنع الاختيار التلقائي لمحرك حالته unknown مع إبقاء فتح البوابة fail-open."
+  },
+  {
+    "claim": "عقد الجهوزية الحالي يطبع التثبيت والمصادقة فقط ولا يحمل قياس تكلفة أو زمن استجابة.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/readiness.js:55",
+    "evidence": ["electron/readiness.js:55", "electron/readiness.js:85", "electron/readiness.js:99"],
+    "impact": "أسقط ترتيب الأرخص أو الأسرع من القرار الحالي؛ نجاحه يتطلب قياساً موحداً غير موجود، لا مجرد إعادة ترتيب المصفوفة."
+  },
+  {
+    "claim": "معرّفات الجلسات تنتمي إلى مخازن مختلفة بحسب المحرك، والقشرة تصفّر sessionId عند الانتقال بين المجموعات.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/app.js:442",
+    "evidence": ["src/ui/app.js:442", "src/ui/app.js:445", "src/ui/app.js:562", "src/ui/app.js:567"],
+    "impact": "أسقط النقل الصامت أو تمرير sessionId إلى البديل، وثبّت أن fallback للجلسة القائمة يجب أن يكون جلسة منفصلة معلنة."
+  },
+  {
+    "claim": "استئناف الجلسات يوجَّه إلى مسار مختلف صراحةً لكل نوع Claude/Codex/Kimi.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/app.js:1749",
+    "evidence": ["src/ui/app.js:1749", "src/ui/app.js:1762", "src/ui/app.js:1763", "src/ui/app.js:1764"],
+    "impact": "رفع أولوية ألفة الجلسة فوق أي افتراضي عالمي، وحصر الاختيار الجديد في الجلسات الجديدة أو انتقال صريح."
+  },
+  {
+    "claim": "لأن التفضيل المستخدم في مسار الإقلاع مخزّن في localStorage ولا يظهر في هذا المسار ناقل مزامنة، فالاختيار المتاح هنا خاص ببيئة الجهاز لا تفضيلاً عابراً للأجهزة.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "src/ui/app.js:51",
+    "evidence": ["src/ui/app.js:51", "src/ui/app.js:524"],
+    "impact": "رجّح اختياراً صريحاً غير حاجب لكل جهاز جديد عند تعدد الجاهزين، بدلاً من ادعاء نقل آخر استعمال بين الأجهزة."
+  },
+  {
+    "claim": "سياسة المشروع تمنع إضافة حزمة npm إلا لضرورة قصوى، والواجهة صفر اعتماديات وقت تشغيل.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "AGENTS.md:22",
+    "evidence": ["AGENTS.md:22", "AGENTS.md:23"],
+    "impact": "رجّح آلية حالة وواجهة صغيرة بالمكوّنات الحالية، وأسقط أي خدمة مزامنة أو محلل سياسات ثقيل من التجربة الأولى."
+  },
+  {
+    "claim": "في مصير مصيّر استوديو البرومو، وثّق المشروع أن المقايضة غير حتمية وأن موقع ffmpeg يُحسم بعد التجربة الفعلية لا بالتقدير.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "CLAUDE.md:3267",
+    "evidence": ["CLAUDE.md:3267", "CLAUDE.md:3269", "CLAUDE.md:3270"],
+    "impact": "عزّز رفض ترتيب المحركات بالأسرع أو الأرخص قبل قياس حي مماثل، بدل تحويل تقدير إلى سياسة منتج."
+  },
+  {
+    "claim": "التصحيح المتوازي والنقد الخصومي أبقيا المرشح الهجين: تفضيل دائم منفصل، بديل مؤقت مرئي، اختيار غير حاجب عند تعدد الجاهزين، وألفة جلسة صارمة.",
+    "status": "inference",
+    "source": "observed",
+    "source_ref": "المرحلة 5 / المصحح HYBRID-A؛ المرحلة 6 / الناقد الخصومي",
+    "evidence": [],
+    "impact": "رفع المرشح الهجين إلى التوصية النهائية بعد تصحيح خطر auth=unknown وسباق تبديل المحرك أثناء الإرسال."
+  },
+  {
+    "claim": "مرشح سياسة الفشل لكل مشروع يعتمد على هوية مشروع مستقرة عبر مسارات Windows، ولم يثبت التدقيق وجود هذه الهوية أو مزامنتها.",
+    "status": "unverified",
+    "source": "observed",
+    "source_ref": "المرحلة 5 / المصحح PROJECT-B؛ المرحلة 6 / الناقد الخصومي",
+    "evidence": [],
+    "impact": "أسقط مرشح عقد المشروع من الجولة الأولى وأبقاه احتمالاً لاحقاً بعد إثبات هوية مشروع مستقرة."
+  }
+]

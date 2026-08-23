@@ -1,0 +1,135 @@
+[
+  {
+    "claim": "الحكم الحالي يعلن التحسن فقط إذا ارتفع verifiableRate وكان deadRefs في B أقل من أو مساوياً لـ A؛ أي إن حارس المراجع الميتة مطلق فعلاً.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "scripts/attribution-audit.js:192",
+    "evidence": [
+      "scripts/attribution-audit.js:192",
+      "scripts/attribution-audit.js:202"
+    ],
+    "impact": "ثبّت خط الأساس الذي لا يجوز وصفه بأنه نسبي، وأبقى حكم الجولة الجارية كما هو."
+  },
+  {
+    "claim": "مقام verifiableRate الحالي هو عدد الادعاءات المؤثرة الذي يختاره كل جناح، لا كون فرص مشتركاً بين الجناحين.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "scripts/attribution-audit.js:131",
+    "evidence": [
+      "scripts/attribution-audit.js:131",
+      "scripts/attribution-audit.js:139",
+      "scripts/attribution-audit.js:147"
+    ],
+    "impact": "أسقط اعتبار النسبة الخام علاجاً كافياً، لأن المقام ذاتي الاختيار وقابل للتغيير."
+  },
+  {
+    "claim": "المدقق يثبت وجود الملف وصلاحية مدى السطر، لكنه لا يفحص أن محتوى السطر يسند معنى الادعاء.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "scripts/attribution-audit.js:70",
+    "evidence": [
+      "scripts/attribution-audit.js:70",
+      "scripts/attribution-audit.js:77",
+      "scripts/attribution-audit.js:82",
+      "scripts/attribution-audit.js:102"
+    ],
+    "impact": "منع تسويق كتالوج الفرص أو opportunity_id كتدقيق دلالي، وأبقى ملاءمة المرجع مجهولاً مستقلاً."
+  },
+  {
+    "claim": "عقد المدقق الحالي لا يقرأ معرّف فرصة دلالية أو وزناً أو طبقة خطر؛ تصنيف المؤثر مشتق فقط من نص impact.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "scripts/attribution-audit.js:85",
+    "evidence": [
+      "scripts/attribution-audit.js:85",
+      "scripts/attribution-audit.js:90",
+      "scripts/attribution-audit.js:127",
+      "scripts/attribution-audit.js:150"
+    ],
+    "impact": "خفض قابلية المطابقة الدلالية والأوزان وطبقات الخطر، وقصرها على بروتوكول مستقبلي مسجل مسبقاً."
+  },
+  {
+    "claim": "مرجع evidence المقبول يجب أن يحل إلى ملف داخل جذر المستودع؛ الخارج عن الجذر يعامل مرجعاً ميتاً.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "scripts/attribution-audit.js:50",
+    "evidence": [
+      "scripts/attribution-audit.js:50",
+      "scripts/attribution-audit.js:57",
+      "scripts/attribution-audit.js:60",
+      "scripts/attribution-audit.js:78"
+    ],
+    "impact": "فرض أن يبقى أي كتالوج لاحق ومساراته قابلاً للتحقق داخل الجذر وبتمثيل Windows حتمي."
+  },
+  {
+    "claim": "سياسة المشروع تمنع إضافة حزمة npm إلا لضرورة قصوى، وتلزم الواجهة بصفر اعتماديات وقت التشغيل.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "AGENTS.md:22",
+    "evidence": [
+      "AGENTS.md:22",
+      "AGENTS.md:23"
+    ],
+    "impact": "أسقط حلول المطابقة أو التجميع التي تحتاج منظومة دلالية ثقيلة، ورجّح حساباً بنيوياً بـ Node المدمج."
+  },
+  {
+    "claim": "مُصيّر استوديو البرومو نفسه مبني على واجهات المتصفح، وتوثيق المشروع يرفض شحن ffmpeg حفاظاً على النواة صفرية الاعتماديات رغم مقايضة الحتمية.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "CLAUDE.md:3260",
+    "evidence": [
+      "CLAUDE.md:3260",
+      "CLAUDE.md:3267",
+      "CLAUDE.md:3269"
+    ],
+    "impact": "أكد أن سياسة الاعتماديات مقايضة تشغيلية مطبقة وليست شعاراً، فاستُبعدت آلية دلالية تعتمد حزمة جديدة."
+  },
+  {
+    "claim": "بروتوكول A/B الجاري مجمّد قبل التشغيل، وتغييره بعد رؤية النتائج يبطل الجولة.",
+    "status": "fact",
+    "source": "observed",
+    "source_ref": "المرحلة 4 / تدقيق AB-PROTOCOL.md:3-4",
+    "evidence": [],
+    "impact": "أسقط تطبيق أي عتبة نسبية أو مخطط جديد بأثر رجعي، وحصر التغيير في shadow أو جولة لاحقة."
+  },
+  {
+    "claim": "البروتوكول الجاري يقيد كل ملف إلى 6..14 ادعاءً مؤثراً؛ لذلك مثال 30 مقابل 6 خارج هذه الجولة، مع بقاء فرق مقام يصل إلى 14 مقابل 6 ممكناً.",
+    "status": "fact",
+    "source": "observed",
+    "source_ref": "المرحلة 4 / تدقيق AB-PROTOCOL.md:43-44",
+    "evidence": [],
+    "impact": "خفّض إلحاح تغيير الحكم أثناء الجولة لكنه منع اعتبار حد العدد علاجاً كاملاً للتضخيم."
+  },
+  {
+    "claim": "بوابة A/B تخص قرار بناء غرفة العصف/الميزة، بينما لاستوديو البرومو بوابة بقاء مستقلة قائمة على إنتاج المالك مقطعاً ونشره.",
+    "status": "fact",
+    "source": "observed",
+    "source_ref": "المرحلة 4 / تدقيق re-fresh-studio-and-gate.md:23 و39-41",
+    "evidence": [],
+    "impact": "منع توسيع أثر قرار Q6 خطأً إلى مصير استوديو البرومو نفسه."
+  },
+  {
+    "claim": "الناقد الأعمى جمع البدائل في خمس آليات، واستبعد صافي المعلومات كفخ، ورتب كتالوج الفرص والقلب المعزول والمقارنة المقترنة في المقدمة قبل التدقيق.",
+    "status": "fact",
+    "source": "observed",
+    "source_ref": "المرحلة 3 / blind_critic",
+    "evidence": [],
+    "impact": "وجّه تدقيق المرحلة 4 إلى ست أفكار محددة وأسقط مقياساً يسمح بمقاصة الأخطاء بالحشو."
+  },
+  {
+    "claim": "بعد الأدلة، صُحح كتالوج الفرص إلى ملف مجمّد ومهشّم لجولة مستقبلية، وصُحح بديله إلى base ثابت وتوسعة لا تعوضه؛ كلاهما منع التغيير الرجعي.",
+    "status": "fact",
+    "source": "observed",
+    "source_ref": "المرحلة 5 / correct_c2 وcorrect_b5",
+    "evidence": [],
+    "impact": "أبقى مرشحين قابلين للعكس وحدد أن العتبة النسبية لا تُقبل إلا على مقام مشترك مسبق."
+  },
+  {
+    "claim": "في المواجهة المجهلة عدّل المستشارون الثلاثة ادعاءاتهم، ثم رفض الناقد الخصومي النسبة الخام وbase غير الموحد ورجّح كتالوج فرص ثابتاً مع حارس deadRefs مطلق.",
+    "status": "fact",
+    "source": "observed",
+    "source_ref": "المرحلة 6 / diverge_f1 وdiverge_f2 وdiverge_f3 ثم adversarial_critic",
+    "evidence": [],
+    "impact": "حسم الترتيب النهائي: إبقاء الجولة الحالية، وتجربة كتالوج ثابت لاحقاً، ورفض النسبة الذاتية المقام."
+  }
+]

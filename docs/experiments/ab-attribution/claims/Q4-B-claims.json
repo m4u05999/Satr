@@ -1,0 +1,98 @@
+[
+  {
+    "claim": "الواقعة نفسها موثقة: أُرسل أمر cmd/POSIX إلى طرفية PowerShell، لم يُنشأ ملف السجل، وبقيت المهمة ظاهرياً حية نحو عشرين دقيقة.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "docs/OBSERVATIONS.md:1013",
+    "evidence": ["docs/OBSERVATIONS.md:1013", "docs/OBSERVATIONS.md:1020"],
+    "impact": "ثبت أن المطلوب إصلاح دورة فشل صامت فعلية، لا تحسين رسالة افتراضية، فارتفعت أولوية حل حتمي للنهاية."
+  },
+  {
+    "claim": "الصدفة الافتراضية على Windows هي powershell.exe، لكن SATR_SHELL يسمح أيضاً بـpwsh.exe وcmd.exe.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/term.js:64",
+    "evidence": ["electron/term.js:64", "electron/term.js:76"],
+    "impact": "أسقط الحارس غير الواعي بالصدفة، لأن النمط النصي نفسه لا يحمل الحكم نفسه في كل الصدف المدعومة."
+  },
+  {
+    "claim": "run_in_background ينشئ صدفة PTY ثم يضيف المهمة إلى jobs قبل أن يكتب أمر المستخدم إليها.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/termjobs.js:45",
+    "evidence": ["electron/termjobs.js:45", "electron/termjobs.js:54", "electron/termjobs.js:69"],
+    "impact": "خفض ترتيب حل pending_start المبني على إنشاء العملية؛ فالعملية التي ثبت بدؤها هي الصدفة لا أمر المستخدم."
+  },
+  {
+    "claim": "غلاف PowerShell الحالي يضع أمر المستخدم والتقاط $? وLASTEXITCODE وexit في سطر واحد قابل لأن يسقط كله عند فشل التحليل.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "electron/termjobs.js:62",
+    "evidence": ["electron/termjobs.js:62", "electron/termjobs.js:65", "docs/OBSERVATIONS.md:1015"],
+    "impact": "حوّل القرار من إضافة exitCode جديد إلى إصلاح حدّ التأطير الذي يمنع وصول حدث النهاية أصلاً."
+  },
+  {
+    "claim": "bg_term_done موجود بالفعل ويحمل exitCode وtail، لكنه لا يُبث إلا بعد حدث exit للـPTY وحذف المهمة من jobs.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/termjobs.js:90",
+    "evidence": ["electron/termjobs.js:90", "electron/termjobs.js:97", "electron/term.js:152"],
+    "impact": "أسقط خيار «بث رمز الخروج فقط» بوصفه ميزة ناقصة؛ الناقص هو ضمان بلوغ الخروج عند خطأ التحليل."
+  },
+  {
+    "claim": "الواجهة تعرض bg_term_done الحالي بعلامة نجاح للكود 0 وتحذير لغيره، فلا يلزم عقد IPC جديد كي يظهر الفشل بعد إصلاح النهاية.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/app.js:1063",
+    "evidence": ["src/ui/app.js:1063", "src/ui/app.js:1067"],
+    "impact": "رفع مرشح إعادة استعمال العقد القائم وخفّض المرشحين الذين يضيفون أحداث prompt أو progress جديدة."
+  },
+  {
+    "claim": "اختبار bg_term_done الحالي يثبت حفظ native exit 7 وبقاء الخادم الطويل حياً، لكنه لا يضم حالة خطأ تحليل PowerShell الموثقة.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "scripts/termjobs-done-test.js:64",
+    "evidence": ["scripts/termjobs-done-test.js:64", "scripts/termjobs-done-test.js:85"],
+    "impact": "حدد أول تجربة قابلة للعكس: إضافة حالة parse failure إلى المسبار قبل تعميم أي آلية جديدة."
+  },
+  {
+    "claim": "مسار PowerShell one-shot بوسائط bootstrap ثابتة يقرأ الأمر من stdin ثم ينشئ ScriptBlock داخل try/catch يمكنه نظرياً فصل قابلية تحليل أمر المستخدم عن إطار الإنهاء.",
+    "status": "inference",
+    "source": "observed",
+    "source_ref": "المرحلة 5 / المصحح C1 ثم المرحلة 6 / الناقد الخصومي",
+    "evidence": [],
+    "impact": "صعد إلى التوصية الأساسية المشروطة، مع منع اعتماده قبل اختبار PS5.1 وpwsh وstdin التفاعلي ودلالات الأخطاء."
+  },
+  {
+    "claim": "مراقبة prompt أو CPU أو I/O أو غياب الخرج لا تصلح مصدر حقيقة لأن run_in_background يشمل خوادم ومهام طويلة قد تبقى حية بلا حدث نهاية.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "electron/tools.js:485",
+    "evidence": ["electron/tools.js:485", "scripts/termjobs-done-test.js:85"],
+    "impact": "أسقط مراقب الخمول من الحل الأساسي وأبقاه، إن استُخدم، مؤشراً تشخيصياً غير قاطع فقط."
+  },
+  {
+    "claim": "حارس regex نقي ممكن بلا اعتماد جديد لأن المشروع يملك execguard نقياً بالفعل، لكن الرفض العام لصيغ شائعة يرفع الإيجابيات الكاذبة ما لم يكن shell-aware ومحافظاً.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "electron/execguard.js:11",
+    "evidence": ["electron/execguard.js:11", "electron/term.js:64"],
+    "impact": "أبقى الحارس كطبقة UX warn-only افتراضياً، لا كعلاج دورة الحياة ولا كرفض شامل."
+  },
+  {
+    "claim": "عقد run_in_background الحالي يقبل command وlabel فقط ولا يحمل shellDialect أو commandSpec منظماً.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/tools.js:485",
+    "evidence": ["electron/tools.js:485", "electron/tools.js:493"],
+    "impact": "خفض ترتيب تفاوض اللهجات وAST متعدد اللهجات لأنه يوسّع العقد أكثر من اللازم لهذه الواقعة."
+  },
+  {
+    "claim": "سياسة المشروع تمنع اعتماديات جديدة بلا ضرورة موثقة، واستوديو البرومو ومصيّره يتعمدان الاعتماد على primitives أصلية وصفريّة الاعتماديات حتى مع مقايضات معلنة.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "CLAUDE.md:3260",
+    "evidence": ["CLAUDE.md:3260", "CLAUDE.md:3269", "CLAUDE.md:3558"],
+    "impact": "أسقط إدخال parser خارجي أو حزمة AST؛ الحل المقترح يبقى داخل node-pty وPowerShell والحارس النقي الموجودين."
+  }
+]

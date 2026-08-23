@@ -1,0 +1,130 @@
+[
+  {
+    "claim": "المسار التجريبي المعتمد على المتصفح كان أبطأ من الزمن الحقيقي بنسبة 1.085×، وطابق 114 إطاراً فقط من 142، وبلغ انحراف الصوت p95 نحو 265ms؛ بينما حقق ffmpeg نسبة 0.057× وتطابق 150/150.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "dist/fast-render-probe/report.json:116",
+    "evidence": [
+      "dist/fast-render-probe/report.json:116",
+      "dist/fast-render-probe/report.json:119",
+      "dist/fast-render-probe/report.json:120",
+      "dist/fast-render-probe/report.json:122"
+    ],
+    "impact": "أسقط عدم دمج ffmpeg كتوصية أساسية، ورفع مسار الجودة إلى الصدارة."
+  },
+  {
+    "claim": "المصيّر الحالي يمزج Canvas وAudioContext ثم يمرر stream إلى MediaRecorder.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/lib/promo-renderer.js:126",
+    "evidence": [
+      "src/ui/lib/promo-renderer.js:126",
+      "src/ui/lib/promo-renderer.js:141",
+      "src/ui/lib/promo-renderer.js:146"
+    ],
+    "impact": "أثبت أن ffmpeg ليس إضافة صغيرة إلى المصيّر نفسه، بل يحتاج حداً جديداً منظماً بين renderer وmain."
+  },
+  {
+    "claim": "توقيت الرسم الحالي مربوط بـ performance.now وrequestAnimationFrame، لا بزمن إطار افتراضي صريح.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/lib/promo-renderer.js:199",
+    "evidence": [
+      "src/ui/lib/promo-renderer.js:199",
+      "src/ui/lib/promo-renderer.js:202",
+      "src/ui/lib/promo-renderer.js:222"
+    ],
+    "impact": "أسقط فكرة أن إعادة الترميز اللاحقة وحدها تصلح اللاحتمية، وجعل فصل الزمن عن الساعة شرطاً للمسار الفائز."
+  },
+  {
+    "claim": "Canvas الحالي هو موضع دلالات العربية: يضبط rtl والمحاذاة والخط العربي والالتفاف ثم يرسم العنوان.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/lib/promo-renderer.js:88",
+    "evidence": [
+      "src/ui/lib/promo-renderer.js:88",
+      "src/ui/lib/promo-renderer.js:94",
+      "src/ui/lib/promo-renderer.js:97",
+      "src/ui/lib/promo-renderer.js:114"
+    ],
+    "impact": "أسقط ترجمة storyboard مباشرة إلى فلاتر ffmpeg، ورجّح إبقاء Canvas مصدراً بصرياً واحداً."
+  },
+  {
+    "claim": "التصدير النهائي الحالي يحدث كاملاً في renderer: يستدعي renderStoryboard ثم ينزّل Blob عبر رابط مؤقت.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/components/promo-studio.js:752",
+    "evidence": [
+      "src/ui/components/promo-studio.js:752",
+      "src/ui/components/promo-studio.js:764",
+      "src/ui/components/promo-studio.js:771",
+      "src/ui/components/promo-studio.js:773"
+    ],
+    "impact": "رفع تكلفة وأهمية عقد IPC الجديد، ومنع اعتبار دمج ffmpeg تغييراً واجهياً محضاً."
+  },
+  {
+    "claim": "سياسة المشروع تفرض أقل اعتماديات ممكنة، واجهة صفر اعتماديات وقت تشغيل، وواجهة preload محدودة مع تنقية صارمة لكل spawn أو مسار.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "AGENTS.md:13",
+    "evidence": [
+      "AGENTS.md:13",
+      "AGENTS.md:16",
+      "AGENTS.md:22",
+      "AGENTS.md:23"
+    ],
+    "impact": "أسقط شحن حزمة أو كشف spawn عام، وقصر المرشح الفائز على ffmpeg نظامي اختياري خلف main."
+  },
+  {
+    "claim": "للمشروع سابقة عملية في إنتاج إطارات PNG بزمن يدوي ثم تجميعها عبر ffmpeg خارجي، وسابقة لاكتشاف ffmpeg من FFMPEG أو مسارات Windows أو PATH.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "scripts/promo-render.js:7",
+    "evidence": [
+      "scripts/promo-render.js:7",
+      "scripts/promo-render.js:80",
+      "scripts/promo-render.js:91",
+      "scripts/promo-assemble.js:24"
+    ],
+    "impact": "رفع قابلية مسار الجودة الهجين وخفّض مخاطرة كونه آلية جديدة تماماً على المشروع."
+  },
+  {
+    "claim": "إذا بقي Canvas هو الراسم المشترك وأنتج إطارات بزمن افتراضي موحد، فالتكافؤ الصارم بين محركي رسم ليس لازماً؛ المطلوب تكافؤ القلب الموعود واختبار الإخراج والصوت والتوقيت.",
+    "status": "inference",
+    "source": "observed",
+    "source_ref": "المرحلة 6 / المواجهة المجهلة C2",
+    "evidence": [
+      "src/ui/lib/promo-renderer.js:88",
+      "src/ui/lib/promo-renderer.js:217"
+    ],
+    "impact": "أنزل خيار التكافؤ الصارم من توصية حاكمة إلى حاجز للقدرات الأساسية فقط."
+  },
+  {
+    "claim": "انتشار ffmpeg وتوفر H.264/AAC في بنائه على أجهزة مستخدمي Windows غير متحقق في هذه الجولة.",
+    "status": "unverified",
+    "source": "observed",
+    "source_ref": "المرحلة 4 / تدقيق الأدلة؛ لم يوجد قياس انتشار أو توافق أجهزة المستخدمين",
+    "evidence": [],
+    "impact": "أسقط جعل ffmpeg المصيّر النهائي الوحيد، وأبقى MediaRecorder كتراجع معلن."
+  },
+  {
+    "claim": "حتمية الصوت وكلفة نقل الإطارات والضغط الخلفي في المسار الهجين غير مثبتة بعد.",
+    "status": "unverified",
+    "source": "observed",
+    "source_ref": "المرحلة 5 / correct_quality_lane ثم المرحلة 6 / final_adversary",
+    "evidence": [],
+    "impact": "حوّل التوصية إلى تجربة مرحلية قابلة للإيقاف، ومنع تسويق المسار كحتمي قبل القياس."
+  },
+  {
+    "claim": "اكتشاف ffmpeg نظامياً لا يضيف حزمة npm إلى الواجهة، لكنه يخلق اعتمادية تشغيلية اختيارية يجب إعلانها للمستخدم.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "scripts/promo-assemble.js:8",
+    "evidence": [
+      "scripts/promo-assemble.js:8",
+      "scripts/promo-assemble.js:24",
+      "package.json:218"
+    ],
+    "impact": "حسم تسمية المرشح الفائز «مسار جودة اختياري» بدلاً من اعتماد مضمّن أو تكافؤ خفي."
+  }
+]

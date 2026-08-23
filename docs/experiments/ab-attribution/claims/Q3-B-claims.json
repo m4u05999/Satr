@@ -1,0 +1,106 @@
+[
+  {
+    "claim": "عقد الجاهزية الحالي يستبعد محولات REST صراحةً ولا يعدها ضمن readyEngines.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/readiness.js:112",
+    "evidence": ["electron/readiness.js:112", "electron/readiness.js:118"],
+    "impact": "أثبت أن حجب صاحب مفتاح REST ليس ضرورة معمارية بل فجوة محددة في العقد الحالي، فرفع أولوية توسيع مفهوم القدرة أو فصل بوابة الدخول عن الإرسال."
+  },
+  {
+    "claim": "البوابة الحالية غطاء ثابت يملأ النافذة، ولا يختفي إلا عندما تعيد preflight قيمة ready صحيحة.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/components/gate.js:14",
+    "evidence": ["src/ui/components/gate.js:14", "src/ui/components/gate.js:193"],
+    "impact": "أسقط إبقاء من لا يملك مزوداً خلف البوابة؛ الحجب أوسع من حد الإرسال ويحرم المستخدم من الإعداد والأسطح المحلية."
+  },
+  {
+    "claim": "حدث gate-ready لا يخفي الغطاء فقط؛ القشرة تحرر gated وتستعمل readyEngines لتصحيح المحرك المختار، كما أن المصفوفة الفارغة تُعامل حالياً كأن sdk جاهز.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/app.js:312",
+    "evidence": ["src/ui/app.js:312", "src/ui/app.js:317", "src/ui/app.js:1428"],
+    "impact": "منع توصية حذف انتقال الجاهزية ببساطة؛ القرار المصحح يفصل تهيئة التطبيق عن قدرة الإرسال ويحافظ على انتقال تهيئة صريح مع معالجة readyEngines الفارغة بصدق."
+  },
+  {
+    "claim": "قائمة المفاتيح المضبوطة تفحص وجود blob غير فارغ بلا فك تشفيره؛ لذلك قد يظهر مدخل مشفر تالف على أنه موجود رغم أن get يعيده فارغاً.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/keys.js:71",
+    "evidence": ["electron/keys.js:45", "electron/keys.js:71", "electron/keys.js:83"],
+    "impact": "أسقط معيار keys.names وحده لفتح الإرسال أو ادعاء الصلاحية، وفرض اشتقاق configured من resolver القابل للفك في العملية الرئيسية."
+  },
+  {
+    "claim": "حفظ مفتاح REST يتحقق محلياً من الاسم والقيمة غير الفارغة والطول فقط؛ الاستثناء البنيوي المخصص هو TestSprite، ولا يوجد طلب تحقق شبكي لمحولات REST.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/main.js:698",
+    "evidence": ["electron/main.js:698", "electron/main.js:703", "electron/main.js:704"],
+    "impact": "حوّل معنى وجود المفتاح من «صالح» إلى «مضبوط ولم يُختبر»، فرفض فتح البوابة بوصف ready مؤكداً."
+  },
+  {
+    "claim": "واجهة مركز المفاتيح لا تقرأ الأسرار، وتعرض «مضبوط» ثم تقول بعد الحفظ «جرّب الإرسال».",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/components/topbar.js:17",
+    "evidence": ["src/ui/components/topbar.js:17", "src/ui/components/topbar.js:31", "src/ui/components/topbar.js:40"],
+    "impact": "دعم إعادة استخدام السطح القائم وعدم نسخ حقل السر داخل البوابة، وأيّد تسمية configured_unverified بدلاً من verified."
+  },
+  {
+    "claim": "سجل المحولات يعلن Gemini وDeepSeek وQwen وغيرها مع keyName، ويوجهها عبر عقد adapter موحد بلا حاجة إلى ثنائي مثبت.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/adapters/index.js:34",
+    "evidence": ["electron/adapters/index.js:34", "electron/adapters/index.js:63", "electron/adapters/index.js:135"],
+    "impact": "ثبت أن مفتاح REST يمثل مسار تنفيذ حقيقياً، فرفع مرشح فتح قدرة الإرسال له وأسقط قصر الجاهزية على الثنائيات."
+  },
+  {
+    "claim": "محولات REST تحسم غياب المفتاح محلياً عند بدء الإرسال، ثم ترى نجاح أو فشل HTTP في الطلب الحقيقي؛ أي أن أول إرسال هو موضع تحقق قائم بالفعل.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/adapters/openai-compatible.js:104",
+    "evidence": ["electron/adapters/openai-compatible.js:104", "electron/adapters/openai-compatible.js:213", "electron/adapters/openai-compatible.js:215"],
+    "impact": "رجح التحقق عند أول استخدام بلا طلب شبكة منفصل عند الإقلاع، مع إبقاء المسودة ومسار تعافٍ واضح عند الرفض."
+  },
+  {
+    "claim": "preflight الحالي يقيس مسبار Codex بنحو 1377ms ويوازي الفحوص كي تكون كلفة الإقلاع أبطأ فحص واحد؛ إضافة تحقق REST شبكي ستدخل بطء وفشلاً خارجياً في مسار الإقلاع.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "electron/main.js:795",
+    "evidence": ["electron/main.js:795", "electron/main.js:853"],
+    "impact": "أسقط طلب الشبكة عند الإقلاع حتى لو أمكن تنفيذه تقنياً؛ لا قيمة في تحويل انقطاع الشبكة أو rate limit إلى حجب للتطبيق."
+  },
+  {
+    "claim": "استوديو البرومو سطح محلي قائم يدعم قراءة حالته وحفظ مشروعه وتحميله، لذا توجد قيمة فعلية داخل التطبيق حتى بلا مزود ذكاء اصطناعي.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "electron/main.js:2968",
+    "evidence": ["electron/main.js:2968", "electron/main.js:3008", "electron/main.js:3019"],
+    "impact": "رجح وضع «مساحة بلا مزود» مع تعطيل الإرسال فقط، وأسقط مركز استعادة محدوداً أو غطاءً يحجب التطبيق كله."
+  },
+  {
+    "claim": "الفروع الثلاثة المستقلة تقاربت على فتح الواجهة أو فصل جاهزية التطبيق عن جاهزية الإرسال، ومنع الاتصال الشبكي التلقائي عند الإقلاع.",
+    "status": "inference",
+    "source": "observed",
+    "source_ref": "المرحلة 2 / الفروع diverge_f1 وdiverge_f2 وdiverge_f3",
+    "evidence": [],
+    "impact": "رفع هذا الاتجاه إلى المرشح الأول قبل التدقيق؛ لم يُعامل التقارب وحده دليلاً بل اختُبر لاحقاً في الملفات والنقد الخصومي."
+  },
+  {
+    "claim": "تعميم 403 كدليل فساد المفتاح غير آمن لأن معناه قد يكون نموذجاً أو نطاقاً أو سياسة؛ لا يجوز الانتقال إلى auth_failed إلا بتصنيف مصادقة موثق خاص بالمزود.",
+    "status": "inference",
+    "source": "observed",
+    "source_ref": "المرحلة 3 / blind_critic ثم المرحلة 6 / adversarial_critic",
+    "evidence": [],
+    "impact": "أسقط مرشح الحجر العام، وقيّد القرار النهائي بنتيجة مصادقة داخلية typed لا باستنتاج من نص spawn_error أو كل 401/403."
+  },
+  {
+    "claim": "ذاكرة lease أو بصمة سر ليست لازمة للنسخة الأولى؛ المواجهة عدلتها إلى نجاح داخل عمر العملية فقط، يعود إلى configured_unverified عند الإقلاع أو تغيير المفتاح.",
+    "status": "inference",
+    "source": "observed",
+    "source_ref": "المرحلة 6 / مواجهة C-lease والنقد الخصومي",
+    "evidence": [],
+    "impact": "خفضت تعقيد المرشح الفائز ومنعت ادعاء صلاحية مستمرة لا يستطيع التخزين المحلي إثباتها."
+  }
+]
