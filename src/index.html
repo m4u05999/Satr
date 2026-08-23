@@ -303,6 +303,17 @@
   <button id="updateDismiss" type="button" title="إخفاء">✕</button>
 </div>
 
+<!-- «ما الجديد» داخل «سطر» بدل فتح متصفح خارجي: القاعدة المعلنة أن الويب يُعرض داخل
+     التطبيق، ولأن GitHub يعترض من هو مسجّل دخول بتحقق 2FA رغم أن المستودع عام.
+     النص يُجلب في العملية الرئيسية ويُكتب بـtextContent (محتوى خارجي غير موثوق). -->
+<div id="notesDialog" hidden>
+  <div id="notesCard" role="dialog" aria-modal="true" aria-labelledby="notesTitle">
+    <div id="notesHead"><span id="notesTitle">ما الجديد</span><button id="notesClose" type="button" title="إغلاق">✕</button></div>
+    <pre id="notesBody" dir="auto"></pre>
+    <div id="notesFoot"><button id="notesExternal" type="button">افتح في المتصفح</button></div>
+  </div>
+</div>
+
 <!-- مربع الأذونات العربي: مكوّن Web Component (تفكيك ت-8) — الطابور والرد داخله -->
 <satr-perm-dialog role="dialog" aria-modal="true" aria-label="طلب إذن لاستخدام أداة"></satr-perm-dialog>
 

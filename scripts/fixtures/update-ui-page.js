@@ -17,16 +17,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     const restart = document.getElementById('updateRestart');
     const dismiss = document.getElementById('updateDismiss');
     const notes = document.getElementById('updateNotes');
+    const notesDialog = document.getElementById('notesDialog');
+    const notesBody = document.getElementById('notesBody');
+    const notesTitle = document.getElementById('notesTitle');
+    const notesClose = document.getElementById('notesClose');
+    const notesExternal = document.getElementById('notesExternal');
     const background = document.getElementById('backgroundAction');
     const backgroundCount = document.getElementById('backgroundCount');
-    const calls = { download: 0, restart: 0, notes: 0, notesVersion: null };
+    const calls = { download: 0, restart: 0, notes: 0, notesVersion: null, fetch: 0, fetchVersion: null };
     const satr = {
       downloadUpdate() { calls.download++; },
       openReleaseNotes(version) { calls.notes++; calls.notesVersion = version; },
+      async releaseNotes(version) { calls.fetch++; calls.fetchVersion = version; return { ok: true, version: "v3.2.1", notes: ["### جديد", "- بند تجريبي"].join(String.fromCharCode(10)), truncated: false }; },
       restartUpdate() { calls.restart++; },
     };
     const { showTransientNotice, handleUpdateEvent } = createUpdateToast({
       toast, text, download, restart, dismiss, notes,
+      notesDialog, notesBody, notesTitle, notesClose, notesExternal,
     }, satr);
     const checks = [];
 
@@ -76,9 +83,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       'ready لم يعرض زر إعادة التشغيل وحده.');
     assert(!notes.hidden, 'زر «ما الجديد؟» يجب أن يبقى ظاهراً عند جاهزية التحديث.');
     notes.click();
-    assert(calls.notes === 1, 'زر «ما الجديد؟» لم يستدع openReleaseNotes مرة واحدة.');
-    assert(calls.notesVersion === '3.2.1',
-      'openReleaseNotes لم يتلقّ إصدار التحديث المعلن: ' + calls.notesVersion);
+    await new Promise((r) => setTimeout(r, 30));
+    assert(!notesDialog.hidden, 'زر «ما الجديد؟» لم يفتح الحوار داخل «سطر».');
+    assert(calls.fetch === 1 && calls.fetchVersion === '3.2.1',
+      'الحوار لم يجلب ملاحظات الإصدار المعلن: ' + calls.fetchVersion);
+    assert(notesBody.textContent.includes('بند تجريبي'), 'نص الملاحظات لم يُعرض في الحوار.');
+    assert(calls.notes === 0, 'فتح الحوار يجب ألّا يفتح متصفحاً خارجياً.');
+    notesExternal.click();
+    assert(calls.notes === 1 && calls.notesVersion === '3.2.1',
+      'زر «افتح في المتصفح» الثانوي لم يعمل.');
+    notesClose.click();
+    assert(notesDialog.hidden, 'زر الإغلاق لم يخفِ الحوار.');
     checks.push('notes-opens-release');
     restart.click();
     assert(calls.restart === 1, 'زر إعادة التشغيل لم يستدع restartUpdate مرة واحدة.');

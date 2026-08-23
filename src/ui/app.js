@@ -960,6 +960,11 @@ import { createUpdateToast } from './lib/update-toast.js';
     download: $('updateDownload'),
     restart: $('updateRestart'),
     notes: $('updateNotes'),
+    notesDialog: $('notesDialog'),
+    notesBody: $('notesBody'),
+    notesTitle: $('notesTitle'),
+    notesClose: $('notesClose'),
+    notesExternal: $('notesExternal'),
     dismiss: $('updateDismiss'),
   }, window.satr);
 

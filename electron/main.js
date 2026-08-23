@@ -802,6 +802,48 @@ function releaseRepo() {
   } catch { /* يسقط إلى الافتراضي */ }
   return { owner: 'm4u05999', repo: 'Satr' };
 }
+// جلب ملاحظات الإصدار **نصاً** لعرضها داخل «سطر». هذا هو المسار الافتراضي منذ
+// 2.16.4: فتح متصفح خارجي كان يخالف قاعدة المشروع المعلنة («افتح الويب داخل معاينة
+// سطر لا في متصفح خارجي»)، وكان يصطدم بتحقق GitHub‏ 2FA لمن هو مسجّل دخول — وهو
+// اعتراض لا علاقة له بالمحتوى، فالمستودع عام وملاحظاته تُقرأ بلا حساب.
+// الجلب هنا في العملية الرئيسية: لا حاجة لتوسيع connect-src في CSP، ولا كوكيز.
+const RELEASE_NOTES_MAX = 20000;
+ipcMain.handle('satr:releaseNotes', async (event, p) => {
+  const { owner, repo } = releaseRepo();
+  const raw = p && typeof p.version === 'string' ? p.version.trim() : '';
+  const tag = raw && SAFE_RELEASE_VERSION.test(raw) ? (raw.startsWith('v') ? raw : 'v' + raw) : '';
+  const url = 'https://api.github.com/repos/' + owner + '/' + repo + '/releases/'
+    + (tag ? 'tags/' + encodeURIComponent(tag) : 'latest');
+  const body = await new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    let request;
+    try {
+      request = https.get(url, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'satr-app' } }, (res) => {
+        if (res.statusCode !== 200) { res.resume(); finish(null); return; }
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { if (text.length < 256 * 1024) text += chunk; else res.destroy(); });
+        res.on('end', () => { try { finish(JSON.parse(text)); } catch { finish(null); } });
+      });
+    } catch { finish(null); return; }
+    request.on('error', () => finish(null));
+    request.setTimeout(8000, () => { try { request.destroy(); } catch {} finish(null); });
+  });
+  if (!body) return { ok: false, error: 'fetch_failed' };
+  // قائمة حقول مغلقة، ونصّ خام يُعرض في renderer بـtextContent لا HTML (محتوى خارجي).
+  const clean = (value, cap) => String(value == null ? '' : value)
+    .replace(/[ --؜‎‏‪-‮⁦-⁩]/g, '')
+    .slice(0, cap);
+  return {
+    ok: true,
+    version: clean(body.tag_name, 32),
+    name: clean(body.name, 200),
+    notes: clean(body.body, RELEASE_NOTES_MAX),
+    truncated: String(body.body || '').length > RELEASE_NOTES_MAX,
+  };
+});
+
 ipcMain.handle('satr:openReleaseNotes', async (event, p) => {
   const { owner, repo } = releaseRepo();
   let url = 'https://github.com/' + owner + '/' + repo + '/releases/latest';

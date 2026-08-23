@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('satr', {
   focusWindow: () => ipcRenderer.invoke("satr:focusWindow"), // رفع نافذة هذه النسخة عند النقر على إشعار النظام
   engineUpdates: () => ipcRenderer.invoke("satr:engineUpdates"), // تأخّر إصدارات المحرّكات — كشف فقط
   engineUpdateRun: (id) => ipcRenderer.invoke("satr:engineUpdateRun", { id, confirmed: true }), // أمر ثابت في main
+  releaseNotes: (version) => ipcRenderer.invoke("satr:releaseNotes", { version }), // نص الملاحظات لعرضه داخل «سطر»
   openReleaseNotes: (version) => ipcRenderer.invoke("satr:openReleaseNotes", { version }), // «ما الجديد؟» — main يبني الرابط
   features: () => ipcRenderer.invoke('satr:features'),
   activityList: (cwd) => ipcRenderer.invoke('satr:activityList', { cwd }),

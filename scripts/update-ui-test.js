@@ -46,7 +46,11 @@ function assertNotificationContract() {
   assert(main.includes('SAFE_RELEASE_VERSION'), 'إصدار ملاحظات الإصدار بلا تحقق نمطي.');
   assert(!/openReleaseNotes[\s\S]{0,400}p\.url/.test(main), 'satr:openReleaseNotes يقبل URL من renderer.');
   assert(preload.includes('openReleaseNotes:'), 'غاب openReleaseNotes من preload.');
-  assert(toast.includes('satr.openReleaseNotes(pendingVersion)'), 'زر «ما الجديد» غير موصول.');
+  assert(toast.includes('satr.openReleaseNotes(pendingVersion)'), 'زر «افتح في المتصفح» الثانوي غير موصول.');
+  assert(main.includes("ipcMain.handle('satr:releaseNotes'"), 'غاب معالج جلب ملاحظات الإصدار.');
+  assert(toast.includes('satr.releaseNotes'), 'زر «ما الجديد» لا يفتح الحوار الداخلي.');
+  assert(toast.includes('dialogBody.textContent'), 'نص الملاحظات يجب أن يُكتب بـtextContent — محتوى خارجي.');
+  assert(!/dialogBody.innerHTML/.test(toast), 'نص ملاحظات خارجي يُحقن كـHTML.');
 
   // (3) إشعار الانتباه: الدور متوقف ينتظر قراراً — أذونات وأسئلة وموصّلات
   assert(chat.includes('function notifyAttention'), 'غابت notifyAttention من chat.js.');
@@ -261,7 +265,7 @@ async function main() {
     const result = await waitForResult(win);
     assert.strictEqual(result.pass, true, result.error || 'فشل اختبار توست التحديث داخل الصفحة.');
     assert.deepStrictEqual(result.violations, [], 'رُصد securitypolicyviolation.');
-    assert.deepStrictEqual(result.calls, { download: 1, restart: 1, notes: 1, notesVersion: '3.2.1' });
+    assert.deepStrictEqual(result.calls, { download: 1, restart: 1, notes: 1, notesVersion: '3.2.1', fetch: 1, fetchVersion: '3.2.1' });
     assert.deepStrictEqual(result.checks, [
       'shared-transient-toast',
       'notes-visible-available',

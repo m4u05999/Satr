@@ -44,9 +44,50 @@ export function createUpdateToast(elements, satr) {
     }
   }
 
-  if (notes) {
-    // الرابط يُبنى في العملية الرئيسية من إعداد النشر — لا URL يعبر من هنا
-    notes.addEventListener('click', () => {
+  // حوار «ما الجديد» داخل «سطر». فتح متصفح خارجي كان يخالف قاعدة المشروع المعلنة
+  // («افتح الويب داخل معاينة سطر») ويصطدم بتحقق GitHub‏ 2FA لمن هو مسجّل دخول — رغم
+  // أن المستودع عام وملاحظاته تُقرأ بلا حساب. الجلب في العملية الرئيسية، والعرض هنا
+  // بـtextContent لأن المحتوى خارجي غير موثوق. والمتصفح يبقى خياراً ثانوياً صريحاً.
+  const dialog = elements.notesDialog || null;
+  const dialogBody = elements.notesBody || null;
+  const dialogTitle = elements.notesTitle || null;
+  const dialogClose = elements.notesClose || null;
+  const dialogExternal = elements.notesExternal || null;
+
+  function closeNotes() {
+    if (dialog) dialog.hidden = true;
+    document.removeEventListener('keydown', onNotesKey, true);
+  }
+  function onNotesKey(event) {
+    if (event.key === 'Escape') { event.stopPropagation(); closeNotes(); }
+  }
+  async function openNotes() {
+    if (!dialog || !dialogBody) { // تدهور رشيق: بلا حوار نعود للمتصفح
+      try { satr.openReleaseNotes(pendingVersion); } catch (e) {}
+      return;
+    }
+    dialogBody.textContent = 'جارٍ الجلب…';
+    if (dialogTitle) dialogTitle.textContent = 'ما الجديد' + (pendingVersion ? ' — ' + pendingVersion : '');
+    dialog.hidden = false;
+    document.addEventListener('keydown', onNotesKey, true);
+    try {
+      const r = satr.releaseNotes ? await satr.releaseNotes(pendingVersion) : null;
+      if (r && r.ok && String(r.notes || '').trim()) {
+        dialogBody.textContent = r.notes + (r.truncated ? '\n\n… (قُصّت البقية — افتحها في المتصفح)' : '');
+        if (dialogTitle && r.version) dialogTitle.textContent = 'ما الجديد — ' + r.version;
+      } else {
+        dialogBody.textContent = 'تعذّر جلب ملاحظات هذا الإصدار. جرّب «افتح في المتصفح».';
+      }
+    } catch (e) {
+      dialogBody.textContent = 'تعذّر جلب ملاحظات هذا الإصدار. جرّب «افتح في المتصفح».';
+    }
+  }
+
+  if (notes) notes.addEventListener('click', openNotes);
+  if (dialogClose) dialogClose.addEventListener('click', closeNotes);
+  if (dialog) dialog.addEventListener('click', (event) => { if (event.target === dialog) closeNotes(); });
+  if (dialogExternal) {
+    dialogExternal.addEventListener('click', () => {
       try { satr.openReleaseNotes(pendingVersion); } catch (e) {}
     });
   }
