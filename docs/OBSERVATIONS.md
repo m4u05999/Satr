@@ -1130,7 +1130,7 @@
 
 - **الوسم**: `engines`
 - **النوع**: عطل
-- **الحالة**: مفتوحة
+- **الحالة**: منجزة — `c60ddcf`
 - **المصدر**: محاولة ترقية Kimi أثناء دفعة إصدارات المحرّكات (2026-08-24)
 - **الدليل**: أعاد الأمر حرفياً: «A newer version of @moonshot-ai/kimi-code is
   available (0.27.0 -> 0.38.0). Detected install source: native (windows). Auto-update
