@@ -286,6 +286,57 @@ class SatrTopbar extends HTMLElement {
     } catch (e) { checkUpdatesStatus.textContent = 'تعذّر بدء الفحص.'; }
     checkStatusTimer = setTimeout(() => { checkUpdatesStatus.textContent = ''; }, 6000);
   });
+  // ---------- إصدارات المحرّكات (2.16.3) ----------
+  // كشف فقط + تحديث بضغطة صريحة. جلب كسول عند فتح ⚙، ومرة واحدة لعمر الصفحة (main
+  // يخزّن نتيجة الاستعلام يومياً على أي حال).
+  const engineUpdatesList = $('engineUpdatesList');
+  const engineUpdatesStatus = $('engineUpdatesStatus');
+  let engineUpdatesLoaded = false;
+  function renderEngineUpdates(engines) {
+    engineUpdatesList.textContent = '';
+    for (const engine of engines) {
+      const row = document.createElement('div'); row.className = 'key-row';
+      const name = document.createElement('span'); name.textContent = engine.label;
+      const state = document.createElement('span'); state.className = 'key-status'; state.dir = 'ltr';
+      state.textContent = engine.installed
+        ? (engine.latest && engine.behind ? engine.installed + ' → ' + engine.latest : engine.installed)
+        : 'غير مثبّت';
+      row.appendChild(name); row.appendChild(state);
+      if (engine.behind) {
+        const gap = document.createElement('span'); gap.className = 'key-status';
+        gap.textContent = engine.gap ? ('متأخر ' + engine.gap + ' إصداراً') : 'متأخر';
+        row.appendChild(gap);
+        const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = '⬆ حدّث الآن';
+        if (engine.note) btn.title = engine.note;
+        btn.addEventListener('click', async () => {
+          // التحديث يستبدل ثنائي المحرك — تأكيد صريح، والأمر نفسه يُعرض كما سيُنفَّذ
+          if (!window.confirm('سيُشغَّل هذا الأمر في طرفية مرئية:\n\n' + engine.command
+            + '\n\nلا تُحدِّث أثناء دور جارٍ. أتابع؟')) return;
+          btn.disabled = true;
+          try {
+            const r = window.satr.engineUpdateRun ? await window.satr.engineUpdateRun(engine.id) : { ok: false };
+            engineUpdatesStatus.textContent = (r && r.ok) ? 'بدأ التحديث في تبويب 🛠 — راقبه هناك.'
+              : (r && r.error === 'busy' ? 'أوقف الدور الجاري أولاً.' : 'تعذّر بدء التحديث.');
+          } catch (e) { engineUpdatesStatus.textContent = 'تعذّر بدء التحديث.'; btn.disabled = false; }
+        });
+        row.appendChild(btn);
+      }
+      engineUpdatesList.appendChild(row);
+    }
+  }
+  settingsBtn.addEventListener('click', async () => {
+    if (settingsPop.hidden || engineUpdatesLoaded || !window.satr.engineUpdates) return;
+    engineUpdatesLoaded = true;
+    engineUpdatesStatus.textContent = 'جارٍ الفحص…';
+    try {
+      const r = await window.satr.engineUpdates();
+      if (r && r.ok && Array.isArray(r.engines)) {
+        renderEngineUpdates(r.engines);
+        engineUpdatesStatus.textContent = r.anyBehind ? 'يوجد تحديث' : 'كلها محدَّثة';
+      } else { engineUpdatesStatus.textContent = 'تعذّر الفحص'; engineUpdatesLoaded = false; }
+    } catch (e) { engineUpdatesStatus.textContent = 'تعذّر الفحص'; engineUpdatesLoaded = false; }
+  });
+
   initEeSection();
 
     // الواجهة العامة للقشرة

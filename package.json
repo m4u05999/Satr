@@ -1,7 +1,7 @@
 {
   "name": "satr",
   "productName": "Satr",
-  "version": "2.16.2",
+  "version": "2.16.3",
   "description": "سطر — تطبيق سطح مكتب عربي لأدوات الذكاء الاصطناعي في سطر الأوامر (Claude Code وغيرها) بدعم RTL كامل",
   "main": "electron/main.js",
   "author": "Moxa",
@@ -95,6 +95,7 @@
     "test:promo-studio": "node scripts/promostudio-test.js && electron scripts/promo-studio-live-test.js",
     "test:claude-auth": "node scripts/claude-auth-test.js",
     "test:readiness": "node scripts/readiness-test.js",
+    "test:enginesupdate": "node scripts/enginesupdate-test.js",
     "test:gate-live": "electron scripts/gate-live-test.js",
     "test:fork-rewind": "node scripts/fork-rewind-test.js",
     "test:claude-models": "node scripts/claude-models-test.js",

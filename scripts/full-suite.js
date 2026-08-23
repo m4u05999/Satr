@@ -53,6 +53,7 @@ const SUITE = [
   'test:promo-studio',
   'test:claude-auth',
   'test:readiness',
+  'test:enginesupdate',
   'test:gate-live',
   'test:fork-rewind',
   'test:claude-models',

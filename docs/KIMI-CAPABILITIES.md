@@ -16,7 +16,7 @@ node scripts/kimi-capability-probe.js
 | القدرة | الحالة | ملاحظات |
 |---|---|---|
 | steering (session/prompt أثناء دور جارٍ) | **غير مدعوم** | يرد `-32600` إن أُرسل أثناء دور حي. |
-| session/fork | **غير مدعوم** | يرد `-32601 Method not found`. |
+| session/fork | **مدعوم منذ 0.38.0** | كان يرد `-32601 Method not found` حتى 0.27.0؛ رصده مسبار القدرات بعد الترقية (2026-08-24). **غير مستهلَك في «سطر» بعد** — إضافته دفعة مستقلة بحاجزها (‏`OBS-048`). |
 | session/undo | **غير مدعوم** | يرد `-32601 Method not found`. |
 | effort في configOptions | **غير معلن** | لا يوجد خيار `effort`/`reasoning_effort`. |
 | thinking في configOptions | **معلن** | خيار `thinking` متاح (Kimi 0.27.0 يعلن `on`). |

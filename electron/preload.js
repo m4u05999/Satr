@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('satr', {
   preflight: () => ipcRenderer.invoke('satr:preflight'),
   appVersion: () => ipcRenderer.invoke('satr:appVersion'), // رقم إصدار التطبيق لقسم ⚙ — قراءة فقط
   focusWindow: () => ipcRenderer.invoke("satr:focusWindow"), // رفع نافذة هذه النسخة عند النقر على إشعار النظام
+  engineUpdates: () => ipcRenderer.invoke("satr:engineUpdates"), // تأخّر إصدارات المحرّكات — كشف فقط
+  engineUpdateRun: (id) => ipcRenderer.invoke("satr:engineUpdateRun", { id, confirmed: true }), // أمر ثابت في main
   openReleaseNotes: (version) => ipcRenderer.invoke("satr:openReleaseNotes", { version }), // «ما الجديد؟» — main يبني الرابط
   features: () => ipcRenderer.invoke('satr:features'),
   activityList: (cwd) => ipcRenderer.invoke('satr:activityList', { cwd }),

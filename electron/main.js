@@ -50,6 +50,7 @@ const testsprite = require('./testsprite'); // تكامل TestSprite MCP — م�
 const testspritejobs = require('./testspritejobs'); // جولة TestSprite معمّرة ومستقلة عن token الدور
 const claudeauth = require('./claudeauth');
 const readiness = require('./readiness'); // عقد الجاهزية بحسب المحرك — البوابة لم تعد حكراً على Claude
+const enginesupdate = require('./enginesupdate'); // كشف تأخّر إصدارات المحرّكات — بلا تحديث تلقائي
 const adapters = require('./adapters');
 const renderertrust = require('./renderertrust');
 const mobilecrypto = require('./mobilecrypto');
@@ -811,6 +812,46 @@ ipcMain.handle('satr:openReleaseNotes', async (event, p) => {
   }
   try { await shell.openExternal(url); return { ok: true }; }
   catch { return { ok: false, error: 'open_failed' }; }
+});
+
+// ---------- تأخّر إصدارات المحرّكات (2.16.3) ----------
+// كشف فقط: نقرأ النسخ المثبَّتة بالمسبارات القائمة، ونقارنها بأحدث إصدار معلن.
+// لا تحديث تلقائي — عقود المحرّكات مثبتة بمسابير حية وكسرها يعطّل التطبيق، والتحديث
+// أثناء دور جارٍ أسوأ. التشغيل يقع بضغطة صريحة في طرفية مرئية (المعالج التالي).
+ipcMain.handle('satr:engineUpdates', async () => {
+  const version = async (bin) => {
+    if (!bin) return '';
+    const probe = await probeVersion(bin, ['--version']);
+    return probe && probe.ok ? String(probe.version || '') : '';
+  };
+  let installed = { claude: '', codex: '', kimi: '' };
+  try {
+    const [claude, codex_, kimi_] = await Promise.all([
+      version(agent.resolveClaudeBin(false) || CLAUDE_BIN),
+      version(codex.resolveCodexBin(false)),
+      version(kimi.resolveKimiBin(false)),
+    ]);
+    installed = { claude, codex: codex_, kimi: kimi_ };
+  } catch { /* يبقى الفحص عاملاً بما توفّر */ }
+  try {
+    const result = await enginesupdate.check(installed);
+    return { ok: true, engines: result.engines, anyBehind: result.anyBehind };
+  } catch { return { ok: false, engines: [], anyBehind: false }; }
+});
+
+// تشغيل أمر التحديث في طرفية «سطر» المرئية. الأمر **ثابت في enginesupdate.js**
+// ويُشتق من المعرّف وحده — لا نص أمر يعبر من renderer إطلاقاً. ورفض التشغيل أثناء
+// دور جارٍ: استبدال ثنائي المحرك تحت دور حيّ يقطعه بلا تفسير.
+const SAFE_ENGINE_UPDATE_ID = /^(claude|codex|kimi)$/;
+ipcMain.handle('satr:engineUpdateRun', (event, p) => {
+  const id = p && typeof p.id === 'string' ? p.id : '';
+  if (!SAFE_ENGINE_UPDATE_ID.test(id)) return { ok: false, error: 'bad_id' };
+  if (p && p.confirmed !== true) return { ok: false, error: 'confirmation_required' };
+  if (currentRun || currentCliRun) return { ok: false, error: 'busy' };
+  const command = enginesupdate.commandFor(id);
+  if (!command) return { ok: false, error: 'unknown_engine' };
+  const started = termjobs.startJob(app.getPath('home'), command, 'تحديث ' + id);
+  return started && started.ok ? { ok: true, id: started.id } : { ok: false, error: (started && started.error) || 'failed' };
 });
 
 // رفع نافذة هذه النسخة إلى المقدمة — يخدم النقر على إشعار النظام. `window.focus()`
