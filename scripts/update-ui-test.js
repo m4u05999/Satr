@@ -261,12 +261,14 @@ async function main() {
     const result = await waitForResult(win);
     assert.strictEqual(result.pass, true, result.error || 'فشل اختبار توست التحديث داخل الصفحة.');
     assert.deepStrictEqual(result.violations, [], 'رُصد securitypolicyviolation.');
-    assert.deepStrictEqual(result.calls, { download: 1, restart: 1 });
+    assert.deepStrictEqual(result.calls, { download: 1, restart: 1, notes: 1, notesVersion: '3.2.1' });
     assert.deepStrictEqual(result.checks, [
       'shared-transient-toast',
+      'notes-visible-available',
       'available-nonblocking',
       'download-consent',
       'progress',
+      'notes-opens-release',
       'ready-restart',
       'silent-error',
       'manual-check-feedback',

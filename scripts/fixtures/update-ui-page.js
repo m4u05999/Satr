@@ -16,15 +16,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const download = document.getElementById('updateDownload');
     const restart = document.getElementById('updateRestart');
     const dismiss = document.getElementById('updateDismiss');
+    const notes = document.getElementById('updateNotes');
     const background = document.getElementById('backgroundAction');
     const backgroundCount = document.getElementById('backgroundCount');
-    const calls = { download: 0, restart: 0 };
+    const calls = { download: 0, restart: 0, notes: 0, notesVersion: null };
     const satr = {
       downloadUpdate() { calls.download++; },
+      openReleaseNotes(version) { calls.notes++; calls.notesVersion = version; },
       restartUpdate() { calls.restart++; },
     };
     const { showTransientNotice, handleUpdateEvent } = createUpdateToast({
-      toast, text, download, restart, dismiss,
+      toast, text, download, restart, dismiss, notes,
     }, satr);
     const checks = [];
 
@@ -50,12 +52,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(hit === background || background.contains(hit), 'التوست حجب عنصراً آخر في الصفحة.');
     hit.click();
     assert(backgroundCount.textContent === '1', 'العنصر المستقل لم يبق قابلاً للنقر مع ظهور التوست.');
+    assert(!notes.hidden && notes.textContent === 'ما الجديد؟',
+      'زر «ما الجديد؟» لم يظهر مع إشعار توفّر التحديث.');
+    checks.push('notes-visible-available');
     checks.push('available-nonblocking');
 
     download.click();
     assert(calls.download === 1, 'زر التنزيل لم يستدع downloadUpdate مرة واحدة.');
     assert(download.hidden && text.textContent === 'جارٍ بدء التنزيل…',
       'زر التنزيل لم ينتقل إلى حالة بدء التنزيل.');
+    assert(!notes.hidden, 'زر «ما الجديد؟» يجب أن يبقى ظاهراً أثناء التنزيل — القراءة مفيدة أثناء الانتظار.');
     checks.push('download-consent');
 
     handleUpdateEvent({ type: 'update', phase: 'progress', percent: 67 });
@@ -68,6 +74,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       'ready لم يعرض النص العربي ورقم النسخة.');
     assert(download.hidden && !restart.hidden && restart.textContent === 'أعد التشغيل الآن',
       'ready لم يعرض زر إعادة التشغيل وحده.');
+    assert(!notes.hidden, 'زر «ما الجديد؟» يجب أن يبقى ظاهراً عند جاهزية التحديث.');
+    notes.click();
+    assert(calls.notes === 1, 'زر «ما الجديد؟» لم يستدع openReleaseNotes مرة واحدة.');
+    assert(calls.notesVersion === '3.2.1',
+      'openReleaseNotes لم يتلقّ إصدار التحديث المعلن: ' + calls.notesVersion);
+    checks.push('notes-opens-release');
     restart.click();
     assert(calls.restart === 1, 'زر إعادة التشغيل لم يستدع restartUpdate مرة واحدة.');
     checks.push('ready-restart');

@@ -26,7 +26,8 @@ export function createUpdateToast(elements, satr) {
     } else if (event.phase === 'progress') {
       text.textContent = 'تنزيل التحديث… ' + (event.percent || 0) + '٪';
       download.hidden = true; restart.hidden = true; toast.hidden = false;
-      if (notes) notes.hidden = true;
+      // «ما الجديد؟» يبقى ظاهراً طوال دورة التحديث: من ينتظر التنزيل قد يريد قراءة
+      // الملاحظات، وإخفاؤه هنا كان يعني أن نافذة القراءة تنغلق لحظة اتخاذ القرار.
     } else if (event.phase === 'ready') {
       pendingVersion = event.version || pendingVersion;
       text.textContent = 'التحديث' + (event.version ? ' (' + event.version + ')' : '') + ' جاهز للتثبيت.';
