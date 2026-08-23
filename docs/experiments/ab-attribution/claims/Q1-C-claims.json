@@ -1,0 +1,142 @@
+[
+  {
+    "claim": "أثبت المسبار الحي أن مسار المتصفح استهلك 1.08× من مدة الفيديو، وطابق 114/142 إطاراً فقط، وبلغ انحراف الصوت فيه p95 مقدار 265ms؛ بينما استهلك ffmpeg ‏0.057× وطابق 150/150.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "docs/OBSERVATIONS.md:976",
+    "evidence": [
+      "docs/OBSERVATIONS.md:976",
+      "docs/OBSERVATIONS.md:977",
+      "docs/OBSERVATIONS.md:978"
+    ],
+    "impact": "أسقط عدم الدمج بوصفه جواباً كافياً، وخفّض التكافؤ الصارم لأن المسار النقي المقاس لا يفي بضمانات التسليم."
+  },
+  {
+    "claim": "مسار الاستوديو المنتج اليوم يبني stream من canvas، ويخلط الصوت عبر WebAudio، ويسجّل الناتج بـMediaRecorder.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/lib/promo-renderer.js:136",
+    "evidence": [
+      "src/ui/lib/promo-renderer.js:136",
+      "src/ui/lib/promo-renderer.js:141",
+      "src/ui/lib/promo-renderer.js:146"
+    ],
+    "impact": "بيّن أن إدخال ffmpeg ليس تبديل اسم codec، بل مسار تسليم جديد له عقد وحدود واضحة."
+  },
+  {
+    "claim": "حلقة الرسم الحالية مرتبطة بزمن الجدار عبر performance.now() وبجدولة requestAnimationFrame().",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/lib/promo-renderer.js:199",
+    "evidence": [
+      "src/ui/lib/promo-renderer.js:199",
+      "src/ui/lib/promo-renderer.js:202",
+      "src/ui/lib/promo-renderer.js:222"
+    ],
+    "impact": "أسقط اعتبار المسار الحالي أساساً صالحاً لتكافؤ حتمي، ورفع آلية الزمن المنطقي f/FPS."
+  },
+  {
+    "claim": "التصدير الحالي يحدث داخل renderer ثم يُنزّل Blob مباشرةً، ولا توجد قناة إنتاجية لتصيير ffmpeg في main.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "src/ui/components/promo-studio.js:764",
+    "evidence": [
+      "src/ui/components/promo-studio.js:764",
+      "src/ui/components/promo-studio.js:771",
+      "src/ui/components/promo-studio.js:773"
+    ],
+    "impact": "منع اقتراح تشغيل ffmpeg من الواجهة، وفرض عقد preload محدوداً ومنفذاً في main."
+  },
+  {
+    "claim": "مخطط storyboard الحالي محدود ومنقّى: الأصول محصورة داخل Downloads، والمدة والانتقالات والملاءمة والتعليقات ومستويات الصوت تمر بقوائم وحدود ثابتة.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/promostudio.js:28",
+    "evidence": [
+      "electron/promostudio.js:28",
+      "electron/promostudio.js:94",
+      "electron/promostudio.js:108"
+    ],
+    "impact": "رفع قابلية بناء preset أو Render Manifest منقّى في main بدلاً من قبول وسائط ffmpeg حرة."
+  },
+  {
+    "claim": "حدود Electron الحالية تُبقي contextIsolation وsandbox مفعّلين وتعطّل nodeIntegration، كما تتحقق من هوية مرسل كل IPC.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "electron/main.js:277",
+    "evidence": [
+      "electron/main.js:277",
+      "electron/main.js:319",
+      "electron/main.js:321"
+    ],
+    "impact": "أسقط أي تصميم يمرر command/path من renderer، وأبقى فقط main مع argv محصور وshell=false."
+  },
+  {
+    "claim": "حزمة الإنتاج الحالية لا تضم ffmpeg ضمن الملفات المفكوكة أو اعتماديات npm.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "package.json:174",
+    "evidence": [
+      "package.json:174",
+      "package.json:188",
+      "package.json:218"
+    ],
+    "impact": "خفض خيار التحزيم الفوري، وحوّل أول خطوة إلى تكامل تجريبي قابل للإزالة مع ثنائي خارجي موثوق."
+  },
+  {
+    "claim": "يوجد خارج مسار الإنتاج نموذج يقود المشهد بزمن f/FPS، يلتقط إطارات PNG، ثم يجمعها بـffmpeg.",
+    "status": "fact",
+    "source": "file",
+    "source_ref": "scripts/promo-render.js:76",
+    "evidence": [
+      "scripts/promo-render.js:76",
+      "scripts/promo-render.js:80",
+      "scripts/promo-render.js:91"
+    ],
+    "impact": "رفع المسار الهجين فوق إعادة كتابة renderer أو رسم العربية داخل ffmpeg، مع إبقائه دليلاً أولياً لا برهان إنتاج."
+  },
+  {
+    "claim": "الإبقاء على رسم النص العربي في Chromium مع نقل الساعة والصوت والترميز إلى ffmpeg يرجّح الحفاظ على العربية مع معالجة العيب المقاس، لكنه لم يُثبت إنتاجياً بعد.",
+    "status": "inference",
+    "source": "file",
+    "source_ref": "scripts/promo-render.js:80",
+    "evidence": [
+      "scripts/promo-render.js:80",
+      "scripts/promo-render.js:91",
+      "src/ui/lib/promo-renderer.js:217"
+    ],
+    "impact": "جعل مسار الجودة الهجين المرشح الأول بدلاً من إعادة تنفيذ captions العربية بمرشحات ffmpeg."
+  },
+  {
+    "claim": "نجاح مسار التكافؤ النقي الجديد يتطلب WebCodecs وPCM وmuxer نقيّاً بخصائص حتمية لم تُثبت في هذه الجولة.",
+    "status": "unverified",
+    "source": "observed",
+    "source_ref": "المرحلة 5 / corrector_parity",
+    "evidence": [],
+    "impact": "أنزل التكافؤ الصارم إلى ما دون مسار الجودة ومنع ترجيحه قبل مسبار مستقل مختلف آلياً."
+  },
+  {
+    "claim": "مصحح التكافؤ الصارم تراجع عنه بعد المواجهة المجهلة لأن المسار الهجين يحافظ على الرسم العربي بينما يعتمد البديل النقي على encoder وmuxer غير مثبتين.",
+    "status": "fact",
+    "source": "observed",
+    "source_ref": "المرحلة 6 / corrector_parity / مواجهة P2",
+    "evidence": [],
+    "impact": "حسم ترتيب المرشحين لصالح مسار الجودة وأزال التكافؤ الصارم من البديل الاحتياطي."
+  },
+  {
+    "claim": "مصحح مسار الجودة عدّل اقتراحه من اعتماد دائم إلى تجربة مرجعية قابلة للإزالة لا يُحزم ffmpeg بعدها إلا إذا اجتاز بوابات Windows والأمان والترخيص.",
+    "status": "fact",
+    "source": "observed",
+    "source_ref": "المرحلة 6 / corrector_quality / مواجهة P1",
+    "evidence": [],
+    "impact": "منع انتهاك قاعدة أقل اعتماديات، وحدد موضع ffmpeg الآن كمسار جودة تجريبي معلن لا كجزء ملزم من النواة."
+  },
+  {
+    "claim": "ترخيص بناء ffmpeg الخارجي وسياسة تحديثه وثقة اكتشافه على Windows غير محسومة في أدلة المشروع المفتوحة.",
+    "status": "unverified",
+    "source": "observed",
+    "source_ref": "المرحلة 6 / adversarial_critic",
+    "evidence": [],
+    "impact": "منع ترقية المسار التجريبي إلى افتراضي أو تحزيم الثنائية، ووضع هذه المسائل في بوابة الإيقاف."
+  }
+]
