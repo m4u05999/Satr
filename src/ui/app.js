@@ -287,6 +287,8 @@ import { createUpdateToast } from './lib/update-toast.js';
   const GATED_ENGINES = ['sdk', 'codex', 'kimi-code'];
   const GATED_ENGINE_LABELS = { 'sdk': 'Claude Code', 'codex': 'Codex', 'kimi-code': 'Kimi Code' };
   let gateReadyEngines = null; // يصل من gate-ready؛ null = لم يُحسم الفحص بعد
+  // آخر توست TestSprite معروض — لمنع تكرار الرسالة نفسها بلا تقدّم فعلي
+  const testspriteNoticeState = { phase: '', signature: '' };
   // تصحيح منتقي المحرك بعد فتح البوابة: من يملك Codex وحده يجب ألّا يبقى منتقيه على
   // sdk فيفشل أول طلب صامتاً. تُستدعى من gate-ready ومن نهاية loadProviders لأن
   // ترتيبهما غير مضمون (كلاهما async)، وهي idempotent فالتكرار بلا أثر.
@@ -957,6 +959,7 @@ import { createUpdateToast } from './lib/update-toast.js';
     text: $('updateText'),
     download: $('updateDownload'),
     restart: $('updateRestart'),
+    notes: $('updateNotes'),
     dismiss: $('updateDismiss'),
   }, window.satr);
 
@@ -971,6 +974,8 @@ import { createUpdateToast } from './lib/update-toast.js';
         requester: ev.requester || '', turnEligible: ev.turnEligible === true,
         alwaysEligible: ev.alwaysEligible !== false, alwaysLabel: ev.alwaysLabel || '',
       });
+      // الدور متوقف ينتظر قرارك — أكثر الحالات إلحاحاً وكانت أصمتها (بلاغ 2026-08-23)
+      if (chatEl.notifyAttention) chatEl.notifyAttention('⏸ مطلوب إذن: ' + (ev.tool || 'أداة'));
       return;
     }
     // قرار الجوال حسم الطلب في main عبر resolvePermission نفسه؛ نسحب مربع سطح المكتب
@@ -1014,11 +1019,13 @@ import { createUpdateToast } from './lib/update-toast.js';
     // أسئلة الاختيار (AskUserQuestion) — تُعالج دائماً أيضاً (تنتظر رد المستخدم أثناء الدور)
     if (ev.type === 'question_request') {
       questionEl.ask({ id: ev.id, questions: ev.questions });
+      if (chatEl.notifyAttention) chatEl.notifyAttention('⏸ سؤال ينتظر إجابتك');
       return;
     }
     // طلب إدخال موصّل Claude (دفعة C): schema منقّى في agent، وURL لا يفتح تلقائياً.
     if (ev.type === 'elicitation_request') {
       elicitationEl.ask({ id: ev.id, server: ev.server, mode: ev.mode, fields: ev.fields, url: ev.url });
+      if (chatEl.notifyAttention) chatEl.notifyAttention('⏸ موصّل ينتظر إدخالك');
       return;
     }
     // التسليم البشري (browser_handoff): الوكيل سلّم قيادة المعاينة — شريط 🤝 في اللوحة
@@ -1031,16 +1038,31 @@ import { createUpdateToast } from './lib/update-toast.js';
       if (previewEl.hideHandoff) previewEl.hideHandoff();
       return;
     }
+    // حالة إشعارات TestSprite: تمنع تكرار التوست نفسه بلا تقدّم فعلي
     if (ev.type === 'testsprite_progress') {
       const completed = Number.isInteger(ev.completed) && ev.completed >= 0 ? ev.completed : 0;
       const total = Number.isInteger(ev.total) && ev.total >= 0 ? ev.total : 0;
       const counts = `نجح ${Number(ev.passed) || 0} · فشل ${Number(ev.failed) || 0} · تخطّى ${Number(ev.skipped) || 0}`;
       if (ev.phase === 'preparing') {
-        showTransientNotice('🧪 يجري تجهيز TestSprite والتحقق من الخطة…');
+        // مرة واحدة لكل جولة: كان يتكرر مع كل حدث تجهيز فيغرق الشاشة (بلاغ 2026-08-23)
+        if (testspriteNoticeState.phase !== 'preparing') {
+          testspriteNoticeState.phase = 'preparing';
+          testspriteNoticeState.signature = '';
+          showTransientNotice('🧪 يجري تجهيز TestSprite والتحقق من الخطة…');
+        }
       } else if (ev.phase === 'complete') {
+        testspriteNoticeState.phase = 'complete';
         addNotice(`🧪 اكتمل TestSprite من ملف النتائج: ${completed}/${total} — ${counts}`);
       } else {
-        showTransientNotice(`🧪 TestSprite: اكتملت ${completed}/${total} — ${counts}`);
+        // حدث التقدّم يُبثّ مع كل تغيّر **وكل 30 ثانية** حتى بلا جديد، فكان يولّد سيلاً
+        // من التوستات المتطابقة. لا نُظهر إلا حين يتغيّر الرقم فعلاً — التوست يصف تقدّماً،
+        // وتكراره بلا تقدّم ضجيج لا معلومة.
+        const signature = `${completed}/${total}|${counts}`;
+        if (testspriteNoticeState.signature !== signature) {
+          testspriteNoticeState.phase = 'running';
+          testspriteNoticeState.signature = signature;
+          showTransientNotice(`🧪 TestSprite: اكتملت ${completed}/${total} — ${counts}`);
+        }
       }
       return;
     }

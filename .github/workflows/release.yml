@@ -122,7 +122,28 @@ jobs:
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
           # GitHub يستبدل الفراغات بشرطات في اسم الأصل المرفوع — نطابقه في الملاحظات.
           $assetName = $exe.Name -replace ' ', '-'
-          $lines = @(
+          # «ما الجديد؟» في إشعار التحديث يفتح هذه الصفحة، فيجب أن تحمل الجديد فعلاً لا
+          # اسم الملف وبصمته فقط. نستخرج قسم الإصدار الجاري من CHANGELOG.md؛ وغيابه لا
+          # يكسر النشر — تبقى الملاحظات كما كانت.
+          $notes = @()
+          $version = '${{ github.ref_name }}' -replace '^v', ''
+          if (Test-Path CHANGELOG.md) {
+            $all = Get-Content CHANGELOG.md -Encoding utf8
+            $start = -1
+            for ($i = 0; $i -lt $all.Count; $i++) {
+              if ($all[$i] -match "^##\s+$([regex]::Escape($version))(\s|$)") { $start = $i; break }
+            }
+            if ($start -ge 0) {
+              $end = $all.Count
+              for ($j = $start + 1; $j -lt $all.Count; $j++) {
+                if ($all[$j] -match '^##\s') { $end = $j; break }
+              }
+              $notes = $all[($start + 1)..($end - 1)]
+            }
+          }
+          $lines = @()
+          if ($notes.Count -gt 0) { $lines += $notes; $lines += "" ; $lines += "---"; $lines += "" }
+          $lines += @(
             "**المثبّت:** ``$assetName`` — حمّله من قسم **Assets** (بكلمة Setup، لا «Source code»).",
             "",
             "**بصمة SHA-256** (للتحقق الاختياري من سلامة الملف):",

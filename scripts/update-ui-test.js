@@ -25,6 +25,53 @@ function extractToast(source) {
   return source.slice(start, end + '</div>'.length).replace(/>\s+</g, '><').trim();
 }
 
+// عقود دفعة 2.16.2 (بلاغ مستخدم 2026-08-23): رابط ملاحظات الإصدار، وإشعار الانتباه
+// عند توقّف الدور، وخنق توست تقدّم TestSprite، ورفع النافذة من العملية الرئيسية.
+function assertNotificationContract() {
+  const main = fs.readFileSync(path.join(ROOT, 'electron', 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(ROOT, 'electron', 'preload.js'), 'utf8');
+  const appSource = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'app.js'), 'utf8');
+  const chat = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'components', 'chat.js'), 'utf8');
+  const toast = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'lib', 'update-toast.js'), 'utf8');
+
+  // (1) رفع النافذة يقع في main — window.focus() وحده لا يرفع نافذة Electron على ويندوز
+  assert(main.includes("ipcMain.handle('satr:focusWindow'"), 'غاب معالج satr:focusWindow.');
+  assert(main.includes('setAlwaysOnTop(true)') && main.includes('setAlwaysOnTop(false)'),
+    'satr:focusWindow لا يستعمل حيلة alwaysOnTop اللحظية لتخطي قيد المقدمة في ويندوز.');
+  assert(preload.includes('focusWindow:'), 'غاب focusWindow من preload.');
+  assert(chat.includes('window.satr.focusWindow()'), 'النقر على الإشعار لا يمرّ بـfocusWindow.');
+
+  // (2) رابط ملاحظات الإصدار يُبنى في main — لا URL يعبر من renderer
+  assert(main.includes("ipcMain.handle('satr:openReleaseNotes'"), 'غاب معالج satr:openReleaseNotes.');
+  assert(main.includes('SAFE_RELEASE_VERSION'), 'إصدار ملاحظات الإصدار بلا تحقق نمطي.');
+  assert(!/openReleaseNotes[\s\S]{0,400}p\.url/.test(main), 'satr:openReleaseNotes يقبل URL من renderer.');
+  assert(preload.includes('openReleaseNotes:'), 'غاب openReleaseNotes من preload.');
+  assert(toast.includes('satr.openReleaseNotes(pendingVersion)'), 'زر «ما الجديد» غير موصول.');
+
+  // (3) إشعار الانتباه: الدور متوقف ينتظر قراراً — أذونات وأسئلة وموصّلات
+  assert(chat.includes('function notifyAttention'), 'غابت notifyAttention من chat.js.');
+  assert(chat.includes("'satr-attention'"), 'إشعار الانتباه بلا tag يمنع التكديس.');
+  assert(chat.includes("'satr-turn'"), 'إشعار نهاية الدور بلا tag.');
+  for (const needle of ['مطلوب إذن', 'سؤال ينتظر إجابتك', 'موصّل ينتظر إدخالك']) {
+    assert(appSource.includes(needle), 'غاب إشعار الانتباه لحالة: ' + needle);
+  }
+
+  // (5) «ما الجديد؟» بلا محتوى وعدٌ كاذب: يلزم قسم للإصدار الحالي في CHANGELOG، وسير
+  // النشر يجب أن يستخرجه — وإلا فتح الزر صفحةً فيها اسم الملف وبصمته فقط.
+  const version = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+  const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
+  const heading = new RegExp('^##\\s+' + version.replace(/\./g, '\\.') + '(\\s|$)', 'm');
+  assert(heading.test(changelog), 'CHANGELOG.md بلا قسم للإصدار الحالي ' + version + '.');
+  const release = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+  assert(release.includes('CHANGELOG.md'), 'سير النشر لا يقرأ CHANGELOG.md.');
+  assert(release.includes('release-notes.md'), 'سير النشر لا يكتب ملاحظات الإصدار.');
+
+  // (4) خنق توست TestSprite: لا يتكرر بلا تقدّم فعلي
+  assert(appSource.includes('testspriteNoticeState'), 'غابت حالة خنق توست TestSprite.');
+  assert(/testspriteNoticeState\.signature !== signature/.test(appSource),
+    'توست تقدّم TestSprite يُعرض بلا مقارنة بالتقدّم السابق.');
+}
+
 function assertStaticContract() {
   const index = fs.readFileSync(path.join(ROOT, 'src', 'index.html'), 'utf8');
   const fixture = fs.readFileSync(FIXTURE, 'utf8');
@@ -189,6 +236,7 @@ async function waitForResult(win) {
 
 async function main() {
   assertStaticContract();
+  assertNotificationContract();
   const contractChecks = testUpdaterContract();
   await app.whenReady();
   const consoleErrors = [];

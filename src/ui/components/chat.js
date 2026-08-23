@@ -1545,15 +1545,42 @@ class SatrChat extends HTMLElement {
   // إشعار نظام عند اكتمال الدور والنافذة غير مركزة (دفعة UX) — «أرسل وانشغل وارجع».
   // Notification في عارض Electron مسموح افتراضياً، وAppUserModelId مضبوط في main.js
   // فيظهر التوست باسم «سطر» على ويندوز. النقر يعيد التركيز للنافذة.
-  function notifyTurnDone(isError) {
-    if (document.hasFocus()) return;
+  // إشعار نظام موحّد. ثلاثة دروس من بلاغ المستخدم (2026-08-23) مثبّتة هنا:
+  // (1) النقر كان لا يفعل شيئاً لأن `window.focus()` لا يرفع نافذة Electron على ويندوز
+  //     حين تكون نافذة أخرى في المقدمة ⇒ نمرّ بـ satr:focusWindow في العملية الرئيسية.
+  //     ومن يشغّل عدة نسخ لعدة مشاريع يصل إلى النسخة الصحيحة لأن الإشعار صدر منها.
+  // (2) `tag` يجعل إشعار النوع نفسه **يستبدل** سابقه بدل أن يتكدّس في مركز الإشعارات.
+  // (3) minGapMs يخنق الأنواع الثرثارة (تقدّم الاختبارات) دون أن يمسّ ما يحتاج فورية.
+  let lastNotifyAt = Object.create(null);
+  function systemNotify(body, tag, minGapMs) {
+    if (document.hasFocus()) return false; // المستخدم أمام النافذة — لا داعي
+    const key = tag || 'satr';
+    const gap = Number.isFinite(minGapMs) ? minGapMs : 0;
+    const now = Date.now();
+    if (gap && now - (lastNotifyAt[key] || 0) < gap) return false;
+    lastNotifyAt[key] = now;
     try {
-      const n = new Notification('سطر', {
-        body: isError ? '✗ انتهى الطلب بخطأ' : '✓ اكتمل الرد — جاهز للمراجعة',
-        silent: false,
-      });
-      n.onclick = () => { try { window.focus(); } catch (e) {} n.close(); };
-    } catch (e) {} // فشل الإشعار لا يمس الدور
+      const n = new Notification('سطر', { body, tag: key, silent: false });
+      n.onclick = () => {
+        try {
+          if (window.satr && window.satr.focusWindow) window.satr.focusWindow();
+          else window.focus(); // تدهور رشيق لو سبق preload قديم
+        } catch (e) {}
+        n.close();
+      };
+      return true;
+    } catch (e) { return false; } // فشل الإشعار لا يمس الدور
+  }
+
+  function notifyTurnDone(isError) {
+    systemNotify(isError ? '✗ انتهى الطلب بخطأ' : '✓ اكتمل الرد — جاهز للمراجعة', 'satr-turn');
+  }
+
+  // انتباه مطلوب: الوكيل **متوقف** ينتظر قراراً (إذن أو سؤال). كان هذا أصمت حالة في
+  // «سطر» رغم أنه أكثرها إلحاحاً — الدور معلّق ولا يعلم المستخدم. tag واحد لكل الطابور
+  // فلا تتكدّس البطاقات المتتابعة، والفورية مصونة (بلا خنق).
+  function notifyAttention(body) {
+    systemNotify(body || '⏸ مطلوب قرارك للمتابعة', 'satr-attention');
   }
 
   // «جلسة جديدة»: حالة فارغة + تصفير الكلفة التراكمية وشريطها
@@ -1609,6 +1636,7 @@ class SatrChat extends HTMLElement {
     this.clearThread = clearThread;
     this.scrollToEnd = scrollDown;
     this.notifyTurnDone = notifyTurnDone;
+    this.notifyAttention = notifyAttention;
     this.toolDetail = toolDetail;
   }
 }

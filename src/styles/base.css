@@ -803,6 +803,9 @@
   #updateToast #updateDownload { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600; cursor: pointer; }
   #updateToast #updateRestart { background: var(--green); color: var(--on-green); border: none; font-weight: 600; cursor: pointer; }
   #updateToast #updateDismiss { background: none; border: none; color: var(--text-dim); cursor: pointer; }
+  /* «ما الجديد؟» فعل ثانوي بجانب «نزّل الآن» الذهبي — هادئ كي لا ينافس الفعل الأساسي */
+  #updateToast #updateNotes { background: none; border: 1px solid var(--border); color: var(--text); cursor: pointer; }
+  #updateToast #updateNotes:hover { border-color: var(--gold-border); color: var(--gold); }
 
   /* مربع الأذونات انتقل لمكوّن satr-perm-dialog (تفكيك ت-8) */
 

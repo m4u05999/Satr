@@ -785,6 +785,53 @@ ipcMain.handle('satr:appVersion', () => ({
   packaged: app.isPackaged === true,
 }));
 
+// «ما الجديد؟» — يفتح صفحة ملاحظات الإصدار في متصفح النظام. **لا يقبل URL من
+// renderer**: العملية الرئيسية تبني الرابط من إعداد النشر ومن رقم إصدار منقّى، بنمط
+// safeOauthUrl القائم. الوسيط الوحيد هو نسخة semver اختيارية؛ أي شيء آخر يُرفض.
+const SAFE_RELEASE_VERSION = /^v?\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[A-Za-z0-9.]{1,32})?$/;
+const SAFE_GH_SEGMENT = /^[A-Za-z0-9._-]{1,64}$/;
+function releaseRepo() {
+  try {
+    const publish = require('../package.json').build.publish;
+    const entry = Array.isArray(publish) ? publish[0] : publish;
+    if (entry && entry.provider === 'github'
+      && SAFE_GH_SEGMENT.test(String(entry.owner)) && SAFE_GH_SEGMENT.test(String(entry.repo))) {
+      return { owner: String(entry.owner), repo: String(entry.repo) };
+    }
+  } catch { /* يسقط إلى الافتراضي */ }
+  return { owner: 'm4u05999', repo: 'Satr' };
+}
+ipcMain.handle('satr:openReleaseNotes', async (event, p) => {
+  const { owner, repo } = releaseRepo();
+  let url = 'https://github.com/' + owner + '/' + repo + '/releases/latest';
+  const raw = p && typeof p.version === 'string' ? p.version.trim() : '';
+  if (raw && SAFE_RELEASE_VERSION.test(raw)) {
+    const tag = raw.startsWith('v') ? raw : 'v' + raw;
+    url = 'https://github.com/' + owner + '/' + repo + '/releases/tag/' + tag;
+  }
+  try { await shell.openExternal(url); return { ok: true }; }
+  catch { return { ok: false, error: 'open_failed' }; }
+});
+
+// رفع نافذة هذه النسخة إلى المقدمة — يخدم النقر على إشعار النظام. `window.focus()`
+// من renderer لا يرفع نافذة Electron على ويندوز حين تكون نافذة أخرى في المقدمة، ولذلك
+// كان النقر على الإشعار لا يفعل شيئاً (بلاغ مستخدم 2026-08-23). المستخدم يشغّل عدة
+// نسخ من «سطر» لعدة مشاريع، فكل نسخة ترفع نافذتها هي — والإشعار يصدر من نسختها أصلاً
+// فيصل النقر إلى المكان الصحيح. alwaysOnTop لحظي هو الحيلة الموثوقة لتخطي قيد
+// المقدمة في ويندوز، ثم يُرفع فوراً كي لا تبقى النافذة فوق كل شيء.
+ipcMain.handle('satr:focusWindow', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    const wasOnTop = mainWindow.isAlwaysOnTop();
+    if (!wasOnTop) mainWindow.setAlwaysOnTop(true);
+    mainWindow.show();
+    mainWindow.focus();
+    if (!wasOnTop) mainWindow.setAlwaysOnTop(false);
+    return { ok: true };
+  } catch { return { ok: false }; }
+});
+
 ipcMain.handle('satr:preflight', async () => {
   // مفاتيح اختبار فقط: SATR_FORCE_NO_CLAUDE / _CODEX / _KIMI = 1 تحاكي غياب محرك للتحقق
   // من البوابة دون إلغاء تثبيته فعلياً (معيار قبول المرحلة 6). لا أثر لها في الاستخدام
