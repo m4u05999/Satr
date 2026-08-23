@@ -89,6 +89,29 @@ score = 0.20*N + 0.25*V + 0.20*F + 0.20*E + 0.15*S
 `impact` فيه `"لا شيء — مُنع من الترجيح"`؛ أي إيصال يخالف ذلك مرفوض. و`source_ref`
 مطلوب لغير `recalled` — إيصال بلا مرجع ليس إيصالاً.
 
+## بيان التنفيذ
+
+```json
+{
+  "read_method_from_file": true,
+  "isolation": "spawn_agent | none",
+  "isolation_evidence": ["معرّف الاستدعاء أو الفرع كما أعادته الأداة"],
+  "batches": [
+    { "stage": "diverge", "launched": 3, "completed": 3, "failed": 0, "missing": 0,
+      "timeout_minutes": 10, "quorum": 2 }
+  ],
+  "audit_budget": { "used": 18, "cap": 25 },
+  "independent_critic": true,
+  "blocking_limit": ""
+}
+```
+
+`isolation` غير `none` **يوجب** `isolation_evidence` غير فارغة بمعرّفات أعادتها الأداة
+فعلاً؛ وغيابها يجعل القيمة الصحيحة `none` مهما جرى في السياق. و`launched` يساوي عدد
+الاستدعاءات الصادرة بالفعل — صفرٌ يُكتب صفراً. أي عدد لا يقابله استدعاء هو ادعاء كاذب،
+وقد وقع فعلاً في تقييم 2026-08-23. و`read_method_from_file: false` يعني أن الجولة
+طبّقت وصفاً مختصراً لا المنهج، فتُوسم كذلك في التقرير.
+
 ## خرج المواجهة المجهّلة
 
 يُعرض على المستشار ادعاء واحد بلا هوية مصدره، فيردّ:
