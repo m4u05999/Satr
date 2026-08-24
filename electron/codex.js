@@ -29,6 +29,7 @@ const preview = require('./preview');   // وحدة المعاينة المشت�
 const codexmcp = require('./codexmcp');  // خادم MCP‏ streamable-HTTP داخل العملية
 const keys = require('./keys');
 const memory = require('./memory'); // ذاكرة مشروع شخصية — حقن قرائي مقصوص (تكافؤ agent.js)
+const termjobs = require('./termjobs'); // مهام الخلفية المعمّرة — كتلة «انتهت بلا دور نشط»
 const testsprite = require('./testsprite');
 const testspritejobs = require('./testspritejobs');
 const envbrief = require('./envbrief');
@@ -1744,6 +1745,9 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // (المراجع/العصف — browserControl:false الصريح، نفس بوابة TestSprite) لا ترثها.
       const memoryPrompt = browserControl === false ? '' : memory.retrieve(cwd, prompt).text;
       if (memoryPrompt) inputItems.push({ type: 'text', text: memoryPrompt, text_elements: [] });
+      // مهام خلفية خرجت بلا دور نشط — كتلة سياق تُحقن مرة واحدة بنفس بوابة الذاكرة
+      const backgroundPrompt = browserControl === false ? '' : termjobs.pendingNoticeText(cwd);
+      if (backgroundPrompt) inputItems.push({ type: 'text', text: backgroundPrompt, text_elements: [] });
       if (effectivePrompt) inputItems.push({ type: 'text', text: effectivePrompt, text_elements: [] });
       if (Array.isArray(images)) {
         for (const im of images) {

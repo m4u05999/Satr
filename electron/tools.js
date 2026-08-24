@@ -512,8 +512,23 @@ const DEFS = [
   {
     type: 'function',
     function: {
+      name: 'wait_for_background_task',
+      description: 'Block until a persistent Satr background job exits, then return its exit code and log tail. Use this instead of a sleep + list_background_tasks polling loop. On timeout it returns status=running so you can extend the wait with one more call.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          timeout_ms: { type: 'integer', minimum: 1000, maximum: 600000 },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_background_tasks',
-      description: 'List persistent Satr terminal jobs and legacy tracked background processes. Call before starting another server.',
+      description: 'List persistent Satr terminal jobs and legacy tracked background processes, plus the most recent jobs that exited with their exit codes. Call before starting another server.',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -687,6 +702,12 @@ async function run(name, cwd, args, ctx) {
       let truncated = r.truncated;
       if (content.length > MAX_RESULT) { content = content.slice(0, MAX_RESULT); truncated = true; }
       if (truncated) content += '\n…(قُصّ الملف هنا — تجاوز سقف حجم النتيجة)';
+      // العيب ③: ملف عُدّل قبل لحظات قد يكون منتصف كتابة كاتب آخر — نقول ذلك بدل
+      // تسليم نسخة ناقصة تبدو كاملة. تنبيه لا حجب: القراءة صحيحة لِما كان على القرص.
+      if (r.recentlyWritten) {
+        content = '⚠️ عُدّل هذا الملف قبل أقل من ثانيتين — قد تكون هذه نسخة منتصف كتابة.'
+          + ' أعد قراءته إن بدا ناقصاً أو غير متسق.\n---\n' + content;
+      }
       return { ok: true, content };
     }
     if (name === 'list_files') {
@@ -854,15 +875,34 @@ async function run(name, cwd, args, ctx) {
     }
     if (name === 'get_background_output') {
       const id = String((args && args.id) || '');
-      if (!termjobs.info(id)) return { ok: false, content: 'خطأ: لا توجد مهمة حيّة بهذا المعرّف.' };
+      if (!termjobs.info(id)) {
+        // المهمة خرجت: أعد رمز خروجها وذيلها المحفوظ بدل «لا توجد مهمة» الصامتة
+        const done = termjobs.lastExit(id);
+        if (done) return { ok: true, content: termjobs.exitSummaryText(done).slice(0, MAX_RESULT) };
+        return { ok: false, content: 'خطأ: لا توجد مهمة حيّة بهذا المعرّف ولا سجل خروج محفوظ لها.' };
+      }
       const read = term.readBuffer(id, term.MAX_BUFFER_BYTES);
       if (!read.ok) return { ok: false, content: 'خطأ: تعذّرت قراءة سجل المهمة.' };
       const count = Number.isInteger(args && args.tail_lines) ? Math.min(args.tail_lines, 2000) : 200;
-      const output = read.data.replace(/\r/g, '').split('\n').slice(-count).join('\n').slice(-MAX_RESULT);
+      const raw = read.data.replace(/\r/g, '').split('\n').slice(-count).join('\n');
+      // تنقية واحدة مشتركة مع bg_term_done: ANSI ومحارف التحكم تُزال والأسرار تُحجب
+      const output = termjobs.scrubDoneTail(raw, MAX_RESULT);
       return { ok: true, content: output || '(لا يوجد خرج بعد)' };
     }
+    if (name === 'wait_for_background_task') {
+      const id = String((args && args.id) || '');
+      const result = await termjobs.waitForExit(id, args && args.timeout_ms);
+      if (result.status === 'unknown') return { ok: false, content: 'خطأ: لا توجد مهمة حيّة بهذا المعرّف ولا سجل خروج محفوظ لها.' };
+      if (result.status === 'running') {
+        return { ok: true, content: 'ما زالت المهمة ' + id + ' تعمل بعد ' + Math.round(result.waited_ms / 1000)
+          + 'ث. نادِ الأداة ثانيةً للاستمرار في الانتظار، أو get_background_output لقراءة سجلها الآن.' };
+      }
+      return { ok: true, content: termjobs.exitSummaryText(result).slice(0, MAX_RESULT) };
+    }
     if (name === 'list_background_tasks') {
-      return { ok: true, content: JSON.stringify({ terminal_jobs: termjobs.list(), legacy_processes: bgprocs.list() }, null, 2).slice(0, MAX_RESULT) };
+      return { ok: true, content: JSON.stringify({
+        terminal_jobs: termjobs.list(), recent_exits: termjobs.recentExitList(), legacy_processes: bgprocs.list(),
+      }, null, 2).slice(0, MAX_RESULT) };
     }
     if (name === 'stop_background_task') {
       const id = String((args && args.id) || '');
@@ -890,6 +930,7 @@ async function run(name, cwd, args, ctx) {
       let output = r.output || '(لا خرج)';
       if (output.length > MAX_RESULT) output = output.slice(0, MAX_RESULT) + '\n…(قُصّ الخرج — تجاوز السقف)';
       const head = (r.timedOut ? '[انتهت المهلة — قد يكون أمراً طويلاً/تفاعلياً]\n' : '')
+        + (r.shellFailed ? '[⚠️ أبلغت الصدفة عن فشل رغم رمز الخروج 0 — راجع الخرج بحثاً عن خطأ]\n' : '')
         + 'exit code: ' + (r.exitCode === null ? 'غير معروف' : r.exitCode) + '\n---\n';
       return { ok: r.exitCode === 0 || r.exitCode === null, content: head + output };
     }

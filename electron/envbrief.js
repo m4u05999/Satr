@@ -6,7 +6,8 @@ const runtimeenv = require('./runtimeenv');
 const langanchor = require('./langanchor');
 
 const SDK_TOOL_NAMES = Object.freeze([
-  'run_in_terminal', 'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task',
+  'run_in_terminal', 'run_in_background', 'get_background_output', 'wait_for_background_task',
+  'list_background_tasks', 'stop_background_task',
   'open_preview', 'close_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network',
   'screenshot', 'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover', 'browser_click',
   'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
@@ -51,6 +52,7 @@ function executionPolicy(engine) {
     '- خادم تطوير أو عملية طويلة/مستمرة: استخدم run_in_background حصراً؛ لا تشغّله في Bash خفي ولا تنتظر مهلة 120ث.',
     '- قبل تشغيل خادم استعمل list_background_tasks كي لا تنشئ نسخة ثانية.',
     afterStart,
+    '- لا تنتظر مهمة خلفية بحلقة نوم ثم list_background_tasks؛ استعمل wait_for_background_task فيعود لحظة خروجها برمز الخروج وذيل السجل. وإن اختفت مهمة من القائمة فسبب خروجها محفوظ في recent_exits داخل list_background_tasks وفي get_background_output بمعرّفها.',
     '- Bash/exec الداخلي القصير مسموح للفحص السريع مثل git status وقراءة حالة الملفات، لا للخوادم.',
     '- في إعداد المنصات فضّل API/CLI المتاح مثل gh وnetlify عبر الطرفية المرئية؛ استخدم المتصفح فقط حين لا توجد واجهة برمجية سلسة أو تلزم لوحة بصرية.',
     '- توليد الصور ثلاث طبقات: تصميم نصي/هوية بنص عربي (بوست/بطاقة/إعلان) ⇒ ابنه HTML/CSS بخط المشروع والتقطه PNG (نماذج الانتشار المتاحة تشوّه العربية)؛ مشهد توليدي بلا نص داخلي ⇒ أداة generate_media الداخلية (كلفة شفافة قبل التنفيذ وسجل معرض 🖼)؛ وموصّل خارجي مثل Higgsfield فقط إن سمّاه المستخدم صراحةً في طلبه.',

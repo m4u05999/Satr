@@ -44,7 +44,8 @@
 - **`promo_propose_storyboard`** — اقترح خطاً زمنياً من مقاطع/أصول محلية داخل Downloads ليراجعه المستخدم في استوديو البرومو. لا يبدأ التصيير ولا يرفع ملفاً.
 - **`run_in_background`** — شغّل خادم تطوير أو مهمة طويلة داخل تبويب طرفية مرئي ومعمّر في «سطر». يبقى بعد نهاية الدور والجلسة حتى يوقفه المستخدم.
 - **`get_background_output`** — اقرأ ذيل سجل مهمة خلفية معمّرة من طرفية «سطر» بلا إيقافها.
-- **`list_background_tasks`** — اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة لتجنب تشغيل خادم ثانٍ.
+- **`wait_for_background_task`** — انتظر خروج مهمة خلفية معمّرة وأعد رمز خروجها وذيل سجلها لحظة انتهائها. استعمله بدل حلقة انتظار ثم list_background_tasks؛ عند المهلة يعود status=running فتستطيع تمديد الانتظار بنداء واحد.
+- **`list_background_tasks`** — اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة لتجنب تشغيل خادم ثانٍ. يعرض كذلك آخر المهام التي خرجت ورموز خروجها.
 - **`stop_background_task`** — أوقف مهمة خلفية معمّرة أو عملية خلفية قديمة. يطلب الإذن في كل مرة.
 
 ## أدوات حلقة الوكيل للمحوّلات (Kimi/DeepSeek/Gemini/Qwen/MiniMax…)
@@ -68,7 +69,8 @@
 - **`run_command`** — Run a single-line shell command (PowerShell on Windows) in the user's visible terminal and return its output. The user must approve each command. Long-running interactive apps (servers) will be cut by the timeout.
 - **`run_in_background`** — Start a development server or long-running task in a persistent visible Satr terminal tab. It survives the turn and chat session until stopped.
 - **`get_background_output`** — Read the tail of a persistent Satr background terminal without stopping it.
-- **`list_background_tasks`** — List persistent Satr terminal jobs and legacy tracked background processes. Call before starting another server.
+- **`wait_for_background_task`** — Block until a persistent Satr background job exits, then return its exit code and log tail. Use this instead of a sleep + list_background_tasks polling loop. On timeout it returns status=running so you can extend the wait with one more call.
+- **`list_background_tasks`** — List persistent Satr terminal jobs and legacy tracked background processes, plus the most recent jobs that exited with their exit codes. Call before starting another server.
 - **`stop_background_task`** — Stop one persistent background task. The user is asked for permission every time.
 - **`edit_file`** — Edit an existing file by exact string replacement. old_string must match the file content exactly (including whitespace) and must be unique unless replace_all is true. The user is asked for permission first.
 

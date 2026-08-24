@@ -829,6 +829,11 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
   const portableSkillPrompt = skillCatalog.catalogPrompt(skillContext, { onlyStandard: true });
   const memoryPrompt = isolatedPolicy ? '' : memory.retrieve(cwd, prompt).text;
+  // مهام خلفية خرجت بلا دور نشط: تُحقن مرة واحدة في بداية هذا الدور فلا تموت صامتة.
+  // البوابة **أضيق من بوابة الذاكرة عمداً**: أي internalPolicy يُقصى — لا السياقات
+  // المعزولة وحدها بل عوامل غرفة العمليات ومراجعوها أيضاً — لأن الكتلة ليست مشتقة من
+  // cwd كالذاكرة، فلا يكفي المجلد المؤقت الفارغ ليعزلها (حصر cwd في termjobs حاجز ثانٍ).
+  const backgroundPrompt = internalPolicy ? '' : termjobs.pendingNoticeText(cwd);
   const mediaCostState = { total: 0 };
   const genmediaOverride = internalPolicy && internalPolicy.genmedia;
   const { query } = await loadSdk();
@@ -1218,6 +1223,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   }
   // ذاكرة المشروع خارج توجيه/أدوات المتصفح: سياق شخصي وافق عليه المستخدم، ضمن ميزانية ثابتة.
   if (memoryPrompt) options.systemPrompt.append += '\n\n' + memoryPrompt;
+  if (backgroundPrompt) options.systemPrompt.append += '\n\n' + backgroundPrompt;
   // جهد التفكير (المرحلة 14.4): منقّى في main.js — الـ SDK يخفّضه صامتاً إن لم يدعمه النموذج
   if (effort) options.effort = effort;
   // مجلدات إضافية يصل إليها النموذج بجانب cwd (منقّاة في main.js: موجودة فعلاً، بسقف 10)
@@ -1245,6 +1251,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         const r = await term.runCapture(ensured.id, args.command, { timeoutMs: 120000 });
         if (!r.ok) return { content: [{ type: 'text', text: 'تعذّر التشغيل: ' + (r.message || r.error) }], isError: true };
         const head = (r.timedOut ? '[انتهت المهلة — قد يكون أمراً طويلاً/تفاعلياً]\n' : '') +
+          (r.shellFailed ? '[⚠️ أبلغت الصدفة عن فشل رغم رمز الخروج 0 — راجع الخرج بحثاً عن خطأ]\n' : '') +
           'exit code: ' + (r.exitCode === null ? 'غير معروف' : r.exitCode) + '\n---\n';
         return { content: [{ type: 'text', text: head + (r.output || '(لا خرج)') }], isError: r.exitCode !== 0 && r.exitCode !== null };
       }
@@ -1267,19 +1274,44 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       'اقرأ ذيل سجل مهمة خلفية معمّرة من طرفية «سطر» بلا إيقافها.',
       { id: z.string(), tail_lines: z.number().int().min(1).max(2000).optional() },
       async (args) => {
-        if (!termjobs.info(args.id)) return { content: [{ type: 'text', text: 'لا توجد مهمة حيّة بهذا المعرّف.' }], isError: true };
+        if (!termjobs.info(args.id)) {
+          // المهمة خرجت: أعد رمز خروجها وذيلها المحفوظ بدل «لا توجد مهمة» الصامتة
+          const done = termjobs.lastExit(args.id);
+          if (done) return { content: [{ type: 'text', text: termjobs.exitSummaryText(done) }] };
+          return { content: [{ type: 'text', text: 'لا توجد مهمة حيّة بهذا المعرّف ولا سجل خروج محفوظ لها.' }], isError: true };
+        }
         const read = term.readBuffer(args.id, term.MAX_BUFFER_BYTES);
         if (!read.ok) return { content: [{ type: 'text', text: 'تعذّرت قراءة سجل المهمة.' }], isError: true };
         const count = Number.isInteger(args.tail_lines) ? args.tail_lines : 200;
-        const output = read.data.replace(/\r/g, '').split('\n').slice(-count).join('\n').slice(-48 * 1024);
+        const raw = read.data.replace(/\r/g, '').split('\n').slice(-count).join('\n');
+        // تنقية واحدة مشتركة مع bg_term_done: ANSI ومحارف التحكم تُزال والأسرار تُحجب
+        const output = termjobs.scrubDoneTail(raw, 48 * 1024);
         return { content: [{ type: 'text', text: output || '(لا يوجد خرج بعد)' }] };
+      }
+    );
+    const backgroundWaitTool = sdk.tool(
+      'wait_for_background_task',
+      'انتظر خروج مهمة خلفية معمّرة وأعد رمز خروجها وذيل سجلها لحظة انتهائها. استعمله بدل حلقة انتظار ثم list_background_tasks؛ عند المهلة يعود status=running فتستطيع تمديد الانتظار بنداء واحد.',
+      { id: z.string(), timeout_ms: z.number().int().min(1000).max(600000).optional() },
+      async (args) => {
+        const result = await termjobs.waitForExit(args.id, args.timeout_ms);
+        if (result.status === 'unknown') {
+          return { content: [{ type: 'text', text: 'لا توجد مهمة حيّة بهذا المعرّف ولا سجل خروج محفوظ لها.' }], isError: true };
+        }
+        if (result.status === 'running') {
+          return { content: [{ type: 'text', text: 'ما زالت المهمة ' + args.id + ' تعمل بعد '
+            + Math.round(result.waited_ms / 1000) + 'ث. نادِ الأداة ثانيةً للاستمرار في الانتظار، أو get_background_output لقراءة سجلها الآن.' }] };
+        }
+        return { content: [{ type: 'text', text: termjobs.exitSummaryText(result) }] };
       }
     );
     const backgroundListTool = sdk.tool(
       'list_background_tasks',
-      'اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة قبل تشغيل خادم جديد.',
+      'اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة قبل تشغيل خادم جديد. يعرض كذلك آخر المهام التي خرجت ورموز خروجها.',
       {},
-      async () => ({ content: [{ type: 'text', text: JSON.stringify({ terminal_jobs: termjobs.list(), legacy_processes: bgprocs.list() }, null, 2) }] })
+      async () => ({ content: [{ type: 'text', text: JSON.stringify({
+        terminal_jobs: termjobs.list(), recent_exits: termjobs.recentExitList(), legacy_processes: bgprocs.list(),
+      }, null, 2) }] })
     );
     const backgroundStopTool = sdk.tool(
       'stop_background_task',
@@ -1793,9 +1825,9 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       },
       async (args) => {
         const r = await preview.setViewport(args && args.width, args && args.height);
-        return r && r.ok
-          ? { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] }
-          : { content: [{ type: 'text', text: 'تعذّر ضبط المقاس (' + ((r && r.error) || 'خطأ') + ').' }], isError: true };
+        if (!r || !r.ok) return { content: [{ type: 'text', text: 'تعذّر ضبط المقاس (' + ((r && r.error) || 'خطأ') + ').' }], isError: true };
+        // التجاوز يُقال أولاً لا داخل JSON: فشل صامت سابق صار رسالة مفهومة (OBS-028)
+        return { content: [{ type: 'text', text: (r.note ? '⚠️ ' + r.note + '\n\n' : '') + JSON.stringify(r, null, 2) }] };
       }
     );
     const perfTool = sdk.tool(
@@ -1954,7 +1986,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, closePreviewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundWaitTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, closePreviewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }

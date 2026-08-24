@@ -63,6 +63,12 @@ async function listFiles(cwd) {
 // ---------- عارض القراءة (الدفعة 1.2 من ROADMAP) ----------
 
 const MAX_VIEW = 256 * 1024; // سقف المعروض في عارض القراءة (بايت)
+// نافذة «قيد الكتابة» (تغذية راجعة 2026-08-24، العيب ③): ملف عُدّل قبل أقل من هذه المدة
+// قد يكون منتصف كتابة كاتب آخر، فالنسخة المقروءة ناقصة بلا أي إشارة. لا قفل هنا — القفل
+// المشترك بين عمليات مستقلة غير متاح لنا، والادعاء به أسوأ من الصراحة بالاحتمال.
+// **حدّ مُصرَّح به**: هذا يغطي files.readText وحدها (read_file للمحوّلات وحقن @ والعارض)؛
+// أدوات Read الأصلية في Claude وCodex وKimi خارج سيطرتنا ولا يشملها هذا التنبيه.
+const WRITE_WINDOW_MS = 1500;
 
 function contentVersion(content) {
   return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
@@ -88,7 +94,14 @@ function readText(cwd, rel) {
   // إزالة محرف بديل مبتور محتمل عند قطع UTF-8 في منتصف حرف — عند القص فقط.
   let content = buf.toString('utf8');
   if (truncated) content = content.replace(/�+$/, '');
-  return { ok: true, content, truncated, bytes: st.size, version: truncated ? null : contentVersion(content) };
+  // recentlyWritten: الفارق بين mtime ولحظة القراءة داخل نافذة الكتابة. أفضل جهد —
+  // نظام الملفات قد يؤخّر mtime، فالغياب لا يعني أن الملف مستقر.
+  const age = Date.now() - st.mtimeMs;
+  const recentlyWritten = Number.isFinite(age) && age >= 0 && age < WRITE_WINDOW_MS;
+  return {
+    ok: true, content, truncated, bytes: st.size, recentlyWritten,
+    version: truncated ? null : contentVersion(content),
+  };
 }
 
-module.exports = { listFiles, readText, contentVersion };
+module.exports = { listFiles, readText, contentVersion, WRITE_WINDOW_MS };

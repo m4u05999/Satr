@@ -125,8 +125,13 @@ function startTerm(cwd, cols, rows, meta) {
       rows: r,
       cwd: dir,
       // البيئة كاملة عمداً (سلوك كل الطرفيات المدمجة: PATH وإعدادات المطور ضرورية) —
-      // يعني أن مفاتيح API في بيئة «سطر» تصل للصدفة، وهي صدفة المستخدم نفسه بنفس صلاحياته
-      env: process.env,
+      // يعني أن مفاتيح API في بيئة «سطر» تصل للصدفة، وهي صدفة المستخدم نفسه بنفس صلاحياته.
+      // PYTHONUTF8/PYTHONIOENCODING: تغذية راجعة 2026-08-24 — طباعة العربية من Python
+      // تفشل بـcp1252 على ويندوز ما لم يُفعَّل وضع UTF-8. لا نطمس اختيار المستخدم إن ضبطه.
+      env: Object.assign({}, process.env, {
+        PYTHONUTF8: process.env.PYTHONUTF8 || '1',
+        PYTHONIOENCODING: process.env.PYTHONIOENCODING || 'utf-8',
+      }),
       useConpty: true, // ConPTY — المتطلب الموثّق: ويندوز 10 1809+
     });
   } catch (e) {
@@ -259,17 +264,23 @@ function runCaptureNow(id, command, opts) {
     const sh = (t.shell || '').toLowerCase();
     let line;
     if (sh.includes('powershell') || sh.includes('pwsh')) {
-      // رمز الخروج رقمي دائماً: نصفّر $LASTEXITCODE قبل الأمر كي لا يحمل قيمة دور سابق
-      // (cmdlets لا تضبطه)، وبعده نسقط لـ $? لو بقي $null (أمر أصلي لم يُشغَّل)
-      line = '$global:LASTEXITCODE=0; Write-Output "' + mBeg + '"; ' + clean +
-        ' ; $c=$LASTEXITCODE; if($c -eq $null){$c=if($?){0}else{1}}; Write-Output ("' + mEnd + ':"+$c)\r';
+      // رمز الخروج رقمي دائماً. تصحيح 2026-08-24 (تغذية راجعة «exit 0 رغم خطأ الأمر»):
+      // التصفير كان `=0` فيبقى $LASTEXITCODE رقماً حتى حين يفشل cmdlet لا يضبطه أصلاً،
+      // فلا يُستشار $? أبداً ويُعلَن نجاح كاذب. صار التصفير $null، و$? يُلتقط **فور**
+      // الأمر (كان يُقرأ بعد إسناد فيصف نجاح الإسناد لا الأمر — نمط termjobs.js المثبت).
+      // الأولوية لـ$LASTEXITCODE حين يكون رقماً: أمر أصلي رمزه هو الحقيقة، فلا ينقلب
+      // نجاح `... 2>&1` إلى فشل بسبب NativeCommandError الذي يضبط $?=false في PS 5.1.
+      line = '$global:LASTEXITCODE=$null; Write-Output "' + mBeg + '"; ' + clean +
+        ' ; $ok=$?; $c=$LASTEXITCODE; if($null -eq $c){$c=if($ok){0}else{1}}' +
+        '; Write-Output ("' + mEnd + ':"+$c+":"+$(if($ok){1}else{0}))\r';
     } else if (sh.includes('cmd')) {
       line = 'echo ' + mBeg + ' & ' + clean + ' & echo ' + mEnd + ':%ERRORLEVEL%\r';
     } else {
       line = 'printf "%s\\n" "' + mBeg + '"; ' + clean + ' ; printf "%s:%s\\n" "' + mEnd + '" "$?"\r';
     }
 
-    const endRe = new RegExp(mEnd + ':(-?\\d+)'); // اكتمال + رمز الخروج
+    // المجموعة الثانية اختيارية: صدف cmd/sh لا تُصدر علم $? فيبقى النمط القديم صالحاً
+    const endRe = new RegExp(mEnd + ':(-?\\d+)(?::([01]))?'); // اكتمال + رمز الخروج + علم الصدفة
     let buf = '';
     let settled = false;
     let disp = null;
@@ -299,7 +310,13 @@ function runCaptureNow(id, command, opts) {
     disp = t.proc.onData((data) => {
       if (buf.length < MAX_CAPTURE + 8192) buf += data;
       const m = buf.match(endRe);
-      if (m) finish({ ok: true, exitCode: parseInt(m[1], 10), output: cleanOutput(buf.slice(0, m.index)) });
+      if (m) {
+        const exitCode = parseInt(m[1], 10);
+        // الصدفة أبلغت فشلاً بينما رمز الخروج 0 (شائع حين يطبع أمر أصلي خطأً على
+        // stderr ثم يخرج بنجاح): لا نكذّب رمزه ولا نخفي إشارته — نعيد الاثنين.
+        const shellFailed = m[2] === '0' && exitCode === 0;
+        finish({ ok: true, exitCode, shellFailed, output: cleanOutput(buf.slice(0, m.index)) });
+      }
     });
 
     timer = setTimeout(() => {

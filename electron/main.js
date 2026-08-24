@@ -2996,7 +2996,9 @@ ipcMain.handle('satr:previewBounds', (event, p) => {
   const ok = p && ['x', 'y', 'width', 'height'].every(
     (k) => Number.isInteger(p[k]) && p[k] >= 0 && p[k] <= 20000);
   if (!ok) return { error: 'bad_bounds' };
-  return preview.setBounds({ x: p.x, y: p.y, width: p.width, height: p.height });
+  // وضع محاكاة الأجهزة: قائمة سماح مغلقة، وأي قيمة أخرى تسقط إلى null (لا تفشل الطلب)
+  const device = p.device === 'mobile' || p.device === 'tablet' ? p.device : null;
+  return preview.setBounds({ x: p.x, y: p.y, width: p.width, height: p.height }, device);
 });
 ipcMain.handle('satr:previewPick', () => preview.startPick());       // م-2: التحديد بالتأشير
 ipcMain.handle('satr:previewPickCancel', () => preview.cancelPick());

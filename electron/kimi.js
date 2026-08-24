@@ -23,6 +23,7 @@ const memory = require('./memory');
 const preview = require('./preview');
 const skillCatalog = require('./skills');
 const agentTools = require('./tools');
+const termjobs = require('./termjobs'); // مهام الخلفية المعمّرة — كتلة «انتهت بلا دور نشط»
 const { isExternalBrowserLaunchCommand, promptRequestsExternalBrowser } = require('./browserguard');
 const keepaliveFactory = require('./kimi-keepalive');
 const { scrubSecrets } = require('./secretscrub');
@@ -1187,6 +1188,9 @@ function create(deps) {
         if (skillPrompt) resources.push({ uri: 'satr://skills', text: skillPrompt });
         const memoryPrompt = browserControl === false ? '' : memory.retrieve(cwd, input.prompt || '').text;
         if (memoryPrompt) resources.push({ uri: 'satr://memory', text: memoryPrompt });
+        // مهام خلفية خرجت بلا دور نشط — كتلة سياق تُحقن مرة واحدة بنفس بوابة الذاكرة
+        const backgroundPrompt = browserControl === false ? '' : termjobs.pendingNoticeText(cwd);
+        if (backgroundPrompt) resources.push({ uri: 'satr://background-tasks', text: backgroundPrompt });
         if (!compactCommand && promptCaps && promptCaps.embeddedContext) {
           for (const resource of resources) prompt.push({
             type: 'resource', resource: { uri: resource.uri, mimeType: 'text/plain', text: resource.text },

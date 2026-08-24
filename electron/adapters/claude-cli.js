@@ -13,6 +13,7 @@
 const { spawn } = require('child_process');
 const skillCatalog = require('../skills');
 const memory = require('../memory');
+const termjobs = require('../termjobs'); // مهام الخلفية المعمّرة — كتلة «انتهت بلا دور نشط»
 const envbrief = require('../envbrief');
 
 const IS_WIN = process.platform === 'win32';
@@ -29,7 +30,9 @@ function start(input, cwd, emit) {
   const environmentPrompt = '<satr_environment>\n'
     + envbrief.build('adapter', model || 'default', { compact: true })
     + '\n</satr_environment>';
-  const contextPrompt = [environmentPrompt, portablePrompt, memoryPrompt].filter(Boolean).join('\n\n');
+  // مهام خلفية خرجت بلا دور نشط — كتلة سياق تُحقن مرة واحدة (termjobs.pendingNoticeText)
+  const backgroundPrompt = termjobs.pendingNoticeText(cwd);
+  const contextPrompt = [environmentPrompt, portablePrompt, memoryPrompt, backgroundPrompt].filter(Boolean).join('\n\n');
 
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (sessionId) args.push('--resume', sessionId);

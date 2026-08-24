@@ -426,7 +426,9 @@ function buildTools(deps) {
       inputSchema: { type: 'object', properties: { width: { type: 'integer', minimum: 240, maximum: 1920 }, height: { type: 'integer', minimum: 240, maximum: 1200 } }, required: ['width'] },
       handler: async (args) => {
         const r = await preview.setViewport(args && args.width, args && args.height);
-        return r && r.ok ? textResult(JSON.stringify(r, null, 2)) : textResult(whyClosed(r && r.error, 'تعذّر ضبط المقاس'), true);
+        if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّر ضبط المقاس'), true);
+        // التجاوز يُقال أولاً لا داخل JSON: فشل صامت سابق صار رسالة مفهومة (OBS-028)
+        return textResult((r.note ? '⚠️ ' + r.note + '\n\n' : '') + JSON.stringify(r, null, 2));
       },
     },
     {
@@ -658,19 +660,50 @@ function buildTools(deps) {
       },
       handler: async (args) => {
         const id = String((args && args.id) || '');
-        if (!termjobs.info(id)) return textResult('لا توجد مهمة حيّة بهذا المعرّف.', true);
+        if (!termjobs.info(id)) {
+          // المهمة خرجت: أعد رمز خروجها وذيلها المحفوظ بدل «لا توجد مهمة» الصامتة
+          const done = termjobs.lastExit(id);
+          if (done) return textResult(termjobs.exitSummaryText(done));
+          return textResult('لا توجد مهمة حيّة بهذا المعرّف ولا سجل خروج محفوظ لها.', true);
+        }
         const result = term.readBuffer(id, term.MAX_BUFFER_BYTES);
         if (!result.ok) return textResult('تعذّرت قراءة سجل المهمة.', true);
         const count = Number.isInteger(args && args.tail_lines) ? Math.min(args.tail_lines, 2000) : 200;
-        const output = result.data.replace(/\r/g, '').split('\n').slice(-count).join('\n').slice(-48 * 1024);
+        const raw = result.data.replace(/\r/g, '').split('\n').slice(-count).join('\n');
+        // تنقية واحدة مشتركة مع bg_term_done: ANSI ومحارف التحكم تُزال والأسرار تُحجب
+        const output = termjobs.scrubDoneTail(raw, 48 * 1024);
         return textResult(output || '(لا يوجد خرج بعد)');
       },
     },
     {
+      name: 'wait_for_background_task', access: 'read',
+      description: 'انتظر خروج مهمة خلفية معمّرة وأعد رمز خروجها وذيل سجلها لحظة انتهائها. استعمله بدل حلقة انتظار ثم list_background_tasks؛ عند المهلة يعود status=running فتستطيع تمديد الانتظار بنداء واحد.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          timeout_ms: { type: 'integer', minimum: 1000, maximum: 600000, description: 'أقصى انتظار (الافتراضي 120000)' },
+        },
+        required: ['id'],
+      },
+      handler: async (args) => {
+        const id = String((args && args.id) || '');
+        const result = await termjobs.waitForExit(id, args && args.timeout_ms);
+        if (result.status === 'unknown') return textResult('لا توجد مهمة حيّة بهذا المعرّف ولا سجل خروج محفوظ لها.', true);
+        if (result.status === 'running') {
+          return textResult('ما زالت المهمة ' + id + ' تعمل بعد ' + Math.round(result.waited_ms / 1000)
+            + 'ث. نادِ الأداة ثانيةً للاستمرار في الانتظار، أو get_background_output لقراءة سجلها الآن.');
+        }
+        return textResult(termjobs.exitSummaryText(result));
+      },
+    },
+    {
       name: 'list_background_tasks', access: 'read',
-      description: 'اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة لتجنب تشغيل خادم ثانٍ.',
+      description: 'اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة لتجنب تشغيل خادم ثانٍ. يعرض كذلك آخر المهام التي خرجت ورموز خروجها.',
       inputSchema: { type: 'object', properties: {} },
-      handler: async () => textResult(JSON.stringify({ terminal_jobs: termjobs.list(), legacy_processes: bgprocs.list() }, null, 2)),
+      handler: async () => textResult(JSON.stringify({
+        terminal_jobs: termjobs.list(), recent_exits: termjobs.recentExitList(), legacy_processes: bgprocs.list(),
+      }, null, 2)),
     },
     {
       name: 'stop_background_task', access: 'exec', neverAlways: true,

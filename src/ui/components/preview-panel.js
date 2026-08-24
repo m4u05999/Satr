@@ -502,10 +502,12 @@ class SatrPreviewPanel extends HTMLElement {
     const holdReasons = new Set(); // حجب مستقل للحوار وdrawer كي لا يفك أحدهما حجب الآخر
     let held = false;
     // معاينة متجاوبة: 0 = كامل عرض pvBox؛ رقم = عرض جهاز يُعرَض موسّطاً (تتفاعل media queries).
+    // mode يُبلَّغ للعملية الرئيسية مع المستطيل كي تشرح أداة browser_set_viewport سبب
+    // تضييق العرض بدل تجاوز الطلب بصمت (OBS-028). قائمة مغلقة تطابق التنقية في main.js.
     const DEVICES = [
-      { icon: '🖥️', label: 'كامل', w: 0 },
-      { icon: '📱', label: 'موبايل', w: 390 },
-      { icon: '📲', label: 'لوحي', w: 768 },
+      { icon: '🖥️', label: 'كامل', w: 0, mode: null },
+      { icon: '📱', label: 'موبايل', w: 390, mode: 'mobile' },
+      { icon: '📲', label: 'لوحي', w: 768, mode: 'tablet' },
     ];
     let deviceIdx = 0;
     try { deviceIdx = Math.max(0, Math.min(DEVICES.length - 1, parseInt(localStorage.getItem('satr_preview_device') || '0', 10) || 0)); } catch (e) {}
@@ -516,17 +518,19 @@ class SatrPreviewPanel extends HTMLElement {
       if (r.width < 2 || r.height < 2) return null;
       const dev = DEVICES[deviceIdx].w;
       let x = r.left, w = r.width;
-      if (dev && dev < r.width) { x = r.left + Math.round((r.width - dev) / 2); w = dev; } // توسيط بعرض الجهاز
-      return { x: Math.round(x), y: Math.round(r.top), w: Math.round(w), h: Math.round(r.height) };
+      let mode = null;
+      // الوضع يُبلَّغ فقط حين يضيّق العرض فعلاً — «كامل» أو لوحة أضيق من الجهاز لا تجاوز فيهما
+      if (dev && dev < r.width) { x = r.left + Math.round((r.width - dev) / 2); w = dev; mode = DEVICES[deviceIdx].mode; }
+      return { x: Math.round(x), y: Math.round(r.top), w: Math.round(w), h: Math.round(r.height), mode };
     };
     // يرسل المستطيل للعملية الرئيسية عند **تغيّره فقط** (لا IPC مكرّر كل إطار).
     const sendBounds = () => {
       const b = measureBounds();
       if (!b) return;
-      const key = b.x + ',' + b.y + ',' + b.w + ',' + b.h;
+      const key = b.x + ',' + b.y + ',' + b.w + ',' + b.h + ',' + (b.mode || '');
       if (key === lastBoundsKey) return;
       lastBoundsKey = key;
-      window.satr.previewBounds(b.x, b.y, b.w, b.h);
+      window.satr.previewBounds(b.x, b.y, b.w, b.h, b.mode);
     };
     // حارس المحاذاة الذاتي: العرض الأصلي (WebContentsView) يطفو فوق pvBox، وResizeObserver
     // يرصد تغيّر **الحجم** فقط. لكن اللوحة قد تنزاح **أفقياً بلا تغيّر حجم** (فتح/إغلاق سطح

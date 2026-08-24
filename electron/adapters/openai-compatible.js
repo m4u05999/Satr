@@ -35,6 +35,7 @@ const chats = require('../chats'); // ذاكرة على القرص (1.3): است
 const tools = require('../tools'); // أدوات الوكيل (2.1): read_file / list_files
 const skillCatalog = require('../skills'); // metadata فقط أولاً؛ المحتوى عبر load_skill عند الطلب
 const memory = require('../memory'); // ذاكرة مشروع شخصية مُقَرّة ضمن ميزانية
+const termjobs = require('../termjobs'); // مهام الخلفية المعمّرة — كتلة «انتهت بلا دور نشط»
 const contextBudget = require('../context'); // خلاصة repo map + usage تقديري موسوم estimate
 const envbrief = require('../envbrief');
 const usage = require('./usage'); // عقد input/output/cached/reasoning موحّد للمحوّلات
@@ -97,7 +98,9 @@ function make(config) {
     const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
     const skillPrompt = skillCatalog.catalogPrompt(skillContext);
     const memoryPrompt = memory.retrieve(cwd, prompt).text;
-    let contextPrompt = [skillPrompt, memoryPrompt].filter(Boolean).join('\n\n');
+    // مهام خلفية خرجت بلا دور نشط — كتلة سياق تُحقن مرة واحدة (termjobs.pendingNoticeText)
+    const backgroundPrompt = termjobs.pendingNoticeText(cwd);
+    let contextPrompt = [skillPrompt, memoryPrompt, backgroundPrompt].filter(Boolean).join('\n\n');
     // acceptEdits/bypassPermissions تمرّان الكتابة بلا سؤال (نفس دلالة أوضاع SDK)
     const autoAllowWrites = permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions';
 

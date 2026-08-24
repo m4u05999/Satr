@@ -22,6 +22,10 @@ let hostWin = null;   // النافذة المضيفة
 let sender = null;    // دالة بثّ الأحداث للواجهة (يمرّرها main.js)
 let lastBounds = null; // آخر مستطيل أبلغته الواجهة — يُطبَّق عند إنشاء عرض جديد
 let viewportOverride = null; // مقاس طلبه الوكيل للتحقق المتجاوب؛ يُطبّق داخل مساحة اللوحة
+// وضع محاكاة الأجهزة النشط في اللوحة (زر 📱/📲) — تبلّغه الواجهة مع المستطيل، ويُستعمل
+// حصراً لتفسير سبب تضييق browser_set_viewport. قائمة مغلقة تطابق DEVICES في المكوّن.
+const DEVICE_LABELS = Object.freeze({ mobile: 'موبايل', tablet: 'لوحي' });
+let lastDeviceMode = null;
 let externalTargetProvider = null; // نافذة التقاط المنتج المرئية أثناء تسجيل البرومو
 const wiredWebContents = new WeakSet();
 const resizeWired = new WeakSet(); // نوافذ رُبط لها حارس إعادة تطبيق المستطيل (مرآة RTL)
@@ -656,8 +660,11 @@ function applyBounds(b) {
   if (view && view.webContents && !view.webContents.isDestroyed()) view.setBounds(nativeBounds(effectiveBounds(b)));
 }
 
-function setBounds(b) {
+function setBounds(b, deviceMode) {
   lastBounds = b;
+  // OBS-028 + تغذية راجعة 2026-08-24: وضع محاكاة الأجهزة يضيّق المستطيل المبلَّغ فيتجاوز
+  // طلب browser_set_viewport **بصمت**. اللوحة تبلّغ الوضع النشط ليصير التجاوز مُعلَناً.
+  lastDeviceMode = DEVICE_LABELS[deviceMode] ? deviceMode : null;
   applyBounds(b);
   return { ok: true };
 }
@@ -1863,7 +1870,20 @@ async function setViewport(width, height) {
   await new Promise((resolve) => setTimeout(resolve, 80));
   try {
     const actual = await wc.executeJavaScript('({width:window.innerWidth,height:window.innerHeight,dpr:window.devicePixelRatio})', true);
-    return { ok: true, requested: { width: w, height: h }, actual };
+    const result = { ok: true, requested: { width: w, height: h }, actual };
+    // التجاوز صار مُعلَناً بدل أن يكون فشلاً صامتاً: عرض اللوحة سقفٌ للطلب دائماً،
+    // وسببه إمّا وضع محاكاة الأجهزة أو ضيق اللوحة نفسها — نسمّي السبب ونذكر العلاج.
+    const panelWidth = lastBounds && Number.isInteger(lastBounds.width) ? lastBounds.width : null;
+    if (actual && Number.isInteger(actual.width) && actual.width < w) {
+      result.clamped = true;
+      result.note = lastDeviceMode
+        ? 'وضع محاكاة الأجهزة «' + DEVICE_LABELS[lastDeviceMode] + '» مفعّل في لوحة المعاينة فحدّ العرض عند '
+          + actual.width + 'px رغم طلبك ' + w + 'px. اطلب من المستخدم النقر على زر الجهاز في رأس اللوحة '
+          + 'حتى يعود إلى «كامل»، أو احكم على هذا المقاس بدل مقاس سطح المكتب.'
+        : 'عرض لوحة المعاينة المتاح ' + (panelWidth || actual.width) + 'px فحُدّ الطلب (' + w + 'px) عنده. '
+          + 'اطلب من المستخدم توسيع اللوحة أو إغلاق سطح جانبي، أو احكم على هذا المقاس بدل مقاس سطح المكتب.';
+    }
+    return result;
   } catch { return { error: 'viewport_failed' }; }
 }
 

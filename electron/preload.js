@@ -192,7 +192,9 @@ contextBridge.exposeInMainWorld('satr', {
   previewOpenAgent: (url) => ipcRenderer.invoke('satr:previewOpenAgent', { url }),
   previewNavigateAgent: (url) => ipcRenderer.invoke('satr:previewNavigateAgent', { url }),
   previewAction: (action) => ipcRenderer.invoke('satr:previewAction', { action }),
-  previewBounds: (x, y, width, height) => ipcRenderer.invoke('satr:previewBounds', { x, y, width, height }),
+  // device اختياري ('mobile'|'tablet' حين تكون محاكاة الأجهزة مفعّلة) — الاستدعاءات
+  // بأربعة معاملات تبقى صالحة، ويُستعمل حصراً لتفسير تضييق browser_set_viewport.
+  previewBounds: (x, y, width, height, device) => ipcRenderer.invoke('satr:previewBounds', { x, y, width, height, device }),
   previewPick: () => ipcRenderer.invoke('satr:previewPick'),             // م-2: التحديد بالتأشير
   previewPickCancel: () => ipcRenderer.invoke('satr:previewPickCancel'),
   previewFrame: () => ipcRenderer.invoke('satr:previewFrame'),           // م-5: إطار للتسجيل

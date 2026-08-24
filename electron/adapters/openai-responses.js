@@ -13,6 +13,7 @@ const chats = require('../chats');
 const tools = require('../tools');
 const skillCatalog = require('../skills');
 const memory = require('../memory');
+const termjobs = require('../termjobs'); // مهام الخلفية المعمّرة — كتلة «انتهت بلا دور نشط»
 const contextBudget = require('../context');
 const envbrief = require('../envbrief');
 const usage = require('./usage');
@@ -160,6 +161,8 @@ function start(input, cwd, emit) {
   const skillContext = skillCatalog.resolveSelection(cwd, input.skills);
   const skillPrompt = skillCatalog.catalogPrompt(skillContext);
   const memoryPrompt = memory.retrieve(cwd, prompt).text;
+  // مهام خلفية خرجت بلا دور نشط — كتلة سياق تُحقن مرة واحدة (termjobs.pendingNoticeText)
+  const backgroundPrompt = termjobs.pendingNoticeText(cwd);
   const apiKey = (process.env.OPENAI_API_KEY || keys.get('OPENAI_API_KEY') || '').trim();
   const model = MODELS.has(input.model) ? input.model : DEFAULT_MODEL;
   const capabilities = MODEL_CAPABILITIES.get(model) || {};
@@ -363,7 +366,7 @@ function start(input, cwd, emit) {
       // فجوة مثبتة سدّها العصف الثلاثي (OBS-001، 2026-08-15): كان هذا المحوّل
       // الوحيد بلا envbrief إطلاقاً — فلا هوية «سطر» ولا تعليمة العربية تصلانه.
       // النمط نفسه في gemini.js:226 وopenai-compatible.js:274 حرفياً.
-      systemParts: [envbrief.build('adapter', model, { compact: true }), skillPrompt, memoryPrompt],
+      systemParts: [envbrief.build('adapter', model, { compact: true }), skillPrompt, memoryPrompt, backgroundPrompt],
       history,
       toolDefinitions: RESPONSE_TOOLS,
     });
