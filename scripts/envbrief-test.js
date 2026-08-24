@@ -46,7 +46,17 @@ for (const engine of ['sdk', 'codex', 'kimi-code']) {
   }
   assert(brief.includes('لا تمرّر مفتاح API') && brief.includes('تُؤكّد كل مرة'), 'موجز ' + engine + ' لا يثبت قاعدة الأسرار والفعل الحسّاس');
   assert(brief.includes('Task Ledger') && brief.includes('task_update'), 'موجز ' + engine + ' لا يثبت أثر مهمة الإعداد');
+  // صدق تسمية الوكلاء الفرعيين (OBS-012 بند ج): وكيل SDK سمّى وكلاءه الفرعيين
+  // «كودكس/كيمي/أوبس» فبدوا نماذجَ حقيقية للمستخدم. السطر يحمل الحظر **والبديل**
+  // معاً — فالحظر وحده يترك الطلب المشروع بلا مخرج.
+  assert(brief.includes('صدق تسمية الوكلاء الفرعيين'), 'موجز ' + engine + ' بلا قاعدة صدق التسمية');
+  assert(brief.includes('لا تسمّهم باسم محرّك آخر'), 'موجز ' + engine + ' لا يحظر انتحال اسم محرّك آخر');
+  assert(brief.includes('satr-diverge'), 'موجز ' + engine + ' يحظر بلا أن يعطي البديل الحقيقي');
 }
+
+// المحوّلات بلا وكلاء فرعيين — لا يُثقَل موجزها بقاعدة عن قدرة لا تملكها
+assert(!envbrief.build('adapter', 'test-model').includes('صدق تسمية الوكلاء الفرعيين'),
+  'سطر صدق التسمية تسرّب إلى موجز المحوّلات');
 
 for (const file of [
   'electron/agent.js', 'electron/codex.js', 'electron/kimi.js',
