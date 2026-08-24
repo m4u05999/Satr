@@ -11,7 +11,7 @@
 //   showTaskLedger(ledger) · clearTaskLedger()
 //   showCheckpoint(checkpoint) · showVerification(result) · clearCheckpoint()
 //   reset() «جلسة جديدة» · clearThread() «استئناف محوّل» · scrollToEnd(force)
-//   notifyTurnDone(isError) · toolDetail(input)
+//   notifyTurnDone(isError) · toolDetail(input) · lastAssistantText(maxChars)
 //
 // **قرار تنفيذ موثّق (ت-12)**: مجرى أحداث satr:event يبقى orchestration في القشرة
 // (يلمس sessionId/busy/currentBlock) ويستدعي methods كتلة الرد التي يعيدها
@@ -1641,6 +1641,21 @@ class SatrChat extends HTMLElement {
     systemNotify(body || '⏸ مطلوب قرارك للمتابعة', 'satr-attention');
   }
 
+  // OBS-033: ذيل آخر ما كتبه النموذج — تستهلكه القشرة لتمرير سياق إلى حوار الأسئلة،
+  // فالحوار الوسطي كان يغطّي حرفياً ما بُني عليه السؤال. الإجابة النهائية أولاً وإلا
+  // سجل التفكير، و**الذيل** لأنه الأقرب إلى السؤال. قراءة عرض فقط بلا حالة جديدة.
+  function lastAssistantText(maxChars) {
+    const cap = Number.isFinite(maxChars) && maxChars > 0 ? Math.floor(maxChars) : 600;
+    const blocks = thread.querySelectorAll('.msg.assistant');
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      for (const el of [blocks[i].querySelector('.answer-wrap .md'), blocks[i].querySelector('.commentary-md')]) {
+        const t = el ? (el.textContent || '').replace(/\s+/g, ' ').trim() : '';
+        if (t) return t.length > cap ? '…' + t.slice(-cap) : t;
+      }
+    }
+    return '';
+  }
+
   // «جلسة جديدة»: حالة فارغة + تصفير الكلفة التراكمية وشريطها
   function reset() {
     if (!searchBar.hidden) closeThreadSearch();
@@ -1696,6 +1711,7 @@ class SatrChat extends HTMLElement {
     this.scrollToEnd = scrollDown;
     this.notifyTurnDone = notifyTurnDone;
     this.notifyAttention = notifyAttention;
+    this.lastAssistantText = lastAssistantText;
     this.toolDetail = toolDetail;
   }
 }

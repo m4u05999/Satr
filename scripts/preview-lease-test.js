@@ -273,10 +273,35 @@ async function main() {
     const log = await preview.evaluate("document.getElementById('log').textContent");
     assert(log.ok && log.value === 'clicked', 'النقر لم يصل معالج الصفحة عبر العالم المعزول: ' + JSON.stringify(log));
 
+    // ---- OBS-018: القراءات أيضاً تصمد على الصفحة العدائية ----
+    // كانت اللقطة وread_page وwait_for ومستطيل لقطة العنصر ومدخلا بوابة السياسة تعمل في
+    // main world، فصفحة تخرّب querySelector[All] كانت تُعمي الوكيل (أو تُخفي حساسية فعل)
+    // بينما الفعل نفسه محصَّن. الفحوص التالية تفشل حتماً لو عادت أيٌّ منها إلى main world.
+    const hostileSnap = await preview.snapshot();
+    assert(hostileSnap.ok && hostileSnap.snap.count >= 1,
+      'اللقطة عمياء على صفحة تخرّب querySelectorAll — عادت إلى main world: ' + JSON.stringify(hostileSnap));
+    const hostileWait = await preview.waitFor({ selector: '#btn' }, 2000);
+    assert(hostileWait.found, 'wait_for لم يجد عنصراً موجوداً على الصفحة العدائية: ' + JSON.stringify(hostileWait));
+    const hostileRead = await preview.readPage();
+    assert(hostileRead.ok && JSON.stringify(hostileRead.page).includes('زر'),
+      'read_page لم يقرأ محتوى الصفحة العدائية: ' + JSON.stringify(hostileRead).slice(0, 300));
+    // لقطة العنصر: النافذة هنا مخفية فلا سطح مرسوم لـcapturePage (حدّ بيئي موثّق)، لكن
+    // المقصود إثبات أن **حلّ العنصر ومستطيله** تمّا رغم التخريب: عمى main world كان
+    // سيعطي not_found/not_visible لا shot_failed.
+    const hostileShot = await preview.screenshotElement('#btn');
+    assert(hostileShot.ok || (hostileShot.error !== 'not_found' && hostileShot.error !== 'not_visible'),
+      'مستطيل لقطة العنصر عمي على الصفحة العدائية: ' + JSON.stringify(hostileShot));
+    // مدخلا بوابة السياسة: قرار «حسّاس أم لا» يُبنى عليهما، فعماهما يعني إعفاءً خاطئاً
+    const hostileCtx = await preview.browserActionContext('browser_click', { ref: '#btn' });
+    assert(hostileCtx && hostileCtx.tag === 'button',
+      'سياق الفعل لم يحلّ العنصر على الصفحة العدائية — بوابة الحساسية تُبنى على قراءة عمياء: '
+      + JSON.stringify(hostileCtx));
+
     console.log('preview-lease: نجح — عقد اللقطة يحجب بعد إدخال المستخدم، البصمة تكشف الانجراف '
       + 'وتسمّي الطرفين، ref_removed يشخّص الاختفاء، pressKey يستهلك العقد وأفعال الوكيل لا، '
       + 'الإبطال عند التسليم والتأشير، satisfied الفوري ونافذة الرصد الكاملة، والعالم المعزول '
-      + 'يقاوم صفحة تخرّب main world، وفكّ التسليم العالق (إغلاق اللوحة، finally في مسارَي '
+      + 'يقاوم صفحة تخرّب main world فعلاً **وقراءةً** (لقطة/read_page/wait_for/لقطة عنصر/'
+      + 'سياق البوابة — OBS-018)، وفكّ التسليم العالق (إغلاق اللوحة، finally في مسارَي '
       + 'SDK، والفكّ الدفاعي قبل كل دور).');
   } finally {
     preview.destroy();

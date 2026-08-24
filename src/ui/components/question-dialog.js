@@ -5,6 +5,8 @@
 // (selections:[{questionIndex, optionIndexes, text?}]) عبر window.satr.answerQuestion،
 // فتبني العملية الرئيسية updatedInput من input الأصلي (أمان). closeAll() للإيقاف/الانتهاء.
 // بيانات النموذج (question/label/description/preview) تُعرض بـ textContent حصراً (لا حقن).
+// OBS-033: ask() يقبل أيضاً context اختيارياً (مقتطف من الخيط تمرّره القشرة) يُعرض أعلى
+// الأسئلة لأن الحوار الوسطي يغطّي ما بُني عليه السؤال؛ غيابه يُبقي السلوك كما كان.
 import { sheet } from '../lib/sheet.js';
 import { controlsSheet } from '../lib/panel.css.js';
 
@@ -24,7 +26,7 @@ const ownSheet = sheet(`
   h3 { color: var(--gold); font-size: 16px; margin-bottom: var(--space-1); }
   .q-list { overflow-y: auto; margin-top: var(--space-1h); }
   .q-item { margin-top: var(--space-4); }
-  .q-item:first-child { margin-top: var(--space-2); }
+  .q-item:first-child, .q-context + .q-item { margin-top: var(--space-2); }
   .q-header { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; }
   .q-text { color: var(--text); font-weight: 600; margin-bottom: var(--space-2); }
   .q-options { display: flex; flex-direction: column; gap: var(--space-1h); }
@@ -51,9 +53,29 @@ const ownSheet = sheet(`
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   .q-msg { color: var(--red); font-size: 12px; margin-top: var(--space-2h); }
+  /* OBS-033: الحوار الوسطي يغطّي حرفياً ما بُني عليه السؤال، فيُجيب المستخدم بالذاكرة
+     أو يلغي. تكرار ذيل آخر ما كتبه النموذج داخل الحوار نفسه لا يعتمد على تخطيط الشاشة
+     (بخلاف إزاحة الحوار)، والنص يُعرض بـ textContent كبقية بيانات النموذج. */
+  .q-context {
+    border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg);
+    padding: var(--space-2) var(--space-2h); margin-bottom: var(--space-2);
+  }
+  .q-context-head { font-size: 11.5px; color: var(--text-faint); margin-bottom: var(--space-1); }
+  .q-context-body {
+    font-size: 12.5px; color: var(--text-dim); max-height: 116px; overflow: auto;
+    unicode-bidi: plaintext; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
   .q-actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); flex-wrap: wrap; }
   .q-actions .submit { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600; }
-  .q-actions .submit:disabled { opacity: .5; cursor: not-allowed; }
+  /* OBS-030: المنع سليم منطقياً، والعيب في الإشارة — العتامة وحدها تُبقي الزر
+     الذهبي أبرز عناصر الحوار فيُنقر بلا أثر ويُقرأ التطبيق عالقاً. الحالة المعطّلة
+     تُقرأ من اللون لا من الشفافية: رمادي محايد بحدّ باهت، ومعه تلميح صريح. */
+  .q-actions .submit:disabled {
+    background: var(--surface-3); color: var(--text-faint);
+    border: 1px solid var(--border-dim); opacity: 1; cursor: not-allowed;
+  }
+  .q-hint { align-self: center; margin-inline-start: auto; color: var(--text-faint); font-size: 11.5px; }
+  .q-hint[hidden] { display: none; }
   .q-actions .cancel { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); }
   /* «أجب بنصّي» فعل مفيد لا رفض: أوضح من إلغاء وأخفت من الإرسال (OBS-035) */
   .q-actions .write { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
@@ -74,6 +96,7 @@ class SatrQuestionDialog extends HTMLElement {
           '<button class="submit">إرسال الإجابة</button>' +
           '<button class="write">✏️ أجب بنصّي</button>' +
           '<button class="cancel">إلغاء</button>' +
+          '<span class="q-hint" hidden>اختر إجابة أولاً</span>' +
         '</div>' +
       '</div>';
     this._list = r.querySelector('.q-list');
@@ -81,6 +104,7 @@ class SatrQuestionDialog extends HTMLElement {
     this._write = r.querySelector('.write');
     this._cancel = r.querySelector('.cancel');
     this._msg = r.querySelector('.q-msg');
+    this._hint = r.querySelector('.q-hint');
     this._queue = [];
     this._current = null;
     this._sending = false; // منع النقر المكرر أثناء انتظار الرد
@@ -106,6 +130,7 @@ class SatrQuestionDialog extends HTMLElement {
     this._current = null;
     this._sending = false;
     this._cancel.disabled = false;
+    if (this._hint) this._hint.hidden = true;
     this._list.textContent = '';
     this._setOpen(false);
   }
@@ -127,15 +152,28 @@ class SatrQuestionDialog extends HTMLElement {
   _showNext() {
     if (this._current || !this._queue.length) return;
     this._current = this._queue.shift();
-    this._render(this._current.questions);
+    this._render(this._current.questions, this._current.context);
     this._setOpen(true);
   }
 
   // بناء الأسئلة بـ DOM آمن (createElement/textContent) — لا innerHTML لبيانات النموذج
-  _render(questions) {
+  _render(questions, context) {
     this._list.textContent = '';
     this._msg.hidden = true; this._msg.textContent = '';
     this._groups = [];
+    // OBS-033: مقتطف السياق أولاً — القشرة تمرّره من الخيط (آخر ما كتبه النموذج)،
+    // وغيابه يُبقي الحوار كما كان تماماً.
+    const snippet = typeof context === 'string' ? context.trim() : '';
+    if (snippet) {
+      const box = document.createElement('div'); box.className = 'q-context';
+      const head = document.createElement('div'); head.className = 'q-context-head';
+      head.textContent = 'سياق السؤال — آخر ما كتبه النموذج';
+      const body = document.createElement('div'); body.className = 'q-context-body';
+      body.dir = 'auto';
+      body.textContent = snippet;
+      box.appendChild(head); box.appendChild(body);
+      this._list.appendChild(box);
+    }
     questions.forEach((q, qi) => {
       const item = document.createElement('div'); item.className = 'q-item';
       if (q.header) { const h = document.createElement('div'); h.className = 'q-header'; h.textContent = q.header; item.appendChild(h); }
@@ -206,6 +244,8 @@ class SatrQuestionDialog extends HTMLElement {
       ? !!(g.inputs[0] && g.inputs[0].value.trim())
       : g.inputs.some((i) => i.checked) || !!(g.textInput && g.textInput.value.trim()));
     this._submit.disabled = !answeredAll || !this._groups.length || this._sending;
+    // التلميح يشرح المنع لا مجرّد يعلنه؛ أثناء الإرسال الزر معطّل لسبب آخر فلا يظهر.
+    if (this._hint) this._hint.hidden = this._sending || !this._groups.length || answeredAll;
   }
 
   async _send() {

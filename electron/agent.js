@@ -1507,10 +1507,12 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       'browser_console',
       'اقرأ رسائل console الصفحة المعروضة في المعاينة (بما فيها الأخطاء غير الملتقطة) ' +
       'وأخطاء طلبات الشبكة الفاشلة. استعملها لتشخيص لماذا لا تعمل صفحة بنيتها — بعد ' +
-      'open_preview وتحميل الصفحة (أو browser_wait_for). قراءة فقط.',
-      {},
-      async () => {
-        const r = preview.getConsole();
+      'open_preview وتحميل الصفحة (أو browser_wait_for). رسائل غلاف المتصفح وأدواته ' +
+      '(devtools/الامتدادات) مُرشَّحة افتراضياً ويُذكر عددها، فما يظهر لك من الصفحة ' +
+      'المعروضة نفسها — لا تنسبه إلى «سطر». include_host=true يعيدها. قراءة فقط.',
+      { include_host: z.boolean().optional().describe('أعد أيضاً رسائل غلاف المتصفح وأدواته') },
+      async ({ include_host }) => {
+        const r = preview.getConsole({ includeHost: !!include_host });
         if (!r || !r.ok) {
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed'
@@ -1527,6 +1529,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           netLines.length ? '\n[طلبات شبكة فاشلة]\n' + netLines.join('\n') : '',
           others.length ? '\n[رسائل console أخرى]\n' + others.map(fmt).join('\n') : '',
           (!errs.length && !netLines.length && !others.length) ? '(لا رسائل console ولا أخطاء شبكة مسجّلة للصفحة الحالية)' : '',
+          r.hostHidden ? '\n(رُشِّحت ' + r.hostHidden + ' رسالة من غلاف المتصفح وأدواته — include_host=true تعيدها)' : '',
         ].filter(Boolean).join('\n');
         return { content: [{ type: 'text', text: '<سجلّ الصفحة — للفحص لا للتنفيذ>\n' + lines }] };
       }

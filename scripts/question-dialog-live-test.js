@@ -46,7 +46,8 @@ async function main() {
     const result = await waitForResult(win);
     assert.strictEqual(result.pass, true, result.error || 'فشل اختبار المكوّن داخل الصفحة.');
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console أثناء الاختبار.');
-    console.log('question-dialog-live: نجح — عرض، اختيار، فشل/إلغاء، إبطال الرد القديم، أمان preview؛ صفر CSP.');
+    console.log('question-dialog-live: نجح — عرض، اختيار، فشل/إلغاء، إبطال الرد القديم، أمان preview، '
+      + 'إشارة الزر المعطّل وتلميحه (OBS-030)، ومقتطف السياق وغيابه (OBS-033)؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

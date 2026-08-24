@@ -252,6 +252,18 @@ let netErrBuf = [];  // {url, error, type}
 let netReqBuf = [];  // {method, url, status, type, fromCache} — كل الطلبات (البند ب)
 const LOG_CAP = 300;
 const LEVELS = ['verbose', 'info', 'warning', 'error']; // ترميز Electron لـ console-message
+
+// OBS-029: وسم مصدر رسالة console — صفحة المستخدم (`page`) أم غلاف المتصفح/أدواته
+// (`host`). المعيار **يقيني** لا تخمين نصّي: مخطّط المصدر وحده. كل ما جاء عبر
+// http(s) يبقى `page` مهما كان مضيفه، لأن مورد CDN خارجي جزء طبيعي من صفحة المستخدم
+// وحجبه كان سيضيّع تشخيصاً حقيقياً — وهو ما تحذّر منه الملاحظة صراحةً. المصدر المجهول
+// يُعدّ `page` للسبب نفسه (الإظهار الخاطئ يكلّف سطراً، والحجب الخاطئ يكلّف عطلاً).
+const HOST_LOG_SCHEMES = ['devtools:', 'chrome-extension:', 'chrome:', 'chrome-error:', 'chrome-untrusted:', 'about:'];
+function logScope(source) {
+  const src = String(source || '').trim().toLowerCase();
+  if (!src) return 'page';
+  return HOST_LOG_SCHEMES.some((scheme) => src.startsWith(scheme)) ? 'host' : 'page';
+}
 function pushLog(arr, item) { arr.push(item); if (arr.length > LOG_CAP) arr.shift(); }
 function resetLogs() { consoleBuf = []; netErrBuf = []; netReqBuf = []; }
 
@@ -468,6 +480,7 @@ function wireEvents(wc) {
       line: Number(line) || 0,
       source: String(sourceId || '').slice(0, 300),
     };
+    entry.scope = logScope(entry.source); // OBS-029: صفحة المستخدم أم غلاف/أدوات المتصفح
     if (memory.hasSecret(entry.message) || memory.hasSecret(entry.source)) return;
     pushLog(consoleBuf, entry);
     emit({ type: 'console', levelLabel: LEVELS[entry.level] || 'log', message: entry.message, line: entry.line, source: entry.source });
@@ -774,7 +787,7 @@ async function startPick() {
   // (العطل الثاني المكتشف — كان وضع التحديد لا يبطلها).
   invalidateSnapshotRefs();
   try {
-    const pick = await view.webContents.executeJavaScript(PICK_SCRIPT, true);
+    const pick = await runIsolated(view.webContents, PICK_SCRIPT); // OBS-018
     return { ok: true, pick: pick || null }; // null = أُلغي (Escape/إلغاء)
   } catch (e) { return { error: 'pick_failed' }; }
 }
@@ -782,7 +795,8 @@ async function startPick() {
 // إلغاء وضع التحديد من الواجهة (زر «تحديد» ثانيةً أو إغلاق) — يحلّ الـ Promise بـ null
 async function cancelPick() {
   if (view && view.webContents && !view.webContents.isDestroyed()) {
-    try { await view.webContents.executeJavaScript('window.__satrPick && window.__satrPick.cancel && window.__satrPick.cancel()', true); } catch (e) {}
+    // العالم نفسه الذي نُصِّب فيه PICK_SCRIPT — وإلا لم يرَ __satrPick أصلاً (OBS-018)
+    try { await runIsolated(view.webContents, 'window.__satrPick && window.__satrPick.cancel && window.__satrPick.cancel()'); } catch (e) {}
   }
   return { ok: true };
 }
@@ -976,7 +990,9 @@ async function browserActionContext(name, input) {
   const inputError = browserInputError(name, input, wc) || leaseError();
   if (inputError) return { currentUrl: wc.getURL(), targetUrl: wc.getURL(), error: inputError };
   try {
-    return await wc.executeJavaScript('(' + ACTION_CONTEXT_FN + ')(' + JSON.stringify(String(name || '')) + ',' + JSON.stringify(input || {}) + ')', true);
+    // OBS-018: هاتان قراءتان يُبنى عليهما قرار أمني (isSubmit/crossOriginPost/targetUrl)،
+    // فتشغيلهما في main world كان يتيح لصفحة تخرّب closest/form.action إخفاء حساسية الفعل.
+    return await runIsolated(wc, '(' + ACTION_CONTEXT_FN + ')(' + JSON.stringify(String(name || '')) + ',' + JSON.stringify(input || {}) + ')');
   } catch { return { currentUrl: wc.getURL() }; }
 }
 async function browserTarget(name, input) {
@@ -988,7 +1004,7 @@ async function browserTarget(name, input) {
   if (bare !== 'browser_click' && bare !== 'browser_press_key') return wc.getURL();
   const locator = bare === 'browser_press_key' ? '__active__' : input && input.ref;
   try {
-    const target = await wc.executeJavaScript('(' + ACTION_TARGET_FN + ')(' + JSON.stringify(bare) + ',' + JSON.stringify(String(locator || '')) + ')', true);
+    const target = await runIsolated(wc, '(' + ACTION_TARGET_FN + ')(' + JSON.stringify(bare) + ',' + JSON.stringify(String(locator || '')) + ')'); // OBS-018
     return isHttpUrl(target) ? target : wc.getURL();
   } catch { return wc.getURL(); }
 }
@@ -1020,23 +1036,29 @@ async function readPage() {
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
   try {
-    const data = await wc.executeJavaScript(READ_SCRIPT, true);
+    const data = await runIsolated(wc, READ_SCRIPT); // OBS-018
     return { ok: true, page: data };
   } catch (e) { return { error: 'read_failed' }; }
 }
 
 // سجلّ الـ console وأخطاء الشبكة الملتقطة للصفحة الحالية (لا executeJavaScript — بثّ حيّ).
 // LEVELS يترجم ترميز Electron، والأخطاء تُبرَز أولاً في العرض ليركّز عليها الوكيل.
-function getConsole() {
+// OBS-029: الضجيج غير القادم من مشروع المستخدم يُرشَّح افتراضياً — لكن العدّ يبقى ظاهراً
+// و`includeHost` يعيده، فلا يختفي تشخيص حقيقي صامتاً.
+function getConsole(options) {
   if (handoffActive) return { error: 'handoff' };
   if (!currentWC()) return { error: 'closed' };
-  const logs = consoleBuf.slice(-150).map((l) => ({
+  const includeHost = !!(options && options.includeHost);
+  const raw = consoleBuf.slice(-150);
+  const kept = includeHost ? raw : raw.filter((l) => l.scope !== 'host');
+  const logs = kept.map((l) => ({
     level: LEVELS[l.level] || 'log',
     message: l.message,
     line: l.line,
     source: l.source,
+    scope: l.scope === 'host' ? 'host' : 'page',
   }));
-  return { ok: true, logs, netErrors: netErrBuf.slice(-80) };
+  return { ok: true, logs, netErrors: netErrBuf.slice(-80), hostHidden: raw.length - kept.length };
 }
 
 // سجلّ الشبكة الكامل للصفحة الحالية (البند ب): كل الطلبات المكتملة + الفاشلة. للوكيل
@@ -1081,7 +1103,7 @@ async function snapshot() {
   await waitReady(wc);
   const generation = nextSnapshotGeneration(wc);
   try {
-    const data = await wc.executeJavaScript('(' + SNAPSHOT_FN + ')(' + generation + ')', true);
+    const data = await runIsolated(wc, '(' + SNAPSHOT_FN + ')(' + generation + ')'); // OBS-018
     if (activeSnapshotGeneration === generation && activeSnapshotOwnerId === wc.id) {
       activeSnapshotNextIndex = Math.max(0, Number(data && data.count) || 0);
       activeSnapshotTextBytes = Buffer.byteLength(((data && data.elements) || []).join('\n'), 'utf8');
@@ -1119,7 +1141,7 @@ async function waitFor(cond, timeoutMs) {
   const arg = JSON.stringify({ text: c.text ? String(c.text).slice(0, 200) : '', selector: c.selector ? String(c.selector) : '' });
   while (Date.now() < deadline) {
     try {
-      const r = await wc.executeJavaScript('(' + WAIT_FN + ')(' + arg + ')', true);
+      const r = await runIsolated(wc, '(' + WAIT_FN + ')(' + arg + ')'); // OBS-018
       if (r && r.err) return { error: 'bad_condition' };
       if (r && r.found) return { ok: true, found: true };
     } catch (e) {}
@@ -1156,8 +1178,8 @@ async function screenshot(options) {
     let pageMetrics;
     if (options && options.includePageMetrics) {
       try {
-        pageMetrics = await wc.executeJavaScript(
-          '({content_height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), viewport_height: window.innerHeight})', true);
+        pageMetrics = await runIsolated(wc, // OBS-018
+          '({content_height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), viewport_height: window.innerHeight})');
       } catch { pageMetrics = undefined; }
     }
     const img = await wc.capturePage();
@@ -1188,7 +1210,7 @@ async function screenshotElement(locator, options) {
   if (inputError) return { error: inputError };
   await waitReady(wc);
   try {
-    const rect = await wc.executeJavaScript('(' + RECT_FN + ')(' + JSON.stringify(String(locator)) + ')', true);
+    const rect = await runIsolated(wc, '(' + RECT_FN + ')(' + JSON.stringify(String(locator)) + ')'); // OBS-018
     if (!rect || rect.err) return { error: (rect && rect.err) || 'rect_failed' };
     await new Promise((res) => setTimeout(res, 150)); // مهلة كي يكتمل التمرير قبل الالتقاط
     const img = await wc.capturePage({
@@ -1332,6 +1354,15 @@ async function flashLocator(wc, locator) {
 // يقرأ DOM سليماً ويرى سمات data-satr-ref الموسومة من main world، حتى حين تخرّب الصفحة
 // document.querySelector وEventTarget.prototype.addEventListener؛ وglobals العالم المعزول
 // محجوبة عن الصفحة. لذلك يجري حل الهدف ومقارنة البصمة والتنفيذ فيه في نداء واحد.
+//
+// OBS-018 (2026-08-25): وسِّع النطاق من الفعل وحده إلى **كل قراءات الوكيل** — لقطة
+// العناصر وبصمتها، وread_page، وwait_for، ومستطيل لقطة العنصر، وقياس طول الصفحة،
+// والتأشير (ومعه إلغاؤه لأن `__satrPick` عالميّ عالمِه)، ومدخلا بوابة السياسة
+// (ACTION_CONTEXT_FN/ACTION_TARGET_FN — قراءتان يُبنى عليهما قرار أمني).
+// **يبقى في main world عمداً**: `browser_evaluate` (غرضه سياق الصفحة نفسه فنقله يُبطله)،
+// ومسبار الأفعال (`PROBE_*` — مجموعة متسقة تُنصَّب وتُقرأ معاً، نقل جزئي يكسرها)،
+// و`SECRET_DONE_FN`، و`SCROLL_FN`/`FLASH_FN` (فعلان لا قراءة — أثر تخريبهما تعطيل
+// وميض أو تمرير، لا قرار خاطئ؛ مسجَّل ملاحظةً لا منفَّذاً في هذه الدفعة).
 const AGENT_WORLD_ID = 1013;
 
 function runIsolated(wc, expression) {

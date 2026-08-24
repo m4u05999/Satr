@@ -1031,7 +1031,9 @@ import { createUpdateToast } from './lib/update-toast.js';
     }
     // أسئلة الاختيار (AskUserQuestion) — تُعالج دائماً أيضاً (تنتظر رد المستخدم أثناء الدور)
     if (ev.type === 'question_request') {
-      questionEl.ask({ id: ev.id, questions: ev.questions });
+      // OBS-033: يمرَّر مقتطف السياق من الخيط لأن الحوار الوسطي يغطّي ما بُني عليه السؤال.
+      questionEl.ask({ id: ev.id, questions: ev.questions,
+        context: chatEl.lastAssistantText ? chatEl.lastAssistantText(600) : '' });
       if (chatEl.notifyAttention) chatEl.notifyAttention('⏸ سؤال ينتظر إجابتك');
       return;
     }

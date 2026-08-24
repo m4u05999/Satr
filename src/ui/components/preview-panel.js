@@ -235,6 +235,9 @@ const previewSheet = sheet(`
     font-size: 13px; text-align: center; padding: 20px;
   }
   .pv-hint .big { font-size: 26px; }
+  /* قاعدة الصنف display:flex تغلب سمة hidden وحدها — بلا هذا السطر يظهر
+     #pvHeldNote دائماً. */
+  .pv-hint[hidden] { display: none; }
   #pvErr {
     display: none; align-items: center; gap: var(--space-2); flex-wrap: wrap;
     padding: var(--space-1h) var(--space-3); font-size: 12px; color: var(--red);
@@ -389,6 +392,10 @@ const MARKUP = `
       <span>أدخل عنوان مشروعك أعلاه — أو شغّل خادم التطوير في الطرفية
       و«سطر» سيقترح فتحه هنا تلقائياً.</span>
     </div>
+    <div class="pv-hint" id="pvHeldNote" hidden>
+      <span class="big">👁️</span>
+      <span>المعاينة مخفية مؤقتاً أثناء الحوار — تعود فور ردّك.</span>
+    </div>
   </div>
   <div id="pvErr"><span id="pvErrText"></span><button id="pvRestartServer" type="button" hidden>🔁 شغّل خادم المشروع</button></div>
   <!-- لوحة Console/أخطاء للمستخدم (الخيار 2): تُملأ حيّاً من أحداث preview.js -->
@@ -434,6 +441,7 @@ class SatrPreviewPanel extends HTMLElement {
     root.appendChild(wrap);
     const $ = (id) => root.getElementById(id);
     const urlIn = $('pvUrl'), box = $('pvBox'), hint = $('pvHint'), err = $('pvErr');
+    const heldNote = $('pvHeldNote'); // OBS-032: لافتة «مخفية مؤقتاً» مكان العرض المنحّى
     const errText = $('pvErrText'), restartServerBtn = $('pvRestartServer');
     const conflictBadge = $('pvConflictBadge');
     const backBtn = $('pvBack'), fwdBtn = $('pvFwd'), reloadBtn = $('pvReload'), autoBtn = $('pvAuto');
@@ -723,6 +731,7 @@ class SatrPreviewPanel extends HTMLElement {
       if (toggleBtn) toggleBtn.classList.remove('active');
       started = false;
       hint.style.display = '';
+      heldNote.hidden = true; // لا عرض منحّى بعد الإغلاق ⇒ لا لافتة (OBS-032)
       err.classList.remove('show');
       // م-2: أنهِ أي تحديد جارٍ/شريط مفتوح (الدوال مهيّأة وقت الاستدعاء — تُعرَّف أدناه)
       if (picking) { window.satr.previewPickCancel(); endPickMode(); }
@@ -1460,6 +1469,10 @@ class SatrPreviewPanel extends HTMLElement {
     const setHeld = (reason, hold) => {
       if (hold) holdReasons.add(reason); else holdReasons.delete(reason);
       held = holdReasons.size > 0;
+      // OBS-032: الإخفاء مقصود لكنه كان صامتاً، فيقرأ المستخدم السوادَ عطلاً لا تنحّياً.
+      // سطر واحد مكان العرض يحوّل ما يبدو عطلاً إلى سلوك مفهوم. مقصور على سبب الحوار
+      // لأن نصّه يعد بالعودة فور الردّ، ولا يظهر قبل بدء عرض أصلاً (لافتة الترحيب مكانه).
+      heldNote.hidden = !(started && holdReasons.has('dialog'));
       if (!started) return;
       if (held) { window.satr.previewBounds(0, 0, 0, 0); lastBoundsKey = '0,0,0,0'; } // العرض بحجم صفر ⇒ مخفي، المربع يظهر
       else reportBounds(); // استعادة الموضع الفعلي بعد الرد (lastBoundsKey='0,0,0,0' يضمن إعادة الإرسال)

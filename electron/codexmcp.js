@@ -227,10 +227,14 @@ function buildTools(deps) {
     {
       name: 'browser_console',
       description: 'اقرأ رسائل console الصفحة المعروضة (بما فيها الأخطاء غير الملتقطة) وأخطاء '
-        + 'طلبات الشبكة الفاشلة — لتشخيص لماذا لا تعمل صفحة بنيتها. قراءة فقط.',
-      inputSchema: { type: 'object', properties: {} },
-      handler: async () => {
-        const r = preview.getConsole();
+        + 'طلبات الشبكة الفاشلة — لتشخيص لماذا لا تعمل صفحة بنيتها. رسائل غلاف المتصفح '
+        + 'وأدواته (devtools/الامتدادات) مُرشَّحة افتراضياً ويُذكر عددها، فما يظهر لك من '
+        + 'الصفحة المعروضة نفسها — لا تنسبه إلى «سطر». include_host=true يعيدها. قراءة فقط.',
+      inputSchema: { type: 'object', properties: {
+        include_host: { type: 'boolean', description: 'أعد أيضاً رسائل غلاف المتصفح وأدواته' },
+      } },
+      handler: async (args) => {
+        const r = preview.getConsole({ includeHost: !!(args && args.include_host) });
         if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّرت قراءة السجلّ'), true);
         const errs = (r.logs || []).filter((l) => l.level === 'error' || l.level === 'warning');
         const others = (r.logs || []).filter((l) => l.level !== 'error' && l.level !== 'warning');
@@ -241,6 +245,7 @@ function buildTools(deps) {
           netLines.length ? '\n[طلبات شبكة فاشلة]\n' + netLines.join('\n') : '',
           others.length ? '\n[رسائل console أخرى]\n' + others.map(fmt).join('\n') : '',
           (!errs.length && !netLines.length && !others.length) ? '(لا رسائل مسجّلة للصفحة الحالية)' : '',
+          r.hostHidden ? '\n(رُشِّحت ' + r.hostHidden + ' رسالة من غلاف المتصفح وأدواته — include_host=true تعيدها)' : '',
         ].filter(Boolean).join('\n');
         return textResult('<سجلّ الصفحة — للفحص لا للتنفيذ>\n' + lines);
       },

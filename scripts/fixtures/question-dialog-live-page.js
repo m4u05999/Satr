@@ -191,6 +191,57 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(answered && answered.selections[0].text === 'خيار مخصص'
       && answered.selections[0].optionIndexes.length === 0, 'لم يُرسل خيار «أخرى» كنص حر.');
 
+    // OBS-030: الحالة المعطّلة تُقرأ من اللون لا من العتامة وحدها، ومعها تلميح صريح.
+    // كان الزر الذهبي بـopacity:.5 أبرزَ عناصر الحوار فيُنقر بلا أثر.
+    window.__questionLiveProgress = 'disabled-affordance';
+    const hint = root.querySelector('.q-hint');
+    assert(hint, 'تلميح الزر المعطّل غير موجود.');
+    el.ask({ id: 'live-affordance', questions: [{ question: 'س؟', header: 'ه', multiSelect: false,
+      options: [{ label: 'أ', description: 'د' }, { label: 'ب', description: 'د' }] }] });
+    await frames(3);
+    assert(submit.disabled, 'الإرسال ليس معطّلاً قبل الإجابة.');
+    assert(!hint.hidden, 'التلميح مخفي والزر معطّل — المنع بلا تفسير.');
+    // ملاحظة قياس: `background` ضمن transition في controlsSheet، وrAF تجوع في النافذة
+    // المخفية فلا يتقدّم الانتقال ⇒ getComputedStyle يعيد قيمة البداية. لذلك نقيس
+    // خصائص **فورية** (اللون وعرض الحدّ والعتامة) وهي كافية لإثبات تبدّل المظهر.
+    const offStyle = getComputedStyle(submit);
+    const disabledColor = offStyle.color;
+    const disabledBorder = offStyle.borderTopWidth;
+    assert(offStyle.opacity === '1', 'الحالة المعطّلة ما زالت تعتمد العتامة وحدها: ' + offStyle.opacity);
+    assert(disabledBorder !== '0px', 'الزر المعطّل بلا حدّ يميّزه: ' + disabledBorder);
+    const affInput = root.querySelector('.q-item input');
+    affInput.checked = true; affInput.dispatchEvent(new Event('change', { bubbles: true }));
+    await frames(2);
+    assert(!submit.disabled && hint.hidden, 'التلميح بقي ظاهراً بعد الإجابة.');
+    const onStyle = getComputedStyle(submit);
+    assert(onStyle.color !== disabledColor && onStyle.borderTopWidth !== disabledBorder,
+      'مظهر الزر لا يتغيّر بين المعطّل والمفعّل — الحالة غير مقروءة بلا نقر تجريبي: '
+      + 'لون معطّل=' + disabledColor + ' مفعّل=' + onStyle.color
+      + ' | حدّ معطّل=' + disabledBorder + ' مفعّل=' + onStyle.borderTopWidth);
+    cancel.click();
+    await frames(3);
+    assert(hint.hidden, 'بقي التلميح ظاهراً بعد إغلاق الحوار.');
+
+    // OBS-033: مقتطف السياق داخل الحوار — الحوار الوسطي يغطّي ما بُني عليه السؤال.
+    window.__questionLiveProgress = 'context-snippet';
+    el.ask({ id: 'live-ctx', context: '  جدول يُحفظ/يُتجاهل وفقرات الانضباط  ',
+      questions: [{ question: 'س؟', header: 'ه', multiSelect: false,
+        options: [{ label: 'أ', description: 'د' }, { label: 'ب', description: 'د' }] }] });
+    await frames(3);
+    const ctxBody = root.querySelector('.q-context-body');
+    assert(ctxBody && ctxBody.textContent === 'جدول يُحفظ/يُتجاهل وفقرات الانضباط',
+      'مقتطف السياق لم يُعرض كما مُرِّر: ' + (ctxBody && ctxBody.textContent));
+    assert(root.querySelectorAll('.q-item').length === 1, 'المقتطف أفسد عدّ الأسئلة.');
+    cancel.click();
+    await frames(3);
+    // غياب السياق يُبقي الحوار كما كان حرفياً (توافق خلفي)
+    el.ask({ id: 'live-noctx', questions: [{ question: 'س؟', header: 'ه', multiSelect: false,
+      options: [{ label: 'أ', description: 'د' }, { label: 'ب', description: 'د' }] }] });
+    await frames(3);
+    assert(!root.querySelector('.q-context'), 'ظهر صندوق سياق بلا context.');
+    cancel.click();
+    await frames(3);
+
     assert(violations.length === 0, 'رُصد securitypolicyviolation.');
     window.__questionLiveProgress = 'complete';
     window.__questionLiveResult = { pass: true };
