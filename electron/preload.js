@@ -130,6 +130,10 @@ contextBridge.exposeInMainWorld('satr', {
   opsRoomArtifactDelete: (cwd, roomId, artifactId, confirmed) => ipcRenderer.invoke('satr:opsRoomArtifactDelete', {
     cwd, roomId, artifactId, confirmed,
   }),
+  // «راجع تغييراتي الآن»: مراجعة عمياء cross-engine لشجرة العمل — قراءة فقط، لا فهرس
+  // يُلمس ولا دمج. المخرَج ملخّص وحكم وبنود مخاطر، بلا الفرق الخام.
+  reviewChanges: (cwd, engine) => ipcRenderer.invoke('satr:reviewChanges', { cwd, engine }),
+  reviewChangesStop: () => ipcRenderer.invoke('satr:reviewChangesStop'),
   opsBrainstormStart: (cwd, brief, teamId) => ipcRenderer.invoke('satr:opsBrainstormStart', { cwd, brief, teamId }),
   opsBrainstormStop: (runId) => ipcRenderer.invoke('satr:opsBrainstormStop', { runId }),
   opsBrainstormLatest: (cwd) => ipcRenderer.invoke('satr:opsBrainstormLatest', { cwd }),

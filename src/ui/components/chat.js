@@ -818,6 +818,64 @@ class SatrChat extends HTMLElement {
     card.appendChild(foot); thread.appendChild(card); scrollDown();
   }
 
+  // بطاقة «راجع تغييراتي الآن»: رأي مراجع أعمى من محرك آخر على تغييرات شجرة العمل.
+  // تعيد استخدام أسلوب work-card نفسه (بلا ورقة ولا token جديد)، ولا تحمل الفرق
+  // الخام — الملخّص والحكم وبنود المخاطر فقط، كما يعيدها العقد من main.
+  const REVIEW_VERDICTS = { approve: 'لا اعتراض', changes_required: 'يلزم تعديل', reject: 'مرفوض' };
+  const REVIEW_SEVERITIES = { critical: 'حرج', high: 'مرتفع', medium: 'متوسط', low: 'منخفض' };
+  const REVIEW_ENGINE_LABELS = { sdk: 'Claude SDK', codex: 'Codex', 'kimi-code': 'Kimi Code' };
+  function addReviewCard(review) {
+    if (!review || typeof review !== 'object') return;
+    hideEmpty();
+    const card = document.createElement('article');
+    card.className = 'work-card ops-event-card';
+    const verdict = review.verdict && review.verdict.decision;
+    card.dataset.state = review.state === 'completed'
+      ? (verdict === 'approve' ? 'completed' : 'failed') : (review.state || '');
+    const head = document.createElement('div'); head.className = 'work-card-head';
+    const title = document.createElement('div'); title.className = 'work-card-title';
+    title.textContent = '🔍 مراجعة مستقلة لتغييراتك — ' + (REVIEW_ENGINE_LABELS[review.engine] || review.engine);
+    const state = document.createElement('div'); state.className = 'work-card-state';
+    state.textContent = review.state === 'completed'
+      ? (REVIEW_VERDICTS[verdict] || 'بلا حكم صريح')
+      : review.state === 'timed_out' ? 'انتهت المهلة'
+        : review.state === 'stopped' ? 'أوقفها المستخدم' : 'تعذّرت المراجعة';
+    const toggle = document.createElement('button'); toggle.className = 'work-card-toggle'; toggle.type = 'button';
+    toggle.textContent = 'التفاصيل'; toggle.setAttribute('aria-expanded', 'false');
+    head.appendChild(title); head.appendChild(state); head.appendChild(toggle); card.appendChild(head);
+
+    // أهم البنود أولاً — التقرير مرتَّب بالشدّة أصلاً من buildMergedReport
+    const summary = document.createElement('div'); summary.className = 'work-card-summary'; summary.dir = 'auto';
+    const items = Array.isArray(review.items) ? review.items : [];
+    summary.textContent = items.length
+      ? items.slice(0, 3).map((item) => '[' + (REVIEW_SEVERITIES[item.severity] || item.severity) + '] ' + item.text).join(' · ')
+      : (review.error || 'لا بنود مخاطر موسومة — اقرأ التفاصيل.');
+    card.appendChild(summary);
+
+    const body = document.createElement('div'); body.className = 'work-card-body'; body.hidden = true; body.dir = 'auto';
+    body.textContent = review.summary || review.error || '';
+    card.appendChild(body);
+    toggle.addEventListener('click', () => {
+      body.hidden = !body.hidden; toggle.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
+    });
+
+    const foot = document.createElement('div'); foot.className = 'work-card-foot';
+    const fileCount = Array.isArray(review.files) ? review.files.length : 0;
+    const values = [
+      ['الملفات', String(fileCount) + (review.truncated ? ' (قُصّ الفرق)' : ''), false],
+      ['البنود', String(items.length), false],
+      ['المدة', Math.round(Number(review.duration_ms) / 1000) + 'ث', false],
+    ];
+    if (review.skipped_count > 0) values.push(['لم تُراجَع', String(review.skipped_count) + ' ملفاً جديداً', false]);
+    for (const [label, value, technical] of values) {
+      const item = document.createElement('span'); item.textContent = label + ': ';
+      const content = document.createElement('bdi'); content.textContent = value;
+      if (technical) content.className = 'work-card-tech';
+      item.appendChild(content); foot.appendChild(item);
+    }
+    card.appendChild(foot); thread.appendChild(card); scrollDown();
+  }
+
   let taskLedgerEl = null;
   let taskLedgerSession = null;
   let taskLedgerCollapsed = true;
@@ -1620,6 +1678,7 @@ class SatrChat extends HTMLElement {
     this.addGenerationCard = addGenerationCard;
     this.addHistoryAssistant = addHistoryAssistant;
     this.showOpsEvent = showOpsEvent;
+    this.addReviewCard = addReviewCard;
     this.showTaskLedger = showTaskLedger;
     this.clearTaskLedger = clearTaskLedger;
     this.showCheckpoint = showCheckpoint;

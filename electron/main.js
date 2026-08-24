@@ -30,6 +30,7 @@ const opsroomindex = require('./opsroomindex');
 const opsartifacts = require('./opsartifacts');
 const opsBrainstormModule = require('./opsbrainstorm');
 const opsPlannerModule = require('./opsplanner');
+const reviewChangesModule = require('./reviewchanges'); // «راجع تغييراتي الآن» — مراجعة عمياء من المحادثة
 const agentsList = require('./agents');
 const agent = require('./agent');
 const orchestratorModule = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
@@ -222,6 +223,9 @@ const orchestrator = orchestratorModule.create({ resolveEngine: resolveOpsRoomRu
 const reviewer = reviewerModule.create({ resolveEngine: resolveOpsRoomRunner });
 const opsBrainstorm = opsBrainstormModule.create({ resolveEngine: resolveOpsBrainstormRunner });
 const opsPlanner = opsPlannerModule.create({ runner: sdkPlannerRunner });
+// «راجع تغييراتي الآن»: يستهلك حلّال المشغّلات نفسه، فيرث بوابة جاهزية Kimi ونماذج
+// غرفة العمليات بلا مسار ثانٍ يتباعد عنها.
+const reviewChanges = reviewChangesModule.create({ resolveEngine: resolveOpsRoomRunner });
 const inject = require('./inject');
 const chats = require('./chats');
 const agentTools = require('./tools'); // أدوات المحوّلات (2.1/2.2) — للتراجع عن تعديلاتها
@@ -3567,6 +3571,40 @@ function emitOpsBrainstorm(obj, references) {
   }
   emitToWindow(obj);
 }
+
+// ---------- «راجع تغييراتي الآن» (2026-08-25) ----------
+// المراجعة العمياء cross-engine مُخرَجة من سطح غرفة العمليات إلى فعل من المحادثة:
+// الوكيل الذي كتب الكود لا يراجعه بعينين نظيفتين، ومطوّر منفرد لا زميل يراجع له.
+// **قراءة فقط**: لا فهرس يُلمس (الجديد يُلتقط بـ--no-index)، ولا دمج ولا أثر محفوظ.
+// المخرَج المعاد إلى renderer قائمة حقول مغلقة **بلا الفرق الخام** ولا مسار مطلق.
+const REVIEW_CHANGES_ENGINES = new Set(['sdk', 'codex', 'kimi-code']);
+ipcMain.handle('satr:reviewChanges', async (event, payload) => {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const cwd = sanitizeMemoryCwd(p.cwd);
+  if (!cwd) return { ok: false, error: 'bad_input' };
+  // محرك المحادثة الحالي يحدّد **من يُستبعد** من المراجعة؛ المجهول يُعامل كغير محدد
+  const engine = REVIEW_CHANGES_ENGINES.has(p.engine) ? p.engine : '';
+  const result = await reviewChanges.start({ cwd, engine });
+  if (!result.ok) return { ok: false, error: result.error };
+  const review = result.review;
+  return {
+    ok: true,
+    review: {
+      engine: review.engine,
+      state: review.state,
+      verdict: review.verdict ? { decision: review.verdict.decision, source: review.verdict.source } : null,
+      summary: review.summary,
+      error: review.error,
+      items: review.items.map((item) => ({ severity: item.severity, text: item.text })),
+      files: review.files,
+      skipped_count: review.skipped.length,
+      truncated: review.truncated,
+      duration_ms: review.duration_ms,
+      cost: review.cost,
+    },
+  };
+});
+ipcMain.handle('satr:reviewChangesStop', () => reviewChanges.stop());
 
 ipcMain.handle('satr:opsBrainstormStart', (event, payload) => {
   const p = payload && typeof payload === 'object' ? payload : {};

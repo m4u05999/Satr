@@ -1611,6 +1611,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   const COMMANDS = [
     { cmd: '/جديدة',   en: '/new',    desc: 'بدء جلسة جديدة (مسح المحادثة الحالية)', run: () => newSession() },
     { cmd: '/جلسات',   en: '/sessions', desc: 'تصفح الجلسات المحفوظة واستئنافها',     run: () => openSessions() },
+    { cmd: '/راجع',    en: '/review', desc: 'رأي مستقل من محرك آخر على تغييراتك غير الملتزمة (قراءة فقط)', run: () => reviewMyChanges() },
     { cmd: '/ذاكرة',   en: '/memory', desc: 'مراجعة ذاكرة المشروع الشخصية والبحث والتعديل والحذف', run: () => openMemory() },
     { cmd: '/بحث',     en: '/research', desc: 'تشغيل 1–3 باحثين للقراءة فقط وإعادة خلاصة ومصادر', sdkOnly: true, run: () => openResearch() },
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
@@ -2119,6 +2120,42 @@ import { createUpdateToast } from './lib/update-toast.js';
 
   function openMemory() {
     surfaceCoordinator.openPanel('memory', document.activeElement, () => memoryEl.open($('cwd').value.trim()));
+  }
+
+  // «راجع تغييراتي الآن»: رأي مستقل من محرك آخر على تغييرات شجرة العمل غير الملتزمة.
+  // لا يفتح سطحاً ولا يغيّر شيئاً — النتيجة بطاقة في المحادثة نفسها. أخطاء العقد
+  // تُترجَم لرسائل تقول ما يلزم فعله، لا رمزاً خاماً.
+  const REVIEW_ERRORS = {
+    no_repo: 'هذا المجلد ليس مستودع git — المراجعة تحتاج فرقاً مقابل آخر التزام.',
+    no_head: 'المستودع بلا التزام واحد بعد، فلا شيء تُقارَن به التغييرات.',
+    no_changes: 'لا تغييرات غير ملتزمة لمراجعتها.',
+    diff_failed: 'تعذّرت قراءة فرق شجرة العمل.',
+    secret_detected: 'أُوقفت المراجعة: قد يحمل الفرق سراً، ولا يُرسل إلى محرك آخر.',
+    review_engine_unavailable: 'لا يوجد محرك آخر جاهز للمراجعة — رأيٌ من المحرك نفسه ليس رأياً مستقلاً.',
+    busy: 'هناك مراجعة جارية بالفعل.',
+    bad_input: 'افتح مجلد المشروع أولاً.',
+  };
+  let reviewInFlight = false;
+  async function reviewMyChanges() {
+    if (reviewInFlight) { addNotice(REVIEW_ERRORS.busy); return; }
+    const cwd = (sessionCwd || $('cwd').value).trim();
+    if (!cwd) { addNotice(REVIEW_ERRORS.bad_input); return; }
+    if (typeof window.satr.reviewChanges !== 'function') {
+      addNotice('نسخة «سطر» العاملة لا تملك المراجعة من المحادثة — حدّثها.'); return;
+    }
+    reviewInFlight = true;
+    addNotice('🔍 تُراجَع تغييراتك في محرك آخر داخل مجلد فارغ — قراءة فقط، بلا تعديل ولا دمج…');
+    let result = null;
+    // محرك المحادثة الحالي يُستبعد من المراجعة — يُقرأ من المنتقي لحظة الطلب
+    const current = $('engine').value;
+    try { result = await window.satr.reviewChanges(cwd, current); } catch (e) { result = null; }
+    reviewInFlight = false;
+    if (!result || !result.ok) {
+      const code = result && result.error;
+      addNotice(REVIEW_ERRORS[code] || ('تعذّرت المراجعة' + (code ? ' (' + code + ')' : '') + '.'));
+      return;
+    }
+    chatEl.addReviewCard(result.review);
   }
 
   function openResearch() {

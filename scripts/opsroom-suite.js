@@ -12,6 +12,7 @@ const deterministicSuite = [
   'test:executionteam',
   'test:reviewmerge',
   'test:review-panel',
+  'test:reviewchanges',
   'test:verify',
   'test:integration',
   'test:opsroom',
