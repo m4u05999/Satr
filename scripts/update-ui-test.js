@@ -28,6 +28,7 @@ function extractToast(source) {
 // عقود دفعة 2.16.2 (بلاغ مستخدم 2026-08-23): رابط ملاحظات الإصدار، وإشعار الانتباه
 // عند توقّف الدور، وخنق توست تقدّم TestSprite، ورفع النافذة من العملية الرئيسية.
 function assertNotificationContract() {
+  const index = fs.readFileSync(path.join(ROOT, 'src', 'index.html'), 'utf8');
   const main = fs.readFileSync(path.join(ROOT, 'electron', 'main.js'), 'utf8');
   const preload = fs.readFileSync(path.join(ROOT, 'electron', 'preload.js'), 'utf8');
   const appSource = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'app.js'), 'utf8');
@@ -49,6 +50,9 @@ function assertNotificationContract() {
   assert(toast.includes('satr.openReleaseNotes(pendingVersion)'), 'زر «افتح في المتصفح» الثانوي غير موصول.');
   assert(main.includes("ipcMain.handle('satr:releaseNotes'"), 'غاب معالج جلب ملاحظات الإصدار.');
   assert(toast.includes('satr.releaseNotes'), 'زر «ما الجديد» لا يفتح الحوار الداخلي.');
+  assert(toast.includes('function openNotesFor'), 'الحوار غير قابل للفتح من خارج بطاقة التحديث.');
+  assert(index.includes('id="appNotesBtn"') && appSource.includes('appNotesBtn'),
+    'غاب «ما الجديد» من ⚙ — من هو على أحدث نسخة لا يرى بطاقة تحديث فيتعذّر فتحه.');
   assert(toast.includes('dialogBody.textContent'), 'نص الملاحظات يجب أن يُكتب بـtextContent — محتوى خارجي.');
   assert(!/dialogBody.innerHTML/.test(toast), 'نص ملاحظات خارجي يُحقن كـHTML.');
 
@@ -92,7 +96,7 @@ function assertStaticContract() {
     'يجب أن تكون كل سكربتات fixture خارجية.');
   assert(!/<style\b/i.test(fixture), 'يحتوي fixture كتلة style مضمّنة.');
   assert(appSource.includes("import { createUpdateToast } from './lib/update-toast.js';")
-    && appSource.includes('const { showTransientNotice, handleUpdateEvent } = createUpdateToast({'),
+    && appSource.includes('} = createUpdateToast({') && appSource.includes('showTransientNotice, handleUpdateEvent'),
   'app.js لا يستخدم وحدة update-toast الإنتاجية.');
   assert(!appSource.includes('function showTransientNotice(') && !appSource.includes('function handleUpdateEvent('),
     'بقيت نسخة مغلقة من منطق التوست داخل app.js.');

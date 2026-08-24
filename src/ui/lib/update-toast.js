@@ -103,5 +103,9 @@ export function createUpdateToast(elements, satr) {
     toast.hidden = true;
   });
 
-  return { showTransientNotice, handleUpdateEvent };
+  // يُفتح أيضاً من ⚙ بلا انتظار تحديث — لا يستطيع من هو على الأحدث رؤية بطاقة تحديث
+  // أصلاً، فكان «ما الجديد» غير قابل للفتح ولا للاختبار حتى يصدر إصدار تالٍ.
+  function openNotesFor(version) { pendingVersion = version || pendingVersion; return openNotes(); }
+
+  return { showTransientNotice, handleUpdateEvent, openNotesFor };
 }

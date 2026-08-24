@@ -954,7 +954,7 @@ import { createUpdateToast } from './lib/update-toast.js';
   // ---------- التحديث التلقائي (المرحلة 17 + موافقة صريحة 2026-07-12) ----------
   // إشعار لا يقاطع بموافقة في كل خطوة: «متوفّر» ⇐ زرّ «نزّل الآن» ⇐ تقدّم ⇐ «جاهز»
   // ⇐ زرّ «أعد التشغيل الآن». لا تنزيل ولا تثبيت تلقائيان (المستخدم يملك كل خطوة).
-  const { showTransientNotice, handleUpdateEvent } = createUpdateToast({
+  const { showTransientNotice, handleUpdateEvent, openNotesFor } = createUpdateToast({
     toast: $('updateToast'),
     text: $('updateText'),
     download: $('updateDownload'),
@@ -967,6 +967,14 @@ import { createUpdateToast } from './lib/update-toast.js';
     notesExternal: $('notesExternal'),
     dismiss: $('updateDismiss'),
   }, window.satr);
+  // «ما الجديد؟» في ⚙ — يعمل بلا انتظار تحديث. من هو على أحدث نسخة لا يرى بطاقة
+  // تحديث أصلاً، فكان الزر غير قابل للفتح ولا للاختبار حتى يصدر إصدار تالٍ.
+  const appNotesBtn = $('appNotesBtn');
+  if (appNotesBtn) appNotesBtn.addEventListener('click', async () => {
+    let version = '';
+    try { const r = await window.satr.appVersion(); if (r && r.ok) version = r.version || ''; } catch (e) {}
+    openNotesFor(version);
+  });
 
   // إشعار اكتمال الدور: انتقل لمكوّن <satr-chat> (ت-12) — chatEl.notifyTurnDone(isError)
 

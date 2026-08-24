@@ -803,6 +803,9 @@
   #updateToast #updateDownload { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600; cursor: pointer; }
   #updateToast #updateRestart { background: var(--green); color: var(--on-green); border: none; font-weight: 600; cursor: pointer; }
   #updateToast #updateDismiss { background: none; border: none; color: var(--text-dim); cursor: pointer; }
+  #appVersionRow #appNotesBtn { background: none; border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; font-size: 12px; padding: 2px var(--space-2h); }
+  #appVersionRow #appNotesBtn:hover { border-color: var(--gold-border); color: var(--gold); }
+
   /* حوار «ما الجديد» داخل «سطر» — بديل فتح المتصفح الخارجي (يخالف قاعدة المشروع،
      ويصطدم بتحقق GitHub‏ 2FA لمن هو مسجّل دخول رغم أن المستودع عام). */
   #notesDialog { position: fixed; inset: 0; z-index: var(--z-modal); background: var(--scrim); display: flex; align-items: center; justify-content: center; padding: var(--space-5); }
