@@ -1173,7 +1173,11 @@ function create(deps) {
 
           // تسجيل القناة في سجل keep-alive (K2). إن رفض السجل (سقف ممتلئ بأدوار نشطة)
           // يكمل الدور كعملية لكل دور ويُدمَّر عند نهايته — سقوط رشيق بلا كسر.
-          keepAliveActive = await keepalive.register({
+          // `keepAlive:false` علم صريح أحادي الغرض يمرّره مسار العصف (OBS-012 بند ب):
+          // تشغيل لقطة واحدة لا جلسة متصلة، ولو سجّل لحجز أحد مقعدَي السقف أو طرد
+          // جلسة المستخدم الخاملة. **لا يُشتق من browserControl**: تلك علامة كشف
+          // الأدوات لا عمر العملية، وتحميلها معنى ثالثاً يخلط محورين مستقلين.
+          keepAliveActive = input.keepAlive === false ? false : await keepalive.register({
             sessionId, proc, rpc, shared, mcpHost,
             cwd: path.resolve(cwd), model: input.model || DEFAULT_MODEL,
             configOptions, promptCapabilities: promptCaps,

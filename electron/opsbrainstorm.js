@@ -1,6 +1,11 @@
 /**
- * عصف غرفة العمليات: رأيان مستقلان من SDK وCodex داخل cwd فارغ، بلا أدوات أو أذونات.
- * لا حلقة بين المحركين ولا وصول إلى المشروع؛ المستخدم هو صاحب القرار والجولة التالية.
+ * عصف غرفة العمليات: آراء مستقلة من محرّكات «سطر» داخل cwd فارغ، بلا أدوات أو أذونات.
+ * لا حلقة بين المحرّكات ولا وصول إلى المشروع؛ المستخدم هو صاحب القرار والجولة التالية.
+ *
+ * المحرّكات (‏OBS-012 بند ب، 2026-08-24): SDK وCodex **إلزاميان**، وKimi Code ينضم
+ * رأياً ثالثاً **حين يكون جاهزاً فقط**. الاختيارية مقصودة: جعل Kimi إلزامياً كان
+ * سيُسقط الميزة كلها عن كل من لم يثبّته أو لم يسجّل دخوله — سلبُ قدرة قائمة ثمناً
+ * لقدرة جديدة. غيابه يعيد سلوك اليوم حرفياً (رأيان)، وحضوره يضيف ثالثاً بلا سؤال.
  */
 
 'use strict';
@@ -14,7 +19,13 @@ const MAX_SUMMARY_CHARS = 8000;
 const DEFAULT_TIMEOUT_MS = 90000;
 const MAX_TIMEOUT_MS = 180000;
 const SAFE_RUN_ID = /^ops-brainstorm-[a-z0-9-]{6,80}$/;
-const ENGINES = Object.freeze(['sdk', 'codex']);
+// إلزاميان: غياب أيّهما يوقف الجولة بخطأ صريح (لا عصف برأي واحد — يفقد معناه).
+const REQUIRED_ENGINES = Object.freeze(['sdk', 'codex']);
+// اختياري: ينضم إن توفّر runner جاهز، ويُتخطّى بصمت إن لم يتوفّر.
+const OPTIONAL_ENGINES = Object.freeze(['kimi-code']);
+const ENGINES = Object.freeze([...REQUIRED_ENGINES, ...OPTIONAL_ENGINES]);
+// تسمية بشرية في البرومبت — «أنت مستشار sdk» كانت تُقرأ معرّفاً داخلياً لا دوراً.
+const ENGINE_LABELS = Object.freeze({ sdk: 'Claude', codex: 'Codex', 'kimi-code': 'Kimi' });
 const TERMINAL_STATES = new Set(['completed', 'partial', 'failed', 'timed_out', 'stopped']);
 const FORBIDDEN_EVENTS = new Set(['file_edit', 'model_term', 'verification_result', 'preview_open']);
 
@@ -29,7 +40,7 @@ function cleanText(value, max) {
 function promptFor(brief, engine) {
   return [
     '[عصف غرفة العمليات — رأي نصي مستقل بلا أدوات]',
-    'أنت مستشار ' + engine + ' مستقل. لا تطلب أدوات ولا ملفات ولا متصفحاً ولا طرفية.',
+    'أنت مستشار ' + (ENGINE_LABELS[engine] || engine) + ' مستقل. لا تطلب أدوات ولا ملفات ولا متصفحاً ولا طرفية.',
     'حلّل الموجز فقط كما هو؛ لا تفترض أنك ترى المشروع. قدّم رأياً منظماً: فرص، مخاطر، ترتيب أولويات، وأسئلة حسم.',
     'لا تحاول مخاطبة المستشار الآخر أو بدء جولة جديدة. المستخدم وحده يوحّد الرأيين ويقرر.',
     '',
@@ -177,17 +188,24 @@ function create(options) {
     if (!brief || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return { ok: false, error: 'bad_input' };
     if (activeRunId) return { ok: false, error: 'busy' };
     const runners = new Map();
-    for (const engine of ENGINES) {
+    for (const engine of REQUIRED_ENGINES) {
       const runner = resolveEngine(engine);
       if (!runner || typeof runner.start !== 'function') return { ok: false, error: 'brainstorm_engine_unavailable', engine };
       runners.set(engine, runner);
     }
+    // الاختياري لا يُفشل الجولة أبداً: غيابه (أو رميه) = رأيان كما كان قبل هذه الدفعة.
+    for (const engine of OPTIONAL_ENGINES) {
+      let runner = null;
+      try { runner = resolveEngine(engine); } catch { runner = null; }
+      if (runner && typeof runner.start === 'function') runners.set(engine, runner);
+    }
+    const engines = [...runners.keys()];
     const createdAt = now();
     const run = {
       id: 'ops-brainstorm-' + createdAt.toString(36) + '-' + (++sequence).toString(36), state: 'running', brief,
       created_at: createdAt, updated_at: createdAt, duration_ms: 0, _emit: emit, _stopRequested: false,
       _sourceCwd: path.resolve(cwd),
-      workers: ENGINES.map((engine, index) => ({
+      workers: engines.map((engine, index) => ({
         id: 'brainstorm-' + (index + 1), engine, state: 'running', summary: '', error: '',
         created_at: createdAt, updated_at: createdAt, duration_ms: 0,
         cost: { usd: 0, input_tokens: 0, output_tokens: 0, estimate: false }, permission_denied: 0,
@@ -227,4 +245,4 @@ function create(options) {
   return { start, stop, stopAll, latest };
 }
 
-module.exports = { create, SAFE_RUN_ID, MAX_BRIEF_CHARS };
+module.exports = { create, SAFE_RUN_ID, MAX_BRIEF_CHARS, ENGINES, REQUIRED_ENGINES, OPTIONAL_ENGINES, ENGINE_LABELS };

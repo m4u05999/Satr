@@ -85,11 +85,53 @@ async function main() {
     const brainstormDone = await waitFor(() => {
       const run = brainstorm.latest(project); return run && run.state === 'completed' ? run : null;
     }, 3000, 'brainstorm completion');
-    assert.strictEqual(brainstormDone.workers.length, 2);
-    assert.strictEqual(new Set(brainstormStats.map((item) => item.cwd)).size, 2);
+    // ثلاثة آراء حين تتوفّر المحرّكات الثلاثة (OBS-012 بند ب): Kimi ينضم ثالثاً.
+    assert.strictEqual(brainstormDone.workers.length, 3);
+    assert.deepStrictEqual(brainstormDone.workers.map((worker) => worker.engine), ['sdk', 'codex', 'kimi-code']);
+    assert.strictEqual(new Set(brainstormStats.map((item) => item.cwd)).size, 3, 'كل رأي في مجلد معزول مستقل');
     assert(brainstormStats.every((item) => item.input.permissionMode === 'plan' && item.input.browserControl === false));
     assert(brainstormStats.every((item) => !path.resolve(item.cwd).startsWith(path.resolve(project) + path.sep)));
+    // البرومبت يسمّي المستشار بتسمية بشرية لا بمعرّف داخلي، ولا يذكر محرّكاً آخر
+    const kimiPrompt = brainstormStats.find((item) => item.engine === 'kimi-code').input.prompt;
+    assert(kimiPrompt.includes('أنت مستشار Kimi مستقل'), 'برومبت Kimi بلا تسمية بشرية');
+    assert(!kimiPrompt.includes('Codex') && !kimiPrompt.includes('Claude'), 'برومبت مستشار يذكر محرّكاً آخر — يكسر العمى');
     assert.strictEqual(brainstorm.latest(path.join(temp, 'other')), null);
+
+    // Kimi اختياري: غيابه يعيد سلوك رأيين حرفياً ولا يُفشل الجولة (عدم تراجع)
+    const optionalStats = [];
+    const withoutKimi = brainstormModule.create({
+      isolationRoot: temp, timeoutMs: 1000,
+      resolveEngine: (engine) => (engine === 'kimi-code' ? null
+        : textRunner(engine, optionalStats, 'رأي مستقل من ' + engine, false)),
+    });
+    assert.strictEqual(withoutKimi.start({ brief: 'بلا كيمي' }, project, () => {}).ok, true,
+      'غياب المحرّك الاختياري أفشل الجولة');
+    const twoOnly = await waitFor(() => {
+      const run = withoutKimi.latest(project); return run && run.state === 'completed' ? run : null;
+    }, 3000, 'brainstorm without optional engine');
+    assert.deepStrictEqual(twoOnly.workers.map((worker) => worker.engine), ['sdk', 'codex']);
+
+    // رمي المحرّك الاختياري لا يُسقط الجولة أيضاً (fail-open للاختياري وحده)
+    const throwingStats = [];
+    const throwing = brainstormModule.create({
+      isolationRoot: temp, timeoutMs: 1000,
+      resolveEngine: (engine) => {
+        if (engine === 'kimi-code') throw new Error('kimi غير جاهز');
+        return textRunner(engine, throwingStats, 'رأي', false);
+      },
+    });
+    assert.strictEqual(throwing.start({ brief: 'كيمي يرمي' }, project, () => {}).ok, true,
+      'رمي المحرّك الاختياري أسقط الجولة');
+
+    // المحرّك الإلزامي يبقى إلزامياً: غيابه خطأ صريح لا تخطٍّ صامت
+    const missingRequired = brainstormModule.create({
+      isolationRoot: temp, timeoutMs: 1000,
+      resolveEngine: (engine) => (engine === 'codex' ? null : textRunner(engine, [], 'رأي', false)),
+    });
+    const missingResult = missingRequired.start({ brief: 'بلا كودكس' }, project, () => {});
+    assert.strictEqual(missingResult.ok, false);
+    assert.strictEqual(missingResult.error, 'brainstorm_engine_unavailable');
+    assert.strictEqual(missingResult.engine, 'codex');
 
     const blockedStats = [];
     const blocked = brainstormModule.create({ isolationRoot: temp, timeoutMs: 1000,
@@ -125,8 +167,9 @@ async function main() {
     assert(mainSource.includes("agent.start(input, cwd, emit, { mode: 'text-only' })"));
     assert(mainSource.includes("agent.start(input, cwd, emit, { mode: 'read-only-planner' })"));
 
-    console.log('✓ Claude and Codex brainstorm independently in empty tool-free workspaces');
+    console.log('✓ Claude, Codex and Kimi brainstorm independently in empty tool-free workspaces');
     console.log('✓ any brainstorm tool use fails closed without an agent-to-agent loop');
+    console.log('✓ Kimi is optional: missing or throwing keeps the two-opinion behaviour, required engines still hard-fail');
     console.log('✓ planner exposes only validated non-overlapping task ownership proposals');
     console.log('✓ planner blocks reads outside the project before accepting a proposal');
   } finally {

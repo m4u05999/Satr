@@ -492,7 +492,7 @@ const ERROR_LABELS = {
   not_available: 'هذا الانتقال غير متاح للحالة الحالية — أكمل الخطوة المقترحة في الغرفة أولاً.',
   not_found: 'لم يعد السجل أو الانتقال موجوداً — حدّث الغرفة ثم أعد المحاولة.',
   timeout_cap: 'بلغت المهلة سقف 10 دقائق ولا يمكن تمديدها — ضيّق المهمة ثم أعد التنفيذ.',
-  brainstorm_engine_unavailable: 'محركا العصف المستقلان غير متاحين — تحقق من توفر Claude وCodex وتسجيل الدخول ثم أعد المحاولة.',
+  brainstorm_engine_unavailable: 'محركا العصف الإلزاميان غير متاحين — تحقق من توفر Claude وCodex وتسجيل الدخول ثم أعد المحاولة. (‏Kimi Code رأي ثالث اختياري يُتخطّى بصمت إن لم يكن جاهزاً.)',
   planner_engine_unavailable: 'مخطط المهام عبر Claude غير متاح — تحقق من توفر Claude وتسجيل الدخول ثم أعد المحاولة.',
   review_skill_unavailable: 'مهارة المراجعة المضبوطة غير متاحة — افتح «إعداد التحقق» وأنشئ المهارة أو صحح اسمها، ثم أعد بدء الحلقة.',
   invalid_plan: 'لم يعد المخطط اقتراحاً بنيوياً صالحاً — وضّح المهمة وملكياتها ثم اطلب التقسيم من جديد.',
@@ -560,7 +560,7 @@ function visibleLifecycleLabel(value, fallback) {
 function actorLabel(value) {
   const actor = text(value);
   if (ACTOR_LABELS[actor]) return ACTOR_LABELS[actor];
-  if (actor === 'sdk' || actor === 'codex') return engineLabel(actor);
+  if (actor === 'sdk' || actor === 'codex' || actor === 'kimi-code') return engineLabel(actor);
   return actor;
 }
 
@@ -632,6 +632,7 @@ function usdLabel(value) {
 function engineLabel(value) {
   if (value === 'sdk') return 'Claude SDK';
   if (value === 'codex') return 'Codex';
+  if (value === 'kimi-code') return 'Kimi Code';
   if (value === 'system') return 'النظام';
   if (value === 'user') return 'المستخدم';
   return value || '';
@@ -2413,15 +2414,16 @@ class SatrOpsRoom extends HTMLElement {
   _renderBrainstorm() {
     const view = this._views.brainstorm; view.textContent = '';
     const setup = document.createElement('section'); setup.className = 'setup';
-    const title = document.createElement('strong'); title.textContent = 'عصف مستقل مع Claude وCodex';
+    const title = document.createElement('strong'); title.textContent = 'عصف مستقل بمحرّكات «سطر»';
     const note = document.createElement('div'); note.className = 'setup-note';
-    note.textContent = 'يستقبل المحركان الموجز فقط داخل مجلدين فارغين، بلا أدوات أو مشروع أو متصفح، ولا يتخاطبان تلقائياً.';
+    note.textContent = 'يستقبل كل محرّك الموجز فقط داخل مجلد فارغ خاص به، بلا أدوات أو مشروع أو متصفح، ولا يتخاطبون تلقائياً. '
+      + 'Claude وCodex دائماً، وينضم Kimi Code رأياً ثالثاً حين يكون مثبَّتاً ومسجَّل الدخول.';
     const input = document.createElement('textarea'); input.maxLength = 12000;
-    input.placeholder = 'اكتب الموجز أو القرار الذي تريد رأيين مستقلين حوله…'; input.setAttribute('aria-label', 'موجز العصف');
+    input.placeholder = 'اكتب الموجز أو القرار الذي تريد آراءً مستقلة حوله…'; input.setAttribute('aria-label', 'موجز العصف');
     input.value = this._brainstormDraft;
     const actions = document.createElement('div'); actions.className = 'setup-actions';
     const active = this._brainstorm && this._brainstorm.state === 'running';
-    const action = document.createElement('button'); action.type = 'button'; action.textContent = active ? 'أوقف العصف' : 'ابدأ رأيين مستقلين';
+    const action = document.createElement('button'); action.type = 'button'; action.textContent = active ? 'أوقف العصف' : 'ابدأ آراءً مستقلة';
     const actionHint = document.createElement('span'); actionHint.className = 'setup-note';
     const syncAction = () => {
       const hint = !this._cwd ? 'افتح مجلد مشروع أولاً لحفظ العصف ضمن سياقه.'

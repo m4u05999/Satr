@@ -137,7 +137,11 @@ function resolveOpsRoomModel(engine, env = process.env, codexDefaultModel = code
     ? { defaultModel: 'claude-opus-4-8', envName: 'SATR_OPSROOM_CLAUDE_MODEL', label: 'Claude' }
     : engine === 'codex'
       ? { defaultModel: codexDefaultModel, envName: 'SATR_OPSROOM_CODEX_MODEL', label: 'Codex' }
-      : null;
+      // Kimi رأي عصف اختياري (OBS-012 بند ب). لا يدخل قوائم `allowedKeys` لأي مستهلك
+      // آخر (منفّذ/مراجع)، فوجوده هنا لا يوسّع مصفوفة المراجعة ولا حاجز 3A.
+      : engine === kimi.ENGINE_ID
+        ? { defaultModel: kimi.DEFAULT_MODEL, envName: 'SATR_OPSROOM_KIMI_MODEL', label: 'Kimi Code' }
+        : null;
   if (!config) return { ok: false, error: 'ops_model_invalid', engine, envName: '' };
   const override = env && typeof env[config.envName] === 'string' ? env[config.envName] : '';
   const model = override || config.defaultModel;
@@ -173,6 +177,13 @@ function resolveOpsRoomRunner(engine) {
   if (engine === 'codex') {
     return { engine, model: resolved.model, start: (input, cwd, emit) => codex.start(input, cwd, emit) };
   }
+  // Kimi رأي عصف اختياري: بوابة جاهزية **رخيصة على القرص** (مسار الثنائي المخزَّن +
+  // قراءة اعتماد) بلا إطلاق أي عملية — بخلاف فحص جاهزية Codex الذي يكلّف ~1.4ث لأنه
+  // يُطلق app-server (‏OBS-043). غير الجاهز يعيد null فيتخطّاه العصف بصمت.
+  if (engine === kimi.ENGINE_ID) {
+    if (!kimi.resolveKimiBin() || !kimi.authStatus().ok) return null;
+    return { engine, model: resolved.model, start: (input, cwd, emit) => kimi.start(input, cwd, emit) };
+  }
   return null;
 }
 
@@ -196,6 +207,12 @@ function resolveOpsBrainstormRunner(engine) {
   if (!runner) return null;
   if (engine === 'sdk') {
     return { ...runner, start: (input, cwd, emit) => agent.start(input, cwd, emit, { mode: 'text-only' }) };
+  }
+  // رأي عصف Kimi لقطة واحدة لا جلسة متصلة: `keepAlive:false` يمنعه من حجز أحد
+  // مقعدَي K2 أو طرد جلسة المستخدم الخاملة. العلم يُحقن هنا لا في نواة العصف
+  // المحايدة عن المحرّك، ولا يُشتق من browserControl (محور مستقل — انظر kimi.js).
+  if (engine === kimi.ENGINE_ID) {
+    return { ...runner, start: (input, cwd, emit) => kimi.start({ ...input, keepAlive: false }, cwd, emit) };
   }
   return runner;
 }

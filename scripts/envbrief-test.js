@@ -58,6 +58,36 @@ for (const engine of ['sdk', 'codex', 'kimi-code']) {
 assert(!envbrief.build('adapter', 'test-model').includes('صدق تسمية الوكلاء الفرعيين'),
   'سطر صدق التسمية تسرّب إلى موجز المحوّلات');
 
+// العصف متعدد الآراء (OBS-012 بند أ): الوكيل أجاب المستخدم بوصف العجز بينما الطرق
+// الثلاث متاحة. السطر يعرضها لكل المحرّكات — satr-diverge مهارة محمولة، وغرفة
+// العمليات سطح تطبيق، وكلاهما لا يخصّ محركاً بعينه.
+for (const engine of ['sdk', 'codex', 'kimi-code', 'adapter']) {
+  const brief = envbrief.build(engine, 'test-model');
+  assert(brief.includes('العصف متعدد الآراء'), 'موجز ' + engine + ' بلا سطر العصف متعدد الآراء');
+  assert(brief.includes('satr-diverge'), 'موجز ' + engine + ' لا يذكر مهارة satr-diverge');
+  assert(brief.includes('عصف غرفة العمليات'), 'موجز ' + engine + ' لا يذكر عصف غرفة العمليات');
+  assert(brief.includes('بدل الاكتفاء بوصف ما لا تستطيع'),
+    'موجز ' + engine + ' لا يعالج سبب العطل: اختيار الوصف بدل الحلّ');
+}
+
+// Kimi رأي عصف اختياري: نواة العصف تفصل الإلزامي عن الاختياري، ولا يُسجَّل تشغيل
+// معزول في keep-alive فيحجز مقعداً من مقعدَي Kimi أو يطرد جلسة المستخدم.
+{
+  const brainstorm = require(path.join(root, 'electron', 'opsbrainstorm.js'));
+  assert.deepStrictEqual([...brainstorm.REQUIRED_ENGINES], ['sdk', 'codex'], 'المحرّكان الإلزاميان تغيّرا');
+  assert.deepStrictEqual([...brainstorm.OPTIONAL_ENGINES], ['kimi-code'], 'المحرّك الاختياري تغيّر');
+  const kimiSource = fs.readFileSync(path.join(root, 'electron', 'kimi.js'), 'utf8');
+  assert(kimiSource.includes("keepAliveActive = input.keepAlive === false ? false : await keepalive.register("),
+    'تشغيل العصف المعزول عاد يسجّل قناة keep-alive');
+  assert(!kimiSource.includes('browserControl === false ? false : await keepalive.register'),
+    'عمر القناة عاد يُشتق من browserControl — خلط كشف الأدوات بعمر العملية');
+  const mainSource = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
+  assert(mainSource.includes('if (!kimi.resolveKimiBin() || !kimi.authStatus().ok) return null;'),
+    'بوابة جاهزية Kimi للعصف مفقودة — غير الجاهز يجب أن يُتخطّى بصمت');
+  assert(mainSource.includes('kimi.start({ ...input, keepAlive: false }, cwd, emit)'),
+    'مشغّل عصف Kimi لا يمرّر keepAlive:false — يحجز مقعداً من مقعدَي K2');
+}
+
 for (const file of [
   'electron/agent.js', 'electron/codex.js', 'electron/kimi.js',
   'electron/adapters/openai-compatible.js', 'electron/adapters/gemini.js',
