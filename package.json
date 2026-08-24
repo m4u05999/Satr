@@ -34,6 +34,7 @@
     "test:executionteam": "node scripts/executionteam-test.js",
     "test:reviewmerge": "node scripts/reviewmerge-test.js",
     "test:reviewchanges": "node scripts/reviewchanges-test.js",
+    "test:reviewchanges-probe": "electron scripts/reviewchanges-live-probe.js",
     "test:review-panel": "node scripts/review-panel-test.js",
     "test:integration": "node scripts/integration-test.js",
     "test:opsroom": "node scripts/opsroom-test.js",
