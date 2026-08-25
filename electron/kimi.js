@@ -640,6 +640,12 @@ function create(deps) {
     } else {
       try {
         proc = spawnKimi(bin, ['acp'], { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: process.env, windowsHide: true }, spawnImpl);
+        // OBS-052: خطأ الأنبوب **غير متزامن** — بلا مستمع يصير uncaughtException يوقف
+        // التطبيق بحوار Electron أحمر (عطل OBS-053 في codex.js حرفياً). هنا `closed`
+        // في createRpc يمنع الكتابة بعد الإغلاق، فالنافذة الباقية هي EPIPE عند موت
+        // العملية فجأة أثناء كتابة جارية. يُسجَّل عند spawn لا لكل دور: القناة المستأجرة
+        // (keep-alive) تعيد استعمال العملية نفسها فتسجيلٌ متكرر يسرّب مستمعين.
+        proc.stdin.on('error', () => {});
       } catch (error) {
         if (mcpHost) await mcpHost.stop().catch(() => {});
         emit({ type: 'spawn_error', text: 'تعذّر تشغيل Kimi Code: ' + scrubError(error && error.message) });
@@ -1295,6 +1301,7 @@ function create(deps) {
     const bin = resolveBin(true);
     if (!bin) throw new Error('not_installed');
     const proc = spawnKimi(bin, ['acp'], { cwd: os.homedir(), stdio: ['pipe', 'pipe', 'pipe'], env: process.env, windowsHide: true }, spawnImpl);
+    proc.stdin.on('error', () => {}); // OBS-052 — انظر التعليل عند موضع spawn الأول
     let rpc;
     rpc = createRpc(proc, {
       onRequest(message, channel) { channel.respondError(message.id, -32601, 'غير متاح أثناء قراءة الجلسات'); },

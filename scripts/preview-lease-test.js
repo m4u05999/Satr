@@ -28,13 +28,21 @@ const PAGE = `<!doctype html><html><body style="margin:0">
 
 // صفحة عدائية: تخرّب main world عمداً (نفس تخريب المسبار الحاجز) — يجب أن يعمل الفعل
 // عبر العالم المعزول رغم ذلك. onclick سمة فلا يعطّلها تخريب addEventListener.
+// OBS-051: أُضيف تخريبان يستهدفان بدقّة ما يستعمله الفعلان الثانويان — `createElement`
+// (يبنيه FLASH_FN) و`scrollBy/scrollTo` (يستعملهما SCROLL_FN). بدونهما كان الفحص
+// يمرّ حتى لو بقيت الدالتان في main world، فلا يعضّ. الشجرة مشتركة بين العوالم بينما
+// globals وprototypes ليست كذلك — وعلى هذا الفرق يقوم الفحصان معاً.
 const HOSTILE = `<!doctype html><html><body>
   <button id="btn" onclick="document.getElementById('log').textContent='clicked'">زر</button>
   <div id="log">idle</div>
+  <div id="tall" style="height:4000px"></div>
   <script>
     document.querySelector = function(){ return null; };
     document.querySelectorAll = function(){ return []; };
     EventTarget.prototype.addEventListener = function(){};
+    document.createElement = function(){ throw new Error('sabotaged'); };
+    window.scrollBy = function(){};
+    window.scrollTo = function(){};
   </script>
 </body></html>`;
 
@@ -297,12 +305,45 @@ async function main() {
       'سياق الفعل لم يحلّ العنصر على الصفحة العدائية — بوابة الحساسية تُبنى على قراءة عمياء: '
       + JSON.stringify(hostileCtx));
 
+    // ---- OBS-051: الفعلان الثانويان (تمرير + وميض) في العالم المعزول ----
+    // الصفحة تعطّل window.scrollBy وdocument.createElement في main world. الفحص الأول
+    // يثبت أن التمرير **حدث فعلاً** (لا أن النداء نجح): نقرأ scrollY من العالم الرئيسي
+    // نفسه المخرَّب — فالمصدر هو حالة الصفحة الحقيقية لا قيمة يعيدها كودنا.
+    const beforeScroll = await preview.evaluate('String(window.scrollY)');
+    assert(beforeScroll.ok && beforeScroll.value === '0', 'الصفحة العدائية لم تبدأ من أعلى: ' + JSON.stringify(beforeScroll));
+    const flashedAt = Date.now();
+    const scrolled = await preview.scroll('down');
+    assert(scrolled.ok && scrolled.moved > 0,
+      'التمرير لم يتحرّك على صفحة تعطّل window.scrollBy — SCROLL_FN ما زالت في main world: ' + JSON.stringify(scrolled));
+    const afterScroll = await preview.evaluate('String(window.scrollY)');
+    assert(afterScroll.ok && Number(afterScroll.value) > 0,
+      'التمرير أبلغ حركةً لم تقع في الصفحة فعلاً: ' + JSON.stringify(afterScroll));
+
+    // الوميض: **الادعاء أنه ما زال يُرى داخل الصفحة**، لا أن النداء نجح. الدليل أن صندوقه
+    // موجود في شجرة الصفحة نفسها (نقرؤه من العالم الرئيسي المخرَّب عبر Element.prototype
+    // السليم) مقيساً وبلون الهوية وموضع fixed — أي عنصرٌ مرسوم لا نداءٌ صامت. وهو
+    // برهانُ أن عزل العوالم يفصل globals لا شجرة DOM.
+    // **حدّ بيئي معلَن**: النافذة هنا مخفية فلا يمكن فحص بكسلات مرسومة (نفس حدّ لقطة
+    // العنصر أعلاه) — دليل الشجرة والأنماط المحسوبة هو السقف الأمين هنا.
+    const flashProbe = await preview.evaluate(
+      "(function(){var b=document.documentElement.querySelector('[data-satr-agent-flash]');"
+      + "if(!b) return 'missing';"
+      + "var r=b.getBoundingClientRect(), s=getComputedStyle(b);"
+      + "return [b.isConnected, r.width>0&&r.height>0, s.borderTopColor, s.position].join('|');})()");
+    const flashElapsed = Date.now() - flashedAt;
+    assert(flashProbe.ok && flashProbe.value !== 'missing',
+      'صندوق الوميض غائب عن شجرة الصفحة بعد ' + flashElapsed + 'ms — FLASH_FN عُطِّلت بتخريب '
+      + 'document.createElement (ما زالت في main world) أو لم تعد تصل الشجرة المشتركة: ' + JSON.stringify(flashProbe));
+    assert.strictEqual(flashProbe.value, 'true|true|rgb(217, 164, 65)|fixed',
+      'الوميض وصل الشجرة لكنه غير مرئي فعلاً (غير موصول/بلا قياس/بلا لون الهوية/بلا fixed): ' + flashProbe.value);
+
     console.log('preview-lease: نجح — عقد اللقطة يحجب بعد إدخال المستخدم، البصمة تكشف الانجراف '
       + 'وتسمّي الطرفين، ref_removed يشخّص الاختفاء، pressKey يستهلك العقد وأفعال الوكيل لا، '
       + 'الإبطال عند التسليم والتأشير، satisfied الفوري ونافذة الرصد الكاملة، والعالم المعزول '
       + 'يقاوم صفحة تخرّب main world فعلاً **وقراءةً** (لقطة/read_page/wait_for/لقطة عنصر/'
-      + 'سياق البوابة — OBS-018)، وفكّ التسليم العالق (إغلاق اللوحة، finally في مسارَي '
-      + 'SDK، والفكّ الدفاعي قبل كل دور).');
+      + 'سياق البوابة — OBS-018)، **وفعلاً ثانوياً** (تمرير يقع فعلاً ووميضٌ يبلغ شجرة '
+      + 'الصفحة مقيساً وبلون الهوية — OBS-051)، وفكّ التسليم العالق (إغلاق اللوحة، '
+      + 'finally في مسارَي SDK، والفكّ الدفاعي قبل كل دور).');
   } finally {
     preview.destroy();
     if (!win.isDestroyed()) win.destroy();

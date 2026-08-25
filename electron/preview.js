@@ -1341,12 +1341,16 @@ function boundActionDelta(lines, alreadyTruncated) {
   return { delta, truncated };
 }
 
-// الوميض تجميلي لا أمني: يبقى في main world، **وفشله لا يوقف الفعل**. كان قبل هذه الدفعة
-// يعمل مدقّقاً مسبقاً للهدف (يعيد not_found/bad_selector فيقطع الفعل)، وذلك يجعل صفحةً
-// تخرّب document.querySelector قادرةً على تعطيل الوكيل. الحارس في العالم المعزول هو
-// السلطة الآن، وهو يعيد الرمزين نفسيهما فالمخرَج للنموذج لم يتغيّر.
+// الوميض تجميلي لا أمني، **وفشله لا يوقف الفعل**. كان قبل دفعة OBS-018 يعمل مدقّقاً
+// مسبقاً للهدف (يعيد not_found/bad_selector فيقطع الفعل)، وذلك يجعل صفحةً تخرّب
+// document.querySelector قادرةً على تعطيل الوكيل. الحارس في العالم المعزول هو السلطة
+// الآن، وهو يعيد الرمزين نفسيهما فالمخرَج للنموذج لم يتغيّر.
+// OBS-051 (2026-08-25): نُقل إلى العالم المعزول أيضاً. الوميض يبقى **مرئياً داخل الصفحة**
+// لأن العوالم تتقاسم DOM واحداً — المعزول يفصل globals وprototypes لا الشجرة؛ فصندوق
+// الوميض يُنشأ ويُلحق بـdocument.documentElement نفسه ويرسمه المحرك كما كان، بينما تعجز
+// صفحة تخرّب document.createElement عن تعطيله. يحرسه فحص حيّ في test:preview-lease.
 async function flashLocator(wc, locator) {
-  try { return await wc.executeJavaScript('(' + FLASH_FN + ')(' + JSON.stringify(String(locator)) + ')', true); }
+  try { return await runIsolated(wc, '(' + FLASH_FN + ')(' + JSON.stringify(String(locator)) + ')'); }
   catch { return { ok: false, reason: 'flash_failed' }; }
 }
 
@@ -1359,10 +1363,12 @@ async function flashLocator(wc, locator) {
 // العناصر وبصمتها، وread_page، وwait_for، ومستطيل لقطة العنصر، وقياس طول الصفحة،
 // والتأشير (ومعه إلغاؤه لأن `__satrPick` عالميّ عالمِه)، ومدخلا بوابة السياسة
 // (ACTION_CONTEXT_FN/ACTION_TARGET_FN — قراءتان يُبنى عليهما قرار أمني).
+// OBS-051 (2026-08-25): ضُمّ ما تبقّى من فئة الأفعال — `SCROLL_FN` و`FLASH_FN`. كانا
+// خارج نطاق OBS-018 لأن أثر تخريبهما تعطيلُ تمرير أو وميض لا قرارٌ خاطئ، فلم يكن
+// النقل عاجلاً؛ لكنه سطران ويُسقط آخر مسار يستطيع صفحةٌ عدائية تعطيله.
 // **يبقى في main world عمداً**: `browser_evaluate` (غرضه سياق الصفحة نفسه فنقله يُبطله)،
 // ومسبار الأفعال (`PROBE_*` — مجموعة متسقة تُنصَّب وتُقرأ معاً، نقل جزئي يكسرها)،
-// و`SECRET_DONE_FN`، و`SCROLL_FN`/`FLASH_FN` (فعلان لا قراءة — أثر تخريبهما تعطيل
-// وميض أو تمرير، لا قرار خاطئ؛ مسجَّل ملاحظةً لا منفَّذاً في هذه الدفعة).
+// و`SECRET_DONE_FN`.
 const AGENT_WORLD_ID = 1013;
 
 function runIsolated(wc, expression) {
@@ -1819,7 +1825,7 @@ async function scroll(direction, amount) {
   await flashLocator(wc, '__page__');
   await recordAgentCapture(wc, 'scroll', '__page__');
   try {
-    const r = await wc.executeJavaScript('(' + SCROLL_FN + ')(' + JSON.stringify(dir) + ',' + JSON.stringify(amt) + ')', true);
+    const r = await runIsolated(wc, '(' + SCROLL_FN + ')(' + JSON.stringify(dir) + ',' + JSON.stringify(amt) + ')'); // OBS-051
     return r && r.ok ? { ok: true, scrollY: r.scrollY, moved: r.moved, max: r.max } : { error: 'scroll_failed' };
   } catch (e) { return { error: 'scroll_failed' }; }
 }

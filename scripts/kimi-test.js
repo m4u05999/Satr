@@ -23,6 +23,20 @@ function waitFor(predicate, timeout) {
   });
 }
 
+// stdin مبنيّ على EventEmitter لا كائناً عارياً (OBS-052): أنبوب العملية الحقيقي يبثّ
+// أخطاءه حدثاً، و«الحدث بلا مستمع» هو بعينه العطل الذي نحرسه — فلو بقي الكائن عارياً
+// لكان الحارس يختبر خيالاً لا الآلية. `emit('error')` على EventEmitter بلا مستمع يرمي
+// كما تفعل الـstreams تماماً.
+class FakeStdin extends EventEmitter {
+  constructor(onWrite) {
+    super();
+    this.onWrite = onWrite;
+    this.ended = false;
+  }
+  write(line) { this.onWrite(line); return true; }
+  end() { this.ended = true; }
+}
+
 class FakeProcess extends EventEmitter {
   constructor(handler) {
     super();
@@ -30,15 +44,11 @@ class FakeProcess extends EventEmitter {
     this.stderr = new EventEmitter();
     this.killed = false;
     this.lines = [];
-    this.stdin = {
-      write: (line) => {
-        const message = JSON.parse(String(line).trim());
-        this.lines.push(message);
-        handler(message, this);
-        return true;
-      },
-      end: () => {},
-    };
+    this.stdin = new FakeStdin((line) => {
+      const message = JSON.parse(String(line).trim());
+      this.lines.push(message);
+      handler(message, this);
+    });
   }
 
   send(message) {
@@ -1005,6 +1015,87 @@ async function testToolLabelsAndAvailableCommands() {
   assert.strictEqual(kimi._internals.toolLabel('أداة غير معروفة'), 'أداة غير معروفة');
 }
 
+// OBS-052 — خطأ الأنبوب غير المتزامن لا يتسرّب uncaughtException (فئة عطل OBS-053 نفسها،
+// الذي أوقف التطبيق بحوار Electron أحمر من `codex.js`). الادعاء **سلوكي**: نبثّ حدث
+// 'error' على stdin من دورة أحداث تالية أثناء كتابة جارية — وهي بعينها نافذة EPIPE عند
+// موت العملية فجأة قبل أن يضبط `createRpc` علم `closed`. بلا مستمع تنشره EventEmitter
+// رمياً (كما تفعل الـstreams حرفياً) فيصير استثناءً غير ملتقط.
+// **حدّ مُعلَن**: هذا يثبت أن المستمع مسجَّل ويبتلع الحدث في موضعَي spawn معاً؛ لا يثبت
+// EPIPE من ثنائي Kimi حقيقي (يحتاج جلسة مسجَّلة الدخول). الآلية آلية Node لا Kimi.
+async function testStdinPipeErrorDoesNotEscape() {
+  const escaped = [];
+  const onUncaught = (error) => escaped.push(error);
+  const pipeError = () => Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+  process.on('uncaughtException', onUncaught);
+
+  // (أ) موضع spawn الأول — مسار الدور
+  let turnProc;
+  let spawnCount = 0;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      spawnCount++;
+      turnProc = new FakeProcess((message, proc) => {
+        // الأنبوب ينهار **أثناء** كتابة جارية: أسوأ لحظة، وقبل أي إغلاق منظّم.
+        setTimeout(() => proc.stdin.emit('error', pipeError()), 0);
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/new') proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_pipe_1' } });
+        else if (message.method === 'session/prompt') proc.send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+      });
+      return turnProc;
+    },
+  });
+
+  try {
+    const events1 = [];
+    await engine.start({
+      prompt: 'الدور الأول', sessionId: null, model: 'k3', permissionMode: 'default',
+      skills: [], images: [], browserControl: false,
+    }, root, (event) => events1.push(event));
+    await waitFor(() => events1.some((event) => event.type === 'result'));
+    assert.strictEqual(turnProc.stdin.listenerCount('error'), 1,
+      'موضع spawn الأول بلا مستمع خطأ على stdin — أي انهيار أنبوب يوقف التطبيق');
+
+    // القناة المستأجرة تعيد استعمال العملية نفسها: تسجيلٌ لكل دور كان يسرّب مستمعين.
+    const events2 = [];
+    await engine.start({
+      prompt: 'الدور الثاني', sessionId: 'kimi_pipe_1', model: 'k3', permissionMode: 'default',
+      skills: [], images: [], browserControl: false,
+    }, root, (event) => events2.push(event));
+    await waitFor(() => events2.some((event) => event.type === 'result'));
+    assert.strictEqual(spawnCount, 1, 'الدور الثاني لم يستأجر القناة — اختبار المستمع لا يقيس ما يدّعيه');
+    assert.strictEqual(turnProc.stdin.listenerCount('error'), 1,
+      'المستمع يُسجَّل لكل دور لا عند spawn — تسريب مستمعين على القناة المستأجرة');
+  } finally {
+    await engine.keepalive.killAll();
+  }
+
+  // (ب) موضع spawn الثاني — withProbe (سرد النماذج/الجلسات)
+  let probeProc;
+  const probeEngine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      probeProc = new FakeProcess((message, proc) => {
+        setTimeout(() => proc.stdin.emit('error', pipeError()), 0);
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/new') proc.send({ jsonrpc: '2.0', id: message.id, result: {
+          sessionId: 'kimi_pipe_2',
+          configOptions: [{ id: 'model', category: 'model', currentValue: 'kimi-code/k3', options: [{ value: 'kimi-code/k3', name: 'K3' }] }],
+        } });
+      });
+      return probeProc;
+    },
+  });
+  await probeEngine.listModels();
+  assert.strictEqual(probeProc.stdin.listenerCount('error'), 1,
+    'موضع spawn الثاني (withProbe) بلا مستمع خطأ على stdin');
+
+  await new Promise((resolve) => setTimeout(resolve, 150)); // خطأ الأنبوب غير متزامن
+  process.removeListener('uncaughtException', onUncaught);
+  assert.deepStrictEqual(escaped.map((error) => error && error.code), [],
+    'انهيار الأنبوب سرّب استثناءً غير ملتقط — نفس عطل OBS-053 في محرك Kimi');
+}
+
 async function testListModelsFromAcp() {
   let spawnCount = 0;
   const engine = kimi.create({
@@ -1305,6 +1396,7 @@ function testSecurityAndWiring() {
   await testThinkingStream();
   await testThinkingTruncation();
   await testThinkingConfigOption();
+  await testStdinPipeErrorDoesNotEscape();
   testKimiLoginCommandAndCwd();
   console.log('✓ Kimi Code ACP مسجّل كمحرك أصيل مستقل عن REST');
   console.log('✓ طلبات ACP العكسية تكمل حتى عند تطابق معرّفها مع معرّف session/prompt');
@@ -1331,6 +1423,7 @@ function testSecurityAndWiring() {
   console.log('✓ التفكير الحي من Kimi ACP يُبثّ كـ stream_text/commentary ويُدمج في رسالة assistant');
   console.log('✓ التفكير الطويل يُقص عند سقف MAX_TOOL_TEXT والأسرار المحجوبة لا تتسرّب إليه');
   console.log('✓ خيار التفكير المعلن في configOptions يُطبَّق عبر session/set_config_option دون لمس config.toml');
+  console.log('✓ OBS-052: انهيار الأنبوب في موضعَي spawn لا يسرّب استثناءً، والمستمع عند spawn لا لكل دور');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
