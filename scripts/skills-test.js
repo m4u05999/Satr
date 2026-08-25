@@ -86,6 +86,9 @@ async function assertSatrAccept(discoveryOptions) {
   // الوصف هو ما يقرّر متى تُحمَّل — يجب أن يحمل المُشغّل والحدّ معاً
   assert(skill.description.includes('صواب/فشل'), 'الوصف بلا معيار القبول');
   assert(skill.description.includes('لا تستعملها'), 'الوصف بلا حدّ الاستعمال');
+  // الترس الأوسط عديم الفائدة إن لم يذكره الوصف: هو ما يقرّر التحميل، وحدّ «دفعة من
+  // سطرين» كان سيصرف الوكيل عن التحميل في الحالة نفسها التي يخدمها الترس (OBS-055).
+  assert(skill.description.includes('فحص مصغّر'), 'الوصف بلا الترس الأوسط — لن يُحمَّل حيث يلزم');
 
   const selected = skills.resolveSelection(ROOT, ['satr-accept'], discoveryOptions);
   const loaded = skills.loadSkill(selected, 'satr-accept');
@@ -95,6 +98,12 @@ async function assertSatrAccept(discoveryOptions) {
   assert(loaded.instructions.includes('**هو ينقر، لا أنت.**'), 'سقطت قاعدة «هو ينقر لا أنت»');
   assert(loaded.instructions.includes('خطوة واحدة حاسمة'), 'سقطت قاعدة حسم التعارض');
   assert(loaded.instructions.includes('نظّف بعدها'));
+  // الترس الأوسط (OBS-055): شروطه الثلاثة هي ما يمنعه من الانفلات إلى بديل رخيص عن
+  // البروتوكول. سقوط الشرط «بلا بناء» أو تبعية «هو ينقر» يحوّله إلى إذنٍ بالاستنتاج.
+  assert(loaded.instructions.includes('## الترس الأوسط — فحص مصغّر'), 'سقط الترس الأوسط');
+  assert(loaded.instructions.includes('الادعاء المتبقي واحد'), 'الفحص المصغّر بلا شرط الادعاء المفرد');
+  assert(loaded.instructions.includes('بلا بناء'), 'الفحص المصغّر بلا شرط «نسخة عاملة بلا بناء»');
+  assert(loaded.instructions.includes('**هو ينقر لا أنت**'), 'الفحص المصغّر لا يعيد تثبيت قاعدة النقر');
   const resources = loaded.resources.map((item) => item.path);
   assert(resources.includes('example.md'), 'المثال الحيّ غير مُدرَج ضمن الموارد');
 
