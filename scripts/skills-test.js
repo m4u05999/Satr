@@ -68,6 +68,46 @@ async function write(root, relative, content) {
   await fsp.writeFile(file, content, 'utf8');
 }
 
+// satr-accept: بروتوكول القبول البشري. الحارس يمنع سقوطها من BUILTIN_SKILLS أو من
+// قائمتَي الحزمة (وحينها لا تصل المستخدمين بصمت)، ويثبت أن قواعدها الملزمة ما زالت
+// في النص — لأن حذف «هو ينقر لا أنت» أو حدود «متى لا تُستعمل» يحوّلها إلى طقس.
+async function assertSatrAccept(discoveryOptions) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  assert(manifest.build.files.includes('.agents/skills/satr-accept/**/*'),
+    'satr-accept خارج build.files — لن تصل الحزمة');
+  assert(manifest.build.asarUnpack.includes('.agents/skills/satr-accept/**/*'),
+    'satr-accept خارج asarUnpack — حصر الموارد يعتمد realpathSync');
+
+  const catalog = skills.discoverSkills(ROOT, discoveryOptions);
+  const skill = catalog.find((item) => item.name === 'satr-accept');
+  assert(skill, 'مهارة satr-accept المضمّنة غير مكتشفة');
+  assert.strictEqual(skill.source, 'project');
+  assert.strictEqual(skill.format, 'standard');
+  // الوصف هو ما يقرّر متى تُحمَّل — يجب أن يحمل المُشغّل والحدّ معاً
+  assert(skill.description.includes('صواب/فشل'), 'الوصف بلا معيار القبول');
+  assert(skill.description.includes('لا تستعملها'), 'الوصف بلا حدّ الاستعمال');
+
+  const selected = skills.resolveSelection(ROOT, ['satr-accept'], discoveryOptions);
+  const loaded = skills.loadSkill(selected, 'satr-accept');
+  assert.strictEqual(loaded.ok, true);
+  assert(loaded.instructions.includes('## قواعد ملزمة'));
+  assert(loaded.instructions.includes('## متى **لا** تُستعمل'));
+  assert(loaded.instructions.includes('**هو ينقر، لا أنت.**'), 'سقطت قاعدة «هو ينقر لا أنت»');
+  assert(loaded.instructions.includes('خطوة واحدة حاسمة'), 'سقطت قاعدة حسم التعارض');
+  assert(loaded.instructions.includes('نظّف بعدها'));
+  const resources = loaded.resources.map((item) => item.path);
+  assert(resources.includes('example.md'), 'المثال الحيّ غير مُدرَج ضمن الموارد');
+
+  const example = skills.readResource(selected, 'satr-accept', 'example.md');
+  assert.strictEqual(example.ok, true);
+  assert(example.content.includes('ERR_STREAM_WRITE_AFTER_END'), 'المثال بلا العطل المكتشَف');
+  assert(example.content.includes('أخطاء ارتكبتُها'), 'المثال يعرض النتائج بلا أخطاء المنفّذ');
+
+  const toolLoaded = await tools.run('load_skill', ROOT, { name: 'satr-accept' }, { skillContext: selected });
+  assert.strictEqual(toolLoaded.ok, true);
+  assert(toolLoaded.content.includes('## قواعد ملزمة'));
+}
+
 async function assertSatrDiverge(discoveryOptions) {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert(manifest.build.files.includes('.agents/skills/satr-diverge/**/*'));
@@ -206,6 +246,8 @@ async function main() {
     console.log('✓ progressive disclosure and resource boundaries');
     console.log('✓ portable tools and Codex skill inputs');
     await assertSatrDiverge(discoveryOptions);
+    await assertSatrAccept(discoveryOptions);
+    console.log('✓ satr-accept: مضمّنة ومحزومة، وقواعدها الملزمة وحدودها ومثالها الحيّ في النص');
     if (process.argv.includes('--live-codex')) await runLiveProbe('codex', project);
     if (process.argv.includes('--live-sdk')) await runLiveProbe('sdk', project);
   } finally {
