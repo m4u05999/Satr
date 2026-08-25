@@ -333,6 +333,7 @@ function sanitizeMcpError(raw) {
 // تعرض الإشعارات، وهذه اللوحة تحتاجها. تُغلق العملية دائماً في finally.
 function openTransient(bin, cwd, onNotification) {
   const proc = spawn(bin, ['app-server'], { cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: process.env });
+  proc.stdin.on('error', () => {}); // خطأ الأنبوب غير متزامن — بلا مستمع يصير uncaughtException
   const replies = new Map();
   let reqId = 0;
   let buf = '';
@@ -958,6 +959,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   const eff = CODEX_EFFORT[effort];
   if (eff) appServerArgs.push('-c', 'model_reasoning_effort="' + eff + '"');
   const proc = spawn(bin, appServerArgs, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: spawnEnv });
+  // خطأ الأنبوب **غير متزامن**: الكتابة بعد `stdin.end()` تُصدر ERR_STREAM_WRITE_AFTER_END
+  // عبر errorOrDestroy لا رمياً، فلا يمسكها try/catch حول write ⇒ uncaughtException يوقف
+  // التطبيق بحوار Electron أحمر. مستمع واحد يبتلعها (ومعها EPIPE عند موت العملية).
+  proc.stdin.on('error', () => {});
   const startedAt = Date.now();
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
 
@@ -1000,12 +1005,23 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     if (set) set.add(toolName);
   }
 
+  // الكتابة على قناة مغلقة لا تُحاول أصلاً: `writableEnded` يعني أن cleanup أنهى stdin
+  // (نهاية دور طبيعية) فأي رسالة بعده بلا مستقبِل.
+  function canWrite() {
+    const stdin = proc.stdin;
+    return !!stdin && stdin.writable && !stdin.writableEnded && !stdin.destroyed;
+  }
   function writeMsg(obj) {
+    if (!canWrite()) return;
     try { proc.stdin.write(JSON.stringify(obj) + '\n'); } catch { /* أُغلق */ }
   }
   function request(method, params, timeoutMs) {
     const id = ++reqId;
     return new Promise((resolve, reject) => {
+      // قناة مغلقة ⇒ رفض فوري لا انتظار: بعد cleanup تُسقَط الرسالة صامتاً، فوعدٌ بلا
+      // مهلة كان سيعلّق للأبد ووعدٌ بمهلة كان سينتظرها بلا جدوى. يقع الرفض في مسارات
+      // catch القائمة (stop/cleanup) بلا تغيير سلوك.
+      if (!canWrite()) { reject(new Error('rpc_closed:' + method)); return; }
       // إصلاح الموثوقية (2026-07-30): وعد RPC عارٍ بلا مهلة كان يعلّق الدور صامتاً
       // إلى الأبد حين تكون عملية app-server حيّة لكن غير مستجيبة («يستعد» بلا نهاية).
       // مهلة اختيارية: عند تجاوزها يُحذف الإدخال ويُرفض الوعد فيقع في مسارات الفشل
@@ -1675,11 +1691,21 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     // نُخفي ضوضاء تحديث التوكن؛ نمرّر الباقي كـ stderr
     if (!/refresh|models_manager|token/i.test(s)) emit({ type: 'stderr', text: s });
   });
+  // موت العملية يحسم كل طلب معلّق: بلا هذا يبقى وعد بلا مهلة معلّقاً **للأبد** (وذو
+  // مهلة ينتظرها بلا جدوى). `openTransient` كان يفعلها منذ البداية والمسار الرئيسي لا —
+  // كشفَ الفجوةَ مراجعُ Codex الأعمى لإصلاح OBS-053، وهي أعمّ من الكتابة بعد الإنهاء
+  // لأنها تغطي الموت المفاجئ وEPIPE أثناء طلب جارٍ.
+  function rejectPending(reason) {
+    for (const [, p] of replies) { try { p.reject(new Error(reason)); } catch {} }
+    replies.clear();
+  }
   proc.on('error', (e) => {
     emit({ type: 'spawn_error', text: 'تعذّر تشغيل Codex: ' + String((e && e.message) || e) });
+    rejectPending('codex_spawn_failed');
     cleanup(1);
   });
   proc.on('exit', (code) => {
+    rejectPending('codex_rpc_closed');
     if (testspriteRequested) testsprite.scrubConfig(cwd);
     if (!finished && !stopping) emit({ type: 'spawn_error', text: 'أُنهيت عملية Codex (كود ' + code + ')' });
     if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }

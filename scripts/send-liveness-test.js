@@ -117,6 +117,42 @@ async function scenarioDeadChannelStop(root) {
   console.log('✓ الإيقاف على قناة ميتة يُحسم خلال ' + stopElapsed + 'ms بدل حبس قفل الإرسال أبدياً');
 }
 
+// إيقاف **بعد** أن يكون cleanup أنهى stdin — وهو ما يفعله reviewer.js حرفياً: done()
+// يستدعي stopHandle دفاعياً بعد نهاية دور المراجعة. كانت الكتابة على أنبوب منتهٍ تُصدر
+// ERR_STREAM_WRITE_AFTER_END **غير متزامن** (لا يمسكه try/catch حول write) فيصير
+// uncaughtException يوقف التطبيق بحوار Electron أحمر — رصده المالك حياً في 2.16.9.
+async function scenarioStopAfterCleanup(root) {
+  const project = path.join(root, 'after-end');
+  await fs.mkdir(project);
+  await fs.writeFile(path.join(project, 'app-server'), deadAfterTurnFixture(), 'utf8');
+  process.env.SATR_CODEX_BOOT_TIMEOUT_MS = '5000';
+  process.env.SATR_CODEX_INTERRUPT_TIMEOUT_MS = '400';
+  const codex = freshCodex();
+  const events = [];
+  const handle = await codex.start({
+    prompt: 'liveness-after-end', images: [], sessionId: null, model: 'gpt-5.6-sol',
+    permissionMode: 'default', skills: [], extraDirs: [], browserControl: false,
+  }, project, (obj) => events.push(obj));
+  await waitFor(() => events.find((e) => e.type === 'system' && e.subtype === 'init'), 8000, 'thread init');
+  const escaped = [];
+  const onUncaught = (err) => escaped.push(err);
+  process.on('uncaughtException', onUncaught);
+  try {
+    await handle.stop();               // الإيقاف الأول: cleanup يُنهي stdin
+    const secondStarted = Date.now();
+    await handle.stop();               // الثاني: نظير stopHandle الدفاعي في reviewer.js
+    const secondElapsed = Date.now() - secondStarted;
+    await new Promise((resolve) => setTimeout(resolve, 250)); // خطأ الأنبوب غير متزامن
+    assert.deepStrictEqual(escaped.map((e) => e && e.code), [],
+      'إيقاف بعد إنهاء stdin سرّب استثناءً غير ملتقط');
+    assert.ok(secondElapsed < 300,
+      'الإيقاف الثاني انتظر مهلة المقاطعة على قناة مغلقة بدل الرفض الفوري: ' + secondElapsed + 'ms');
+  } finally {
+    process.removeListener('uncaughtException', onUncaught);
+  }
+  console.log('✓ الإيقاف بعد إنهاء stdin بلا استثناء غير ملتقط ويُحسم فوراً (لا انتظار مهلة)');
+}
+
 function scenarioMainGuards() {
   const main = fssync.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
   assert.ok(main.includes('STOP_ALL_SEND_TIMEOUT_MS'), 'main defines stopAll send cap');
@@ -130,6 +166,19 @@ function scenarioMainGuards() {
   assert.ok(/raw >= 100 && raw <= 600000/.test(codexSrc), 'reliabilityTimeout bounds env override');
   assert.ok(codexSrc.includes("request('turn/interrupt', { threadId, turnId }, INTERRUPT_TIMEOUT_MS)"),
     'stop interrupt is bounded');
+  // الطبقات الثلاث لحادثة ERR_STREAM_WRITE_AFTER_END — أي واحدة تسقط تعيد العطل
+  assert.ok((codexSrc.match(/proc\.stdin\.on\('error'/g) || []).length >= 2,
+    'كل موضع spawn يبتلع خطأ الأنبوب غير المتزامن');
+  assert.ok(/function canWrite\(\)/.test(codexSrc) && /if \(!canWrite\(\)\) return;/.test(codexSrc),
+    'writeMsg يحرس القناة المغلقة');
+  assert.ok(/reject\(new Error\('rpc_closed:/.test(codexSrc),
+    'request يرفض فوراً على قناة مغلقة بدل انتظار المهلة');
+  // موت العملية المفاجئ (لا الكتابة بعد الإنهاء): الحالة التي رصدها مراجع Codex الأعمى.
+  // فحص بنيوي معلَن — إنشاء طلب معلّق يحتاج نافذة داخلية لا تعرضها الوحدة.
+  assert.ok(/function rejectPending\(reason\)/.test(codexSrc)
+    && /rejectPending\('codex_rpc_closed'\)/.test(codexSrc)
+    && /rejectPending\('codex_spawn_failed'\)/.test(codexSrc),
+    'موت العملية في المسار الرئيسي يحسم كل طلب معلّق (وعدٌ بلا مهلة كان يعلّق للأبد)');
   console.log('✓ حصون main.js (سقف stopAll ومهلة إقلاع SDK) وحدود تجاوز البيئة موجودة نصياً');
 }
 
@@ -140,8 +189,9 @@ async function main() {
     process.env.CODEX_BIN = process.execPath;
     await scenarioSilentBoot(root);
     await scenarioDeadChannelStop(root);
+    await scenarioStopAfterCleanup(root);
     scenarioMainGuards();
-    console.log('send-liveness-test: ok — مهلة الإقلاع، إيقاف القناة الميتة، حصون قفل الإرسال');
+    console.log('send-liveness-test: ok — مهلة الإقلاع، إيقاف القناة الميتة، الإيقاف بعد إنهاء stdin، حصون قفل الإرسال');
   } finally {
     if (prevBin === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = prevBin;
     delete process.env.SATR_CODEX_BOOT_TIMEOUT_MS;
