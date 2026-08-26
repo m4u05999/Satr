@@ -254,13 +254,22 @@ const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex').s
   const dir = path.join(__dirname, '..');
   const metric = fs.readFileSync(path.join(dir, 'electron', 'langmetric.js'), 'utf8');
   const metricTest = fs.readFileSync(path.join(dir, 'scripts', 'langmetric-test.js'), 'utf8');
-  ok(/const METRIC_VERSION = 3;/.test(metric), 'إصدار المقياس هو 3 (وعي الخط — OBS-022)');
-  ok(/توافق v3 مع v2/.test(metric), 'والملف يعلن ادعاء التوافق صراحةً لا ضمناً');
-  // البرهان لا الادعاء: نسخة v2 مجمَّدة تُشغَّل بجانب v3 على مجموعة غير فارسية
+  ok(/const METRIC_VERSION = 4;/.test(metric),
+    'إصدار المقياس هو 4 (وعي الخط OBS-022 ثم استثناء جداول المعرّفات OBS-057)');
+  ok(/توافق ضيّق ومحروس/.test(metric), 'والملف يعلن ادعاء التوافق صراحةً لا ضمناً');
+  // البرهان لا الادعاء: نسخة v2 مجمَّدة تُشغَّل بجانب الحالية على مجموعة محايدة
   ok(/function isSlipV2\(/.test(metricTest) && /const SHARE_V2 = 0\.5;/.test(metricTest),
     'وحارس التوافق يحمل نسخة v2 مجمَّدة بعتباتها المكتوبة حرفياً');
+  // **نسخةٌ تستورد فرعها من الإنتاج ليست مجمَّدة** — وقع ذلك فعلاً في OBS-057:
+  // بقي `structuralSlips` مستورَداً فلما اكتسب استثناء الجداول صار الحارس يقارن
+  // الشيء بنفسه في الفرع البنيوي ويمرّ دائماً.
+  ok(/function structuralSlipsV2\(/.test(metricTest) && /structuralSlipsV2\(text\)/.test(metricTest),
+    'وفرعُها البنيوي مجمَّد أيضاً لا مستورَد من الإنتاج');
   ok(/isSlipV2\(sample\)/.test(metricTest),
     'ويقارن حكم الإصدارين عيّنةً عيّنة — فأي مساس بالإقصاءات أو العتبات يسقطه');
+  // وإثبات موضع الاختلاف لا موضع التطابق وحده — وإلا صار «التوافق» ادعاءً فضفاضاً
+  ok(/isSlipV2\(TABLE\)\.reason === 'structure'/.test(metricTest),
+    'ويثبت أين **يجب** أن يختلفا — وإلا كان رفع الإصدار بلا داعٍ');
   ok(!/langoverride/.test(metric), 'ولا يعرف المقياس شيئاً عن التجاوز');
 }
 

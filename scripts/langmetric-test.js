@@ -9,7 +9,7 @@
 
 const assert = require('assert');
 const {
-  arabicShare, structuralSlips, proseOf, scriptOf, isSlip, METRIC_VERSION,
+  arabicShare, structuralSlips, proseOf, scriptOf, isSlip, METRIC_VERSION, STRUCTURAL_THRESHOLD,
 } = require('../electron/langmetric');
 
 /**
@@ -20,12 +20,32 @@ const {
  * وعي الخط. فإن مسّ أحدٌ الإقصاءات أو العتبات انهار التطابق وسقط الفحص — وهو
  * المقصود: الادعاء أن بيانات v2 الـ906 ما زالت قابلة للمعايرة، وهذه هي عضّته.
  */
+/**
+ * وصفوف الجداول **مجمَّدة هي أيضاً** (‏OBS-057): كان هذا الملف يستدعي
+ * `structuralSlips` الإنتاجية، فلما اكتسبت استثناء صفوف الجداول صار «حارس
+ * التوافق» يقارن الشيء بنفسه في الفرع البنيوي ويمرّ دائماً — أمسكه أول فحص
+ * اختلافٍ صريح. الدرس المتكرر: نسخةٌ مجمَّدة تستورد من الإنتاج ليست مجمَّدة.
+ */
+const LINE_V2 = /^(#{1,4}\s|\|.*\||[-*]\s|\d+[.)]\s)/;
+function structuralSlipsV2(text) {
+  if (typeof text !== 'string' || !text) return [];
+  const out = [];
+  for (const line of text.replace(/```[\s\S]*?(?:```|$)/g, '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!LINE_V2.test(trimmed)) continue;
+    const measured = arabicShare(trimmed);
+    if (measured.share !== null && measured.share < SHARE_V2
+        && (measured.arabic + measured.latin) >= 12) out.push(trimmed.slice(0, 80));
+  }
+  return out;
+}
+
 function isSlipV2(text) {
   const measured = arabicShare(text);
   const strong = measured.arabic + measured.latin;
   if (measured.share === null) return { slip: false, reason: 'no_prose', ...measured };
   if (strong < MIN_STRONG) return { slip: false, reason: 'short', ...measured };
-  const slips = structuralSlips(text);
+  const slips = structuralSlipsV2(text);
   if (measured.share < SHARE_V2) return { slip: true, reason: 'share', structural: slips.length, ...measured };
   if (slips.length >= STRUCTURAL_V2) return { slip: true, reason: 'structure', structural: slips.length, ...measured };
   return { slip: false, reason: 'ok', structural: slips.length, ...measured };
@@ -61,8 +81,14 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
   const m = arabicShare(slipped);
   ok(m.share !== null && m.share < 0.1,
     'التقرير الإنجليزي الكامل يقيس انزلاقاً صريحاً (' + (m.share && m.share.toFixed(2)) + ')');
-  ok(structuralSlips(slipped).length >= 3,
-    'والبنية الإنجليزية (عنوان + صفوف جدول) مكشوفة (' + structuralSlips(slipped).length + ' سطراً)');
+  // **النتيجة هي الثابت لا عدد الأسطر**: كان الفحص يشترط ≥3 فأسقطه استثناءُ صفوف
+  // الجداول (‏OBS-057) بحقّ — الساقط `| Area | Status | Notes |` صفُّ معرّفات خالصة.
+  // فصار يحرس ما يهمّ فعلاً: أن لقطة المالك تُمسَك، وأن ما بقي يبلغ العتبة.
+  ok(isSlip(slipped).slip === true, 'لقطة المالك ما زالت مُمسَكة بعد صقل قاعدة الجداول');
+  ok(structuralSlips(slipped).length >= STRUCTURAL_THRESHOLD,
+    'والأسطر النثرية الإنجليزية تبلغ العتبة وحدها (' + structuralSlips(slipped).length + ' سطراً)');
+  ok(!structuralSlips(slipped).some((line) => /\| Area \| Status \| Notes \|/.test(line)),
+    'وصفُّ العناوين المعرّفات لم يعد يُحتسب — وهو جوهر صقل OBS-057');
 }
 
 // ── 3) الانزلاق الجزئي: نثر إنجليزي داخل ردّ عربي ───────────────────────────
@@ -194,9 +220,58 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
       'حكم v3 يطابق v2 لهذه العيّنة غير الفارسية — وإلا أُهدرت ‏906 قياساً متراكمة: '
         + JSON.stringify(sample.slice(0, 40)) + ' ⇒ v3=' + now.reason + ' vs v2=' + before.reason);
   }
-  ok(METRIC_VERSION === 3, 'وسم الإصدار ارتفع مع تغيّر الحكم');
+  ok(METRIC_VERSION === 4, 'وسم الإصدار ارتفع مع تغيّر الحكم');
+
+  // وحيث **يجب** أن يختلفا: صفّ جدول معرّفات كان v2 يُدينه (‏OBS-057). إثبات موضع
+  // الاختلاف لا يقل أهمية عن إثبات موضع التطابق — بدونه يصير «التوافق» ادعاءً
+  // فضفاضاً يُخفي أن رفع الإصدار كان بلا داعٍ أو أنه غيّر أكثر مما أُعلن.
+  const TABLE = AR + '\n| Field | v2 | v3 |\n| share | same | same |\n'
+    + '| script | absent | ar/fa/mixed |\n' + AR;
+  ok(isSlipV2(TABLE).reason === 'structure',
+    'جدول المعرّفات كان يُدان في v2 — وإلا فرفع الإصدار إلى 4 بلا داعٍ');
+  ok(isSlip(TABLE).reason !== 'structure', 'ولم يعد يُدان في v4');
+}
+
+// ── OBS-057: صفوف الجداول التقنية ليست انزلاقاً بنيوياً ────────────────────
+// العيّنة أدناه **مقيسة لا مفترضة**: بُنيت لتحاكي أشكال ردود «سطر» الحقيقية، فكشفت
+// أن جدول مقارنةٍ عربياً بحصّة 0.91 كان يُدان بسبب خلايا هي أسماء حقول وقيم —
+// أي أن الحكم يعاقب الجواب الصحيح الذي يوجب العقدُ نفسه إبقاءَ مصطلحاته إنجليزية.
+{
+  const AR = 'راجعتُ الطبقات الثلاث ووجدتُ أن معالج الأذونات يبتلع الأخطاء، وأن منطق '
+    + 'إعادة المحاولة لا يعمل، وأن سجل التدقيق لا يحمل معرّفات الأدوات إطلاقاً. ';
+
+  // (أ) جداول تقنية مشروعة — خلاياها معرّفات وقيم، فلا جملة فيها
+  const legitimate = [
+    ['مقارنة إصدارين', AR + '\n| Field | v2 | v3 |\n| share | same | same |\n| script | absent | ar/fa/mixed |\n' + AR],
+    ['مدد الاختبارات', AR + '\n| Suite | Seconds |\n| test:opsroom-all | 121.6 |\n| test:handoff-bar-live | 25.2 |\n' + AR],
+    ['ملفات وحالات', AR + '\n| الملف | الحالة |\n| electron/preview.js | ✅ |\n' + AR],
+  ];
+  for (const [name, text] of legitimate) {
+    const verdict = isSlip(text);
+    ok(verdict.reason !== 'structure',
+      'جدول تقني مشروع «' + name + '» أُدين بنيوياً — الحكم يعاقب الجواب الصحيح: '
+        + JSON.stringify(structuralSlips(text)));
+  }
+
+  // (ب) الإيجابيات الصحيحة ما زالت تُمسَك — الاستثناء لم يُفرغ الحارس
+  const genuine = [
+    ['عناوين إنجليزية (شكوى المالك)', AR + '\n## Findings and open questions\n## Recommended next steps\n' + AR],
+    ['بنود إنجليزية كاملة', AR + '\n- The handler swallows every error silently\n- The retry logic never runs at all\n' + AR],
+    ['جدول بخلايا نثرية', AR + '\n| Layer | Status | Every handler checked |\n| The retry logic never runs at all |\n' + AR],
+  ];
+  for (const [name, text] of genuine) {
+    ok(isSlip(text).reason === 'structure',
+      'الانزلاق البنيوي الحقيقي «' + name + '» أفلت — الاستثناء أفرغ الحارس بدل أن يصقله');
+  }
+
+  // القاعدة الفارقة نفسها: الأنبوب يقطع تتابع الكلمات فلا تتكوّن جملة داخل خلية
+  ok(structuralSlips('| share | same | same | absent | value |').length === 0,
+    'خلايا المعرّفات مهما كثرت لا تصنع جملة');
+  ok(structuralSlips(AR + '\n| The handler swallows every error |\n| The retry never runs at all |').length === 2,
+    'وخليةُ الجملة تُدان ولو كانت داخل جدول');
 }
 
 console.log('langmetric-test: ok — ' + checks
   + ' فحوص (الجواب الصحيح لا يُعاقَب، ولقطة المالك تُمسَك، والحواف لا تكسر، '
-  + 'ووعي الخط يمسك الفارسية دون أن يُهدر بيانات v2).');
+  + 'ووعي الخط يمسك الفارسية دون أن يُهدر بيانات v2، '
+  + 'وجداول المعرّفات التقنية لم تعد انزلاقاً بنيوياً بينما خلايا النثر تبقى).');
