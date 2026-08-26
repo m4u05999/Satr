@@ -122,6 +122,7 @@
     "test:activity": "node scripts/activity-test.js",
     "test:definition-of-done": "node scripts/definition-of-done-test.js",
     "test:full-evidence": "node scripts/full-suite-evidence-test.js",
+    "test:full-timeout": "node scripts/full-suite-timeout-test.js",
     "test:full:evidence": "node scripts/full-suite-evidence.js",
     "prestart": "node scripts/update-csp.js",
     "start": "electron .",
