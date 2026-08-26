@@ -1,5 +1,6 @@
 import { formatPermissionDetail } from './lib/permission-detail.js';
 import { createUpdateToast } from './lib/update-toast.js';
+import { createPreviewShield } from './lib/preview-shield.js';
 
 // قشرة الإقلاع والتوجيه (Orchestration) — وحدة ES منذ التنظيف النهائي ت-13
 // (كانت IIFE كلاسيكية طوال التفكيك — قرار ت-0 لتفادي مفاجآت strict mode).
@@ -760,7 +761,20 @@ import { createUpdateToast } from './lib/update-toast.js';
         name: record.name, category: record.category, state: record.state,
       }));
     }
-    return { register, openPanel, closePanel, closeActivePanel, setDialog, confirm, snapshot };
+    // ‏OBS-059 — درع بنيوي فوق التسجيل: أي سطح حواري **مرئي** يحجب طبقة العرض
+    // الأصلي، أُعلن للمنسّق أم لا. بلاغ مالك بلقطة (2.16.11) أظهر صفحة المعاينة
+    // ترتسم من خلال حوار «ما الجديد» لأنه يُفتح بـ`hidden=false` بلا `setDialog`.
+    // المفتاح `modal` مستقل عن `dialog` كي لا يُفرج إغلاقُ أحدهما عن حجب الآخر.
+    const shield = createPreviewShield({
+      onHold: (hold) => {
+        const preview = previewSurface();
+        if (preview && preview.holdForModal) preview.holdForModal(hold);
+        if (!hold) requestAnimationFrame(remeasurePreview);
+      },
+    });
+    shield.start();
+
+    return { register, openPanel, closePanel, closeActivePanel, setDialog, confirm, snapshot, shield };
   })();
 
   for (const [name, selector] of [

@@ -80,6 +80,7 @@ const SUITE = [
   'test:browser-member-live',
   'test:preview-member-live',
   'test:preview-lease',
+  'test:preview-shield',
   'test:question-dialog',
   'test:gallery',
   'eval:agent',

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+<title>درع المعاينة — fixture</title>
+</head>
+<body>
+<!-- ترميز حوار «ما الجديد» منسوخ حرفياً من src/index.html — يحرس الاختبار عدم انحرافه -->
+<div id="notesDialog" hidden>
+  <div id="notesCard" role="dialog" aria-modal="true" aria-labelledby="notesTitle">
+    <div id="notesHead"><span id="notesTitle">ما الجديد</span><button id="notesClose" type="button" title="إغلاق">✕</button></div>
+    <pre id="notesBody" dir="auto"></pre>
+    <div id="notesFoot"><button id="notesExternal" type="button">افتح في المتصفح</button></div>
+  </div>
+</div>
+
+<!-- سطح عادي: يجب ألّا يحجب المعاينة -->
+<div id="plain">محتوى عادي</div>
+
+<script type="module" src="preview-shield-page.js"></script>
+</body>
+</html>

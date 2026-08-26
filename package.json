@@ -155,7 +155,8 @@
     "test:promocapture-events-live": "electron scripts/promocapture-events-live-test.js",
     "test:promostudio-batch1": "node scripts/promostudio-batch1-test.js",
     "test:promo-preview": "electron scripts/promo-studio-preview-test.js",
-    "test:promo-audio-live": "electron scripts/promo-audio-live-test.js"
+    "test:promo-audio-live": "electron scripts/promo-audio-live-test.js",
+    "test:preview-shield": "electron scripts/preview-shield-test.js"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",

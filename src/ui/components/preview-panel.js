@@ -1472,12 +1472,18 @@ class SatrPreviewPanel extends HTMLElement {
       // OBS-032: الإخفاء مقصود لكنه كان صامتاً، فيقرأ المستخدم السوادَ عطلاً لا تنحّياً.
       // سطر واحد مكان العرض يحوّل ما يبدو عطلاً إلى سلوك مفهوم. مقصور على سبب الحوار
       // لأن نصّه يعد بالعودة فور الردّ، ولا يظهر قبل بدء عرض أصلاً (لافتة الترحيب مكانه).
-      heldNote.hidden = !(started && holdReasons.has('dialog'));
+      // ‏OBS-059: سبب `modal` يأتي من درع المعاينة البنيوي (‏lib/preview-shield) لا من
+      // المنسّق. يستحق السطر المفسِّر نفسه — فالمستخدم يرى السواد ذاته ويلزمه التفسير
+      // ذاته، سواء أُعلن الحوار للمنسّق أم اكتُشف من DOM.
+      heldNote.hidden = !(started && (holdReasons.has('dialog') || holdReasons.has('modal')));
       if (!started) return;
       if (held) { window.satr.previewBounds(0, 0, 0, 0); lastBoundsKey = '0,0,0,0'; } // العرض بحجم صفر ⇒ مخفي، المربع يظهر
       else reportBounds(); // استعادة الموضع الفعلي بعد الرد (lastBoundsKey='0,0,0,0' يضمن إعادة الإرسال)
     };
     this.holdForDialog = (hold) => setHeld('dialog', hold);
+    // ‏OBS-059 — مفتاح مستقل عمداً: لو تشارك الدرعُ والمنسّق مفتاحاً واحداً لأفرج
+    // إغلاقُ أحدهما عن حجب الآخر، فيظهر العرض الأصلي فوق حوارٍ ما زال مفتوحاً.
+    this.holdForModal = (hold) => setHeld('modal', hold);
     this.holdForDrawer = (hold) => {
       this.toggleAttribute('drawer-held', !!hold);
       setHeld('drawer', hold);
