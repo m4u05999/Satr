@@ -28,6 +28,32 @@ const KEEP_TAIL_LINES = 2000;
 const SAFE_ENGINE = /^[a-z0-9_-]{1,32}$/i;
 const PHASES = new Set(['final_answer', 'commentary']);
 
+/**
+ * الانزلاقات التي تخرج من الظلّ إلى العرض — **معايرة على 917 قياساً حقيقياً**
+ * (‏OBS-001، 2026-08-26) لا تقديراً.
+ *
+ * انقسمت العشرون انزلاقة إلى مجتمعين متمايزين: تسعٌ سببها `share` وحصصها
+ * 0.00–0.35 (رسائل غير عربية بلا لبس)، وإحدى عشرة سببها `structure` وحصصها
+ * **0.90–0.95** — ردودٌ عربية في جوهرها أُدينت بسطرين بنيويين قد يكون أحدهما
+ * جدولاً تقنياً مشروعاً. والسجل «أرقام بلا نص» بالتصميم فلا سبيل للتمييز.
+ *
+ * فيخرج ما لا لبس فيه وحده، ويبقى `structure` مسجَّلاً غير معروض حتى يُتحقَّق منه
+ * بنصٍّ فعلي: حارسٌ يُطلق إنذارات كاذبة يُعطَّل ثم لا يحرس شيئاً — وهو درس مكرر
+ * في هذا المستودع لا احتمال نظري.
+ */
+const VISIBLE_SLIP_REASONS = new Set(['share', 'script']);
+
+/**
+ * هل يُعرض هذا الحكم للمستخدم؟ دالة نقية — قرار العرض وحده، لا التسجيل.
+ * التجاوز الصريح يقمعه: زرُّ «أعد الصياغة بالعربية» على ردٍّ طلبه المستخدم بلغة
+ * أخرى **بنفسه** هو أسوأ إنذار كاذب ممكن، لأن المستخدم يعرف يقيناً أنه خاطئ.
+ */
+function visibleSlip(verdict, override) {
+  if (override === true) return false;
+  if (!verdict || verdict.slip !== true) return false;
+  return VISIBLE_SLIP_REASONS.has(verdict.reason);
+}
+
 function createShadow(options) {
   const opts = options && typeof options === 'object' ? options : {};
   const file = typeof opts.file === 'string' && opts.file ? opts.file : DEFAULT_FILE;
@@ -101,6 +127,8 @@ module.exports = {
   record: shadow.record,
   file: shadow.file,
   createShadow,
+  visibleSlip,
+  VISIBLE_SLIP_REASONS,
   MAX_FILE_BYTES,
   KEEP_TAIL_LINES,
 };

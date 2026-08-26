@@ -102,8 +102,15 @@ const ENGLISH_LONG = 'The review found three issues in the permission layer. Fir
     'الظلّ مستدعى من emitToWindow — نقطة الاختناق الواحدة بقرار العصف');
   ok(/obj\.type !== 'assistant'/.test(main),
     'ويقيس أحداث assistant المكتملة فقط (لا stream_text)');
-  const wrapped = /try \{ shadowMeasureAssistant\([\s\S]{0,80}?\} catch/.test(main);
-  ok(wrapped, 'والاستدعاء داخل try — فشله لا يسقط البث');
+  // الثابت هو الاحتواء داخل try لا شكل السطر: كانت الكتلة سطراً واحداً قبل أن يضاف
+  // بثّ تلميح العرض (‏OBS-001 الخروج من الظلّ)، فصار نمط السطر الواحد يكسر حارساً
+  // معناه سليم. تُقرأ الكتلة من `try {` إلى أول `} catch` ويُطلب أن تحويه.
+  const block = main.slice(main.indexOf('function emitToWindow'));
+  const tryBlock = block.slice(block.indexOf('try {'), block.indexOf('} catch'));
+  ok(tryBlock.includes('shadowMeasureAssistant('),
+    'والاستدعاء داخل try — فشله لا يسقط البث');
+  ok(tryBlock.includes("send('satr:event', hint)"),
+    'وبثّ تلميح العرض داخل الحماية نفسها — تلميحٌ يُسقط دوراً أسوأ من تلميح ضائع');
 }
 
 // ── 6) المرساة (دفعة 4) — وصلها الساكن في المحرّكين ─────────────────────────
@@ -127,5 +134,64 @@ const ENGLISH_LONG = 'The review found three issues in the permission layer. Fir
     'المرساة موسومة والقوية أطول من العادية');
 }
 
+// ── الخروج من الظلّ (‏OBS-001) — العرض المعايَر وممنوعاته المجمَّدة ──────────
+{
+  const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'src', 'ui', 'app.js'), 'utf8');
+
+  // ── المعايرة سلوكياً (لا نصّياً): قرار العرض دالة نقية في langshadow ────────
+  const { visibleSlip } = require('../electron/langshadow');
+  const verdictOf = (reason) => ({ slip: true, reason });
+  ok(visibleSlip(verdictOf('share'), false) === true, 'الحصّة المنهارة تُعرض');
+  ok(visibleSlip(verdictOf('script'), false) === true, 'والخط غير العربي يُعرض');
+  // 11 من 20 انزلاقة كانت `structure` بحصص 0.90–0.95 — عربيةٌ في جوهرها وقد يكون
+  // سطراها البنيويان جدولاً تقنياً مشروعاً. عرضها يعيد خطر الإنذار الكاذب.
+  ok(visibleSlip(verdictOf('structure'), false) === false,
+    'والبنية تبقى في الظلّ حتى يُتحقَّق منها بنصّ فعلي');
+  ok(visibleSlip({ slip: false, reason: 'ok' }, false) === false, 'وغير المنزلق لا يُعرض');
+  ok(visibleSlip(null, false) === false && visibleSlip(undefined, false) === false,
+    'والحكم الغائب لا يُعرض (fail-closed)');
+  // التجاوز يقمع **كل** الأسباب — لا استثناء
+  for (const reason of ['share', 'script', 'structure']) {
+    ok(visibleSlip(verdictOf(reason), true) === false,
+      'التجاوز الصريح يقمع سبب «' + reason + '» — زرٌّ على ردٍّ طلبه المستخدم بنفسه'
+        + ' أسوأ إنذار كاذب ممكن لأنه يعرف يقيناً أنه خاطئ');
+  }
+  ok(/VISIBLE_SLIP_REASONS = new Set\(\['share', 'script'\]\)/.test(
+    fs.readFileSync(path.join(__dirname, '..', 'electron', 'langshadow.js'), 'utf8')),
+  'وقائمة المعروض مغلقة صراحةً');
+
+  // حقل override كان موثَّقاً وميتاً — وصلُه شرطُ ألّا يظهر الزر على ردٍّ طُلب بلغة أخرى
+  ok(/langshadow\.record\(\{[\s\S]{0,200}?override,/.test(main),
+    'علم التجاوز يصل السجل فعلاً (كان موثَّقاً بلا مستدعٍ)');
+  ok(/langshadow\.visibleSlip\(verdict, override\)/.test(main),
+    'وmain يستهلك الدالة النقية لا ينسخ منطقها');
+  ok(/noteShadowOverride\(runEngine, activeSessionId, prompt\)/.test(main),
+    'ويُرصد من نصّ المستخدم الخام عند الإرسال');
+  // `sessionOverride` مستهلِكة للحالة — استدعاؤها من main يُفسد حالة المحرك
+  ok(!/langoverride\.sessionOverride/.test(main),
+    'وmain لا يستدعي sessionOverride المستهلِكة — الكاشف النقي وحده');
+  ok(/shadowOverrides\.delete\(pending\)/.test(main),
+    'وتبنّي المعلّق مطبَّق — بلا،ه يسقط القمع في أول دور وهو أشيع الحالات');
+
+  // الممنوعات المجمَّدة: النقر هو الفعل، ولا ترجمة آلية
+  ok(/ev\.type === 'lang_slip'/.test(app), 'الواجهة تستهلك الحدث');
+  ok(/addActionNotice\(/.test(app.slice(app.indexOf("ev.type === 'lang_slip'"))),
+    'وتعرضه إشعارَ فعلٍ لا حجباً');
+  const handler = app.slice(app.indexOf("ev.type === 'lang_slip'"), app.indexOf("ev.type === 'lang_slip'") + 900);
+  ok(/onAct|\(\) => \{/.test(handler) && /send\(\);/.test(handler),
+    'والإرسال داخل معالج النقر لا خارجه — لا إعادة توليد تلقائية');
+  ok(/الكود والمسارات والأوامر والمصطلحات التقنية بالإنجليزية/.test(handler),
+    'ونصّ الطلب يحفظ عقد «سطر» نفسه فلا يُعرّب الكود');
+
+  // حدث منسَّق: أرقام بلا نص، ولا يدخل مجرى المراقبة ولا أنواع المحركات
+  ok(/type: 'lang_slip',\s*\n\s*schema_version: 1,/.test(main), 'الحدث موسوم بإصداره');
+  ok(!/lang_slip[\s\S]{0,80}text/.test(main), 'ولا نص فيه — قاعدة «أرقام بلا نص» سارية بعد العرض');
+  const known = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8')
+    .match(/KNOWN_EVENT_TYPES[\s\S]{0,600}?\]/);
+  ok(!known || !/lang_slip/.test(known[0]), 'وليس نوع حدث محرك (منسَّق نظير loop_update)');
+}
+
 console.log('langshadow-test: ok — ' + checks
-  + ' فحصاً (أرقام بلا نص، القصّ، فشل القرص، ووصل الظلّ والمرساة).');
+  + ' فحصاً (أرقام بلا نص، القصّ، فشل القرص، ووصل الظلّ والمرساة، '
+  + 'والخروج المعايَر من الظلّ بممنوعاته).');

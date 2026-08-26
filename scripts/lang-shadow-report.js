@@ -58,6 +58,28 @@ for (const [key, group] of [...groups.entries()].sort()) {
     + (group.slips + ' (' + Math.round(group.slips / group.n * 100) + '%)').padEnd(9)
     + (median === null ? '—' : Math.round(median * 100) + '%'));
 }
+// ── توزيع الأسباب ───────────────────────────────────────────────────────────
+// كان صدر هذا الملف يَعِد به منذ الدفعة 5 ولا يطبعه. وهو أساس المعايرة لا زينة:
+// عليه انبنى قرار الخروج من الظلّ (‏`share`/`script` تُعرض و`structure` لا).
+const slips = rows.filter((row) => row.slip);
+if (slips.length) {
+  const reasons = new Map();
+  for (const row of slips) {
+    const key = row.engine + ' · ' + row.reason;
+    if (!reasons.has(key)) reasons.set(key, []);
+    if (typeof row.share === 'number') reasons.get(key).push(row.share);
+    else reasons.get(key).push(null);
+  }
+  console.log('\nتوزيع أسباب الانزلاق (' + slips.length + ' من ' + rows.length + '):');
+  for (const [key, shares] of [...reasons.entries()].sort()) {
+    const known = shares.filter((value) => typeof value === 'number').sort((a, b) => a - b);
+    const span = known.length
+      ? '  حصص ' + Math.round(known[0] * 100) + '%–' + Math.round(known[known.length - 1] * 100) + '%' : '';
+    const shown = ['share', 'script'].includes(key.split(' · ')[1]) ? 'يُعرض' : 'في الظلّ';
+    console.log('  ' + key.padEnd(28) + String(shares.length).padEnd(6) + span.padEnd(18) + shown);
+  }
+}
+
 // ── سرد العمل مقابل الإجابة (‏2026-08-26) ───────────────────────────────────
 // `phase` وحده يضلّل: `commentary` سردُ عمل في Codex وتفكيرٌ فقط في SDK، فسرد عمل
 // SDK يقع في `final_answer` مخلوطاً بالإجابة. حقل `tool` محايد عن المحرك — رسالةٌ

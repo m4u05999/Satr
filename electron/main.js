@@ -232,6 +232,7 @@ const agentTools = require('./tools'); // أدوات المحوّلات (2.1/2.2
 const features = require('./features');
 const activity = require('./activity');
 const langshadow = require('./langshadow'); // حارس اللغة بوضع الظلّ (OBS-001 دفعة 5)
+const langoverride = require('./langoverride'); // الكاشف النقي وحده — انظر shadowOverrides
 const keys = require('./keys');
 const bgprocs = require('./bgprocs');
 const term = require('./term');
@@ -1851,25 +1852,82 @@ function notifyObservers(obj, meta) {
  * فقط (لا نص) في سجل الظلّ؛ لا يعرض ولا يعيد توليداً ولا يترجم. شظايا stream_text
  * خارجه عمداً (الرسالة المكتملة فقط)، وكل فشل مبتلَع فلا يمسّ الدور.
  */
+/**
+ * تجاوز اللغة الصريح كما تعرفه العملية الرئيسية (‏OBS-001 الخروج من الظلّ).
+ *
+ * كان حقل `override` في `langshadow` **موثَّقاً وميتاً**: لا يمرّره أحد. في الظلّ
+ * كان أثره تلويثَ المعايرة صامتاً، أما بعد العرض فيصير أسوأ إنذارٍ كاذب ممكن —
+ * زرُّ «أعد الصياغة بالعربية» على ردٍّ طلبه المستخدم بلغة أخرى **بنفسه**.
+ *
+ * تُستعمل هنا `detectExplicitRequest` **النقية وحدها**؛ و`sessionOverride`
+ * محظورة صراحةً لأنها مستهلِكة للحالة (تمسح `PENDING_KEY`) فاستدعاؤها ثانيةً من
+ * main يُفسد حالة المحرك. والخريطة هنا نظيرة لا بديل: المحرّكات تبقى صاحبة القرار
+ * في البرومبت، وهذه تقرّر العرض فقط.
+ */
+const shadowOverrides = new Map();
+const MAX_SHADOW_OVERRIDES = 200;
+function noteShadowOverride(engine, sessionId, prompt) {
+  const key = String(engine || '') + '|' + String(sessionId || '');
+  const request = langoverride.detectExplicitRequest(prompt);
+  if (!request) return;
+  if (request.reset) { shadowOverrides.delete(key); return; }
+  if (shadowOverrides.size >= MAX_SHADOW_OVERRIDES) {
+    shadowOverrides.delete(shadowOverrides.keys().next().value);
+  }
+  shadowOverrides.set(key, true);
+}
+function shadowOverrideActive(engine, sessionId) {
+  const pending = String(engine || '') + '|';
+  const key = pending + String(sessionId || '');
+  // **تبنّي المعلّق**: الدور الأول يُرسَل ومعرّف الجلسة لم يصدره المحرك بعد، بينما
+  // الرسالة العائدة تحمله. بلا هذا التبنّي يسقط القمع في أكثر الحالات شيوعاً على
+  // الإطلاق — أول دور يطلب فيه المستخدم لغةً أخرى. نظير `PENDING_KEY` في
+  // `langoverride` حرفياً، ولذلك يُنقل المدخل لا يُنسخ.
+  if (sessionId && shadowOverrides.has(pending)) {
+    shadowOverrides.delete(pending);
+    shadowOverrides.set(key, true);
+  }
+  return shadowOverrides.has(key);
+}
+
 function shadowMeasureAssistant(obj, engine) {
-  if (!obj || obj.type !== 'assistant' || !obj.message || !Array.isArray(obj.message.content)) return;
+  if (!obj || obj.type !== 'assistant' || !obj.message || !Array.isArray(obj.message.content)) return null;
   // «سرد عمل» بمعنى محايد عن المحرك: رسالةٌ نادت أداةً — لا وسم `phase` الذي تختلف
   // دلالته بين المحرّكات (‏Codex: سرد · SDK: تفكير فقط). انظر تعليل `tool` في langshadow.
   const tool = obj.message.content.some((block) => block && block.type === 'tool_use');
+  const override = shadowOverrideActive(engine, obj.session_id);
+  let hint = null;
   for (const block of obj.message.content) {
     if (!block || block.type !== 'text' || typeof block.text !== 'string') continue;
-    langshadow.record({
+    const verdict = langshadow.record({
       text: block.text,
       engine,
       phase: block.phase === 'commentary' ? 'commentary' : 'final_answer',
       tool,
+      override,
     });
+    // قرار العرض دالة نقية في langshadow — مختبَرة سلوكياً هناك لا نصّياً هنا
+    if (hint || !langshadow.visibleSlip(verdict, override)) continue;
+    hint = {
+      type: 'lang_slip',
+      schema_version: 1,
+      engine: String(engine || 'unknown'),
+      reason: verdict.reason,
+      share: typeof verdict.share === 'number' ? Math.round(verdict.share * 100) / 100 : null,
+    };
   }
+  return hint;
 }
 
 function emitToWindow(obj, engineOverride) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:event', obj);
-  try { shadowMeasureAssistant(obj, engineOverride || lastEngine); } catch { /* ظلٌّ لا يمسّ الدور */ }
+  try {
+    const hint = shadowMeasureAssistant(obj, engineOverride || lastEngine);
+    // يُرسل مباشرةً لا عبر `emitToWindow` — وإلا أعاد دخول القياس على نفسه. وهو
+    // حدث **منسَّق** (نمط loop_update) فلا يدخل KNOWN_EVENT_TYPES ولا مجرى المراقبة:
+    // تلميحُ عرضٍ أرقاماً بلا نص، لا حدثَ محرّك.
+    if (hint && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:event', hint);
+  } catch { /* ظلٌّ لا يمسّ الدور */ }
   // Community يسجل metadata مختصرة، وEnterprise يلتقط التدقيق/الاستهلاك عبر مجراه.
   // URL طلب المصادقة يصل للحوار فقط ولا يدخل سجل المراقبة (قد يحمل state/query حساسة).
   const observed = obj && obj.type === 'elicitation_request'
@@ -2682,6 +2740,10 @@ async function handleSendRequest(event, payload, requestEpoch) {
     }
     emitToWindow(obj, lateSdkBackgroundEvent ? runEngine : undefined);
   };
+
+  // تجاوز اللغة الصريح — يُرصد من نصّ المستخدم الخام قبل أي معالجة، ويُستعمل لقمع
+  // إشعار الانزلاق وحده (لا يمسّ برومبت المحرك). انظر shadowOverrides.
+  try { noteShadowOverride(runEngine, activeSessionId, prompt); } catch (e) { /* عرضٌ لا دور */ }
 
   // مجرى المراقبة (§4.7): حدث وصفي ببداية الدور — للتدقيق (من طلب ماذا وأين)
   lastEngine = runEngine;
