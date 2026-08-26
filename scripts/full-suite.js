@@ -73,6 +73,7 @@ const SUITE = [
   'test:definition-of-done',
   'test:full-evidence',
   'test:full-timeout',
+  'test:readme-version',
   'test:opsroom-all-live',
   'test:terminal-tabs',
   'test:background-ui-live',

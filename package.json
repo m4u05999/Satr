@@ -124,6 +124,8 @@
     "test:full-evidence": "node scripts/full-suite-evidence-test.js",
     "test:full-timeout": "node scripts/full-suite-timeout-test.js",
     "test:full:evidence": "node scripts/full-suite-evidence.js",
+    "version": "node scripts/sync-readme-version.js && git add README.md",
+    "test:readme-version": "node scripts/readme-version-test.js",
     "prestart": "node scripts/update-csp.js",
     "start": "electron .",
     "predist": "node scripts/update-csp.js",

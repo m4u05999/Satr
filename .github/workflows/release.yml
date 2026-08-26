@@ -70,6 +70,13 @@ jobs:
             throw "الوسم v$tagVersion لا يطابق package.json ($packageVersion)"
           }
 
+      # ‏OBS-054: رابط التنزيل في README مبنيّ على اسم الأصل حرفياً، فتأخّرُ الرقم
+      # يعني 404 في الواجهة الأولى للمشروع — وقع سبع مرات متتالية. الفحص هنا
+      # **عند الوسم لا عند كل push**: بين الإصدارات يكون README على الرقم المنشور
+      # بينما package.json قد رُفع، ففحصٌ أبكر كان سيكسر CI على عمل سليم.
+      - name: مطابقة رقم الإصدار في README
+        run: node scripts/sync-readme-version.js --check
+
       - name: تثبيت الاعتماديات المقفلة
         run: npm ci
 
