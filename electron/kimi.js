@@ -19,6 +19,8 @@ const codexmcp = require('./codexmcp');
 const { computeDiff } = require('./diff');
 const envbrief = require('./envbrief');
 const execguard = require('./execguard');
+const langanchor = require('./langanchor'); // ‏OBS-023 — نظير agent.js وcodex.js
+const langoverride = require('./langoverride');
 const memory = require('./memory');
 const preview = require('./preview');
 const skillCatalog = require('./skills');
@@ -31,6 +33,22 @@ const { scrubSecrets } = require('./secretscrub');
 const ENGINE_ID = 'kimi-code';
 const DEFAULT_MODEL = 'k3';
 const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
+
+// ‏OBS-023 — كان Kimi المحرك الأصيل الوحيد خارج منظومة المرساة اللغوية: يأخذ
+// `CONTRACT_LINE` عبر `envbrief` وحده، بلا مرساة ذيلية ولا صيغة قوية ولا تجاوز
+// صريح. وأثرُه ليس نظرياً: حصيلة سجل الظلّ الأولى لم تحمل له إلا صفّين، وصفّ
+// سرده الوحيد كان انزلاقاً بحصّة 5%. نظيرا الحالة هنا هما `compactedThreads`
+// و`langOverrides` في codex.js بالسقف نفسه.
+const compactedSessions = new Set();
+const MAX_COMPACTED_SESSIONS = 200;
+const langOverrides = new Map();
+function markCompactedSession(sessionId) {
+  if (!sessionId) return;
+  if (compactedSessions.size >= MAX_COMPACTED_SESSIONS) {
+    compactedSessions.delete(compactedSessions.values().next().value);
+  }
+  compactedSessions.add(sessionId);
+}
 const MAX_RPC_LINE = 4 * 1024 * 1024;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_TOOL_TEXT = 20000;
@@ -1006,6 +1024,8 @@ function create(deps) {
         ? parseCompactionText(messageOrder.map((id) => messages.get(id) || '').join('\n')) : null;
       if (compactMetadata) {
         messages.clear(); messageOrder.length = 0;
+        // ‏OBS-023: الدور التالي يستحق المرساة القوية — ملخّص الضغط قد يكون إنجليزياً
+        markCompactedSession(sessionId);
         emit({ type: 'system', subtype: 'compact_boundary', compact_metadata: compactMetadata });
       } else emitAssistantMessages();
       const reason = result && result.stopReason || 'end_turn';
@@ -1210,6 +1230,19 @@ function create(deps) {
           for (const image of input.images) if (image && image.data && image.media_type) {
             prompt.push({ type: 'image', data: image.data, mimeType: image.media_type });
           }
+        }
+        // المرساة اللغوية الذيلية (‏OBS-023) — **آخر كتلة** كي تكون أقرب ما يقرؤه
+        // النموذج، وهي علّة تسميتها «ذيلية». القوية لأول دور في الجلسة (‏!input.sessionId)
+        // ولأول دور بعد الضغط (ملخّصه قد يكون إنجليزياً فيبدأ السياق ملوثاً). الغياب
+        // عن `/compact` متعمد كبقية كتل السياق. والسياقات المعزولة (‏browserControl:false
+        // — المراجع/العصف) خارجها كالذاكرة تماماً، فبوابتها هي البوابة نفسها.
+        if (!compactCommand && browserControl !== false) {
+          const overrideLang = langoverride.sessionOverride(langOverrides, sessionId, input.prompt || '');
+          const baseAnchor = langanchor.anchor({
+            strong: !input.sessionId || compactedSessions.delete(sessionId),
+          });
+          const anchorText = overrideLang ? langanchor.anchor({ override: overrideLang }) : baseAnchor;
+          if (anchorText) prompt.push({ type: 'text', text: anchorText });
         }
         promptRequest = rpc.request('session/prompt', { sessionId, prompt });
         promptRequest.then(finishTurn).catch((error) => {

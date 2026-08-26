@@ -232,13 +232,35 @@ const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex').s
   ok(/langanchor\.anchor\(\{ strong: !sessionId \|\| compactedSessions\.delete\(sessionId\) \}\)/.test(agent)
     && /langanchor\.anchor\(\{ strong: !sessionId \|\| compactedThreads\.delete\(threadId\) \}\)/.test(codex),
     'وصيغة النداء العادي محفوظة حرفياً في المحرّكين');
+  // ‏OBS-023: كان Kimi المحرك الأصيل الوحيد خارج المنظومة. الفحص السلوكي في
+  // `test:kimi` يثبت الموضع والصيغة؛ وهذا يمنع **سقوطه الصامت** مرة أخرى.
+  const kimi = fs.readFileSync(path.join(__dirname, '..', 'electron', 'kimi.js'), 'utf8');
+  ok(/require\('\.\/langanchor'\)/.test(kimi) && /require\('\.\/langoverride'\)/.test(kimi),
+    'و‏kimi.js داخل منظومة المرساة (‏OBS-023) لا يكتفي بـCONTRACT_LINE من envbrief');
+  ok(/langoverride\.sessionOverride\(langOverrides, sessionId, input\.prompt \|\| ''\)/.test(kimi),
+    'وتجاوز اللغة الصريح يصل Kimi بمفتاح جلسته');
+  ok(/browserControl !== false[\s\S]{0,400}?langanchor\.anchor/.test(kimi),
+    'والسياقات المعزولة في Kimi خارج المرساة كنظيريه');
+  ok(/markCompactedSession\(sessionId\)/.test(kimi),
+    'وضغط المحادثة في Kimi يستحقّ الدورَ التالي مرساةً قوية');
 }
 
-// ── 11) المقياس لم يُمسّ — قاعدة METRIC_VERSION الموثّقة ─────────────────────
+// ── 11) المعايرة لم تُحرق — الثابت الذي كان يحرسه وتد METRIC_VERSION ─────────
+// كان هنا وتد أعمى `METRIC_VERSION = 2` غرضه المعلن حماية معايرة سجل الظلّ الجارية
+// من الحرق. رفعُ الإصدار إلى 3 لوعي الخط (‏OBS-022) أطلقه — وهو ما صُمّم له.
+// فاستُبدل بالثابت نفسه مصوغاً بدقّة: يجوز تحريك الرقم **بشرط برهان التوافق**، وإلا
+// عاد الوتد يمنع الإصلاح الصحيح ويُلتفّ عليه بحذفه (وهو أسوأ ما يصيب حارساً).
 {
-  const metric = fs.readFileSync(path.join(__dirname, '..', 'electron', 'langmetric.js'), 'utf8');
-  ok(/const METRIC_VERSION = 2;/.test(metric),
-    'إصدار المقياس ما زال 2 — معايرة سجل الظلّ الجارية لم تُحرق');
+  const dir = path.join(__dirname, '..');
+  const metric = fs.readFileSync(path.join(dir, 'electron', 'langmetric.js'), 'utf8');
+  const metricTest = fs.readFileSync(path.join(dir, 'scripts', 'langmetric-test.js'), 'utf8');
+  ok(/const METRIC_VERSION = 3;/.test(metric), 'إصدار المقياس هو 3 (وعي الخط — OBS-022)');
+  ok(/توافق v3 مع v2/.test(metric), 'والملف يعلن ادعاء التوافق صراحةً لا ضمناً');
+  // البرهان لا الادعاء: نسخة v2 مجمَّدة تُشغَّل بجانب v3 على مجموعة غير فارسية
+  ok(/function isSlipV2\(/.test(metricTest) && /const SHARE_V2 = 0\.5;/.test(metricTest),
+    'وحارس التوافق يحمل نسخة v2 مجمَّدة بعتباتها المكتوبة حرفياً');
+  ok(/isSlipV2\(sample\)/.test(metricTest),
+    'ويقارن حكم الإصدارين عيّنةً عيّنة — فأي مساس بالإقصاءات أو العتبات يسقطه');
   ok(!/langoverride/.test(metric), 'ولا يعرف المقياس شيئاً عن التجاوز');
 }
 

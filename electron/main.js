@@ -1853,12 +1853,16 @@ function notifyObservers(obj, meta) {
  */
 function shadowMeasureAssistant(obj, engine) {
   if (!obj || obj.type !== 'assistant' || !obj.message || !Array.isArray(obj.message.content)) return;
+  // «سرد عمل» بمعنى محايد عن المحرك: رسالةٌ نادت أداةً — لا وسم `phase` الذي تختلف
+  // دلالته بين المحرّكات (‏Codex: سرد · SDK: تفكير فقط). انظر تعليل `tool` في langshadow.
+  const tool = obj.message.content.some((block) => block && block.type === 'tool_use');
   for (const block of obj.message.content) {
     if (!block || block.type !== 'text' || typeof block.text !== 'string') continue;
     langshadow.record({
       text: block.text,
       engine,
       phase: block.phase === 'commentary' ? 'commentary' : 'final_answer',
+      tool,
     });
   }
 }

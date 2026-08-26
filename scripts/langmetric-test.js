@@ -9,8 +9,32 @@
 
 const assert = require('assert');
 const {
-  arabicShare, structuralSlips, proseOf, isSlip, METRIC_VERSION,
+  arabicShare, structuralSlips, proseOf, scriptOf, isSlip, METRIC_VERSION,
 } = require('../electron/langmetric');
+
+/**
+ * نسخة v2 **مجمَّدة** من دالة الحكم — مصدر الحقيقة لادعاء التوافق في `langmetric.js`.
+ *
+ * ليست تكراراً للمنطق بل **بصمة تاريخية**: تُبنى فوق `arabicShare`/`structuralSlips`
+ * الحاليتين (وهما اللتان يعِد العقد بعدم مسّهما) وتعيد ما كان `isSlip` يعيده قبل
+ * وعي الخط. فإن مسّ أحدٌ الإقصاءات أو العتبات انهار التطابق وسقط الفحص — وهو
+ * المقصود: الادعاء أن بيانات v2 الـ906 ما زالت قابلة للمعايرة، وهذه هي عضّته.
+ */
+function isSlipV2(text) {
+  const measured = arabicShare(text);
+  const strong = measured.arabic + measured.latin;
+  if (measured.share === null) return { slip: false, reason: 'no_prose', ...measured };
+  if (strong < MIN_STRONG) return { slip: false, reason: 'short', ...measured };
+  const slips = structuralSlips(text);
+  if (measured.share < SHARE_V2) return { slip: true, reason: 'share', structural: slips.length, ...measured };
+  if (slips.length >= STRUCTURAL_V2) return { slip: true, reason: 'structure', structural: slips.length, ...measured };
+  return { slip: false, reason: 'ok', structural: slips.length, ...measured };
+}
+// العتبات كما جُمّدت في v2 — مكتوبة هنا حرفياً لا مستوردة، وإلا تحرّكت مع الإنتاج
+// فصار الفحص يقارن الشيء بنفسه ويمرّ دائماً (حارس أخضر كاذب).
+const SHARE_V2 = 0.5;
+const MIN_STRONG = 120;
+const STRUCTURAL_V2 = 2;
 
 let checks = 0;
 function ok(cond, msg) { checks += 1; assert(cond, msg); }
@@ -133,5 +157,46 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
     'بنيتان إنجليزيتان تدينان ولو كانت الحصّة الإجمالية فوق العتبة');
 }
 
+// ── وعي الخط (‏OBS-022) وتوافق v3 مع v2 ─────────────────────────────────────
+{
+  const FA = 'این یک متن فارسی خالص است که برای آزمایش نوشته شده و هیچ کلمه عربی در آن '
+    + 'وجود ندارد. نویسنده این متن می خواهد نشان دهد که سنجه زبان فارسی را عربی می شمارد.';
+  const AR = 'هذا نصّ عربي خالص كُتب للاختبار كي يتجاوز عتبة المحارف القوية فيُحكَم عليه، '
+    + 'ولا يحوي أي كلمة فارسية على الإطلاق. والغرض إثبات أن الحكم عليه لم يتغيّر بين الإصدارين.';
+  const EN = 'This is a fully English paragraph written to cross the strong character threshold '
+    + 'so that the metric actually judges it rather than skipping it as too short to matter here.';
+
+  // العطل المرصود حرفياً في OBS-022: فارسي خالص كان يعطي share≈0.96 وحكم ok
+  ok(scriptOf(FA) === 'fa', 'الفارسي الخالص يُصنَّف fa لا ar');
+  const faVerdict = isSlip(FA);
+  ok(faVerdict.slip === true && faVerdict.reason === 'script',
+    'الفارسي الخالص لم يعد يُسجَّل ملتزماً بالعربية (كان reason=ok)');
+  ok(isSlipV2(FA).slip === false, 'وهذا فرقٌ حقيقي عن v2 — وإلا لما لزم رفع الإصدار');
+
+  ok(scriptOf(AR) === 'ar', 'العربي الخالص يُصنَّف ar');
+  ok(scriptOf(EN) === null, 'النثر اللاتيني بلا حكم خطّ');
+  // المختلط لا يُدان تحفظاً (عربيٌّ يقتبس فارسية حالة مشروعة) لكنه موسوم للمعايرة
+  const mixed = isSlip(AR + ' ' + FA);
+  ok(mixed.script === 'mixed' && mixed.slip === false, 'المختلط يُوسم ولا يُدان');
+
+  // ادعاء التوافق: كل نثر عربي/لاتيني/كودي يعطي حكماً مطابقاً حقلاً حقلاً
+  const CORPUS = [AR, EN, 'Done, all tests pass.', '```bash\nnpm test\n```',
+    'راجعت الطبقات الثلاث كاملة ووجدت أن معالج الأذونات يبتلع الأخطاء، وأن منطق '
+      + 'إعادة المحاولة لا يعمل، وأن سجل التدقيق لا يحمل معرّفات الأدوات إطلاقاً.',
+    'إليك الملخص:\n## Findings and open questions from the full review\n'
+      + '| Layer | Status | Every handler checked |\nوسأكمل البقية غداً بتقرير التغطية.',
+    'المشكلة في `validate()` داخل src/ui/app.js مع العلم --strict، والعلاج نقل الفحص '
+      + 'إلى أول الدالة كي لا يُستدعى trim قبل فحص النوع الصحيح للمدخل الوارد.'];
+  for (const sample of CORPUS) {
+    const now = isSlip(sample);
+    const before = isSlipV2(sample);
+    ok(now.slip === before.slip && now.reason === before.reason && now.share === before.share,
+      'حكم v3 يطابق v2 لهذه العيّنة غير الفارسية — وإلا أُهدرت ‏906 قياساً متراكمة: '
+        + JSON.stringify(sample.slice(0, 40)) + ' ⇒ v3=' + now.reason + ' vs v2=' + before.reason);
+  }
+  ok(METRIC_VERSION === 3, 'وسم الإصدار ارتفع مع تغيّر الحكم');
+}
+
 console.log('langmetric-test: ok — ' + checks
-  + ' فحوص (الجواب الصحيح لا يُعاقَب، ولقطة المالك تُمسَك، والحواف لا تكسر).');
+  + ' فحوص (الجواب الصحيح لا يُعاقَب، ولقطة المالك تُمسَك، والحواف لا تكسر، '
+  + 'ووعي الخط يمسك الفارسية دون أن يُهدر بيانات v2).');

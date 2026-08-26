@@ -58,4 +58,48 @@ for (const [key, group] of [...groups.entries()].sort()) {
     + (group.slips + ' (' + Math.round(group.slips / group.n * 100) + '%)').padEnd(9)
     + (median === null ? '—' : Math.round(median * 100) + '%'));
 }
+// ── سرد العمل مقابل الإجابة (‏2026-08-26) ───────────────────────────────────
+// `phase` وحده يضلّل: `commentary` سردُ عمل في Codex وتفكيرٌ فقط في SDK، فسرد عمل
+// SDK يقع في `final_answer` مخلوطاً بالإجابة. حقل `tool` محايد عن المحرك — رسالةٌ
+// نادت أداةً هي سرد عمل أياً كان وسم محرّكها. يظهر لصفوف v3 فصاعداً فقط.
+const tagged = rows.filter((row) => typeof row.tool === 'boolean' || row.tool === true);
+if (tagged.length) {
+  const kinds = new Map();
+  for (const row of tagged) {
+    const key = row.engine + ' · ' + (row.tool ? 'سرد عمل' : 'إجابة');
+    if (!kinds.has(key)) kinds.set(key, { n: 0, slips: 0 });
+    const kind = kinds.get(key);
+    kind.n += 1;
+    if (row.slip) kind.slips += 1;
+  }
+  console.log('\nبدلالة موحّدة عبر المحرّكات (‏' + tagged.length + ' صفاً يحمل الوسم):');
+  for (const [key, kind] of [...kinds.entries()].sort()) {
+    console.log('  ' + key.padEnd(28) + String(kind.n).padEnd(8)
+      + (kind.slips + ' (' + Math.round(kind.slips / kind.n * 100) + '%)'));
+  }
+} else {
+  console.log('\nلا صفّ يحمل وسم «سرد عمل/إجابة» بعد — يبدأ تسجيله من مقياس v3.');
+}
+
+// ── الخط (‏OBS-022) ─────────────────────────────────────────────────────────
+const scripts = new Map();
+for (const row of rows) if (row.script) scripts.set(row.script, (scripts.get(row.script) || 0) + 1);
+const nonArabic = [...scripts.entries()].filter(([name]) => name !== 'ar');
+if (nonArabic.length) {
+  console.log('\n⚠️ خطوط غير عربية في السجل: '
+    + nonArabic.map(([name, n]) => name + '=' + n).join(' · ')
+    + ' — استبعدها قبل معايرة عتبات العربية.');
+}
+
+// ── قابلية المقارنة ─────────────────────────────────────────────────────────
+// القاعدة المجمَّدة: لا تُقارن الأرقام عبر إصدارين. لكن v3 وُثّق توافقه الحكمي مع v2
+// لكل نثر عربي، فالخلط مسموح **لصفوف العربية وحدها** — وقولها صراحةً أصدق من
+// إخفاء الخلط أو رفض التجميع كلياً.
+const versions = [...new Set(rows.map((row) => row.v))].sort();
+if (versions.length > 1) {
+  console.log('\nℹ️ السجل يخلط إصدارَي مقياس (' + versions.map((v) => 'v' + v).join(' · ')
+    + '). حكم v3 موثَّق التطابق مع v2 للنثر العربي، فأرقام العربية أعلاه قابلة للجمع؛'
+    + ' أما صفوف الخطوط الأخرى فمن v3 وحده.');
+}
+
 console.log('\nالسجل أرقام فقط — لا نص فيه. المعايرة ثم قرار الخروج من الظلّ للمالك.');

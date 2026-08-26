@@ -53,7 +53,16 @@ function createShadow(options) {
    * **قيمة منطقية فقط** ولا يحمل اسم اللغة ولا نصّ الطلب (قاعدة «أرقام بلا نص»)،
    * ويُكتب حين يكون `true` فقط فتبقى السطور القائمة بقائمة حقولها المغلقة كما هي.
    *
-   * @param {{text:string, engine?:string, phase?:string, override?:boolean}} entry
+   * **حقل `tool` (‏2026-08-26)**: `phase` **غير قابل للمقارنة بين المحرّكات** — في Codex
+   * يعني `commentary` سردَ العمل، وفي SDK لا يصير `commentary` إلا من كتل `thinking`
+   * (‏`agent.js`)، فسرد عمل SDK يقع في `final_answer` مخلوطاً بالإجابة. رصدته حصيلة
+   * الظلّ الأولى: ‏180 صفَّ `codex·commentary` مقابل **صفر** لـSDK من 676 صفاً.
+   * فأُضيف علم منطقي محايد عن المحرك: هل رافق النصَّ نداءُ أداة في الرسالة نفسها؟
+   * ذاك هو «سرد العمل» بالمعنى الذي شخّصته OBS-001، أياً كان وسم المحرك له.
+   * **لم يُمسّ ما يُبثّ**: وسم `phase` في الأحداث كما هو لأن الواجهة تفصل به سجل
+   * العمل عن الإجابة — تغييره سطحٌ مرئي، ودقّة القياس لا تُشترى بذلك.
+   *
+   * @param {{text:string, engine?:string, phase?:string, override?:boolean, tool?:boolean}} entry
    */
   function record(entry) {
     if (!entry || typeof entry.text !== 'string' || !entry.text) return null;
@@ -71,7 +80,10 @@ function createShadow(options) {
       slip: verdict.slip === true,
       reason: verdict.reason,
     };
+    // وسم الخط (‏OBS-022): يميّز الفارسية عن العربية فلا تلوّث جلسةٌ عابرة المعايرة.
+    if (verdict.script) row.script = verdict.script;
     if (entry.override === true) row.override = true;
+    if (entry.tool === true) row.tool = true;
     try {
       io.mkdirSync(path.dirname(file), { recursive: true });
       io.appendFileSync(file, JSON.stringify(row) + '\n', 'utf8');

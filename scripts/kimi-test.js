@@ -1015,6 +1015,50 @@ async function testToolLabelsAndAvailableCommands() {
   assert.strictEqual(kimi._internals.toolLabel('أداة غير معروفة'), 'أداة غير معروفة');
 }
 
+// OBS-023 — المرساة اللغوية تصل Kimi كما تصل SDK وCodex.
+// كان المحرك الأصيل الوحيد خارجها: `CONTRACT_LINE` عبر envbrief فقط، بلا مرساة
+// ذيلية ولا صيغة قوية. الفحص **سلوكي** على البرومبت المرسَل فعلاً لا نصّي على المصدر:
+// الموضع (آخر كتلة) والصيغة (بايتاً ببايت من langanchor) والبوابة (المعزول خارجها).
+async function testLanguageAnchorReachesKimi() {
+  const langanchor = require('../electron/langanchor');
+  async function runTurn(extra) {
+    let processRef;
+    const engine = kimi.create({
+      resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+      spawn: () => {
+        processRef = new FakeProcess((message, proc) => {
+          if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+          else if (message.method === 'session/new') proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_anchor_1' } });
+          else if (message.method === 'session/prompt') proc.send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+        });
+        return processRef;
+      },
+    });
+    const events = [];
+    await engine.start({
+      prompt: 'حلّل هذا الملف', sessionId: null, model: 'k3', permissionMode: 'default',
+      skills: [], images: [], browserControl: false, ...extra,
+    }, root, (event) => events.push(event));
+    await waitFor(() => events.some((event) => event.type === 'result'));
+    await engine.keepalive.killAll();
+    const sent = processRef.lines.find((message) => message.method === 'session/prompt');
+    return sent.params.prompt;
+  }
+
+  const normal = await runTurn({ browserControl: null });
+  const last = normal[normal.length - 1];
+  assert.strictEqual(last.type, 'text', 'المرساة ليست آخر كتلة — «الذيلية» تعني الأقرب لما يقرؤه النموذج');
+  assert.strictEqual(last.text, langanchor.anchor({ strong: true }),
+    'صيغة المرساة القوية لا تطابق langanchor بايتاً ببايت (الدور الأول يستحق القوية)');
+  assert.ok(normal.filter((block) => block.type === 'text').length >= 2,
+    'نص المستخدم ما زال موجوداً بجانب المرساة');
+
+  // السياق المعزول (المراجع/العصف) خارجها — نفس بوابة الذاكرة حرفياً
+  const isolated = await runTurn({ browserControl: false });
+  assert.ok(!isolated.some((block) => block.type === 'text' && block.text === langanchor.anchor({ strong: true })),
+    'السياق المعزول تسرّبت إليه المرساة — بوابته هي بوابة الذاكرة نفسها');
+}
+
 // OBS-052 — خطأ الأنبوب غير المتزامن لا يتسرّب uncaughtException (فئة عطل OBS-053 نفسها،
 // الذي أوقف التطبيق بحوار Electron أحمر من `codex.js`). الادعاء **سلوكي**: نبثّ حدث
 // 'error' على stdin من دورة أحداث تالية أثناء كتابة جارية — وهي بعينها نافذة EPIPE عند
@@ -1396,6 +1440,7 @@ function testSecurityAndWiring() {
   await testThinkingStream();
   await testThinkingTruncation();
   await testThinkingConfigOption();
+  await testLanguageAnchorReachesKimi();
   await testStdinPipeErrorDoesNotEscape();
   testKimiLoginCommandAndCwd();
   console.log('✓ Kimi Code ACP مسجّل كمحرك أصيل مستقل عن REST');
@@ -1423,6 +1468,7 @@ function testSecurityAndWiring() {
   console.log('✓ التفكير الحي من Kimi ACP يُبثّ كـ stream_text/commentary ويُدمج في رسالة assistant');
   console.log('✓ التفكير الطويل يُقص عند سقف MAX_TOOL_TEXT والأسرار المحجوبة لا تتسرّب إليه');
   console.log('✓ خيار التفكير المعلن في configOptions يُطبَّق عبر session/set_config_option دون لمس config.toml');
+  console.log('✓ OBS-023: المرساة اللغوية تصل Kimi آخرَ كتلة بصيغتها القوية، والمعزول خارجها');
   console.log('✓ OBS-052: انهيار الأنبوب في موضعَي spawn لا يسرّب استثناءً، والمستمع عند spawn لا لكل دور');
 })().catch((error) => {
   console.error(error.stack || error);
