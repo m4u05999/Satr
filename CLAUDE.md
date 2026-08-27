@@ -583,6 +583,14 @@ rollback. أما محرك sdk فيضيف بجواره فعلاً مستقلاً 
   بدل حقل فارغ، والقيمة تُرسل ما دام المحرك يقبلها. يغطيها `test:claude-models` المحدَّث. أعاد `accountInfo()` مفاتيح
   `apiProvider,email,organization,subscriptionType`، لكن العقد العام يسقط الأول. اختيار
   fallback مطابق للنموذج الأساسي يُسقط دفاعياً قبل SDK لتجنب دور غير صالح.
+- **إعادة تحقّق بعد ترقية المحرّك (2026-08-27، ‏CLI ‏`2.1.241`)**: العقود أعلاه **صامدة**
+  — `accountInfo()` بالمفاتيح الأربع نفسها، و`fallbackModel` أنهى دوره `success` بطول
+  `83`. والانحراف **إضافي لا كاسر**: النماذج `5 → 6` (انضم `claude-opus-4-8`، وهو يمرّ
+  `SAFE_MODEL` بلا تعديل)، وأطوال وصف `default`/`opus[1m]` ‏`59 → 57`، وكل نموذج صار
+  يحمل تسعة حقول لا ثلاثة (`supportsEffort` و`supportedEffortLevels` و`supportsAutoMode`
+  و`supportsFastMode` و`supportsAdaptiveThinking` و`resolvedModel` و`displayName`).
+  قائمة السماح المغلقة تُسقطها كلها قبل renderer — سليم أمنياً، لكن المعلومة تضيع:
+  ‏`OBS-063`.
 - **الأحداث والتحقق**: لا يضيف هذا التكامل أي نوع إلى `satr:event`. يغطي
   `npm run test:claude-models` عقدي IPC والتنقية والكاش/تجميع الطلبات وعدم تسريب الحقول،
   والسقوط إلى القائمة الثابتة، وحفظ fallback وعزله عن كل `internalPolicy`؛ وهو داخل
@@ -940,6 +948,10 @@ result`)، فالواجهة لا تتغيّر.
   استرجاع/غرفة عمليات لأنها ليست حدّ دور. بقية المحركات بلا تغيير سلوكي.
 - **لماذا Codex وحده**: Kimi ACP يرفض دوراً ثانياً أثناء دور جارٍ (‏`-32600` — موثّق في
   قسم Kimi)، ومحرك SDK لا يملك عقد steer. لذلك `unsupported` صريحة لا محاكاة.
+- **إعادة تحقّق (2026-08-27، ‏codex-cli ‏`0.149.1`)**: عقد السلك **صامد حرفياً** —
+  `steer_turn_id_equals_start:true`، وعدم المطابقة يردّ `-32600` **ومعه معرّف الدور
+  النشط** (فيبقى حجب نص upstream لازماً لا احتياطاً)، وبعد الاكتمال `no active turn to
+  steer`. العلامة بلغت الإجابة النهائية (`3269` محرفاً بعد `996` إشعاراً).
 - **التحقق**: `npm run test:codex-steer` (قطعي، بلا شبكة — fixture عبر `CODEX_BIN=node`
   بنمط `codex-contract-test.js`) يغطي التنقية النقية (النوع، الفراغ، السقف، CRLF،
   محارف التحكم، اثني عشر محرف Bidi)، وعقد السلك (`threadId`/`expectedTurnId` النشط/شكل
@@ -996,6 +1008,10 @@ result`)، فالواجهة لا تتغيّر.
   مخبّأ» و«منه تفكير» بأسماء تُظهر أنهما مجموعتان فرعيتان فلا يُقرأ الشريط جمعاً مضاعفاً.
 - **الواجهة**: `/سياق` و`/ضغط` أُضيف لهما `'codex'` في `engines`، و`compactConversation()`
   يقبل codex. **لا نوع حدث جديد في `satr:event`** ولا تغيير في أي مكوّن.
+- **إعادة تحقّق (2026-08-27، ‏`0.149.1`)**: **صامد** — `thread/compact/start` يعيد `{}`،
+  والإشارة تبقى `item/completed:contextCompaction` بحمولة `{id,type}` فقط (فلا أرقام
+  رموز)، و`modelContextWindow` ما زال `258400`، والضغط أثناء دور جارٍ ما زال مقبولاً،
+  واسترجاع الرمز المزروع نجح.
 - **التحقق**: `npm run test:codex-compact` (قطعي، بلا شبكة — fixture عبر `CODEX_BIN=node`)
   يغطي: استدعاء `thread/compact/start` مرة واحدة بحقل `threadId` وحده و**بلا** `turn/start`،
   وتحويل `contextCompaction` إلى `compact_boundary` مع بقاء `session_id` وغياب
@@ -1113,6 +1129,12 @@ result`)، فالواجهة لا تتغيّر.
   `test:codex-contract` (وهو عقد عدم تراجع ملزم)، ويستلزم كذلك عملاً في `chat.js` الحسّاس.
   ذلك دفعة مستقلة بحاجزها الخاص، لا ذيل دفعة. (تأكيد إضافي من الـschema:
   `NonSteerableTurnKind` يضم `review` — دور المراجعة صنف مستقل غير قابل للتوجيه.)
+- **إعادة تحقّق (2026-08-27، ‏`0.149.1`)**: العقود **صامدة** (البدء فوق اعتماد قائم ما
+  زال يُقبل، والإلغاء يولّد `completed` بـ`success:false`، والمعرّف المجهول يردّ `-32600`،
+  و`credits.balance` نص). والانحراف **إضافي**: `usage/read` كسب `threadUsage`، و
+  `rateLimits/read` كسب `rateLimitsByLimitId` و`individualLimit` و`limitId` و
+  `spendControlReached`. قائمة الحقول المغلقة في `normalizeRateLimits` تُسقطها
+  fail-closed فلا يتأثر العرض.
 - **التحقق**: `npm run test:codex-account` (قطعي، بلا شبكة — fixture عبر `CODEX_BIN=node`)
   يغطي تطبيع الاستهلاك والحدود وقوائم الحقول المغلقة، `params:null` على السلك، دورة
   الدخول (نجاح/رفض/إلغاء يُرسل `account/login/cancel`/رابط غير آمن/بلا رابط/فشل)،
