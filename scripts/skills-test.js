@@ -231,6 +231,27 @@ async function assertSatrDiverge(discoveryOptions) {
   assert(adapter.content.includes('لا تُنهِ دور الجذر ولا تعرض خرج طفل واحد'));
   assert(adapter.content.includes('بقاء `/root` وحده قبل استلام خرج فرع يعني `missing`'));
 
+  // تعدد المحركات (‏OBS-060، بدليل جلسة `ec550b65`): كان المورد يحيل المحركات المختلفة
+  // إلى غرفة العمليات **وهي سطح واجهة بلا أداة وكيل**، ويحرّم الصدفة تحريماً مطلقاً —
+  // بينما `envbrief` المحقون كل دور يجيز «تشغيل محرّك آخر من الطرفية». فبقي الوكيل بلا
+  // مسار شرعي: 19 محاولة إطلاق يدوية · 1110ث · ‏$14.61 ثم استسلم. هذه الفحوص تمنع عودة
+  // أيٍّ من الثلاثة: إعلان حدّ الغرفة، والوصفة المثبَّتة، وسقف المحاولات.
+  assert(adapter.content.includes('سطح واجهة لا أداة وكيل'),
+    'المورد لا يعلن أن غرفة العمليات ليست أداة وكيل — يعود الوكيل يبحث عن بديل');
+  assert(adapter.content.includes('## تعدد المحركات'), 'سقط قسم تعدد المحركات');
+  assert(/codex exec[^\n]*--dangerously-bypass-approvals-and-sandbox\s+-/.test(adapter.content),
+    'الوصفة بلا العلم الصحيح أو بلا علامة stdin `-` — وهما سببا الفشل المرصود');
+  assert(adapter.content.includes('OutputEncoding') && adapter.content.includes('ASCII'),
+    'الوصفة لا تحذّر من ترميز PS 5.1 الافتراضي — العربية تصل ???');
+  assert(adapter.content.includes("EAP='Continue'") || adapter.content.includes("'Continue'"),
+    'الوصفة لا تذكر EAP=Continue — stderr يقتل السكربت');
+  assert(adapter.content.includes('محاولتين'), 'الوصفة بلا سقف محاولات — يدخل الوكيل حلقة');
+  // ولا تُحيل إلى مسار من مستودعنا: المهارة تعمل في مشروع المستخدم (‏OBS-060).
+  for (const leak of ['executor.ps1', 'AGENT-CLI-FLAGS', 'D:\\sater', 'docs/']) {
+    assert(!adapter.content.includes(leak),
+      'تسريب مسار من مستودعنا إلى المهارة المحمولة: ' + leak);
+  }
+
   const evaluation = skills.readResource(selected, 'satr-diverge', 'references/evaluation.md');
   assert.strictEqual(evaluation.ok, true);
   assert(evaluation.content.includes('branch_completion_ratio'));
