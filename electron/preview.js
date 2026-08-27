@@ -1939,6 +1939,240 @@ async function perf() {
   } catch { return { error: 'perf_failed' }; }
 }
 
+// ---------- قياس قرائية الصفحة (browser_readability) ----------
+// **قرائية محضة — وهذا شرط أمني لا راحة**: لا كتابة واحدة في DOM. القياس كله
+// `getComputedStyle` و`getBoundingClientRect` و`Range`/`TreeWalker` (لا يعدّلان الشجرة)
+// وقراءة `document.fonts`. ولذلك وحدها تدخل `AUTO_SAFE_TOOLS` بخلاف `browser_snapshot`
+// (يكتب `data-satr-ref`) و`browser_scroll` (يطلق lazy-load وشبكة) و`browser_hover`.
+//
+// **لماذا لا تكفي الخاصية المحسوبة**: `getComputedStyle(el).direction` يعيد `rtl`
+// الموروثة بينما الفقرة رست LTR فعلياً — العطل الذي أثبته `scripts/arabic-rtl-probe.js`
+// بالبكسل بعد أن أخفته الخاصية المحسوبة. فالمقياس هنا هو نفسه: موضع أول محرف عبر
+// `Range` مقارنةً بحافتَي العنصر. هذا هو الفحص الذي لا يملكه أي مدقّق ويب عام.
+//
+// **حدود معلنة في الناتج نفسه لا مسكوت عنها**: `querySelectorAll` لا يخترق Shadow DOM
+// ولا `<iframe>` (القيد نفسه في `SNAPSHOT_FN`/`READ_SCRIPT`)، فيُعدّان ويُصرَّح بهما؛
+// و`innerWidth` الفعلي يعود دائماً لأن `viewportOverride` قد يقصّ العرض بصمت (‏OBS-028).
+const READABILITY_FN = `(async function(){
+  var CAP = 200, MAX_FINDINGS = 20, SNIP = 40, WHERE = 60;
+  // عائلة الحرف العربي كلها لا العربية وحدها (‏OBS-037): عربي + ملحقه + الموسّعان أ/ب
+  // + شكلا العرض. أوسع من نطاق src/ui/lib/text-dir.js عمداً لأن المقيس مشاريع المستخدمين.
+  var AR = /[\\u0600-\\u06FF\\u0750-\\u077F\\u0870-\\u089F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/g;
+  var LAT = /[A-Za-z]/g;
+  var GENERIC = {'serif':1,'sans-serif':1,'monospace':1,'cursive':1,'fantasy':1,'system-ui':1,
+    'ui-sans-serif':1,'ui-serif':1,'ui-monospace':1,'ui-rounded':1,'inherit':1,'initial':1,
+    'unset':1,'-apple-system':1,'blinkmacsystemfont':1,'math':1,'emoji':1,'fangsong':1};
+  var BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,td,th,dd,dt,blockquote,figcaption,caption,summary,label,legend';
+
+  // انتظار الخطوط صراحةً: waitReady ينتظر did-stop-loading وقد يسبق جهوز الخطوط،
+  // فيصير التقرير غير حتمي بين نداءين. المهلة تمنع التعليق على صفحة لا تحسمها.
+  try { await Promise.race([document.fonts.ready, new Promise(function(r){ setTimeout(r, 1500); })]); } catch(e) {}
+
+  function n(s, re){ var m = String(s).match(re); return m ? m.length : 0; }
+  function expectDir(s){ var a = n(s, AR), l = n(s, LAT); if (!a && !l) return ''; return a * 2 >= l ? 'rtl' : 'ltr'; }
+  function clean(s){ return String(s || '').replace(/\\s+/g, ' ').trim(); }
+  function where(el){
+    var out = el.tagName.toLowerCase();
+    if (el.id) out += '#' + el.id;
+    else if (el.className && typeof el.className === 'string') {
+      var c = el.className.trim().split(/\\s+/)[0];
+      if (c) out += '.' + c;
+    }
+    return out.slice(0, WHERE);
+  }
+  function firstText(el){
+    try {
+      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+      var t;
+      while ((t = w.nextNode())) { if (t.data && t.data.trim()) return t; }
+    } catch(e) {}
+    return null;
+  }
+  // موضع أول محرف بالبكسل — الدليل الوحيد على الرسو الفعلي. Range لا يعدّل الشجرة.
+  function anchorOf(el){
+    var node = firstText(el);
+    if (!node) return null;
+    var lead = node.data.length - node.data.replace(/^\\s+/, '').length;
+    if (lead >= node.data.length) return null;
+    var first, box;
+    try {
+      var r = document.createRange();
+      r.setStart(node, lead); r.setEnd(node, lead + 1);
+      first = r.getBoundingClientRect();
+    } catch(e) { return null; }
+    box = el.getBoundingClientRect();
+    if ((!first.width && !first.height) || (!box.width && !box.height)) return null;
+    var fromRight = box.right - first.right, fromLeft = first.left - box.left;
+    if (Math.abs(fromRight - fromLeft) < 1) return null; // نصّ يملأ سطراً واحداً بلا حسم
+    return fromRight <= fromLeft ? 'rtl' : 'ltr';
+  }
+  function rgb(s){
+    var m = String(s).match(/rgba?\\(([^)]+)\\)/);
+    if (!m) return null;
+    var p = m[1].split(',').map(function(x){ return parseFloat(x); });
+    if (p.length < 3 || p.some(function(x){ return !isFinite(x); })) return null;
+    return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+  }
+  function lum(c){
+    function f(v){ v = v / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  }
+  function ratio(a, b){
+    var x = lum(a), y = lum(b);
+    if (x < y) { var t = x; x = y; y = t; }
+    return (x + 0.05) / (y + 0.05);
+  }
+  // صعود الآباء لأول خلفية غير شفافة. خلفية صورة/تدرّج ⇒ «غير محدَّد» لا تخمين.
+  function backdrop(el){
+    var node = el;
+    for (var hop = 0; node && hop < 24; hop++, node = node.parentElement) {
+      var cs;
+      try { cs = getComputedStyle(node); } catch(e) { return null; }
+      if (cs.backgroundImage && cs.backgroundImage !== 'none') return 'image';
+      var c = rgb(cs.backgroundColor);
+      if (c && c.a >= 0.95) return c;
+      if (c && c.a > 0) return 'blended';
+    }
+    return null;
+  }
+
+  var findings = [], counts = { direction: 0, contrast: 0, overflow: 0, font: 0 };
+  var stacks = {}, scanned = 0, truncated = false;
+  var vw = Math.round(innerWidth || 0), vh = Math.round(innerHeight || 0);
+
+  var els;
+  try { els = Array.prototype.slice.call(document.querySelectorAll(BLOCKS)); } catch(e) { els = []; }
+  if (els.length > CAP) { truncated = true; els = els.slice(0, CAP); }
+
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i], cs;
+    try { cs = getComputedStyle(el); } catch(e) { continue; }
+    if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+    var box = el.getBoundingClientRect();
+    if (!box.width || !box.height) continue;
+    var text = clean(el.textContent);
+    if (text.length < 12) continue;
+    scanned++;
+    var snip = text.slice(0, SNIP);
+    var arCount = n(text, AR);
+
+    // (1) رسو الاتجاه — الفحص الجوهري
+    var want = expectDir(text);
+    if (want) {
+      var got = anchorOf(el);
+      if (got && got !== want) {
+        counts.direction++;
+        var startsLatin = /^[A-Za-z0-9$#@\\[(<]/.test(text);
+        findings.push({ s: 100, kind: 'direction', where: where(el), text: snip,
+          detail: 'متوقّع ' + want + ' ورسا ' + got
+            + (want === 'rtl' && startsLatin ? ' — يبدأ برمز لاتيني: بصمة plaintext/dir=auto' : '') });
+      }
+    }
+
+    // (2) التباين
+    var fg = rgb(cs.color), bg = backdrop(el);
+    if (fg && fg.a >= 0.95 && bg && bg !== 'image' && bg !== 'blended') {
+      var cr = ratio(fg, bg);
+      var size = parseFloat(cs.fontSize) || 16;
+      var weight = parseInt(cs.fontWeight, 10) || 400;
+      var large = size >= 24 || (size >= 18.66 && weight >= 700);
+      var need = large ? 3 : 4.5;
+      if (cr < need) {
+        counts.contrast++;
+        findings.push({ s: cr < 3 ? 80 : 50, kind: 'contrast', where: where(el), text: snip,
+          detail: 'التباين ' + cr.toFixed(2) + ':1 والمطلوب ' + need + ':1' });
+      }
+    }
+
+    // (3) التجاوز الأفقي على مستوى العنصر
+    if (vw && box.right > vw + 1 && box.width <= vw) {
+      counts.overflow++;
+      findings.push({ s: 40, kind: 'overflow', where: where(el), text: snip,
+        detail: 'يمتد إلى ' + Math.round(box.right) + 'px خارج عرض ' + vw + 'px' });
+    }
+
+    // (4) أسر الخطوط المستعملة فعلاً على نصّ بالحرف العربي
+    if (arCount > 0) {
+      var stack = clean(cs.fontFamily).slice(0, 120);
+      if (stack) stacks[stack] = (stacks[stack] || 0) + 1;
+    }
+  }
+
+  // خطوط الصفحة المحمّلة فعلاً (@font-face مطبَّق) مقابل أول أسرة مسمّاة في كل مكدّس
+  var loaded = {};
+  try {
+    Array.prototype.forEach.call(Array.from(document.fonts), function(f){
+      if (f.status === 'loaded') loaded[clean(f.family).replace(/^["']|["']$/g, '').toLowerCase()] = 1;
+    });
+  } catch(e) {}
+  var unembedded = [];
+  Object.keys(stacks).forEach(function(stack){
+    var first = clean(stack.split(',')[0]).replace(/^["']|["']$/g, '');
+    var key = first.toLowerCase();
+    if (!first || GENERIC[key] || loaded[key]) return;
+    unembedded.push({ family: first.slice(0, 60), elements: stacks[stack] });
+  });
+  unembedded.sort(function(a, b){ return b.elements - a.elements; });
+  unembedded.slice(0, 3).forEach(function(u){
+    counts.font++;
+    findings.push({ s: 90, kind: 'font', where: u.family, text: '',
+      // العدد في النهاية تجنّباً لتصريف التمييز العربي (‏3–10 جمع قلّة، 11+ منصوب)
+      detail: 'أسرة غير محمّلة في الصفحة — سقوط صامت إلى خط النظام · عناصر متأثّرة: ' + u.elements });
+  });
+
+  // (5) تجاوز أفقي على مستوى المستند
+  var de = document.documentElement, pageOverflow = null;
+  if (de && de.scrollWidth > de.clientWidth + 1) {
+    pageOverflow = { scrollWidth: de.scrollWidth, clientWidth: de.clientWidth };
+    counts.overflow++;
+    findings.unshift({ s: 70, kind: 'overflow', where: 'html', text: '',
+      detail: 'المستند يمرّر أفقياً: ' + de.scrollWidth + 'px داخل ' + de.clientWidth + 'px' });
+  }
+
+  // ما لم نره — يُصرَّح به بدل صمت يُقرأ «صفر مخالفات»
+  var shadowRoots = 0;
+  try {
+    var all = Array.prototype.slice.call(document.querySelectorAll('*'), 0, 5000);
+    for (var k = 0; k < all.length; k++) { if (all[k].shadowRoot) shadowRoots++; }
+  } catch(e) {}
+  var iframes = 0;
+  try { iframes = document.querySelectorAll('iframe,frame').length; } catch(e) {}
+
+  findings.sort(function(a, b){ return b.s - a.s; });
+  var total = findings.length;
+  findings = findings.slice(0, MAX_FINDINGS).map(function(f){
+    return { kind: f.kind, where: f.where, text: f.text, detail: f.detail };
+  });
+
+  return {
+    url: location.href,
+    lang: (de && de.getAttribute('lang')) || '',
+    doc_dir: (de && de.getAttribute('dir')) || (de ? getComputedStyle(de).direction : ''),
+    viewport: { width: vw, height: vh, dpr: Number(devicePixelRatio) || 1 },
+    scanned: scanned, truncated: truncated,
+    counts: counts, total_findings: total, findings: findings,
+    page_overflow: pageOverflow,
+    font_stacks: Object.keys(stacks).slice(0, 5),
+    unseen: { shadow_roots: shadowRoots, iframes: iframes }
+  };
+})()`;
+
+async function readability() {
+  if (handoffActive) return { error: 'handoff' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  try {
+    const data = await runIsolated(wc, READABILITY_FN); // OBS-018
+    if (!data || typeof data !== 'object') return { error: 'readability_failed' };
+    // العرض الفعلي يعود دائماً: قد يكون مقصوصاً بوضع محاكاة الأجهزة أو بضيق اللوحة،
+    // فحكمٌ على «التجاوز الأفقي» بلا معرفته حكمٌ مضلّل (‏OBS-028 بوجه آخر).
+    if (data.viewport && lastDeviceMode) data.viewport.device_mode = lastDeviceMode;
+    if (data.viewport && viewportOverride) data.viewport.overridden = true;
+    return { ok: true, readability: data };
+  } catch { return { error: 'readability_failed' }; }
+}
+
 async function historyNavigate(direction) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
@@ -2009,7 +2243,7 @@ function close() {
 function destroy() { close(); hostWin = null; sender = null; }
 
 module.exports = {
-  open, navigate, action, setBounds, startPick, cancelPick, readPage, snapshot, waitFor,
+  open, navigate, action, setBounds, startPick, cancelPick, readPage, readability, snapshot, waitFor,
   getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText,
   selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
   fillForm, transferField, requestSecret, resolveSecretRequest, clearSecretTransfers, clearSensitiveState,

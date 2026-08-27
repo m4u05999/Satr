@@ -143,7 +143,7 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
   j = JSON.parse(r.body);
   const names = j.result.tools.map((t) => t.name);
-  ['open_preview', 'browser_navigate', 'read_page', 'browser_snapshot', 'browser_console', 'browser_network', 'screenshot',
+  ['open_preview', 'browser_navigate', 'read_page', 'browser_readability', 'browser_snapshot', 'browser_console', 'browser_network', 'screenshot',
    'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover',
    'browser_click', 'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
    'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
@@ -152,13 +152,14 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
    'generate_media',
    'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
-  ok(names.length === 36, 'عدد أدوات Codex MCP أصبح 36 (26 متصفح — منها close_preview ‏OBS-020 — + 5 خلفية، منها wait_for_background_task، + generate_media + 4 برومو)');
+  ok(names.length === 37, 'عدد أدوات Codex MCP أصبح 37 (27 متصفح — منها close_preview ‏OBS-020 وbrowser_readability — + 5 خلفية، منها wait_for_background_task، + generate_media + 4 برومو)');
   ok(names.includes('wait_for_background_task'), 'أداة الانتظار الحاجب غائبة عن tools/list');
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
   const builtTools = codexmcp.buildTools({ preview, cwd: process.cwd(), genmedia, promoCapture, promoStudio });
   const built = (name) => builtTools.find((tool) => tool.name === name);
   ok(built('browser_evaluate').browserClass === 'act', 'browser_evaluate مصنّفة act');
   ok(built('browser_set_viewport').browserClass === 'read' && built('browser_perf').browserClass === 'read', 'viewport/perf مصنّفتان read');
+  ok(built('browser_readability').browserClass === 'read', 'browser_readability مصنّفة read (بلا إذن نطاق)');
   ok(built('browser_back').browserClass === 'navigate' && built('browser_forward').browserClass === 'navigate', 'back/forward مصنّفتان navigate');
   ok(['browser_fill_form', 'browser_transfer_field', 'browser_request_secret'].every((name) => built(name).browserClass === 'act'), 'أدوات الحقول الجديدة مصنّفة act');
   ok(built('browser_handoff_step').browserClass === 'handoff', 'browser_handoff_step مصنّفة handoff');

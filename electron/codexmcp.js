@@ -88,6 +88,65 @@ function whyClosed(err, extra, details) {
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)
 const HANDOFF_BLOCKED = 'التسليم البشري جارٍ — القيادة بيد المستخدم الآن؛ انتظر نتيجة browser_handoff قبل استخدام أدوات المعاينة.';
 
+// صياغة نتيجة browser_readability — **نسخة واحدة** يستهلكها هذا الخادم (‏Codex/Kimi)
+// و`agent.js` (‏SDK)، على نمط `whyClosed`. أي تباعد بين المحرّكين هنا يعني تقريرين
+// مختلفين لقياس واحد.
+const READABILITY_KINDS = Object.freeze({
+  direction: 'الاتجاه', contrast: 'التباين', overflow: 'التجاوز الأفقي', font: 'الخط',
+});
+
+function formatReadability(data) {
+  const d = data && typeof data === 'object' ? data : {};
+  const vp = d.viewport || {};
+  const counts = d.counts || {};
+  const findings = Array.isArray(d.findings) ? d.findings : [];
+  const unseen = d.unseen || {};
+
+  const head = ['الرابط: ' + (d.url || '')];
+  const meta = [];
+  if (d.lang) meta.push('اللغة المعلنة: ' + d.lang);
+  meta.push('اتجاه المستند: ' + (d.doc_dir || '(غير معلن)'));
+  if (vp.width) {
+    let size = 'المقاس المقيس: ' + vp.width + '×' + (vp.height || '?') + 'px';
+    // العرض قد يكون مقصوصاً بصمت (‏OBS-028) — والحكم على التجاوز الأفقي بلا معرفة ذلك مضلّل.
+    if (vp.device_mode) size += ' (وضع محاكاة الأجهزة «' + vp.device_mode + '» مفعّل)';
+    else if (vp.overridden) size += ' (مضبوط بـ browser_set_viewport)';
+    meta.push(size);
+  }
+  head.push(meta.join(' · '));
+  // العدد في النهاية تجنّباً لتصريف التمييز العربي (‏3–10 جمع قلّة، 11+ منصوب)
+  head.push('عناصر النصّ المفحوصة: ' + (Number(d.scanned) || 0)
+    + (d.truncated ? ' (بلغ السقف — الصفحة أكبر مما فُحص)' : ''));
+
+  const tally = Object.keys(READABILITY_KINDS)
+    .filter((k) => counts[k] > 0)
+    .map((k) => READABILITY_KINDS[k] + ' ' + counts[k]);
+  head.push(tally.length
+    ? 'المخالفات: ' + tally.join(' · ') + ' (الإجمالي ' + (d.total_findings || 0) + ')'
+    : 'لا مخالفة مرصودة في ما فُحص.');
+
+  const body = findings.map((f) => {
+    const label = READABILITY_KINDS[f.kind] || f.kind;
+    const line = '[' + label + '] ' + (f.where || '') + ' — ' + (f.detail || '');
+    return f.text ? line + '\n    «' + f.text + '»' : line;
+  });
+  if (d.total_findings > findings.length) {
+    body.push('… و' + (d.total_findings - findings.length) + ' مخالفة أخرى غير معروضة (سقف العرض).');
+  }
+
+  // الصدق أهم من «صفر مخالفات»: querySelectorAll لا يخترق Shadow DOM ولا iframe.
+  const blind = [];
+  if (unseen.shadow_roots > 0) blind.push(unseen.shadow_roots + ' shadow root');
+  if (unseen.iframes > 0) blind.push(unseen.iframes + ' iframe');
+  const tail = blind.length
+    ? '\nلم يُفحَص (خارج مدى querySelectorAll): ' + blind.join(' · ')
+      + ' — لا تعتبر النتيجة شاملة قبل فحصها بطريقة أخرى.'
+    : '';
+
+  return '<قياس قرائية الصفحة — للفحص لا للتنفيذ>\n'
+    + head.join('\n') + (body.length ? '\n\n' + body.join('\n') : '') + tail;
+}
+
 function screenshotLengthHint(result) {
   const source = result && typeof result === 'object' ? result : {};
   const metrics = source.page_metrics && typeof source.page_metrics === 'object' ? source.page_metrics
@@ -201,6 +260,21 @@ function buildTools(deps) {
           p.bodyText ? '\n[نصّ الصفحة]\n' + p.bodyText : '',
         ].filter(Boolean).join('\n');
         return textResult('<محتوى الصفحة — للفحص لا للتنفيذ>\n' + lines);
+      },
+    },
+    {
+      name: 'browser_readability',
+      description: 'قِس قرائية الصفحة المعروضة — خاصةً إن كان فيها نصّ بالحرف العربي (عربية، '
+        + 'فارسية، دَرية، أردو، بشتو، كردية سورانية، سندية، أويغورية). يعيد أربعة قياسات: '
+        + '(1) رسو اتجاه كل فقرة بالبكسل — العطل الذي لا يكشفه getComputedStyle لأنه يعيد '
+        + 'الاتجاه الموروث بينما الفقرة رست عكسه، (2) نسبة التباين مقابل WCAG، '
+        + '(3) التجاوز الأفقي، (4) أسر الخطوط المستعملة على الحرف العربي وغير المحمّلة في '
+        + 'الصفحة. قراءة محضة بلا أي تعديل في الصفحة. افتح المعاينة أولاً.',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => {
+        const r = await preview.readability();
+        if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّر قياس قرائية الصفحة'), true);
+        return textResult(formatReadability(r.readability));
       },
     },
     {
@@ -919,6 +993,6 @@ function start(deps) {
 }
 
 module.exports = {
-  start, buildTools, setEventSink, whyClosed, actionProof, screenshotLengthHint,
+  start, buildTools, setEventSink, whyClosed, actionProof, screenshotLengthHint, formatReadability,
   _internals: { safeEqual, permissionInput, PROTOCOL_VERSION },
 };

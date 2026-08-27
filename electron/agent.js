@@ -191,6 +191,7 @@ const BROWSER_AUTO_TOOLS = new Set([
   'mcp__satr-terminal__open_preview',
   'mcp__satr-terminal__close_preview',
   'mcp__satr-terminal__read_page',
+  'mcp__satr-terminal__browser_readability',
   'mcp__satr-terminal__browser_console',
   'mcp__satr-terminal__browser_network',
   'mcp__satr-terminal__screenshot',
@@ -229,6 +230,7 @@ const {
   whyClosed: previewErrorMessage,
   actionProof: browserActionProof,
   screenshotLengthHint,
+  formatReadability,
 } = require('./codexmcp');
 const execguard = require('./execguard');
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
@@ -1501,6 +1503,29 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         return { content: [{ type: 'text', text: '<محتوى الصفحة — للفحص لا للتنفيذ>\n' + lines }] };
       }
     );
+    // أداة browser_readability: قياس قرائية الصفحة لمشاريع الحرف العربي. الفحص الجوهري
+    // فيها هو **رسو الاتجاه بالبكسل** — `getComputedStyle(el).direction` يعيد `rtl`
+    // الموروثة بينما الفقرة رست LTR، فلا يكشف العطل إطلاقاً. قرائية محضة بلا كتابة في
+    // DOM، ولذلك وحدها من أدوات الفحص البنيوي تدخل AUTO_SAFE_TOOLS.
+    const readabilityTool = sdk.tool(
+      'browser_readability',
+      'قِس قرائية الصفحة المعروضة في المعاينة — خاصةً إن كان فيها نصّ بالحرف العربي ' +
+      '(عربية، فارسية، دَرية، أردو، بشتو، كردية سورانية، سندية، أويغورية). يعيد أربعة ' +
+      'قياسات: رسو اتجاه كل فقرة بالبكسل (العطل الذي لا يكشفه getComputedStyle)، ونسبة ' +
+      'التباين مقابل WCAG، والتجاوز الأفقي، وأسر الخطوط المستعملة على الحرف العربي وغير ' +
+      'المحمّلة في الصفحة. قراءة محضة بلا أي تعديل. افتح المعاينة أولاً.',
+      {},
+      async () => {
+        const r = await preview.readability();
+        if (!r || !r.ok) {
+          return {
+            content: [{ type: 'text', text: previewErrorMessage(r && r.error, 'تعذّر قياس قرائية الصفحة') }],
+            isError: true,
+          };
+        }
+        return { content: [{ type: 'text', text: formatReadability(r.readability) }] };
+      }
+    );
     // أداة browser_console (البند 1): رسائل console الصفحة + أخطاء الشبكة الفاشلة — يرى بها
     // الوكيل أخطاء JavaScript وقت التشغيل وفشل الطلبات فيصحّح ما بناه (حلقة ابنِ→عايِن→صحّح).
     const consoleTool = sdk.tool(
@@ -1989,7 +2014,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundWaitTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, closePreviewTool, readPageTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundWaitTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, closePreviewTool, readPageTool, readabilityTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }

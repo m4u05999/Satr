@@ -117,6 +117,80 @@ async function assertSatrAccept(discoveryOptions) {
   assert(toolLoaded.content.includes('## قواعد ملزمة'));
 }
 
+// satr-design-ar: خبرة واجهات الحرف العربي محمولةً إلى مشاريع المستخدمين.
+//
+// **الحارس الجوهري هنا هو المحمولية** (‏OBS-060): المهارة تعمل داخل مشروع المستخدم حيث
+// لا وجود لـ`docs/` ولا `electron/` ولا `npm run test:*` الخاصة بنا. الإحالة إلى مسار
+// غائب أسوأ من السكوت — كلّفت جلسةً 1014 ثانية و‏$13.77 حين بحث الوكيل عن ملف لا وجود
+// له ثم ارتجل. فأي تسريب مسار من مستودعنا إلى نصّ المهارة أو مواردها يفشل هنا.
+const REPO_LEAKS = Object.freeze([
+  [/\bdocs\/[A-Za-z0-9_.-]+/, 'مسار docs/ من مستودعنا'],
+  [/\belectron\/[A-Za-z0-9_.-]+/, 'مسار electron/ من مستودعنا'],
+  [/\bscripts\/[A-Za-z0-9_.-]+/, 'مسار scripts/ من مستودعنا'],
+  [/\bsrc\/ui\/[A-Za-z0-9_./-]+/, 'مسار src/ui/ من مستودعنا'],
+  [/\bOBS-\d+/, 'معرّف ملاحظة داخلية'],
+  [/\bCLAUDE\.md\b/, 'CLAUDE.md'],
+  [/\bAGENTS\.md\b/, 'AGENTS.md'],
+  [/npm run (?:test|gen):[A-Za-z-]+/, 'سكربت npm خاص بمستودعنا'],
+]);
+
+async function assertSatrDesignAr(discoveryOptions) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  assert(manifest.build.files.includes('.agents/skills/satr-design-ar/**/*'),
+    'satr-design-ar خارج build.files — لن تصل الحزمة');
+  assert(manifest.build.asarUnpack.includes('.agents/skills/satr-design-ar/**/*'),
+    'satr-design-ar خارج asarUnpack — حصر الموارد يعتمد realpathSync');
+
+  const catalog = skills.discoverSkills(ROOT, discoveryOptions);
+  const skill = catalog.find((item) => item.name === 'satr-design-ar');
+  assert(skill, 'مهارة satr-design-ar المضمّنة غير مكتشفة');
+  assert.strictEqual(skill.format, 'standard');
+  // الوصف وحده ما يقرّر التحميل: يجب أن يحمل المُشغّل والأداة والحدّ معاً
+  assert(skill.description.includes('browser_readability'), 'الوصف بلا أداة القياس');
+  assert(skill.description.includes('لا تستعملها'), 'الوصف بلا حدّ الاستعمال');
+
+  const selected = skills.resolveSelection(ROOT, ['satr-design-ar'], discoveryOptions);
+  const loaded = skills.loadSkill(selected, 'satr-design-ar');
+  assert.strictEqual(loaded.ok, true);
+  assert(loaded.instructions.includes('## متى **لا** تُستعمل'), 'سقطت حدود الاستعمال');
+  // الفحص الجوهري: العطل الذي لا تكشفه الخاصية المحسوبة. سقوطه يفرّغ المهارة.
+  assert(loaded.instructions.includes('getComputedStyle'),
+    'سقط تحذير الخاصية المحسوبة — وهو العطل المركزي');
+  assert(/ar\s*\*\s*2\s*>=\s*lat/.test(loaded.instructions),
+    'سقطت دالة الحسم الإحصائي — بدونها تعود التوصية إلى plaintext');
+  assert(loaded.instructions.includes('unicode-bidi: plaintext'),
+    'المهارة لا تسمّي الفخّ الذي تعالجه');
+  // «صفر مخالفات» بلا تصريح بما لم يُفحص ادّعاءٌ ضمني بالشمول
+  assert(loaded.instructions.includes('unseen'), 'سقطت قاعدة التصريح بما لم يُفحص');
+
+  const resources = loaded.resources.map((item) => item.path);
+  for (const name of ['direction.md', 'fonts.md', 'locales.md', 'checklist.md']) {
+    assert(resources.includes(name), 'المورد ' + name + ' غير مُدرَج');
+  }
+  // التحميل التدريجي: الموارد لا تُحشر في SKILL.md وإلا استُهلك سياق كل دور
+  assert(loaded.instructions.length < 12000,
+    'SKILL.md انتفخ (' + loaded.instructions.length + ' محرفاً) — انقل التفصيل إلى مورد');
+
+  // المحمولية — على النصّ وكل مورد
+  const texts = [['SKILL.md', loaded.instructions]];
+  for (const name of resources) {
+    const resource = skills.readResource(selected, 'satr-design-ar', name);
+    assert.strictEqual(resource.ok, true, 'تعذّرت قراءة المورد ' + name);
+    texts.push([name, resource.content]);
+  }
+  for (const [name, text] of texts) {
+    for (const [pattern, label] of REPO_LEAKS) {
+      const hit = text.match(pattern);
+      assert(!hit, 'تسريب مسار مستودعنا في ' + name + ' (' + label + '): ' + (hit && hit[0])
+        + ' — المهارة تعمل في مشروع المستخدم حيث لا وجود له');
+    }
+  }
+
+  const toolLoaded = await tools.run('load_skill', ROOT, { name: 'satr-design-ar' }, { skillContext: selected });
+  assert.strictEqual(toolLoaded.ok, true);
+  assert(toolLoaded.content.includes('## متى **لا** تُستعمل'));
+}
+
 async function assertSatrDiverge(discoveryOptions) {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert(manifest.build.files.includes('.agents/skills/satr-diverge/**/*'));
@@ -257,6 +331,8 @@ async function main() {
     await assertSatrDiverge(discoveryOptions);
     await assertSatrAccept(discoveryOptions);
     console.log('✓ satr-accept: مضمّنة ومحزومة، وقواعدها الملزمة وحدودها ومثالها الحيّ في النص');
+    await assertSatrDesignAr(discoveryOptions);
+    console.log('✓ satr-design-ar: مضمّنة ومحزومة، وفحصها المركزي وحدودها في النص، ومحمولة بلا مسار من مستودعنا');
     if (process.argv.includes('--live-codex')) await runLiveProbe('codex', project);
     if (process.argv.includes('--live-sdk')) await runLiveProbe('sdk', project);
   } finally {

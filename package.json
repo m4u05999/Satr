@@ -84,6 +84,7 @@
     "test:browser-member-live": "electron scripts/browser-member-live-test.js",
     "test:preview-member-live": "electron scripts/preview-member-live-test.js",
     "test:preview-lease": "electron scripts/preview-lease-test.js",
+    "test:readability": "electron scripts/readability-test.js",
     "test:rtl-preview": "electron scripts/rtl-preview-fix-test.js --ar",
     "test:rtl-native": "electron scripts/rtl-native-audit.js --ar",
     "test:rtl-geometry": "electron scripts/rtl-geometry-live-test.js --lang=ar",
@@ -185,6 +186,7 @@
       ".agents/skills/satr-diverge/**/*",
       ".agents/skills/satr-generate/**/*",
       ".agents/skills/satr-accept/**/*",
+      ".agents/skills/satr-design-ar/**/*",
       "!enterprise/**",
       "!**/@anthropic-ai/claude-agent-sdk-win32-x64/**",
       "!**/@anthropic-ai/claude-agent-sdk-*/**",
@@ -197,7 +199,8 @@
       ".agents/skills/satr-guide/**/*",
       ".agents/skills/satr-diverge/**/*",
       ".agents/skills/satr-generate/**/*",
-      ".agents/skills/satr-accept/**/*"
+      ".agents/skills/satr-accept/**/*",
+      ".agents/skills/satr-design-ar/**/*"
     ],
     "win": {
       "icon": "build/icon.ico",

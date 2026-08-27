@@ -1,0 +1,22 @@
+/* أنماط عيوب مزروعة لقياس أداة القرائية — كل عيب معلَّق بما يُفترض أن يُرصد. */
+
+/* أسرة غير محمّلة إطلاقاً (لا @font-face لها) ⇒ اعتماد على خط النظام */
+body {
+  font-family: "Ghost Arabic Face", sans-serif;
+  background: #ffffff;
+  color: #111111;
+  margin: 0;
+  padding: 8px;
+}
+
+p { font-size: 16px; line-height: 1.6; }
+
+/* عيب 1 — الاتجاه: الفقرة عربية الجوهر لكنها تبدأ برمز لاتيني */
+#plain { unicode-bidi: plaintext; }
+
+/* عيب 2 — التباين: ‎#8a8a8a على ‎#9a9a9a */
+#faint { color: #8a8a8a; background: #9a9a9a; }
+
+/* عيب 3 — التجاوز الأفقي */
+#wide { width: 2400px; }
+#pushed { width: 2400px; }

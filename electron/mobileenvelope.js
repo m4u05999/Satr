@@ -70,6 +70,7 @@ const LABELS = Object.freeze({
   open_preview: 'فتح المعاينة',
   browser_navigate: 'انتقال في المتصفح',
   read_page: 'قراءة الصفحة',
+  browser_readability: 'قياس قرائية الصفحة',
   browser_snapshot: 'لقطة بنيوية للصفحة',
   browser_console: 'قراءة سجل المتصفح',
   browser_network: 'قراءة شبكة المتصفح',
@@ -103,6 +104,7 @@ const NO_FIELD_READ = Object.freeze({
 
 const NO_FIELD_BROWSER = Object.freeze({
   read_page: 'الصفحة المعروضة حالياً',
+  browser_readability: 'قرائية الصفحة المعروضة حالياً',
   browser_snapshot: 'العناصر التفاعلية في الصفحة الحالية',
   browser_console: 'سجل الصفحة الحالية',
   browser_network: 'طلبات شبكة الصفحة الحالية',

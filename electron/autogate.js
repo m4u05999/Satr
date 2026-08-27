@@ -24,6 +24,9 @@ const AUTO_SAFE_TOOLS = new Set([
   'Read', 'Glob', 'Grep', 'LS', 'TodoWrite',
   // معاينة الويب — القرائية البحتة فقط
   'mcp__satr-terminal__read_page',
+  // قرائية محضة مُثبَتة بفحص حيّ: لا سمة ولا عنصر ولا تمرير بعد القياس (‏test:readability
+  // يفحص DOM بعده). لولا ذلك لبقيت خارج القائمة مثل snapshot/scroll/hover.
+  'mcp__satr-terminal__browser_readability',
   'mcp__satr-terminal__screenshot',
   'mcp__satr-terminal__browser_console',
   'mcp__satr-terminal__browser_network',

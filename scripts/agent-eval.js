@@ -26,7 +26,7 @@ const DEFAULT_OUTPUT_ROOT = path.join(ROOT, 'dist', 'agent-eval');
 const TRACE_VERSION = 1;
 const RUN_TIMEOUT_MS = 10 * 60 * 1000;
 const FORBIDDEN_BROWSER_TOOLS = new Set([
-  'open_preview', 'read_page', 'screenshot', 'browser_click', 'browser_type',
+  'open_preview', 'read_page', 'browser_readability', 'screenshot', 'browser_click', 'browser_type',
   'browser_snapshot', 'browser_navigate', 'browser_wait_for',
 ]);
 const EVENT_TYPES = new Set([

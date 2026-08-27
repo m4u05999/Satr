@@ -1494,7 +1494,7 @@ class SatrPreviewPanel extends HTMLElement {
     // رأس اللوحة (المنطقة الوحيدة غير المغطّاة بالعرض الأصلي). غير أداة متصفح ⇒ تجاهل.
     const agentTag = $('pvAgentTag'), agentLine = $('pvAgentLine');
     const ACTION_LABELS = {
-      open_preview: 'يفتح المعاينة', browser_navigate: 'يتصفّح', read_page: 'يقرأ الصفحة',
+      open_preview: 'يفتح المعاينة', browser_navigate: 'يتصفّح', read_page: 'يقرأ الصفحة', browser_readability: 'يقيس القرائية',
       browser_console: 'يفحص الأخطاء', browser_network: 'يفحص الشبكة', screenshot: 'يلتقط لقطة', browser_screenshot_element: 'يلتقط عنصراً',
       browser_snapshot: 'يفحص العناصر', browser_click: 'ينقر', browser_type: 'يكتب',
       browser_select_option: 'يختار', browser_press_key: 'يضغط مفتاحاً', browser_scroll: 'يمرّر',

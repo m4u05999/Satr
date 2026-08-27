@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>قياس القرائية — عيوب مزروعة</title>
+  <link rel="stylesheet" href="readability.css">
+</head>
+<body>
+  <!-- عيب 1: plaintext يحسم من أول حرف قوي فترسو الفقرة العربية LTR -->
+  <p id="plain">SHA-256 هو ملخّص التجزئة الذي نستعمله في تثبيت الأثر قبل المراجعة</p>
+
+  <!-- سليمة: عربية خالصة ترث dir=rtl -->
+  <p id="good">هذه فقرة عربية سليمة ترسو يميناً كما ينبغي بلا أي تدخّل</p>
+
+  <!-- سليمة: إنجليزية داخل حاوية ltr -->
+  <p id="latin" dir="ltr">This paragraph is English and must anchor to the left edge</p>
+
+  <!-- عيب 2: تباين منخفض -->
+  <p id="faint">نصّ عربي باهت جداً على خلفية رمادية قريبة منه في القيمة</p>
+
+  <!-- عيب 3: تجاوز أفقي -->
+  <div id="wide"><p id="pushed">فقرة تمتد بعيداً خارج عرض النافذة فتُحدث تمريراً أفقياً</p></div>
+
+  <script src="readability-page.js"></script>
+</body>
+</html>

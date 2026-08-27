@@ -41,9 +41,9 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
     const builtinCatalog = skills.discoverSkills(project, { home, builtinRoot });
     const builtinGuide = builtinCatalog.find((s) => s.name === 'satr-guide');
     ok(!!builtinGuide && builtinGuide.source === 'builtin', 'المشروع الفارغ يكتشف satr-guide من المصدر المضمّن');
-    ok(builtinCatalog.map((s) => s.name).join(',') === 'satr-accept,satr-diverge,satr-generate,satr-guide'
+    ok(builtinCatalog.map((s) => s.name).join(',') === 'satr-accept,satr-design-ar,satr-diverge,satr-generate,satr-guide'
       && !builtinCatalog.some((s) => s.name === 'tafqeet'),
-    'المصدر المضمّن مقصور على مهارات سطر الرسمية الأربع ولا يشحن مثال tafqeet');
+    'المصدر المضمّن مقصور على مهارات سطر الرسمية الخمس ولا يشحن مثال tafqeet');
 
     const overrideDir = path.join(project, '.agents', 'skills', 'satr-guide');
     fs.mkdirSync(overrideDir, { recursive: true });
