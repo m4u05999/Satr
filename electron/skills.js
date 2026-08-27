@@ -311,4 +311,6 @@ module.exports = {
   SAFE_NAME,
   MAX_SKILL_BYTES,
   MAX_RESOURCE_BYTES,
+  // مُصدَّرة ليقرأها حارس `satr-guide` من المصدر الواحد بدل نسخة ثانية تتباعد بصمت.
+  BUILTIN_SKILLS,
 };

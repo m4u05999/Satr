@@ -91,6 +91,21 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
   ok(!/CLAUDE\.md|docs\/PLAN|ROADMAP/.test(feat), 'features.md لا يحيل لوثائق التطوير الداخلية');
   ok(Buffer.byteLength(feat) <= skills.MAX_RESOURCE_BYTES, 'features.md ضمن سقف حجم المورد');
 
+  // 3ب) كل مهارة مضمّنة مذكورة بالاسم في features.md.
+  //
+  // **لماذا هذا الحارس**: نصف الدليل محروس ونصفه لا. `tools.md` مولَّد ويفشل عند أي
+  // انحراف، بينما `features.md` نثرٌ بشري يتقادم **بصمت**. ولا يمكن اشتقاق نثر
+  // المستخدم من الكود، لكن **أسماء المهارات المضمّنة** قابلة للاشتقاق — وهي أكثر ما
+  // يتغيّر. سقوط `satr-generate` و`satr-design-ar` من الدليل (‏2026-08-27) لم يكشفه
+  // شيء حتى سأل المالك؛ هذا يمنع تكراره.
+  //
+  // **حدّه المُعلَن**: يحرس **الذكر** لا **الدقة** — مهارة مذكورة بوصف متقادم تمرّ.
+  // ولا يغطّي بقية الميزات إطلاقاً؛ تلك تبقى على المراجعة البشرية.
+  const undocumented = [...skills.BUILTIN_SKILLS]
+    .filter((name) => name !== 'satr-guide' && !feat.includes(name));
+  ok(undocumented.length === 0,
+    'features.md يذكر كل مهارة مضمّنة' + (undocumented.length ? ' — الناقص: ' + undocumented.join(' · ') : ''));
+
   // 4) tools.md متزامن مع تعريفات الأدوات الفعلية (جوهر الحارس)
   const disk = fs.readFileSync(gen.OUT, 'utf8');
   ok(lf(disk) === lf(gen.buildMarkdown()),
