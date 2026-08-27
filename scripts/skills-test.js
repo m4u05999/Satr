@@ -246,6 +246,16 @@ async function assertSatrDiverge(discoveryOptions) {
   assert(adapter.content.includes("EAP='Continue'") || adapter.content.includes("'Continue'"),
     'الوصفة لا تذكر EAP=Continue — stderr يقتل السكربت');
   assert(adapter.content.includes('محاولتين'), 'الوصفة بلا سقف محاولات — يدخل الوكيل حلقة');
+  // الافتراضي نفسه (بلاغ مالك 2026-08-27، جلسة `01a0444f`): أول صياغة قالت «فإن كان
+  // هذا مسارك الوحيد فتوقّف» عن غرفة العمليات ثم «نقرة الغرفة أبسط وأأمن» — فتوقّف
+  // الوكيل عند القسم الأول ولم يبلغ الوصفة أصلاً. أحال المستخدم إلى نقرة وهو يملك
+  // مساراً ينفّذه. النتيجة كانت صادقة (‏launched=0) لكنها ليست المطلوب.
+  assert(adapter.content.includes('ليست مسارك الافتراضي'),
+    'المورد لا ينزع الافتراضية عن غرفة العمليات — يعود الوكيل يحيل إلى نقرة');
+  assert(adapter.content.includes('مسارك الافتراضي، لا خيارٌ احتياطي'),
+    'قسم تعدد المحركات لا يُعلن نفسه افتراضياً — يبقى خياراً لا يُسلَك');
+  assert(!/نقرة غرفة العمليات أبسط وأأمن/.test(adapter.content),
+    'عادت الصياغة التي تحيز إلى النقرة على حساب المسار المنفَّذ');
   // ولا تُحيل إلى مسار من مستودعنا: المهارة تعمل في مشروع المستخدم (‏OBS-060).
   for (const leak of ['executor.ps1', 'AGENT-CLI-FLAGS', 'D:\\sater', 'docs/']) {
     assert(!adapter.content.includes(leak),
