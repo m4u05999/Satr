@@ -15,6 +15,7 @@ const SUITE = [
   'test:sessionmeta',
   'test:tasks',
   'test:observations',
+  'test:probe-runner',
   'test:langmetric',
   'test:langshadow',
   'test:langoverride',

@@ -17,6 +17,8 @@
     "test:skills": "node scripts/skills-test.js",
     "test:tasks": "node scripts/tasks-test.js",
     "test:observations": "node scripts/observations-test.js",
+    "test:probe-runner": "node scripts/probe-runner-test.js",
+    "probe:run": "node scripts/probe-runner.js",
     "test:webpush-probe": "node scripts/webpush-probe.js",
     "test:sessionmeta": "node scripts/sessionmeta-test.js",
     "test:verify": "node scripts/verify-test.js",

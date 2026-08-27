@@ -18,6 +18,18 @@ const BASELINE_PATH = path.join(__dirname, '..', 'docs', 'KIMI-CAPABILITIES.md')
 const MAX_WAIT_MS = 60000;
 const IS_WIN = process.platform === 'win32';
 
+// حارس الخروج (‏OBS-062): مسبارٌ يطبع تقريره ثم لا يخرج يحجب سلسلة المسابير بصمت.
+// النمط من `scripts/arabic-rtl-probe.js`: مهلة `unref` + التقاط ما لا يُلتقط + خروج صريح.
+process.on('uncaughtException', (error) => {
+  console.error('kimi-capability-probe: FAIL:', (error && error.stack) || error);
+  process.exit(1);
+});
+const exitGuard = setTimeout(() => {
+  console.error('kimi-capability-probe: FAIL — تجاوز المهلة الكلية');
+  process.exit(1);
+}, 180000);
+exitGuard.unref();
+
 function findKimiBin() {
   const found = kimi.resolveKimiBin(true);
   if (found) return found;
@@ -174,9 +186,20 @@ async function probeCapabilities() {
     }, 30000);
 
     // ننتظر أول كتلة إجابة (أو مهلة قصيرة) ثم نحاول steering.
+    // ‏OBS-062 — **سبب التعليق الجذري**: كانت `check` تعيد جدولة نفسها كل 50ms بلا شرط
+    // توقّف، و`setTimeout(resolve, 3000)` يحلّ الوعد **دون أن يوقف السلسلة**. فحين لا
+    // تصل أول كتلة، تبقى حلقة الأحداث دائرة أبداً وينتهي الشغل بلا أن تخرج العملية.
+    // العلاج: مقبضان يُمسح كلٌّ منهما عند أول حسم، أيّهما سبق.
     await new Promise((resolve) => {
-      const check = () => { if (gotChunk) return resolve(); setTimeout(check, 50); };
-      setTimeout(resolve, 3000);
+      let pollTimer = null;
+      let capTimer = null;
+      const finish = () => {
+        if (pollTimer) clearTimeout(pollTimer);
+        if (capTimer) clearTimeout(capTimer);
+        resolve();
+      };
+      const check = () => { if (gotChunk) return finish(); pollTimer = setTimeout(check, 50); };
+      capTimer = setTimeout(finish, 3000);
       check();
     });
 
@@ -203,11 +226,29 @@ async function probeCapabilities() {
   } finally {
     rpc.close();
     try { proc.stdin.end(); } catch { /* */ }
-    setTimeout(() => { try { proc.kill(); } catch { /* */ } }, 500);
+    // قتل حتمي بلا مؤقّت: المؤقّت غير المُلغى كان يُبقي الحلقة دائرة، وunref عليه كان
+    // سيُخرج العملية قبل أن يُقتل الطفل فيبقى يتيماً. وعلى ويندوز الشجرة كاملةً لأن
+    // الثنائي قد يكون خلف `cmd /c` فقتل الأب وحده يترك الحفيد (‏OBS-062).
+    try {
+      if (IS_WIN && proc.pid) {
+        spawn('taskkill', ['/T', '/F', '/PID', String(proc.pid)], { stdio: 'ignore', windowsHide: true });
+      } else {
+        proc.kill();
+      }
+    } catch { /* */ }
     try { fs.rmSync(sandbox, { recursive: true, force: true }); } catch { /* */ }
   }
 
   return result;
+}
+
+/**
+ * ‏OBS-062: المطابقة **ببادئة لا بمساواة تامة**. الوثيقة تكتب الحالة مؤهَّلة —
+ * `**مدعوم منذ 0.38.0**` — فالمساواة التامة كانت تقرؤها «غير مدعوم» وتصرخ بفرقٍ معروف
+ * في كل تشغيل حتى يصير تحذيراً يُتجاهَل. و«غير مدعوم» لا يطابق البادئة لأنه يبدأ بـ«غير».
+ */
+function is(value, word) {
+  return typeof value === 'string' && new RegExp('^' + word + '(\\s|$)').test(value.trim());
 }
 
 function readBaseline() {
@@ -219,13 +260,13 @@ function readBaseline() {
     };
     // \S+ بدلاً من \w+ لأن الحالة قد تكون عربية (مدعوم/غير مدعوم/معلن/موصول).
     return {
-      steering: parse(/\| steering[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/) === 'مدعوم',
-      fork: parse(/\| session\/fork[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/) === 'مدعوم',
-      undo: parse(/\| session\/undo[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/) === 'مدعوم',
-      effort: parse(/\| effort[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/) === 'معلن',
-      thinking: parse(/\| thinking[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/) === 'معلن',
-      mode: parse(/\| mode[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/) === 'معلن',
-      terminal: parse(/\| terminal[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/) === 'موصول',
+      steering: is(parse(/\| steering[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/), 'مدعوم'),
+      fork: is(parse(/\| session\/fork[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/), 'مدعوم'),
+      undo: is(parse(/\| session\/undo[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/), 'مدعوم'),
+      effort: is(parse(/\| effort[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/), 'معلن'),
+      thinking: is(parse(/\| thinking[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/), 'معلن'),
+      mode: is(parse(/\| mode[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/), 'معلن'),
+      terminal: is(parse(/\| terminal[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/), 'موصول'),
       commands: parse(/\| الأوامر[^|]*\|[^|]*\*\*([^*|\s][^*|]*?)\*\*/) || 'محدودة',
     };
   } catch {
@@ -260,11 +301,21 @@ function compare(result) {
     for (const line of diffs) console.log(line);
     console.log('\nراجع docs/KIMI-CAPABILITIES.md وCLAUDE.md وحدّثهما عند الحاجة.');
   } else {
-    console.log('\n✅ لا يوجد فرق عن خط الأساب.');
+    console.log('\n✅ لا يوجد فرق عن خط الأساس.');
   }
 }
 
-(async () => {
-  const result = await probeCapabilities();
-  if (result) compare(result);
-})();
+// حارس `require.main` كي يصير الملف قابلاً للاستيراد: بلا هذا كان مجرّد `require`
+// يشغّل مسباراً حياً يستهلك دوراً — فلا يمكن اختبار محلّل خط الأساس إلا بنسخ منطقه،
+// وذاك حارسٌ يقارن الشيء بنفسه (الدرس نفسه في `full-suite.js`).
+if (require.main === module) {
+  (async () => {
+    const result = await probeCapabilities();
+    if (result) compare(result);
+    // خروج صريح (‏OBS-062): لا تعتمد على فراغ حلقة الأحداث — مقبضٌ واحد منسيّ يحوّل
+    // «انتهى التقرير» إلى عمليةٍ خالدة تحجب ما بعدها.
+    process.exit(0);
+  })();
+}
+
+module.exports = { is, readBaseline, findKimiBin };
