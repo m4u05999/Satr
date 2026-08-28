@@ -169,6 +169,33 @@ function startTerm(cwd, cols, rows, meta) {
 
 // كتابة خام إلى pty — البيانات آمنة لأنها تذهب لمجرى الطرفية لا لوسائط spawn.
 // تحقق دفاعي مكرر لتنقية main.js تحسّباً لإعادة هيكلة مستقبلية (مراجعة muraji-amn)
+/**
+ * كتابة سطر أمر باللصق المُقوّس (bracketed paste) — PSReadLine يعالج المحتوى وحدةً
+ * واحدة بلا إعادة رسم ولا إسقاط محارف (تحقق قبول 16.1: الحقن الخام يُسقط محارف
+ * السطر الطويل).
+ *
+ * **استُخرجت لأن `runCapture` وحده كان يستعملها** بينما `termjobs.startJob`
+ * (‏`run_in_background`) يكتب خاماً عبر `writeTerm`. والنتيجة مرصودة حياً: أمر تباعد
+ * طويل تجاوز ما تتحمله PowerShell، فتعطّل PSReadLine وبقيت القشرة عند `>>` والمهمة
+ * تبدو حيّة بلا عمل. أي أن الحماية كانت في الملف نفسه ولا تصل نصف مستعمليها.
+ */
+function writePasted(t, line) {
+  const CR = line.slice(-1) === '\r' ? '\r' : '';
+  const body = CR ? line.slice(0, -1) : line;
+  try { t.proc.write('\x1b[200~' + body + '\x1b[201~' + CR); return true; }
+  catch (e) { return false; }
+}
+
+/** نظير `writeTerm` لكن باللصق المُقوّس — لسطر أمر كامل لا لإدخال المستخدم الحرفي. */
+function writeTermPasted(id, data) {
+  const t = terminals.get(id);
+  if (!t) return { ok: false, error: 'no_term' };
+  if (typeof data !== 'string' || !data.length || data.length > 1024 * 1024) {
+    return { ok: false, error: 'bad_data' };
+  }
+  return writePasted(t, data) ? { ok: true } : { ok: false, error: 'write_failed' };
+}
+
 function writeTerm(id, data) {
   const t = terminals.get(id);
   if (!t) return { ok: false, error: 'no_term' };
@@ -208,8 +235,27 @@ function readBuffer(id, tailBytes) {
   if (!t) return { ok: false, error: 'no_term' };
   const wanted = Number.isInteger(tailBytes) && tailBytes > 0
     ? Math.min(tailBytes, MAX_BUFFER_BYTES) : MAX_BUFFER_BYTES;
-  const data = t.buffer.subarray(Math.max(0, t.buffer.length - wanted)).toString('utf8');
-  return { ok: true, data };
+  const start = Math.max(0, t.buffer.length - wanted);
+  if (start === 0) return { ok: true, data: t.buffer.toString('utf8'), truncated: false };
+
+  // القصّ الخام كان يرتكب خطأين صامتين معاً (مرصودان حياً في جولة تباعد):
+  // (1) يشطر محرفاً عربياً متعدد البايتات فيبدأ الخرج بمحرف تالف؛
+  // (2) يقطع السطر الأول في منتصفه بلا أي علامة، فيبدو **كاملاً** وهو ليس كذلك —
+  //     وخرج JSON طويل يفقد غلافه الافتتاحي فيستحيل التحقق منه («لم يظهر مفتاح frame»).
+  // العلاج: محاذاة الحدّ إلى بداية محرف UTF-8، ثم إسقاط بقية السطر الجزئي، ثم **إعلان**
+  // القصّ صراحةً بدل تمرير كسرٍ يُقرأ سلامةً.
+  let cut = start;
+  while (cut < t.buffer.length && (t.buffer[cut] & 0xC0) === 0x80) cut++; // تخطَّ بايتات الاستمرار
+  let text = t.buffer.subarray(cut).toString('utf8');
+  const newline = text.indexOf('\n');
+  if (newline >= 0 && newline < text.length - 1) text = text.slice(newline + 1);
+  const droppedBytes = t.buffer.length - Buffer.byteLength(text, 'utf8');
+  return {
+    ok: true,
+    truncated: true,
+    droppedBytes,
+    data: '[قُصّ ' + droppedBytes + ' بايت من بداية السجل — هذا ذيله لا كامله]\n' + text,
+  };
 }
 
 // ---------- طرفية النموذج المخصّصة (المرحلة 16.2 — أداة run_in_terminal) ----------
@@ -324,12 +370,9 @@ function runCaptureNow(id, command, opts) {
         note: 'انتهت المهلة (' + Math.round(timeoutMs / 1000) + 'ث) — قد يكون أمراً تفاعلياً أو طويلاً؛ الخرج حتى الآن أعلاه.' });
     }, timeoutMs);
 
-    // اللصق المُقوّس (bracketed paste): PSReadLine يعالج المحتوى كوحدة لصق بلا إعادة رسم
-    // ولا إسقاط محارف للأسطر الطويلة (تحقق قبول 16.1: الحقن الخام يُسقط محارف السطر الطويل)
-    const CR = line.slice(-1) === '\r' ? '\r' : '';
-    const body = CR ? line.slice(0, -1) : line;
-    try { t.proc.write('\x1b[200~' + body + '\x1b[201~' + CR); }
-    catch (e) { finish({ ok: false, error: 'write_failed', message: 'تعذّرت الكتابة للطرفية.' }); }
+    if (!writePasted(t, line)) {
+      finish({ ok: false, error: 'write_failed', message: 'تعذّرت الكتابة للطرفية.' });
+    }
   });
 }
 
@@ -356,6 +399,6 @@ function killAll() {
 
 module.exports = {
   MAX_TERMS, MAX_BUFFER_BYTES,
-  setNotifier, subscribe, startTerm, writeTerm, resizeTerm, killTerm, listTerms, readBuffer,
+  setNotifier, subscribe, startTerm, writeTerm, writeTermPasted, resizeTerm, killTerm, listTerms, readBuffer,
   sanitizeCommand, runCapture, ensureModelTerm, getModelTermId, killAll,
 };

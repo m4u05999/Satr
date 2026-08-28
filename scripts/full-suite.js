@@ -43,6 +43,7 @@ const SUITE = [
   'test:browser-platform-live',
   'test:execguard',
   'test:termjobs',
+  'test:term-longline',
   'test:termjobs-done',
   'test:secretscrub',
   'test:envbrief',

@@ -190,6 +190,11 @@ function startJob(cwd, command, label, options) {
   } else {
     line = cleanCommand + '; exit';
   }
+  // ⚠️ **لا تستبدلها بـ`writeTermPasted`** (جُرّب وسقط، 2026-08-28): `runCapture` يلصق
+  // مُقوّساً إلى طرفية **مستقرّة** رسم مِحَثّها، أما هنا فالكتابة تقع فور `startTerm`
+  // قبل أن يفعّل PSReadLine وضع اللصق — فتصل `\x1b[200~` محارفَ حرفية تفسد الأمر،
+  // وسقط `test:termjobs-done` فوراً. مشكلة السطر الطويل قائمة ومسجّلة، وعلاجها ملف
+  // سكربت مؤقت لا لصقٌ مُقوّس.
   const written = term.writeTerm(job.id, line + '\r');
   if (!written.ok) {
     jobs.delete(job.id);
