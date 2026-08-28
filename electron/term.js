@@ -65,6 +65,14 @@ function loadPty() {
 // (اكتشاف مراجعة الوكيل muraji-amn: القيمة كانت تمرّ لـ pty.spawn بلا تنقية)
 const ALLOWED_SHELLS = new Set(['powershell.exe', 'pwsh.exe', 'cmd.exe']);
 
+// سطر ضبط ترميز الكونسول — نسخة واحدة يستعملها مسارا الإقلاع (سطر تفاعلي/سكربت مُرمَّز)
+const PWSH_UTF8_PRELUDE =
+  '[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8';
+
+// سقف نصّ base64 المُمرَّر في `-EncodedCommand`. حدّ `CreateProcess` هو 32767 محرفاً
+// لسطر الأوامر كله؛ نترك هامشاً لاسم الصدفة والعلَم. التجاوز يُرصد قبل spawn لا بعده.
+const MAX_ENCODED_COMMAND = 30000;
+
 // الصدفة الافتراضية: PowerShell على ويندوز (أغنى من cmd)، وإلا صدفة النظام
 function defaultShell() {
   if (IS_WIN) {
@@ -104,17 +112,47 @@ function startTerm(cwd, cols, rows, meta) {
   const r = Number.isInteger(rows) && rows >= 2 && rows <= 500 ? rows : 30;
   const shell = defaultShell();
   const id = 'term_' + (++seq);
+  const safeMeta = meta && typeof meta === 'object' ? meta : {};
 
   // ترميز UTF-8 للكونسول (chcp 65001 بالاتجاهين): خرج البرامج يصل UTF-8 سليماً بلا
   // هذا، لكن **صدى الإدخال** العربي يمر بصفحة ترميز conhost القديمة فيصير «؟؟؟» —
   // ثبت بالتجربة (لقطة قبول 8.2). نضبطه عند الإقلاع بلا ضجيج في أول الشاشة.
   let args = [];
   const shellLower = shell.toLowerCase();
-  if (shellLower.includes('powershell') || shellLower.includes('pwsh')) {
-    args = ['-NoExit', '-Command',
-      '[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8'];
+  const isPwsh = shellLower.includes('powershell') || shellLower.includes('pwsh');
+  if (isPwsh) {
+    args = ['-NoExit', '-Command', PWSH_UTF8_PRELUDE];
   } else if (shellLower.includes('cmd')) {
     args = ['/K', 'chcp 65001 >nul'];
+  }
+
+  // ---- سكربت الإقلاع: يُمرَّر في **وسائط spawn** لا في سطر الطرفية (‏OBS-065) ----
+  // العلّة المقيسة لم تكن الطول (‏7986 محرفاً وصلت سليمة بالكتابة الخام)، بل **جملة غير
+  // مكتملة** تُبقي PowerShell عند مِحَثّ `>>` إلى الأبد فتبدو المهمة حيّة بلا عمل. ومصدرها
+  // الأول كان `sanitizeCommand` وهو يحذف `\n` فيلصق الجُمل — انظر `sanitizeScript`.
+  // تمريره في الوسائط يُخرج الأمر من محرِّر السطر كلياً: لا حدّ طول، ولا PSReadLine، ولا
+  // ملف على القرص يحتاج تنظيفاً أو تصطدم به `ExecutionPolicy` (‏افتراضي ويندوز للعميل
+  // `Restricted` يحجب `& 'file.ps1'`، وجهاز التطوير المتساهل كان سيُخفي ذلك).
+  // وأي خطأ تحليل يصير خروجاً فورياً برمز 1 ورسالة صريحة بدل علقٍ صامت — مقيس.
+  const bootScript = typeof safeMeta.script === 'string' ? safeMeta.script : '';
+  let launchedScript = false;
+  if (bootScript) {
+    if (isPwsh) {
+      // base64 لـUTF-16LE: يعبر سطر أوامر ويندوز بمحارف ASCII فقط، فلا اقتباس يُفسد
+      // ولا محرف عربي يُشوَّه. حدّ سطر الأوامر 32767 وسقفنا 8000 محرف ⇒ هامش واسع.
+      const encoded = Buffer.from(PWSH_UTF8_PRELUDE + '\n' + bootScript, 'utf16le').toString('base64');
+      // حارس صريح بدل رسالة نظام غامضة: تجاوز سطر أوامر ويندوز يردّ
+      // `Cannot create process, error code: 206` وهو لا يدلّ على السبب (رُصد حيّاً).
+      if (encoded.length > MAX_ENCODED_COMMAND) {
+        return { ok: false, error: 'script_too_long',
+          message: 'الأمر أطول مما يقبله سطر أوامر ويندوز — اختصره أو ضعه في ملف سكربت واستدعِه.' };
+      }
+      args = ['-EncodedCommand', encoded];
+      launchedScript = true;
+    }
+    // الصدف الأخرى (cmd وPOSIX) تبقى على مسار الكتابة إلى السطر عمداً: العطل المرصود
+    // خاص بـPSReadLine، وتحويل bash إلى `-c` يُسقط قراءة `.bashrc` (الصدفة اليوم
+    // تفاعلية) فيتغيّر PATH للمستخدم — تغييرٌ غير مقيس لا نُقدم عليه. حدّ معلَن.
   }
 
   let proc;
@@ -139,7 +177,6 @@ function startTerm(cwd, cols, rows, meta) {
     return { ok: false, error: 'spawn_failed', message: 'تعذّر تشغيل الصدفة — أعد المحاولة أو راجع سجل التشغيل.' };
   }
 
-  const safeMeta = meta && typeof meta === 'object' ? meta : {};
   const entry = {
     id, proc, shell, cwd: dir,
     label: typeof safeMeta.label === 'string' ? safeMeta.label : '',
@@ -164,7 +201,8 @@ function startTerm(cwd, cols, rows, meta) {
     emit({ type: 'exit', id, exitCode, tail });
   });
 
-  return { ok: true, id, shell };
+  // `launchedScript` يخبر المستدعي أن السكربت أُقلع مع الصدفة، فلا يكتب سطراً بعده.
+  return { ok: true, id, shell, launchedScript };
 }
 
 // كتابة خام إلى pty — البيانات آمنة لأنها تذهب لمجرى الطرفية لا لوسائط spawn.
@@ -289,6 +327,71 @@ function sanitizeCommand(cmd) {
   return cmd.replace(/[\x00-\x08\x0A-\x1F\x7F-\x9F]/g, '').slice(0, 8000);
 }
 
+const MAX_SCRIPT_CHARS = 8000; // مطابق لسقف sanitizeCommand عمداً
+
+/**
+ * نظير `sanitizeCommand` لكنه **يحفظ الأسطر الجديدة** — لمسار المهام الذي يمرّر النصّ
+ * في وسائط spawn لا في سطر الطرفية، فلا يلزمه سطر واحد.
+ *
+ * **العلّة الجذرية في OBS-065، مقيسة**: `sanitizeCommand` يحذف `\n` (ضمن الصنف
+ * `[\x00-\x08\x0A-\x1F…]`) **بلا بديل**، فأمرٌ متعدد الأسطر تلتصق جُمله:
+ *     `$b = @'⏎نص⏎'@⏎Write-Output 'x'`  ⟶  `$b = @'نص'@Write-Output 'x'`
+ * والناتج **جملة غير مكتملة**، وهي المعنى الوحيد لمِحَثّ `>>` الذي عَلِقت عنده المهمة
+ * في البلاغ. أي أن العطل لم يكن طولاً بل إفساداً صامتاً — والطول كان تفسير الوكيل
+ * لنفسه لا قياساً (سُبر: 7986 محرفاً وصلت سليمة بالكتابة الخام).
+ *
+ * يبقى `\t` و`\n` وحدهما من محارف التحكم، وتُوحَّد `\r\n`/`\r` إلى `\n`.
+ * `sanitizeCommand` **لم يُلمَس** لأن `runCaptureNow` يوجب سطراً واحداً بنيوياً
+ * (بروتوكول علامتَي البداية/النهاية).
+ */
+function sanitizeScript(cmd) {
+  if (typeof cmd !== 'string') return '';
+  return cmd
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
+    .slice(0, MAX_SCRIPT_CHARS);
+}
+
+/** اقتباس نصّ داخل سلسلة PowerShell أحادية الاقتباس (تضعيف `'` هو القاعدة الوحيدة). */
+function pwshSingleQuote(text) { return "'" + String(text).replace(/'/g, "''") + "'"; }
+
+/**
+ * شكل بنيوي لنصّ أمر — أرقام محضة بلا أي محتوى.
+ *
+ * **لماذا هي هنا ومن يستدعيها**: خرجت من جولة قرار (‏2026-08-28) رُفض فيها بناء سجلٍّ
+ * دائم لتيار تفكير الوكيل. الاعتراض القاتل أن الفرق البنيوي بين «ما طلبه النموذج» و«ما
+ * سُلِّم للصدفة» **ليس صفراً في المسار السليم**: الغلاف يضيف أسطراً بالتصميم، وفرع
+ * `sanitizeCommand` يحذفها بالتصميم — فأرضية الضجيج تساوي الإشارة، ويصير السجل تسجيلاً
+ * لتحويل معلَن على أنه شذوذ. والقيمة الحقيقية أن **يُثبَّت التحويل المعلَن نفسه ثابتاً
+ * في الحارس**، فيسقط أي انحراف مستقبلي في `test:full` قبل الشحن بدل أن يُقرأ في سجلٍّ
+ * على قرص المستخدم بعد أن تعلق مهمته.
+ *
+ * لذلك: **لا مستدعي لها في مسار الإنتاج** — `scripts/term-longline-test.js` وحده.
+ * ولا تُكتب نتيجتها إلى قرص ولا تعبر أي عقد. `bytes` بايتات UTF-8 حقيقية لأن سقوف
+ * القصّ تعمل بوحدات UTF-16 والأمر العربي يضاعف البايتات، فالوحدتان لا تتطابقان.
+ */
+function structuralShape(text) {
+  const s = typeof text === 'string' ? text : '';
+  return {
+    bytes: Buffer.byteLength(s, 'utf8'),
+    newlines: (s.match(/\n/g) || []).length,
+    singleQuotes: (s.match(/'/g) || []).length,
+    doubleQuotes: (s.match(/"/g) || []).length,
+  };
+}
+
+/** فرق الشكلين — موجب يعني زيادة في `after`. دالة نقية بلا أثر جانبي. */
+function structuralDelta(before, after) {
+  const a = structuralShape(before);
+  const b = structuralShape(after);
+  return {
+    bytes: b.bytes - a.bytes,
+    newlines: b.newlines - a.newlines,
+    singleQuotes: b.singleQuotes - a.singleQuotes,
+    doubleQuotes: b.doubleQuotes - a.doubleQuotes,
+  };
+}
+
 const MAX_CAPTURE = 512 * 1024;   // سقف خرج ملتقَط (يحمي ذاكرة النموذج والعملية)
 const DEFAULT_CAP_TIMEOUT = 120000; // مهلة افتراضية للأمر (قابلة للتخصيص من المستدعي)
 
@@ -400,5 +503,7 @@ function killAll() {
 module.exports = {
   MAX_TERMS, MAX_BUFFER_BYTES,
   setNotifier, subscribe, startTerm, writeTerm, writeTermPasted, resizeTerm, killTerm, listTerms, readBuffer,
-  sanitizeCommand, runCapture, ensureModelTerm, getModelTermId, killAll,
+  sanitizeCommand, sanitizeScript, pwshSingleQuote, defaultShell,
+  structuralShape, structuralDelta,
+  runCapture, ensureModelTerm, getModelTermId, killAll,
 };

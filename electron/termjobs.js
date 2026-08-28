@@ -160,13 +160,47 @@ function pendingNoticeText(cwd) {
   return lines.join('\n');
 }
 
+// منطق رمز الخروج نفسه المستعمل منذ K4 — استُخرج كي تتشاركه صياغتا الإقلاع بلا تكرار:
+// PowerShell يعيد 0 مع `exit` العاري، فنلتقط نتيجة الأمر **فوره** قبل تنفيذ الغلاف.
+const PWSH_EXIT_WRAPPER = '$satrCommandOk = $?; $satrExitCode = $LASTEXITCODE'
+  + '; if ($satrCommandOk) { exit 0 }'
+  + ' elseif ($satrExitCode -is [int] -and $satrExitCode -ne 0) { exit $satrExitCode } else { exit 1 }';
+
+// سقف صدى الأمر في التبويب. **ليس تجميلاً**: الصدى يضاعف طول الأمر داخل السكربت، وقد
+// رصد الحارس حيّاً `Cannot create process, error code: 206` لأمر 7000 محرف — سطر أوامر
+// ويندوز محدود بـ32767 وbase64 لـUTF-16LE يضخّم الطول ‏×2.67. القصّ يجعل أسوأ حالة
+// حتمية: ‏400 + 8000 + الغلاف ≈ 8700 محرفاً ⇒ ‏base64 ≈ 23200 ⇒ هامش ~9500 محرف.
+const MAX_ECHO_CHARS = 400;
+
+/**
+ * سكربت إقلاع مهمة PowerShell — يُمرَّر في وسائط spawn لا في سطر الطرفية (‏OBS-065).
+ * يبدأ بصدى الأمر لأن `-EncodedCommand` لا يطبع مِحَثّاً ولا يُظهر ما يعمل، وتبويب 🛠
+ * بلا صدى يترك المستخدم يرى خرجاً لا يعرف مصدره.
+ */
+function buildPwshJobScript(cleanCommand) {
+  const echo = cleanCommand.length > MAX_ECHO_CHARS
+    ? cleanCommand.slice(0, MAX_ECHO_CHARS) + ' …[قُصّ الصدى — الأمر كامل قيد التنفيذ]'
+    : cleanCommand;
+  return 'Write-Host ' + term.pwshSingleQuote(echo) + '\n'
+    + '$global:LASTEXITCODE = $null\n'
+    + cleanCommand + '\n'
+    + PWSH_EXIT_WRAPPER + '\n';
+}
+
 function startJob(cwd, command, label, options) {
   const settings = options && typeof options === 'object' ? options : {};
   if (jobs.size >= MAX_JOBS) return { ok: false, error: 'too_many', message: 'بلغت مهام الخلفية الحد الأقصى (' + MAX_JOBS + ').' };
-  const cleanCommand = term.sanitizeCommand(command);
+  // OBS-065: مسار PowerShell يحفظ الأسطر الجديدة (وسائط spawn تقبل نصاً متعدد الأسطر)،
+  // أما الصدف الأخرى فتبقى على سطر واحد لأنها ما زالت تُكتب إلى سطر الطرفية.
+  const shellPath = term.defaultShell();
+  const usesPwsh = /powershell|pwsh/i.test(path.basename(String(shellPath)));
+  const cleanCommand = usesPwsh ? term.sanitizeScript(command) : term.sanitizeCommand(command);
   if (!cleanCommand.trim()) return { ok: false, error: 'empty', message: 'أمر فارغ.' };
   const cleanLabel = sanitizeLabel(label);
-  const started = term.startTerm(cwd, 120, 30, { label: cleanLabel, isJob: true });
+  const started = term.startTerm(cwd, 120, 30, {
+    label: cleanLabel, isJob: true,
+    script: usesPwsh ? buildPwshJobScript(cleanCommand) : '',
+  });
   if (!started.ok) return started;
   const job = {
     id: started.id, label: cleanLabel, command: cleanCommand, cwd: path.resolve(cwd),
@@ -177,29 +211,24 @@ function startJob(cwd, command, label, options) {
   };
   jobs.set(job.id, job);
   if (job.recordDevServer) devservers.recordStart(job.cwd, job.command, job.label);
-  const shell = String(job.shell || '').toLowerCase();
-  let line;
-  if (shell.includes('cmd')) {
-    line = cleanCommand + ' & exit';
-  } else if (shell.includes('powershell') || shell.includes('pwsh')) {
-    // PowerShell يعيد 0 مع exit العاري؛ التقط نتيجة الأمر قبل تنفيذ الغلاف نفسه.
-    line = '$global:LASTEXITCODE = $null; ' + cleanCommand
-      + '; $satrCommandOk = $?; $satrExitCode = $LASTEXITCODE'
-      + '; if ($satrCommandOk) { exit 0 }'
-      + ' elseif ($satrExitCode -is [int] -and $satrExitCode -ne 0) { exit $satrExitCode } else { exit 1 }';
-  } else {
-    line = cleanCommand + '; exit';
-  }
-  // ⚠️ **لا تستبدلها بـ`writeTermPasted`** (جُرّب وسقط، 2026-08-28): `runCapture` يلصق
-  // مُقوّساً إلى طرفية **مستقرّة** رسم مِحَثّها، أما هنا فالكتابة تقع فور `startTerm`
-  // قبل أن يفعّل PSReadLine وضع اللصق — فتصل `\x1b[200~` محارفَ حرفية تفسد الأمر،
-  // وسقط `test:termjobs-done` فوراً. مشكلة السطر الطويل قائمة ومسجّلة، وعلاجها ملف
-  // سكربت مؤقت لا لصقٌ مُقوّس.
-  const written = term.writeTerm(job.id, line + '\r');
-  if (!written.ok) {
-    jobs.delete(job.id);
-    term.killTerm(job.id);
-    return written;
+  // مسار PowerShell: السكربت أُقلع **مع الصدفة** في وسائط spawn، فلا يُكتب سطر بعده.
+  // بذلك لا يمرّ الأمر بمحرِّر السطر إطلاقاً: لا حدّ طول، ولا PSReadLine، وأي جملة غير
+  // مكتملة تصير خطأ تحليل فورياً برمز 1 بدل علقٍ صامت عند `>>` (‏OBS-065، مقيس).
+  //
+  // ⚠️ **لا تُعِد الأمر إلى سطر الطرفية، ولا تستبدل الكتابة بـ`writeTermPasted`**
+  // (جُرّب وسقط، 2026-08-28): `runCapture` يلصق مُقوّساً إلى طرفية **مستقرّة** رسم
+  // مِحَثّها، أما هنا فالكتابة تقع فور `startTerm` قبل أن يفعّل PSReadLine وضع اللصق —
+  // فتصل `\x1b[200~` محارفَ حرفية تفسد الأمر، وسقط `test:termjobs-done` فوراً.
+  if (!started.launchedScript) {
+    // الصدف الأخرى (cmd وPOSIX) — حدّ معلَن: تبقى على سطر واحد يُكتب إلى الطرفية.
+    const shell = String(job.shell || '').toLowerCase();
+    const line = shell.includes('cmd') ? cleanCommand + ' & exit' : cleanCommand + '; exit';
+    const written = term.writeTerm(job.id, line + '\r');
+    if (!written.ok) {
+      jobs.delete(job.id);
+      term.killTerm(job.id);
+      return written;
+    }
   }
   notify({ type: 'bg_term', id: job.id, label: job.label, shell: job.shell, cwd: job.publicCwd });
   return { ok: true, ...publicJob(job) };
@@ -236,6 +265,7 @@ term.subscribe((event) => {
 
 module.exports = {
   MAX_JOBS, MAX_DONE_TAIL, MAX_RECENT_EXITS, MIN_WAIT_MS, MAX_WAIT_MS, DEFAULT_WAIT_MS,
+  MAX_ECHO_CHARS, buildPwshJobScript, // للحارس وحده — يثبّت التحويل المعلَن ثابتاً
   setNotifier, sanitizeLabel, scrubDoneTail, startJob, list, info, stop,
   lastExit, recentExitList, waitForExit, pendingNoticeText, exitSummaryText,
 };
