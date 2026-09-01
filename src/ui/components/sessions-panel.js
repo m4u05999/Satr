@@ -33,7 +33,43 @@ const ownSheet = sheet(`
     direction: ltr; text-align: right; margin-top: 3px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  /* ---- التجميع بالمشروع (‏OBS-068): 22 مشروعاً كانت متشابكة زمنياً في قائمة واحدة ---- */
+  .grp {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    background: var(--surface-2); border-bottom: 1px solid var(--border);
+    cursor: pointer; user-select: none; position: sticky; top: 0; z-index: var(--z-sticky);
+  }
+  .grp:hover, .grp:focus-visible { background: var(--surface-3); outline: none; }
+  .grp .caret { flex: none; color: var(--text-dim); font-size: 10px; width: 10px; }
+  /* اسم المجلد مسار تقني — LTR دائماً مهما كان محيطه */
+  .grp .name {
+    flex: 1; min-width: 0; font-size: 12px; font-family: var(--mono);
+    direction: ltr; text-align: right;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .grp .count {
+    flex: none; font-size: 10.5px; color: var(--text-dim);
+    background: var(--surface); border: 1px solid var(--border-dim);
+    border-radius: var(--radius-pill); padding: 1px var(--space-2);
+  }
+  .grp.current .name { color: var(--gold); }
+  .panel-tools {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border);
+    font-size: 11.5px; color: var(--text-dim);
+  }
+  .panel-tools label { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; }
+  .panel-tools .spacer { flex: 1; }
 `);
+
+// جلسة أداة لا جلسة مستخدم: عوامل غرفة العمليات والمراجعون والمسابير تعمل في worktrees
+// أو مجلدات مؤقتة. تُكشف بيقين من المسار وحده — أما مجلدات مثل `<project>-opus` فهي
+// مجلدات حقيقية على قرص المستخدم ولا يميّزها شيء، فلا نخمّنها (‏OBS-068).
+const TOOL_PATH = /(^|[\\/])\.satr[\\/]worktrees[\\/]|[\\/]AppData[\\/]Local[\\/]Temp[\\/]|[\\/]Temp[\\/]satr-/i;
+function isToolSession(s) {
+  return TOOL_PATH.test(String((s && s.cwd) || ''));
+}
 
 // عمر الجلسة بصيغة عربية سليمة: مفرد/مثنى/جمع 3–10/تمييز 11+ (جولة الصقل 2026-08-08 —
 // كانت «قبل 1 س» و«قبل 2 يوم» أرقاماً واختصارات بلا مثنى)
@@ -65,12 +101,26 @@ class SatrSessionsPanel extends HTMLElement {
       '<div class="panel-search">' +
         '<input type="text" placeholder="🔍 ابحث بالعنوان أو المجلد…" autocomplete="off">' +
       '</div>' +
+      '<div class="panel-tools">' +
+        '<label><input type="checkbox" class="hidetools"> أخفِ جلسات الأدوات</label>' +
+        '<span class="spacer"></span><span class="tally"></span>' +
+      '</div>' +
       '<div class="panel-list"></div>';
     this._list = r.querySelector('.panel-list');
-    this._search = r.querySelector('input');
+    this._search = r.querySelector('.panel-search input');
+    this._hideTools = r.querySelector('.hidetools');
+    this._tally = r.querySelector('.tally');
     this._data = [];
     this._providers = [];
     this._meta = {};
+    this._cwd = '';
+    this._open = new Set();   // المجموعات المفرودة
+    // الافتراضي: إخفاء جلسات الأدوات — هي أثر تشغيل لا محادثة يبحث عنها المستخدم
+    this._hideTools.checked = localStorage.getItem('satr_sessions_show_tools') !== '1';
+    this._hideTools.addEventListener('change', () => {
+      localStorage.setItem('satr_sessions_show_tools', this._hideTools.checked ? '0' : '1');
+      this._render();
+    });
     r.querySelector('.close').addEventListener('click', () => this.close());
     // ترشيح فوري بالعنوان أو المجلد/المزوّد (دفعة UX) — القائمة تُجلب مرة وتُرشَّح محلياً
     this._search.addEventListener('input', () => this._render());
@@ -90,20 +140,94 @@ class SatrSessionsPanel extends HTMLElement {
     return (p && p.label) ? p.label : name;
   }
 
+  // مفتاح التجميع: المجلد للمحرّكات الأصيلة، واسم المزوّد لمحادثات المحوّلات (بلا مجلد).
+  _groupOf(s) {
+    if (s.kind === 'chat') return this._label(s.provider);
+    return String(s.cwd || s.project || '(بلا مجلد)');
+  }
+
   _render() {
     const q = this._search.value.trim().toLowerCase();
     const hay = (s) => (String(s.displayTitle || s.title || '') + ' ' +
       String(s.cwd || s.project || '') + ' ' +
       (s.kind === 'chat' ? s.provider + ' ' + this._label(s.provider) : '')).toLowerCase();
-    const list = (q ? this._data.filter((s) => hay(s).includes(q)) : this._data.slice())
-      .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || (b.mtime || 0) - (a.mtime || 0));
+    // المثبّتة تنجو من مرشّح الأدوات دائماً: تثبيتها قرار صريح من المستخدم
+    const visible = this._data.filter((s) =>
+      s.pinned || !this._hideTools.checked || !isToolSession(s));
+    const list = (q ? visible.filter((s) => hay(s).includes(q)) : visible.slice())
+      .sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+
+    this._tally.textContent = list.length === this._data.length
+      ? list.length + ' جلسة'
+      : list.length + ' من ' + this._data.length;
+
     this._list.innerHTML = '';
     if (!list.length) {
       this._list.innerHTML = '<div class="hint">' +
         (q ? 'لا نتائج مطابقة.' : 'لا توجد جلسات محفوظة.') + '</div>';
       return;
     }
-    for (const s of list) {
+
+    // بناء المجموعات — المثبّتة مجموعة مستقلة أولاً، ثم المشروع الحالي، ثم الأحدث نشاطاً
+    const groups = new Map();
+    const push = (key, s) => {
+      if (!groups.has(key)) groups.set(key, { key, items: [], mtime: 0 });
+      const g = groups.get(key);
+      g.items.push(s);
+      if ((s.mtime || 0) > g.mtime) g.mtime = s.mtime || 0;
+    };
+    const PINNED = '📌 المثبّتة';
+    for (const s of list) push(s.pinned ? PINNED : this._groupOf(s), s);
+
+    const cwd = String(this._cwd || '');
+    const order = [...groups.values()].sort((a, b) =>
+      Number(b.key === PINNED) - Number(a.key === PINNED)
+      || Number(b.key === cwd) - Number(a.key === cwd)
+      || b.mtime - a.mtime);
+
+    // الفرد الافتراضي بميزانية صفوف لا بقاعدة صلبة: المثبّتة والمشروع الحالي أولاً، ثم
+    // الأحدث فالأحدث ما دام المعروض ضمن ملء الشاشة تقريباً. وبهذا لا تبدو اللوحة فارغة
+    // حين لا يكون للمشروع الحالي جلسات — وهي حالة أوقعتني فيها القاعدة الصلبة أولاً
+    // (أمسكها `test:daily-loop-ui`): كل المجموعات مطوية والمستخدم أمام قائمة رؤوس.
+    const ROW_BUDGET = 12;
+    const auto = new Set();
+    let budget = ROW_BUDGET;
+    for (const g of order) {
+      const forced = g.key === PINNED || g.key === cwd;
+      if (forced || budget > 0) { auto.add(g.key); if (!forced) budget -= g.items.length; }
+    }
+
+    for (const g of order) {
+      const isCurrent = g.key === cwd;
+      // البحث يفرد ما فيه نتائج؛ وبعد أول تبديل يدوي تصير `_open` مصدر الحقيقة
+      const expanded = q ? true : (this._open.size ? this._open.has(g.key) : auto.has(g.key));
+      const head = document.createElement('div');
+      head.className = 'grp' + (isCurrent ? ' current' : '');
+      head.tabIndex = 0;
+      const caret = document.createElement('span'); caret.className = 'caret';
+      caret.textContent = expanded ? '▾' : '▸';
+      const name = document.createElement('span'); name.className = 'name';
+      name.textContent = g.key; name.title = g.key;
+      const count = document.createElement('span'); count.className = 'count';
+      count.textContent = g.items.length + ' · ' + fmtAge(g.mtime);
+      head.appendChild(caret); head.appendChild(name); head.appendChild(count);
+      const toggle = () => {
+        // أول نقرة تثبّت ما يراه المستخدم الآن (‏`auto`) ثم تبدّل المطلوب — وإلا قفزت
+        // مجموعات أخرى مع نقرته الأولى.
+        if (this._open.size === 0) for (const key of auto) this._open.add(key);
+        if (this._open.has(g.key)) this._open.delete(g.key); else this._open.add(g.key);
+        this._render();
+      };
+      head.addEventListener('click', toggle);
+      head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+      this._list.appendChild(head);
+      if (!expanded) continue;
+      for (const s of g.items) this._list.appendChild(this._row(s));
+    }
+  }
+
+  _row(s) {
+    {
       const el = document.createElement('div');
       el.className = 'sess' + (s.pinned ? ' pinned' : '');
       el.tabIndex = 0;
@@ -149,28 +273,28 @@ class SatrSessionsPanel extends HTMLElement {
         fork.addEventListener('click', async (event) => {
           event.stopPropagation();
           const result = await window.satr.forkCodexSession(s.id);
-          if (result && result.ok) await this.open(this._providers);
+          if (result && result.ok) await this.open(this._providers, this._cwd);
         });
         const archive = document.createElement('button'); archive.type = 'button'; archive.textContent = '▣'; archive.title = 'أرشفة جلسة Codex';
         archive.addEventListener('click', async (event) => {
           event.stopPropagation();
           if (!window.confirm('أرشفة جلسة Codex هذه وإخفاؤها من القائمة؟')) return;
           const result = await window.satr.archiveCodexSession(s.id);
-          if (result && result.ok) await this.open(this._providers);
+          if (result && result.ok) await this.open(this._providers, this._cwd);
         });
         const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '⌫'; remove.title = 'حذف جلسة Codex نهائياً';
         remove.addEventListener('click', async (event) => {
           event.stopPropagation();
           if (!window.confirm('حذف جلسة Codex هذه نهائياً؟ لا يمكن التراجع.')) return;
           const result = await window.satr.deleteCodexSession(s.id);
-          if (result && result.ok) await this.open(this._providers);
+          if (result && result.ok) await this.open(this._providers, this._cwd);
         });
         actions.appendChild(fork); actions.appendChild(archive); actions.appendChild(remove);
       }
       const open = () => this.dispatchEvent(new CustomEvent('session-resume', { detail: s }));
       el.addEventListener('click', open);
       el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === el) open(); });
-      this._list.appendChild(el);
+      return el;
     }
   }
 
@@ -181,8 +305,9 @@ class SatrSessionsPanel extends HTMLElement {
     });
   }
 
-  async open(providers) {
+  async open(providers, cwd) {
     this._providers = Array.isArray(providers) ? providers : [];
+    if (typeof cwd === 'string') this._cwd = cwd.trim();
     this.setAttribute('open', '');
     this._list.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
     // جلسات Claude Code + المحوّلات + Codex + Kimi Code، الأحدث أولاً.

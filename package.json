@@ -22,6 +22,7 @@
     "test:webpush-probe": "node scripts/webpush-probe.js",
     "test:sessionmeta": "node scripts/sessionmeta-test.js",
     "test:sessions-cwd": "node scripts/sessions-cwd-test.js",
+    "test:sessions-panel": "electron scripts/sessions-panel-live-test.js",
     "test:verify": "node scripts/verify-test.js",
     "test:verify-config-dialog": "electron scripts/verify-config-dialog-live-test.js",
     "test:memory": "node scripts/memory-test.js",

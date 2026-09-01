@@ -85,6 +85,7 @@ const SUITE = [
   'test:preview-lease',
   'test:readability',
   'test:preview-shield',
+  'test:sessions-panel',
   'test:question-dialog',
   'test:gallery',
   'eval:agent',

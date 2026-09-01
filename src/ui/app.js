@@ -1812,7 +1812,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
   // يبقى هنا — يصل حدث session-resume بحمولة عنصر الجلسة المنقور.
   const sessionsEl = document.querySelector('satr-sessions-panel');
   function openSessions() {
-    surfaceCoordinator.openPanel('sessions', document.activeElement, () => sessionsEl.open(providersCache));
+    surfaceCoordinator.openPanel('sessions', document.activeElement, () => sessionsEl.open(providersCache, $('cwd').value.trim()));
   }
   sessionsEl.addEventListener('session-resume', async (e) => {
     if (sessionControlBusy || sessionResumeBusy || busy) {
