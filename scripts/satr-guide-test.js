@@ -41,9 +41,13 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
     const builtinCatalog = skills.discoverSkills(project, { home, builtinRoot });
     const builtinGuide = builtinCatalog.find((s) => s.name === 'satr-guide');
     ok(!!builtinGuide && builtinGuide.source === 'builtin', 'المشروع الفارغ يكتشف satr-guide من المصدر المضمّن');
-    ok(builtinCatalog.map((s) => s.name).join(',') === 'satr-accept,satr-design-ar,satr-diverge,satr-generate,satr-guide'
+    // تُشتقّ من `BUILTIN_SKILLS` لا من نسخة مكرّرة — وهو الدرس نفسه الذي بُني عليه فحص
+    // `features.md` أدناه: قائمةٌ ثانية تتباعد بصمت، ثم تُكتشف بالمصادفة.
+    const expectedBuiltin = [...skills.BUILTIN_SKILLS].sort().join(',');
+    ok(builtinCatalog.map((s) => s.name).join(',') === expectedBuiltin
       && !builtinCatalog.some((s) => s.name === 'tafqeet'),
-    'المصدر المضمّن مقصور على مهارات سطر الرسمية الخمس ولا يشحن مثال tafqeet');
+    'المصدر المضمّن مقصور على مهارات سطر الرسمية (' + skills.BUILTIN_SKILLS.size
+      + ') ولا يشحن مثال tafqeet');
 
     const overrideDir = path.join(project, '.agents', 'skills', 'satr-guide');
     fs.mkdirSync(overrideDir, { recursive: true });

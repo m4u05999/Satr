@@ -191,6 +191,7 @@
       ".agents/skills/satr-generate/**/*",
       ".agents/skills/satr-accept/**/*",
       ".agents/skills/satr-design-ar/**/*",
+      ".agents/skills/satr-youtube/**/*",
       "!enterprise/**",
       "!**/@anthropic-ai/claude-agent-sdk-win32-x64/**",
       "!**/@anthropic-ai/claude-agent-sdk-*/**",
@@ -204,7 +205,8 @@
       ".agents/skills/satr-diverge/**/*",
       ".agents/skills/satr-generate/**/*",
       ".agents/skills/satr-accept/**/*",
-      ".agents/skills/satr-design-ar/**/*"
+      ".agents/skills/satr-design-ar/**/*",
+      ".agents/skills/satr-youtube/**/*"
     ],
     "win": {
       "icon": "build/icon.ico",
