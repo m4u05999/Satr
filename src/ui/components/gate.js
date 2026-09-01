@@ -7,7 +7,11 @@
 import { sheet } from '../lib/sheet.js';
 import { controlsSheet } from '../lib/panel.css.js';
 
-const INSTALL_CMD = 'npm install -g @anthropic-ai/claude-code';
+// `npm.cmd` لا `npm`: في PowerShell يسبق `npm.ps1` ملفَّ `npm.cmd` في ترتيب الأوامر،
+// و`ExecutionPolicy` الافتراضية لعميل ويندوز تحجب السكربتات — فيفشل الأمر **حتى وهو
+// منسوخ بيد المستخدم**. مصدر الحقيقة `electron/readiness.js` (‏NPM_BIN)؛ هذا احتياط
+// مسار preflight القديم وحده.
+const INSTALL_CMD = 'npm.cmd install -g @anthropic-ai/claude-code';
 const LOGIN_CMD = 'claude auth login';
 
 const ownSheet = sheet(`

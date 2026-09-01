@@ -32,8 +32,11 @@ check('Claude وCodex عبر npm',
   eu.ENGINES.filter((e) => e.channel === 'npm').map((e) => e.id).join(',') === 'claude,codex');
 check('أمر Kimi هو سكربت التثبيت الرسمي',
   eu.commandFor('kimi').includes('code.kimi.com/kimi-code/install.ps1'));
+// النصّ لم يعد مثبَّتاً حرفياً لأن مُشغِّل npm صار يختلف بالمنصّة (‏`npm.cmd` على
+// ويندوز — انظر `readiness.NPM_BIN`). المحروس هو المعنى: npm لا المثبّت الأصلي.
 check('أمر Claude عبر npm لا المثبّت الأصلي',
-  eu.commandFor('claude') === 'npm i -g @anthropic-ai/claude-code@latest');
+  eu.commandFor('claude').endsWith(' i -g @anthropic-ai/claude-code@latest')
+  && /^npm(\.cmd)? /.test(eu.commandFor('claude')));
 check('معرّف مجهول لا يعيد أمراً', eu.commandFor('../evil') === null && eu.commandFor('') === null);
 check('العقد مجمَّد', Object.isFrozen(eu.ENGINES) && Object.isFrozen(eu.ENGINES[0]));
 

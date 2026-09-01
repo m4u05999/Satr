@@ -9,6 +9,9 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const ROOT = path.join(__dirname, '..');
 const {
   ENGINES, ENGINE_IDS, normalizeState, engineState, isReady, deriveReadiness, pickEngineSwitch,
 } = require('../electron/readiness');
@@ -38,7 +41,7 @@ const installedUnknownAuth = { installed: true }; // مثبّت وتعذّر ح�
   check('Codex جاهز/Claude غائب ⇒ readyEngines = [codex]', r.readyEngines.join(',') === 'codex');
   const sdk = r.engines.find((e) => e.id === 'sdk');
   check('Claude الغائب يُوسم missing', sdk.state === 'missing');
-  check('Claude الغائب يحمل أمر تثبيته', sdk.install === 'npm install -g @anthropic-ai/claude-code');
+  check('Claude الغائب يحمل أمر تثبيته', sdk.install.endsWith('install -g @anthropic-ai/claude-code'));
 }
 
 // (ب) العكس: Claude جاهز وCodex غائب ⇒ السلوك القائم يبقى كما هو
@@ -127,8 +130,36 @@ const installedUnknownAuth = { installed: true }; // مثبّت وتعذّر ح�
   check('كل محرك يحمل أمر تثبيت غير فارغ', ENGINES.every((e) => typeof e.install === 'string' && e.install.length > 0));
   check('كل محرك يحمل أمر تسجيل دخول غير فارغ', ENGINES.every((e) => typeof e.login === 'string' && e.login.length > 0));
   check('كل محرك يحمل تسمية معروضة', ENGINES.every((e) => typeof e.label === 'string' && e.label.length > 0));
-  check('أمر تثبيت Codex مطابق للموثّق في codex.js', ENGINES[1].install === 'npm install -g @openai/codex');
+  check('أمر تثبيت Codex يحمل الحزمة الصحيحة', ENGINES[1].install.endsWith('install -g @openai/codex'));
   check('أمر تثبيت Kimi مطابق للموثّق في app.js', ENGINES[2].install.includes('code.kimi.com/kimi-code/install.ps1'));
+
+  // ---------- npm.cmd لا npm العارية (عطل مُعاد إنتاجه 2026-08-28) ----------
+  // في PowerShell يسبق `npm.ps1` ملفَّ `npm.cmd` في ترتيب الأوامر، و`ExecutionPolicy`
+  // الافتراضية لعميل ويندوز (`Restricted`) تحجب السكربتات لا الملفات الدفعية. قياس حيّ:
+  //   npm --version      ⇒ npm.ps1 cannot be loaded because running scripts is disabled
+  //   npm.cmd --version  ⇒ 11.17.0
+  // فالأمر يفشل حتى وهو منسوخ بيد المستخدم، وأسوأُ منه أن `enginesupdate` **ينفّذه**
+  // في طرفية PowerShell فيفشل الزرّ صامتاً. الحارس على **كل** ما نعرضه أو ننفّذه.
+  const BARE_NPM = /(^|[^.\w])npm\s+(i|install)\s/;
+  if (process.platform === 'win32') {
+    check('أوامر التثبيت تستعمل npm.cmd على ويندوز',
+      ENGINES.filter((e) => /npm/.test(e.install)).every((e) => e.install.startsWith('npm.cmd ')),
+      ENGINES.map((e) => e.install).join(' | '));
+    const eu = require(path.join(ROOT, 'electron', 'enginesupdate.js'));
+    check('وأوامر التحديث المنفَّذة كذلك (وهي تُشغَّل فعلاً في طرفية PowerShell)',
+      eu.ENGINES.filter((e) => e.channel === 'npm').every((e) => e.command.startsWith('npm.cmd ')),
+      eu.ENGINES.map((e) => e.command).join(' | '));
+  }
+  // ولا `npm` عارية في أي نصّ يصل المستخدم — البحث على الملفات الشاحنة كلها
+  for (const rel of ['electron/readiness.js', 'electron/enginesupdate.js', 'electron/codex.js',
+    'src/ui/app.js', 'src/ui/components/gate.js']) {
+    const body = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const offenders = body.split(/\r?\n/)
+      .map((line, i) => ({ line: line.trim(), no: i + 1 }))
+      .filter((x) => BARE_NPM.test(x.line) && !/^\s*(\/\/|\*)/.test(x.line) && !x.line.includes('npm.cmd'));
+    check('لا أمر npm عارٍ في ' + rel, offenders.length === 0,
+      offenders.map((x) => x.no + ': ' + x.line.slice(0, 70)).join(' · '));
+  }
   check('العقد مجمَّد ضد التعديل العابر', Object.isFrozen(ENGINES) && Object.isFrozen(ENGINES[0]));
   // لقطة الجاهزية لا تحمل مساراً مطلقاً ولا رمزاً — تعبر IPC إلى renderer
   const snapshot = JSON.stringify(deriveReadiness({ sdk: claudeReady, codex: codexReady, 'kimi-code': missing }));

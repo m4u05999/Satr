@@ -47,3 +47,7 @@ desktop.ini
 
 # Local Netlify folder
 .netlify
+
+# وسائط generate_media — ناتج مولَّد داخل مجلد المشروع (electron/genmedia.js)
+generations/
+.satr/generations.jsonl

@@ -13,6 +13,7 @@ const SUITE = [
   'test:task-ledger-ui',
   'test:daily-loop-ui',
   'test:sessionmeta',
+  'test:sessions-cwd',
   'test:tasks',
   'test:observations',
   'test:probe-runner',

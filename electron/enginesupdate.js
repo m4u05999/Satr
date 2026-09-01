@@ -26,16 +26,22 @@ const path = require('path');
 //            («Detected install source: native (windows). Auto-update is not supported»)
 //            ويوجّه إلى سكربت التثبيت. لكن **رقم إصداره يُقرأ من npm** — رسالة kimi
 //            نفسها تقارن بـnpm (رصد حيّ: «0.27.0 -> 0.38.0»).
+// `NPM_BIN` مصدره الوحيد `readiness.js` — انظر تعليقه: `npm` العارية تُحجب بـ
+// `ExecutionPolicy` لأن `npm.ps1` يسبق `npm.cmd` في ترتيب PowerShell. وهذا الملف
+// **ينفّذ** أمره فعلاً في طرفية مرئية عبر `termjobs`، فكان الزرّ يفشل صامتاً على أي
+// جهاز بالسياسة الافتراضية لعميل ويندوز.
+const { NPM_BIN } = require('./readiness');
+
 const ENGINES = Object.freeze([
   Object.freeze({
     id: 'claude', label: 'Claude Code', pkg: '@anthropic-ai/claude-code',
-    channel: 'npm', command: 'npm i -g @anthropic-ai/claude-code@latest',
+    channel: 'npm', command: NPM_BIN + ' i -g @anthropic-ai/claude-code@latest',
     // درس مسجَّل: المثبّت الأصلي (native) يكسر اكتشاف المسار في «سطر» — npm حصراً.
     note: 'حدّثه بـnpm لا بالمثبّت الأصلي — الأخير يكسر اكتشاف المسار في «سطر».',
   }),
   Object.freeze({
     id: 'codex', label: 'Codex', pkg: '@openai/codex',
-    channel: 'npm', command: 'npm i -g @openai/codex@latest', note: '',
+    channel: 'npm', command: NPM_BIN + ' i -g @openai/codex@latest', note: '',
   }),
   Object.freeze({
     id: 'kimi', label: 'Kimi Code', pkg: '@moonshot-ai/kimi-code',

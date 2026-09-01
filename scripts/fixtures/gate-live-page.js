@@ -141,7 +141,9 @@
       const legacyBlocked = { node: NODE_OK, npm: NODE_OK, claude: { ok: false, path: null } };
       const r2 = await run(gate, legacyBlocked);
       if (r2.hidden) throw new Error('استجابة قديمة بلا Claude فتحت البوابة');
-      if (!r2.steps.includes('npm install -g @anthropic-ai/claude-code')) throw new Error('تراجع البوابة القديم بلا أمر تثبيت');
+      // `npm.cmd` لا `npm` العارية: ‏`ExecutionPolicy` تحجب `npm.ps1` الذي يسبقه في
+      // ترتيب PowerShell، فيفشل الأمر حتى وهو منسوخ بيد المستخدم (عطل مُعاد إنتاجه).
+      if (!r2.steps.includes('npm.cmd install -g @anthropic-ai/claude-code')) throw new Error('تراجع البوابة القديم بلا أمر تثبيت بـnpm.cmd');
       checks.push('legacy-preflight-fallback');
     }
 

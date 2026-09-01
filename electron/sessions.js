@@ -128,7 +128,21 @@ function buildMessages(raw) {
   const messages = [];
   let cwd = '';
   for (const e of parseLines(raw)) {
-    if (typeof e.cwd === 'string' && e.cwd) cwd = e.cwd; // آخر cwd في الملف هو الأحدث
+    // **أول** cwd لا آخره — وهذا إصلاح عطل مقيس (‏2026-08-30، بلاغ مالك بلقطة):
+    //
+    // أداة Bash في Claude Code تملك صدفة معمّرة، فحين ينتقل الوكيل بـ`cd` إلى مجلد
+    // فرعي يسجّل CLI المجلد الجديد في كل سطر تالٍ. قياس على جلسة حقيقية: انزاح `cwd`
+    // **37 مرة** داخل جلسة واحدة، وآخر قيمة كانت `D:\alulama\packages\erp-poc` بينما
+    // الجلسة بدأت في `D:\alulama`.
+    //
+    // وكان هذا السطر يأخذ الأخير بحجّة «الأحدث» — وهي جملة صحيحة عن **الصدفة**
+    // وخاطئة عن **المشروع**. فيستأنف المستخدم جلسته، فتكتب `app.js` القيمة المنزاحة
+    // في حقل المجلد و`localStorage`، فيتغيّر مجلد عمله صامتاً ويبقى بعد إعادة التشغيل،
+    // وتُولد كل جلسة تالية في المجلد الخطأ — وتصنع «مشروعاً» وهمياً في الأرشيف.
+    //
+    // مجلد المشروع هو حيث **بدأت** الجلسة: ثابتٌ، وهو ما يعتمده `listSessions` (السطر
+    // 104) وما يسمّي به Claude Code مجلد الأرشيف نفسه. فالقاعدتان تتفقان الآن.
+    if (!cwd && typeof e.cwd === 'string' && e.cwd) cwd = e.cwd;
     const u = userText(e);
     if (u !== null) {
       const message = { role: 'user', text: u };
@@ -183,4 +197,6 @@ async function readFullSession(id) {
   return { error: 'not_found' };
 }
 
-module.exports = { listSessions, readSession, readFullSession };
+// `buildMessages` مُصدَّرة للحارس وحده (‏دالة نقية فوق نصّ jsonl خام): تثبّت أن
+// «مجلد المشروع» هو أول cwd لا آخره — انظر تعليقها أعلاه.
+module.exports = { listSessions, readSession, readFullSession, buildMessages };

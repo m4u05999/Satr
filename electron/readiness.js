@@ -29,17 +29,34 @@
 //   sdk       ← gate.js (INSTALL_CMD القائم)
 //   codex     ← codex.js:809 وapp.js:1597
 //   kimi-code ← app.js:1648
+/**
+ * مُشغِّل npm — **`npm.cmd` على ويندوز لا `npm` العارية**، وهذا ليس تفضيلاً تجميلياً.
+ *
+ * العطل مُعاد إنتاجه حيّاً (2026-08-28): في PowerShell يرتّب `Get-Command npm` الملفَّ
+ * `npm.ps1` (‏ExternalScript) **قبل** `npm.cmd`، و`ExecutionPolicy` تحجب ملفات السكربت
+ * لا الملفات الدفعية. فعلى جهاز بالسياسة الافتراضية لعميل ويندوز (`Restricted`):
+ *     npm --version      ⇒ npm.ps1 cannot be loaded because running scripts is disabled
+ *     npm.cmd --version  ⇒ 11.17.0
+ * أي أن الأمر يفشل **حتى لو نسخه المستخدم بيده**، وهو بلاغ مستخدم حقيقي. و`npm.cmd`
+ * يعمل بلا لمس أي إعداد أمان على جهازه.
+ *
+ * ويلزم أن يمرّ به كل أمر نعرضه **أو ننفّذه**: `enginesupdate.js` يشغّل أمر التحديث
+ * فعلاً في طرفية PowerShell عبر `termjobs`، فكانت الزرّة تفشل صامتة على تلك الأجهزة.
+ * وعلى غير ويندوز تبقى `npm` لأن `npm.cmd` ملفٌّ لا وجود له هناك.
+ */
+const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
 const ENGINES = Object.freeze([
   Object.freeze({
     id: 'sdk',
     label: 'Claude Code',
-    install: 'npm install -g @anthropic-ai/claude-code',
+    install: NPM_BIN + ' install -g @anthropic-ai/claude-code',
     login: 'claude auth login',
   }),
   Object.freeze({
     id: 'codex',
     label: 'Codex',
-    install: 'npm install -g @openai/codex',
+    install: NPM_BIN + ' install -g @openai/codex',
     login: 'codex login',
   }),
   Object.freeze({
@@ -121,4 +138,7 @@ function pickEngineSwitch(selected, readiness) {
   return readyEngines[0];
 }
 
-module.exports = { ENGINES, ENGINE_IDS, normalizeState, engineState, isReady, deriveReadiness, pickEngineSwitch };
+module.exports = {
+  NPM_BIN, ENGINES, ENGINE_IDS,
+  normalizeState, engineState, isReady, deriveReadiness, pickEngineSwitch,
+};

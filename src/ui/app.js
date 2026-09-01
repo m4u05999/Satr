@@ -331,7 +331,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
       // الموجة 3: إصدار Claude Code أقدم من الموصى به — إرشاد غير حاجب (لا تحديث تلقائي؛
       // «سطر» يعتمد المثبّت العالمي عمداً). يبقى ظاهراً أطول ليلحظه المستخدم.
       b.className = 'note';
-      b.textContent = '⚠️ Claude Code ' + (d.version || '') + ' — للنماذج الأحدث (Sonnet 5 فأعلى) حدّث: npm i -g @anthropic-ai/claude-code';
+      b.textContent = '⚠️ Claude Code ' + (d.version || '') + ' — للنماذج الأحدث (Sonnet 5 فأعلى) حدّث: npm.cmd i -g @anthropic-ai/claude-code';
       hideGateBannerAfter(b, 12000);
     } else {
       b.className = 'ok'; b.textContent = '✓ Claude Code جاهز — ' + (d.version || '');
@@ -343,7 +343,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
       b.style.display = '';
       if (d.outdated) {
         b.className = 'note';
-        b.textContent = '⚠️ Claude Code ' + (d.version || '') + ' — للنماذج الأحدث (Sonnet 5 فأعلى) حدّث: npm i -g @anthropic-ai/claude-code · مسجّل الدخول: ' + account.email;
+        b.textContent = '⚠️ Claude Code ' + (d.version || '') + ' — للنماذج الأحدث (Sonnet 5 فأعلى) حدّث: npm.cmd i -g @anthropic-ai/claude-code · مسجّل الدخول: ' + account.email;
         hideGateBannerAfter(b, 12000);
       } else {
         b.className = 'ok';
@@ -1698,7 +1698,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     try { s = await window.satr.codexStatus(); } catch (e) { return; }
     if (!s) return;
     if (!s.installed) {
-      addNotice('⚠️ Codex غير مثبَّت. ثبّته بالأمر:  npm install -g @openai/codex  ثم أعد المحاولة.');
+      addNotice('⚠️ Codex غير مثبَّت. ثبّته بالأمر:  npm.cmd install -g @openai/codex  ثم أعد المحاولة.');
     } else if (!s.auth || !s.auth.ok) {
       addNotice('⚠️ Codex غير مسجَّل الدخول. نفّذ في الطرفية:  codex login  (اشتراك ChatGPT) ثم أعد المحاولة.');
     }
@@ -1883,6 +1883,44 @@ import { createPreviewShield } from './lib/preview-shield.js';
 
   // رسالة المساعد التاريخية: انتقلت لمكوّن <satr-chat> (ت-12) — chatEl.addHistoryAssistant
 
+  /**
+   * تطبيق مجلد جلسة مستأنفة — **مع إعلام المستخدم وإتاحة التراجع** (‏OBS-067).
+   *
+   * كانت المسارات الثلاثة (‏Claude/Codex/Kimi) تكتب `data.cwd` في الحقل وفي
+   * `localStorage` **صامتةً**، فمن يفتح جلسة مشروع آخر ليقرأها يجد مجلد عمله قد
+   * تبدّل — ويبقى متبدّلاً بعد إعادة التشغيل. والتطبيق يملك أصلاً حارساً لهذه الحالة
+   * (‏`send()` يُعلم ويبدأ جلسة جديدة حين تغيّر المجلد **أنت**)، لكنه لا يشتعل هنا لأن
+   * `sessionCwd` يُزامَن فوراً مع القيمة الجديدة فيتساوى الطرفان.
+   *
+   * القاعدة المطبَّقة: **أخبِر ولا تسأل** — يبقى فتح الجلسة بنقرة واحدة، ويصير
+   * التبديل مرئياً وقابلاً للتراجع. ومربع تأكيد مرفوض عمداً: يضع احتكاكاً على فعل
+   * يتكرر عشرات المرات ويعاقب الحالة الشائعة السليمة.
+   *
+   * والتراجع يصفّر الجلسة صراحةً: جلسات Claude Code مرتبطة بمجلدها، فاستعادة مجلدك
+   * تعني أن الجلسة المستأنفة لا تُكمَل — نقولها فوراً بدل أن يكتشفها المستخدم عند
+   * أول إرسال.
+   */
+  function applyResumedCwd(nextCwd) {
+    if (!nextCwd) return;
+    const prev = $('cwd').value.trim();
+    const setCwd = (value) => {
+      $('cwd').value = value;
+      localStorage.setItem('satr_cwd', value);
+      $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    setCwd(nextCwd);
+    // ويندوز لا يميّز حالة الأحرف في المسارات — لا نزعج المستخدم بفرق شكلي
+    if (!prev || prev.toLowerCase() === String(nextCwd).toLowerCase()) return;
+    chatEl.addActionNotice('📁 تبدّل مجلد المشروع إلى مجلد هذه الجلسة: ' + nextCwd
+      + '  (كان: ' + prev + ')', '↩ أعِد مجلدي', () => {
+      setCwd(prev);
+      sessionCwd = prev;
+      sessionId = null;
+      $('sessionInfo').textContent = 'لا جلسة';
+      addNotice('📁 أُعيد مجلدك — والجلسة المستأنفة لا تُكمَل خارج مجلدها، فبدأت جلسة جديدة.');
+    });
+  }
+
   async function resumeSession(s) {
     const data = await window.satr.readSession(s.project, s.id);
     sessionsEl.close();
@@ -1890,11 +1928,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (!newSession({ fromResume: true })) return;
     sessionId = s.id; // الرسالة القادمة ستُرسل بـ --resume على هذه الجلسة
     $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(s.id);
-    if (data.cwd) {
-      $('cwd').value = data.cwd;
-      localStorage.setItem('satr_cwd', data.cwd);
-      $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
-    }
+    applyResumedCwd(data.cwd);
     sessionCwd = $('cwd').value.trim(); // الجلسة المستأنفة مرتبطة بمجلدها هذا
     loadTaskLedger($('engine').value, s.id);
     loadCheckpoint($('engine').value, s.id);
@@ -1935,11 +1969,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (composerEl.clearImages) composerEl.clearImages();
     chatEl.clearThread();
     resetSessionChanges();
-    if (data.cwd) {
-      $('cwd').value = data.cwd;
-      localStorage.setItem('satr_cwd', data.cwd);
-      $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
-    }
+    applyResumedCwd(data.cwd);
     sessionCwd = $('cwd').value.trim();
     if (data.total > data.messages.length)
       addNotice('عرض آخر ' + data.messages.length + ' من أصل ' + data.total + ' رسالة');
@@ -1975,11 +2005,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (composerEl.clearImages) composerEl.clearImages();
     chatEl.clearThread();
     resetSessionChanges();
-    if (data.cwd) {
-      $('cwd').value = data.cwd;
-      localStorage.setItem('satr_cwd', data.cwd);
-      $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
-    }
+    applyResumedCwd(data.cwd);
     sessionCwd = $('cwd').value.trim();
     if (data.total > data.messages.length) addNotice('عرض آخر ' + data.messages.length + ' من أصل ' + data.total + ' رسالة');
     for (const message of (data.messages || [])) {

@@ -808,7 +808,7 @@ function decodeBase64(s) { try { return Buffer.from(s, 'base64').toString('utf8'
 async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, browserControl, trustedBrowserOrigins, browserBudget }, cwd, emit) {
   const bin = resolveCodexBin();
   if (!bin) {
-    emit({ type: 'spawn_error', text: 'لم يُعثر على Codex CLI. ثبّته: npm install -g @openai/codex' });
+    emit({ type: 'spawn_error', text: 'لم يُعثر على Codex CLI. ثبّته: npm.cmd install -g @openai/codex' });
     emit({ type: 'proc_done', code: 1 });
     return { resolvePermission() { return false; }, async stop() {} };
   }
