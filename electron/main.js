@@ -81,6 +81,20 @@ function cleanClaudePublicText(value, maxLength) {
     .join('');
 }
 
+// الاسم الرسمي للنموذج من resolvedModel (بلاغ مالك 2026-09-03 + OBS-063):
+// displayName الخام يعرض «Fable» بلا رقم إصدار بينما التسمية الرسمية «Fable 5.1»
+// موجودة في resolvedModel (claude-fable-5-1). الاشتقاق حتمي: المقاطع الرقمية بعد
+// اسم العائلة تُوصل بنقطة، ومقطع التاريخ (≥1000 مثل 20251001 في haiku) يُسقط.
+// resolvedModel لا يعبر IPC — يُستهلك هنا لبناء label فقط، والعقد العام لم يتغير.
+function officialClaudeName(resolvedModel) {
+  const clean = cleanClaudePublicText(resolvedModel, 64).replace(/\[1m\]$/, '');
+  const match = /^claude-([a-z]+)((?:-\d+)+)$/.exec(clean);
+  if (!match) return '';
+  const nums = match[2].split('-').filter(Boolean).filter((n) => Number(n) < 1000);
+  if (!nums.length) return '';
+  return match[1].charAt(0).toUpperCase() + match[1].slice(1) + ' ' + nums.join('.');
+}
+
 function sanitizeClaudeModelsResult(result) {
   if (!result || result.ok !== true || !Array.isArray(result.models)) return { ok: false, models: [] };
   const seen = new Set();
@@ -88,7 +102,14 @@ function sanitizeClaudeModelsResult(result) {
   for (const item of result.models) {
     const value = cleanClaudePublicText(item && item.value, 64);
     if (!SAFE_MODEL.test(value) || seen.has(value)) continue;
-    const label = cleanClaudePublicText(item && item.displayName, 80) || value;
+    let label = cleanClaudePublicText(item && item.displayName, 80) || value;
+    // إن أعلن المحرك resolvedModel صالحاً نعرض التسمية الرسمية لأنثروبيك؛
+    // غيابه أو شذوذه يبقي displayName حرفياً (توافق خلفي مع CLI أقدم).
+    const official = officialClaudeName(item && item.resolvedModel);
+    if (official) {
+      if (value === 'default') label = (label || 'Default') + ' — ' + official;
+      else label = official + (/\[1m\]/.test(value) ? ' (1M context)' : '');
+    }
     const description = cleanClaudePublicText(item && item.description, 240);
     seen.add(value);
     models.push({ value, label, description });

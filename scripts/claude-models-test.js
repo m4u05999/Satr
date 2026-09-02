@@ -174,6 +174,32 @@ async function testMainSanitization() {
   assert.ok(!modelResult.models.some((model) => model.value.includes('[2m]')), 'عبر نموذج مقوّس لا يطابق SAFE_MODEL');
   assert.ok(!JSON.stringify(modelResult).includes(SECRET_SENTINEL), 'تسرّب حقل نموذج غير معلن');
 
+  // اشتقاق التسمية الرسمية من resolvedModel (بلاغ مالك 2026-09-03 — OBS-063):
+  // «Fable» وحدها لا تقول 5.1؛ الاسم الرسمي يُشتق حتمياً من المعرّف المحلول،
+  // وresolvedModel نفسه لا يعبر IPC، والفاسد يسقط إلى displayName حرفياً.
+  const officialRaw = [
+    { value: 'default', displayName: 'Default (recommended)', description: 'x', resolvedModel: 'claude-opus-5[1m]' },
+    { value: 'opus[1m]', displayName: 'Opus (1M context)', description: 'x', resolvedModel: 'claude-opus-5[1m]' },
+    { value: 'claude-fable-5-1[1m]', displayName: 'Fable', description: 'x', resolvedModel: 'claude-fable-5-1' },
+    { value: 'haiku', displayName: 'Haiku', description: 'x', resolvedModel: 'claude-haiku-4-5-20251001' },
+    { value: 'claude-opus-4-8', displayName: 'Opus 4.8', description: 'x', resolvedModel: 'claude-opus-4-8' },
+    { value: 'sonnet', displayName: 'Sonnet', description: 'x', resolvedModel: SECRET_SENTINEL },
+  ];
+  const officialResult = plain(await contract.handleClaudeModelsRequest({
+    async claudeModels() { return { ok: true, models: officialRaw }; },
+  }));
+  const labelByValue = new Map(officialResult.models.map((model) => [model.value, model.label]));
+  assert.equal(labelByValue.get('claude-fable-5-1[1m]'), 'Fable 5.1 (1M context)', 'اسم Fable الرسمي بلا رقم الإصدار');
+  assert.equal(labelByValue.get('opus[1m]'), 'Opus 5 (1M context)', 'اسم Opus الرسمي');
+  assert.equal(labelByValue.get('default'), 'Default (recommended) — Opus 5', 'الافتراضي يذكر نموذجه المحلول');
+  assert.equal(labelByValue.get('haiku'), 'Haiku 4.5', 'مقطع تاريخ haiku لم يُسقط');
+  assert.equal(labelByValue.get('claude-opus-4-8'), 'Opus 4.8', 'اسم Opus 4.8');
+  assert.equal(labelByValue.get('sonnet'), 'Sonnet', 'resolvedModel الفاسد لم يسقط إلى displayName');
+  for (const model of officialResult.models) {
+    assert.deepEqual(Object.keys(model).sort(), ['description', 'label', 'value'], 'resolvedModel تسرب إلى العقد العام');
+  }
+  assert.ok(!JSON.stringify(officialResult).includes(SECRET_SENTINEL), 'تسرّب resolvedModel خام');
+
   const accountResult = plain(await contract.handleClaudeAccountRequest({
     async claudeAccount(cwd) {
       assert.equal(cwd, 'C:\\Users\\safe-user');
