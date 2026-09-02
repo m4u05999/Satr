@@ -773,10 +773,11 @@ section {
     var(--bg-deep);
 }
 
-/* الوسم العلوي — مقصور على #pro عمداً: الصنف `.eyebrow` بلا قاعدة عامة في الورقة
-   (يستعمله #generate نصاً عادياً)، وتنميطه عالمياً يغيّر مشهداً معتمداً.
+/* الوسم العلوي — مقصور على مقطعين بأسمائهما عمداً: الصنف `.eyebrow` بلا قاعدة عامة
+   في الورقة (يستعمله #generate نصاً عادياً)، وتنميطه عالمياً يغيّر مشهداً معتمداً.
    ‏inline-block ضروري كي تعمل إزاحة [data-reveal] — ‏transform يُتجاهل على inline. */
-#pro .eyebrow {
+#pro .eyebrow,
+#platform-interest .eyebrow {
   display: inline-block;
   margin-bottom: .9rem;
   color: var(--gold);
@@ -918,6 +919,19 @@ section {
 
 .pro-input::placeholder { color: var(--text-faint); }
 
+/* القائمة المنسدلة ترث حقل النموذج نفسه؛ هنا فقط ما يخالفه:
+   ‏(1) خياراتها عربية فترسو يميناً بخلاف البريد اللاتيني،
+   ‏(2) الخط الأحادي بلا تغطية عربية (الدرس نفسه أعلى الورقة) فتعود إلى `--sans`،
+   ‏(3) ‏color-scheme يجعل القائمة المنبثقة التي يرسمها النظام داكنة — بلا هذا
+       تفتح لوحة بيضاء فوق صفحة داكنة. */
+.pro-select {
+  direction: rtl;
+  text-align: right;
+  font-family: var(--sans);
+  color-scheme: dark;
+  cursor: pointer;
+}
+
 /* حلقة التركيز الذهبية نفسها في الورقة، بإزاحة أصغر (‏2px بدل 4px) كي لا تلامس
    الزرّ أسفلها؛ outline لا box-shadow فتبقى مرئية في أوضاع التباين العالي. */
 .pro-input:focus-visible {
@@ -1026,6 +1040,117 @@ section {
 .winget button:hover { background: var(--gold); color: var(--on-gold); }
 
 .dl-note { color: var(--text-faint); font-size: .85rem; margin-top: 1.5rem; }
+
+/* روابط الباب الصوري: تبعية بوضوح — نصّ خافت بخطّ متقطّع، لا زرّ ولا حدّ صلب.
+   المقصود قياس نقرة مقصودة، فمنافسة زرّ التنزيل بصرياً تُفسد القياس نفسه. */
+.platform-hints {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .55rem 1.6rem;
+  margin: 1.5rem 0 0;
+}
+
+.platform-hint {
+  color: var(--text-faint);
+  font-size: .95rem;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--border);
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.platform-hint strong { color: var(--text-dim); font-weight: 500; }
+.platform-hint:hover,
+.platform-hint:hover strong { color: var(--gold); }
+.platform-hint:hover { border-bottom-color: var(--gold-border); }
+
+/* ---------- المشهد 8ب: تسجيل اهتمام ماك/لينكس ---------- */
+#platform-interest { background: var(--bg-deep); }
+
+.platform-form {
+  display: grid;
+  gap: 1.15rem;
+  max-width: 34rem;
+  margin: 0;
+  padding: clamp(1.4rem, 4vw, 2rem);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.platform-field { display: grid; gap: .45rem; }
+
+/* ‏fieldset مجرّد من زخرفة المتصفح؛ الشبكة في `.platform-radios` لا عليه نفسه
+   لأن موضع `<legend>` خارج تدفّق الحاوية يجعل fieldset شبكيّاً حالة حافّة. */
+.platform-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.platform-legend { padding: 0; margin-bottom: .55rem; }
+
+.platform-radios { display: grid; gap: .55rem; }
+
+.platform-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+  padding: .7rem .9rem;
+  border: 1px solid var(--border-dim);
+  border-radius: 10px;
+  background: var(--bg-deep);
+  color: var(--text-dim);
+  font-size: .95rem;
+  line-height: 1.6;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.platform-radio:hover { border-color: var(--border); color: var(--text); }
+
+/* حلقة التركيز على البطاقة كلها: الزرّ الأصلي صغير، وإظهار الحدّ وحده لا يكفي */
+.platform-radio:focus-within {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.platform-radio input {
+  flex: none;
+  margin: .35rem 0 0;
+  accent-color: var(--gold);
+  color-scheme: dark;
+}
+
+/* إبراز المختار — سقوط `:has` في متصفح قديم يفقد الإبراز فقط، والزرّ الأصلي
+   يبقى ظاهر الاختيار بلونه، فلا يعتمد الوضوح على هذه القاعدة وحدها. */
+.platform-radio:has(input:checked) {
+  border-color: var(--gold-border);
+  background: var(--gold-soft);
+  color: var(--text);
+}
+
+/* الزرّ يرث `.btn.btn-gold`؛ هنا فقط ما لا يرثه عنصر button — نظير `.pro-submit` */
+.platform-submit {
+  justify-content: center;
+  width: 100%;
+  margin-top: .35rem;
+  border: 0;
+  font-family: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.platform-note {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: .85rem;
+  line-height: 1.7;
+}
+
+.platform-note a { color: var(--text-dim); }
+.platform-note a:hover { color: var(--gold); }
 
 /* ---------- التذييل ---------- */
 .site-footer {
