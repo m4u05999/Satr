@@ -70,3 +70,28 @@
 3. CI تجريبي `platform-trial.yml` يبني من المصدر على ماك ولينكس.
 4. حقل نظام التشغيل و«fake-door» في صفحة الهبوط.
 5. هذا الملف `docs/PLATFORMS-DECISION-2026-09.md`.
+
+## نتائج التشغيل الأول للـCI التجريبي (2026-09-03 — التشغيل `33697105032`)
+
+**«52 موضعاً يفترض ويندوز» تحوّلت إلى عطلين مقيسين فقط**، واحد لكل نظام، وكلاهما في طبقة
+الطرفية (منفذ `shell`/`installers`) — كل ما عداهما نجح على `macos-latest` (‏darwin-arm64)
+و`ubuntu-latest` (‏linux-x64) في ~40 ثانية لكل نظام:
+
+| الخطوة | Ubuntu | macOS |
+|---|---|---|
+| `npm ci` (‏node-pty بـ`npmRebuild:false`) | ✅ | ✅ |
+| `node --check` لكل `electron/*.js` | ✅ | ✅ |
+| 11 اختباراً نقياً (adapters/autogate/browserguard/secretscrub/readiness/verify/tasks/memory/observations/reviewchanges/sessions-cwd) | ✅ | ✅ |
+| `test:termjobs` (مهام الطرفية فوق node-pty) | ❌ | ❌ |
+| تعبئة Electron غير موقّعة `electron-builder --dir` | ✅ ‏`linux-unpacked` | ✅ ‏`mac-arm64` |
+
+- **Ubuntu — `خرج النداء الأول متشابك`** (‏`scripts/termjobs-test.js:93`): الصدفة أُطلقت وعملت،
+  لكن بروتوكول `runCapture` (علامتا البداية/النهاية + اللصق المقوّس + التقاط رمز الخروج)
+  مبنيّ على سلوك PowerShell 5.1؛ تحت bash يتداخل الخرج. **منفذ `shell`** — علاج معروف الحدود.
+- **macOS — `posix_spawnp failed`** (‏`termjobs-test.js:42`): node-pty لم يستطع إطلاق الصدفة
+  أصلاً. الفرضية المرجّحة (حالة موثقة لدى node-pty): ملف `prebuilds/darwin-arm64/spawn-helper`
+  يفقد صلاحية التنفيذ بعد `npm ci` ⇒ يُحسم في التشغيل التالي بخطوة `chmod +x` تجريبية قبل
+  الاختبار. **منفذ `installers`/`binPaths`**.
+- **حدّ القياس**: هذا CI بلا Electron حي — لا يقيس الواجهة ولا المعاينة ولا مرآة RTL ولا
+  اكتشاف المحرّكات من مساراتها العالمية. ما نُفي هنا هو «استحالة البناء والاختبار النقي» لا
+  «جاهزية المنتج». الملاحظتان مسجّلتان: `OBS-072` و`OBS-073`.
