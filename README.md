@@ -166,6 +166,42 @@ npm run dist       # بناء مثبّت ويندوز NSIS في مجلد dist/
 > لمزيد من تفاصيل المعمارية وقواعد المشروع راجع [`CONTRIBUTING.md`](CONTRIBUTING.md) و
 > [`CLAUDE.md`](CLAUDE.md).
 
+### التشغيل من المصدر على ماك ولينكس — تجربة غير مدعومة
+
+> [!WARNING]
+> المثبّت الرسمي لـ«سطر» هو لويندوز فقط. هذه التعليمات تجربة بحثية لقياس الطلب والأعطال على ماك ولينكس.
+
+المتطلّبات:
+1. Node.js 20+.
+2. أحد المحركات مثبّت ومسجّل الدخول:
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   claude auth login
+   ```
+   أو:
+   ```bash
+   npm install -g @openai/codex
+   codex login
+   ```
+   أو Kimi Code (Node.js 22.19+):
+   ```bash
+   npm install -g @moonshot-ai/kimi-code
+   kimi login
+   ```
+
+الخطوات:
+```bash
+git clone https://github.com/m4u05999/Satr.git
+cd Satr
+npm ci
+npm start
+```
+ما قد لا يعمل بصدق: اكتشاف المحركات (خاصةً المسارات العالمية)، حفظ المفاتيح على لينكس بلا `libsecret`/keyring، وبعض أوامر الطرفية المقترنة بويندوز (`taskkill` ونحوها).
+
+أبلغ بنتيجتك عبر قالب «[تجربة منصة]»: https://github.com/m4u05999/Satr/issues/new/choose
+
+املأ الحقول الستة: النظام، المعالج، هل فتح التطبيق، هل عملت جلسة طرفية عربية، هل اكتُشف محرك، هل ظهرت العربية سليمة. ملاحظتك هي ما يقرر بناء النسخة.
+
 ## بيان الاستقلالية
 
 «سطر» **أداة مجتمعية مستقلة** طوّرها متطوّعون. **هو ليس منتَجاً من Anthropic ولا مدعوماً
