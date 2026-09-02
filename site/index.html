@@ -275,6 +275,15 @@
           <p class="pro-bot" hidden aria-hidden="true"><label>لا تملأ هذا الحقل: <input name="bot-field"></label></p>
           <label class="pro-label" for="proEmail">بريدك الإلكتروني</label>
           <input class="pro-input" id="proEmail" name="email" type="email" required dir="ltr" autocomplete="email" placeholder="you@example.com">
+          <label class="pro-label" for="proOs">نظام تشغيلك</label>
+          <!-- الخيار الفارغ أولاً كي يعمل required فعلاً: قيمة مُسبقة تجعل «ويندوز»
+               إجابة كل من ضغط الزرّ بلا قراءة، فتفسد القياس الذي وُضع الحقل لأجله. -->
+          <select class="pro-input pro-select" id="proOs" name="os" required>
+            <option value="" disabled selected>اختر نظامك</option>
+            <option value="windows">ويندوز</option>
+            <option value="mac">ماك</option>
+            <option value="linux">لينكس</option>
+          </select>
           <button class="btn btn-gold pro-submit" type="submit">سجّل اهتمامك</button>
         </form>
         <p class="pro-note">الدفع لم يُفعَّل بعد — التسجيل بريد فقط. المسجلون أول من يصله رابط الاشتراك بعرض المؤسسين، ولا نستخدم بريدك لغير ذلك.</p>
@@ -304,6 +313,12 @@
     <div data-reveal>
       <a class="btn btn-gold" id="dlBtn" href="https://github.com/m4u05999/Satr/releases/latest" rel="noopener">تنزيل «سطر» لويندوز</a>
       <p class="download-facts">ويندوز · مجاني · شفرته عامة</p>
+      <!-- باب صوري (fake-door) يقيس الطلب بالسلوك لا بالرأي: روابط تبعية لا أزرار
+           تنزيل — لا نسخة ماك أو لينكس تُنزَّل، والوجهة نموذج تسجيل صريح. -->
+      <p class="platform-hints">
+        <a class="platform-hint" href="#platform-interest"><strong>ماك</strong> — ليس بعد. سجّل اهتمامك ↓</a>
+        <a class="platform-hint" href="#platform-interest"><strong>لينكس</strong> — ليس بعد. سجّل اهتمامك ↓</a>
+      </p>
       <!-- مخفي حتى قبول حزمة «سطر» في مستودع winget-pkgs (قرار مالك 2026-07-18):
            لا تُعرض تعليمات لا تعمل بعد — أزل hidden عند القبول -->
       <div class="winget" dir="ltr" hidden>
@@ -312,6 +327,62 @@
       </div>
       <p class="dl-note">يتطلب ويندوز 10 1809+ و‏Claude Code مثبّتاً — والبوابة الأولى في التطبيق ترشدك خطوة بخطوة.</p>
     </div>
+  </div>
+</section>
+
+<!-- المشهد 8ب: ماك ولينكس — تسجيل اهتمام صادق يقرر إن كانت النسخة تُبنى.
+     النموذج ثابت في الترميز كاملاً (لا حقل يُنشأ بـJS) لأن Netlify لا يكتشف
+     النماذج إلا من HTML الثابت — حقل مبنيّ وقت التشغيل لا يصل أبداً. -->
+<section id="platform-interest" aria-labelledby="platform-title">
+  <div class="wrap">
+    <span class="eyebrow" data-reveal>ماك ولينكس · قياس الطلب</span>
+    <h2 class="section-title" id="platform-title" data-reveal>لا توجد نسخة ماك ولا لينكس — <span class="gold">بعد</span>.</h2>
+    <p class="section-lead" data-reveal>«سطر» اليوم مثبّت ويندوز فقط: لا نسخة ماك، ولا نسخة لينكس، ولا موعد لأيٍّ منهما. تسجيلك هنا هو ما يقرر إن كانت تُبنى أصلاً — ولن نراسلك إلا إن بُنيت نسختك.</p>
+    <form class="platform-form" name="platform-interest" method="POST" action="/platform-thanks.html" data-netlify="true" netlify-honeypot="bot-field" data-reveal>
+      <input type="hidden" name="form-name" value="platform-interest">
+      <input type="hidden" name="source" value="site-download-fakedoor">
+      <p class="pro-bot" hidden aria-hidden="true"><label>لا تملأ هذا الحقل: <input name="bot-field"></label></p>
+
+      <div class="platform-field">
+        <label class="pro-label" for="platEmail">بريدك الإلكتروني</label>
+        <input class="pro-input" id="platEmail" name="email" type="email" required dir="ltr" autocomplete="email" placeholder="you@example.com">
+      </div>
+
+      <div class="platform-field">
+        <label class="pro-label" for="platOs">النظام الذي تنتظره</label>
+        <select class="pro-input pro-select" id="platOs" name="os" required>
+          <option value="" disabled selected>اختر النظام</option>
+          <option value="mac">ماك</option>
+          <option value="linux">لينكس</option>
+        </select>
+      </div>
+
+      <div class="platform-field">
+        <!-- المعرّفات التقنية dir="ltr" لكل خيار: القائمة عربية الاتجاه والأسماء لاتينية -->
+        <label class="pro-label" for="platArch">معالج جهازك</label>
+        <select class="pro-input pro-select" id="platArch" name="arch" required>
+          <option value="" disabled selected>اختر المعالج</option>
+          <option value="apple-silicon" dir="ltr">Apple Silicon</option>
+          <option value="mac-intel" dir="ltr">Intel (ماك)</option>
+          <option value="x86_64" dir="ltr">x86_64</option>
+          <option value="arm64" dir="ltr">arm64</option>
+        </select>
+      </div>
+
+      <fieldset class="platform-fieldset">
+        <legend class="pro-label platform-legend">هل غياب هذه النسخة يمنعك فعلاً؟</legend>
+        <!-- ‏required على الخيارات الثلاثة: واحدٌ يكفي لإلزام المجموعة، والتكرار
+             يمنع سقوط الإلزام بصمت لو حُذف الخيار الأول أو أُعيد ترتيبه لاحقاً. -->
+        <div class="platform-radios">
+          <label class="platform-radio"><input type="radio" name="blocker" value="blocks" required><span>نعم — غياب هذه النسخة يمنعني من استخدام «سطر»</span></label>
+          <label class="platform-radio"><input type="radio" name="blocker" value="has-windows" required><span>لا — أملك ويندوز أيضاً وسأستخدمه هناك</span></label>
+          <label class="platform-radio"><input type="radio" name="blocker" value="from-source" required><span>سأشغّله من المصدر على جهازي</span></label>
+        </div>
+      </fieldset>
+
+      <button class="btn btn-gold platform-submit" type="submit">سجّل اهتمامك</button>
+      <p class="platform-note">للمجرّبين: شفرة «سطر» عامة ويمكن تشغيلها من المصدر على ماك ولينكس اليوم — بلا مثبّت وبلا تجربة مصقولة، فنحن لم نختبرها على هذين النظامين. الطريقة في <a href="https://github.com/m4u05999/Satr#readme" rel="noopener">‏README على GitHub</a>.</p>
+    </form>
   </div>
 </section>
 
