@@ -854,7 +854,14 @@ result`)، فالواجهة لا تتغيّر.
 - **السجلّ** (`adapters/index.js`): `register(name, adapter, meta)` / `get(engine)` /
   `list()` (يعيد `{name, label, family, keyName}`). **قابل للحقن** فتضيف طبقة Enterprise
   مزوّدين دون لمس النواة (نقطة الربط §4.2 في ARCHITECTURE.md). المدمج: cli, gemini,
-  openai, deepseek, qwen, kimi, minimax وollama. خيار `kimi` هو **Kimi API (REST)**
+  openai, deepseek, qwen, kimi, minimax, ollama, nvidia وgroq. **التسميات بمبدأ
+  «العلامة + طريقة الدخول»** (اشتراك/مفتاح API/محلي — جولة 2026-09-02)، والمعرّفات لا
+  تُمسّ أبداً (تُخزَّن في localStorage و`~/.satr/chats/` و`~/.satr/tasks/`).
+  `nvidia` (‏NVIDIA NIM — ‏`integrate.api.nvidia.com`، المفتاح `NVIDIA_API_KEY`)
+  و`groq` (‏`api.groq.com/openai/v1`، المفتاح `GROQ_API_KEY`) منصتان بطبقة مجانية
+  دائمة بلا بطاقة ائتمان وتدعمان tool calling؛ البروتوكول عقد المصنع المتحقَّق، ومعرّفات
+  نماذجهما يثبتها حيّاً `scripts/free-providers-probe.js` فور توفر مفتاح (يتخطى بصمت
+  مزوّداً بلا مفتاح). خيار `kimi` هو **Kimi API (REST)**
   مباشرةً (`api.kimi.com/coding/v1`، النموذج `k3`، المفتاح `KIMI_API_KEY`) ولا يلتف
   عبر Claude Code. وهو مستقل عن محرك الاشتراك الأصلي `kimi-code` الموثّق أدناه.
 - **`adapters/claude-cli.js`**: مسار `claude -p` المنقول من main.js (نفس detached+taskkill).
@@ -1171,11 +1178,11 @@ result`)، فالواجهة لا تتغيّر.
 ### محرك Kimi Code الأصيل (ACP — 2.10.0)
 
 - **الفصل المقصود**: `electron/kimi.js` محرك خاص ثالث مثل `agent.js` و`codex.js`، باسم
-  `kimi-code` ووسم «Kimi Code — أصلي (ACP)». يشغّل `kimi acp` ويتكلم ACP v1 كـ JSON-RPC
+  `kimi-code` ووسم «Kimi Code — اشتراك». يشغّل `kimi acp` ويتكلم ACP v1 كـ JSON-RPC
   مفصول بأسطر فوق stdio؛ لا يحلّل خرج TUI ولا يعتمد على `KIMI_API_KEY`. المصادقة من
   اشتراك Kimi المحلي: مثبّت Windows الرسمي المستقل (المفضّل) أو
   `@moonshot-ai/kimi-code` مع Node 22.19+، ثم `kimi login`. خيار `kimi` القديم
-  باقٍ بوسم «Kimi K3 — API (REST)» كاحتياط مستقل.
+  باقٍ بوسم «Kimi K3 — مفتاح API» كاحتياط مستقل.
 - **استمرارية حقيقية**: التسلسل `initialize → session/new|session/resume → session/prompt`.
   معرّف Kimi نفسه يصل إلى الواجهة عبر حدث `system`، والإيقاف يرسل notification
   `session/cancel` وينتظر تفريغ الدور ثم يحرّره **دون قتل العملية** (K2)؛ الرسالة التالية

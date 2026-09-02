@@ -40,7 +40,7 @@ function build() {
 
 // بيانات التسجيل في سجلّ المحوّلات (تظهر في قائمة «المحرك» بالواجهة)
 const META = {
-  label: 'Ollama — محلي',
+  label: 'Ollama — نماذج محلية',
   family: 'openai',
   keyName: '', // بلا مفتاح
   models: [

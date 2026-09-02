@@ -111,7 +111,7 @@ let kimiBinResolved;
 function publicInfo() {
   return {
     name: ENGINE_ID,
-    label: 'Kimi Code — أصلي (ACP)',
+    label: 'Kimi Code — اشتراك',
     family: 'kimi-native',
     keyName: '',
     capabilities: {

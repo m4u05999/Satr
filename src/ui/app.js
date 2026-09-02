@@ -527,8 +527,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
       const saved = localStorage.getItem('satr_engine') || sel.value || 'sdk';
       sel.innerHTML = '';
       const add = (v, l) => { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.appendChild(o); };
-      add('sdk', 'SDK — بث وأذونات حية'); // محرك SDK الخاص (ليس محوّلاً في السجلّ)
-      add('codex', 'Codex — OpenAI (بث وأذونات)'); // fallback لمحرك أصيل إن تعذّر جلب قائمة المزودين
+      add('sdk', 'Claude — اشتراك Claude Code'); // محرك SDK الخاص (ليس محوّلاً في السجلّ)
+      add('codex', 'Codex — اشتراك ChatGPT'); // fallback لمحرك أصيل إن تعذّر جلب قائمة المزودين
       for (const p of list) add(p.name, p.label || p.name);
       if ([...sel.options].some((o) => o.value === saved)) sel.value = saved;
     }

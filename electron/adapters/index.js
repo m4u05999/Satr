@@ -25,16 +25,20 @@ function register(name, adapter, meta) {
 // نماذج Claude (لمحرك cli الاحتياطي — ومحرك sdk الخاص يعرّفها في الواجهة)
 const CLAUDE_MODELS = [
   { value: '', label: 'الافتراضي' },
-  { value: 'claude-fable-5', label: 'Fable 5' },
+  // مثبت حياً 2026-09-02: supportedModels() على CLI 2.1.258 يعلن claude-fable-5-1[1m]
+  // (بديل claude-fable-5)، وclaude --model claude-fable-5-1 -p قبِله مباشرة.
+  { value: 'claude-fable-5-1', label: 'Fable 5.1' },
   { value: 'opus', label: 'Opus' },
   { value: 'sonnet', label: 'Sonnet' },
   { value: 'haiku', label: 'Haiku' },
 ];
 
 // ---- المحرّكات المدمجة في النواة ----
-register('cli', claudeCli, { label: 'CLI — احتياطي', family: 'claude', models: CLAUDE_MODELS });
+// التسميات بمبدأ «العلامة + طريقة الدخول» (اشتراك/مفتاح API/محلي) — جولة 2026-09-02:
+// المعرّفات (name) لا تُمسّ أبداً: تُخزَّن في localStorage ومجلدات ~/.satr/chats و~/.satr/tasks.
+register('cli', claudeCli, { label: 'Claude CLI — احتياطي', family: 'claude', models: CLAUDE_MODELS });
 register('gemini', gemini, {
-  label: 'Gemini (REST)', family: 'gemini', keyName: 'GEMINI_API_KEY',
+  label: 'Google Gemini — مفتاح API', family: 'gemini', keyName: 'GEMINI_API_KEY',
   models: [
     { value: '', label: 'الافتراضي (Flash)' },
     { value: 'gemini-2.5-flash', label: '2.5 Flash' },
@@ -43,7 +47,7 @@ register('gemini', gemini, {
 });
 
 register('openai', openaiResponses, {
-  label: 'OpenAI (Responses)', family: 'openai', keyName: 'OPENAI_API_KEY',
+  label: 'OpenAI — مفتاح API', family: 'openai', keyName: 'OPENAI_API_KEY',
   // الجولة المنسّقة (vision): نماذج GPT-5.6 تقبل الصور؛ main.js يقرأ هذا من list()
   // ليمرّر input.images، وopenai-responses.js يقرّر الاستهلاك لكل نموذج. (أكمله Claude
   // لسدّ فجوة العقد إذ لم يصل البند لكودكس — يراجعه كودكس.)
@@ -68,7 +72,7 @@ register('deepseek', openaiCompatible.make({
   keyName: 'DEEPSEEK_API_KEY', defaultModel: 'deepseek-chat', label: 'DeepSeek', includeUsage: true,
   capabilities: { strictTools: true },
 }), {
-  label: 'DeepSeek', family: 'openai', keyName: 'DEEPSEEK_API_KEY',
+  label: 'DeepSeek — مفتاح API', family: 'openai', keyName: 'DEEPSEEK_API_KEY',
   models: [
     { value: '', label: 'الافتراضي' },
     { value: 'deepseek-chat', label: 'Chat (V3)' },
@@ -81,7 +85,7 @@ register('qwen', openaiCompatible.make({
   host: 'dashscope-intl.aliyuncs.com', path: '/compatible-mode/v1/chat/completions',
   keyName: 'QWEN_API_KEY', defaultModel: 'qwen-plus', label: 'Qwen (Alibaba)', includeUsage: true,
 }), {
-  label: 'Qwen (Alibaba)', family: 'openai', keyName: 'QWEN_API_KEY',
+  label: 'Qwen — مفتاح API', family: 'openai', keyName: 'QWEN_API_KEY',
   models: [
     { value: '', label: 'الافتراضي' },
     { value: 'qwen-plus', label: 'Plus' },
@@ -102,7 +106,7 @@ register('kimi', openaiCompatible.make({
   promptCacheKey: true,
   authHint: 'مفتاح Kimi Code مرفوض. أنشئ مفتاحاً من Kimi Code Console؛ مفتاح Kimi Open Platform لا يعمل مع هذا المسار.',
 }), {
-  label: 'Kimi K3 — API (REST)', family: 'openai', keyName: 'KIMI_API_KEY',
+  label: 'Kimi K3 — مفتاح API', family: 'openai', keyName: 'KIMI_API_KEY',
   capabilities: { vision: true },
   models: [
     { value: 'k3', label: 'K3 — 256K/1M حسب الخطة' },
@@ -116,13 +120,51 @@ register('minimax', openaiCompatible.make({
   host: 'api.minimax.io', path: '/v1/chat/completions',
   keyName: 'MINIMAX_API_KEY', defaultModel: 'MiniMax-M3', label: 'MiniMax', includeUsage: true,
 }), {
-  label: 'MiniMax', family: 'openai', keyName: 'MINIMAX_API_KEY',
+  label: 'MiniMax — مفتاح API', family: 'openai', keyName: 'MINIMAX_API_KEY',
   models: [
     { value: '', label: 'الافتراضي (M3)' },
     { value: 'MiniMax-M3', label: 'M3' },
     { value: 'MiniMax-M2.7', label: 'M2.7' },
     { value: 'MiniMax-M2.5', label: 'M2.5' },
     { value: 'MiniMax-M2', label: 'M2' },
+  ],
+});
+
+// ---- منصتان مجانيتان بمفتاح API (جولة «النماذج المجانية» 2026-09-02) ----
+// البروتوكول (OpenAI Chat Completions + SSE) هو عقد المصنع المتحقَّق حيّاً؛ معرّفات
+// النماذج أدناه من توثيق المنصتين المنشور، ويثبتها حيّاً scripts/free-providers-probe.js
+// فور توفر مفتاح (المسبار يتخطى بصمت مزوّداً بلا مفتاح — نمط genmedia-probe).
+// كلتاهما بطبقة مجانية دائمة بحساب فقط (بلا بطاقة ائتمان) وتدعمان tool calling —
+// وهو الشرط الحاكم: بلا أدوات يصير المحرك دردشة لا وكيلاً.
+
+// NVIDIA NIM — بوابة النماذج المفتوحة للمطورين (integrate.api.nvidia.com).
+register('nvidia', openaiCompatible.make({
+  id: 'nvidia', // مجلد الذاكرة ~/.satr/chats/nvidia/
+  host: 'integrate.api.nvidia.com', path: '/v1/chat/completions',
+  keyName: 'NVIDIA_API_KEY', defaultModel: 'meta/llama-3.3-70b-instruct', label: 'NVIDIA NIM', includeUsage: true,
+  authHint: 'مفتاح NVIDIA مرفوض. أنشئ مفتاحاً مجانياً من build.nvidia.com (حساب مطوّر بلا بطاقة ائتمان).',
+}), {
+  label: 'NVIDIA NIM — مفتاح API مجاني', family: 'openai', keyName: 'NVIDIA_API_KEY',
+  models: [
+    { value: '', label: 'الافتراضي (Llama 3.3 70B)' },
+    { value: 'meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
+    { value: 'qwen/qwen2.5-coder-32b-instruct', label: 'Qwen2.5 Coder 32B' },
+    { value: 'deepseek-ai/deepseek-r1', label: 'DeepSeek R1' },
+  ],
+});
+
+// Groq — استدلال فائق السرعة (LPU) بطبقة مجانية دائمة ذات حدود يومية.
+register('groq', openaiCompatible.make({
+  id: 'groq', // مجلد الذاكرة ~/.satr/chats/groq/
+  host: 'api.groq.com', path: '/openai/v1/chat/completions',
+  keyName: 'GROQ_API_KEY', defaultModel: 'llama-3.3-70b-versatile', label: 'Groq', includeUsage: true,
+  authHint: 'مفتاح Groq مرفوض. أنشئ مفتاحاً مجانياً من console.groq.com (حساب فقط، بلا بطاقة).',
+}), {
+  label: 'Groq — مفتاح API مجاني', family: 'openai', keyName: 'GROQ_API_KEY',
+  models: [
+    { value: '', label: 'الافتراضي (Llama 3.3 70B)' },
+    { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B' },
+    { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B — سريع' },
   ],
 });
 

@@ -48,7 +48,7 @@
     },
     providers: async () => ({
       providers: [{
-        name: 'kimi-code', label: 'Kimi Code — أصلي (ACP)', family: 'kimi-native', keyName: '',
+        name: 'kimi-code', label: 'Kimi Code — اشتراك', family: 'kimi-native', keyName: '',
         capabilities: { native: true, vision: true, sessions: true, contextUsage: true, compact: true, effort: false },
         models: [{ value: 'k3', label: 'K3 — عبر اشتراك Kimi Code' }],
       }],

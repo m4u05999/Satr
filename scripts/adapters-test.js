@@ -166,7 +166,7 @@ async function main() {
 
     const kimi = adapters.list().find((provider) => provider.name === 'kimi');
     assert.ok(kimi, 'Kimi is registered in the Community adapter registry');
-    assert.strictEqual(kimi.label, 'Kimi K3 — API (REST)');
+    assert.strictEqual(kimi.label, 'Kimi K3 — مفتاح API');
     assert.strictEqual(kimi.keyName, 'KIMI_API_KEY');
     assert.deepStrictEqual(kimi.models.map((model) => model.value), ['k3']);
     assert.strictEqual(kimi.capabilities.vision, true);
