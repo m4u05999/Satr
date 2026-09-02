@@ -1,0 +1,167 @@
+# هذا المسار لقياس أعطال المنصات لا لإصدار التطبيق أو نشره.
+# قرار المنصات 2026-09-03: نبني على macOS وLinux بناءً تجريبياً غير مدعوم ونجمع كل النتائج.
+name: تجربة منصات — بناء غير مدعوم (macOS/Linux)
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform-trial:
+    name: تجربة ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+
+    steps:
+      - name: جلب المستودع
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@v6
+
+      - name: إعداد Node.js
+        id: setup_node
+        continue-on-error: true
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: تثبيت الاعتماديات المقفلة
+        id: npm_ci
+        continue-on-error: true
+        run: npm ci
+
+      - name: فحص صياغة ملفات Electron
+        id: syntax_check
+        continue-on-error: true
+        shell: bash
+        run: |
+          failures=0
+          shopt -s nullglob
+          files=(electron/*.js)
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::لم يُعثر على أي ملف ضمن electron/*.js."
+            exit 1
+          fi
+          for file in "${files[@]}"; do
+            if ! node --check "$file"; then
+              echo "::error file=$file::فشل فحص الصياغة"
+              failures=$((failures + 1))
+            fi
+          done
+          if (( failures > 0 )); then
+            echo "فشل فحص الصياغة في $failures ملف/ملفات."
+            exit 1
+          fi
+          echo "نجح فحص صياغة جميع ملفات electron/*.js."
+
+      - name: اختبار Node — المحوّلات
+        id: test_adapters
+        continue-on-error: true
+        run: npm run test:adapters
+
+      - name: اختبار Node — بوابة الأذونات التلقائية
+        id: test_autogate
+        continue-on-error: true
+        run: npm run test:autogate
+
+      - name: اختبار Node — حارس المتصفح
+        id: test_browserguard
+        continue-on-error: true
+        run: npm run test:browserguard
+
+      - name: اختبار Node — تنقية الأسرار
+        id: test_secretscrub
+        continue-on-error: true
+        run: npm run test:secretscrub
+
+      - name: اختبار Node — الجاهزية
+        id: test_readiness
+        continue-on-error: true
+        run: npm run test:readiness
+
+      - name: اختبار Node — التحقق
+        id: test_verify
+        continue-on-error: true
+        run: npm run test:verify
+
+      - name: اختبار Node — المهام
+        id: test_tasks
+        continue-on-error: true
+        run: npm run test:tasks
+
+      - name: اختبار Node — الذاكرة
+        id: test_memory
+        continue-on-error: true
+        run: npm run test:memory
+
+      - name: اختبار Node — الملاحظات
+        id: test_observations
+        continue-on-error: true
+        run: npm run test:observations
+
+      - name: اختبار Node — مراجعة التغييرات والفرق
+        id: test_reviewchanges
+        continue-on-error: true
+        run: npm run test:reviewchanges
+
+      - name: اختبار Node — مسارات الجلسات
+        id: test_sessions_cwd
+        continue-on-error: true
+        run: npm run test:sessions-cwd
+
+      - name: اختبار Node — وظائف الطرفية
+        id: test_termjobs
+        continue-on-error: true
+        run: npm run test:termjobs
+
+      - name: بناء تجريبي غير موقع وغير معبّأ
+        id: platform_build
+        continue-on-error: true
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            npx electron-builder --mac dir --publish never
+          else
+            npx electron-builder --linux dir --publish never
+          fi
+
+      - name: تلخيص نتائج التجربة
+        id: write_summary
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          {
+            echo "## نتائج تجربة المنصة — ${{ matrix.os }}"
+            echo
+            echo "> قياس تجريبي غير مدعوم؛ لا توقيع ولا نشر."
+            echo
+            echo "| الخطوة | النتيجة |"
+            echo "| --- | --- |"
+            echo '| جلب المستودع | `${{ steps.checkout.outcome }}` |'
+            echo '| إعداد Node.js | `${{ steps.setup_node.outcome }}` |'
+            echo '| تثبيت الاعتماديات المقفلة | `${{ steps.npm_ci.outcome }}` |'
+            echo '| فحص صياغة ملفات Electron | `${{ steps.syntax_check.outcome }}` |'
+            echo '| اختبار المحوّلات | `${{ steps.test_adapters.outcome }}` |'
+            echo '| اختبار بوابة الأذونات التلقائية | `${{ steps.test_autogate.outcome }}` |'
+            echo '| اختبار حارس المتصفح | `${{ steps.test_browserguard.outcome }}` |'
+            echo '| اختبار تنقية الأسرار | `${{ steps.test_secretscrub.outcome }}` |'
+            echo '| اختبار الجاهزية | `${{ steps.test_readiness.outcome }}` |'
+            echo '| اختبار التحقق | `${{ steps.test_verify.outcome }}` |'
+            echo '| اختبار المهام | `${{ steps.test_tasks.outcome }}` |'
+            echo '| اختبار الذاكرة | `${{ steps.test_memory.outcome }}` |'
+            echo '| اختبار الملاحظات | `${{ steps.test_observations.outcome }}` |'
+            echo '| اختبار مراجعة التغييرات والفرق | `${{ steps.test_reviewchanges.outcome }}` |'
+            echo '| اختبار مسارات الجلسات | `${{ steps.test_sessions_cwd.outcome }}` |'
+            echo '| اختبار وظائف الطرفية | `${{ steps.test_termjobs.outcome }}` |'
+            echo '| البناء التجريبي | `${{ steps.platform_build.outcome }}` |'
+          } >> "$GITHUB_STEP_SUMMARY"

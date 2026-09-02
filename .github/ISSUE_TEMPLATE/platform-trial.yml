@@ -1,0 +1,87 @@
+name: تجربة منصة (macOS/Linux)
+description: أبلغ بنتيجة تشغيل «سطر» من المصدر على منصة غير مدعومة.
+title: "[تجربة منصة] "
+labels: ["platform-trial"]
+body:
+  - type: dropdown
+    id: operating_system
+    attributes:
+      label: النظام
+      description: اختر نظام التشغيل الذي جُرّب عليه «سطر».
+      options:
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: system_version
+    attributes:
+      label: التوزيعة أو إصدار النظام (اختياري)
+      description: "مثال: macOS 15.6 أو Ubuntu 24.04."
+      placeholder: اسم التوزيعة ورقم الإصدار
+
+  - type: dropdown
+    id: processor
+    attributes:
+      label: المعالج
+      options:
+        - Apple Silicon
+        - Intel (macOS)
+        - x86_64
+        - arm64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: app_opened
+    attributes:
+      label: هل فتح التطبيق؟
+      options:
+        - نعم
+        - فتح ثم انهار
+        - لم يفتح
+    validations:
+      required: true
+
+  - type: dropdown
+    id: arabic_terminal
+    attributes:
+      label: هل عملت جلسة طرفية عربية؟
+      options:
+        - نعم
+        - لا
+        - لم أجرّب
+    validations:
+      required: true
+
+  - type: dropdown
+    id: detected_engine
+    attributes:
+      label: هل اكتُشف محرك؟
+      options:
+        - Claude Code
+        - Codex
+        - Kimi Code
+        - لا شيء
+    validations:
+      required: true
+
+  - type: dropdown
+    id: arabic_rendering
+    attributes:
+      label: هل ظهرت العربية سليمة في المحادثة؟
+      options:
+        - نعم
+        - مقلوبة
+        - مقطّعة
+        - لم أصل إليها
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes_or_error_log
+    attributes:
+      label: ملاحظات أو سجل الخطأ
+      description: أضف ما يساعد على إعادة المشكلة، واحذف أي مفاتيح أو رموز سرية من السجل قبل إرساله.
+      placeholder: الخطوات، ورسالة الخطأ، وأي ملاحظات إضافية (اختياري)
