@@ -2405,6 +2405,9 @@ function createClaudeMetadataClient(dependencies) {
             value: item && item.value,
             displayName: item && item.displayName,
             description: item && item.description,
+            // resolvedModel داخلي بين agent وmain حصراً: main.js يشتق منه التسمية
+            // الرسمية (officialClaudeName) ولا يمرره إلى renderer — يحرسه test:claude-models
+            resolvedModel: item && item.resolvedModel,
           }));
           const publicAccount = {};
           for (const field of ['email', 'organization', 'subscriptionType']) {

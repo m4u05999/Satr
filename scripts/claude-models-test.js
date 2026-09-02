@@ -107,7 +107,9 @@ async function testMetadataCache() {
   assert.equal(controlQueries, 1, 'لم تتشارك طلبات النماذج والحساب تشغيل control عابراً واحداً');
   assert.equal(supportedCalls, 1);
   assert.equal(accountCalls, 1);
-  assert.deepEqual(Object.keys(models.models[0]).sort(), ['description', 'displayName', 'value']);
+  // resolvedModel يمر من agent إلى main عمداً (اشتقاق التسمية الرسمية — 2026-09-03)؛
+  // فحص عدم بلوغه renderer في testMainSanitization أدناه.
+  assert.deepEqual(Object.keys(models.models[0]).sort(), ['description', 'displayName', 'resolvedModel', 'value']);
   assert.deepEqual(Object.keys(account.account).sort(), ['email', 'organization', 'subscriptionType']);
   assert.ok(!JSON.stringify({ models, account }).includes(SECRET_SENTINEL), 'تسرّب حقل سري من agent metadata');
 
