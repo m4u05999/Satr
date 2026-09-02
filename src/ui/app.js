@@ -1806,6 +1806,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
     return true;
   }
   $('newSession').addEventListener('click', newSession);
+  // زر «الجلسات» في الشريط العلوي (طلب مالك 2026-09-03): نفس مسار أمر /جلسات حرفياً
+  $('sessionsToggle').addEventListener('click', openSessions);
 
   // ---------- لوحة الجلسات: انتقلت إلى مكوّن <satr-sessions-panel> (تفكيك ت-4) ----------
   // المكوّن يملك الجلب والدمج والبحث والعرض؛ الاستئناف (حالة عميقة: محرك/خيط/sessionId)
