@@ -22,23 +22,34 @@ const PROVIDERS = [
   {
     id: 'nvidia', keyName: 'NVIDIA_API_KEY',
     host: 'integrate.api.nvidia.com', path: '/v1/chat/completions',
-    model: 'meta/llama-3.3-70b-instruct',
+    model: 'nvidia/nemotron-3-super-120b-a12b', // مثبت حياً 2026-09-02 (أدوات ✅)
   },
   {
     id: 'groq', keyName: 'GROQ_API_KEY',
     host: 'api.groq.com', path: '/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile',
+    model: 'openai/gpt-oss-120b', // مثبت حياً 2026-09-02 (أدوات ✅)
   },
 ];
 
-// المفتاح: بيئة النظام أولاً ثم ~/.satr/keys.json — نفس ترتيب المصنع، بلا Electron
+// المفتاح: بيئة النظام أولاً ثم مخزن «سطر». المخزن يشفّر بـsafeStorage (DPAPI)،
+// ففكّه يحتاج Electron: تحت Electron نستعمل electron/keys.js نفسه (نفس مسار المصنع)،
+// وتحت node خام نقرأ الصيغ الصريحة فقط ونرشد لتشغيل المسبار عبر Electron للمشفّرة.
+let keysStore = null; // يُحقن في main() حين نعمل تحت Electron بعد app.whenReady()
 function resolveKey(name) {
   if (process.env[name]) return String(process.env[name]).trim();
+  if (keysStore) { try { return keysStore.get(name) || ''; } catch { return ''; } }
   try {
-    const raw = fs.readFileSync(path.join(os.homedir(), '.satr', 'keys.json'), 'utf8');
-    const obj = JSON.parse(raw);
-    return obj && typeof obj[name] === 'string' ? obj[name].trim() : '';
-  } catch { return ''; }
+    const raw = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.satr', 'keys.json'), 'utf8'));
+    const entry = raw && raw[name];
+    if (typeof entry === 'string') return entry.trim();
+    if (entry && typeof entry === 'object' && typeof entry.v === 'string') {
+      if (entry.enc === false) return entry.v.trim();
+      if (entry.enc === true) {
+        console.log(`[${name}] مشفّر بـsafeStorage — شغّل المسبار عبر Electron: npx.cmd electron scripts/free-providers-probe.js`);
+      }
+    }
+  } catch { /* غياب الملف/تلفه = لا مفتاح */ }
+  return '';
 }
 
 function requestSSE(provider, key, body) {
@@ -112,8 +123,10 @@ async function probeProvider(provider) {
   }
 
   // (2) جولة أداة: أداة واحدة بسيطة وبرومبت يفرض استعمالها
+  // سقف أعلى لجولة الأداة: النماذج الاستدلالية (gpt-oss) تصرف رموزاً في التفكير
+  // قبل نداء الأداة — سقف 120 أنهى الدور length قبل بلوغ النداء (قياس 2026-09-02).
   const toolReq = await requestSSE(provider, key, {
-    model: provider.model, stream: true, max_tokens: 120,
+    model: provider.model, stream: true, max_tokens: 600,
     tools: [{
       type: 'function',
       function: {
@@ -148,6 +161,16 @@ async function probeProvider(provider) {
 }
 
 async function main() {
+  // تحت Electron: انتظر الجهوز ثم استعمل مخزن المفاتيح الحقيقي (فكّ safeStorage)
+  if (process.versions.electron) {
+    const { app } = require('electron');
+    // مفتاح safeStorage مشتق من Local State داخل userData — بلا هذا التوجيه يعمل
+    // المسبار باسم "Electron" فيقرأ مجلداً آخر ويفشل الفكّ صامتاً (قيس 2026-09-02:
+    // encAvailable=true لكن decryptString يعيد '' لكل المفاتيح). productName هو Satr.
+    app.setPath('userData', path.join(app.getPath('appData'), 'Satr'));
+    await app.whenReady();
+    keysStore = require(path.join(__dirname, '..', 'electron', 'keys'));
+  }
   const results = [];
   for (const provider of PROVIDERS) {
     try {
@@ -160,7 +183,17 @@ async function main() {
   console.log(JSON.stringify({ ok: true, probedAt: new Date().toISOString(), results }, null, 2));
 }
 
-main().catch((error) => {
+// درس electron-startup-hang: مهلة صلبة كي لا يعلّق مسبار Electron بلا نهاية
+const hardTimer = setTimeout(() => {
+  console.error('free-providers-probe: انتهت المهلة الصلبة (180ث)');
+  process.exit(1);
+}, 180000);
+hardTimer.unref();
+
+main().then(() => {
+  if (process.versions.electron) require('electron').app.exit(process.exitCode || 0);
+}).catch((error) => {
   console.error('free-providers-probe فشل: ' + (error && error.stack || error));
   process.exitCode = 1;
+  if (process.versions.electron) require('electron').app.exit(1);
 });

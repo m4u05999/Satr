@@ -138,33 +138,40 @@ register('minimax', openaiCompatible.make({
 // وهو الشرط الحاكم: بلا أدوات يصير المحرك دردشة لا وكيلاً.
 
 // NVIDIA NIM — بوابة النماذج المفتوحة للمطورين (integrate.api.nvidia.com).
+// النماذج أدناه مثبتة حياً 2026-09-02 بمفتاح حقيقي (SSE + جولة أداة كاملة):
+// nemotron-3-super نجح فوراً، وdeepseek-v4-pro نجح بعد إعادة (الطبقة المجانية تتقلب
+// بإقلاع بارد وECONNRESET عارض — المصنع يعيد الرسالة للمستخدم والدور التالي يمر).
+// kimi-k3 وdeepseek-v4-flash على NIM أثبتا الدردشة لا الأدوات فلم يدخلا الكتالوج.
 register('nvidia', openaiCompatible.make({
   id: 'nvidia', // مجلد الذاكرة ~/.satr/chats/nvidia/
   host: 'integrate.api.nvidia.com', path: '/v1/chat/completions',
-  keyName: 'NVIDIA_API_KEY', defaultModel: 'meta/llama-3.3-70b-instruct', label: 'NVIDIA NIM', includeUsage: true,
+  keyName: 'NVIDIA_API_KEY', defaultModel: 'nvidia/nemotron-3-super-120b-a12b', label: 'NVIDIA NIM', includeUsage: true,
   authHint: 'مفتاح NVIDIA مرفوض. أنشئ مفتاحاً مجانياً من build.nvidia.com (حساب مطوّر بلا بطاقة ائتمان).',
 }), {
   label: 'NVIDIA NIM — مفتاح API مجاني', family: 'openai', keyName: 'NVIDIA_API_KEY',
   models: [
-    { value: '', label: 'الافتراضي (Llama 3.3 70B)' },
-    { value: 'meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
-    { value: 'qwen/qwen2.5-coder-32b-instruct', label: 'Qwen2.5 Coder 32B' },
-    { value: 'deepseek-ai/deepseek-r1', label: 'DeepSeek R1' },
+    { value: '', label: 'الافتراضي (Nemotron 3 Super)' },
+    { value: 'nvidia/nemotron-3-super-120b-a12b', label: 'Nemotron 3 Super 120B' },
+    { value: 'deepseek-ai/deepseek-v4-pro-0813', label: 'DeepSeek V4 Pro' },
   ],
 });
 
 // Groq — استدلال فائق السرعة (LPU) بطبقة مجانية دائمة ذات حدود يومية.
+// النماذج مثبتة حياً 2026-09-02 (SSE + جولة أداة). allam-2-7b عربي سعودي لكنه
+// دردشة فقط — Groq يرد 400 على tools والمصنع يتدهور رشيقاً لدردشة بلا أدوات.
 register('groq', openaiCompatible.make({
   id: 'groq', // مجلد الذاكرة ~/.satr/chats/groq/
   host: 'api.groq.com', path: '/openai/v1/chat/completions',
-  keyName: 'GROQ_API_KEY', defaultModel: 'llama-3.3-70b-versatile', label: 'Groq', includeUsage: true,
+  keyName: 'GROQ_API_KEY', defaultModel: 'openai/gpt-oss-120b', label: 'Groq', includeUsage: true,
   authHint: 'مفتاح Groq مرفوض. أنشئ مفتاحاً مجانياً من console.groq.com (حساب فقط، بلا بطاقة).',
 }), {
   label: 'Groq — مفتاح API مجاني', family: 'openai', keyName: 'GROQ_API_KEY',
   models: [
-    { value: '', label: 'الافتراضي (Llama 3.3 70B)' },
-    { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B' },
-    { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B — سريع' },
+    { value: '', label: 'الافتراضي (GPT-OSS 120B)' },
+    { value: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
+    { value: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B — سريع' },
+    { value: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B' },
+    { value: 'allam-2-7b', label: 'ALLaM 7B — عربي، دردشة بلا أدوات' },
   ],
 });
 
