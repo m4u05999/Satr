@@ -60,6 +60,30 @@ function buildTerminal(instant) {
   return { cmd, cursor, outLines, brokenCommand };
 }
 
+// ---------- إزاحة المراسي: مشتقّة من ارتفاع الرأس الفعلي ----------
+// الرأس `position: fixed` ويلتفّ على الشاشات الضيقة (‏151px عند 390px مقابل 73px
+// عند 1280px — مقيسان)، فالإزاحة الثابتة `-60` كانت تُبقي 91px من رأس المقطع خلفه على الجوال —
+// ‏OBS-071. تُقاس عند النقر لا عند التحميل كي تتبع الالتفاف وتغيّر حجم النافذة.
+const ANCHOR_GAP = 12; // هامش تنفّس بين حافة الرأس السفلى ورأس المقطع
+
+function anchorOffset() {
+  const header = document.querySelector('.site-header');
+  return -((header ? header.offsetHeight : 0) + ANCHOR_GAP);
+}
+
+// مشتركة بين مساري الحركة وreduced-motion: الأول يمرّر تمرير Lenis السلس،
+// والثاني قفزة فورية — والإزاحة واحدة في الحالتين.
+function initAnchors(scrollTo) {
+  document.querySelectorAll('a[href^="#"]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      const target = document.querySelector(link.getAttribute('href'));
+      if (!target) return;
+      event.preventDefault();
+      scrollTo(target, anchorOffset());
+    });
+  });
+}
+
 // ---------- مسار الحركة الكاملة ----------
 function initAnimations() {
   gsap.registerPlugin(ScrollTrigger);
@@ -70,15 +94,8 @@ function initAnimations() {
   gsap.ticker.add((time) => { lenis.raf(time * 1000); });
   gsap.ticker.lagSmoothing(0);
 
-  // الروابط الداخلية تستعمل Lenis (سلاسة + إزاحة الرأس الثابت)
-  document.querySelectorAll('a[href^="#"]').forEach((link) => {
-    link.addEventListener('click', (event) => {
-      const target = document.querySelector(link.getAttribute('href'));
-      if (!target) return;
-      event.preventDefault();
-      lenis.scrollTo(target, { offset: -60 });
-    });
-  });
+  // الروابط الداخلية تستعمل Lenis (سلاسة + إزاحة الرأس المشتقّة)
+  initAnchors((target, offset) => { lenis.scrollTo(target, { offset }); });
 
   // الخيط الذهبي: تقدم القراءة
   gsap.to('#goldLine', {
@@ -196,6 +213,12 @@ function initStatic() {
   buildTerminal(true);
   const cursor = document.querySelector('.hero-cursor');
   if (cursor) cursor.style.opacity = '1';
+  // بلا Lenis هنا: القفزة الأصلية للمتصفح تضع رأس المقطع عند حافة النافذة تماماً
+  // فيبتلعه الرأس الثابت. القفزة الفورية نفسها لكن بالإزاحة المشتقّة.
+  initAnchors((target, offset) => {
+    const top = target.getBoundingClientRect().top + window.scrollY + offset;
+    window.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+  });
 }
 
 // ---------- زر نسخ winget ----------

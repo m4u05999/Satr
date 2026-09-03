@@ -28,7 +28,11 @@ const SHOTS = [
   { fixture: 'site-shots-gen.html', out: 'app-generation-chat.png', width: 1280, height: 820, query: { scene: 'chat' } },
   { fixture: 'site-shots-gen.html', out: 'app-generation-gallery.png', width: 1280, height: 900, query: { scene: 'gallery' } },
   { fixture: 'site-shots-gen.html', out: 'app-generation-permission.png', width: 960, height: 680, query: { scene: 'permission' } },
-  { sitePage: true, out: 'round10-generation-preview.png', width: 1440, height: 2500, destination: 'dist' },
+  { sitePage: true, section: 'generate', verifyGenerate: true, out: 'round10-generation-preview.png', width: 1440, height: 2500, destination: 'dist' },
+  // معاينة مقطع اهتمام ماك/لينكس — ‏OBS-069: لم يكن له مدخل. الرسو بالإزاحة التي
+  // يحسبها معالج المراسي نفسه (‏anchorOffset في site/js/main.js) لا بـscrollIntoView،
+  // فتُظهر اللقطة ما يراه الزائر بعد الإصلاح لا رأس المقطع خلف الرأس الثابت.
+  { sitePage: true, section: 'platform-interest', anchorScroll: true, out: 'platform-interest-preview.png', width: 1440, height: 1400, destination: 'dist' },
 ];
 
 function delay(ms) {
@@ -78,8 +82,8 @@ async function capture(win, shot) {
   win.setSize(shot.width, shot.height);
   if (shot.sitePage) {
     await win.loadFile(path.join(ROOT, 'site', 'index.html'));
-    await verifySiteResponsive(win, shot);
-    await win.webContents.executeJavaScript(`
+    if (shot.verifyGenerate) await verifySiteResponsive(win, shot);
+    const landing = await win.webContents.executeJavaScript(`(() => {
       document.documentElement.style.scrollBehavior = 'auto';
       document.querySelectorAll('[data-reveal]').forEach((element) => {
         element.style.setProperty('opacity', '1', 'important');
@@ -89,8 +93,25 @@ async function capture(win, shot) {
         element.style.setProperty('transform', 'none', 'important'));
       const goldLine = document.getElementById('goldLine');
       if (goldLine) goldLine.style.display = 'none';
-      document.getElementById('generate').scrollIntoView({ block: 'start' });
-    `, true);
+      const section = document.getElementById(${JSON.stringify(shot.section)});
+      if (${shot.anchorScroll ? 'true' : 'false'}) {
+        // الإزاحة من دالة الإنتاج نفسها؛ الاحتياط للحالة التي يتعذّر فيها تحميل main.js
+        const offset = typeof anchorOffset === 'function' ? anchorOffset() : -60;
+        window.scrollTo(0, Math.max(0, section.getBoundingClientRect().top + window.scrollY + offset));
+      } else {
+        section.scrollIntoView({ block: 'start' });
+      }
+      const box = section.getBoundingClientRect();
+      return {
+        sectionTop: Math.round(box.top),
+        sectionBottom: Math.round(box.bottom),
+        headerBottom: Math.round(document.querySelector('.site-header').getBoundingClientRect().bottom),
+        viewport: window.innerHeight,
+      };
+    })()`, true);
+    console.log('  ↳ رسوّ #' + shot.section + ': رأس المقطع=' + landing.sectionTop +
+      ' حافة الرأس=' + landing.headerBottom + ' أسفل المقطع=' + landing.sectionBottom +
+      ' ارتفاع النافذة=' + landing.viewport);
     await delay(900); // تحميل الصور الكسول واستقرار خطوط صفحة الهبوط
   } else {
     await win.loadFile(path.join(__dirname, 'fixtures', shot.fixture), { query: shot.query || {} });
