@@ -163,7 +163,9 @@
     "test:promostudio-batch1": "node scripts/promostudio-batch1-test.js",
     "test:promo-preview": "electron scripts/promo-studio-preview-test.js",
     "test:promo-audio-live": "electron scripts/promo-audio-live-test.js",
-    "test:preview-shield": "electron scripts/preview-shield-test.js"
+    "test:preview-shield": "electron scripts/preview-shield-test.js",
+    "test:keys": "node scripts/keys-test.js",
+    "test:topbar-dev-badge": "node scripts/topbar-dev-badge-test.js"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",

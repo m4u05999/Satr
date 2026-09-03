@@ -24,6 +24,8 @@ const SUITE = [
   'test:memory',
   'test:design-guard',
   'test:gitdiff',
+  'test:keys',
+  'test:topbar-dev-badge',
   'test:repomap',
   'test:context',
   'test:orchestrator',
