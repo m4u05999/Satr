@@ -196,6 +196,12 @@ function startJob(cwd, command, label, options) {
   const usesPwsh = /powershell|pwsh/i.test(path.basename(String(shellPath)));
   const cleanCommand = usesPwsh ? term.sanitizeScript(command) : term.sanitizeCommand(command);
   if (!cleanCommand.trim()) return { ok: false, error: 'empty', message: 'أمر فارغ.' };
+  // OBS-042: الرفض هنا قبل startTerm كي يصل الأسطح كلها ولا ينشأ pty لمهمة لن تبدأ.
+  const syntaxProblems = require('./execguard').shellSyntaxProblems(cleanCommand, shellPath);
+  if (syntaxProblems.length) {
+    const details = syntaxProblems.map((problem) => '«' + problem.token + '»: ' + problem.hint).join(' ');
+    return { ok: false, error: 'shell_syntax', message: 'رُفض أمر المهمة لأن صيغته لا توافق PowerShell 5.1. ' + details };
+  }
   const cleanLabel = sanitizeLabel(label);
   const started = term.startTerm(cwd, 120, 30, {
     label: cleanLabel, isJob: true,

@@ -36,6 +36,25 @@ async function waitFor(fn, label, timeout = 12000) {
 }
 
 (async () => {
+  const originalDefaultShell = term.defaultShell;
+  const originalStartTerm = term.startTerm;
+  let ptyStarts = 0;
+  try {
+    term.defaultShell = () => 'powershell.exe';
+    term.startTerm = () => { ptyStarts += 1; return { ok: true, id: 'unexpected_pty' }; };
+    const rejected = termjobs.startJob(temp,
+      'cd /d D:\\work && npm run test:full | tee dist\\full.log', 'صياغة خاطئة');
+    assert.strictEqual(rejected.ok, false, 'قُبلت صياغة cmd/POSIX في PowerShell');
+    assert.strictEqual(rejected.error, 'shell_syntax', 'رمز رفض الصياغة غير ثابت');
+    assert(/cd \/d/.test(rejected.message) && /&&/.test(rejected.message)
+      && /Set-Location/.test(rejected.message), 'رسالة الرفض لا تذكر الرموز ونظائرها');
+    assert(!/tee/.test(rejected.message), 'حُجب tee وهو اسم مستعار صالح في PowerShell');
+    assert.strictEqual(ptyStarts, 0, 'أُنشئ pty قبل رفض صياغة الصدفة');
+  } finally {
+    term.defaultShell = originalDefaultShell;
+    term.startTerm = originalStartTerm;
+  }
+
   const label = 'خادم\x00 تجريبي ' + 'س'.repeat(60);
   const started = termjobs.startJob(temp,
     'node -e "console.log(\'READY http://localhost:4317\'); setInterval(()=>console.log(\'tick\'), 150)"', label);
@@ -97,7 +116,7 @@ async function waitFor(fn, label, timeout = 12000) {
   await waitFor(() => !term.listTerms().some((item) => item.id === model.id), 'خروج طرفية الالتقاط طبيعياً');
   term.killAll();
   cleanupTemp();
-  console.log('termjobs: نجح — pty حي، buffer، termList، السقوف، label، وقفل FIFO.');
+  console.log('termjobs: نجح — رفض الصياغة بلا pty، وpty حي، وbuffer، وtermList، والسقوف، وlabel، وقفل FIFO.');
   process.exit(0);
 })().catch((error) => {
   term.killAll();

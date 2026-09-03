@@ -2709,6 +2709,7 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
 
 ### مهام الطرفية المعمّرة — run_in_background
 
+- **حارس الصدفة (‏OBS-042)**: قبل إنشاء pty يرفض `termjobs.startJob` خلطات cmd/POSIX الشائعة في PowerShell برسالة `shell_syntax` عربية تذكر الرمز ونظيره، ويتجاهل النصوص المقتبسة والتعليقات اتقاءً للإيجابيات الكاذبة.
 - `termjobs.startJob(cwd,command,label)` ينشئ pty حقيقياً عبر `term.startTerm`؛ المهمة
   تعيش بعد نهاية الدور وتبديل الجلسة ولا تموت إلا بخروجها أو
   `termKill/stop_background_task` أو إغلاق التطبيق. يُلحق خروجاً للصدفة بعد الأمر مع
