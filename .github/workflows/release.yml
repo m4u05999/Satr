@@ -77,6 +77,14 @@ jobs:
       - name: تثبيت xvfb
         run: sudo apt-get update -q && sudo apt-get install -y -q xvfb
 
+      # أول تشغيل حقيقي (‏33772062720، 2026-09-03) أسقط كل اختبار Electron حيّ (24 مجموعة)
+      # بـ`FATAL: setuid_sandbox_host — SUID sandbox helper found but not configured`
+      # ثم SIGTRAP: ubuntu-latest صار 24.04 وAppArmor فيه يمنع user namespaces غير
+      # المميّزة، فلا يجد Chromium أيّ sandbox يعمل. رفع القيد يُبقي sandbox الفضاءات
+      # الحقيقي عاملاً — أدق من ELECTRON_DISABLE_SANDBOX الذي يعطّله كلياً.
+      - name: السماح بـsandbox فضاءات الأسماء لـChromium (‏Ubuntu 24.04)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: الطقم الكامل
         run: xvfb-run -a --server-args="-screen 0 1600x1000x24" npm run test:full
         env:
