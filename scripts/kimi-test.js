@@ -947,6 +947,81 @@ async function testContextUsageCommand() {
   assert.deepStrictEqual(await engine.contextUsage(root, null), { ok: false, error: 'ابدأ جلسة Kimi أولاً' });
 }
 
+async function testForkSession() {
+  let forkSeen = false;
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/fork') {
+        forkSeen = true;
+        assert.strictEqual(message.params.sessionId, 'kimi_session_1');
+        assert.strictEqual(message.params.cwd, root);
+        assert.strictEqual(message.params.upToMessageId, 'kimi_msg_1');
+        assert.strictEqual(message.params.title, 'فرع: اختبار التفريع');
+        proc.send({ jsonrpc: '2.0', id: message.id, result: {
+          sessionId: 'kimi_fork_1',
+          configOptions: [{ id: 'model', type: 'select', options: [{ value: 'k3', name: 'K3' }] }],
+          modes: { currentModeId: 'default', availableModes: [] },
+        } });
+      }
+    }),
+  });
+
+  const result = await engine.forkSession({
+    cwd: root,
+    sessionId: 'kimi_session_1',
+    upToMessageId: 'kimi_msg_1',
+    title: 'فرع: اختبار التفريع',
+  });
+  assert.strictEqual(forkSeen, true);
+  assert.deepStrictEqual(result, { ok: true, sessionId: 'kimi_fork_1', from: 'point' });
+
+  // تنقية المعرّف المعاد: إن أعادت العملية معرّفاً غير صالح
+  const badIdEngine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/fork') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: '../../evil' } });
+      }
+    }),
+  });
+  const badIdResult = await badIdEngine.forkSession({ cwd: root, sessionId: 'kimi_session_1' });
+  assert.strictEqual(badIdResult.ok, false);
+  assert.strictEqual(badIdResult.error, 'invalid_fork_id');
+  assert.ok(!badIdResult.message || !badIdResult.message.includes('../../evil'));
+
+  // رمز خطأ ثابت عند -32601 Method not found، دون تسريب نص upstream
+  const unsupportedEngine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/fork') {
+        proc.send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found upstream' } });
+      }
+    }),
+  });
+  const unsupportedResult = await unsupportedEngine.forkSession({ cwd: root, sessionId: 'kimi_session_1' });
+  assert.strictEqual(unsupportedResult.ok, false);
+  assert.strictEqual(unsupportedResult.error, 'fork_failed');
+  assert.ok(!unsupportedResult.message || !unsupportedResult.message.includes('Method not found upstream'));
+  assert.ok(!unsupportedResult.message || !unsupportedResult.message.includes('-32601'));
+
+  // without upToMessageId → from: 'end'
+  const endEngine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/fork') {
+        proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_fork_end', configOptions: [], modes: {} } });
+      }
+    }),
+  });
+  const endResult = await endEngine.forkSession({ cwd: root, sessionId: 'kimi_session_1' });
+  assert.deepStrictEqual(endResult, { ok: true, sessionId: 'kimi_fork_end', from: 'end' });
+}
+
 async function testToolLabelsAndAvailableCommands() {
   const events = [];
   const engine = kimi.create({
@@ -1434,6 +1509,7 @@ function testSecurityAndWiring() {
   await testSessionBrowser();
   await testModelCompactAndEffortContract();
   await testContextUsageCommand();
+  await testForkSession();
   await testToolLabelsAndAvailableCommands();
   await testListModelsFromAcp();
   await testFullModelValueApplied();
@@ -1460,6 +1536,7 @@ function testSecurityAndWiring() {
   console.log('✓ سرد الجلسات يتصفح فوق 80 حتى سقف 200 وقراءتها تلتقط نداءات الأدوات بتسمياتها العربية وحالاتها');
   console.log('✓ اختيار K3 يضبط model عبر ACP و/ضغط يعرض compact_boundary دون نص تقني خام');
   console.log('✓ /سياق يقرأ /usage الرسمي، وجهد التفكير غير المعلن لا يُرسل إلى ACP');
+  console.log('✓ OBS-048: تفريع الجلسة عبر session/fork ينظّف المدخلات ويعزل أخطاء upstream');
   console.log('✓ مسارات filesystem محصورة داخل مجلد المشروع ولا تتسرّب الأسرار للأحداث');
   console.log('✓ أدوات Kimi الداخلية تظهر بتسميات عربية وأوامر ACP المعلنة تصل الواجهة');
   console.log('✓ قائمة نماذج Kimi تُجلب من configOptions الرسمية وتُخزَّن مؤقتاً دون رمي عند الفشل');

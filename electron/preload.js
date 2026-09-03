@@ -49,8 +49,8 @@ contextBridge.exposeInMainWorld('satr', {
   readSession: (project, id) => ipcRenderer.invoke('satr:readSession', { project, id }),
   sessionMetaList: () => ipcRenderer.invoke('satr:sessionMetaList'),
   sessionMetaSet: (sessionId, patch) => ipcRenderer.invoke('satr:sessionMetaSet', { ...(patch || {}), sessionId }),
-  sessionFork: (sessionId, upToMessageId, title) => ipcRenderer.invoke('satr:sessionFork', {
-    sessionId, upToMessageId, title,
+  sessionFork: (sessionId, upToMessageId, title, engine) => ipcRenderer.invoke('satr:sessionFork', {
+    sessionId, upToMessageId, title, engine,
   }),
   rewindFiles: (cwd, sessionId, userMessageId, dryRun, confirmed, previewToken) => ipcRenderer.invoke('satr:rewindFiles', {
     cwd, sessionId, userMessageId, dryRun, confirmed, previewToken,

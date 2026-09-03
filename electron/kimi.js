@@ -1437,6 +1437,39 @@ function create(deps) {
     return { cwd: session.cwd, total: clean.length, messages: clean.slice(-MAX_MESSAGES) };
   }
 
+  async function forkSession({ cwd, sessionId, upToMessageId, title }) {
+    if (!SAFE_SESSION.test(sessionId || '')) return { ok: false, error: 'invalid_session' };
+    let resolvedCwd = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : '';
+    if (!resolvedCwd) {
+      let session;
+      try { session = (await rawSessionList()).find((item) => item && item.sessionId === sessionId); }
+      catch { return { ok: false, error: 'list_failed' }; }
+      if (!session || !path.isAbsolute(session.cwd || '')) return { ok: false, error: 'session_not_found' };
+      resolvedCwd = session.cwd;
+    }
+    try {
+      if (!fs.statSync(resolvedCwd).isDirectory()) throw new Error('bad_cwd');
+    } catch {
+      return { ok: false, error: 'bad_cwd' };
+    }
+    const cleanTitle = typeof title === 'string'
+      ? title.replace(/[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim()
+      : '';
+    try {
+      const result = await withProbe(async (rpc) => {
+        const params = { sessionId, cwd: path.resolve(resolvedCwd) };
+        if (SAFE_SESSION.test(upToMessageId || '')) params.upToMessageId = upToMessageId;
+        if (cleanTitle) params.title = cleanTitle.slice(0, 80);
+        return rpc.request('session/fork', params, 30000);
+      });
+      const forkId = result && result.sessionId;
+      if (!SAFE_SESSION.test(forkId || '')) return { ok: false, error: 'invalid_fork_id' };
+      return { ok: true, sessionId: forkId, from: upToMessageId ? 'point' : 'end' };
+    } catch (error) {
+      return { ok: false, error: 'fork_failed', message: 'تعذّر تفريع جلسة Kimi Code؛ بقيت الجلسة الحالية كما هي.' };
+    }
+  }
+
   async function contextUsage(cwd, id) {
     if (!SAFE_SESSION.test(id || '')) return { ok: false, error: 'ابدأ جلسة Kimi أولاً' };
     let capture = false;
@@ -1496,7 +1529,7 @@ function create(deps) {
     } catch { return []; }
   }
 
-  return { start, listSessions, readSession, contextUsage, listModels, keepalive };
+  return { start, listSessions, readSession, forkSession, contextUsage, listModels, keepalive };
 }
 
 const runtime = create();
@@ -1518,7 +1551,7 @@ function loginCwd(cwd) {
 module.exports = {
   ENGINE_ID, DEFAULT_MODEL, SAFE_SESSION, publicInfo, resolveKimiBin, authStatus, undoEdit,
   start: runtime.start, listSessions: runtime.listSessions, readSession: runtime.readSession,
-  contextUsage: runtime.contextUsage, listModels: runtime.listModels,
+  forkSession: runtime.forkSession, contextUsage: runtime.contextUsage, listModels: runtime.listModels,
   keepalive: runtime.keepalive,
   create,
   _internals: {
