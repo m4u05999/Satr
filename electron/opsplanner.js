@@ -9,6 +9,7 @@ const path = require('path');
 
 const executor = require('./executor');
 const memory = require('./memory');
+const sessionmeta = require('./sessionmeta');
 const worktrees = require('./worktrees');
 
 const MAX_TASK_CHARS = 4000;
@@ -73,6 +74,7 @@ function create(options) {
   const settings = options || {};
   const runner = settings.runner;
   const manager = settings.worktrees || worktrees;
+  const meta = settings.sessionmeta || sessionmeta;
   const now = typeof settings.now === 'function' ? settings.now : Date.now;
   const timeoutMs = Math.max(20, Math.min(Number(settings.timeoutMs) || DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS));
   const runs = new Map();
@@ -140,6 +142,8 @@ function create(options) {
     runs.set(run.id, run); activeRunId = run.id; publish(run);
     const onEvent = (event) => {
       if (run._finished || !event || typeof event !== 'object') return;
+      // وسم جلسة الأداة وقت إنشائها (‏OBS-068 ب) — لا تُكشف بالمسار وحده لاحقاً.
+      if (event.session_id && (event.type === 'system' || event.type === 'result')) meta.setKind(event.session_id, 'tool');
       if (event.type === 'permission_request') {
         const safe = allowedTool(run, event.tool, event.input);
         if (run._handle && typeof run._handle.resolvePermission === 'function') run._handle.resolvePermission(event.id, safe, false);

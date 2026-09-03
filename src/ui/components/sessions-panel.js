@@ -63,11 +63,14 @@ const ownSheet = sheet(`
   .panel-tools .spacer { flex: 1; }
 `);
 
-// جلسة أداة لا جلسة مستخدم: عوامل غرفة العمليات والمراجعون والمسابير تعمل في worktrees
-// أو مجلدات مؤقتة. تُكشف بيقين من المسار وحده — أما مجلدات مثل `<project>-opus` فهي
-// مجلدات حقيقية على قرص المستخدم ولا يميّزها شيء، فلا نخمّنها (‏OBS-068).
+// جلسة أداة لا جلسة مستخدم: عوامل غرفة العمليات والمراجعون والباحثون والمسابير.
+// **الوسم أولاً** (‏OBS-068 ب): تُوسَم وقت إنشائها في `sessionmeta` فتُكشف حتى إن جرت
+// داخل مجلد مشروع حقيقي (المخطط والعصف لا يستعملان worktree). وكشف المسار يبقى احتياطاً
+// للجلسات القديمة التي سبقت الوسم — بيقين من المسار وحده؛ أما مجلدات مثل `<project>-opus`
+// فهي مجلدات حقيقية على قرص المستخدم ولا يميّزها شيء، فلا نخمّنها.
 const TOOL_PATH = /(^|[\\/])\.satr[\\/]worktrees[\\/]|[\\/]AppData[\\/]Local[\\/]Temp[\\/]|[\\/]Temp[\\/]satr-/i;
 function isToolSession(s) {
+  if (s && s.toolTagged === true) return true;
   return TOOL_PATH.test(String((s && s.cwd) || ''));
 }
 
@@ -301,7 +304,13 @@ class SatrSessionsPanel extends HTMLElement {
   _applyMeta() {
     this._data = this._data.map((session) => {
       const meta = this._meta[session.id] || {};
-      return { ...session, pinned: meta.pinned === true, displayTitle: meta.title || session.title };
+      // `session.kind` محجوز لعائلة المحرك (chat/codex/kimi)؛ وسم الميتاداتا يصل بعلم مستقل.
+      return {
+        ...session,
+        pinned: meta.pinned === true,
+        toolTagged: meta.kind === 'tool',
+        displayTitle: meta.title || session.title,
+      };
     });
   }
 

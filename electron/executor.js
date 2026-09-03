@@ -9,6 +9,7 @@
 
 const path = require('path');
 const worktrees = require('./worktrees');
+const sessionmeta = require('./sessionmeta');
 
 const SAFE_RUN_ID = /^execution-[a-z0-9-]{6,80}$/;
 const MAX_TASK_CHARS = 4000;
@@ -155,6 +156,7 @@ function publicRun(run) {
 function create(options) {
   const settings = options || {};
   const manager = settings.worktrees || worktrees;
+  const meta = settings.sessionmeta || sessionmeta;
   const runner = settings.runner;
   const engine = cleanText(runner && runner.engine, 32);
   const now = typeof settings.now === 'function' ? settings.now : Date.now;
@@ -373,6 +375,8 @@ function create(options) {
 
     const handleEvent = (event) => {
       if (!event || typeof event !== 'object' || run._finishing || run._stopping) return;
+      // وسم جلسة الأداة وقت إنشائها (‏OBS-068 ب) — لا تُكشف بالمسار وحده لاحقاً.
+      if (event.session_id && (event.type === 'system' || event.type === 'result')) meta.setKind(event.session_id, 'tool');
       if (event.type === 'permission_request') {
         const allowed = allowedTool(run, event.tool, event.input);
         const canWrite = allowed.ok && allowed.tier === 'write' && run.permissions.write_used < run.permissions.write_limit;

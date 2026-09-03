@@ -10,12 +10,23 @@ const path = require('path');
 const DEFAULT_FILE = path.join(os.homedir(), '.satr', 'session-meta.json');
 const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_ENTRIES = 500;
+// حصّة وسوم الأدوات داخل السقف العام: جلسات الأدوات تُولَد بالعشرات في كل دورة غرفة
+// عمليات، فلو زاحمت تثبيت المستخدم على الـ500 لعاد `set` بـ`limit` **صامتاً** (اللوحة
+// تتجاهل الفشل) فيتعطّل زرّ التثبيت. الوسوم نافذة متدحرجة، والتثبيت/التسمية لا تُمَسّان.
+const MAX_TOOL_ENTRIES = 200;
 const MAX_TITLE = 80;
+// أنواع الجلسة — قائمة مغلقة قابلة للتوسّع. `tool`: جلسة أداة لا محادثة مستخدم
+// (عوامل غرفة العمليات والمراجعون والباحثون) — تُوسَم وقت إنشائها لا تُخمَّن (‏OBS-068).
+const KINDS = Object.freeze(['tool']);
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
 
 function cleanTitle(value) {
   if (typeof value !== 'string') return null;
   return value.replace(CONTROL_RE, '').replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE);
+}
+
+function cleanKind(value) {
+  return typeof value === 'string' && KINDS.includes(value) ? value : null;
 }
 
 function safeSessionId(value) {
@@ -28,6 +39,8 @@ function cleanEntry(value) {
   if (value.pinned === true) entry.pinned = true;
   const title = cleanTitle(value.title);
   if (title) entry.title = title;
+  const kind = cleanKind(value.kind);
+  if (kind) entry.kind = kind;
   return Object.keys(entry).length ? entry : null;
 }
 
@@ -110,6 +123,48 @@ function createStore(options = {}) {
     return { ok: true, entry: entries[sessionId] ? { ...entries[sessionId] } : null };
   }
 
+  /**
+   * وسم جلسة أداة وقت إنشائها (‏OBS-068 ب) — أفضل جهد، ولا يمرّ من renderer إطلاقاً:
+   * `set` تبقى قائمة سماحها `pinned/title` وحدهما، فلا تستطيع الواجهة إخفاء جلسة
+   * مستخدم بادّعاء أنها أداة. الوسم يجاور التثبيت/التسمية ولا يمحوهما.
+   */
+  function setKind(sessionId, kind) {
+    ensureLoaded();
+    const clean = cleanKind(kind);
+    if (!safeSessionId(sessionId) || !clean) return { ok: false, error: 'bad_input' };
+    // الوسم نفسه مرّة واحدة: أحداث `system` تتكرر مع الاستئناف، ولا كتابة قرص بلا تغيير.
+    if (entries[sessionId] && entries[sessionId].kind === clean) {
+      return { ok: true, entry: { ...entries[sessionId] } };
+    }
+    const before = entries[sessionId] ? { ...entries[sessionId] } : null;
+    const evicted = [];
+    if (!before) {
+      // إخلاء نافذة الوسوم: يُطرد الأقدم من **الوسوم الخالصة** فقط (بلا تثبيت ولا عنوان)
+      // بترتيب الإدراج، فتبقى قرارات المستخدم الصريحة خارج الإخلاء.
+      const toolOnly = Object.keys(entries).filter((id) => {
+        const entry = entries[id];
+        return entry.kind && entry.pinned !== true && !entry.title;
+      });
+      let overflow = toolOnly.length - (MAX_TOOL_ENTRIES - 1);
+      for (let index = 0; index < toolOnly.length && overflow > 0; index++, overflow--) {
+        evicted.push([toolOnly[index], entries[toolOnly[index]]]);
+        delete entries[toolOnly[index]];
+      }
+      if (Object.keys(entries).length >= MAX_ENTRIES) {
+        for (const [id, entry] of evicted) entries[id] = entry;
+        return { ok: false, error: 'limit' };
+      }
+    }
+    entries[sessionId] = { ...(before || {}), kind: clean };
+    if (!persist()) {
+      if (before) entries[sessionId] = before;
+      else delete entries[sessionId];
+      for (const [id, entry] of evicted) entries[id] = entry;
+      return { ok: false, error: 'write_failed' };
+    }
+    return { ok: true, entry: { ...entries[sessionId] } };
+  }
+
   function remove(sessionId) {
     ensureLoaded();
     if (!safeSessionId(sessionId)) return { ok: false, error: 'bad_input' };
@@ -120,7 +175,7 @@ function createStore(options = {}) {
     return { ok: true, removed: true };
   }
 
-  return { list, get, set, remove };
+  return { list, get, set, setKind, remove };
 }
 
 const store = createStore();
@@ -129,10 +184,14 @@ module.exports = {
   list: store.list,
   get: store.get,
   set: store.set,
+  setKind: store.setKind,
   remove: store.remove,
   createStore,
   cleanTitle,
+  cleanKind,
   safeSessionId,
+  KINDS,
   MAX_ENTRIES,
+  MAX_TOOL_ENTRIES,
   MAX_TITLE,
 };
