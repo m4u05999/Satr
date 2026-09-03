@@ -1,6 +1,7 @@
 const previewListeners = [];
 const calls = [];
 const onePixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLzNwAAAABJRU5ErkJggg==';
+const modelPixel = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAA//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8Af//Z';
 
 window.satr = {
   previewBounds: (...args) => { calls.push(['bounds', ...args]); return Promise.resolve({ ok: true }); },
@@ -22,6 +23,10 @@ window.satr = {
   devServerInfo: () => Promise.resolve({ ok: true, running: true, record: { command: 'npm run dev' } }),
   devServerRestart: () => Promise.resolve({ ok: true }),
   handoffDone: () => Promise.resolve({ ok: true }),
+  listBgProcs: () => Promise.resolve([]),
+  listCommands: () => Promise.resolve({ ok: true, commands: [] }),
+  listSkills: () => Promise.resolve([]),
+  listFiles: () => Promise.resolve([]),
   onPreview: (callback) => { previewListeners.push(callback); return () => {}; },
   // بوابة اختبارية لبثّ أحداث satr:preview اصطناعياً من runner الحي
   __firePreviewEvent: (event) => previewListeners.forEach((listener) => listener(event)),
@@ -35,10 +40,13 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   try {
     await import('../../src/ui/components/chat.js');
     await import('../../src/ui/components/preview-panel.js');
+    await import('../../src/ui/components/composer.js');
     await customElements.whenDefined('satr-chat');
     await customElements.whenDefined('satr-preview-panel');
+    await customElements.whenDefined('satr-composer');
     const chat = document.querySelector('satr-chat');
     const panel = document.querySelector('satr-preview-panel');
+    const composer = document.querySelector('satr-composer');
     const root = panel.shadowRoot;
 
     const block = chat.newAssistantBlock('اختبار');
@@ -61,6 +69,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await wait(4300);
     if (!wave || wave.count !== 1) throw new Error('لم يظهر إشعار موجة أخطاء ما بعد التحديث');
 
+    // اختبار توصيل 🎯: بلا model = السلوك القديم (imageDataUrl فقط)
     let picked = null;
     panel.addEventListener('preview-edit', (event) => { picked = event.detail; });
     root.getElementById('pvPick').click();
@@ -70,6 +79,34 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (!picked || !/أصلح/.test(picked.instruction) || !picked.imageDataUrl.startsWith('data:image/png;base64,')) {
       throw new Error('شريحة 🎯 السريعة لم ترسل طلباً مع لقطة العنصر');
     }
+
+    // اختبار توصيل 🎯: مع model = المصغّرة PNG والحمولة من النموذج
+    window.satr.previewElementShot = () => Promise.resolve({ ok: true, base64: onePixel, modelBase64: modelPixel, modelMimeType: 'image/jpeg' });
+    composer.clearImages();
+    let pickedModel = null;
+    const modelHandler = (event) => { pickedModel = event.detail; };
+    panel.addEventListener('preview-edit', modelHandler);
+    root.getElementById('pvPick').click();
+    await wait(20);
+    root.getElementById('pbFix').click();
+    await wait(30);
+    panel.removeEventListener('preview-edit', modelHandler);
+    if (!pickedModel || !pickedModel.dataUrl || !pickedModel.model) {
+      throw new Error('🎯: لم يُرسل dataUrl و model عند توفر modelBase64');
+    }
+    if (!pickedModel.dataUrl.startsWith('data:image/png;base64,')) {
+      throw new Error('🎯: dataUrl ليست PNG للعرض');
+    }
+    if (pickedModel.model.media_type !== 'image/jpeg' || pickedModel.model.data !== modelPixel) {
+      throw new Error('🎯: model لا يحمل بيانات النموذج');
+    }
+    // محاكاة ما تفعله القشرة: addImageData(dataUrl, model) ثم قراءة getImages()
+    composer.addImageData(pickedModel.dataUrl, pickedModel.model);
+    const attached = composer.getImages();
+    if (!attached.length) throw new Error('🎯: لم تُرفق الصورة في المؤلف');
+    if (attached[0].dataUrl !== pickedModel.dataUrl) throw new Error('🎯: المصغّرة المعروضة ليست dataUrl');
+    if (attached[0].media_type !== 'image/jpeg') throw new Error('🎯: media_type المرسل للنموذج ليست من model');
+    if (attached[0].data !== modelPixel) throw new Error('🎯: بيانات النموذج المرسلة ليست modelBase64');
 
     await panel.refreshServerStatus();
     if (!root.getElementById('pvServerState').classList.contains('running') || root.getElementById('pvServerText').textContent !== 'الخادم يعمل') {

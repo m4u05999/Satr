@@ -109,11 +109,13 @@ class SatrComposer extends HTMLElement {
     reader.readAsDataURL(file);
   }
 
-  function addImageData(dataUrl) {
+  function addImageData(dataUrl, model) {
     const value = String(dataUrl || '');
     const match = value.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
     if (!match || pendingImages.length >= 6) return false;
-    pendingImages.push({ id: 'img_' + Math.random().toString(36).slice(2), media_type: match[1], data: match[2], dataUrl: value });
+    // نسخة النموذج (model) تُرسَل للمحرك، والمصغّرة تبقى من dataUrl (عقد 🎯)
+    const useModel = model && ALLOWED_PASTE.has(model.media_type) && typeof model.data === 'string' && /^[A-Za-z0-9+/=]+$/.test(model.data);
+    pendingImages.push({ id: 'img_' + Math.random().toString(36).slice(2), media_type: useModel ? model.media_type : match[1], data: useModel ? model.data : match[2], dataUrl: value });
     renderAttachments();
     return true;
   }

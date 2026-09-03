@@ -13,6 +13,7 @@ function assertStaticContract() {
   const html = fs.readFileSync(FIXTURE, 'utf8');
   const appSource = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'app.js'), 'utf8');
   const panelSource = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'components', 'preview-panel.js'), 'utf8');
+  const composerSource = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'components', 'composer.js'), 'utf8');
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const suite = fs.readFileSync(path.join(ROOT, 'scripts', 'full-suite.js'), 'utf8');
   assert(html.includes("script-src 'self'") && html.includes("style-src 'self'"), 'fixture بلا CSP صارم');
@@ -23,6 +24,10 @@ function assertStaticContract() {
   assert(appSource.includes("previewEl.addEventListener('preview-error-wave'") && appSource.includes("chatEl.addActionNotice('ظهرت '"), 'القشرة لا تحول موجة الأخطاء إلى إشعار فعل');
   assert(panelSource.includes("new CustomEvent('preview-fix'") && appSource.includes("previewEl.addEventListener('preview-fix'"), 'زر أصلحه غير مربوط بمسار الإرسال');
   assert(panelSource.includes('control_conflict') && panelSource.includes('flashConflict'), 'لوحة المعاينة لا تستقبل حدث التنازع');
+  assert(panelSource.includes('modelBase64') && panelSource.includes('modelMimeType'), 'لوحة المعاينة لا تبني نسخة النموذج');
+  assert(appSource.includes("addImageData(displayUrl, d.model)"), 'القشرة لا تمرّر model للمؤلف');
+  assert(composerSource.includes('function addImageData(dataUrl, model)'), 'المؤلف لا يقبل نسخة النموذج');
+  assert(composerSource.includes('useModel ? model.media_type') && composerSource.includes('useModel ? model.data'), 'المؤلف لا يفصل العرض عن الحمولة');
 }
 
 async function main() {
@@ -90,7 +95,7 @@ async function main() {
     })()`, true);
     assert.strictEqual(conflictResult, true, 'فشل اختبار شارة التنازع');
 
-    console.log('browser-member-live: نجح — لقطة الأداة، أصلحه، موجة الأخطاء، 🎯، وشارة الخادم، وشارة التنازع.');
+    console.log('browser-member-live: نجح — لقطة الأداة، أصلحه، موجة الأخطاء، 🎯 (عرض/نموذج)، وشارة الخادم، وشارة التنازع.');
   } finally { if (!win.isDestroyed()) win.destroy(); }
 }
 
