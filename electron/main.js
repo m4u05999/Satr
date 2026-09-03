@@ -2516,7 +2516,9 @@ async function handleKimiSessionForkRequest(payload) {
     return { ok: false, error: 'invalid_session', message: 'معرّف جلسة Kimi غير صالح.' };
   }
   let upToMessageId;
-  if (payload.upToMessageId !== undefined) {
+  // الواجهة تمرر '' لجلسات Kimi (تفريع من النهاية) — الفراغ يعني «بلا نقطة» لا معرّفاً فاسداً
+  // (مراجعة Opus الخصومية 2026-09-03: كان الحارس يرفض الفراغ فتموت الميزة في كل نقرة)
+  if (payload.upToMessageId !== undefined && payload.upToMessageId !== '') {
     if (typeof payload.upToMessageId !== 'string' || !SAFE_SESSION.test(payload.upToMessageId)) {
       return { ok: false, error: 'invalid_message', message: 'معرّف رسالة المستخدم غير صالح.' };
     }
