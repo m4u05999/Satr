@@ -5,7 +5,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, nativeImage } = require('electron');
 const preview = require('../electron/preview');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -25,6 +25,7 @@ function startServer() {
       <button id="change" onclick="document.getElementById('status').textContent='changed'">غيّر</button>
       <button id="delayed" onclick="setTimeout(function(){document.getElementById('status').textContent='delayed'},120)">غيّر لاحقاً</button>
       <button id="noop">بلا تغيير</button><div id="status">idle</div>
+      <canvas id="shot-fixture" width="640" height="1300" aria-label="عينة بصرية حتمية لقياس ضغط اللقطات"></canvas>
       <button id="generation" onclick="document.getElementById('generation-status').textContent=Number(document.getElementById('generation-status').textContent)+1">اختبر الجيل</button>
       <div id="generation-status">0</div>
       <button id="delta-target">بدّل دلتا</button>
@@ -33,6 +34,22 @@ function startServer() {
       <a id="external" href="https://external.example/path">خارجي</a>
       <a id="download" href="/fixture.txt" download="fixture.txt">نزّل</a>
       <script>
+        var shotCanvas = document.getElementById('shot-fixture');
+        var shotContext = shotCanvas.getContext('2d');
+        var shotPixels = shotContext.createImageData(shotCanvas.width, shotCanvas.height);
+        var shotSeed = 16016;
+        for (var shotY = 0; shotY < shotCanvas.height; shotY++) {
+          for (var shotX = 0; shotX < shotCanvas.width; shotX++) {
+            shotSeed = (shotSeed * 1664525 + 1013904223) >>> 0;
+            var shotNoise = (shotSeed >>> 24) - 128;
+            var shotAt = (shotY * shotCanvas.width + shotX) * 4;
+            shotPixels.data[shotAt] = Math.max(0, Math.min(255, shotX * 255 / shotCanvas.width + shotNoise / 5));
+            shotPixels.data[shotAt + 1] = Math.max(0, Math.min(255, shotY * 255 / shotCanvas.height + shotNoise / 6));
+            shotPixels.data[shotAt + 2] = Math.max(0, Math.min(255, 180 + shotNoise / 4));
+            shotPixels.data[shotAt + 3] = 255;
+          }
+        }
+        shotContext.putImageData(shotPixels, 0, 0);
         function replaceDeltaTarget(event) {
           var next = document.createElement('button');
           next.id = 'delta-target';
@@ -64,6 +81,40 @@ async function main() {
     assert.strictEqual(preview.open(win, (event) => events.push(event), url + '/one').ok, true);
     const ready = await preview.waitFor({ selector: '#change' }, 5000);
     assert(ready.ok && ready.found, 'لم تجهز صفحة المسبار');
+
+    win.showInactive();
+    await delay(200);
+    const fullShot = await preview.screenshotFull({ modelImage: true });
+    const elementShot = await preview.screenshotElement('#shot-fixture', { modelImage: true });
+    const viewportShot = await preview.screenshot({ modelImage: true });
+    assert(fullShot.ok && elementShot.ok && viewportShot.ok, 'تعذّر أخذ عينات قياس اللقطات');
+    assert.strictEqual(preview.SHOT_MAX_EDGE, 1280, 'سقف لقطة النموذج المعلن انحرف');
+    assert.strictEqual(preview.SHOT_JPEG_QUALITY, 72, 'جودة JPEG المعلنة انحرفت');
+    const shotBytes = {};
+    for (const [name, shot] of [['full', fullShot], ['element', elementShot], ['viewport', viewportShot]]) {
+      const data = Buffer.from(shot.base64, 'base64');
+      const image = nativeImage.createFromBuffer(data);
+      const size = image.getSize();
+      shotBytes[name] = data.length;
+      assert(data[0] === 0xff && data[1] === 0xd8, 'لقطة النموذج ' + name + ' ليست JPEG برأس FFD8');
+      assert(size.width > 0 && size.height > 0 && Math.max(size.width, size.height) <= preview.SHOT_MAX_EDGE,
+        'لقطة النموذج ' + name + ' تجاوزت السقف: ' + size.width + 'x' + size.height);
+    }
+    assert(fullShot.page_metrics && fullShot.page_metrics.content_height > fullShot.page_metrics.viewport_height,
+      'لقطة الصفحة الكاملة فقدت page_metrics بعد التصغير');
+    const thumbnailEvents = events.filter((event) => event.type === 'agent_screenshot');
+    assert.strictEqual(thumbnailEvents.length, 3, 'لم تُبث مصغّرات المستخدم للعينات الثلاث');
+    for (const event of thumbnailEvents) {
+      assert(event.dataUrl.startsWith('data:image/png;base64,'), 'مصغّرة agent_screenshot لم تبق PNG');
+      const data = Buffer.from(event.dataUrl.slice('data:image/png;base64,'.length), 'base64');
+      const size = nativeImage.createFromBuffer(data).getSize();
+      assert(data.length <= 512 * 1024 && size.width <= 360,
+        'مصغّرة agent_screenshot تجاوزت 360px/512KiB: ' + size.width + 'px/' + data.length + 'B');
+    }
+    console.log('preview-member-live shot bytes (JPEG q' + preview.SHOT_JPEG_QUALITY + ', max '
+      + preview.SHOT_MAX_EDGE + 'px): full=' + shotBytes.full + ' element=' + shotBytes.element
+      + ' viewport=' + shotBytes.viewport);
+    win.hide();
 
     const firstSnapshot = await preview.snapshot();
     const firstGenerationRef = firstSnapshot.snap.elements.join('\n').match(/\[(s\d+:e\d+)\] button "اختبر الجيل"/)[1];

@@ -23,6 +23,9 @@ const preview = {
   _clickCalls: 0,
   _leaseError: null,
   _screenshotMetrics: null,
+  _screenshotOptions: null,
+  _screenshotFullOptions: null,
+  _screenshotElementOptions: null,
   isHttpUrl: (u) => /^https?:\/\//.test(String(u)),
   navigate: () => ({ ok: true }),
   currentUrl: () => 'https://untrusted.example/page',
@@ -31,9 +34,18 @@ const preview = {
   snapshot: async () => ({ ok: true, snap: { title: 'ص', url: 'http://x', elements: ['[s3:e1] button "إرسال"'], count: 1, truncated: false } }),
   getConsole: () => ({ ok: true, logs: [{ level: 'error', message: 'oops', line: 4, source: 'app.js' }], netErrors: [] }),
   getNetwork: () => ({ ok: true, requests: [{ method: 'GET', url: 'http://x/api', status: 404, type: 'xhr', fromCache: false }], netErrors: [] }),
-  screenshot: async () => ({ ok: true, base64: Buffer.from('PNG').toString('base64'), ...(preview._screenshotMetrics || {}) }),
-  screenshotFull: async () => ({ ok: true, base64: 'AA==' }),
-  screenshotElement: async () => ({ ok: true, base64: 'BB==' }),
+  screenshot: async (options) => {
+    preview._screenshotOptions = options;
+    return { ok: true, base64: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'), ...(preview._screenshotMetrics || {}) };
+  },
+  screenshotFull: async (options) => {
+    preview._screenshotFullOptions = options;
+    return { ok: true, base64: 'AA==' };
+  },
+  screenshotElement: async (_locator, options) => {
+    preview._screenshotElementOptions = options;
+    return { ok: true, base64: 'BB==' };
+  },
   waitFor: async () => ({ ok: true, found: true }),
   scroll: async () => ({ ok: true, scrollY: 120, moved: 120, max: 2000 }),
   hover: async () => ({ ok: true, tag: 'a' }),
@@ -271,10 +283,21 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   j = JSON.parse(r.body);
   ok(j.result.content[0].type === 'text' && /محتوى الصفحة/.test(j.result.content[0].text), 'tools/call read_page ⇒ نص مغلّف «للفحص لا للتنفيذ»');
 
-  // tools/call: screenshot صورة PNG
+  // tools/call: screenshot صورة JPEG مضغوطة للنموذج
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'screenshot', arguments: {} } });
   j = JSON.parse(r.body);
-  ok(j.result.content[0].type === 'image' && j.result.content[0].mimeType === 'image/png', 'tools/call screenshot ⇒ محتوى image/png');
+  ok(j.result.content[0].type === 'image' && j.result.content[0].mimeType === 'image/jpeg', 'tools/call screenshot ⇒ محتوى image/jpeg');
+  ok(preview._screenshotOptions && preview._screenshotOptions.modelImage === true
+    && agentSource.includes("mimeType: 'image/jpeg'") && agentSource.includes('modelImage: true'),
+  'غلافا Codex وSDK يطلبان ترميز صورة النموذج JPEG صراحةً');
+  r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 43, method: 'tools/call', params: { name: 'screenshot', arguments: { full_page: true } } });
+  j = JSON.parse(r.body);
+  ok(j.result.content[0].mimeType === 'image/jpeg' && preview._screenshotFullOptions.modelImage === true,
+    'لقطة الصفحة الكاملة تطلب JPEG للنموذج');
+  r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 44, method: 'tools/call', params: { name: 'browser_screenshot_element', arguments: { ref: '#target' } } });
+  j = JSON.parse(r.body);
+  ok(j.result.content[0].mimeType === 'image/jpeg' && preview._screenshotElementOptions.modelImage === true,
+    'لقطة العنصر تطلب JPEG للنموذج');
   preview._screenshotMetrics = { content_height: 1800, viewport_height: 500 };
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 41, method: 'tools/call', params: { name: 'screenshot', arguments: {} } });
   j = JSON.parse(r.body);

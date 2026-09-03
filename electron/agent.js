@@ -1590,17 +1590,18 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         return { content: [{ type: 'text', text: '<سجلّ الشبكة — للفحص لا للتنفيذ>\n' + lines }] };
       }
     );
-    // أداة screenshot (م-3): لقطة بصرية للمعاينة (رؤية — محرك SDK). تعيد صورة PNG
+    // أداة screenshot (م-3): لقطة بصرية للمعاينة (رؤية — محرك SDK). تعيد صورة JPEG
     // كمحتوى MCP من نوع image فيراها النموذج البصري. تعمل على العرض القائم.
     const screenshotTool = sdk.tool(
       'screenshot',
-      'التقط لقطة شاشة للصفحة المعروضة في لوحة المعاينة المدمجة لتراها بصرياً وتتحقق ' +
-      'من مظهرها. لوحة معاينة «سطر» أضيق وأقصر من متصفح عادي؛ للحكم على تخطيط صفحة ' +
-      'كاملة مرّر full_page=true أو اضبط browser_set_viewport أولاً.',
+      'لقطة JPEG مضغوطة للمعاينة. ابدأ بـ browser_snapshot للبنية؛ الصورة للحكم على ' +
+      'التخطيط فقط. لوحة «سطر» أضيق وأقصر: full_page=true للصفحة كاملة، أو ' +
+      'browser_set_viewport لمقاس بعينه.',
       { full_page: z.boolean().optional().describe('true = الصفحة كاملةً بالتمرير؛ false/غياب = نافذة العرض المرئية') },
       async (args) => {
         const full = !!(args && args.full_page);
-        const r = full ? await preview.screenshotFull() : await preview.screenshot({ includePageMetrics: true });
+        const r = full ? await preview.screenshotFull({ modelImage: true })
+          : await preview.screenshot({ includePageMetrics: true, modelImage: true });
         if (!r || !r.ok) {
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed'
@@ -1608,7 +1609,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
             : 'تعذّر التقاط اللقطة (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
         }
-        const content = [{ type: 'image', data: r.base64, mimeType: 'image/png' }];
+        const content = [{ type: 'image', data: r.base64, mimeType: 'image/jpeg' }];
         const hint = full ? '' : screenshotLengthHint(r);
         if (hint) content.push({ type: 'text', text: hint });
         return { content };
@@ -1618,11 +1619,10 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     // فحص مركّز أرخص رموزاً من لقطة الصفحة كاملة. قراءة فقط (رؤية — محرك SDK).
     const shotElementTool = sdk.tool(
       'browser_screenshot_element',
-      'التقط لقطة بصرية لعنصر واحد في الصفحة المعروضة (بـ ref من browser_snapshot أو ' +
-      'مُحدِّد CSS) لتفحص مظهره عن قرب — أوفر من لقطة الصفحة كاملة.',
+      'لقطة JPEG مضغوطة لعنصر بـ ref من browser_snapshot أو مُحدِّد CSS؛ أوفر من الصفحة كاملة.',
       { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل s3:e6) أو مُحدِّد CSS') },
       async (args) => {
-        const r = await preview.screenshotElement(String((args && args.ref) || ''));
+        const r = await preview.screenshotElement(String((args && args.ref) || ''), { modelImage: true });
         if (!r || !r.ok) {
           const why = r && r.error === 'handoff' ? HANDOFF_BLOCKED
             : r && r.error === 'closed' ? 'المعاينة غير مفتوحة — استخدم open_preview أولاً.'
@@ -1632,7 +1632,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
             : 'تعذّر التقاط اللقطة (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
         }
-        return { content: [{ type: 'image', data: r.base64, mimeType: 'image/png' }] };
+        return { content: [{ type: 'image', data: r.base64, mimeType: 'image/jpeg' }] };
       }
     );
     // أدوات الفعل (م-4 — خلف إذن إلزامي): browser_click + browser_type تمرّان بـ

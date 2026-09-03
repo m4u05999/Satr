@@ -1150,6 +1150,31 @@ async function waitFor(cond, timeoutMs) {
   return { ok: true, found: false };
 }
 
+// OBS-016: عينة الحارس قبل الضغط كانت 1,903,731 بايت للكاملة و853,149 للعنصر
+// و873,108 للنافذة (PNG)، وبعد سقف 1280 وجودة 72 صارت 119,217 و80,756 و83,138.
+// الاختيار يبقي ما يكفي للحكم على التخطيط؛ أما البنية والنص فمسارهما browser_snapshot.
+const SHOT_MAX_EDGE = 1280;
+const SHOT_JPEG_QUALITY = 72;
+
+function encodeScreenshot(image, modelImage) {
+  if (!image || image.isEmpty()) return null;
+  let output = image;
+  if (modelImage) {
+    const size = image.getSize();
+    const longest = Math.max(size.width, size.height);
+    if (longest > SHOT_MAX_EDGE) {
+      const ratio = SHOT_MAX_EDGE / longest;
+      output = image.resize({
+        width: Math.max(1, Math.round(size.width * ratio)),
+        height: Math.max(1, Math.round(size.height * ratio)),
+        quality: 'good',
+      });
+    }
+  }
+  const data = modelImage ? output.toJPEG(SHOT_JPEG_QUALITY) : output.toPNG();
+  return data && data.length ? data : null;
+}
+
 function emitScreenshotThumbnail(image, kind, locator) {
   try {
     if (!image || image.isEmpty()) return;
@@ -1165,6 +1190,13 @@ function emitScreenshotThumbnail(image, kind, locator) {
   } catch {}
 }
 
+async function readPageMetrics(wc) {
+  try {
+    return await runIsolated(wc, // OBS-018
+      '({content_height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), viewport_height: window.innerHeight})');
+  } catch { return undefined; }
+}
+
 // جسر تكامل الدفعة (بند «مذكور لا منفَّذ» في تقرير منفّذ ب): الأغلفة تطلب قياس
 // طول الصفحة داخل نداء اللقطة نفسه كي تلحق تلميح «الصفحة أطول من المعروض —
 // خذ full_page:true» (بند مالك — لوحة سطر أضيق من متصفح عادي). فشل القياس لا
@@ -1175,18 +1207,12 @@ async function screenshot(options) {
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
   try {
-    let pageMetrics;
-    if (options && options.includePageMetrics) {
-      try {
-        pageMetrics = await runIsolated(wc, // OBS-018
-          '({content_height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), viewport_height: window.innerHeight})');
-      } catch { pageMetrics = undefined; }
-    }
+    const pageMetrics = options && options.includePageMetrics ? await readPageMetrics(wc) : undefined;
     const img = await wc.capturePage();
-    const png = img.toPNG();
-    if (!png || !png.length) return { error: 'empty' };
     emitScreenshotThumbnail(img, 'page');
-    return { ok: true, base64: png.toString('base64'), page_metrics: pageMetrics };
+    const data = encodeScreenshot(img, options && options.modelImage === true);
+    if (!data) return { error: 'empty' };
+    return { ok: true, base64: data.toString('base64'), page_metrics: pageMetrics };
   } catch (e) { return { error: 'shot_failed' }; }
 }
 
@@ -1217,10 +1243,10 @@ async function screenshotElement(locator, options) {
       x: rect.x, y: rect.y,
       width: Math.min(rect.width, 4000), height: Math.min(rect.height, 4000),
     });
-    const png = img.toPNG();
-    if (!png || !png.length) return { error: 'empty' };
     if (!options || options.emitThumbnail !== false) emitScreenshotThumbnail(img, 'element', locator);
-    return { ok: true, base64: png.toString('base64') };
+    const data = encodeScreenshot(img, options && options.modelImage === true);
+    if (!data) return { error: 'empty' };
+    return { ok: true, base64: data.toString('base64') };
   } catch (e) { return { error: 'shot_failed' }; }
 }
 
@@ -1228,35 +1254,48 @@ async function screenshotElement(locator, options) {
 // Page.captureScreenshot بـ captureBeyondViewport، لقطة واحدة للمحتوى القابل للتمرير كلّه.
 // سقف ارتفاع 20000px (أداء/رموز)، وسقوط للقطة العادية إن تعذّر CDP. scale:1 ⇒ 1 CSS px = 1 بكسل.
 const MAX_FULL_HEIGHT = 20000;
-async function screenshotFull() {
+async function screenshotFull(options) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
   const dbg = wc.debugger;
   let attached = false;
+  let pageMetrics;
   try {
     try { dbg.attach('1.3'); attached = true; } catch (e) { attached = dbg.isAttached && dbg.isAttached(); }
     const metrics = await dbg.sendCommand('Page.getLayoutMetrics');
     const size = metrics.cssContentSize || metrics.contentSize || {};
     const width = Math.max(1, Math.ceil(size.width || 0));
-    const height = Math.min(Math.max(1, Math.ceil(size.height || 0)), MAX_FULL_HEIGHT);
+    const contentHeight = Math.max(1, Math.ceil(size.height || 0));
+    const height = Math.min(contentHeight, MAX_FULL_HEIGHT);
+    const viewport = metrics.cssLayoutViewport || metrics.layoutViewport || {};
+    pageMetrics = {
+      content_height: contentHeight,
+      viewport_height: Math.max(1, Math.ceil(viewport.clientHeight || 0)),
+    };
     const clip = { x: 0, y: 0, width, height, scale: 1 };
     const shot = await dbg.sendCommand('Page.captureScreenshot', {
       format: 'png', captureBeyondViewport: true, clip,
     });
     if (!shot || !shot.data) return { error: 'empty' };
-    try { emitScreenshotThumbnail(nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')), 'full_page'); } catch {}
-    return { ok: true, base64: shot.data, truncated: height >= MAX_FULL_HEIGHT };
+    const img = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'));
+    emitScreenshotThumbnail(img, 'full_page');
+    const data = encodeScreenshot(img, options && options.modelImage === true);
+    if (!data) return { error: 'empty' };
+    return {
+      ok: true, base64: data.toString('base64'), page_metrics: pageMetrics,
+      truncated: contentHeight > MAX_FULL_HEIGHT,
+    };
   } catch (e) {
     // سقوط رشيق للقطة نافذة العرض العادية إن فشل مسار CDP
     try {
       const img = await wc.capturePage();
-      const png = img.toPNG();
-      if (png && png.length) {
-        emitScreenshotThumbnail(img, 'page');
-        return { ok: true, base64: png.toString('base64'), fellBack: true };
-      }
+      emitScreenshotThumbnail(img, 'page');
+      const data = encodeScreenshot(img, options && options.modelImage === true);
+      if (!data) return { error: 'empty' };
+      if (!pageMetrics) pageMetrics = await readPageMetrics(wc);
+      return { ok: true, base64: data.toString('base64'), page_metrics: pageMetrics, fellBack: true };
     } catch (e2) {}
     return { error: 'shot_failed' };
   } finally {
@@ -2243,6 +2282,7 @@ function close() {
 function destroy() { close(); hostWin = null; sender = null; }
 
 module.exports = {
+  SHOT_MAX_EDGE, SHOT_JPEG_QUALITY,
   open, navigate, action, setBounds, startPick, cancelPick, readPage, readability, snapshot, waitFor,
   getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText,
   selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
