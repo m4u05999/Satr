@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.10.0.schema.json
+# بيان الإصدار لحزمة «سطر» في winget (رادار ٠٠١ / OBS-096): winget لا يشترط توقيعاً ويتجاوز
+# حظر تنزيل المتصفح. الناشر «Moxa» يطابق حقل author في package.json — المعرّف دائم فلا يُغيَّر.
+PackageIdentifier: Moxa.Satr
+PackageVersion: 2.16.15
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.10.0
