@@ -7,6 +7,7 @@
  * codex-contract-test.js المثبّت).
  *
  * يغطي:
+ *  - كاش accountStatus القصير: التتابع والتزامن وforce والانتهاء وتغيّر الثنائي والفشل.
  *  - تطبيع account/usage/read وaccount/rateLimits/read إلى عقد عام مغلق.
  *  - **عدم تسريب رابط تسجيل الدخول أو loginId من قناة البدء** (قائمة سماح {ok,id}).
  *  - تحقق الرابط fail-closed بـsafeOauthUrl قبل أي فتح.
@@ -39,6 +40,17 @@ rl.on('line', (line) => {
   let m; try { m = JSON.parse(line); } catch { return; }
   if (m.method === 'initialize') { reply(m.id, { userAgent: 'fixture' }); return; }
   if (m.method === 'initialized') return;
+
+  if (m.method === 'account/read') {
+    log({ type: 'status', params: m.params === undefined ? 'undefined' : m.params });
+    if (mode === 'status_fail') { fail(m.id, process.env.SATR_CODEX_ACCT_LEAK); return; }
+    const answer = () => reply(m.id, {
+      requiresOpenaiAuth: true,
+      account: { type: 'chatgpt', planType: 'plus' },
+    });
+    if (mode === 'status_slow') setTimeout(answer, 150); else answer();
+    return;
+  }
 
   if (m.method === 'account/usage/read') {
     log({ type: 'usage', params: m.params === undefined ? 'undefined' : m.params });
@@ -163,6 +175,64 @@ async function main() {
     codex.resolveCodexBin(true);
 
     testNormalizeLimits(codex);
+
+    // ---------- (0) كاش جاهزية الحساب ----------
+    // ساعة مزيفة تجعل انتهاء 90ث قطعياً وفورياً؛ fixture البطيء يضمن تداخل النداءين.
+    await fs.writeFile(logFile, '', 'utf8');
+    const realDateNow = Date.now;
+    let fakeNow = realDateNow();
+    Date.now = () => fakeNow;
+    try {
+      process.env.SATR_CODEX_ACCT_MODE = 'ok';
+      const expectedStatus = { ok: true, method: 'chatgpt', plan: 'plus' };
+      assert.deepStrictEqual(await codex.accountStatus(false, project), expectedStatus, 'نتيجة accountStatus الأولى');
+      assert.deepStrictEqual(await codex.accountStatus(false, project), expectedStatus, 'نتيجة accountStatus المخزّنة');
+      let launches = (await readLog(logFile)).filter((r) => r.type === 'status').length;
+      assert.strictEqual(launches, 1, 'نداءان متتاليان داخل مدة الكاش أطلقا app-server أكثر من مرة');
+
+      fakeNow += 90 * 1000 + 1;
+      await codex.accountStatus(false, project);
+      launches = (await readLog(logFile)).filter((r) => r.type === 'status').length;
+      assert.strictEqual(launches, 2, 'انتهاء مدة الكاش لم يُعد إطلاق app-server');
+
+      await codex.accountStatus(true, project);
+      launches = (await readLog(logFile)).filter((r) => r.type === 'status').length;
+      assert.strictEqual(launches, 3, 'force لم يتجاوز كاش accountStatus');
+
+      fakeNow += 90 * 1000 + 1;
+      process.env.SATR_CODEX_ACCT_MODE = 'status_slow';
+      const concurrent = await Promise.all([
+        codex.accountStatus(false, project),
+        codex.accountStatus(false, project),
+      ]);
+      assert.deepStrictEqual(concurrent, [expectedStatus, expectedStatus], 'نتيجتا الطلب الجاري المشترك');
+      launches = (await readLog(logFile)).filter((r) => r.type === 'status').length;
+      assert.strictEqual(launches, 4, 'نداءان متزامنان أطلقا app-server أكثر من مرة');
+
+      // تغيير المسار مع بقاء الكاش صالحاً يجب أن يبطله. الرابط الصلب يبقي الاختبار بلا Codex حقيقي.
+      const alternateBin = path.join(root, process.platform === 'win32' ? 'node-account-alt.exe' : 'node-account-alt');
+      try {
+        await fs.link(process.execPath, alternateBin);
+      } catch {
+        await fs.copyFile(process.execPath, alternateBin);
+        if (process.platform !== 'win32') await fs.chmod(alternateBin, 0o755);
+      }
+      process.env.CODEX_BIN = alternateBin;
+      codex.resolveCodexBin(true);
+      process.env.SATR_CODEX_ACCT_MODE = 'ok';
+      await codex.accountStatus(false, project);
+      launches = (await readLog(logFile)).filter((r) => r.type === 'status').length;
+      assert.strictEqual(launches, 5, 'تغيّر مسار الثنائي لم يبطل كاش accountStatus');
+
+      fakeNow += 90 * 1000 + 1;
+      process.env.SATR_CODEX_ACCT_MODE = 'status_fail';
+      await codex.accountStatus(false, project);
+      await codex.accountStatus(false, project);
+      launches = (await readLog(logFile)).filter((r) => r.type === 'status').length;
+      assert.strictEqual(launches, 7, 'فشل account/read خُزّن بدلاً من إعادة المحاولة فوراً');
+    } finally {
+      Date.now = realDateNow;
+    }
 
     // ---------- (1) الاستهلاك ----------
     process.env.SATR_CODEX_ACCT_MODE = 'ok';
@@ -316,8 +386,8 @@ async function main() {
       'preview_close', 'handoff_request', 'handoff_end', 'testsprite_progress']);
     for (const t of emitTypes) assert(known.has(t), 'نوع حدث جديد أضافته الدفعة: ' + t);
 
-    console.log('codex-account: نجح — تطبيع الاستهلاك والحدود، حجب رابط الدخول وloginId،'
-      + ' fail-closed للرابط، والتدهور الرشيق بلا تسريب upstream أو auth.json.');
+    console.log('codex-account: نجح — كاش الجاهزية 90ث/طلب مشترك/force/إبطال المسار والفشل،'
+      + ' وتطبيع الاستهلاك والحدود، وحجب رابط الدخول وloginId بلا تسريب upstream أو auth.json.');
   } finally {
     delete process.env.CODEX_BIN;
     delete process.env.SATR_CODEX_ACCT_LOG;

@@ -185,20 +185,64 @@ function permissionSet(sessionId) {
   return set;
 }
 
-async function accountStatus() {
+// فحص account/read يطلق app-server عابراً؛ نخزّن النجاح 90ث ونشارك الطلب الجاري كي
+// لا تفتح البوابة ولوحة الحساب عمليتين معاً. الفشل لا يدخل الكاش، وforce مخصّص
+// لإعادة الفحص الصريحة بعد تسجيل الدخول. cwd اختباري فقط ولا يأتي من renderer.
+const ACCOUNT_STATUS_CACHE_TTL_MS = 90 * 1000;
+let accountStatusCache = null;
+let accountStatusInFlight = null;
+let accountStatusBin = null;
+let accountStatusGeneration = 0;
+
+async function accountStatus(force = false, cwd) {
   const bin = resolveCodexBin();
+  if (accountStatusBin !== bin) {
+    accountStatusBin = bin;
+    accountStatusCache = null;
+    accountStatusGeneration += 1;
+  }
   if (!bin) return { ok: false, method: null };
+
+  if (force === true) {
+    accountStatusCache = null;
+    accountStatusGeneration += 1;
+  } else {
+    if (accountStatusCache && Date.now() < accountStatusCache.expiresAt) {
+      return accountStatusCache.value;
+    }
+    if (accountStatusInFlight && accountStatusInFlight.bin === bin
+        && accountStatusInFlight.generation === accountStatusGeneration) {
+      return accountStatusInFlight.promise;
+    }
+  }
+
+  const generation = accountStatusGeneration;
+  const promise = (async () => {
+    try {
+      const result = await queryCodex(bin, 'account/read', { refreshToken: false }, cwd ? { cwd } : {});
+      const account = result && result.account;
+      const value = !account
+        ? { ok: result && result.requiresOpenaiAuth === false, method: null }
+        : {
+          ok: true,
+          method: account.type === 'apiKey' ? 'apikey' : account.type,
+          plan: account.type === 'chatgpt' ? account.planType || null : null,
+        };
+      if (accountStatusBin === bin && accountStatusGeneration === generation) {
+        accountStatusCache = { value, expiresAt: Date.now() + ACCOUNT_STATUS_CACHE_TTL_MS };
+      }
+      return value;
+    } catch {
+      // لا نخزّن نتيجة الاحتياط: قد يكون app-server عابراً أو تمّ تسجيل الدخول للتو.
+      return authStatus();
+    }
+  })();
+  const flight = { bin, generation, promise };
+  accountStatusInFlight = flight;
   try {
-    const result = await queryCodex(bin, 'account/read', { refreshToken: false });
-    const account = result && result.account;
-    if (!account) return { ok: result && result.requiresOpenaiAuth === false, method: null };
-    return {
-      ok: true,
-      method: account.type === 'apiKey' ? 'apikey' : account.type,
-      plan: account.type === 'chatgpt' ? account.planType || null : null,
-    };
-  } catch {
-    return authStatus();
+    return await promise;
+  } finally {
+    if (accountStatusInFlight === flight) accountStatusInFlight = null;
   }
 }
 
