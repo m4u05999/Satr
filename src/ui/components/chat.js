@@ -524,14 +524,20 @@ class SatrChat extends HTMLElement {
   }
 
   const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 
   function bindUserMessageElement(message, messageId, sessionId, cwd) {
-    if (!message || !SAFE_UUID.test(String(messageId || '')) || !SAFE_UUID.test(String(sessionId || ''))) return false;
-    message.dataset.sdkMessageId = messageId;
+    const sidOk = SAFE_UUID.test(String(sessionId || '')) || SAFE_SESSION.test(String(sessionId || ''));
+    const mid = String(messageId || '');
+    const midOk = mid === '' || SAFE_UUID.test(mid) || SAFE_SESSION.test(mid);
+    if (!message || !sidOk || !midOk) return false;
+    message.dataset.sdkMessageId = mid;
     message.dataset.sdkSessionId = sessionId;
     message.dataset.sdkCwd = typeof cwd === 'string' ? cwd : '';
     message.dataset.sdkUserPending = 'false';
     for (const button of message.querySelectorAll('.msg-user-fork, .msg-user-rewind')) {
+      const isRewind = button.classList.contains('msg-user-rewind');
+      if (isRewind && !mid) continue; // استرجاع الملفات يحتاج معرّف رسالة (SDK فقط)
       button.disabled = false;
       button.hidden = false;
     }
@@ -556,7 +562,8 @@ class SatrChat extends HTMLElement {
   }
 
   function trimAfterSdkUserMessage(messageId) {
-    if (!SAFE_UUID.test(String(messageId || ''))) return false;
+    const mid = String(messageId || '');
+    if (!mid || !(SAFE_UUID.test(mid) || SAFE_SESSION.test(mid))) return false;
     const message = [...thread.querySelectorAll('.msg.user')]
       .find((entry) => entry.dataset.sdkMessageId === messageId);
     if (!message) return false;
@@ -602,8 +609,8 @@ class SatrChat extends HTMLElement {
       }));
     });
     const fork = document.createElement('button'); fork.type = 'button'; fork.className = 'msg-user-fork';
-    fork.textContent = '🌿 فرّع من هنا'; fork.title = 'أنشئ جلسة Claude جديدة من هذه الرسالة';
-    fork.setAttribute('aria-label', 'فرّع جلسة Claude من هذه الرسالة');
+    fork.textContent = '🌿 فرّع من هنا'; fork.title = 'أنشئ جلسة جديدة من هذه الرسالة';
+    fork.setAttribute('aria-label', 'فرّع جلسة جديدة من هذه الرسالة');
     fork.disabled = true; fork.hidden = true;
     fork.addEventListener('click', () => {
       if (fork.disabled) return;

@@ -1267,6 +1267,12 @@ result`)، فالواجهة لا تتغيّر.
   لـ terminal reverse-RPC مسبقاً: يُفحص `agentCapabilities.terminalCapabilities.reverseRpc`
   عند `initialize` ويبقى معطّلاً حتى يُعلنه Kimي صراحةً؛ عندها فقط نُعلن قدرة العميل
   terminal ونوجّه الأوامر إلى تبويبات pty المرئية. لا دعم مُدّعى غير موجود.
+- **تفريع الجلسات (OBS-048)**: منذ Kimi 0.38.0 صارت `session/fork` متاحة وتتطلّب
+  `{sessionId, cwd}` وتعيد `{sessionId, configOptions, modes}`. «سطر» يستعملها كتفريع
+  من النهاية فقط — الزر «🌿 فرّع من هنا» يظهر على آخر رسالة مستخدم، وعند النقر تُنشأ
+  جلسة فرعية تحمل كل السياق السابق وتُبدّل `sessionId` في الواجهة. `upToMessageId` يُمرَّر
+  إن وُجد لكن سلوكه لم يُثبت بالجسّ الحقيقي على 0.40.1، لذا تُعامل الدفعة كاملة كتفريع
+  من النهاية.
 - **حدود upstream مؤكدة بالجسّ الحقيقي على Kimi 0.27.0 (2026-07-21)**:
   Steering مرفوض — `session/prompt` أثناء دور جارٍ يرد بـ
   `-32600 "Cannot launch a new turn while another turn (ID 0) is active"`.

@@ -1254,7 +1254,7 @@
 
 - **الوسم**: `engines`
 - **النوع**: تحسين
-- **الحالة**: مفتوحة
+- **الحالة**: منجزة — `922e6df` (فرع `wave-kimi`)
 - **المصدر**: مسبار القدرات بعد ترقية Kimi ‏0.27.0 → 0.38.0 (2026-08-24)
 - **الدليل**: أعاد `scripts/kimi-capability-probe.js` فرقاً واحداً عن خط الأساس:
   `fork: خط الأساس ❌ — الواقع ✅`. كان `session/fork` يرد `-32601 Method not found`
@@ -1265,6 +1265,13 @@
 - **مؤجَّل بقرار**: إضافته دفعة مستقلة بحاجزها (مسبار عقد `session/fork` الحيّ، ثم
   توصيل الزر، ثم اختبار عدم تراجع في `test:kimi`). حُدّث خط الأساس في
   `docs/KIMI-CAPABILITIES.md` كي لا يُقرأ الفرق إنذاراً كل مرة.
+- **المنجز**: مسبار `scripts/kimi-fork-shape-probe.js` رصد في Kimi 0.40.1 أن `session/fork`
+  يتطلّب `{sessionId, cwd}` ويعيد `{sessionId: string(44), configOptions: array(3), modes: {...}}`.
+  وُصّل الزر في `src/ui/app.js` + `src/ui/components/chat.js`، وأضيف `kimi.forkSession`
+  في `electron/kimi.js` وفرع `kimi-code` في `satr:sessionFork` بـ `electron/main.js`.
+  التفريع مُستعمل كتفريع من النهاية فقط؛ `upToMessageId` يُمرَّر إن وُجد لكن المسبار
+  لم يُنتج رسائل مستخدم قابلة للتحقق من نقطة التفريع. الاختبارات في `scripts/kimi-test.js`
+  تغطّي النداء والتنقية ورمز الخطأ الثابت.
 
 ## OBS-049 — «kimi upgrade» لا يرقّي على ويندوز
 

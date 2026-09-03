@@ -2498,6 +2498,37 @@ async function handleSessionForkRequest(payload, sessionAgent = agent) {
   }
 }
 
+
+async function handleKimiSessionForkRequest(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { ok: false, error: 'invalid_payload', message: 'بيانات طلب التفريع غير صالحة.' };
+  }
+  const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+  if (!SAFE_SESSION.test(sessionId)) {
+    return { ok: false, error: 'invalid_session', message: 'معرّف جلسة Kimi غير صالح.' };
+  }
+  let upToMessageId;
+  if (payload.upToMessageId !== undefined) {
+    if (typeof payload.upToMessageId !== 'string' || !SAFE_SESSION.test(payload.upToMessageId)) {
+      return { ok: false, error: 'invalid_message', message: 'معرّف رسالة المستخدم غير صالح.' };
+    }
+    upToMessageId = payload.upToMessageId;
+  }
+  const rawTitle = typeof payload.title === 'string'
+    ? payload.title.replace(/[؜‎‏‪-‮⁦-⁩]/g, ' ')
+    : payload.title;
+  const title = sessionmeta.cleanTitle(rawTitle);
+  try {
+    const result = await kimi.forkSession({ sessionId, upToMessageId, title: title || undefined });
+    if (!result || result.ok !== true || !SAFE_SESSION.test(String(result.sessionId || ''))) {
+      return { ok: false, error: 'kimi_fork_failed', message: 'تعذّر تفريع جلسة Kimi؛ بقيت الجلسة الحالية كما هي.' };
+    }
+    return { ok: true, sessionId: result.sessionId, from: result.from || 'end' };
+  } catch {
+    return { ok: false, error: 'kimi_fork_failed', message: 'تعذّر تفريع جلسة Kimi؛ بقيت الجلسة الحالية كما هي.' };
+  }
+}
+
 async function handleRewindFilesRequest(payload, sessionAgent = agent) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return { ok: false, error: 'invalid_payload', message: 'بيانات طلب الاسترجاع غير صالحة.' };
@@ -2608,9 +2639,21 @@ function publishVerification({ engine, sessionId, runId, checkpointId, taskTitle
   return { event, checkpoint, ledger };
 }
 
-ipcMain.handle('satr:sessionFork', async (event, payload) => runSdkSessionControl(
-  () => handleSessionForkRequest(payload),
-));
+let kimiSessionControlBusy = false;
+ipcMain.handle('satr:sessionFork', async (event, payload) => {
+  if (payload && payload.engine === kimi.ENGINE_ID) {
+    if (sendRequestBusy || currentRun || kimiSessionControlBusy) {
+      return { ok: false, error: 'session_run_busy', message: 'انتظر انتهاء دور Kimi أو عملية تفريع أخرى قبل التفريع.' };
+    }
+    kimiSessionControlBusy = true;
+    try {
+      return await handleKimiSessionForkRequest(payload);
+    } finally {
+      kimiSessionControlBusy = false;
+    }
+  }
+  return runSdkSessionControl(() => handleSessionForkRequest(payload));
+});
 ipcMain.handle('satr:rewindFiles', async (event, payload) => runSdkSessionControl(
   () => handleRewindFilesRequest(payload),
 ));

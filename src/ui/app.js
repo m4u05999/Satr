@@ -38,6 +38,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     });
   })();
   const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
   const SAFE_CHECKPOINT_ID = /^cp-[A-Za-z0-9-]{3,80}$/;
   let sessionId = null, busy = false, currentBlock = null;
   let sessionControlBusy = false;
@@ -1306,6 +1307,15 @@ import { createPreviewShield } from './lib/preview-shield.js';
         chatEl.bindLatestUserMessage(ev.uuid, ev.session_id, sessionCwd || $('cwd').value.trim());
       }
     }
+    // تفريع Kimi Code: لا يصل معرّف رسالة عبر أحداث الدور، والتفريع من النهاية فقط (OBS-048).
+    // نربط أحدث رسالة مستخدم معرّف الجلسة عند system/init، ونبطل الروابط السابقة ليبقى الزر
+    // على آخر رسالة فقط.
+    if ($('engine').value === 'kimi-code' && ev.type === 'system' && ev.subtype === 'init' && ev.session_id) {
+      if (chatEl.invalidateSdkUserMessages) chatEl.invalidateSdkUserMessages();
+      if (chatEl.bindLatestUserMessage) {
+        chatEl.bindLatestUserMessage('', ev.session_id, sessionCwd || $('cwd').value.trim());
+      }
+    }
     const block = currentBlock;
     if (!block || block.done) return;
     if (ev.type === 'sdk_agent_progress') {
@@ -1561,7 +1571,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (composerEl.afterSend) composerEl.afterSend(); // تمدد + مسودة + إغلاق القائمتين
     if (composerEl.clearImages) composerEl.clearImages();
     chatEl.addUserMsg(prompt, images.map((i) => i.dataUrl), {
-      awaitingSdkIdentity: engine === 'sdk',
+      awaitingSdkIdentity: engine === 'sdk' || engine === 'kimi-code',
     });
 
     busy = true;
@@ -2398,13 +2408,23 @@ import { createPreviewShield } from './lib/preview-shield.js';
       addNotice('انتظر انتهاء الطلب الجاري قبل تفريع الجلسة.');
       return;
     }
-    if ($('engine').value !== 'sdk') {
-      addNotice('تفريع الرسائل متاح لمحرك Claude SDK فقط.');
+    const engine = $('engine').value;
+    const isSdk = engine === 'sdk';
+    const isKimi = engine === 'kimi-code';
+    if (!isSdk && !isKimi) {
+      addNotice('تفريع الرسائل متاح لمحرك Claude SDK أو Kimi Code فقط.');
       return;
     }
-    if (!SAFE_UUID.test(String(detail.sessionId || ''))
-      || !SAFE_UUID.test(String(detail.messageId || ''))
-      || detail.sessionId !== sessionId) {
+    let sessionIdOk;
+    let messageIdOk;
+    if (isSdk) {
+      sessionIdOk = SAFE_UUID.test(String(detail.sessionId || ''));
+      messageIdOk = SAFE_UUID.test(String(detail.messageId || ''));
+    } else {
+      sessionIdOk = SAFE_SESSION.test(String(detail.sessionId || ''));
+      messageIdOk = String(detail.messageId || '') === ''; // Kimi: تفريع من النهاية فقط
+    }
+    if (!sessionIdOk || !messageIdOk || detail.sessionId !== sessionId) {
       addNotice('تعذّر التفريع: معرّف الرسالة أو الجلسة قديم أو غير صالح.');
       return;
     }
@@ -2420,13 +2440,18 @@ import { createPreviewShield } from './lib/preview-shield.js';
     cwdInput.disabled = true;
     try {
       const compactText = typeof detail.text === 'string' ? detail.text.replace(/\s+/g, ' ').trim() : '';
+      const defaultTitle = isKimi ? 'فرع Kimi' : 'فرع Claude';
       const result = await window.satr.sessionFork(
         detail.sessionId,
-        detail.messageId,
-        compactText ? 'فرع: ' + compactText.slice(0, 68) : 'فرع Claude',
+        isSdk ? detail.messageId : '',
+        compactText ? 'فرع: ' + compactText.slice(0, 68) : defaultTitle,
+        engine,
       );
-      if (!result || !result.ok || !SAFE_UUID.test(String(result.sessionId || ''))) {
-        addNotice('✕ ' + (result && result.message || 'تعذّر تفريع جلسة Claude؛ بقيت الجلسة الحالية كما هي.'));
+      const resultSessionOk = isSdk
+        ? SAFE_UUID.test(String(result && result.sessionId || ''))
+        : SAFE_SESSION.test(String(result && result.sessionId || ''));
+      if (!result || !result.ok || !resultSessionOk) {
+        addNotice('✕ ' + (result && result.message || 'تعذّر تفريع الجلسة؛ بقيت الجلسة الحالية كما هي.'));
         return;
       }
       if (!sessionControlEpochIsCurrent(epoch)) {
@@ -2437,12 +2462,15 @@ import { createPreviewShield } from './lib/preview-shield.js';
       sessionCwd = epoch.cwd;
       currentBlock = null;
       $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(sessionId) + ' (فرع)';
-      const trimmed = chatEl.trimAfterSdkUserMessage
-        ? chatEl.trimAfterSdkUserMessage(detail.messageId) : false;
-      if (!trimmed) {
-        chatEl.clearThread();
-        addNotice('أُنشئ الفرع، لكن تعذّر مطابقة موضع الرسالة محلياً؛ أُخفي سجل الأصل ويمكن فتح الفرع من /جلسات.');
+      if (isSdk) {
+        const trimmed = chatEl.trimAfterSdkUserMessage
+          ? chatEl.trimAfterSdkUserMessage(detail.messageId) : false;
+        if (!trimmed) {
+          chatEl.clearThread();
+          addNotice('أُنشئ الفرع، لكن تعذّر مطابقة موضع الرسالة محلياً؛ أُخفي سجل الأصل ويمكن فتح الفرع من /جلسات.');
+        }
       }
+      // Kimi: التفريع من النهاية، لا حاجة لقصّ العرض — نبقي السجل لأن الفرع يحمل نفس الرسائل.
       if (chatEl.invalidateSdkUserMessages) chatEl.invalidateSdkUserMessages();
       chatEl.clearTaskLedger();
       chatEl.clearCheckpoint();
@@ -2451,13 +2479,14 @@ import { createPreviewShield } from './lib/preview-shield.js';
       if (composerRevision() === draftRevision) {
         if (composerEl.restoreTurn) composerEl.restoreTurn(detail.text || '', detail.images || []);
         else input.value = detail.text || '';
-        addNotice('🌿 أُنشئ فرع Claude جديد من هذه الرسالة. أُعيد النص إلى المؤلف ولم يُرسل تلقائياً.');
+        const engineLabel = isKimi ? 'Kimi' : 'Claude';
+        addNotice('🌿 أُنشئ فرع ' + engineLabel + ' جديد من هذه الرسالة. أُعيد النص إلى المؤلف ولم يُرسل تلقائياً.');
       } else {
-        addNotice('🌿 أُنشئ فرع Claude الجديد، واحتُفظ بالمسودة الأحدث في المؤلف بلا استبدال.');
+        addNotice('🌿 أُنشئ الفرع الجديد، واحتُفظ بالمسودة الأحدث في المؤلف بلا استبدال.');
       }
       input.focus();
     } catch {
-      addNotice('✕ تعذّر التأكد من اكتمال تفريع جلسة Claude؛ راجع /جلسات قبل إعادة المحاولة.');
+      addNotice('✕ تعذّر التأكد من اكتمال التفريع؛ راجع /جلسات قبل إعادة المحاولة.');
     } finally {
       sessionControlBusy = false;
       cwdInput.disabled = cwdWasDisabled;
