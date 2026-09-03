@@ -95,6 +95,21 @@ function officialClaudeName(resolvedModel) {
   return match[1].charAt(0).toUpperCase() + match[1].slice(1) + ' ' + nums.join('.');
 }
 
+// مستويات جهد التفكير المعلنة لكل نموذج (OBS-063 مرشّح أ). القائمة **مغلقة** وتطابق
+// اتحاد sdk.d.ts، وترتيبها هنا هو ترتيب العرض — لا نرث ترتيب SDK كي لا يقلب إعلانٌ
+// لاحق ترتيب المنتقي على المستخدم. القيمة الفارغة (الافتراضي) تبنيها الواجهة لا العقد.
+const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+// يعيد مصفوفة جديدة منقّاة أو null. الشرط الصريح supportsEffort === true (لا truthy)،
+// ويُسقَط ما ليس نصاً أو خارج القائمة المغلقة، ويُزال التكرار ضمناً بالمرور على القائمة.
+// غياب الحقلين — CLI أقدم أو نموذج لا يعلن جهداً — يعيد null فيبقى العقد العام كما هو.
+function sanitizeClaudeEffortLevels(item) {
+  if (!item || item.supportsEffort !== true || !Array.isArray(item.supportedEffortLevels)) return null;
+  const declared = new Set(item.supportedEffortLevels.filter((level) => typeof level === 'string'));
+  const levels = CLAUDE_EFFORT_LEVELS.filter((level) => declared.has(level));
+  return levels.length ? levels : null;
+}
+
 function sanitizeClaudeModelsResult(result) {
   if (!result || result.ok !== true || !Array.isArray(result.models)) return { ok: false, models: [] };
   const seen = new Set();
@@ -112,7 +127,11 @@ function sanitizeClaudeModelsResult(result) {
     }
     const description = cleanClaudePublicText(item && item.description, 240);
     seen.add(value);
-    models.push({ value, label, description });
+    const model = { value, label, description };
+    // حقل اختياري: يُضاف فقط حين يعلن المحرك مستويات صالحة، فيبقى العقد القديم حرفياً لغيره
+    const effortLevels = sanitizeClaudeEffortLevels(item);
+    if (effortLevels) model.effortLevels = effortLevels;
+    models.push(model);
     if (models.length >= 12) break;
   }
   return { ok: true, models };
