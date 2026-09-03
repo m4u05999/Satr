@@ -58,9 +58,13 @@ jobs:
           $e = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
             Get-ItemProperty | Where-Object { $_.DisplayName -like '*Satr*' -or $_.DisplayName -like '*سطر*' } | Select-Object -First 1
           if (-not $e) { Write-Host 'no ARP entry to uninstall'; exit 0 }
-          $u = $e.UninstallString -replace '"',''
-          Write-Host "uninstall: $u /S"
-          $p = Start-Process -FilePath $u -ArgumentList '/S' -PassThru -Wait
+          # UninstallString بصيغة "C:\...\Uninstall Satr.exe" /currentuser — المسار فيه مسافة،
+          # فيُفصل الملف التنفيذي عن وسائطه بالاقتباس لا بإزالته (خطأ التشغيل الأول).
+          $s = $e.UninstallString
+          if ($s -match '^"([^"]+)"\s*(.*)$') { $exe = $Matches[1]; $extra = $Matches[2] } else { $exe = $s; $extra = '' }
+          $args = @('/S'); if ($extra) { $args += $extra.Trim() }
+          Write-Host "uninstall: `"$exe`" $($args -join ' ')"
+          $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -Wait
           Write-Host "uninstall exit=$($p.ExitCode)"
 
       - name: (2) winget install --manifest (المسار الذي تسلكه البوابة)
