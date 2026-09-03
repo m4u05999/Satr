@@ -116,6 +116,33 @@ jobs:
         continue-on-error: true
         run: npm run test:sessions-cwd
 
+      - name: تشخيص node-pty
+        id: diagnose_node_pty
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "SHELL=$SHELL"
+          ls -la node_modules/node-pty/prebuilds/*/
+          echo '--- فحص pty ---'
+          if command -v timeout >/dev/null 2>&1; then
+            timeout 30 node -e "const p=require('node-pty');const t=p.spawn(process.env.SHELL||'/bin/bash',['-lc','echo pty-ok'],{name:'xterm',cols:80,rows:24});t.onData(d=>process.stdout.write(d));t.onExit(e=>{console.log('exit',e.exitCode);process.exit(0)})"
+          else
+            node -e "const p=require('node-pty');const t=p.spawn(process.env.SHELL||'/bin/bash',['-lc','echo pty-ok'],{name:'xterm',cols:80,rows:24});t.onData(d=>process.stdout.write(d));t.onExit(e=>{console.log('exit',e.exitCode);process.exit(0)})"
+          fi
+
+      - name: إصلاح صلاحية spawn-helper (تجريبي)
+        id: fix_spawn_helper
+        continue-on-error: true
+        shell: bash
+        run: |
+          chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true
+          echo '--- فحص pty بعد الإصلاح ---'
+          if command -v timeout >/dev/null 2>&1; then
+            timeout 30 node -e "const p=require('node-pty');const t=p.spawn(process.env.SHELL||'/bin/bash',['-lc','echo pty-ok'],{name:'xterm',cols:80,rows:24});t.onData(d=>process.stdout.write(d));t.onExit(e=>{console.log('exit',e.exitCode);process.exit(0)})"
+          else
+            node -e "const p=require('node-pty');const t=p.spawn(process.env.SHELL||'/bin/bash',['-lc','echo pty-ok'],{name:'xterm',cols:80,rows:24});t.onData(d=>process.stdout.write(d));t.onExit(e=>{console.log('exit',e.exitCode);process.exit(0)})"
+          fi
+
       - name: اختبار Node — وظائف الطرفية
         id: test_termjobs
         continue-on-error: true
@@ -162,6 +189,8 @@ jobs:
             echo '| اختبار الملاحظات | `${{ steps.test_observations.outcome }}` |'
             echo '| اختبار مراجعة التغييرات والفرق | `${{ steps.test_reviewchanges.outcome }}` |'
             echo '| اختبار مسارات الجلسات | `${{ steps.test_sessions_cwd.outcome }}` |'
+            echo '| تشخيص node-pty | `${{ steps.diagnose_node_pty.outcome }}` |'
+            echo '| إصلاح صلاحية spawn-helper (تجريبي) | `${{ steps.fix_spawn_helper.outcome }}` |'
             echo '| اختبار وظائف الطرفية | `${{ steps.test_termjobs.outcome }}` |'
             echo '| البناء التجريبي | `${{ steps.platform_build.outcome }}` |'
           } >> "$GITHUB_STEP_SUMMARY"
