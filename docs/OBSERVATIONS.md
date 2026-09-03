@@ -2750,9 +2750,14 @@ Claude لا محرّكات مختلفة، لم يبقَ مسار مشروع — 
   لكن قبول FSL تحت «مفتوح المصدر» **غير مؤكد** · winget لا يشترط التوقيع ويتجاوز حظر تنزيل
   المتصفح · Microsoft Store يوقّع MSIX بنفسه بشرط عمل spawn داخل الحاوية. السياق: 53 تنزيلاً
   إجمالاً ⇒ المشكلة توزيع (`docs/PLATFORMS-DECISION-2026-09.md`).
-- **المصدر**: رادار سطر ٠٠١ — رُصد؛ **winget قيد التنفيذ الآن بقرار مالك 2026-09-03**
-- **مرشّح العلاج**: (أ) manifest عبر `wingetcreate` وPR إلى `microsoft/winget-pkgs` — جارٍ؛
-  (ب) رسالة إلى Certum عن FSL قبل أي شراء؛ (ج) تجربة `target: appx` مع اختبار PTY داخل الحزمة.
+- **المصدر**: رادار سطر ٠٠١ — رُصد؛ **winget نُفّذ بقرار مالك 2026-09-03**
+- **مرشّح العلاج**: (أ) manifest عبر `wingetcreate` وPR إلى `microsoft/winget-pkgs` — **مُرسَل**:
+  `microsoft/winget-pkgs#429004` («New package: Moxa.Satr version 2.16.15»)؛ الملفات الأربعة
+  (version/installer/en-US/ar-SA، schema 1.10) محفوظة في `winget/manifests/m/Moxa/Satr/2.16.15/`
+  و`winget validate` نجح محلياً. المعرّف الدائم `Moxa.Satr` (قرار مالك). يبقى: مراقبة فحوص
+  Microsoft الآلية، وعند القبول قسم «التثبيت عبر winget» في README وسير إصدار يحدّث الحزمة
+  آلياً (`wingetcreate update`) مع كل وسم؛ (ب) رسالة إلى Certum عن FSL قبل أي شراء؛
+  (ج) تجربة `target: appx` مع اختبار PTY داخل الحزمة.
 
 ## OBS-097 — قناة اكتساب مجانية: issues RTL مفتوحة في Claude Code وCodex وVS Code أصحابها جمهور سطر الأول
 - **الوسم**: `docs`
