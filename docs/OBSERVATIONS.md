@@ -2551,3 +2551,11 @@ Claude لا محرّكات مختلفة، لم يبقَ مسار مشروع — 
   `main` (‏`gh api .../branches/main/protection`) — مؤجَّل بقرار مالك حتى تشغيلين ناجحين.
 - **المصدر**: تقرير Cowork «تغيير لزم في ملف لا أملكه» (رُصد ولم يُنفَّذ)
 - **مرشّح العلاج**: الثلاثة سطور صغيرة؛ (3) يُنفَّذ بعد قياس تشغيلين على Actions لا قبله.
+- **تحديث 2026-09-03 (مساءً)**: أول تشغيل حقيقي `33772062720` **أسقط كل اختبار Electron حيّ**
+  (‏24 مجموعة) بـ`FATAL: setuid_sandbox_host` ثم `SIGTRAP` — افتراض Cowork «مستخدم غير root فلا
+  حاجة لتعطيل sandbox» خاطئ على `ubuntu-latest` = 24.04 حيث AppArmor يمنع user namespaces
+  غير المميّزة. العلاج `6d65ddc`: خطوة `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`
+  (تُبقي namespace sandbox عاملاً — أدق من `ELECTRON_DISABLE_SANDBOX`). التشغيل الثاني
+  `33772458296` **أخضر في 4m17s**. عدّاد شرط (3): **تشغيل ناجح 1 من 2**. وذيل رابع من
+  السجل: `actions/setup-node@v4` يُوسم «Node.js 20 deprecated — forced to run on Node.js 24» —
+  تحذير على الـaction نفسه لا على `node-version`، ويُعالَج برفع الـaction إلى v5 حين يُلمس الملف.
