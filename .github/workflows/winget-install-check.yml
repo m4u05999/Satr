@@ -67,16 +67,48 @@ jobs:
           $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -Wait
           Write-Host "uninstall exit=$($p.ExitCode)"
 
-      - name: (2) winget install --manifest (المسار الذي تسلكه البوابة)
+      # الفرضية (التشغيل 33796955694): winget يشغّل المثبّت عبر ShellExecute على ملف نزّله بنفسه
+      # فيحمل علامة الويب (Zone.Identifier)، وShellExecute يستشير SmartScreen للملفات الموسومة غير
+      # الموقّعة — فيُعرض حوار «Windows protected your PC» ويعلق التثبيت في جلسة بلا واجهة؛ بينما
+      # CreateProcess في الخطوة (1) على ملف نزّله PowerShell (بلا علامة) أنهى في 8 ثوانٍ.
+      - name: (1ج) الفرضية: علامة الويب + ShellExecute — بمهلة وبالتقاط نوافذ الحوار
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $src = "$env:RUNNER_TEMP\Satr-Setup.exe"
+          $motw = "$env:RUNNER_TEMP\motw\Satr-Setup-2.16.15.exe"
+          New-Item -ItemType Directory -Force (Split-Path $motw) | Out-Null
+          Copy-Item $src $motw
+          Set-Content -Path $motw -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3`r`nHostUrl=https://github.com/"
+          Write-Host "MotW streams: $((Get-Item $motw -Stream * | Select-Object -ExpandProperty Stream) -join ', ')"
+          $p = Start-Process -FilePath $motw -ArgumentList '/S' -Verb Open -PassThru
+          $done = $p.WaitForExit(120000)
+          if ($done) { Write-Host "ShellExecute+MotW: exited $($p.ExitCode)" } else {
+            Write-Host "ShellExecute+MotW: HUNG after 120s"
+            Get-Process | Where-Object { $_.MainWindowTitle } | ForEach-Object { Write-Host "  window: [$($_.ProcessName)] $($_.MainWindowTitle)" }
+            Get-Process -Name 'smartscreen','Satr-Setup*' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  proc: $($_.ProcessName) pid=$($_.Id)" }
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: (2) winget install --manifest (المسار الذي تسلكه البوابة) — بمهلة
         shell: pwsh
         continue-on-error: true
         run: |
           winget --version
           winget settings --enable LocalManifestFiles
           $dir = "winget\manifests\m\Moxa\Satr\${{ github.event.inputs.version }}"
-          Get-ChildItem $dir
-          winget install --manifest $dir --accept-source-agreements --accept-package-agreements --disable-interactivity --verbose-logs
-          Write-Host "winget exit=$LASTEXITCODE"
+          $wg = Start-Process -FilePath winget -ArgumentList @('install','--manifest',$dir,'--accept-source-agreements','--accept-package-agreements','--disable-interactivity','--verbose-logs') -PassThru -NoNewWindow -RedirectStandardOutput "$env:RUNNER_TEMP\wg.out" -RedirectStandardError "$env:RUNNER_TEMP\wg.err"
+          $done = $wg.WaitForExit(300000)
+          if ($done) { Write-Host "winget exit=$($wg.ExitCode)" } else {
+            Write-Host "winget: HUNG after 300s — snapshot of windows/processes:"
+            Get-Process | Where-Object { $_.MainWindowTitle } | ForEach-Object { Write-Host "  window: [$($_.ProcessName)] $($_.MainWindowTitle)" }
+            Get-Process -Name 'smartscreen','Satr-Setup*','winget' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  proc: $($_.ProcessName) pid=$($_.Id)" }
+            $inst = Get-ChildItem "$env:TEMP\WinGet" -Recurse -Filter '*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($inst) { Write-Host "  downloaded: $($inst.FullName) streams: $((Get-Item $inst.FullName -Stream * | Select-Object -ExpandProperty Stream) -join ', ')" }
+            Get-Process -Name 'Satr-Setup*','smartscreen' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $wg.Id -Force -ErrorAction SilentlyContinue
+          }
+          Get-Content "$env:RUNNER_TEMP\wg.out" -ErrorAction SilentlyContinue | Select-Object -Last 15
           $running = Get-Process -Name Satr -ErrorAction SilentlyContinue
           Write-Host "Satr.exe running after winget install: $([bool]$running)"
           if ($running) { $running | Stop-Process -Force }
