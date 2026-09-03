@@ -256,19 +256,32 @@ class SatrTopbar extends HTMLElement {
     } catch (e) { $('eeAuditBox').textContent = ''; }
   }
   let appVersionLoaded = false; // يُجلب مرة واحدة لعمر الصفحة — القيمة ثابتة
+  let appVersionData = null;
+  async function loadAppVersion() {
+    if (appVersionData || !window.satr.appVersion) return;
+    try {
+      const r = await window.satr.appVersion();
+      if (r && r.ok) appVersionData = r;
+    } catch (e) { /* يبقى «—» — لا كسر للواجهة */ }
+  }
+  // OBS-031: الشارة في الشريط العلوي تظهر فور الإقلاع في نسخة التطوير، قبل فتح ⚙
+  loadAppVersion().then(() => {
+    if (appVersionData) {
+      const devBadge = $('topbarDevBadge');
+      if (devBadge) devBadge.hidden = appVersionData.packaged !== false;
+    }
+  });
   settingsBtn.addEventListener('click', async () => {
     if (!settingsPop.hidden) { refreshActivity(); refreshEeStats(); }
     if (!settingsPop.hidden && !appVersionLoaded && window.satr.appVersion) {
-      try {
-        const r = await window.satr.appVersion();
-        if (r && r.ok && r.version) {
-          $('appVersionLabel').textContent = 'v' + r.version;
-          // OBS-026: تُعلَّم نسخة التطوير وحدها — المثبّتة هي القاعدة فلا تحتاج وسماً،
-          // ووجود الشارة يفصلها عن نسخة مثبّتة قد تحمل رقم الإصدار نفسه
-          $('appEnvBadge').hidden = r.packaged !== false;
-          appVersionLoaded = true;
-        }
-      } catch (e) { /* يبقى «—» — لا كسر للوحة */ }
+      await loadAppVersion();
+      if (appVersionData && appVersionData.version) {
+        $('appVersionLabel').textContent = 'v' + appVersionData.version;
+        // OBS-026 + OBS-031: تُعلَّم نسخة التطوير وحدها — المثبّتة هي القاعدة فلا تحتاج وسماً،
+        // ووجود الشارة يفصلها عن نسخة مثبّتة قد تحمل رقم الإصدار نفسه
+        $('appEnvBadge').hidden = appVersionData.packaged !== false;
+        appVersionLoaded = true;
+      }
     }
   });
   // فحص يدوي للتحديثات — النتيجة النهائية تصل توست update (none/available/check_failed)؛
