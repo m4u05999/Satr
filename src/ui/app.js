@@ -2750,7 +2750,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
       (d.text ? 'نصه الظاهر: «' + d.text + '»\n' : '') +
       '\nالمطلوب: ' + d.instruction + '\n\n' +
       '(ابحث عن هذا العنصر في مصدر المشروع — بنصّه أو صنفه — وطبّق التعديل.)';
-    if (d.imageDataUrl && composerEl.addImageData) composerEl.addImageData(d.imageDataUrl);
+    const displayUrl = d.dataUrl || d.imageDataUrl;
+    if (displayUrl && composerEl.addImageData) composerEl.addImageData(displayUrl, d.model);
     input.value = ctx;
     send();
   });

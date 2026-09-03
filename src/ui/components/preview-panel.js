@@ -1041,14 +1041,23 @@ class SatrPreviewPanel extends HTMLElement {
       const instruction = pbInput.value.trim();
       if (!instruction || !picked) return;
       let imageDataUrl = '';
+      let dataUrl = '';
+      let model = null;
       try {
         const shot = picked.selector ? await window.satr.previewElementShot(picked.selector) : null;
-        if (shot && shot.ok && shot.base64) imageDataUrl = 'data:image/png;base64,' + shot.base64;
+        if (shot && shot.ok && shot.base64) {
+          imageDataUrl = 'data:image/png;base64,' + shot.base64;
+          // نسخة العرض للمصغّرة، ونسخة مضغوطة للنموذج (عقد 🎯 بعد OBS-016)
+          if (shot.modelBase64 && shot.modelMimeType) {
+            dataUrl = imageDataUrl;
+            model = { media_type: shot.modelMimeType, data: shot.modelBase64 };
+          }
+        }
       } catch (e) {}
       // يُرسل للقشرة سياق العنصر + الطلب — القشرة تركّبه وترسله كدور محادثة عادي
       this.dispatchEvent(new CustomEvent('preview-edit', {
         bubbles: true,
-        detail: { instruction, url: urlIn.value, tag: picked.tag, selector: picked.selector, html: picked.html, text: picked.text, box: picked.box, styles: picked.styles, imageDataUrl },
+        detail: { instruction, url: urlIn.value, tag: picked.tag, selector: picked.selector, html: picked.html, text: picked.text, box: picked.box, styles: picked.styles, imageDataUrl, dataUrl, model },
       }));
       closePickBar();
     };
