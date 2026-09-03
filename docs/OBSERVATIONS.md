@@ -2197,6 +2197,11 @@ Claude لا محرّكات مختلفة، لم يبقَ مسار مشروع — 
   هذه الرسالة حرفياً. تُحسم بخطوة `chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper`
   قبل الاختبار في التشغيل التالي؛ إن نجحت فهي سطر في **منفذ `installers`**، وإن لم تنجح
   فالعلّة في الـprebuild نفسه تحت `npmRebuild:false`.
+- **التشخيص المضاف (2026-09-03)**: أُضيفت خطوتان في `platform-trial.yml` قبل
+  `test:termjobs` — `تشخيص node-pty` تطبع `SHELL` وصلاحيات `prebuilds/*/` وتُجري
+  فحص pty صغير، ثم `إصلاح صلاحية spawn-helper (تجريبي)` تُطبّق `chmod +x` وتُعيد
+  الفحص — كلتاهما `continue-on-error: true` ومُدرجتان في `GITHUB_STEP_SUMMARY`؛
+  النتيجة تُحدّد ما إذا كانت المشكلة صلاحية أم عطب أعمق في الـprebuild.
 
 ## OBS-070 — معرّفات نماذج NVIDIA NIM وGroq تنتظر إثبات المسبار الحيّ بمفتاحين
 - **الوسم**: `engines`
