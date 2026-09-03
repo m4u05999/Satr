@@ -27,6 +27,7 @@
     "test:verify-config-dialog": "electron scripts/verify-config-dialog-live-test.js",
     "test:memory": "node scripts/memory-test.js",
     "test:design-guard": "node scripts/design-guard-test.js",
+    "test:gitdiff": "node scripts/gitdiff-test.js",
     "test:chat-rtl": "electron scripts/chat-rtl-test.js",
     "test:update-ui": "electron scripts/update-ui-test.js",
     "test:task-ledger-ui": "electron scripts/task-ledger-ui-test.js",
