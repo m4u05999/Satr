@@ -2408,6 +2408,12 @@ function createClaudeMetadataClient(dependencies) {
             // resolvedModel داخلي بين agent وmain حصراً: main.js يشتق منه التسمية
             // الرسمية (officialClaudeName) ولا يمرره إلى renderer — يحرسه test:claude-models
             resolvedModel: item && item.resolvedModel,
+            // حقلا الجهد داخليان مثله (OBS-063 مرشّح أ): main.js يشتق منهما effortLevels
+            // المنقّى بقائمة قيم مغلقة، ولا يعبر supportsEffort نفسه إلى renderer.
+            // غيابهما (CLI أقدم أو نموذج لا يعلن جهداً — رُصد haiku كذلك حياً على 2.1.258)
+            // يبقي العقد العام كما هو حرفياً.
+            supportsEffort: item && item.supportsEffort,
+            supportedEffortLevels: item && item.supportedEffortLevels,
           }));
           const publicAccount = {};
           for (const field of ['email', 'organization', 'subscriptionType']) {

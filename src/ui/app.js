@@ -115,7 +115,14 @@ import { createPreviewShield } from './lib/preview-shield.js';
     select.value = values[(index + 1 + values.length) % values.length];
     select.dispatchEvent(new Event('change', { bubbles: true }));
   }
-  $('awarenessEffort').addEventListener('click', () => cycleSelect($('effort'), EFFORT_CYCLE));
+  // دورة شريط الوعي تُشتق من خيارات المنتقي الفعلية لا من الثابت الأوسع: بعد OBS-063
+  // قد تكون القائمة مقصورة على مستويات النموذج المعلنة، والتدوير على ثابت أوسع كان
+  // يضبط قيمة بلا خيار مقابل فيفرغ الحقل. قبل أول rebuildEfforts تُقرأ خيارات الترميز.
+  function effortCycleValues() {
+    const values = [...$('effort').options].map((option) => option.value);
+    return values.length ? values : EFFORT_CYCLE;
+  }
+  $('awarenessEffort').addEventListener('click', () => cycleSelect($('effort'), effortCycleValues()));
   $('awarenessThinking').addEventListener('click', () => {
     const index = THINKING_CYCLE.indexOf(thinkingValue);
     thinkingValue = THINKING_CYCLE[(index + 1 + THINKING_CYCLE.length) % THINKING_CYCLE.length];
@@ -377,6 +384,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
           value: model.value,
           label: model.label,
           description: model.description || '',
+          // OBS-063 مرشّح (أ): حقل اختياري في العقد — غيابه يعني «لم يعلن» لا «لا يدعم»
+          effortLevels: Array.isArray(model.effortLevels) ? model.effortLevels : [],
         }));
       }
     } catch (e) { /* تبقى قائمة Claude الثابتة */ }
@@ -478,14 +487,25 @@ import { createPreviewShield } from './lib/preview-shield.js';
   function engineSupportsEffort(engine) {
     return engine !== 'kimi-code';
   }
+  // مستويات الجهد التي يعلنها النموذج المختار، أو null إن لم يعلن شيئاً.
+  // Codex يعلنها في model/list منذ الموجة 2؛ وClaude صار يعلنها في supportedModels
+  // (OBS-063). غياب الإعلان — CLI أقدم أو نموذج بلا حقول جهد — يُبقي القائمة الثابتة.
+  function declaredEffortLevels() {
+    const engine = $('engine').value;
+    const model = engine === 'codex' && codexDynamicModels.length
+      ? codexDynamicModels.find((item) => item.value === $('model').value)
+      : engine === 'sdk' && claudeDynamicModels.length
+        ? claudeDynamicModels.find((item) => item.value === $('model').value)
+        : null;
+    if (!model) return null;
+    const levels = engine === 'codex' ? model.efforts : model.effortLevels;
+    return Array.isArray(levels) && levels.length ? levels : null;
+  }
   function rebuildEfforts() {
     const effortSelect = $('effort');
     const previous = effortSelect.value;
-    let values = EFFORT_CYCLE;
-    if ($('engine').value === 'codex' && codexDynamicModels.length) {
-      const model = codexDynamicModels.find((item) => item.value === $('model').value);
-      if (model && model.efforts.length) values = ['', ...model.efforts];
-    }
+    const declared = declaredEffortLevels();
+    const values = declared ? ['', ...declared] : EFFORT_CYCLE;
     effortSelect.innerHTML = '';
     for (const value of [...new Set(values)]) {
       const option = document.createElement('option');
@@ -494,6 +514,18 @@ import { createPreviewShield } from './lib/preview-shield.js';
       effortSelect.appendChild(option);
     }
     if ([...effortSelect.options].some((option) => option.value === previous)) effortSelect.value = previous;
+    else if (declared && previous) {
+      // الاختيار المحفوظ خارج ما يعلنه النموذج: يسقط إلى «الافتراضي» (أول خيار).
+      // الإشعار لمسار sdk وحده — كان SDK يخفّضه صامتاً فلا يرى المستخدم شيئاً؛
+      // وسلوك Codex يبقى كما كان حرفياً. لا نمسّ localStorage كي لا يضيع اختيار
+      // محرك آخر (المفتاح satr_effort مشترك بين المحركات).
+      // لا حاجة لحارس تكرار: بعد الإسقاط تصير القيمة '' وهي في كل قائمة، فلا يُعاد
+      // دخول هذا الفرع إلا باختيار جديد من المستخدم — وذاك يستحق إشعاراً جديداً.
+      effortSelect.value = '';
+      if ($('engine').value === 'sdk') {
+        addNotice('ℹ️ النموذج المختار لا يعلن جهد «' + effortShort(previous) + '» — عاد الجهد إلى الافتراضي.');
+      }
+    }
   }
   function rebuildModels() {
     const engine = $('engine').value, mSel = $('model');
