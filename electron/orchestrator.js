@@ -9,6 +9,7 @@
 'use strict';
 
 const path = require('path');
+const sessionmeta = require('./sessionmeta');
 
 const MAX_AGENTS = 3;
 const MAX_QUESTION_CHARS = 4000;
@@ -150,6 +151,7 @@ function runPublic(run) {
 function create(options) {
   const settings = options || {};
   const resolveEngine = typeof settings.resolveEngine === 'function' ? settings.resolveEngine : defaultResolveEngine;
+  const meta = settings.sessionmeta || sessionmeta;
   const now = typeof settings.now === 'function' ? settings.now : Date.now;
   const configuredTimeout = Math.max(10, Math.min(Number(settings.timeoutMs) || DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS));
   const runs = new Map();
@@ -211,6 +213,8 @@ function create(options) {
 
       const onEvent = (event) => {
         if (finished || !event || typeof event !== 'object') return;
+        // وسم جلسة الأداة وقت إنشائها (‏OBS-068 ب) — لا تُكشف بالمسار وحده لاحقاً.
+        if (event.session_id && (event.type === 'system' || event.type === 'result')) meta.setKind(event.session_id, 'tool');
         if (event.type === 'permission_request') {
           worker.permission_denied++;
           if (handle && typeof handle.resolvePermission === 'function') handle.resolvePermission(event.id, false, false);

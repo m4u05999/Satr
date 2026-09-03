@@ -1,7 +1,8 @@
 'use strict';
 /* صفحة اختبار لوحة الجلسات الحيّة — تشغّل المكوّن الإنتاجي تحت CSP الفعلية.
    العطل المحروس (‏OBS-068): 22 مشروعاً متشابكة زمنياً في قائمة واحدة، وجلسات
-   الأدوات مختلطة بجلسات المستخدم. */
+   الأدوات مختلطة بجلسات المستخدم — ومنها ما جرى داخل مجلد مشروع حقيقي فلا يكشفه
+   المسار، وهو ما يعالجه الوسم وقت الإنشاء (البند ب). */
 
 window.__panelProgress = 'boot';
 const violations = [];
@@ -31,10 +32,21 @@ const CLAUDE = [
   S('g1', 'D:\\proj\\gamma', 'تحليل بيانات', 300),
   S('t1', 'C:\\Users\\U\\.satr\\worktrees\\abc123\\wt-xyz-1', 'عامل تنفيذ معزول', 2),
   S('t2', 'C:\\Users\\U\\AppData\\Local\\Temp\\satr-review-QQ\\workspace', 'مراجع أعمى', 4),
+  // ‏OBS-068 ب: جلسات أدوات جرت **داخل مجلد مشروع حقيقي** — لا يميّزها المسار إطلاقاً
+  // (المخطط والعصف لا يستعملان worktree). `p1` موسومة فتُخفى، و`p2` توأمها بلا وسم
+  // فتظهر — وهو الفرق الذي يثبت أن الإخفاء من الوسم لا من تخمين المجلد.
+  S('p1', CWD, 'مخطط مهام غرفة العمليات', 6),
+  S('p2', CWD, 'راجع خطة الإصدار', 7),
+  S('p3', CWD, 'عصف ثلاثي مثبّت', 9),
 ];
 const CHATS = [{ id: 'c1', provider: 'openai', title: 'صف الصورة', mtime: now - 8 * HOUR }];
 
-const meta = { entries: { a3: { pinned: true } } };
+const meta = { entries: {
+  a3: { pinned: true },
+  p1: { kind: 'tool' },
+  // موسومة **ومثبّتة**: التثبيت قرار صريح من المستخدم فيغلب مرشّح الأدوات كما هو اليوم.
+  p3: { kind: 'tool', pinned: true },
+} };
 
 window.satr = {
   listSessions: async () => CLAUDE.map((x) => ({ ...x })),
@@ -87,7 +99,16 @@ function view(root) {
 
     // 2) جلسات الأدوات مخفية افتراضياً (‏t1 وt2 خارج العدّ)
     if (v.groups.some((g) => /worktrees|Temp/i.test(g.name))) fail('جلسات الأدوات ظاهرة رغم الإخفاء الافتراضي');
-    if (v.tally !== '22 من 24') fail('العدّاد لا يعلن الإخفاء: ' + v.tally);
+    // 2‑ب) الوسم (‏OBS-068 ب): جلسة أداة **داخل مجلد مشروع حقيقي** تُخفى، وتوأمها غير
+    //      الموسوم يبقى ظاهراً، والموسومة المثبّتة تنجو. المسار وحده لا يميّز الثلاث.
+    //      يسبق فحصَ العدّاد عمداً: انحرافُ رقمٍ لا يقول أيّ جلسة تسرّبت.
+    const titles = () => [...root.querySelectorAll('.sess .t')].map((n) => n.textContent);
+    if (titles().includes('مخطط مهام غرفة العمليات')) fail('الجلسة الموسومة أداةً ظهرت رغم الإخفاء');
+    if (!titles().includes('راجع خطة الإصدار')) fail('جلسة مستخدم بلا وسم أُخفيت — تخمينٌ لا وسم');
+    if (!titles().includes('عصف ثلاثي مثبّت')) fail('الموسومة المثبّتة أُخفيت — التثبيت قرار صريح');
+    checks.push('tagged-tool-hidden-untagged-visible');
+
+    if (v.tally !== '24 من 27') fail('العدّاد لا يعلن الإخفاء: ' + v.tally);
     checks.push('tools-hidden-by-default');
 
     // 3) المثبّتة أولاً، ثم المشروع الحالي
@@ -119,7 +140,8 @@ function view(root) {
     await sleep(20);
     v = view(root);
     if (!v.groups.some((g) => /worktrees/i.test(g.name))) fail('إطفاء المرشّح لم يُظهر جلسات الأدوات');
-    if (v.tally !== '24 جلسة') fail('العدّاد لم يعد كاملاً: ' + v.tally);
+    if (v.tally !== '27 جلسة') fail('العدّاد لم يعد كاملاً: ' + v.tally);
+    if (!titles().includes('مخطط مهام غرفة العمليات')) fail('إطفاء المرشّح لم يُظهر الجلسة الموسومة');
     box.checked = true; box.dispatchEvent(new Event('change'));
     await sleep(20);
     checks.push('tools-filter-toggles');

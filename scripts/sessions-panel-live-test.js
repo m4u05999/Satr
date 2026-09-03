@@ -18,9 +18,10 @@ const { app, BrowserWindow } = require('electron');
 
 const TIMEOUT_MS = 30000;
 const CHECKS = [
-  'grouped', 'tools-hidden-by-default', 'pinned-and-current-first',
-  'current-expanded-others-collapsed', 'collapse-toggles-rows', 'tools-filter-toggles',
-  'search-reaches-collapsed', 'chat-grouped-by-provider', 'row-click-resumes',
+  'grouped', 'tools-hidden-by-default', 'tagged-tool-hidden-untagged-visible',
+  'pinned-and-current-first', 'current-expanded-others-collapsed', 'collapse-toggles-rows',
+  'tools-filter-toggles', 'search-reaches-collapsed', 'chat-grouped-by-provider',
+  'row-click-resumes',
 ];
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,6 +47,21 @@ function assertStaticContract() {
   // كله — أول صياغة كانت تقرأ الملف فأطلقت إنذاراً كاذباً على التعليق الذي يشرح القاعدة.
   assert(!/-opus|_opus|-wt/.test(toolPath),
     'TOOL_PATH يخمّن مجلدات فريق من أنماط أسماء — تلك مجلدات مستخدم حقيقية لا تُكشف بيقين.');
+  // ‏OBS-068 ب: **الوسم أولاً** ثم المسار احتياطاً. حذف أيّهما عطل: بلا الوسم تعود جلسات
+  // الوكلاء داخل مجلدات المشاريع الحقيقية إلى القائمة، وبلا المسار تظهر كل جلسة قديمة
+  // سبقت الوسم. والفحص بمقارنة المواضع لا بنصّ واحد: الترتيب هو الادعاء.
+  const tagAt = panel.indexOf('s.toolTagged === true');
+  const pathAt = panel.indexOf('TOOL_PATH.test');
+  assert(tagAt > 0, 'اللوحة لا تقرأ وسم الجلسة إطلاقاً — عاد الكشف بالمسار وحده.');
+  assert(pathAt > tagAt, 'كشف المسار الاحتياطي غاب أو سبق الوسم — الجلسات القديمة بلا وسم تنكشف به.');
+  // والاشتقاق من `meta.kind` لا من `session.kind` المحجوز لعائلة المحرك (chat/codex/kimi).
+  assert(panel.includes("toolTagged: meta.kind === 'tool'"), 'اللوحة لا تشتق الوسم من الميتاداتا.');
+
+  // والوسم لا يمرّ من renderer: قائمة سماح `set` تبقى pinned/title، فلا تُخفي الواجهة
+  // جلسة مستخدم بادّعاء أنها أداة. (‏`setKind` مسار العملية الرئيسية وحده.)
+  const meta = fs.readFileSync(path.join(__dirname, '..', 'electron', 'sessionmeta.js'), 'utf8');
+  assert(meta.includes("const allowed = new Set(['pinned', 'title']);"),
+    'قائمة سماح `set` تغيّرت — الوسم يجب أن يبقى خارج ما يقبله renderer.');
 }
 
 function assertFixtureContract() {
@@ -89,7 +105,8 @@ async function main() {
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console أثناء اختبار اللوحة.');
     for (const check of CHECKS) assert(result.checks.includes(check), 'غاب فحص اللوحة الحي: ' + check);
     console.log('sessions-panel-live: نجح — التجميع بالمشروع، والمثبّتة والمشروع الحالي أولاً، '
-      + 'وإخفاء جلسات الأدوات وكشفها، والبحث يصل مجموعة مطوية، والطيّ يُخفي صفوفاً؛ صفر CSP.');
+      + 'وإخفاء جلسات الأدوات بالوسم داخل مجلد مشروع حقيقي مع بقاء توأمها غير الموسوم، '
+      + 'وكشفها بالمرشّح، والبحث يصل مجموعة مطوية، والطيّ يُخفي صفوفاً؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

@@ -21,6 +21,7 @@ const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
 const memory = require('./memory');
+const sessionmeta = require('./sessionmeta');
 
 const MAX_PATCH_CHARS = 400000;
 const MAX_SUMMARY_CHARS = 16000;
@@ -386,6 +387,8 @@ function skillReviewPrompt(patch, instructions) {
  */
 function applyReviewEvent(node, event, fail) {
   if (node._finished || !event || typeof event !== 'object') return;
+  // وسم جلسة الأداة وقت إنشائها (‏OBS-068 ب) — لا تُكشف بالمسار وحده لاحقاً.
+  if (event.session_id && (event.type === 'system' || event.type === 'result')) (node._sessionmeta || sessionmeta).setKind(event.session_id, 'tool');
   if (event.type === 'permission_request') {
     node.permission_denied++;
     if (node._handle && typeof node._handle.resolvePermission === 'function') {
@@ -458,6 +461,7 @@ function blankNode(createdAt) {
     _finished: false,
     _timer: null,
     _isolationRoot: '',
+    _sessionmeta: null,
   };
 }
 
@@ -474,6 +478,7 @@ async function reviewOnce(options) {
   const timeoutMs = Math.max(1000, Math.min(Number(settings.timeoutMs) || DEFAULT_TIMEOUT_MS, MAX_REVIEW_ONCE_TIMEOUT_MS));
   const isolationRoot = path.resolve(settings.isolationRoot || os.tmpdir());
   const node = blankNode(now());
+  node._sessionmeta = settings.sessionmeta || null;
   const publicNode = (state, error) => ({
     state,
     summary: node.summary,
@@ -772,6 +777,7 @@ function create(options) {
             _finished: false,
             _timer: null,
             _isolationRoot: '',
+            _sessionmeta: settings.sessionmeta || null,
           })),
         };
       }),
