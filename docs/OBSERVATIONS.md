@@ -2577,3 +2577,201 @@ Claude لا محرّكات مختلفة، لم يبقَ مسار مشروع — 
   وهو ملف عدم تراجع فيلزمه حارسه؛ أو (ب) **اختباري** — `completedReview` ينتظر «كل الزوايا طرفية»
   لا «الدفعة طرفية». (أ) أصح دلالياً؛ (ب) لا يغيّر عقد الحدث. وقبل أيّهما: إعادة التشغيل مرتين
   على Actions لقياس معدّل الهشاشة لا الاكتفاء بعينة واحدة.
+
+## OBS-084 — Agent SDK متأخر 82 إصداراً (0.3.176 → 0.3.258) وفيها تغييرات كاسرة وأخرى تفكّ قيد rewind
+- **الوسم**: `engines`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: `package.json` (‏`@anthropic-ai/claude-agent-sdk ^0.3.176`) مقابل `latest=0.3.258` في سجل
+  npm (2026-09-02). رادار سطر ٠٠١ (متحقَّق من CHANGELOG المصدر): الكاسر — 0.3.233 أزال أدوات
+  Todo/Task افتراضياً مع Fable 5+ (تُعاد بـ`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`؛ يمسّ Task Ledger
+  في `electron/agent.js`)، 0.3.234 حذف `bypass_permissions_disabled` من `ExitReason`، 0.3.217
+  خفّض عمق subagents المتداخلة إلى 1. الجديد المهم — `rewind_conversation` (0.3.186)،
+  `resumeSessionAt` + `resumeDropsTurn` (0.3.223)، `permissionPrompts:'none'` (0.3.258)، وإصلاح
+  `mcp_status` الذي كان يبلّغ اتصالاً وهمياً (يمسّ لوحة `/موصلات`).
+- **المصدر**: رادار سطر ٠٠١ (Cowork، 2026-09-03) — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: ترقية على فرع بحاجز: `test:full` + مسابير SDK الحية الخمسة (fork-rewind،
+  claude-models، elicitation، sdk-background، sdk-polish) + فحص أدوات Todo وقائمة النماذج؛
+  ثم ملاحظة مستقلة لتجربة مسار rewind الجديد (`resumeSessionAt` + `forkSession` + `rewindFiles`).
+
+## OBS-085 — مجهول مالي: هل يُحاسَب دور سطر من رصيد Agent SDK الشهري ($20 لـPro) أم من حصة Claude Code العادية؟
+- **الوسم**: `engines`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: شروط Anthropic (‏`code.claude.com/docs/en/legal-and-compliance`، قُرئت 2026-09-03):
+  الاشتراك مسموح على «ثنائي Claude Code غير المعدَّل» بشروط ثلاثة يلتزمها سطر (`electron/agent.js`
+  يوجّه `pathToClaudeCodeExecutable` إلى الثنائي المثبَّت؛ الدخول عبر `claude login`؛ لا وساطة).
+  ومنذ 2026-05-13 (مصدر ثانوي — VentureBeat) الاستخدام البرمجي للاشتراك من رصيد «Agent SDK»
+  منفصل ($20 Pro / $100 Max5 / $200 Max20) بأسعار API لا يُرحَّل. إن احتُسب دور سطر منه استنفده
+  مستخدم Pro في أيام، ويجب أن تقوله البوابة. **غير مقيس**. تنظيف مصاحب: `electron/main.js`
+  (‏`sdkReviewEngineAvailable`) كان يقرأ `~/.claude/.credentials.json` لفحص الوجود.
+- **المصدر**: رادار سطر ٠٠١ (F1) + تحليل القائد — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: مسبار على حساب Pro حقيقي يقرأ `rate_limit_event`/`SDKRateLimitInfo`
+  (‏`seven_day_overage_included`، `model_scoped` منذ 0.3.191) قبل وبعد دور سطر؛ ثم سطر في
+  البوابة و`features.md` بحسب النتيجة. فقرة الموقف التعاقدي في `README.md` (مع هذه الدفعة).
+
+## OBS-086 — حدود Groq المجانية (8K token/دقيقة · 30 طلب/دقيقة) تصطدم بها جلسة وكيلية من أول مخرج CLI طويل
+- **الوسم**: `engines`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: `console.groq.com/docs/rate-limits` (رادار ٠٠١): النماذج المجانية الأربعة تتشارك
+  30 RPM · 1,000 RPD · 8K TPM · 200K TPD؛ وسحبت Groq نماذج Llama وQwen3-32b من المجاني في
+  يوليو/أغسطس. NIM ~40 RPM بلا مسار زيادة. محوّلنا (`electron/adapters/openai-compatible.js`)
+  لا يعالج 429 بتراجع ولا يعرض الحدود عند إدخال المفتاح في البوابة (`src/ui/components/gate.js`).
+- **المصدر**: رادار سطر ٠٠١ (F5) — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: (أ) 429 ⇒ backoff بمهلة `Retry-After` ورسالة عربية تسمّي الحدّ؛ (ب) سطر
+  الحدود في شاشة المفتاح المجاني؛ (ج) اقتراح `/ضغط` أو قصّ مخرجات الطرفية تلقائياً على Groq.
+
+## OBS-087 — ChainDrop: hooks مزروعة في `.claude/settings.json` تُنفَّذ من داخل سطر حين يفتح مستودع الآخرين
+- **الوسم**: `security`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: دودة npm (2026-08-04، Microsoft/Elastic — رادار ٠٠١): 444+ حزمة تزرع persistence في
+  `.claude/settings.json` + `.claude/setup.mjs` + `.vscode/tasks.json` عبر كل الفروع وتسرق
+  أنماط credentials. lockfile سطر نظيف (keyv 4.5.4، cacheable-request 7.0.4 خارج النطاق).
+  لكن `electron/agent.js` يحمّل `settingSources=['user','project','local']` فأي `SessionStart`
+  hook في مستودع المستخدم يعمل من داخل سطر. وبالتوازي: اختطاف `~/.claude.json` لتوجيه MCP
+  إلى proxy محلي (Mitiga) — سطر يعرض قائمة MCP في `/موصلات`.
+- **المصدر**: رادار سطر ٠٠١ (F8) — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: (أ) تحذير عربي غير حاجب قبل أول دور في مشروع فيه `SessionStart` hooks أو
+  `setup.mjs` تحت `.claude/` لم يُوافَق عليها من قبل (بصمة لكل مشروع في `~/.satr/`)؛ (ب) بصمة
+  لتكوين كل خادم MCP وتنبيه عند تغيّره خارج سطر؛ (ج) `CLAUDE_MIN_RECOMMENDED` اليوم 2.1.197 ≥
+  2.1.163 (سلسلة CVE أُصلحت فيها) ✓.
+
+## OBS-088 — تفسير ميكانيكي لـOBS-001 (رسوّ النموذج على لغة الإطار) يقترح تجربة re-anchor رخيصة بعد كل tool result
+- **الوسم**: `engines`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: ورقة «Code-Switching Reveals Language Anchoring» (arXiv 2606.19668 — رادار ٠٠١،
+  لم تشمل العربية): الحالات الداخلية تبقى راسية على لغة الإطار والإدخال المختلط يزيد التدهور
+  — متسق مع تشخيص OBS-001 (مخرجات CLI الإنجليزية هي الإطار). أداة القياس عندنا جاهزة:
+  `electron/langmetric.js` و`test:langmetric`/`test:langshadow`. وبالتوازي QIMMA (TII،
+  2026-04-21) أول لوحة coding بتعليمات عربية — مفتوحة على GitHub.
+- **المصدر**: رادار سطر ٠٠١ (F6) — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: تجربة مضبوطة — إعادة ترسيخ عربية قصيرة تُحقن بعد كل `tool_result` (لا تشديد
+  للعقد) وقياس الانزلاق بـlangmetric لكل نموذج على حدة؛ وتشغيل مجموعة QIMMA البرمجية على
+  نماذج سطر الخمسة؛ وتحذير في الواجهة عند اختيار Nemotron (لا يعلن العربية بين لغاته السبع).
+
+## OBS-089 — MCP 2026-07-28: البروتوكول صار stateless و`elicitation/create` استُبدل بنمط MRTR — يصلنا عبر ترقية SDK/Codex لا بتغيير في سطر
+- **الوسم**: `engines`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: `modelcontextprotocol.io/specification/2026-07-28/changelog` (رادار ٠٠١): حُذف
+  handshake `initialize` و`Mcp-Session-Id`، وطلبات الخادم (elicitation/sampling/roots) صارت
+  Multi Round-Trip Requests (‏`resultType:"input_required"`). سطر لا يتحدث MCP مباشرة (لا
+  `@modelcontextprotocol/sdk` في الاعتماديات) — المحرّكات تحمله (Codex 0.147+)، لكن
+  `electron/elicitation.js` ولوحة `/موصلات` تعتمدان شكل الرسائل الذي يمرّره SDK.
+- **المصدر**: رادار سطر ٠٠١ (F7) — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: مربوط بـOBS-084: بعد ترقية SDK/Codex أعد `test:elicitation` و`test:codex-mcp-panel`
+  والمسبار الحي `elicitation-probe`، وسجّل ما تغيّر شكله.
+
+## OBS-090 — ACP صار معياراً لتضمين الوكلاء (Kiro/Codex/Claude Code لها adapters) — spike لتقييمه مساراً ثانياً
+- **الوسم**: `engines`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: Agent Client Protocol 1.0 (2026-06-24) ثم 1.6، وv2 alpha (2026-07-21) يوحّد
+  `session/load`/`session/resume` ويضيف `auth/*`؛ Zed يوزّع `@zed-industries/claude-code-acp`،
+  وKiro CLI وCodex لهما ACP (رادار ٠٠١ F4). سطر يغلّف ثلاثة وكلاء بثلاث تكاملات مخصّصة
+  (`electron/agent.js` · `codex.js` · `kimi.js` — والأخير ACP أصلاً).
+- **المصدر**: رادار سطر ٠٠١ — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: spike مقيس: تشغيل `claude-code-acp` عبر عميل ACP الموجود في `kimi.js`
+  وقياس ما يضيع (أذونات SDK، الأحداث، rewind، المهام الخلفية) مقابل ما يُكسب (Kiro/Gemini/
+  OpenCode بتكلفة واحدة). تعارض محتمل مع بند Anthropic (OBS-085): الاشتراك مربوط بالثنائي
+  غير المعدَّل — يُفحص أولاً.
+
+## OBS-091 — GitHub Sponsors متاح للسعودية، وelectron-builder 26.13 أصلح كاذب «التطبيق لا يمكن إغلاقه» في NSIS
+- **الوسم**: `process`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: قائمة الدول المدعومة في Sponsors تشمل السعودية (رادار ٠٠١ F9)؛ لا `FUNDING.yml`
+  في المستودع اليوم. وelectron-builder 26.13.0 أصلح مطابقة اسم العملية في NSIS — يهمّ سطر لأنه
+  يشغّل عمليات CLI فرعية أثناء التحديث (`package.json` على 25.1.8؛ الترقية مربوطة بـOBS-095).
+- **المصدر**: رادار سطر ٠٠١ — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: تفعيل Sponsors + `.github/FUNDING.yml` (يكمّل Ko-fi)؛ وترقية electron-builder
+  ضمن ترقية Electron لا منفردة.
+
+## OBS-092 — xterm.js: BiDi مفتوح منذ 2017 وPR الشامل رُفض؛ المسار الأرجح libghostty — يمسّ الـbuffer الذي يقرأ منه عارض سطر المزدوج
+- **الوسم**: `ui`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: xterm.js#701 (2017، آخر نشاط 2026-07-05) · PR #5623 أُغلق 2026-01-26 («I have
+  doubts this type of thing can be contributed externally») · اقتراح #5686 استبدال
+  Buffer/Parser بـlibghostty (2026-08-15) بلا قرار · 6.1.0-beta.304 فيها إصلاح IME/RTL
+  composition. عارض BiDi في `src/ui/components/terminal-panel.js` يقرأ Buffer API مباشرة.
+- **المصدر**: رادار سطر ٠٠١ (F3) — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: قياس اعتماد الـdual-renderer على internals الـbuffer (قائمة الواجهات
+  المستعملة)، وتجربة 6.1.0-beta على فرع بحارس `test:xterm-csp`/`test:terminal-tabs`.
+
+## OBS-093 — node-pty 1.2.0-beta: فشل CreateProcessW صار حدث exit بدل uncaughtException
+- **الوسم**: `ui`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: سلسلة 1.2.0-beta.15 (2026-08-03 — رادار ٠٠١): فشل spawn عبر ConPTY يظهر حدثاً
+  عادياً وتُغلق pipe handles. المثبّت 1.1.0 (`package.json`)، ومسار spawn في `electron/term.js`.
+  نفس فئة الانهيار الصامت التي يرصدها غياب معالج `uncaughtException` عام.
+- **المصدر**: رادار سطر ٠٠١ — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: الترقية عند 1.2.0 stable مع إعادة فحص prebuilds لـElectron الهدف (OBS-095)؛
+  حتى ذلك الحين معالج عام يغطّي.
+
+## OBS-094 — Claude Code 2.1.232+: تفريع subagents افتراضي وحقول شجرة جديدة لا يقرؤها عارض سطر، وموافقة usage-credits لمستخدمي Pro لا تمرّ عبر واجهته
+- **الوسم**: `ui`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: CHANGELOG Claude Code (رادار ٠٠١ F1/F2): subagent forking افتراضي (2.1.232)،
+  الرسائل تحمل `parent_agent_id`/`spawn_depth`/`is_backgrounded`؛ و2.1.251 أضاف موافقة
+  usage-credits لـFable على Pro و`/usage` يعرض Spend limit. بطاقة الوكيل في
+  `src/ui/components/chat.js` تعتمد `parent_tool_use_id` وحده، ولا مسار لعرض consent prompt
+  في سطر. (نص Help Center الأصلي للخطط لم يُجلب — مصدر ثانوي.)
+- **المصدر**: رادار سطر ٠٠١ — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: مربوط بـOBS-084: بعد الترقية مسبار يبثّ subagent متداخلاً ويقيس ما تعرضه
+  البطاقة؛ وعرض حالة الحدود/الـcredits لكل نموذج في شريط الوعي حين يمرّرها SDK.
+
+## OBS-095 — Electron 33 خارج الدعم منذ 2025-04-29 (المدعوم 44/43/42): Chromium 130 بلا رقع تحت معاينة تحمّل خوادم تطوير
+- **الوسم**: `security`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: صفحة الإصدار `releases.electronjs.org/release/v33.4.11` تحمل «has reached
+  end-of-support» (رادار ٠٠١، متحقَّق من المصدر). CVEs أغسطس 2026 (CVE-2026-70604 بدرجة 7.4 وأخرى)
+  لا تصل إلى 33. سطوح سطر المحدّدة: `electron/preview.js` يرفض كل أذونات الويب ولا
+  `registerSchemesAsPrivileged` — فالثغرات المسمّاة أقل انطباقاً، والفجوة الحقيقية Chromium
+  نفسه. قيد الترقية: `npmRebuild:false` يعتمد prebuilds `node-pty 1.1.0` المثبتة على 33 —
+  توافقها مع 44 غير مقيس؛ ويلزم electron-builder 26.x.
+- **المصدر**: رادار سطر ٠٠١ (F8) — رُصد ولم يُنفَّذ؛ **قرار مالك**: مؤجَّل إلى ما بعد قراءة عتبة
+  المنصات (~2026-09-10)
+- **مرشّح العلاج**: spike على فرع: Electron 44 + electron-builder 26 + فحص prebuilds + `test:full`
+  كاملاً + `test:rtl-preview` (نافذة مرئية) + بناء مثبّت تجريبي. وهي الخطوة اللازمة لماك أيضاً.
+
+## OBS-096 — خريطة توقيع مطوّر فرد في السعودية: Azure مغلق، SignPath يرفض FSL، Certum المسار الواقعي — وwinget بلا شهادة هو الطريق الأقصر للتوزيع
+- **الوسم**: `process`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: (رادار ٠٠١ F9، متحقَّق جزئياً) Azure Artifact Signing يقبل الأفراد من أمريكا وكندا
+  فقط · SignPath Foundation يشترط رخصة OSI وFSL-1.1-MIT ليست منها · Certum Open Source €49–69
+  لكن قبول FSL تحت «مفتوح المصدر» **غير مؤكد** · winget لا يشترط التوقيع ويتجاوز حظر تنزيل
+  المتصفح · Microsoft Store يوقّع MSIX بنفسه بشرط عمل spawn داخل الحاوية. السياق: 53 تنزيلاً
+  إجمالاً ⇒ المشكلة توزيع (`docs/PLATFORMS-DECISION-2026-09.md`).
+- **المصدر**: رادار سطر ٠٠١ — رُصد؛ **winget قيد التنفيذ الآن بقرار مالك 2026-09-03**
+- **مرشّح العلاج**: (أ) manifest عبر `wingetcreate` وPR إلى `microsoft/winget-pkgs` — جارٍ؛
+  (ب) رسالة إلى Certum عن FSL قبل أي شراء؛ (ج) تجربة `target: appx` مع اختبار PTY داخل الحزمة.
+
+## OBS-097 — قناة اكتساب مجانية: issues RTL مفتوحة في Claude Code وCodex وVS Code أصحابها جمهور سطر الأول
+- **الوسم**: `docs`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: (رادار ٠٠١ F10) `claude-code#48559` (PowerShell والنص المختلط، من مطوّر عربي) ·
+  `codex#5827`/`#30129`/`#31903` بلا رد رسمي · `vscode#296495` وhermes-agent#29047 يُحالان إلى
+  xterm.js#701. لا قسم «Known RTL issues» في `README.md`.
+- **المصدر**: رادار سطر ٠٠١ — رُصد ولم يُنفَّذ؛ **قرار مالك** (صوت عام)
+- **مرشّح العلاج**: تعليق مهذّب بصورة قبل/بعد في الثلاثة المفتوحة، وقسم مقارنة/حدود RTL في README.
+
+## OBS-098 — «ar-terminal» (إضافة VS Code سعودية) أول تنفيذ علني لنهج الـoverlay نفسه — الميزة في الجودة لا في وجود الطبقة
+- **الوسم**: `docs`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة
+- **الدليل**: (رادار ٠٠١ F4) `marketplace.visualstudio.com · ar-terminal` — xterm.js للمنطق +
+  طبقة DOM ترسم العربية بمحرك المتصفح وتذكر Claude Code؛ 3,023 تثبيتاً، مستودع بنجمتين بلا
+  نشاط منذ 2026-03-29. نهج سطر في `src/ui/components/terminal-panel.js` (عارض BiDi النافذي)
+  و`docs/PHASE8-DESIGN.md`.
+- **المصدر**: رادار سطر ٠٠١ — رُصد ولم يُنفَّذ
+- **مرشّح العلاج**: تثبيتها وتشغيل حالات سطر الصعبة عليها (التحديد، المؤشر، الاتجاه المختلط،
+  شذوذ ConPTY) وتوثيق الفروق في README مقارنةً صريحة.
