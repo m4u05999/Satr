@@ -977,9 +977,10 @@ ipcMain.handle('satr:focusWindow', () => {
   } catch { return { ok: false }; }
 });
 
-ipcMain.handle('satr:preflight', async () => {
-  // مفاتيح اختبار فقط: SATR_FORCE_NO_CLAUDE / _CODEX / _KIMI = 1 تحاكي غياب محرك للتحقق
-  // من البوابة دون إلغاء تثبيته فعلياً (معيار قبول المرحلة 6). لا أثر لها في الاستخدام
+ipcMain.handle('satr:preflight', async (event, payload) => {
+  const force = !!(payload && payload.force === true);
+  // مفاتيح اختبار فقط: SATR_FORCE_NO_CLAUDE / _CODEX / _KIMI / _KEYS = 1 تحاكي غياب
+  // المحركات والمفاتيح للتحقق من البوابة دون حذف شيء فعلياً. لا أثر لها في الاستخدام
   // العادي. مع عقد الجاهزية أدناه صارت تخدم الحاجز مباشرةً: تشغيل «سطر» بـ
   // SATR_FORCE_NO_CLAUDE=1 على جهاز فيه Codex يجب أن **يفتح** البوابة على Codex.
   const forced = (name) => process.env['SATR_FORCE_NO_' + name] === '1';
@@ -1030,7 +1031,7 @@ ipcMain.handle('satr:preflight', async () => {
     try {
       const bin = codex.resolveCodexBin(true);
       if (!bin) return { installed: false };
-      return { installed: true, auth: await codex.accountStatus() };
+      return { installed: true, auth: await codex.accountStatus(force) };
     } catch { return { installed: false }; }
   })();
   const kimiPromise = (async () => {
@@ -1048,18 +1049,25 @@ ipcMain.handle('satr:preflight', async () => {
     claudePromise, codexPromise, kimiPromise,
   ]);
 
+  // أسماء المفاتيح وحدها تُقرأ هنا؛ لا تُفك قيمة ولا تعبر إلى الواجهة. ويحافظ filter
+  // على ترتيب سجلّ المحوّلات ليكون أول مزوّد ذي مفتاح هو مرشّح الفتح الاحتياطي.
+  const savedKeyNames = forced('KEYS') ? new Set() : new Set(keys.names());
+  const keyProviders = adapters.list()
+    .filter((provider) => provider.keyName && savedKeyNames.has(provider.keyName))
+    .map((provider) => ({ name: provider.name, label: provider.label }));
   const snapshot = readiness.deriveReadiness({
     // مصادقة Claude: authChecked=false تعني مسباراً عاجزاً عن الحسم لا رفضاً ⇒ null،
     // فيبقى fail-open كما هو سلوك gate.js اليوم حرفياً.
     sdk: { installed: claude.ok === true, loggedIn: claude.authChecked ? claude.loggedIn : null },
     codex: codexState,
     'kimi-code': kimiState,
-  });
+  }, { keyProviders });
 
   // العقد القديم (claude/node/npm) يبقى حرفياً — كل مستهلك قائم يقرؤه كما كان.
   return {
     claude, node, npm,
     engines: snapshot.engines,
+    keyProviders: snapshot.keyProviders,
     ready: snapshot.ready,
     readyEngines: snapshot.readyEngines,
     preferred: snapshot.preferred,

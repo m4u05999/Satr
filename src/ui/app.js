@@ -295,24 +295,29 @@ import { createPreviewShield } from './lib/preview-shield.js';
   const GATED_ENGINES = ['sdk', 'codex', 'kimi-code'];
   const GATED_ENGINE_LABELS = { 'sdk': 'Claude Code', 'codex': 'Codex', 'kimi-code': 'Kimi Code' };
   let gateReadyEngines = null; // يصل من gate-ready؛ null = لم يُحسم الفحص بعد
+  let gatePreferred = null; // قد يكون محوّل REST ذا مفتاح حين لا يجهز أي محرك أصيل
   // آخر توست TestSprite معروض — لمنع تكرار الرسالة نفسها بلا تقدّم فعلي
   const testspriteNoticeState = { phase: '', signature: '' };
   // تصحيح منتقي المحرك بعد فتح البوابة: من يملك Codex وحده يجب ألّا يبقى منتقيه على
   // sdk فيفشل أول طلب صامتاً. تُستدعى من gate-ready ومن نهاية loadProviders لأن
   // ترتيبهما غير مضمون (كلاهما async)، وهي idempotent فالتكرار بلا أثر.
   function applyGateEngineSwitch() {
-    if (!Array.isArray(gateReadyEngines) || !gateReadyEngines.length) return;
+    if (!Array.isArray(gateReadyEngines)) return;
     const sel = $('engine');
     const current = sel.value;
     if (!GATED_ENGINES.includes(current) || gateReadyEngines.includes(current)) return;
     // لا نبدّل إلا إلى خيار موجود فعلاً في القائمة (kimi-code قد لا يكون معروضاً بعد)
-    const next = gateReadyEngines.find((id) => [...sel.options].some((o) => o.value === id));
+    const candidates = gateReadyEngines.length
+      ? gateReadyEngines
+      : (typeof gatePreferred === 'string' && gatePreferred ? [gatePreferred] : []);
+    const next = candidates.find((id) => [...sel.options].some((o) => o.value === id));
     if (!next || next === current) return;
     sel.value = next;
     localStorage.setItem('satr_engine', next);
     sel.dispatchEvent(new Event('change')); // يعيد بناء النماذج والأوامر بالمسار القائم
+    const nextOption = [...sel.options].find((o) => o.value === next);
     addNotice('⚙️ ' + (GATED_ENGINE_LABELS[current] || current) + ' غير جاهز على هذا الجهاز — بُدِّل المحرك إلى '
-      + (GATED_ENGINE_LABELS[next] || next) + '.');
+      + (GATED_ENGINE_LABELS[next] || (nextOption && nextOption.textContent) || next) + '.');
   }
 
   // ---------- بوابة أول التشغيل: انتقلت لمكوّن <satr-gate> (تفكيك ت-8) ----------
@@ -323,9 +328,14 @@ import { createPreviewShield } from './lib/preview-shield.js';
     gated = false;
     const b = $('banner'); const d = e.detail || {};
     // عقد الجاهزية بحسب المحرك: البوابة تفتح على أي محرك جاهز، لا Claude وحده. غياب
-    // readyEngines يعني بوابة/preflight قديمين ⇒ نفترض sdk فيبقى السلوك السابق حرفياً.
-    const readyList = Array.isArray(d.readyEngines) && d.readyEngines.length ? d.readyEngines : ['sdk'];
+    // readyEngines (أو فراغها مع preferred أصيل في العقد القديم) ⇒ نفترض sdk؛ أما
+    // فراغها مع preferred من REST فهو مسار المفتاح الجديد المقصود.
+    const providerPreferred = typeof d.preferred === 'string' && !GATED_ENGINES.includes(d.preferred);
+    const readyList = Array.isArray(d.readyEngines) && (d.readyEngines.length || providerPreferred)
+      ? d.readyEngines.slice()
+      : ['sdk'];
     gateReadyEngines = readyList;
+    gatePreferred = typeof d.preferred === 'string' ? d.preferred : readyList[0];
     applyGateEngineSwitch();
     // لا نستجوب حساب Claude ونماذجه إن لم يكن جاهزاً — استدعاء لثنائي غائب يبطئ الإقلاع.
     if (!readyList.includes('sdk')) {

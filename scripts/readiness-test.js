@@ -167,4 +167,40 @@ const installedUnknownAuth = { installed: true }; // مثبّت وتعذّر ح�
   check('اللقطة بلا حقول token/key', !/token|apiKey|api_key|secret/i.test(snapshot));
 }
 
+// ---------- 8) المفتاح المحفوظ بوابة بديلة بلا اشتراك ----------
+{
+  const noneRaw = { sdk: missing, codex: missing, 'kimi-code': missing };
+  const providers = [
+    { name: 'groq', label: 'Groq — مفتاح API مجاني' },
+    { name: 'nvidia', label: 'NVIDIA NIM — مفتاح API مجاني' },
+  ];
+  const providerOnly = deriveReadiness(noneRaw, { keyProviders: providers });
+  check('مزوّد REST بمفتاح محفوظ يفتح البوابة', providerOnly.ready === true);
+  check('غياب الأصيل يجعل أول مزوّد ذي مفتاح هو المفضّل', providerOnly.preferred === 'groq');
+  check('keyProviders تحفظ ترتيب الوصول', providerOnly.keyProviders.map((p) => p.name).join(',') === 'groq,nvidia');
+  check('keyProviders لا تعيد حقلاً غير name/label',
+    Object.keys(providerOnly.keyProviders[0]).join(',') === 'name,label');
+
+  const nativeAndProvider = deriveReadiness(
+    { sdk: missing, codex: codexReady, 'kimi-code': missing },
+    { keyProviders: providers });
+  check('المحرك الأصيل الجاهز يبقى مفضّلاً على مزوّد المفتاح', nativeAndProvider.preferred === 'codex');
+
+  // الحالات الأربع لعقد تصحيح المنتقي: بديل مفتاح، بديل أصيل، اختيار مفتاح، وخارج العقد.
+  check('اختيار أصيل غير جاهز + لا أصيل جاهز + مفتاح ⇒ أول مزوّد',
+    pickEngineSwitch('sdk', providerOnly) === 'groq');
+  check('اختيار أصيل غير جاهز + أصيل جاهز + مفتاح ⇒ الأصيل أولاً',
+    pickEngineSwitch('sdk', nativeAndProvider) === 'codex');
+  check('اختيار مزوّد له مفتاح لا يُبدّل من تحت المستخدم',
+    pickEngineSwitch('groq', providerOnly) === null);
+  check('اختيار REST غير مذكور لا يُبدّل من تحت المستخدم',
+    pickEngineSwitch('gemini', providerOnly) === null);
+
+  const oldCall = deriveReadiness(noneRaw);
+  check('غياب المعامل الثاني يحفظ قرار العقد القديم حرفياً',
+    oldCall.ready === false && oldCall.preferred === null && oldCall.readyEngines.length === 0);
+  check('غياب المعامل الثاني يضيف keyProviders فارغة فقط',
+    Array.isArray(oldCall.keyProviders) && oldCall.keyProviders.length === 0);
+}
+
 console.log('\nالنتيجة: ' + passed + '/' + passed + ' ناجحة.');

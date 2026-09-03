@@ -1,11 +1,12 @@
 // <satr-gate> — بوابة أول التشغيل (مانع إطلاق — المرحلة 6) — تفكيك ت-8.
-// «سطر» يعتمد كلياً على Claude Code المثبّت عالمياً، فتحجب البوابة المحادثة حتى يتوفّر.
-// المكوّن ذاتي بالكامل: يفحص عند الاتصال (satr.preflight — بالقوة ليلتقط تثبيتاً جرى
-// بعد الإقلاع)، يرسم الخطوات العربية بأزرار نسخ الأوامر، و«أعد الفحص» داخلي.
+// تفتح البوابة بمحرك أصيل جاهز أو بمحوّل REST له مفتاح محفوظ. المكوّن ذاتي بالكامل:
+// يفحص عند الاتصال، ويرسم خطوات المحركات ومسار حفظ مفتاح مجاني، و«أعد الفحص» داخلي
+// يطلب تجاوز كاش جاهزية Codex ليلتقط تسجيلاً جرى بعد الإقلاع.
 // عند الجهوز يخفي نفسه ويُصدر «gate-ready {version}» — القشرة ترفع حجب الإرسال
 // (gated) وتعرض شريط النجاح (banner عنصر مشترك ملكها).
 import { sheet } from '../lib/sheet.js';
 import { controlsSheet } from '../lib/panel.css.js';
+import { textDir } from '../lib/text-dir.js';
 
 // `npm.cmd` لا `npm`: في PowerShell يسبق `npm.ps1` ملفَّ `npm.cmd` في ترتيب الأوامر،
 // و`ExecutionPolicy` الافتراضية لعميل ويندوز تحجب السكربتات — فيفشل الأمر **حتى وهو
@@ -14,17 +15,22 @@ import { controlsSheet } from '../lib/panel.css.js';
 const INSTALL_CMD = 'npm.cmd install -g @anthropic-ai/claude-code';
 const LOGIN_CMD = 'claude auth login';
 
+function applyTextDirection(el, text) {
+  el.setAttribute('dir', textDir(typeof text === 'string' ? text : el.textContent) || 'rtl');
+}
+
 const ownSheet = sheet(`
   :host {
     position: fixed; inset: 0; z-index: var(--z-system);
     background: var(--bg);
-    display: flex; align-items: center; justify-content: center;
+    display: flex; align-items: flex-start; justify-content: center;
     padding: 28px; overflow-y: auto;
   }
   :host([hidden]) { display: none; }
   .gate-card {
     width: 100%; max-width: 560px; background: var(--surface);
     border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-6) var(--space-6) var(--space-5);
+    margin-block: auto;
   }
   .gate-logo { font-size: 30px; font-weight: 700; color: var(--gold); display: flex; align-items: baseline; gap: var(--space-1); justify-content: center; margin-bottom: var(--space-4); user-select: none; }
   .gate-logo .cursor { display: inline-block; width: 13px; height: 26px; background: var(--gold); animation: blink 1.1s steps(1) infinite; transform: translateY(3px); }
@@ -51,6 +57,24 @@ const ownSheet = sheet(`
   .recheck { background: var(--gold); color: var(--on-gold); border-color: var(--gold); font-weight: 700; padding: var(--space-2h) var(--space-5); font-size: 14px; }
   .recheck:hover { filter: brightness(1.07); }
   .recheck:disabled { opacity: .55; cursor: default; }
+  .gate-key { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--border); }
+  .gate-key[hidden] { display: none; }
+  .gate-key h2 { margin: 0 0 var(--space-2); color: var(--text); font-size: 17px; text-align: center; }
+  .gate-key p { margin: 0 0 var(--space-2); color: var(--text-dim); font-size: 13px; line-height: 1.7; }
+  .gate-key a { color: var(--text); text-decoration-color: var(--gold); direction: ltr; unicode-bidi: isolate; }
+  .gate-key-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); margin-top: var(--space-3); }
+  .gate-key-field { display: grid; gap: var(--space-1); min-width: 0; }
+  .gate-key-field label { color: var(--text-dim); font-size: 12px; }
+  .gate-key-field select, .gate-key-field input {
+    width: 100%; min-width: 0; background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-md); padding: var(--space-2) var(--space-2h); color: var(--text);
+    font-family: var(--sans); font-size: 13px; outline: none;
+  }
+  .gate-key-field select:focus, .gate-key-field input:focus { border-color: var(--gold); }
+  .gate-key-field input { direction: ltr; text-align: left; font-family: var(--mono); }
+  .save-key { background: var(--gold); color: var(--on-gold); border-color: var(--gold); font-weight: 700; }
+  .save-key:disabled { opacity: .55; cursor: default; }
+  .gate-key-error { min-height: 1.7em; margin-top: var(--space-2); color: var(--red); }
   .gate-foot { text-align: center; color: var(--text-dim); font-size: 12px; margin-top: 20px; line-height: 1.7; }
 `);
 
@@ -80,18 +104,120 @@ class SatrGate extends HTMLElement {
         '<p class="gate-sub">لحظة من فضلك</p>' +
         '<ol class="gate-steps"></ol>' +
         '<div class="gate-actions"><button class="recheck">أعد الفحص</button></div>' +
-        '<p class="gate-foot">«سطر» يشغّل محرّك الذكاء الاصطناعي في الخلفية ويعرض محادثتك بالعربية بشكل سليم.<br>يكفي تثبيت محرّك واحد مرة واحدة على جهازك.</p>' +
+        '<section class="gate-key" hidden>' +
+          '<h2>أو ابدأ الآن بمفتاح API مجاني</h2>' +
+          '<p class="gate-key-intro">مفتاح API هو رمز خاص يربط «سطر» بحسابك لدى مزوّد الذكاء الاصطناعي. أنشئه ثم الصقه هنا، ولا تشاركه مع أحد.</p>' +
+          '<p class="gate-key-links">تمنحك <a href="https://build.nvidia.com/" target="_blank" rel="noopener">NVIDIA NIM</a> و<a href="https://console.groq.com/" target="_blank" rel="noopener">Groq</a> مفتاحاً مجانياً بإنشاء حساب فقط، بلا بطاقة ائتمان.</p>' +
+          '<div class="gate-key-fields">' +
+            '<div class="gate-key-field"><label for="gateKeyProvider">اختر المزوّد</label><select id="gateKeyProvider"></select></div>' +
+            '<div class="gate-key-field"><label for="gateKeyValue">مفتاح API</label><input id="gateKeyValue" type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="الصق المفتاح هنا"></div>' +
+            '<button class="save-key">احفظ وابدأ</button>' +
+          '</div>' +
+          '<p class="gate-key-error" role="status" aria-live="polite"></p>' +
+        '</section>' +
+        '<p class="gate-foot">«سطر» يشغّل محرّك الذكاء الاصطناعي في الخلفية ويعرض محادثتك بالعربية بشكل سليم.<br>يكفي محرّك جاهز أو مفتاح API محفوظ؛ لا تحتاج إلى إعدادهما معاً.</p>' +
       '</div>';
     this._title = r.querySelector('h1');
     this._sub = r.querySelector('.gate-sub');
     this._steps = r.querySelector('.gate-steps');
     this._btn = r.querySelector('.recheck');
-    this._btn.addEventListener('click', () => this._run());
+    this._keySection = r.querySelector('.gate-key');
+    this._keySelect = r.querySelector('#gateKeyProvider');
+    this._keyInput = r.querySelector('#gateKeyValue');
+    this._keySave = r.querySelector('.save-key');
+    this._keyError = r.querySelector('.gate-key-error');
+    this._keyProviders = null;
+    this._keyProvidersPromise = null;
+    for (const el of [this._title, this._sub, r.querySelector('.gate-foot'),
+      r.querySelector('.gate-key h2'), r.querySelector('.gate-key-intro'),
+      r.querySelector('.gate-key-links'), r.querySelector('label[for="gateKeyProvider"]'),
+      r.querySelector('label[for="gateKeyValue"]')]) {
+      applyTextDirection(el);
+    }
+    this._btn.addEventListener('click', () => this._run(true));
+    this._keySave.addEventListener('click', () => this._saveKey());
   }
 
   connectedCallback() {
     // إظهار حالة «جارٍ التحقق» فوراً ريثما يعود الفحص (المضيف ظاهر افتراضياً)
     this._run();
+  }
+
+  async _loadKeyProviders() {
+    if (this._keyProviders) return this._keyProviders;
+    if (!this._keyProvidersPromise) {
+      this._keyProvidersPromise = (async () => {
+        try {
+          const result = typeof window.satr.providers === 'function' ? await window.satr.providers() : null;
+          const list = result && Array.isArray(result.providers) ? result.providers : [];
+          const freeOrder = new Map([['nvidia', 0], ['groq', 1]]);
+          this._keyProviders = list
+            .map((provider, index) => ({ provider, index }))
+            .filter(({ provider }) => provider && typeof provider.name === 'string' && provider.name
+              && typeof provider.keyName === 'string' && provider.keyName)
+            .sort((a, b) => (freeOrder.get(a.provider.name) ?? 2) - (freeOrder.get(b.provider.name) ?? 2)
+              || a.index - b.index)
+            .map(({ provider }) => provider);
+        } catch (e) { this._keyProviders = []; }
+        return this._keyProviders;
+      })();
+    }
+    return this._keyProvidersPromise;
+  }
+
+  async _renderKeySetup() {
+    this._keySection.hidden = true;
+    const providers = await this._loadKeyProviders();
+    if (this.hidden || !providers.length) return;
+    this._keySelect.innerHTML = '';
+    for (const provider of providers) {
+      const option = document.createElement('option');
+      option.value = provider.name;
+      const baseLabel = typeof provider.label === 'string' && provider.label ? provider.label : provider.name;
+      option.textContent = (provider.name === 'nvidia' || provider.name === 'groq') && !baseLabel.includes('مجاني')
+        ? baseLabel + ' — مجاني'
+        : baseLabel;
+      applyTextDirection(option);
+      this._keySelect.appendChild(option);
+    }
+    this._keySection.hidden = false;
+  }
+
+  _setKeyError(message) {
+    this._keyError.textContent = message;
+    applyTextDirection(this._keyError, message);
+  }
+
+  async _saveKey() {
+    const provider = Array.isArray(this._keyProviders)
+      ? this._keyProviders.find((item) => item.name === this._keySelect.value)
+      : null;
+    let value = this._keyInput.value.trim();
+    this._keyInput.value = '';
+    this._setKeyError('');
+    if (!provider || !value) {
+      value = '';
+      this._setKeyError('ألصق المفتاح أولاً، ثم اضغط «احفظ وابدأ».');
+      return;
+    }
+    this._keySave.disabled = true;
+    this._keySave.textContent = 'جارٍ الحفظ…';
+    try {
+      const saving = window.satr.keySet(provider.keyName, value);
+      value = '';
+      const result = await saving;
+      if (!result || result.ok !== true) {
+        this._setKeyError('تعذّر حفظ المفتاح. تأكّد من المفتاح وحاول مرة أخرى.');
+        return;
+      }
+      await this._run();
+    } catch (e) {
+      this._setKeyError('تعذّر حفظ المفتاح. حاول مرة أخرى.');
+    } finally {
+      value = '';
+      this._keySave.disabled = false;
+      this._keySave.textContent = 'احفظ وابدأ';
+    }
   }
 
   // بناء صفّ خطوة: علامة حالة + عنوان + وصف (يقبل عقدة) + أمر اختياري بزر نسخ
@@ -104,6 +230,7 @@ class SatrGate extends HTMLElement {
     const t = document.createElement('div'); t.className = 't'; t.textContent = title;
     const d = document.createElement('div'); d.className = 'd';
     if (typeof descNode === 'string') d.textContent = descNode; else if (descNode) d.appendChild(descNode);
+    applyTextDirection(t, title); applyTextDirection(d);
     body.appendChild(t); body.appendChild(d);
     if (cmd) {
       const row = document.createElement('div'); row.className = 'gate-cmd';
@@ -114,6 +241,7 @@ class SatrGate extends HTMLElement {
       body.appendChild(row);
     }
     li.appendChild(mark); li.appendChild(body);
+    applyTextDirection(li);
     return li;
   }
 
@@ -123,8 +251,10 @@ class SatrGate extends HTMLElement {
   _ready(r) {
     const claude = (r && r.claude) || {};
     const engines = (r && Array.isArray(r.engines)) ? r.engines : [];
+    const keyProviders = (r && Array.isArray(r.keyProviders)) ? r.keyProviders : [];
     const preferred = (r && r.preferred) || 'sdk';
-    const chosen = engines.find((engine) => engine.id === preferred) || null;
+    const chosen = engines.find((engine) => engine.id === preferred)
+      || keyProviders.find((provider) => provider.name === preferred) || null;
     this.hidden = true;
     this.dispatchEvent(new CustomEvent('gate-ready', { detail: {
       version: claude.version || '',
@@ -138,7 +268,7 @@ class SatrGate extends HTMLElement {
 
   // رسم الخطوات حين لا يجهز **أي** محرك. يكفي واحد من الثلاثة ليفتح التطبيق، فالخطوات
   // تُعرض بديلةً لا متتابعة: لكل محرك حالته وأمره الخاص (تثبيت أو تسجيل دخول).
-  _render(r) {
+  async _render(r) {
     this.hidden = false;
     const engines = (r && Array.isArray(r.engines) && r.engines.length) ? r.engines : null;
     // محرك مثبّت لكنه غير مسجّل ⇒ رسالة أدقّ من «ثبّت»: المستخدم على بعد خطوة واحدة.
@@ -147,6 +277,7 @@ class SatrGate extends HTMLElement {
     this._sub.textContent = anyInstalled
       ? 'المحرّك مثبّت لكنه غير مسجّل الدخول. سجّل الدخول ثم اضغط «أعد الفحص».'
       : '«سطر» يشغّل محرّكاً في الخلفية ويعرض محادثتك بالعربية. يكفي واحد من هذه المحرّكات — اختر أيّها شئت.';
+    applyTextDirection(this._title); applyTextDirection(this._sub);
     this._steps.innerHTML = '';
 
     // الخطوة الأولى: Node.js — يلزم npm لتثبيت محرّكَي Claude Code وCodex
@@ -174,25 +305,25 @@ class SatrGate extends HTMLElement {
         authReady ? 'Claude Code مسجّل الدخول' : 'سجّل الدخول إلى Claude Code',
         authReady ? 'المصادقة جاهزة.' : 'شغّل الأمر التالي في الطرفية ثم أعد الفحص:',
         authReady ? null : LOGIN_CMD));
-      return;
+    } else {
+      engines.forEach((engine, index) => {
+        const recommended = index === 0 ? ' — الموصى به' : '';
+        if (engine.state === 'logged_out') {
+          this._steps.appendChild(this._step('todo', engine.label + ' — مثبّت، يلزم تسجيل الدخول',
+            'شغّل هذا الأمر في الطرفية واتبع خطواته، ثم أعد الفحص:', engine.login));
+        } else {
+          this._steps.appendChild(this._step('todo', 'ثبّت ' + engine.label + recommended,
+            'افتح الطرفية (PowerShell) ونفّذ هذا الأمر مرة واحدة:', engine.install));
+        }
+      });
     }
-
-    engines.forEach((engine, index) => {
-      const recommended = index === 0 ? ' — الموصى به' : '';
-      if (engine.state === 'logged_out') {
-        this._steps.appendChild(this._step('todo', engine.label + ' — مثبّت، يلزم تسجيل الدخول',
-          'شغّل هذا الأمر في الطرفية واتبع خطواته، ثم أعد الفحص:', engine.login));
-      } else {
-        this._steps.appendChild(this._step('todo', 'ثبّت ' + engine.label + recommended,
-          'افتح الطرفية (PowerShell) ونفّذ هذا الأمر مرة واحدة:', engine.install));
-      }
-    });
+    await this._renderKeySetup();
   }
 
-  async _run() {
+  async _run(force = false) {
     this._btn.disabled = true; this._btn.textContent = 'جارٍ الفحص…';
     let r = null;
-    try { r = await window.satr.preflight(); } catch (e) { r = null; }
+    try { r = await window.satr.preflight(force ? { force: true } : undefined); } catch (e) { r = null; }
     this._btn.disabled = false; this._btn.textContent = 'أعد الفحص';
     // `ready` هو عقد الجاهزية الجديد (أي محرك يكفي). غيابه = preflight قديم ⇒ نعود
     // إلى شرط Claude وحده كما كان، فلا تنكسر نسخة قديمة من العملية الرئيسية.
@@ -200,7 +331,7 @@ class SatrGate extends HTMLElement {
       ? r.ready
       : !!(r && r.claude && r.claude.ok && (!r.claude.authChecked || r.claude.loggedIn === true));
     if (open) this._ready(r);
-    else this._render(r);
+    else await this._render(r);
   }
 }
 
