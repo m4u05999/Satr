@@ -16,9 +16,10 @@
  *  - subscribe (§4.7)          — مجرى مراقبة أحداث «سطر» (للتدقيق والاستهلاك)
  */
 
-// electron قد لا تتوفر خارج العملية الرئيسية (اختبارات node النقية) — تحميل دفاعي
+// ipcMain لا يُستورد خاماً من electron هنا: main.js يحقن غلافه المحروس (renderertrust.guardIpcMain)
+// عبر init({ ipcMain }) كي تخضع قنوات satr:ee:* لتحقق المرسِل/الإطار نفسه الذي تخضع له قنوات
+// النواة. غيابه (اختبارات node النقية) = تجاهل آمن للتسجيل.
 let ipcMain = null;
-try { ({ ipcMain } = require('electron')); } catch (e) { ipcMain = null; }
 const adapters = require('./adapters');
 const openaiCompatible = require('./adapters/openai-compatible');
 const packageJson = require('../package.json');
@@ -64,7 +65,7 @@ function buildSeams() {
       const ch = String(channel);
       if (!/^satr:ee:[a-zA-Z0-9_-]{1,64}$/.test(ch)) throw new Error('قناة Enterprise يجب أن تبدأ بـ satr:ee:');
       if (typeof handler !== 'function') throw new Error('معالج غير صالح');
-      if (ipcMain && ipcMain.handle) ipcMain.handle(ch, handler); // خارج electron (اختبار node): تجاهل آمن
+      if (ipcMain) ipcMain.handle(ch, handler); // بلا مضيف محروس (اختبار node): تجاهل آمن
     },
 
     // §4.7: الاشتراك في مجرى مراقبة الأحداث (تدقيق/استهلاك) — يعيد دالة إلغاء
@@ -80,9 +81,12 @@ function buildSeams() {
 }
 
 // تهيئة الطبقة عند إقلاع «سطر». تُستدعى مرة واحدة من main.js.
-function init() {
+// opts.ipcMain: مضيف IPC المحروس (يطبّق تحقق الثقة على كل handle) — يُقبل فقط إن وفّر handle().
+function init(opts) {
   if (started) return { loaded: !!enterprise, edition: buildEdition, status: runtimeStatus };
   started = true;
+  const host = opts && opts.ipcMain;
+  ipcMain = host && typeof host.handle === 'function' ? host : null;
   try {
     // يُحمَّل فقط إن وُجد المجلد؛ البناء المجتمعي يستثني enterprise/ فيفشل require بهدوء
     enterprise = require('../enterprise');
