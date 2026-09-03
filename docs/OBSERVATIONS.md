@@ -2757,10 +2757,20 @@ Claude لا محرّكات مختلفة، لم يبقَ مسار مشروع — 
 - **مرشّح العلاج**: (أ) manifest عبر `wingetcreate` وPR إلى `microsoft/winget-pkgs` — **مُرسَل**:
   `microsoft/winget-pkgs#429004` («New package: Moxa.Satr version 2.16.15»)؛ الملفات الأربعة
   (version/installer/en-US/ar-SA، schema 1.10) محفوظة في `winget/manifests/m/Moxa/Satr/2.16.15/`
-  و`winget validate` نجح محلياً. المعرّف الدائم `Moxa.Satr` (قرار مالك). يبقى: مراقبة فحوص
-  Microsoft الآلية، وعند القبول قسم «التثبيت عبر winget» في README وسير إصدار يحدّث الحزمة
-  آلياً (`wingetcreate update`) مع كل وسم؛ (ب) رسالة إلى Certum عن FSL قبل أي شراء؛
-  (ج) تجربة `target: appx` مع اختبار PTY داخل الحزمة.
+  و`winget validate` نجح محلياً. المعرّف الدائم `Moxa.Satr` (قرار مالك). **نتيجة خط الفحص
+  (2026-09-03 مساءً)**: CLA وُقّع من جلسة المالك، والفحوص 01–07 خضراء، و**08. Installation
+  Validation فشل** بوسم `Validation-Shell-Execute` (البوت: «failed to install during dynamic
+  validation… verify that the application installs correctly using winget cli»). **ما استُبعد**:
+  فرضية «المثبّت يطلق التطبيق في الوضع الصامت» — قالب `app-builder-lib/templates/nsis/
+  installSection.nsh` (المثبّت assisted لا oneClick) لا يستدعي `doStartApp` صامتاً إلا مع
+  `--force-run`. **ما لم يُحسم**: سبب فشل ShellExecute في بيئة winget (رفع صلاحيات؟ رمز خروج؟
+  `$LANGUAGE=1025` في `preInit`؟) — الوسم شائع (12 PR مفتوحاً به اليوم) ويُحلّ عادةً بمراجعة
+  يدوية أو بإعادة إنتاج محلية. **الخطوة التالية**: إعادة إنتاج `winget install --manifest
+  <dir>` محلياً (تثبيت فعلي — يلزم إذن المالك أو Windows Sandbox) وقراءة رمز الخروج، ثم إمّا
+  إصلاح في مثبّت 2.16.16 وإمّا طلب مراجعة يدوية في PR. بعد القبول: قسم «التثبيت عبر winget»
+  في README وسير إصدار يحدّث الحزمة آلياً (`wingetcreate update`) مع كل وسم؛
+  (ب) رسالة إلى Certum عن FSL قبل أي شراء (مسودة جاهزة عند القائد)؛ (ج) تجربة `target: appx`
+  مع اختبار PTY داخل الحزمة.
 
 ## OBS-097 — قناة اكتساب مجانية: issues RTL مفتوحة في Claude Code وCodex وVS Code أصحابها جمهور سطر الأول
 - **الوسم**: `docs`

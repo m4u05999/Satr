@@ -1,0 +1,90 @@
+# فحص التثبيت الصامت كما يفعل winget — على عدّاء ويندوز نظيف (يدوي فقط).
+# السبب (OBS-096، 2026-09-03): PR ‏microsoft/winget-pkgs#429004 سقط في «08. Installation
+# Validation» بوسم Validation-Shell-Execute بلا سجل متاح؛ جهاز التطوير فيه سطر مثبّت
+# وWindows Sandbox غائب، فإعادة الإنتاج المحلية «تحديث» لا تثبيتاً نظيفاً. هذا السير يعيد
+# الخطوات نفسها التي تُجريها بوابة winget: تنزيل المثبّت من الإصدار، تثبيت صامت /S بمستخدم
+# غير مرتفع الصلاحيات، ثم `winget install --manifest` من manifests المستودع، ويطبع رموز
+# الخروج والسجلات. لا ينشر شيئاً ولا يمسّ الإصدار.
+name: فحص التثبيت الصامت (winget)
+
+'on':
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'رقم الإصدار المنشور (مثل 2.16.15)'
+        required: true
+        default: '2.16.15'
+
+permissions:
+  contents: read
+
+jobs:
+  silent-install:
+    name: تثبيت صامت على ويندوز نظيف
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: جلب المستودع (لأجل manifests)
+        uses: actions/checkout@v6
+
+      - name: تنزيل المثبّت من الإصدار
+        shell: pwsh
+        run: |
+          $v = '${{ github.event.inputs.version }}'
+          $url = "https://github.com/${{ github.repository }}/releases/download/v$v/Satr-Setup-$v.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\Satr-Setup.exe"
+          $h = (Get-FileHash "$env:RUNNER_TEMP\Satr-Setup.exe" -Algorithm SHA256).Hash
+          "installer_sha256=$h" >> $env:GITHUB_OUTPUT
+          Write-Host "SHA256: $h"
+
+      - name: (1) تشغيل مباشر صامت /S — رمز الخروج والمدة
+        shell: pwsh
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\Satr-Setup.exe" -ArgumentList '/S' -PassThru -Wait
+          $sw.Stop()
+          Write-Host "exit=$($p.ExitCode) elapsed=$([int]$sw.Elapsed.TotalSeconds)s"
+          $entries = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+            Get-ItemProperty | Where-Object { $_.DisplayName -like '*Satr*' -or $_.DisplayName -like '*سطر*' }
+          foreach ($e in $entries) { Write-Host "ARP: $($e.DisplayName) | $($e.DisplayVersion) | $($e.Publisher) | $($e.InstallLocation)" }
+          $running = Get-Process -Name Satr -ErrorAction SilentlyContinue
+          Write-Host "Satr.exe running after silent install: $([bool]$running)"
+          if ($running) { $running | Stop-Process -Force }
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+
+      - name: (1ب) إلغاء التثبيت الصامت
+        shell: pwsh
+        run: |
+          $e = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+            Get-ItemProperty | Where-Object { $_.DisplayName -like '*Satr*' -or $_.DisplayName -like '*سطر*' } | Select-Object -First 1
+          if (-not $e) { Write-Host 'no ARP entry to uninstall'; exit 0 }
+          $u = $e.UninstallString -replace '"',''
+          Write-Host "uninstall: $u /S"
+          $p = Start-Process -FilePath $u -ArgumentList '/S' -PassThru -Wait
+          Write-Host "uninstall exit=$($p.ExitCode)"
+
+      - name: (2) winget install --manifest (المسار الذي تسلكه البوابة)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          winget --version
+          winget settings --enable LocalManifestFiles
+          $dir = "winget\manifests\m\Moxa\Satr\${{ github.event.inputs.version }}"
+          Get-ChildItem $dir
+          winget install --manifest $dir --accept-source-agreements --accept-package-agreements --disable-interactivity --verbose-logs
+          Write-Host "winget exit=$LASTEXITCODE"
+          $running = Get-Process -Name Satr -ErrorAction SilentlyContinue
+          Write-Host "Satr.exe running after winget install: $([bool]$running)"
+          if ($running) { $running | Stop-Process -Force }
+
+      - name: (2ب) سجلات winget
+        if: always()
+        shell: pwsh
+        run: |
+          $logDir = "$env:LOCALAPPDATA\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\DiagOutputDir"
+          if (Test-Path $logDir) {
+            Get-ChildItem $logDir | Sort-Object LastWriteTime -Descending | Select-Object -First 2 | ForEach-Object {
+              Write-Host "===== $($_.Name) ====="
+              Get-Content $_.FullName -Tail 120
+            }
+          } else { Write-Host 'no winget log dir' }
