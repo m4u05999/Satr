@@ -242,5 +242,9 @@
     "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0",
     "zod": "^4.4.3"
+  },
+  "allowScripts": {
+    "electron": true,
+    "node-pty": true
   }
 }
