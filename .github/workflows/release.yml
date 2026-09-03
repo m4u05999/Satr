@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# دفعة جديدة على الفرع نفسه تلغي التي قبلها — كان push وpull_request يشغّلان
+# التحقق مرتين على الكود نفسه، وبوابة الاختبارات أدناه أثقل من أن تُهدر مرتين.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
 jobs:
   verify:
     name: التحقق الخفيف
@@ -44,9 +50,44 @@ jobs:
           node scripts/update-csp.js
           git diff --exit-code -- src/index.html
 
+  # بوابة الاختبارات — تحوّل CI من «الملف يُفسَّر» إلى «الطقم يعمل».
+  # كان `test:full` (‏86 مجموعة) لا يستدعيه أي مسار عمل، فدفعةٌ تحذف منطق ميزة
+  # كاملة تبقى خضراء ما دام الملف يُفسَّر. القياس (2026-09-03، لينكس تحت xvfb):
+  # 80/86 تنجح — بما فيها اختبارات Electron الحية — والست الباقية حدود معلَنة
+  # يتخطّاها المشغّل صراحةً (SKIP_ON_POSIX في scripts/full-suite.js) لا صمتاً.
+  # لينكس لا ويندوز لأن الدقائق أرخص ثلاث مرات والتشغيل الكامل ~5 دقائق.
+  tests:
+    name: بوابة الاختبارات (لينكس)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: جلب المستودع
+        uses: actions/checkout@v6
+
+      - name: إعداد Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: تثبيت الاعتماديات المقفلة
+        run: npm ci
+
+      # اختبارات Electron الحية تحتاج شاشة؛ xvfb يوفّر واحدة افتراضية.
+      - name: تثبيت xvfb
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb
+
+      - name: الطقم الكامل
+        run: xvfb-run -a --server-args="-screen 0 1600x1000x24" npm run test:full
+        env:
+          CI: '1'
+
   release:
     name: بناء ونشر مثبّت ويندوز
     if: startsWith(github.ref, 'refs/tags/v')
+    # قرار مالك (2026-09-03): بوابة الاختبارات تُبلّغ ولا تمنع الإصدار في جولتها الأولى —
+    # لم تُشغَّل على Actions فعلياً بعد (Node 20 على لينكس مقابل 26 على جهاز التطوير). بعد
+    # تشغيلين ناجحين على `main` تُضاف `tests` هنا فتصير شرطاً؛ لا أحمر يعطّل إصداراً بلا سبب مقيس.
     needs: verify
     runs-on: windows-latest
     permissions:
