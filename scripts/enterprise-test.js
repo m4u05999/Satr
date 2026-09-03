@@ -87,6 +87,44 @@ try {
     Module._load = originalLoad;
     delete require.cache[featuresPath];
   }
+
+  // §4.5: قناة satr:ee:* المسجَّلة عبر seam.registerIpc تمرّ من حارس الثقة نفسه الذي تمرّ منه
+  // قنوات النواة — مرسِل أو إطار غير موثوق يفشل مغلقاً بـ untrusted_sender ولا يصل للمعالج.
+  const renderertrust = require('../electron/renderertrust');
+  const registered = new Map(); // ما وصل فعلاً إلى ipcMain «الخام» (electron)
+  const rawIpcMain = { handle: (ch, fn) => { registered.set(ch, fn); } };
+  const trustedUrl = renderertrust.fileUrl(path.join(root, 'src', 'index.html'));
+  const mainFrame = { url: trustedUrl };
+  const webContents = { mainFrame };
+  const mainWindow = { isDestroyed: () => false, webContents };
+  const guardedIpcMain = renderertrust.guardIpcMain(rawIpcMain, () => mainWindow, trustedUrl);
+  let seams = null;
+  let handlerCalls = 0;
+  Module._load = function loadFakeEnterprise(request) {
+    if (request === '../enterprise') {
+      return { register(s) { seams = s; s.registerIpc('satr:ee:probe', () => { handlerCalls += 1; return { ok: true }; }); } };
+    }
+    return originalLoad.apply(this, arguments);
+  };
+  try {
+    const features = require('../electron/features');
+    assert.strictEqual(features.init({ ipcMain: guardedIpcMain }).loaded, true);
+    assert.throws(() => seams.registerIpc('satr:probe', () => {}), /satr:ee:/);
+    assert.throws(() => seams.registerIpc('satr:ee:bad', 'not-a-function'), /معالج غير صالح/);
+    const listener = registered.get('satr:ee:probe');
+    assert.strictEqual(typeof listener, 'function', 'قناة Enterprise يجب أن تُسجَّل عبر ipcMain المحروس');
+    assert.deepStrictEqual(listener({ sender: {}, senderFrame: mainFrame }), { ok: false, error: 'untrusted_sender' });
+    assert.deepStrictEqual(listener({ sender: webContents, senderFrame: { url: trustedUrl } }), { ok: false, error: 'untrusted_sender' });
+    assert.deepStrictEqual(listener({ sender: webContents, senderFrame: { url: 'https://example.com' } }), { ok: false, error: 'untrusted_sender' });
+    assert.strictEqual(handlerCalls, 0, 'المعالج لا يُستدعى لمرسِل غير موثوق');
+    assert.deepStrictEqual(listener({ sender: webContents, senderFrame: mainFrame }), { ok: true });
+    assert.strictEqual(handlerCalls, 1);
+  } finally {
+    Module._load = originalLoad;
+    delete require.cache[featuresPath];
+  }
+  console.log('✓ Enterprise IPC channels share the core renderer-trust guard');
+
   const updater = require('../electron/updater');
   assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community' }), true);
   assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: true }), true);

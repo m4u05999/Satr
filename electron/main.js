@@ -338,16 +338,8 @@ let mobileControlEnabled = false;
 let mobileTransition = Promise.resolve(); // يسلسل start/stop كي لا يُفتح خادمان بنقرتين متزامنتين
 
 // كل قنوات IPC مخصّصة لوثيقة «سطر» المحلية وإطارها الرئيسي فقط؛ أي مصدر آخر يفشل مغلقاً.
-const ipcMain = {
-  handle(channel, listener) {
-    return electronIpcMain.handle(channel, (event, ...args) => {
-      if (!renderertrust.isTrustedIpcEvent(event, mainWindow, TRUSTED_RENDERER_URL)) {
-        return { ok: false, error: 'untrusted_sender' };
-      }
-      return listener(event, ...args);
-    });
-  },
-};
+// الغلاف نفسه يُحقن في features.init كي تخضع قنوات Enterprise (`satr:ee:*`) للحارس ذاته.
+const ipcMain = renderertrust.guardIpcMain(electronIpcMain, () => mainWindow, TRUSTED_RENDERER_URL);
 
 // ---------- مناعة ضد إشارات تحكّم الكونسول (ويندوز) ----------
 // المشكلة: الأوامر الطويلة (خادم تطوير مثل `npm run dev`) تعمل ضمن شجرة عمليات
@@ -4779,7 +4771,8 @@ ipcMain.handle('satr:contextUsage', (event, p) => {
 
 // تهيئة طبقة القدرات + المُحمِّل الشرطي لـ Enterprise (docs/ARCHITECTURE.md §4.1).
 // النواة تعمل كاملة إن غاب enterprise/. لا يُسقط الإقلاع إن فشل.
-try { features.init(); } catch (e) { /* عزل: فشل Enterprise لا يمنع إقلاع النواة */ }
+// يُمرَّر ipcMain المُغلَّف (لا الخام) كي ترفض قنوات satr:ee:* المرسِل غير الموثوق كقنوات النواة.
+try { features.init({ ipcMain }); } catch (e) { /* عزل: فشل Enterprise لا يمنع إقلاع النواة */ }
 
 // ترحيل مفاتيح المزوّدين إلى التخزين المشفّر (safeStorage) بعد جهوزية التطبيق —
 // التشفير غير متاح قبلها. أفضل جهد: لا يمنع الإقلاع إن فشل.
