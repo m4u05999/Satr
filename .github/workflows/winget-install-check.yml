@@ -71,7 +71,7 @@ jobs:
       # فيحمل علامة الويب (Zone.Identifier)، وShellExecute يستشير SmartScreen للملفات الموسومة غير
       # الموقّعة — فيُعرض حوار «Windows protected your PC» ويعلق التثبيت في جلسة بلا واجهة؛ بينما
       # CreateProcess في الخطوة (1) على ملف نزّله PowerShell (بلا علامة) أنهى في 8 ثوانٍ.
-      - name: (1ج) الفرضية: علامة الويب + ShellExecute — بمهلة وبالتقاط نوافذ الحوار
+      - name: "(1ج) الفرضية — علامة الويب + ShellExecute بمهلة والتقاط نوافذ الحوار"
         shell: pwsh
         continue-on-error: true
         run: |
