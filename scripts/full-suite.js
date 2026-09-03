@@ -16,6 +16,7 @@ const SUITE = [
   'test:sessions-cwd',
   'test:tasks',
   'test:observations',
+  'test:suite-coverage',
   'test:probe-runner',
   'test:langmetric',
   'test:langshadow',
@@ -31,6 +32,7 @@ const SUITE = [
   'test:orchestrator',
   'test:opsroom-all',
   'test:mobile',
+  'test:qr',
   'test:codexmcp',
   'test:genmedia',
   'test:codex-contract',
@@ -55,8 +57,10 @@ const SUITE = [
   'test:handoff-bar-live',
   'test:preview-recording',
   'test:promocapture',
+  'test:promocapture-batch1',
   'test:promocapture-live',
   'test:promo-studio',
+  'test:promostudio-batch1',
   'test:claude-auth',
   'test:readiness',
   'test:enginesupdate',
@@ -95,6 +99,50 @@ const SUITE = [
 ];
 
 /**
+ * المستبعَدة من الطقم **عمداً وبسبب مكتوب** — لا مكان ثالثاً.
+ *
+ * الدرس (OBS-011 ثم تكراره): كل سكربت `test:*` يُسجَّل في `package.json` ولا يدخل
+ * الطقم يصير «اختباراً بالتذكّر»، وما يُشغَّل بالتذكّر لا يُشغَّل. وقد تراكم هكذا
+ * ثلاثة اختبارات قطعية نقية (`test:qr` و`*-batch1`) خارج البوابة بلا أن ينتبه أحد.
+ *
+ * فالعقد الذي يحرسه `scripts/suite-coverage-test.js`: كل سكربت `test:`/`eval:`/`audit:`
+ * إمّا **يصله الطقم** (مباشرةً أو عبر طقم فرعي) وإمّا **مذكور هنا بسببه**. الاستبعاد
+ * مشروع — المسبار الحيّ يستهلك أدواراً بكلفة فعلية ويحتاج مفاتيح، والفحص البصري
+ * يحتاج نافذة مرئية — لكنه يُعلَن لا يُنسى. والحارس يرفض أيضاً السبب الفارغ والاسم
+ * الذي لم يعد في `package.json` والاسم الذي صار يصله الطقم (قيد بائت).
+ */
+const EXCLUDED_FROM_SUITE = Object.freeze([
+  // ── المشغّلات نفسها: إدراجها يعني طقماً يشغّل نفسه ──
+  { name: 'test:full', reason: 'هو المشغّل نفسه (هذا الملف)' },
+  { name: 'test:full:evidence', reason: 'غلاف المشغّل الذي يكتب أدلّة التشغيل في dist/test-runs — يشغّل الطقم كاملاً بدوره' },
+  { name: 'eval:agent:baseline', reason: 'يكتب وثيقة baseline في docs/ — يُشغَّل يدوياً عند تحديث خط الأساس لا في كل بوابة' },
+  // ── مسابير حيّة: تستهلك أدواراً حقيقية وتحتاج محرّكاً مثبّتاً ومسجَّل الدخول ──
+  { name: 'test:codex-executor-probe', reason: 'مسبار حيّ خارج الطقم — يشغّل Codex فعلياً' },
+  { name: 'test:loop-live-probe', reason: 'مسبار حيّ خارج الطقم — حلقة محدودة بمحرك SDK حقيقي يستهلك أدواراً' },
+  { name: 'test:codex-subagent-live', reason: 'مسبار حيّ خارج الطقم — يطلق وكلاء Codex فرعيين فعليين' },
+  { name: 'test:browser-loop-probe', reason: 'مسبار حيّ خارج الطقم — حلقة متصفح بمحرك حقيقي' },
+  { name: 'test:browser-loop-sdk-probe', reason: 'مسبار حيّ خارج الطقم — حلقة متصفح بمحرك SDK حقيقي' },
+  { name: 'test:browser-loop-kimi-probe', reason: 'مسبار حيّ خارج الطقم — حلقة متصفح بمحرك Kimi حقيقي' },
+  { name: 'test:codex-steer-probe', reason: 'مسبار حيّ خارج الطقم — يوثّق عقد turn/steer على codex-cli المثبّت' },
+  { name: 'test:codex-compact-probe', reason: 'مسبار حيّ خارج الطقم — يوثّق عقد thread/compact على codex-cli المثبّت' },
+  { name: 'test:codex-mcp-panel-probe', reason: 'مسبار حيّ خارج الطقم — يشغّل خوادم MCP الحقيقية للمستخدم' },
+  { name: 'test:codex-account-probe', reason: 'مسبار حيّ خارج الطقم — يقرأ حساب Codex ويبدأ دورة دخول ثم يلغيها' },
+  { name: 'test:sdk-polish-probe', reason: 'مسبار حيّ خارج الطقم — يحتاج Claude Code عالمياً مسجَّل الدخول ويستهلك دوراً' },
+  { name: 'test:reviewchanges-probe', reason: 'مسبار حيّ خارج الطقم — «راجع تغييراتي» بمحرك حقيقي؛ الحارس القطعي test:reviewchanges داخل الطقم' },
+  // ── فحوص بصرية تحتاج نافذة مرئية أو desktopCapturer (OBS-019: هشّة تحت الحمل) ──
+  { name: 'test:rtl-preview', reason: 'فحص RTL بصري يحتاج نافذة مرئية وdesktopCapturer — يُشغَّل يدوياً عند مسّ المعاينة (OBS-019)' },
+  { name: 'test:rtl-native', reason: 'فحص RTL بصري شامل للطبقات الأصلية يحتاج نافذة مرئية — يُشغَّل يدوياً عند مسّ الطبقات الأصلية' },
+  { name: 'test:rtl-geometry', reason: 'فحص RTL حيّ لهندسة الأسطح الجانبية بإحداثيات فيزيائية — يُشغَّل يدوياً عند مسّ الأسطح' },
+  { name: 'audit:rtl-visual', reason: 'جولة تدقيق RTL بصرية تكتب docs/RTL-AUDIT.md ولقطات في dist/ — أداة تقرير لا حارس' },
+  // ── مسابير تشغيل خارجي أو اختبارات حيّة تُشغَّل يدوياً عند مسّ ميزتها ──
+  { name: 'test:pty-shutdown', reason: 'مسبار خارجي يقيس موت العملية نفسها بعد الإغلاق (ConPTY على Windows) — لا يمكن لعملية أن تشهد على موتها من داخل الطقم' },
+  { name: 'test:pwa-crypto', reason: 'اختبار Electron حيّ لتوافق pwa/crypto.js مع المتّجهات — يُشغَّل يدوياً عند مسّ تعمية الجوال؛ القطعي test:mobile-crypto داخل طقم الجوال' },
+  { name: 'test:promocapture-events-live', reason: 'اختبار Electron حيّ لأحداث الالتقاط يكتب نتيجته في dist/ — يُشغَّل يدوياً عند مسّ promocapture' },
+  { name: 'test:promo-preview', reason: 'اختبار Electron حيّ لمعاينة استوديو البرومو تحت CSP — يُشغَّل يدوياً عند مسّ المعاينة' },
+  { name: 'test:promo-audio-live', reason: 'اختبار Electron حيّ لطبقة الصوت بمذبذب حقيقي وffprobe اختياري — يُشغَّل يدوياً عند مسّ صوت البرومو' },
+]);
+
+/**
  * مهلة لكل مجموعة (‏OBS-056) — **البوابة تنطق أو تسقط، ولا تصمت**.
  *
  * الدليل: في بوابة 2026-08-26 سقط `test:termjobs` ثم بقي المشغّل معلّقاً أكثر من
@@ -121,6 +169,30 @@ const TIMEOUT_OVERRIDES = Object.freeze({
   'test:opsroom-all-live': 300000,
   'eval:agent': 300000,
 });
+/**
+ * مجموعات تُتخطّى على غير ويندوز — **حدود معلَنة لا أعطال**.
+ *
+ * الدليل: تشغيل كامل للطقم على لينكس تحت `xvfb` (2026-09-03، الشجرة `3cf1f3d`):
+ * نجحت 80 من 86 مجموعة، بما فيها كل اختبارات Electron الحية. الست الباقية تسقط
+ * لسببٍ في **الاختبار أو الحدّ المعلَن** لا في الكود المحروس، فتخطّيها المعلَن أصدق
+ * من حذفها أو من ترك بوابة لينكس حمراء إلى الأبد. القاعدة: كل مدخل هنا يحمل سبباً
+ * يُقرأ، ويُحذف حين يزول سببه — والمشغّل يطبع المتخطّى صراحةً فلا يُقرأ الصمت
+ * نجاحاً (‏OBS-042).
+ */
+const SKIP_ON_POSIX = Object.freeze([
+  { name: 'test:termjobs', reason: 'خرج runCapture يتشابك تحت bash — بروتوكول علامتَي الالتقاط مبنيّ على PowerShell (‏OBS-072)' },
+  { name: 'test:term-longline', reason: 'حدّ معلَن في termjobs.js: الأمر متعدد الأسطر يُدمَج على POSIX ولا يُلتقط رمز الخروج (‏OBS-065)' },
+  { name: 'test:genmedia', reason: 'فحص «حارس المنزل» يفترض نظام ملفات لا يميّز حالة الأحرف (home.toUpperCase) — افتراض ويندوزي في الاختبار نفسه' },
+  { name: 'test:codex-contract', reason: 'فحص العبور يستخدم "..\\outside.txt" — الشرطة المائلة العكسية حرف اسم صالح على POSIX، فالافتراض ويندوزي في الاختبار' },
+  { name: 'test:promo-studio', reason: 'الجزء الحي يصيّر صوتاً وفيديو ويحتاج ALSA/GPU حقيقيين — يسقط بـ live_timeout:rendering على عدّاء بلا صوت' },
+  { name: 'eval:agent', reason: 'التقييم يعلن 12 مهمة وينفّذ 11 على POSIX فيُعدّ ناقصاً — يحتاج فحصاً مستقلاً لمهمته المشروطة بويندوز' },
+]);
+function skipReasonFor(name, platform = process.platform) {
+  if (platform === 'win32') return null;
+  const hit = SKIP_ON_POSIX.find((entry) => entry.name === name);
+  return hit ? hit.reason : null;
+}
+
 // تجاوز بيئي بحدود — لقياس المدد أول مرة بقيمة سخيّة، ولجهاز أبطأ في CI. خارج
 // الحدود يسقط إلى الافتراضي بدل أن يُعطِّل الحارس بقيمة صفرية أو لا نهائية.
 const ENV_TIMEOUT = Number(process.env.SATR_SUITE_TIMEOUT_MS);
@@ -148,17 +220,26 @@ function killTree(pid) {
 
 /**
  * مغلَّفة في دالة كي يصير الملف قابلاً للاستيراد: بلا حارس `require.main` كان
- * مجرّد `require` يشغّل 75 مجموعة — فلا يمكن اختبار المهلة ولا قتل الشجرة إلا
- * بنسخ منطقهما في الاختبار، وذاك حارسٌ يقارن الشيء بنفسه.
+ * مجرّد `require` يشغّل الطقم كاملاً — فلا يمكن اختبار المهلة ولا قتل الشجرة ولا
+ * قائمة المستبعَدات إلا بنسخ منطقها في الاختبار، وذاك حارسٌ يقارن الشيء بنفسه.
  */
 function main() {
   const failures = [];
   const durations = [];
+  const skipped = [];
   console.log(`full-suite: بدء ${SUITE.length} مجموعة اختبار قطعية/حية بالتسلسل.`);
-  console.log('مستبعدة عمداً: test:codex-executor-probe وtest:browser-loop-probe وtest:browser-loop-sdk-probe وtest:browser-loop-kimi-probe (حية خارجية)، وeval:agent:baseline (يكتب وثيقة baseline).');
+  // تُشتق من القائمة المعلنة لا من نصّ يدوي يبيت — الأسباب كاملة في EXCLUDED_FROM_SUITE.
+  console.log(`مستبعدة عمداً (${EXCLUDED_FROM_SUITE.length}، بأسباب موثّقة في EXCLUDED_FROM_SUITE): `
+    + EXCLUDED_FROM_SUITE.map((item) => item.name).join(' و') + '.');
 
   for (let index = 0; index < SUITE.length; index++) {
     const name = SUITE[index];
+    const skipReason = skipReasonFor(name);
+    if (skipReason) {
+      console.log(`\n[${index + 1}/${SUITE.length}] ⏭ ${name} — متخطّاة على ${process.platform}: ${skipReason}`);
+      skipped.push({ name, reason: skipReason });
+      continue;
+    }
     console.log(`\n[${index + 1}/${SUITE.length}] npm run ${name}`);
     const command = process.platform === 'win32' ? 'cmd' : 'npm';
     const args = process.platform === 'win32' ? ['/d', '/s', '/c', 'npm', 'run', name] : ['run', name];
@@ -190,16 +271,22 @@ function main() {
   console.log('\nfull-suite: أبطأ ثماني مجموعات (ثانية) — أساس معايرة المهل:');
   for (const item of slowest) console.log(`  ${item.name.padEnd(32)} ${(item.ms / 1000).toFixed(1)}`);
 
+  if (skipped.length) {
+    console.log(`\nfull-suite: متخطّاة على ${process.platform} بحدّ معلَن (${skipped.length}):`);
+    for (const item of skipped) console.log(`- ${item.name}: ${item.reason}`);
+  }
+
+  const ran = SUITE.length - skipped.length;
   if (failures.length) {
     console.error('\nfull-suite: فشلت المجموعات التالية:');
     for (const failure of failures) console.error(`- ${failure.name}: ${failure.signal || failure.status}`);
     process.exitCode = 1;
   } else {
-    console.log(`\nfull-suite: نجحت المجموعات كلها — ${SUITE.length}/${SUITE.length}.`);
+    console.log(`\nfull-suite: نجحت المجموعات كلها — ${ran}/${ran}${skipped.length ? ` (و${skipped.length} متخطّاة بحدّ معلَن)` : ''}.`);
   }
 
 }
 
 if (require.main === module) main();
 
-module.exports = { main, timeoutFor, killTree, SUITE, SUITE_TIMEOUT_MS, TIMEOUT_OVERRIDES };
+module.exports = { main, timeoutFor, killTree, skipReasonFor, SUITE, EXCLUDED_FROM_SUITE, SKIP_ON_POSIX, SUITE_TIMEOUT_MS, TIMEOUT_OVERRIDES };

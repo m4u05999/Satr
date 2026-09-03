@@ -61,7 +61,16 @@ const ownSheet = sheet(`
   }
   .panel-tools label { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; }
   .panel-tools .spacer { flex: 1; }
+  .meta-status {
+    padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border);
+    color: var(--red); font-size: 11.5px; line-height: 1.6;
+  }
 `);
+
+const META_ERROR_MESSAGES = Object.freeze({
+  limit: 'تعذّر الحفظ: امتلأ سجلّ بيانات الجلسات.',
+  write_failed: 'تعذّر الحفظ: تعذّرت الكتابة إلى ملف بيانات الجلسات.',
+});
 
 // جلسة أداة لا جلسة مستخدم: عوامل غرفة العمليات والمراجعون والباحثون والمسابير.
 // **الوسم أولاً** (‏OBS-068 ب): تُوسَم وقت إنشائها في `sessionmeta` فتُكشف حتى إن جرت
@@ -108,11 +117,13 @@ class SatrSessionsPanel extends HTMLElement {
         '<label><input type="checkbox" class="hidetools"> أخفِ جلسات الأدوات</label>' +
         '<span class="spacer"></span><span class="tally"></span>' +
       '</div>' +
+      '<div class="meta-status" role="status" aria-live="polite" aria-atomic="true" dir="rtl" hidden></div>' +
       '<div class="panel-list"></div>';
     this._list = r.querySelector('.panel-list');
     this._search = r.querySelector('.panel-search input');
     this._hideTools = r.querySelector('.hidetools');
     this._tally = r.querySelector('.tally');
+    this._metaStatus = r.querySelector('.meta-status');
     this._data = [];
     this._providers = [];
     this._meta = {};
@@ -136,6 +147,25 @@ class SatrSessionsPanel extends HTMLElement {
   }
 
   close() { this.removeAttribute('open'); }
+
+  _showMetaError(result) {
+    const error = result && result.error;
+    this._metaStatus.textContent = META_ERROR_MESSAGES[error] || 'تعذّر حفظ بيانات الجلسة.';
+    this._metaStatus.hidden = false;
+  }
+
+  _clearMetaError() {
+    this._metaStatus.textContent = '';
+    this._metaStatus.hidden = true;
+  }
+
+  async _saveMeta(sessionId, patch) {
+    let result = null;
+    try { result = await window.satr.sessionMetaSet(sessionId, patch); } catch {}
+    if (!result || !result.ok) { this._showMetaError(result); return null; }
+    this._clearMetaError();
+    return result;
+  }
 
   // تسمية مزوّد محادثة محوّل (الدفعة 4) — من قائمة المزوّدين الممرَّرة عند الفتح
   _label(name) {
@@ -250,8 +280,8 @@ class SatrSessionsPanel extends HTMLElement {
       pin.textContent = '📌'; pin.title = s.pinned ? 'إلغاء تثبيت الجلسة' : 'تثبيت الجلسة';
       pin.addEventListener('click', async (event) => {
         event.stopPropagation();
-        const result = await window.satr.sessionMetaSet(s.id, { pinned: !s.pinned });
-        if (!result || !result.ok) return;
+        const result = await this._saveMeta(s.id, { pinned: !s.pinned });
+        if (!result) return;
         this._meta[s.id] = result.entry || {};
         this._applyMeta(); this._render();
       });
@@ -263,10 +293,10 @@ class SatrSessionsPanel extends HTMLElement {
         if (title === null) return;
         if (s.kind === 'codex' && window.satr.nameCodexSession) {
           const official = await window.satr.nameCodexSession(s.id, title);
-          if (!official || !official.ok) return;
+          if (!official || !official.ok) { this._showMetaError(official); return; }
         }
-        const result = await window.satr.sessionMetaSet(s.id, { title });
-        if (!result || !result.ok) return;
+        const result = await this._saveMeta(s.id, { title });
+        if (!result) return;
         this._meta[s.id] = result.entry || {};
         this._applyMeta(); this._render();
       });
@@ -317,6 +347,7 @@ class SatrSessionsPanel extends HTMLElement {
   async open(providers, cwd) {
     this._providers = Array.isArray(providers) ? providers : [];
     if (typeof cwd === 'string') this._cwd = cwd.trim();
+    this._clearMetaError();
     this.setAttribute('open', '');
     this._list.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
     // جلسات Claude Code + المحوّلات + Codex + Kimi Code، الأحدث أولاً.

@@ -11,8 +11,8 @@ const DEFAULT_FILE = path.join(os.homedir(), '.satr', 'session-meta.json');
 const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_ENTRIES = 500;
 // حصّة وسوم الأدوات داخل السقف العام: جلسات الأدوات تُولَد بالعشرات في كل دورة غرفة
-// عمليات، فلو زاحمت تثبيت المستخدم على الـ500 لعاد `set` بـ`limit` **صامتاً** (اللوحة
-// تتجاهل الفشل) فيتعطّل زرّ التثبيت. الوسوم نافذة متدحرجة، والتثبيت/التسمية لا تُمَسّان.
+// عمليات، فلا يجوز أن تقضم سعة تثبيت المستخدم وتسميته. الوسوم نافذة متدحرجة، وقرارات
+// المستخدم لا تُمَسّ؛ وعند امتلاء السقف يخلي `set` أقدم وسم خالص قبل القرار الجديد.
 const MAX_TOOL_ENTRIES = 200;
 const MAX_TITLE = 80;
 // أنواع الجلسة — قائمة مغلقة قابلة للتوسّع. `tool`: جلسة أداة لا محادثة مستخدم
@@ -100,9 +100,25 @@ function createStore(options = {}) {
     if (!keys.length || keys.some((key) => !allowed.has(key))) return { ok: false, error: 'bad_input' };
     if ('pinned' in patch && typeof patch.pinned !== 'boolean') return { ok: false, error: 'bad_input' };
     if ('title' in patch && typeof patch.title !== 'string') return { ok: false, error: 'bad_input' };
-    if (!entries[sessionId] && Object.keys(entries).length >= MAX_ENTRIES) return { ok: false, error: 'limit' };
-
     const before = entries[sessionId] ? { ...entries[sessionId] } : null;
+    const evicted = [];
+    if (!before && Object.keys(entries).length >= MAX_ENTRIES) {
+      // قرار المستخدم أولى بالسعة من أثر الأداة: يُخلى أقدم وسم خالص فقط، بترتيب
+      // الإدراج نفسه في `setKind`. التثبيت والعنوان يحصّنان المدخل ولو حمل وسم أداة.
+      const toolOnly = Object.keys(entries).filter((id) => {
+        const entry = entries[id];
+        return entry.kind && entry.pinned !== true && !entry.title;
+      });
+      let overflow = Object.keys(entries).length - (MAX_ENTRIES - 1);
+      for (let index = 0; index < toolOnly.length && overflow > 0; index++, overflow--) {
+        evicted.push([toolOnly[index], entries[toolOnly[index]]]);
+        delete entries[toolOnly[index]];
+      }
+      if (Object.keys(entries).length >= MAX_ENTRIES) {
+        for (const [id, entry] of evicted) entries[id] = entry;
+        return { ok: false, error: 'limit' };
+      }
+    }
     const next = { ...(before || {}) };
     if ('pinned' in patch) {
       if (patch.pinned) next.pinned = true;
@@ -118,6 +134,7 @@ function createStore(options = {}) {
     if (!persist()) {
       if (before) entries[sessionId] = before;
       else delete entries[sessionId];
+      for (const [id, entry] of evicted) entries[id] = entry;
       return { ok: false, error: 'write_failed' };
     }
     return { ok: true, entry: entries[sessionId] ? { ...entries[sessionId] } : null };

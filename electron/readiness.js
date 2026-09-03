@@ -137,23 +137,7 @@ function deriveReadiness(raw, extra) {
   };
 }
 
-// هل يحتاج المستخدم إلى تبديل محرك؟ يُستدعى بعد فتح البوابة: إن كان اختياره الأصيل
-// المحفوظ غير جاهز نعيد أول أصيل جاهز، أو أول مزوّد ذي مفتاح عند غياب الأصيل الجاهز.
-// عدم وجود بديل — أو كون المختار جاهزاً — يعيد null فلا تلمس القشرة اختيار المستخدم.
-// اختيار REST نفسه لا يُبدَّل من تحت المستخدم، سواء ظهر في keyProviders أم لم يظهر.
-function pickEngineSwitch(selected, readiness) {
-  const snapshot = readiness && typeof readiness === 'object' ? readiness : {};
-  const readyEngines = Array.isArray(snapshot.readyEngines) ? snapshot.readyEngines : [];
-  // اختيار خارج عقد الجاهزية (محوّل REST مثلاً) لا يُبدَّل — له مسار مفاتيحه الخاص.
-  if (typeof selected !== 'string' || !ENGINE_IDS.includes(selected)) return null;
-  if (readyEngines.includes(selected)) return null;
-  if (readyEngines.length) return readyEngines[0];
-  const keyProviders = Array.isArray(snapshot.keyProviders) ? snapshot.keyProviders : [];
-  const first = keyProviders[0];
-  return first && typeof first.name === 'string' && first.name ? first.name : null;
-}
-
 module.exports = {
   NPM_BIN, ENGINES, ENGINE_IDS,
-  normalizeState, engineState, isReady, deriveReadiness, pickEngineSwitch,
+  normalizeState, engineState, isReady, deriveReadiness,
 };

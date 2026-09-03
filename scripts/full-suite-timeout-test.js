@@ -102,12 +102,30 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
 // ── 3) عقد سطر الخلاصة لم يُكسر — يقرؤه full-suite-evidence بتعبير حرفي ─────
 {
   const source = fs.readFileSync(path.join(__dirname, 'full-suite.js'), 'utf8');
-  ok(/full-suite: نجحت المجموعات كلها — \$\{SUITE\.length\}\/\$\{SUITE\.length\}/.test(source),
+  // البسط والمقام هما ما شُغّل فعلاً (بعد التخطّي المعلَن) — وتعبير evidence يقرأ
+  // «(\d+)/(\d+)» ولا يشترط نهاية السطر، فلاحقة التخطّي لا تكسره.
+  ok(/full-suite: نجحت المجموعات كلها — \$\{ran\}\/\$\{ran\}/.test(source),
     'سطر النجاح حرفي كما يتوقعه full-suite-evidence');
   ok(/full-suite: فشلت المجموعات التالية:/.test(source), 'وسطر الفشل كذلك');
   ok(/if \(require\.main === module\) main\(\);/.test(source),
     'وحارس require.main موجود — بدونه يشغّل الاستيراد 75 مجموعة');
 }
 
+// ── 4) التخطّي المعلَن على POSIX: بسبب مقروء، ولا يمسّ ويندوز، ولا يخفي مجموعة ──
+{
+  ok(Array.isArray(suite.SKIP_ON_POSIX) && suite.SKIP_ON_POSIX.length > 0, 'قائمة التخطّي موجودة');
+  for (const entry of suite.SKIP_ON_POSIX) {
+    ok(suite.SUITE.includes(entry.name), `المتخطّاة «${entry.name}» في الطقم أصلاً — تخطّي ما ليس فيه ستر لغياب`);
+    ok(typeof entry.reason === 'string' && /[؀-ۿ]/.test(entry.reason) && entry.reason.length >= 20,
+      `ولـ«${entry.name}» سبب عربي مقروء لا رمز`);
+  }
+  const first = suite.SKIP_ON_POSIX[0].name;
+  ok(suite.skipReasonFor(first, 'win32') === null, 'على ويندوز لا يُتخطّى شيء — الطقم كاملاً كما كان');
+  ok(typeof suite.skipReasonFor(first, 'linux') === 'string', 'وعلى لينكس يعود السبب لا صمت');
+  ok(suite.skipReasonFor('test:langmetric', 'linux') === null, 'وما ليس في القائمة لا يُتخطّى');
+  const source = fs.readFileSync(path.join(__dirname, 'full-suite.js'), 'utf8');
+  ok(/⏭ \$\{name\} — متخطّاة على/.test(source), 'والمشغّل يطبع المتخطّى صراحةً — الصمت لا يُقرأ نجاحاً (‏OBS-042)');
+}
+
 console.log('full-suite-timeout: نجح — ' + checks
-  + ' فحصاً (معايرة المهل من قياس، وETIMEDOUT ينطق، وkillTree تُنهي الحفيد اليتيم، وعقد الخلاصة سليم).');
+  + ' فحصاً (معايرة المهل من قياس، وETIMEDOUT ينطق، وkillTree تُنهي الحفيد اليتيم، وعقد الخلاصة سليم، والتخطّي المعلَن على POSIX مقيّد).');

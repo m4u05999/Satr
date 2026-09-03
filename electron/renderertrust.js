@@ -21,4 +21,21 @@ function allowNavigation(event, url, trustedUrl) {
   return false;
 }
 
-module.exports = { fileUrl, isTrustedIpcEvent, allowNavigation };
+// غلاف ipcMain الموحّد: كل قناة تُسجَّل عبره تفشل مغلقة (untrusted_sender) ما لم يأتِ الحدث من
+// وثيقة «سطر» وإطارها الرئيسي. يعيش هنا (لا داخل main.js) كي تمرّ قنوات النواة وقنوات
+// Enterprise (`satr:ee:*` عبر seam.registerIpc) من الحارس نفسه وتختبره الاختبارات بلا Electron.
+// getWindow دالة لأن النافذة تُنشأ بعد بناء الغلاف وقد تُعاد.
+function guardIpcMain(rawIpcMain, getWindow, trustedUrl) {
+  return {
+    handle(channel, listener) {
+      return rawIpcMain.handle(channel, (event, ...args) => {
+        if (!isTrustedIpcEvent(event, getWindow(), trustedUrl)) {
+          return { ok: false, error: 'untrusted_sender' };
+        }
+        return listener(event, ...args);
+      });
+    },
+  };
+}
+
+module.exports = { fileUrl, isTrustedIpcEvent, allowNavigation, guardIpcMain };

@@ -17,6 +17,7 @@
     "test:skills": "node scripts/skills-test.js",
     "test:tasks": "node scripts/tasks-test.js",
     "test:observations": "node scripts/observations-test.js",
+    "test:suite-coverage": "node scripts/suite-coverage-test.js",
     "test:probe-runner": "node scripts/probe-runner-test.js",
     "probe:run": "node scripts/probe-runner.js",
     "test:webpush-probe": "node scripts/webpush-probe.js",
@@ -242,5 +243,9 @@
     "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0",
     "zod": "^4.4.3"
+  },
+  "allowScripts": {
+    "electron": true,
+    "node-pty": true
   }
 }
