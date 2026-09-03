@@ -86,6 +86,12 @@ function names() {
   return Object.keys(j).filter((k) => hasValue(j[k]));
 }
 
+// هل مفتاح الاسم قابل للاستعمال؟ يفكّ مرةً واحدة ويعيد boolean فقط (لا تُعاد القيمة)
+function hasUsableValue(name) {
+  const value = fromEntry(readRaw()[name]);
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 // ضبط/تحديث مفتاح (يحفظ بقية المفاتيح؛ يُخزَّن مشفّراً إن أمكن)
 function set(name, value) {
   const j = readRaw();
@@ -122,4 +128,4 @@ function migrate() {
   } catch (e) { /* أفضل جهد — الترحيل الفاشل لا يمنع العمل */ }
 }
 
-module.exports = { get, names, set, remove, migrate, KEYS_PATH };
+module.exports = { get, names, hasUsableValue, set, remove, migrate, KEYS_PATH };
