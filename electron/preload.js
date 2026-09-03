@@ -6,7 +6,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('satr', {
-  preflight: () => ipcRenderer.invoke('satr:preflight'),
+  // لا نعبر إلا العلم المعروف؛ زر البوابة يستعمله لتجاوز كاش جاهزية Codex صراحةً.
+  preflight: (options) => ipcRenderer.invoke('satr:preflight',
+    options && options.force === true ? { force: true } : undefined),
   appVersion: () => ipcRenderer.invoke('satr:appVersion'), // رقم إصدار التطبيق لقسم ⚙ — قراءة فقط
   focusWindow: () => ipcRenderer.invoke("satr:focusWindow"), // رفع نافذة هذه النسخة عند النقر على إشعار النظام
   engineUpdates: () => ipcRenderer.invoke("satr:engineUpdates"), // تأخّر إصدارات المحرّكات — كشف فقط

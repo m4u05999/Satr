@@ -8,8 +8,9 @@
 //
 // هذه وحدة **منطق نقي بلا تبعيات** (نمط autogate.js/browserguard.js): تستقبل حالات خام
 // جمعها main.js من المسابير القائمة (claudeauth.probe · codex.accountStatus ·
-// kimi.authStatus) وتشتق منها الجاهزية. لا spawn ولا قرص ولا Electron هنا، فيبقى
-// الاختبار قطعياً وسريعاً وقابلاً للتشغيل بـnode وحده.
+// kimi.authStatus)، ومعها أسماء مزوّدي REST الذين لهم مفتاح محفوظ، وتشتق الجاهزية.
+// لا قيمة مفتاح تعبر هذا العقد، ولا spawn ولا قرص ولا Electron هنا، فيبقى الاختبار
+// قطعياً وسريعاً وقابلاً للتشغيل بـnode وحده.
 //
 // **قاعدة الجاهزية** — مشتقّة من سلوك Claude القائم في preflight حرفياً، لا مخترعة:
 //   غير مثبّت                    ⇒ 'missing'    (الإرشاد: ثبّت)
@@ -96,11 +97,21 @@ function isReady(raw) {
   return engineState(raw) === 'ready';
 }
 
-// اشتقاق لقطة الجاهزية الكاملة من حالات المحركات الخام.
+// اشتقاق لقطة الجاهزية الكاملة من حالات المحركات الخام ومزوّدي المفاتيح الاختياريين.
 // `raw` كائن مفاتيحه معرّفات المحركات؛ المحرك الغائب عنه يُعامل «غير مثبّت» (fail-closed
 // في الوصف لا في الحجب — لأن الحجب يقع فقط إن لم يجهز **أي** محرك).
-function deriveReadiness(raw) {
+// `extra.keyProviders` لا يحمل إلا `{name,label}` مرتّبة كما جاءت من سجلّ المحوّلات؛
+// غياب `extra` يساوي القائمة الفارغة ويحفظ سلوك العقد السابق حرفياً.
+function deriveReadiness(raw, extra) {
   const source = raw && typeof raw === 'object' ? raw : {};
+  const keyProviders = extra && Array.isArray(extra.keyProviders)
+    ? extra.keyProviders
+      .filter((provider) => provider && typeof provider.name === 'string' && provider.name)
+      .map((provider) => ({
+        name: provider.name,
+        label: typeof provider.label === 'string' && provider.label ? provider.label : provider.name,
+      }))
+    : [];
   const engines = ENGINES.map((engine) => {
     const state = normalizeState(source[engine.id]);
     return {
@@ -116,26 +127,30 @@ function deriveReadiness(raw) {
   const readyEngines = engines.filter((engine) => engine.state === 'ready').map((engine) => engine.id);
   return {
     engines,
-    ready: readyEngines.length > 0,
+    keyProviders,
+    ready: readyEngines.length > 0 || keyProviders.length > 0,
     readyEngines,
-    // المحرك المفضّل = أول جاهز بترتيب الأفضلية أعلاه. null حين لا شيء جاهز.
-    preferred: readyEngines.length > 0 ? readyEngines[0] : null,
+    // المحرك المفضّل = أول أصيل جاهز، ثم أول مزوّد ذي مفتاح. null حين لا شيء جاهز.
+    preferred: readyEngines.length > 0
+      ? readyEngines[0]
+      : (keyProviders.length > 0 ? keyProviders[0].name : null),
   };
 }
 
-// هل يحتاج المستخدم إلى تبديل محرك؟ يُستدعى بعد فتح البوابة: إن كان اختياره المحفوظ
-// غير جاهز بينما يوجد جاهز غيره، نعيد المرشّح كي تبدّل القشرة إليه وتُعلمه صراحةً.
+// هل يحتاج المستخدم إلى تبديل محرك؟ يُستدعى بعد فتح البوابة: إن كان اختياره الأصيل
+// المحفوظ غير جاهز نعيد أول أصيل جاهز، أو أول مزوّد ذي مفتاح عند غياب الأصيل الجاهز.
 // عدم وجود بديل — أو كون المختار جاهزاً — يعيد null فلا تلمس القشرة اختيار المستخدم.
-// ملاحظة: المحركات غير المذكورة هنا (gemini وبقية محوّلات REST) تعتمد مفاتيح API لا
-// ثنائيات مثبّتة، فلا تدخل عقد الجاهزية ولا نبدّلها من تحت المستخدم.
+// اختيار REST نفسه لا يُبدَّل من تحت المستخدم، سواء ظهر في keyProviders أم لم يظهر.
 function pickEngineSwitch(selected, readiness) {
   const snapshot = readiness && typeof readiness === 'object' ? readiness : {};
   const readyEngines = Array.isArray(snapshot.readyEngines) ? snapshot.readyEngines : [];
-  if (!readyEngines.length) return null;
   // اختيار خارج عقد الجاهزية (محوّل REST مثلاً) لا يُبدَّل — له مسار مفاتيحه الخاص.
   if (typeof selected !== 'string' || !ENGINE_IDS.includes(selected)) return null;
   if (readyEngines.includes(selected)) return null;
-  return readyEngines[0];
+  if (readyEngines.length) return readyEngines[0];
+  const keyProviders = Array.isArray(snapshot.keyProviders) ? snapshot.keyProviders : [];
+  const first = keyProviders[0];
+  return first && typeof first.name === 'string' && first.name ? first.name : null;
 }
 
 module.exports = {
