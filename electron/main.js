@@ -3186,7 +3186,7 @@ ipcMain.handle('satr:previewFrame', () => preview.captureFrame());   // م-5: إ
 ipcMain.handle('satr:previewElementShot', async (event, p) => {
   const selector = p && p.selector;
   if (typeof selector !== 'string' || !SAFE_PREVIEW_SELECTOR.test(selector)) return { error: 'bad_selector' };
-  return preview.screenshotElement(selector, { emitThumbnail: false });
+  return preview.screenshotElement(selector, { emitThumbnail: false, modelImage: true, preserveDisplayImage: true });
 });
 ipcMain.handle('satr:previewClose', () => preview.close());
 

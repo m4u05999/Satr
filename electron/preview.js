@@ -1150,9 +1150,9 @@ async function waitFor(cond, timeoutMs) {
   return { ok: true, found: false };
 }
 
-// OBS-016: عينة الحارس قبل الضغط كانت 1,903,731 بايت للكاملة و853,149 للعنصر
-// و873,108 للنافذة (PNG)، وبعد سقف 1280 وجودة 72 صارت 119,217 و80,756 و83,138.
-// الاختيار يبقي ما يكفي للحكم على التخطيط؛ أما البنية والنص فمسارهما browser_snapshot.
+// OBS-016: مسار النموذج يحافظ على عرض الصفحة حتى 1280px كي لا يصغّر النص في الصفحات
+// الطويلة، ثم يقارن PNG وJPEG فعلياً ويختار الأصغر. أما البنية والنص فمسارهما
+// browser_snapshot؛ ومصغّرة المستخدم تبقى PNG مستقلة أدناه.
 const SHOT_MAX_EDGE = 1280;
 const SHOT_JPEG_QUALITY = 72;
 
@@ -1161,9 +1161,8 @@ function encodeScreenshot(image, modelImage) {
   let output = image;
   if (modelImage) {
     const size = image.getSize();
-    const longest = Math.max(size.width, size.height);
-    if (longest > SHOT_MAX_EDGE) {
-      const ratio = SHOT_MAX_EDGE / longest;
+    if (size.width > SHOT_MAX_EDGE) {
+      const ratio = SHOT_MAX_EDGE / size.width;
       output = image.resize({
         width: Math.max(1, Math.round(size.width * ratio)),
         height: Math.max(1, Math.round(size.height * ratio)),
@@ -1171,8 +1170,14 @@ function encodeScreenshot(image, modelImage) {
       });
     }
   }
-  const data = modelImage ? output.toJPEG(SHOT_JPEG_QUALITY) : output.toPNG();
-  return data && data.length ? data : null;
+  const png = output.toPNG();
+  if (!modelImage) return png && png.length ? { data: png, mimeType: 'image/png' } : null;
+  const jpeg = output.toJPEG(SHOT_JPEG_QUALITY);
+  if ((!png || !png.length) && (!jpeg || !jpeg.length)) return null;
+  if (!jpeg || !jpeg.length || (png && png.length <= jpeg.length)) {
+    return { data: png, mimeType: 'image/png' };
+  }
+  return { data: jpeg, mimeType: 'image/jpeg' };
 }
 
 function emitScreenshotThumbnail(image, kind, locator) {
@@ -1210,9 +1215,12 @@ async function screenshot(options) {
     const pageMetrics = options && options.includePageMetrics ? await readPageMetrics(wc) : undefined;
     const img = await wc.capturePage();
     emitScreenshotThumbnail(img, 'page');
-    const data = encodeScreenshot(img, options && options.modelImage === true);
-    if (!data) return { error: 'empty' };
-    return { ok: true, base64: data.toString('base64'), page_metrics: pageMetrics };
+    const encoded = encodeScreenshot(img, options && options.modelImage === true);
+    if (!encoded) return { error: 'empty' };
+    return {
+      ok: true, base64: encoded.data.toString('base64'), mimeType: encoded.mimeType,
+      page_metrics: pageMetrics,
+    };
   } catch (e) { return { error: 'shot_failed' }; }
 }
 
@@ -1244,9 +1252,20 @@ async function screenshotElement(locator, options) {
       width: Math.min(rect.width, 4000), height: Math.min(rect.height, 4000),
     });
     if (!options || options.emitThumbnail !== false) emitScreenshotThumbnail(img, 'element', locator);
-    const data = encodeScreenshot(img, options && options.modelImage === true);
-    if (!data) return { error: 'empty' };
-    return { ok: true, base64: data.toString('base64') };
+    const modelImage = options && options.modelImage === true;
+    const encoded = encodeScreenshot(img, modelImage);
+    if (!encoded) return { error: 'empty' };
+    // مسار 🎯 يعرض المرفق نفسه للمستخدم؛ نحافظ على عقد base64 القديم PNG، ونضع نسخة
+    // النموذج المختارة في حقلين منفصلين كي لا تُوسم JPEG خطأً بأنها image/png في الواجهة.
+    if (modelImage && options.preserveDisplayImage === true) {
+      const display = encodeScreenshot(img, false);
+      if (!display) return { error: 'empty' };
+      return {
+        ok: true, base64: display.data.toString('base64'), mimeType: display.mimeType,
+        modelBase64: encoded.data.toString('base64'), modelMimeType: encoded.mimeType,
+      };
+    }
+    return { ok: true, base64: encoded.data.toString('base64'), mimeType: encoded.mimeType };
   } catch (e) { return { error: 'shot_failed' }; }
 }
 
@@ -1281,21 +1300,25 @@ async function screenshotFull(options) {
     if (!shot || !shot.data) return { error: 'empty' };
     const img = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'));
     emitScreenshotThumbnail(img, 'full_page');
-    const data = encodeScreenshot(img, options && options.modelImage === true);
-    if (!data) return { error: 'empty' };
+    const encoded = encodeScreenshot(img, options && options.modelImage === true);
+    if (!encoded) return { error: 'empty' };
     return {
-      ok: true, base64: data.toString('base64'), page_metrics: pageMetrics,
-      truncated: contentHeight > MAX_FULL_HEIGHT,
+      ok: true, base64: encoded.data.toString('base64'), mimeType: encoded.mimeType,
+      page_metrics: pageMetrics, captured_height: height, truncated: contentHeight > MAX_FULL_HEIGHT,
+      full_page: true,
     };
   } catch (e) {
     // سقوط رشيق للقطة نافذة العرض العادية إن فشل مسار CDP
     try {
       const img = await wc.capturePage();
       emitScreenshotThumbnail(img, 'page');
-      const data = encodeScreenshot(img, options && options.modelImage === true);
-      if (!data) return { error: 'empty' };
+      const encoded = encodeScreenshot(img, options && options.modelImage === true);
+      if (!encoded) return { error: 'empty' };
       if (!pageMetrics) pageMetrics = await readPageMetrics(wc);
-      return { ok: true, base64: data.toString('base64'), page_metrics: pageMetrics, fellBack: true };
+      return {
+        ok: true, base64: encoded.data.toString('base64'), mimeType: encoded.mimeType,
+        page_metrics: pageMetrics, fellBack: true, full_page: true,
+      };
     } catch (e2) {}
     return { error: 'shot_failed' };
   } finally {
@@ -2293,6 +2316,7 @@ module.exports = {
   setCaptureEventSink, showCaptureBeacon,
   _internals: {
     safeDownloadName, uniqueDownloadPath, effectiveBounds, isLocalHttpsUrl, locatorError,
+    encodeScreenshot,
     fingerprintLabel, AGENT_WORLD_ID, COMMITTED_INPUT_TYPES, CAPTURE_BEACON_COLORS,
     CAPTURE_HUMAN_INSTALL, CAPTURE_HUMAN_DRAIN,
     snapshotFingerprints: () => new Map(activeSnapshotFingerprints),
