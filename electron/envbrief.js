@@ -66,7 +66,7 @@ function browserPolicy(hasBrowser) {
   return [
     '## المعاينة والمتصفح',
     '- افتح صفحات الويب داخل معاينة «سطر» بأداة open_preview، لا Chrome/Edge/Firefox ولا أوامر فتح متصفح خارجي.',
-    '- افحص ما بنيته عبر read_page وbrowser_snapshot وscreenshot وbrowser_console وbrowser_network.',
+    '- ابدأ بـ browser_snapshot لفهم البنية، واستعمل screenshot البصرية للحكم على التخطيط فقط؛ وأكمل الفحص عبر read_page وbrowser_console وbrowser_network.',
     '- لصفحة فيها نصّ بالحرف العربي (عربية/فارسية/دَرية/أردو/بشتو/كردية/سندية/أويغورية) استعمل browser_readability: يقيس رسو اتجاه كل فقرة بالبكسل والتباين والتجاوز الأفقي وتحميل الخط. لا تحكم على الاتجاه بالنظر ولا بـ getComputedStyle — كلاهما يعيد rtl الموروثة بينما الفقرة رست LTR. أصلح ثم أعد القياس، ولا تدّعِ السلامة قبل صفر مخالفات مع ذكر ما لم يُرَ (unseen).',
     '- خذ browser_snapshot قبل التفاعل، واستعمل refs مع browser_click/browser_type. إذا تدخّل المستخدم أو تغيّر/أزيل الهدف بعد اللقطة، لا تكرر الفعل؛ خذ browser_snapshot جديدة وتحقق من الهدف.',
     '- لوحة معاينة «سطر» أضيق وأقصر من متصفح عادي؛ للحكم على تخطيط الصفحة كاملةً استعمل screenshot مع full_page:true، أو اضبط browser_set_viewport أولاً إن كنت تختبر مقاساً بعينه.',

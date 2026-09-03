@@ -52,7 +52,7 @@ function textResult(text, isError) {
   return { content: [{ type: 'text', text: String(text) }], isError: !!isError };
 }
 function imageResult(base64, note) {
-  const content = [{ type: 'image', data: base64, mimeType: 'image/png' }];
+  const content = [{ type: 'image', data: base64, mimeType: 'image/jpeg' }];
   if (note) content.push({ type: 'text', text: note });
   return { content };
 }
@@ -347,24 +347,25 @@ function buildTools(deps) {
     },
     {
       name: 'screenshot',
-      description: 'التقط لقطة شاشة للصفحة المعروضة في المعاينة لتراها بصرياً وتتحقق من مظهرها. '
-        + 'لوحة معاينة «سطر» أضيق وأقصر من متصفح عادي؛ للحكم على تخطيط صفحة كاملة مرّر '
-        + 'full_page=true أو اضبط browser_set_viewport أولاً. تعيد صورة PNG.',
+      description: 'لقطة JPEG مضغوطة للمعاينة. ابدأ بـ browser_snapshot للبنية؛ الصورة للحكم '
+        + 'على التخطيط فقط. لوحة «سطر» أضيق وأقصر: full_page=true للصفحة كاملة، أو '
+        + 'browser_set_viewport لمقاس بعينه.',
       inputSchema: { type: 'object', properties: { full_page: { type: 'boolean' } } },
       handler: async (args) => {
         const full = !!(args && args.full_page);
-        const r = full ? await preview.screenshotFull() : await preview.screenshot({ includePageMetrics: true });
+        const r = full ? await preview.screenshotFull({ modelImage: true })
+          : await preview.screenshot({ includePageMetrics: true, modelImage: true });
         if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّر التقاط اللقطة'), true);
         return imageResult(r.base64, full ? '' : screenshotLengthHint(r));
       },
     },
     {
       name: 'browser_screenshot_element',
-      description: 'التقط لقطة بصرية لعنصر واحد في الصفحة المعروضة (بـ ref من browser_snapshot أو '
-        + 'مُحدِّد CSS) لتفحص مظهره عن قرب — أوفر من لقطة الصفحة كاملة. قراءة فقط.',
+      description: 'لقطة JPEG مضغوطة لعنصر بـ ref من browser_snapshot أو مُحدِّد CSS؛ '
+        + 'أوفر من الصفحة كاملة. قراءة فقط.',
       inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'ref (مثل s3:e6) أو مُحدِّد CSS' } }, required: ['ref'] },
       handler: async (args) => {
-        const r = await preview.screenshotElement(String((args && args.ref) || ''));
+        const r = await preview.screenshotElement(String((args && args.ref) || ''), { modelImage: true });
         if (!r || !r.ok) {
           const why = r && r.error === 'not_found' ? 'لم يُعثر على العنصر — أعد أخذ لقطة بـ browser_snapshot.'
             : r && r.error === 'not_visible' ? 'العنصر غير ظاهر (بلا أبعاد).' : whyClosed(r && r.error, 'تعذّر التقاط اللقطة');
