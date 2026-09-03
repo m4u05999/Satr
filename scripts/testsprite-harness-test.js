@@ -35,6 +35,15 @@ async function main() {
   assert(!fs.readFileSync(path.join(harness.SRC, 'index.html'), 'utf8').includes('/__testsprite__/mock-satr.js'),
     'تسرّب حقن harness إلى index الإنتاجي.');
 
+  // مجلد pickFolder المحاكي: TESTSPRITE_FOLDER أولاً ثم جذر المشروع — ولا مسار جهاز مطوّر يُشحن.
+  assert.strictEqual(harness.harnessFolder({}), harness.ROOT);
+  assert.strictEqual(harness.harnessFolder({ TESTSPRITE_FOLDER: '  ' }), harness.ROOT);
+  assert.strictEqual(harness.harnessFolder({ TESTSPRITE_FOLDER: '/tmp/satr-project' }), '/tmp/satr-project');
+  const client = harness.harnessClient({ TESTSPRITE_FOLDER: 'C:\\proj\\satr' });
+  assert(client.startsWith('window.__SATR_TESTSPRITE_FOLDER__ = "C:\\\\proj\\\\satr";\n'));
+  assert(client.includes('window.__SATR_TESTSPRITE_FOLDER__') && client.includes('pickFolder'));
+  assert(!fs.readFileSync(harness.CLIENT, 'utf8').includes('D:\\\\sater'), 'مسار جهاز مطوّر داخل عميل harness المشحون.');
+
   const server = harness.createHarnessServer();
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -51,6 +60,10 @@ async function main() {
     const root = await request(port, '/');
     assert.strictEqual(root.status, 200);
     assert(root.body.includes('/__testsprite__/mock-satr.js'));
+    const mock = await request(port, '/__testsprite__/mock-satr.js');
+    assert.strictEqual(mock.status, 200);
+    assert(String(mock.headers['content-type']).startsWith('text/javascript'));
+    assert(mock.body.startsWith('window.__SATR_TESTSPRITE_FOLDER__ = '), 'خادم harness لا يحقن مجلد pickFolder.');
     const app = await request(port, '/ui/app.js');
     assert.strictEqual(app.status, 200);
     assert(String(app.headers['content-type']).startsWith('text/javascript'));

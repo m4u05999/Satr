@@ -94,7 +94,7 @@ async function main() {
 
     // الحقل الكامل: الوسم يُنقّى ويُقصّ، والمهلة تُقبل داخل 1..600.
     const fullReview = verify.buildConfig(commands, null, {
-      name: 'project-review', label: '  مراجعة‮نوعية  ', timeout_seconds: 45,
+      name: 'project-review', label: '  مراجعة‮نوعية  \x07', timeout_seconds: 45,
     });
     assert.strictEqual(fullReview.ok, true);
     assert.deepStrictEqual(fullReview.config.review_skill,

@@ -895,7 +895,7 @@ ipcMain.handle('satr:releaseNotes', async (event, p) => {
   if (!body) return { ok: false, error: 'fetch_failed' };
   // قائمة حقول مغلقة، ونصّ خام يُعرض في renderer بـtextContent لا HTML (محتوى خارجي).
   const clean = (value, cap) => String(value == null ? '' : value)
-    .replace(/[ --؜‎‏‪-‮⁦-⁩]/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f؜‎‏‪-‮⁦-⁩]/g, '')
     .slice(0, cap);
   return {
     ok: true,

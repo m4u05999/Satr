@@ -49,6 +49,10 @@ function assertNotificationContract() {
   assert(preload.includes('openReleaseNotes:'), 'غاب openReleaseNotes من preload.');
   assert(toast.includes('satr.openReleaseNotes(pendingVersion)'), 'زر «افتح في المتصفح» الثانوي غير موصول.');
   assert(main.includes("ipcMain.handle('satr:releaseNotes'"), 'غاب معالج جلب ملاحظات الإصدار.');
+  // نظافة المصدر: منظّف ملاحظات الإصدار يكتب بايتات التحكم كهروب \xNN لا خاماً —
+  // بايت خام واحد يجعل git/grep يعاملان main.js (أكبر ملف في المستودع) كثنائي.
+  assert(!/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(main), 'بايتات تحكم خام داخل electron/main.js.');
+  assert(main.includes('.replace(/[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f'), 'منظّف ملاحظات الإصدار لا يستعمل هروب \\xNN.');
   assert(toast.includes('satr.releaseNotes'), 'زر «ما الجديد» لا يفتح الحوار الداخلي.');
   assert(toast.includes('function openNotesFor'), 'الحوار غير قابل للفتح من خارج بطاقة التحديث.');
   assert(index.includes('id="appNotesBtn"') && appSource.includes('appNotesBtn'),

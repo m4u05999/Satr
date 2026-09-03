@@ -725,7 +725,6 @@ function qualityExtension(asset, response) {
 function ffmpegPath() {
   const candidates = [
     process.env.FFMPEG_PATH,
-    'D:\\sater\\tools\\ffmpeg.exe',
     path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
   ].filter(Boolean);
   return candidates.find((candidate) => fs.existsSync(candidate)) || 'ffmpeg';
