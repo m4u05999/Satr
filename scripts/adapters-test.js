@@ -158,6 +158,7 @@ async function main() {
   let restoreChat;
   const previousKey = process.env.OPENAI_API_KEY;
   const previousKimiKey = process.env.KIMI_API_KEY;
+  const previousDeepseekKey = process.env.DEEPSEEK_API_KEY;
   try {
     const ollama = adapters.list().find((provider) => provider.name === 'ollama');
     assert.ok(ollama, 'Ollama is registered in the Community adapter registry');
@@ -195,6 +196,35 @@ async function main() {
     assert.strictEqual(kimiRequests[0].body.model, 'k3');
     assert.strictEqual(kimiRequests[0].body.reasoning_effort, 'max');
     assert.match(kimiRequests[0].body.prompt_cache_key, /^[0-9a-f-]{36}$/);
+
+    // DeepSeek V4 (رادار ٠٠١): الاسمان القديمان أُوقفا 2026-07-24 وبقيا في السجل ستة أسابيع
+    // بلا حارس. قائمة حظر صريحة لأسماء أُعلن إيقافها — حارس قطعي لا يعرف upstream، لكنه
+    // يمنع عودة اسم ميت بعد أن عُرف موته؛ والعضّة الحيّة في free-providers-probe.
+    const RETIRED_MODEL_NAMES = ['deepseek-chat', 'deepseek-reasoner'];
+    const deepseek = adapters.list().find((provider) => provider.name === 'deepseek');
+    assert.ok(deepseek, 'DeepSeek is registered in the Community adapter registry');
+    assert.strictEqual(deepseek.keyName, 'DEEPSEEK_API_KEY');
+    assert.deepStrictEqual(deepseek.models.map((model) => model.value), ['', 'deepseek-v4-flash', 'deepseek-v4-pro']);
+    for (const retired of RETIRED_MODEL_NAMES) {
+      assert.ok(!deepseek.models.some((model) => model.value === retired), 'retired DeepSeek name in registry: ' + retired);
+    }
+    const deepseekRequests = [];
+    process.env.DEEPSEEK_API_KEY = 'deepseek-test-key';
+    restoreChat = installChatMock(deepseekRequests);
+    await waitForAdapter(adapters.get('deepseek'), {
+      prompt: 'اختبار DeepSeek', sessionId: null, model: null,
+      permissionMode: 'default', skills: [], images: [], effort: 'medium',
+    }, temp);
+    restoreChat();
+    restoreChat = null;
+    assert.strictEqual(deepseekRequests.length, 1);
+    assert.strictEqual(deepseekRequests[0].options.host, 'api.deepseek.com');
+    assert.strictEqual(deepseekRequests[0].options.path, '/chat/completions');
+    assert.strictEqual(deepseekRequests[0].options.headers.Authorization, 'Bearer deepseek-test-key');
+    // الافتراضي هو V4 Flash لا الاسم الميت، والجهد يُطبَّع إلى سلّم V4 (low|high|max)
+    assert.strictEqual(deepseekRequests[0].body.model, 'deepseek-v4-flash');
+    assert.ok(!RETIRED_MODEL_NAMES.includes(deepseekRequests[0].body.model));
+    assert.strictEqual(deepseekRequests[0].body.reasoning_effort, 'high');
 
     server = await openChatServer(chatBodies);
     const commonConfig = {
@@ -303,6 +333,7 @@ async function main() {
     console.log('✓ Kimi uses the Kimi Code endpoint and bearer key directly');
     console.log('✓ Kimi keeps one prompt_cache_key across tool rounds');
     console.log('✓ Kimi reasoning effort is mapped and reasoning_content survives tool rounds');
+    console.log('✓ DeepSeek defaults to deepseek-v4-flash, maps effort to V4 levels, and lists no retired model name');
     console.log('✓ Authentication rejection is not retried as a tool compatibility failure');
     console.log('✓ REST provider failures are not mislabeled as Claude executable failures');
   } finally {
@@ -312,6 +343,8 @@ async function main() {
     else process.env.OPENAI_API_KEY = previousKey;
     if (previousKimiKey === undefined) delete process.env.KIMI_API_KEY;
     else process.env.KIMI_API_KEY = previousKimiKey;
+    if (previousDeepseekKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = previousDeepseekKey;
     if (server) await new Promise((resolve) => server.close(resolve));
     if (kimiServer) await new Promise((resolve) => kimiServer.close(resolve));
     if (authErrorServer) await new Promise((resolve) => authErrorServer.close(resolve));

@@ -66,17 +66,27 @@ register('ollama', ollama.build(), ollama.META);
 
 // عائلة المتوافقة مع OpenAI: نفس البروتوكول، مفتاح لكل مزوّد في ~/.satr/keys.json.
 // البروتوكول متحقَّق حيّاً (عبر نقطة Gemini المتوافقة)؛ المفاتيح يضيفها المستخدم.
+// DeepSeek V4 (رادار سطر ٠٠١ — 2026-09-03): الاسمان `deepseek-chat`/`deepseek-reasoner`
+// أُعلن إيقافهما رسمياً بتاريخ 2026-07-24 (api-docs.deepseek.com/updates). **المقيس حياً**
+// (free-providers-probe، 2026-09-03): الاسم القديم ما زال يُقبل ويُخدَم كـ`deepseek-v4-flash`
+// — أي alias بلا موعد قطع معلن، فالانتقال هنا استباقي لا إصلاح عطل واقع. البدائل الصريحة
+// `deepseek-v4-flash` (بيتا عام 07-31) و`deepseek-v4-pro` (‏GA 08-13). التفكير في V4
+// **مفعّل افتراضياً** (effort=high) وجهده `reasoning_effort: low|high|max`، ومع `tools`
+// يجب إعادة `reasoning_content` في كل جولة لاحقة وإلا رُفضت — عقد K3 نفسه، فيرث
+// `reasoningKey`/`effortMap` من مسار Kimi المثبت (كانا غائبين هنا، وهذه الثغرة الفعلية).
 register('deepseek', openaiCompatible.make({
   id: 'deepseek', // معرّف مجلد الذاكرة على القرص (~/.satr/chats/deepseek/) — الدفعة 1.3
   host: 'api.deepseek.com', path: '/chat/completions',
-  keyName: 'DEEPSEEK_API_KEY', defaultModel: 'deepseek-chat', label: 'DeepSeek', includeUsage: true,
+  keyName: 'DEEPSEEK_API_KEY', defaultModel: 'deepseek-v4-flash', label: 'DeepSeek', includeUsage: true,
   capabilities: { strictTools: true },
+  reasoningKey: 'reasoning_content',
+  effortMap: { low: 'low', medium: 'high', high: 'high', xhigh: 'max', max: 'max' },
 }), {
   label: 'DeepSeek — مفتاح API', family: 'openai', keyName: 'DEEPSEEK_API_KEY',
   models: [
     { value: '', label: 'الافتراضي' },
-    { value: 'deepseek-chat', label: 'Chat (V3)' },
-    { value: 'deepseek-reasoner', label: 'Reasoner (R1)' },
+    { value: 'deepseek-v4-flash', label: 'V4 Flash' },
+    { value: 'deepseek-v4-pro', label: 'V4 Pro' },
   ],
 });
 

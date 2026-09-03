@@ -29,6 +29,15 @@ const PROVIDERS = [
     host: 'api.groq.com', path: '/openai/v1/chat/completions',
     model: 'openai/gpt-oss-120b', // مثبت حياً 2026-09-02 (أدوات ✅)
   },
+  {
+    // ليس مجانياً، لكنه المزوّد ذو الأسماء المُعلَن إيقافها (رادار ٠٠١). الخطوة (4) تقيس
+    // مصير الاسم القديم فعلياً: المقيس 2026-09-03 أنه ما زال 200 ويُخدَم كـv4-flash (alias)،
+    // فالقيمة معلوماتية — يوم يصير 4xx نعرف أن القطع وقع، لا أن نفترضه من الإعلان.
+    id: 'deepseek', keyName: 'DEEPSEEK_API_KEY',
+    host: 'api.deepseek.com', path: '/chat/completions',
+    model: 'deepseek-v4-flash',
+    legacyModel: 'deepseek-chat', // أُعلن إيقافه 2026-07-24
+  },
 ];
 
 // المفتاح: بيئة النظام أولاً ثم مخزن «سطر». المخزن يشفّر بـsafeStorage (DPAPI)،
@@ -156,6 +165,22 @@ async function probeProvider(provider) {
     messages: [{ role: 'user', content: 'hi' }],
   });
   report.badKeyStatus = bad.status;
+
+  // (4) مصير اسم أُعلن إيقافه — مقياس لا افتراض: `status` و`servedAs` (النموذج الذي خدم
+  // الطلب فعلاً إن قبِله المزوّد كـalias). حارس قطعي لا يعرف upstream؛ هذا هو المصدر.
+  if (provider.legacyModel) {
+    const legacy = await requestSSE(provider, key, {
+      model: provider.legacyModel, stream: false, max_tokens: 5,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    let servedAs = null;
+    try { servedAs = JSON.parse(legacy.raw).model || null; } catch { /* غير JSON = رفض أو خطأ */ }
+    report.legacy = {
+      model: provider.legacyModel, status: legacy.status,
+      rejected: legacy.status >= 400 && legacy.status < 500,
+      servedAs,
+    };
+  }
 
   return report;
 }
