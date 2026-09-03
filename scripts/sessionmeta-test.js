@@ -93,8 +93,73 @@ try {
     'الإخلاء أسقط تثبيت المستخدم');
   assert.strictEqual(quotaEntries['tool-0'], undefined, 'لم يُطرد أقدم وسم خالص');
   assert.strictEqual(quotaEntries['tool-' + (sessionmeta.MAX_TOOL_ENTRIES + 4)].kind, 'tool');
-  // وزرّ التثبيت يبقى عاملاً بعد امتلاء حصّة الوسوم (وإلا فشل `set` صامتاً في اللوحة).
+  // وزرّ التثبيت يبقى عاملاً بعد امتلاء حصّة الوسوم، فلا تقضم آثار الأدوات سعة المستخدم.
   assert.strictEqual(quota.set('user-pin', { pinned: true }).ok, true, 'حصّة الوسوم عطّلت تثبيت المستخدم');
+
+  // ---------- السقف العام: قرار المستخدم يطرد أقدم وسم خالص (‏OBS-074) ----------
+  const pressureFile = path.join(root, 'user-pressure.json');
+  const pressure = sessionmeta.createStore({ file: pressureFile });
+  for (let index = 0; index < sessionmeta.MAX_TOOL_ENTRIES; index++) {
+    assert.strictEqual(pressure.setKind('pressure-tool-' + index, 'tool').ok, true);
+  }
+  for (let index = 0; index < sessionmeta.MAX_ENTRIES - sessionmeta.MAX_TOOL_ENTRIES; index++) {
+    assert.strictEqual(pressure.set('pressure-user-' + index, { pinned: true }).ok, true);
+  }
+  assert.strictEqual(Object.keys(pressure.list()).length, sessionmeta.MAX_ENTRIES);
+  assert.deepStrictEqual(pressure.set('pressure-user-overflow', { pinned: true }),
+    { ok: true, entry: { pinned: true } },
+    'التثبيت رقم 301 لم يطرد أقدم وسم خالص عند امتلاء السقف العام');
+  const pressureEntries = pressure.list();
+  assert.strictEqual(Object.keys(pressureEntries).length, sessionmeta.MAX_ENTRIES,
+    'إخلاء وسم واحد لم يُبقِ المخزن عند سقفه العام');
+  assert.strictEqual(pressureEntries['pressure-tool-0'], undefined, 'لم يُخلَ أقدم وسم خالص');
+  assert.deepStrictEqual(pressureEntries['pressure-tool-1'], { kind: 'tool' },
+    'أُخلي أكثر من الوسم الأدنى اللازم');
+  assert.deepStrictEqual(pressureEntries['pressure-user-0'], { pinned: true },
+    'الإخلاء أسقط قرار مستخدم سابقاً');
+  assert.deepStrictEqual(pressureEntries['pressure-user-overflow'], { pinned: true });
+
+  // وسم يحمل قرار تثبيت محصّن حتى لو كان أقدم مفاتيح المخزن.
+  const protectedFile = path.join(root, 'protected-tool.json');
+  const protectedStore = sessionmeta.createStore({ file: protectedFile });
+  assert.strictEqual(protectedStore.setKind('protected-tool', 'tool').ok, true);
+  assert.strictEqual(protectedStore.set('protected-tool', { pinned: true }).ok, true);
+  assert.strictEqual(protectedStore.setKind('protected-titled-tool', 'tool').ok, true);
+  assert.strictEqual(protectedStore.set('protected-titled-tool', { title: 'اسم المستخدم' }).ok, true);
+  for (let index = 0; index < sessionmeta.MAX_TOOL_ENTRIES - 2; index++) {
+    assert.strictEqual(protectedStore.setKind('protected-tool-only-' + index, 'tool').ok, true);
+  }
+  for (let index = 0; index < sessionmeta.MAX_ENTRIES - sessionmeta.MAX_TOOL_ENTRIES; index++) {
+    assert.strictEqual(protectedStore.set('protected-user-' + index, { pinned: true }).ok, true);
+  }
+  assert.strictEqual(protectedStore.set('protected-overflow', { title: 'قرار جديد' }).ok, true,
+    'وسم مثبت عطّل قرار مستخدم جديداً بدلاً من إخلاء وسم خالص');
+  const protectedEntries = protectedStore.list();
+  assert.deepStrictEqual(protectedEntries['protected-tool'], { kind: 'tool', pinned: true },
+    'الإخلاء أسقط وسم أداة يحمل تثبيت مستخدم');
+  assert.deepStrictEqual(protectedEntries['protected-titled-tool'], { kind: 'tool', title: 'اسم المستخدم' },
+    'الإخلاء أسقط وسم أداة يحمل تسمية مستخدم');
+  assert.strictEqual(protectedEntries['protected-tool-only-0'], undefined,
+    'لم يُخلَ أقدم وسم خالص مع وجود وسم مثبت أقدم منه');
+
+  // فشل الكتابة بعد الإخلاء يعيد لقطة المخزن كاملة ولا يترك القرار الجديد في الذاكرة.
+  const rollbackSeed = { 'rollback-tool': { kind: 'tool' } };
+  for (let index = 0; index < sessionmeta.MAX_ENTRIES - 1; index++) {
+    rollbackSeed['rollback-user-' + index] = { pinned: true };
+  }
+  const failingFs = {
+    readFileSync() { return JSON.stringify(rollbackSeed); },
+    mkdirSync() {},
+    writeFileSync() {},
+    renameSync() { throw new Error('disk full'); },
+    unlinkSync() {},
+  };
+  const rollback = sessionmeta.createStore({ file: path.join(root, 'rollback.json'), fs: failingFs });
+  const rollbackBefore = rollback.list();
+  assert.deepStrictEqual(rollback.set('rollback-overflow', { pinned: true }),
+    { ok: false, error: 'write_failed' });
+  assert.deepStrictEqual(rollback.list(), rollbackBefore,
+    'فشل persist بعد الإخلاء لم يُعِد لقطة المخزن كاملة');
 
   const cappedFile = path.join(root, 'cap.json');
   const seed = {};
@@ -123,7 +188,8 @@ try {
   assert.strictEqual(operations[2][2], path.join(root, 'atomic.json'));
 
   console.log('sessionmeta: نجح — get/set/remove والتنقية والسقف والكتابة الذرية ورفض المدخلات، '
-    + 'ووسم الأدوات: القائمة المغلقة وحجبه عن renderer وبقاؤه مع التثبيت وحصّته المتدحرجة.');
+    + 'ووسم الأدوات: القائمة المغلقة وحجبه عن renderer وبقاؤه مع التثبيت وحصّته المتدحرجة؛ '
+    + 'OBS-074 ‏4/4: إخلاء الأقدم، تحصين قرارات المستخدم، بقاء limit، واستعادة فشل الكتابة.');
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }
