@@ -107,19 +107,24 @@ function parseUnified(buf) {
 }
 
 /**
- * تغييرات المستودع منذ HEAD: {ok, repo, files:[...], more, partial}
+ * تغييرات المستودع منذ HEAD: {ok, repo, head, files:[...], more, partial}
  * كل ملف: {rel, kind:'new'|'del'|'mod', renamedFrom?, skipped?, added, removed, lines, truncated}
  * skipped: 'binary'|'big'|'error' — صف بلا فرق (شارة فقط).
+ *
+ * head (‏OBS-034 — additive): هل للمستودع التزام واحد على الأقل (HEAD قابل للتحقق).
+ * `repo:false` يعني «ليس مستودعاً» فيصحبه دائماً `head:false`؛ و`repo:true, head:false`
+ * يعني «مستودع بلا أي commit». تستهلكه الواجهة لتنبيه «لا شبكة استرجاع» غير الحاجب،
+ * وهي القيمة نفسها التي تحكم فرق الملفات هنا (‏hasHead) فلا مصدر حقيقة ثانياً.
  */
 async function changes(cwd) {
   // جذر المستودع (مسارات status نسبية إليه لا إلى cwd الفرعي المحتمل)
   const top = await runGit(cwd, ['rev-parse', '--show-toplevel']);
   if (!top.ok) {
     if (top.code === 'ENOENT') return { ok: false, error: 'no_git' }; // git غير مثبّت
-    return { ok: true, repo: false };
+    return { ok: true, repo: false, head: false };
   }
   const root = top.out.toString('utf8').trim();
-  if (!root) return { ok: true, repo: false };
+  if (!root) return { ok: true, repo: false, head: false };
 
   // مستودع بلا أي التزام بعد (لا HEAD): كل شيء «جديد» والقبل فارغ
   const hasHead = (await runGit(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD'])).ok;
@@ -183,7 +188,7 @@ async function changes(cwd) {
     }
   }
 
-  return { ok: true, repo: true, files, more: Math.max(0, entries.length - MAX_FILES), partial };
+  return { ok: true, repo: true, head: hasHead, files, more: Math.max(0, entries.length - MAX_FILES), partial };
 }
 
 module.exports = { changes, parseUnified };

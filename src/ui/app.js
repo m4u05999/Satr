@@ -678,6 +678,47 @@ import { createPreviewShield } from './lib/preview-shield.js';
   const mobileEl = document.querySelector('satr-mobile-panel');
   function addNotice(text) { chatEl.addNotice(text); }
 
+  // ---------- تنبيه «لا شبكة استرجاع» عند أول كتابة (‏OBS-034) ----------
+  // لقطات التراجع ذاكرية تموت بإغلاق «سطر»، وcheckpoint يفقد `restorable` بعدها،
+  // فيبقى git الأرضية الوحيدة الباقية — وقد تكون غائبة أصلاً. لذلك تنبيه **غير حاجب
+  // مرة واحدة لكل مشروع** عند أول دور كتابة في مجلد ليس مستودعاً أو مستودع بلا أي
+  // commit. تمييز لازم (نصّ الملاحظة): commit يعطي كشفاً واسترجاعاً ولا يعطي إنفاذ
+  // ملكية — المنع الحقيقي عزلُ الكتابة، وهو ما تفعله غرفة العمليات وحدها.
+  const GIT_SAFETY_KEY = 'satr_git_safety_notice::'; // نمط مفاتيح المشروع القائم
+  const GIT_SAFETY_NOTICES = {
+    'no-repo': '⚠️ هذا المجلد ليس مستودع git — التراجع متاح داخل هذه الجلسة فقط ويضيع بإغلاق «سطر». '
+      + 'الأمران git init ثم أول commit يعطيانك شبكة استرجاع دائمة.',
+    'no-head': '⚠️ مستودع git بلا أي commit — التراجع متاح داخل هذه الجلسة فقط ويضيع بإغلاق «سطر». '
+      + 'أول commit يعطيك شبكة استرجاع دائمة.',
+  };
+  // نقية: من ردّ satr:gitChanges إلى حالة التنبيه أو null. fail-open للصمت — ردّ
+  // فاشل أو غير حاسم (git غير مثبّت، cwd سيئ، حقل head غائب في بناء أقدم) لا
+  // يُنبّه ولا يُسجَّل: لا ادّعاء بغياب شبكة استرجاع بلا دليل صريح عليه.
+  function gitSafetyState(result) {
+    if (!result || result.ok !== true) return null;
+    if (result.repo !== true) return 'no-repo';
+    return result.head === false ? 'no-head' : null;
+  }
+  const gitSafetyChecked = new Set(); // استعلام واحد لكل cwd في الجلسة (الفشل يعيد فتح الباب)
+  async function warnIfNoGitSafetyNet(cwd) {
+    const dir = String(cwd || '').trim();
+    if (!dir || gitSafetyChecked.has(dir)) return;
+    gitSafetyChecked.add(dir);
+    try {
+      const key = GIT_SAFETY_KEY + dir;
+      let seen = '';
+      try { seen = localStorage.getItem(key) || ''; } catch (e) {}
+      if (seen) return; // نُبّه سابقاً لهذا المشروع ⇒ لا استعلام أصلاً
+      if (!window.satr || typeof window.satr.gitChanges !== 'function') { gitSafetyChecked.delete(dir); return; }
+      const state = gitSafetyState(await window.satr.gitChanges(dir));
+      if (!state) return; // مستودع سليم أو ردّ غير حاسم ⇒ صمت بلا مفتاح (يُعاد الفحص لاحقاً)
+      try { localStorage.setItem(key, state); } catch (e) {}
+      addNotice(GIT_SAFETY_NOTICES[state]);
+    } catch (e) {
+      gitSafetyChecked.delete(dir); // فشل عابر لا يُسكت بقية الجلسة
+    }
+  }
+
   // منسّق الأسطح الواحد: لوحة رئيسية واحدة، سجل active/held/hidden، واستعادة تركيز
   // وقياس المعاينة الأصلية من موضعها الفعلي بعد كل انتقال.
   const surfaceCoordinator = (() => {
@@ -1342,6 +1383,9 @@ import { createPreviewShield } from './lib/preview-shield.js';
       block.addDiff(ev);
       recordSessionChange(ev);
       previewDirty = true; // م-1-ج: عُدّل ملف في هذا الدور ⇒ المعاينة تحتاج تحديثاً عند انتهائه
+      // OBS-034: أول كتابة ⇒ افحص شبكة استرجاع git. كسول **بعد** عرض الفرق وبلا
+      // await، فلا يؤخّر الدور، والفشل لا يؤثر في المسار (الدالة لا ترفض أبداً).
+      warnIfNoGitSafetyNet(sessionCwd || $('cwd').value.trim());
     } else if (ev.type === 'result') {
       // backgroundTasks قد يولد نتيجتي SDK؛ نحاسب وننهي العرض على الأولى فقط.
       if (block.resultHandled) return;

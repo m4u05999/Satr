@@ -3009,8 +3009,8 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   `electron/gitactions.js` (الجانب الكاتب — gitdiff.js يبقى قراءة فقط). «تجاهل» مدمّر
   فتؤكّده الواجهة بـ `confirm` عربي قبل الاستدعاء (checkout HEAD للمتتبَّع، حذف قرص للجديد).
   بعد كل فعل تُعاد قراءة القائمة، ونجاح الالتزام/الفشل يظهر تنبيهاً عربياً.
-- **IPC**: `satr:gitChanges {cwd}` → `{ok, repo, files:[{rel, kind, staged, renamedFrom?,
-  skipped?, added, removed, lines, truncated}], more, partial}` (أُضيف `staged`) ·
+- **IPC**: `satr:gitChanges {cwd}` → `{ok, repo, head, files:[{rel, kind, staged, renamedFrom?,
+  skipped?, added, removed, lines, truncated}], more, partial}` (أُضيف `staged` ثم `head`) ·
   `satr:gitAction {cwd, op, rel?, message?}` حيث op ∈ `{stage, unstage, discard, commit}`
   → `{ok, hash?}` أو `{ok:false, error}` (`no_git|no_repo|bad_cwd|bad_input|not_changed|
   nothing_staged|empty_message|outside|error(+message)}`). التنقية في main.js (op قائمة
@@ -3022,6 +3022,24 @@ localStorage (`satr_engine`)؛ فشل الجلب ⇒ الخيارات الثاب
   (main.js ظهر +517 −501 لتعديل 16 سطراً). عقد الأسطر واحد (`{t, text, old, new}`).
 - **حدود**: 100 ملف (الأكثر يُعدّ)، تخطّي الثنائي/الضخم >2م.ب (شارة بلا بطاقة)،
   ميزانية كلية 10ث (`partial`).
+- **تنبيه «لا شبكة استرجاع» (‏OBS-034 — 2026-09-03)**: لقطات التراجع ذاكرية تموت
+  بإغلاق «سطر»، وcheckpoint يفقد `restorable` بعدها، فيبقى git الأرضية الوحيدة —
+  وقد تغيب. لذلك يعيد `gitdiff.changes` حقلاً **additive** هو `head:boolean` (‏commit
+  واحد على الأقل)، مشتقاً من `hasHead` نفسه الذي يحكم حساب الفروقات فلا مصدر حقيقة
+  ثانٍ، ويصحب `repo:false` دائماً `head:false`. معالج `satr:gitChanges` يمرّر ردّ
+  `gitdiff` كما هو ⇒ **صفر تعديل في `main.js`**. وعند أول `file_edit` في الجلسة
+  تستدعي `app.js` ‏`warnIfNoGitSafetyNet(cwd)` **بعد** عرض الفرق وبلا `await` (لا
+  تؤخّر الدور، ولا ترفض أبداً فلا تؤثّر في المسار)، فتعرض `addNotice` عربياً غير
+  حاجب **مرة واحدة لكل مشروع** يميّز «ليس مستودعاً» من «مستودع بلا أي commit»،
+  ويُخزَّن القرار في `satr_git_safety_notice::<cwd>` (نمط `satr_draft::<cwd>`).
+  **fail-open للصمت عمداً**: ردّ فاشل أو بلا حقل `head` (بناء أقدم) لا يُنبّه ولا
+  يُسجَّل — لا ادّعاء بغياب شبكة استرجاع بلا دليل. والمستودع السليم يصمت **بلا كتابة
+  مفتاح** كي يبقى الفحص قائماً لجلسة لاحقة؛ ثمنه استعلام واحد لكل مشروع في الجلسة
+  (كلفة فتح لوحة ± مرة). **تمييز لازم**: الإشعار يَعِد بكشف واسترجاع لا بإنفاذ ملكية
+  — العزل الحقيقي (worktree + ملكية مسارات) يبقى في غرفة العمليات وحدها.
+  الحارس: `npm run test:gitdiff` (قطعي بمستودعات git حقيقية) يغطي `head` في الحالات
+  الثلاث وعدم تراجع الحقول القائمة، ومنطق التنبيه **مستخرَجاً من `app.js` وقت
+  التشغيل** (نمط منتقي الجهد في `test:claude-models`) لا نسخةً موازية.
 
 ### تصدير المحادثة 📤 (الدفعة 4.8 — «مشاركة»)
 
