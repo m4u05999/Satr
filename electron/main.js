@@ -1049,9 +1049,9 @@ ipcMain.handle('satr:preflight', async (event, payload) => {
     claudePromise, codexPromise, kimiPromise,
   ]);
 
-  // أسماء المفاتيح وحدها تُقرأ هنا؛ لا تُفك قيمة ولا تعبر إلى الواجهة. ويحافظ filter
+  // المفاتيح الصالحة فقط تفتح البوابة: hasUsableValue تفكّ سرّياً دون إعادة القيمة، ويحافظ filter
   // على ترتيب سجلّ المحوّلات ليكون أول مزوّد ذي مفتاح هو مرشّح الفتح الاحتياطي.
-  const savedKeyNames = forced('KEYS') ? new Set() : new Set(keys.names());
+  const savedKeyNames = forced('KEYS') ? new Set() : new Set(keys.names().filter((name) => keys.hasUsableValue(name)));
   const keyProviders = adapters.list()
     .filter((provider) => provider.keyName && savedKeyNames.has(provider.keyName))
     .map((provider) => ({ name: provider.name, label: provider.label }));
@@ -2479,7 +2479,7 @@ async function handleSessionForkRequest(payload, sessionAgent = agent) {
     return { ok: false, error: 'invalid_session', message: 'معرّف جلسة Claude غير صالح.' };
   }
   let upToMessageId;
-  if (payload.upToMessageId !== undefined) {
+  if (payload.upToMessageId !== undefined && payload.upToMessageId !== '') {
     if (typeof payload.upToMessageId !== 'string' || !SAFE_UUID.test(payload.upToMessageId)) {
       return { ok: false, error: 'invalid_message', message: 'معرّف رسالة المستخدم غير صالح.' };
     }

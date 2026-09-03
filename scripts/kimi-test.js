@@ -4,9 +4,11 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 const { EventEmitter } = require('events');
 
 const kimi = require('../electron/kimi');
+const sessionmeta = require('../electron/sessionmeta');
 const skillCatalog = require('../electron/skills');
 
 const root = path.resolve(__dirname, '..');
@@ -1491,6 +1493,64 @@ function testSecurityAndWiring() {
   assert.ok(preload.includes('kimiLogin:'));
 }
 
+// استخراج نصّي لمعالج satr:sessionFork الخاص بـKimi، مع mocks لما يحتاجه من main.js
+function loadKimiForkHandler() {
+  const mainSource = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
+  const safeSessionMatch = mainSource.match(/const SAFE_SESSION = [^\r\n]+;/);
+  const start = mainSource.indexOf('async function handleKimiSessionForkRequest(');
+  const end = mainSource.indexOf('async function handleRewindFilesRequest(', start);
+  assert.ok(safeSessionMatch && start >= 0 && end > start, 'تعذّر استخراج معالج تفريع Kimi من main.js');
+
+  const calls = [];
+  const sandbox = {
+    sessionmeta: { cleanTitle: sessionmeta.cleanTitle },
+    kimi: {
+      forkSession: async (args) => {
+        calls.push(args);
+        return { ok: true, sessionId: 'kimi_fork_123', from: 'end' };
+      },
+    },
+    exported: {},
+  };
+  vm.runInNewContext(
+    `${safeSessionMatch[0]}\n${mainSource.slice(start, end)}\nObject.assign(exported, { handleKimiSessionForkRequest });`,
+    sandbox,
+    { filename: 'main-kimi-fork-extract.js' },
+  );
+  return { handler: sandbox.exported.handleKimiSessionForkRequest, calls };
+}
+
+async function testMainForkLink() {
+  const { handler, calls } = loadKimiForkHandler();
+
+  // الحمولة كما يبنيها preload من وسائط app.js: upToMessageId فارغ يعني «من النهاية»
+  const payload = {
+    sessionId: 'kimi_session_1',
+    upToMessageId: '',
+    title: 'نسخة من جلسة',
+    engine: 'kimi-code',
+  };
+  const result = await handler(payload);
+  assert.strictEqual(result.ok, true, 'فراغ upToMessageId يجب ألا يفشل');
+  assert.strictEqual(result.sessionId, 'kimi_fork_123');
+  assert.strictEqual(calls.length, 1, 'لم تصل الحمولة إلى kimi.forkSession');
+  assert.strictEqual(calls[0].sessionId, 'kimi_session_1');
+  assert.strictEqual(calls[0].upToMessageId, undefined);
+  assert.strictEqual(calls[0].title, 'نسخة من جلسة');
+
+  calls.length = 0;
+  const badMessage = {
+    sessionId: 'kimi_session_1',
+    upToMessageId: '../../evil',
+    title: 'x',
+    engine: 'kimi-code',
+  };
+  const badResult = await handler(badMessage);
+  assert.strictEqual(badResult.ok, false, 'معرّف رسالة فاسد غير فارغ يُرفض');
+  assert.strictEqual(badResult.error, 'invalid_message');
+  assert.strictEqual(calls.length, 0, 'وصل طلب فاسد إلى kimi.forkSession');
+}
+
 (async () => {
   testSecurityAndWiring();
   await testNativeTurnAndPermission();
@@ -1510,6 +1570,7 @@ function testSecurityAndWiring() {
   await testModelCompactAndEffortContract();
   await testContextUsageCommand();
   await testForkSession();
+  await testMainForkLink();
   await testToolLabelsAndAvailableCommands();
   await testListModelsFromAcp();
   await testFullModelValueApplied();
@@ -1547,6 +1608,7 @@ function testSecurityAndWiring() {
   console.log('✓ خيار التفكير المعلن في configOptions يُطبَّق عبر session/set_config_option دون لمس config.toml');
   console.log('✓ OBS-023: المرساة اللغوية تصل Kimi آخرَ كتلة بصيغتها القوية، والمعزول خارجها');
   console.log('✓ OBS-052: انهيار الأنبوب في موضعَي spawn لا يسرّب استثناءً، والمستمع عند spawn لا لكل دور');
+  console.log('✓ وصلة تفريع Kimi عبر preload: الفراغ يصل kimi.forkSession والمعرّف الفاسد يُرفض');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;
