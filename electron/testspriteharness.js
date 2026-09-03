@@ -33,6 +33,19 @@ function harnessIndex() {
     .replace(INJECT_BEFORE, MOCK_TAG + '\n' + INJECT_BEFORE);
 }
 
+// المجلد الذي يعيده pickFolder المحاكي في المتصفح: من TESTSPRITE_FOLDER أو جذر
+// المشروع نفسه — لا مسار جهاز مطوّر مثبّت في ملف يُشحن داخل app.asar.
+function harnessFolder(env = process.env) {
+  const raw = env && typeof env.TESTSPRITE_FOLDER === 'string' ? env.TESTSPRITE_FOLDER.trim() : '';
+  return raw || ROOT;
+}
+
+// نص mock-satr.js المُقدَّم للمتصفح: مقدّمة تحقن المجلد كمتغيّر عام ثم العميل كما هو.
+function harnessClient(env = process.env) {
+  const prelude = 'window.__SATR_TESTSPRITE_FOLDER__ = ' + JSON.stringify(harnessFolder(env)) + ';\n';
+  return prelude + fs.readFileSync(CLIENT, 'utf8');
+}
+
 function safeAsset(pathname, base = SRC) {
   let decoded;
   try { decoded = decodeURIComponent(pathname); } catch (error) { return null; }
@@ -76,7 +89,7 @@ function createHarnessServer() {
       return;
     }
     if (pathname === '/__testsprite__/mock-satr.js') {
-      send(res, 200, MIME['.js'], fs.readFileSync(CLIENT), headOnly);
+      send(res, 200, MIME['.js'], harnessClient(), headOnly);
       return;
     }
     if (pathname === '/' || pathname === '/index.html') {
@@ -221,6 +234,6 @@ function startSite(port = DEFAULT_SITE_PORT) {
 
 module.exports = {
   ROOT, SRC, SITE, CLIENT, HOST, DEFAULT_PORT, DEFAULT_SITE_PORT,
-  createHarnessServer, createSiteServer, harnessIndex, safeAsset, parsePort,
+  createHarnessServer, createSiteServer, harnessIndex, harnessFolder, harnessClient, safeAsset, parsePort,
   supportsProject, supportsSite, probe, start, startSite,
 };

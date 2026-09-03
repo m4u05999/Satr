@@ -59,7 +59,9 @@
     keysList: async () => ({ names: [] }),
     keySet: async () => ({ ok: false, error: 'disabled_in_harness' }),
     keyDelete: async () => ({ ok: false, error: 'disabled_in_harness' }),
-    pickFolder: async () => 'D:\\sater\\satr-2',
+    // المجلد يحقنه خادم harness في مقدّمة هذا الملف (window.__SATR_TESTSPRITE_FOLDER__)
+    // — لا مسار ثابت لجهاز مطوّر؛ null يطابق إلغاء الحوار في التطبيق الحقيقي.
+    pickFolder: async () => (typeof window.__SATR_TESTSPRITE_FOLDER__ === 'string' && window.__SATR_TESTSPRITE_FOLDER__) || null,
     lastChat: async () => ({ sid: null }),
     forgetChat: async () => ({ ok: true }),
     listChats: async () => [],

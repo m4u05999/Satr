@@ -574,7 +574,7 @@ class SatrTerminalPanel extends HTMLElement {
       // علامة الالتقاط __SATR_ (السطر المُغلّف وسطرا البداية/النهاية) يُعرض فارغاً —
       // فيرى المستخدم الخرج النظيف فقط. أمر مستخدم حقيقي لا يحوي هذه العلامة.
       if (line.translateToString(true).indexOf('__SATR_') >= 0) {
-        if (rec.key !== 'satr') { rec.key = 'satr'; rec.el.textContent = ''; }
+        if (rec.key !== '\x01satr') { rec.key = '\x01satr'; rec.el.textContent = ''; }
         continue;
       }
       const r = extractLine(line, tab.cellRef);
