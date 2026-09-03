@@ -558,7 +558,11 @@ async function main() {
 
     const mainSource = await fsp.readFile(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
     const codexSource = await fsp.readFile(path.join(__dirname, '..', 'electron', 'codex.js'), 'utf8');
-    assert(mainSource.includes("const unavailable = unavailableReviewEngines(['sdk'])"));
+    assert(mainSource.includes("const unavailable = await unavailableReviewEngines(['sdk'])"));
+    // OBS-085: جاهزية Claude للمراجعة عبر `claude auth status` لا بقراءة ملف الاعتماد
+    assert(!mainSource.includes('.credentials.json'), 'main.js يقرأ ملف اعتماد Claude مباشرة');
+    assert(mainSource.includes('async function sdkReviewEngineAvailable()'));
+    assert(mainSource.includes('const auth = await claudeauth.probe(bin, { env: process.env });'));
     assert(mainSource.includes('artifactId: artifact.artifact_id'));
     assert(mainSource.includes('producerEngines: artifact.producer_engines'));
     assert(mainSource.includes('reviewerModule.mergeGate(review, artifact, p.reviewId)'));

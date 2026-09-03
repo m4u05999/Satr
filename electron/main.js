@@ -296,27 +296,28 @@ function browserBudgetFor(engine, sessionId) {
   return budget;
 }
 
-function sdkReviewEngineAvailable() {
-  if (!agent.resolveClaudeBin()) return false;
-  if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) return true;
-  try {
-    const credentials = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8'));
-    return !!(credentials && credentials.claudeAiOauth
-      && (credentials.claudeAiOauth.accessToken || credentials.claudeAiOauth.refreshToken));
-  } catch { return false; }
+// جاهزية Claude كمحرك مراجعة: عبر `claude auth status` (تدفق Anthropic نفسه — OBS-085) لا بقراءة
+// ملف اعتماد Claude على القرص؛ سطر لا يلمس ملفات الاعتماد ولو للوجود (يحرسه test:reviewmerge). `probe` يعيد loggedIn:true
+// فوراً عند ANTHROPIC_API_KEY/CLAUDE_CODE_OAUTH_TOKEN في البيئة، وتعذّر الفحص (null) يبقى fail-closed.
+async function sdkReviewEngineAvailable() {
+  const bin = agent.resolveClaudeBin();
+  if (!bin) return false;
+  const auth = await claudeauth.probe(bin, { env: process.env });
+  return auth.loggedIn === true;
 }
 
-function reviewEngineAvailable(engine) {
+async function reviewEngineAvailable(engine) {
   if (engine === 'sdk') return sdkReviewEngineAvailable();
   if (engine === 'codex') return !!codex.resolveCodexBin()
     && (codex.authStatus().ok || !!process.env.CODEX_API_KEY);
   return false;
 }
 
-function unavailableReviewEngines(producerEngines) {
+async function unavailableReviewEngines(producerEngines) {
   const required = reviewerModule.requiredReviewEngines(producerEngines);
   const engines = required ? [...new Set([...producerEngines, ...required])] : ['invalid'];
-  return engines.filter((engine) => !reviewEngineAvailable(engine));
+  const availability = await Promise.all(engines.map((engine) => reviewEngineAvailable(engine)));
+  return engines.filter((engine, index) => !availability[index]);
 }
 
 const IS_WIN = process.platform === 'win32';
@@ -3922,7 +3923,7 @@ ipcMain.handle('satr:executionTeamStart', async (event, payload) => {
   if (mode === 'mergeable') {
     const configured = await integration.preflight(cwd);
     if (!configured.ok) return configured;
-    const unavailable = unavailableReviewEngines(['sdk']);
+    const unavailable = await unavailableReviewEngines(['sdk']);
     if (unavailable.length) return { ok: false, error: 'review_engine_unavailable', engines: unavailable };
   }
   const previewCleanup = await integration.stopPreview();

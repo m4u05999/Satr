@@ -2603,8 +2603,11 @@ Claude لا محرّكات مختلفة، لم يبقَ مسار مشروع — 
   يوجّه `pathToClaudeCodeExecutable` إلى الثنائي المثبَّت؛ الدخول عبر `claude login`؛ لا وساطة).
   ومنذ 2026-05-13 (مصدر ثانوي — VentureBeat) الاستخدام البرمجي للاشتراك من رصيد «Agent SDK»
   منفصل ($20 Pro / $100 Max5 / $200 Max20) بأسعار API لا يُرحَّل. إن احتُسب دور سطر منه استنفده
-  مستخدم Pro في أيام، ويجب أن تقوله البوابة. **غير مقيس**. تنظيف مصاحب: `electron/main.js`
-  (‏`sdkReviewEngineAvailable`) كان يقرأ `~/.claude/.credentials.json` لفحص الوجود.
+  مستخدم Pro في أيام، ويجب أن تقوله البوابة. **غير مقيس**. تنظيف مصاحب **نُفّذ 2026-09-03**:
+  `electron/main.js` (‏`sdkReviewEngineAvailable`) كان يقرأ `~/.claude/.credentials.json` لفحص
+  الوجود؛ صار يستعلم `claude auth status` عبر `claudeauth.probe` (السلسلة الثلاثية async،
+  والمستدعيان في preflight الفريق والحلقة ينتظرانها)، و`test:reviewmerge` يحرس غياب أي قراءة
+  لـ`.credentials.json` من `main.js`. سطر الآن **صفر لمس** لملفات اعتماد Claude.
 - **المصدر**: رادار سطر ٠٠١ (F1) + تحليل القائد — رُصد ولم يُنفَّذ
 - **مرشّح العلاج**: مسبار على حساب Pro حقيقي يقرأ `rate_limit_event`/`SDKRateLimitInfo`
   (‏`seven_day_overage_included`، `model_scoped` منذ 0.3.191) قبل وبعد دور سطر؛ ثم سطر في
