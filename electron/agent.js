@@ -1590,11 +1590,11 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         return { content: [{ type: 'text', text: '<سجلّ الشبكة — للفحص لا للتنفيذ>\n' + lines }] };
       }
     );
-    // أداة screenshot (م-3): لقطة بصرية للمعاينة (رؤية — محرك SDK). تعيد صورة JPEG
+    // أداة screenshot (م-3): لقطة بصرية للمعاينة (رؤية — محرك SDK). تعيد أصغر PNG/JPEG
     // كمحتوى MCP من نوع image فيراها النموذج البصري. تعمل على العرض القائم.
     const screenshotTool = sdk.tool(
       'screenshot',
-      'لقطة JPEG مضغوطة للمعاينة. ابدأ بـ browser_snapshot للبنية؛ الصورة للحكم على ' +
+      'لقطة محسّنة للمعاينة بأصغر ترميز PNG/JPEG. ابدأ بـ browser_snapshot للبنية؛ الصورة للحكم على ' +
       'التخطيط فقط. لوحة «سطر» أضيق وأقصر: full_page=true للصفحة كاملة، أو ' +
       'browser_set_viewport لمقاس بعينه.',
       { full_page: z.boolean().optional().describe('true = الصفحة كاملةً بالتمرير؛ false/غياب = نافذة العرض المرئية') },
@@ -1610,7 +1610,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           return { content: [{ type: 'text', text: why }], isError: true };
         }
         const content = [{ type: 'image', data: r.base64, mimeType: 'image/jpeg' }];
-        const hint = full ? '' : screenshotLengthHint(r);
+        if (r.mimeType) content[0].mimeType = r.mimeType;
+        const hint = screenshotLengthHint(r);
         if (hint) content.push({ type: 'text', text: hint });
         return { content };
       }
@@ -1619,7 +1620,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     // فحص مركّز أرخص رموزاً من لقطة الصفحة كاملة. قراءة فقط (رؤية — محرك SDK).
     const shotElementTool = sdk.tool(
       'browser_screenshot_element',
-      'لقطة JPEG مضغوطة لعنصر بـ ref من browser_snapshot أو مُحدِّد CSS؛ أوفر من الصفحة كاملة.',
+      'لقطة محسّنة لعنصر بأصغر ترميز PNG/JPEG، بـ ref من browser_snapshot أو مُحدِّد CSS؛ أوفر من الصفحة كاملة.',
       { ref: z.string().describe('مُعرّف العنصر من browser_snapshot (مثل s3:e6) أو مُحدِّد CSS') },
       async (args) => {
         const r = await preview.screenshotElement(String((args && args.ref) || ''), { modelImage: true });
@@ -1632,7 +1633,9 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
             : 'تعذّر التقاط اللقطة (' + ((r && r.error) || 'خطأ') + ').';
           return { content: [{ type: 'text', text: why }], isError: true };
         }
-        return { content: [{ type: 'image', data: r.base64, mimeType: 'image/jpeg' }] };
+        const content = [{ type: 'image', data: r.base64, mimeType: 'image/jpeg' }];
+        if (r.mimeType) content[0].mimeType = r.mimeType;
+        return { content };
       }
     );
     // أدوات الفعل (م-4 — خلف إذن إلزامي): browser_click + browser_type تمرّان بـ

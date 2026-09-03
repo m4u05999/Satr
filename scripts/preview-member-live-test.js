@@ -10,6 +10,53 @@ const preview = require('../electron/preview');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function imageMime(data) {
+  if (data.length >= 8 && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) return 'image/png';
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
+  return '';
+}
+
+function modelEncodingCandidates(rawShot) {
+  const raw = Buffer.from(rawShot.base64, 'base64');
+  let image = nativeImage.createFromBuffer(raw);
+  const sourceSize = image.getSize();
+  if (sourceSize.width > preview.SHOT_MAX_EDGE) {
+    const ratio = preview.SHOT_MAX_EDGE / sourceSize.width;
+    image = image.resize({
+      width: Math.max(1, Math.round(sourceSize.width * ratio)),
+      height: Math.max(1, Math.round(sourceSize.height * ratio)),
+      quality: 'good',
+    });
+  }
+  const png = image.toPNG();
+  const jpeg = image.toJPEG(preview.SHOT_JPEG_QUALITY);
+  return {
+    png: png.length, jpeg: jpeg.length, size: image.getSize(),
+    selectedMime: png.length <= jpeg.length ? 'image/png' : 'image/jpeg',
+    selectedBytes: Math.min(png.length, jpeg.length),
+  };
+}
+
+function verifyModelEncoding(name, rawShot, modelShot) {
+  assert.strictEqual(rawShot.mimeType, 'image/png', 'العينة الخام ' + name + ' لم تعد PNG');
+  const candidates = modelEncodingCandidates(rawShot);
+  const encoded = preview._internals.encodeScreenshot(nativeImage.createFromBuffer(Buffer.from(rawShot.base64, 'base64')), true);
+  const data = Buffer.from(modelShot.base64, 'base64');
+  assert(encoded && encoded.mimeType === candidates.selectedMime && encoded.data.length === candidates.selectedBytes,
+    'مرمّز الإنتاج لم يختر الأصغر في ' + name + ': PNG=' + candidates.png + ' JPEG=' + candidates.jpeg);
+  assert.strictEqual(modelShot.mimeType, candidates.selectedMime,
+    'صيغة لقطة النموذج ' + name + ' ليست الأصغر: PNG=' + candidates.png + ' JPEG=' + candidates.jpeg);
+  assert.strictEqual(imageMime(data), modelShot.mimeType, 'mimeType لا يطابق رأس بايتات ' + name);
+  const returnedImage = nativeImage.createFromBuffer(data);
+  const alternateBytes = modelShot.mimeType === 'image/png'
+    ? returnedImage.toJPEG(preview.SHOT_JPEG_QUALITY).length : returnedImage.toPNG().length;
+  assert(data.length <= alternateBytes,
+    'الصيغة المعادة ليست الأصغر لبكسلات ' + name + ': selected=' + data.length + ' alternate=' + alternateBytes);
+  assert(data.length > 0 && returnedImage.getSize().width <= preview.SHOT_MAX_EDGE,
+    'عرض لقطة النموذج ' + name + ' تجاوز السقف الأفقي');
+  return { ...candidates, actualBytes: data.length, actualSize: returnedImage.getSize() };
+}
+
 function startServer() {
   const server = http.createServer((request, response) => {
     if (request.url === '/fixture.txt') {
@@ -21,35 +68,90 @@ function startServer() {
       response.end('<!doctype html><html><body><h1>الثانية</h1></body></html>'); return;
     }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    response.end(`<!doctype html><html><body>
-      <button id="change" onclick="document.getElementById('status').textContent='changed'">غيّر</button>
-      <button id="delayed" onclick="setTimeout(function(){document.getElementById('status').textContent='delayed'},120)">غيّر لاحقاً</button>
-      <button id="noop">بلا تغيير</button><div id="status">idle</div>
-      <canvas id="shot-fixture" width="640" height="1300" aria-label="عينة بصرية حتمية لقياس ضغط اللقطات"></canvas>
-      <button id="generation" onclick="document.getElementById('generation-status').textContent=Number(document.getElementById('generation-status').textContent)+1">اختبر الجيل</button>
-      <div id="generation-status">0</div>
-      <button id="delta-target">بدّل دلتا</button>
-      <div id="editor" contenteditable="true"><b>قديم</b></div>
-      <a id="next" href="/two">التالي</a>
-      <a id="external" href="https://external.example/path">خارجي</a>
-      <a id="download" href="/fixture.txt" download="fixture.txt">نزّل</a>
+    response.end(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>
+      :root { --fixture-page:#f3f5f9; --fixture-surface:#fff; --fixture-text:#172033; --fixture-muted:#667085;
+        --fixture-line:#d9deea; --fixture-primary:#3457d5; --fixture-primary-soft:#e8edff;
+        --fixture-success:#147d64; --fixture-success-soft:#e2f5ef; --fixture-warning:#9a5b00;
+        --fixture-warning-soft:#fff1d6; --fixture-shadow:rgba(23,32,51,.12); }
+      * { box-sizing:border-box; } body { margin:0; background:var(--fixture-page); color:var(--fixture-text);
+        direction:rtl; font-family:system-ui,sans-serif; text-align:start; }
+      .test-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px 16px;
+        background:var(--fixture-surface); border-bottom:1px solid var(--fixture-line); }
+      button, input, a { font:inherit; } button, .fixture-action { border:1px solid var(--fixture-line);
+        border-radius:8px; background:var(--fixture-surface); color:var(--fixture-text); padding:7px 12px; }
+      #status, #generation-status { min-width:32px; color:var(--fixture-muted); }
+      #editor { min-width:100px; padding:7px 10px; border:1px solid var(--fixture-line); border-radius:8px; }
+      #shot-fixture { width:min(640px,calc(100% - 32px)); min-height:1300px; margin:24px auto;
+        overflow:hidden; border:1px solid var(--fixture-line); border-radius:18px; background:var(--fixture-surface);
+        box-shadow:0 12px 30px var(--fixture-shadow); }
+      .fixture-header { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; padding:28px;
+        color:var(--fixture-surface); background:var(--fixture-primary); }
+      .fixture-header h1, .fixture-header p { margin:0; } .fixture-header p { margin-top:8px; opacity:.88; }
+      .fixture-code { direction:ltr; unicode-bidi:isolate; white-space:nowrap; }
+      .fixture-action { border-color:var(--fixture-surface); color:var(--fixture-primary); }
+      .fixture-content { display:grid; gap:22px; padding:28px; }
+      .fixture-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+      .fixture-card { padding:16px; border:1px solid var(--fixture-line); border-radius:12px;
+        background:var(--fixture-surface); } .fixture-card h2 { margin:0 0 9px; font-size:15px; }
+      .fixture-number { margin:0; font-size:28px; font-weight:700; } .fixture-note { margin:7px 0 0; color:var(--fixture-muted); }
+      .fixture-panel { border:1px solid var(--fixture-line); border-radius:14px; overflow:hidden; }
+      .fixture-panel-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:16px 18px;
+        background:var(--fixture-primary-soft); } .fixture-panel h2 { margin:0; font-size:17px; }
+      .fixture-list { list-style:none; margin:0; padding:0; } .fixture-list li { display:flex; gap:12px;
+        justify-content:space-between; padding:15px 18px; border-top:1px solid var(--fixture-line); }
+      .fixture-list p { margin:0; } .fixture-list small { display:block; margin-top:4px; color:var(--fixture-muted); }
+      .fixture-badge { align-self:center; border-radius:999px; padding:5px 9px; color:var(--fixture-success);
+        background:var(--fixture-success-soft); white-space:nowrap; }
+      .fixture-badge.warn { color:var(--fixture-warning); background:var(--fixture-warning-soft); }
+      .fixture-table-wrap { overflow:auto; } table { width:100%; border-collapse:collapse; }
+      th, td { padding:13px 16px; border-top:1px solid var(--fixture-line); text-align:start; }
+      th { color:var(--fixture-muted); font-size:13px; } .fixture-footer { padding:18px 28px 26px;
+        color:var(--fixture-muted); border-top:1px solid var(--fixture-line); }
+      @media (max-width:520px) { .fixture-cards { grid-template-columns:1fr; }
+        .fixture-header { flex-direction:column; } .fixture-content { padding:18px; } }
+    </style></head><body>
+      <div class="test-controls">
+        <button id="change" onclick="document.getElementById('status').textContent='changed'">غيّر</button>
+        <button id="delayed" onclick="setTimeout(function(){document.getElementById('status').textContent='delayed'},120)">غيّر لاحقاً</button>
+        <button id="noop">بلا تغيير</button><span id="status">idle</span>
+        <button id="generation" onclick="document.getElementById('generation-status').textContent=Number(document.getElementById('generation-status').textContent)+1">اختبر الجيل</button>
+        <span id="generation-status">0</span><button id="delta-target">بدّل دلتا</button>
+        <div id="editor" contenteditable="true"><b>قديم</b></div>
+        <a id="next" href="/two">التالي</a><a id="external" href="https://external.example/path">خارجي</a>
+        <a id="download" href="/fixture.txt" download="fixture.txt">نزّل</a>
+      </div>
+      <main id="shot-fixture" aria-label="واجهة عربية فعلية لقياس ترميز اللقطات">
+        <header class="fixture-header"><div><h1>لوحة متابعة المشروع</h1>
+          <p>ملخّص واضح لحالة العمل والمهام المفتوحة لهذا الأسبوع.</p></div>
+          <button class="fixture-action">إنشاء تقرير</button></header>
+        <div class="fixture-content">
+          <section class="fixture-cards" aria-label="المؤشرات">
+            <article class="fixture-card"><h2>المهام المنجزة</h2><p class="fixture-number">24</p><p class="fixture-note">أعلى بثلاث مهام من أمس</p></article>
+            <article class="fixture-card"><h2>قيد المراجعة</h2><p class="fixture-number">7</p><p class="fixture-note">مراجعتان تحتاجان قراراً</p></article>
+            <article class="fixture-card"><h2>وقت الاستجابة</h2><p class="fixture-number"><span class="fixture-code">1.8s</span></p><p class="fixture-note">ضمن الهدف التشغيلي</p></article>
+          </section>
+          <section class="fixture-panel"><div class="fixture-panel-head"><h2>آخر الأنشطة</h2><span>اليوم</span></div>
+            <ul class="fixture-list">
+              <li><p>اكتملت مراجعة صفحة الإعدادات<small>راجع الفريق الاتجاه والتباين وحالة التحميل.</small></p><span class="fixture-badge">مكتمل</span></li>
+              <li><p><span class="fixture-code">SHA-256</span> تم التحقق من بصمة الحزمة<small>طابقت البصمة الملف المنشور في قناة الاختبار.</small></p><span class="fixture-badge">سليم</span></li>
+              <li><p>تحديث بيانات المشروع متأخر<small>آخر مزامنة كانت قبل خمس عشرة دقيقة.</small></p><span class="fixture-badge warn">تنبيه</span></li>
+              <li><p>أضيف عضوان إلى مساحة العمل<small>الصلاحيات الافتراضية للقراءة فقط.</small></p><span class="fixture-badge">جديد</span></li>
+            </ul>
+          </section>
+          <section class="fixture-panel"><div class="fixture-panel-head"><h2>إصدارات هذا الأسبوع</h2><button>عرض الكل</button></div>
+            <div class="fixture-table-wrap"><table><thead><tr><th>الإصدار</th><th>الحالة</th><th>المدة</th></tr></thead>
+              <tbody><tr><td class="fixture-code">v2.16.9</td><td>جاهز للاختبار</td><td class="fixture-code">08:42</td></tr>
+              <tr><td class="fixture-code">v2.16.8</td><td>نُشر بنجاح</td><td class="fixture-code">06:15</td></tr>
+              <tr><td class="fixture-code">v2.16.7</td><td>مؤرشف</td><td class="fixture-code">05:58</td></tr></tbody></table></div>
+          </section>
+          <section class="fixture-panel"><div class="fixture-panel-head"><h2>ملاحظات الفريق</h2><span>٤ ملاحظات</span></div>
+            <ul class="fixture-list"><li><p>تأكد من وضوح رسائل الفشل قبل بدء تجربة القبول.<small>لكل خطوة نتيجة صواب وفشل مكتوبة سلفاً.</small></p></li>
+              <li><p>راجع التخطيط عند العرض الضيق.<small>يجب ألا يظهر تمرير أفقي في الصفحة.</small></p></li></ul>
+          </section>
+        </div>
+        <footer class="fixture-footer">آخر تحديث: اليوم، الساعة <span class="fixture-code">14:30</span></footer>
+      </main>
       <script>
-        var shotCanvas = document.getElementById('shot-fixture');
-        var shotContext = shotCanvas.getContext('2d');
-        var shotPixels = shotContext.createImageData(shotCanvas.width, shotCanvas.height);
-        var shotSeed = 16016;
-        for (var shotY = 0; shotY < shotCanvas.height; shotY++) {
-          for (var shotX = 0; shotX < shotCanvas.width; shotX++) {
-            shotSeed = (shotSeed * 1664525 + 1013904223) >>> 0;
-            var shotNoise = (shotSeed >>> 24) - 128;
-            var shotAt = (shotY * shotCanvas.width + shotX) * 4;
-            shotPixels.data[shotAt] = Math.max(0, Math.min(255, shotX * 255 / shotCanvas.width + shotNoise / 5));
-            shotPixels.data[shotAt + 1] = Math.max(0, Math.min(255, shotY * 255 / shotCanvas.height + shotNoise / 6));
-            shotPixels.data[shotAt + 2] = Math.max(0, Math.min(255, 180 + shotNoise / 4));
-            shotPixels.data[shotAt + 3] = 255;
-          }
-        }
-        shotContext.putImageData(shotPixels, 0, 0);
         function replaceDeltaTarget(event) {
           var next = document.createElement('button');
           next.id = 'delta-target';
@@ -70,38 +172,57 @@ async function main() {
   app.setPath('downloads', temp);
   const { server, url } = await startServer();
   const events = [];
-  const win = new BrowserWindow({ show: false, width: 900, height: 700,
+  const win = new BrowserWindow({ show: false, width: 900, height: 860,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
   try {
     assert.deepStrictEqual(preview._internals.effectiveBounds({ x: 0, y: 0, width: 800, height: 600 }), { x: 0, y: 0, width: 800, height: 600 });
     assert(/safe_name/.test(preview._internals.safeDownloadName('safe_name.txt')));
     assert(preview._internals.isLocalHttpsUrl('https://localhost:5173') && preview._internals.isLocalHttpsUrl('https://127.0.0.1:8443'), 'شهادة localhost ليست ضمن الاستثناء');
     assert(!preview._internals.isLocalHttpsUrl('https://example.com'), 'استثناء الشهادة يتسرب إلى نطاق خارجي');
-    preview.setBounds({ x: 10, y: 10, width: 800, height: 600 });
+    preview.setBounds({ x: 10, y: 10, width: 700, height: 760 });
     assert.strictEqual(preview.open(win, (event) => events.push(event), url + '/one').ok, true);
     const ready = await preview.waitFor({ selector: '#change' }, 5000);
     assert(ready.ok && ready.found, 'لم تجهز صفحة المسبار');
 
     win.showInactive();
     await delay(200);
+    const fixtureKind = await preview.evaluate("document.querySelector('#shot-fixture').tagName + ':' + document.querySelectorAll('#shot-fixture canvas').length");
+    assert(fixtureKind.ok && fixtureKind.value === 'MAIN:0', 'عينة الترميز ليست واجهة DOM فعلية بلا canvas ضوضاء');
+    const rawFullShot = await preview.screenshotFull();
+    const rawElementShot = await preview.screenshotElement('#shot-fixture', { emitThumbnail: false });
+    const rawViewportShot = await preview.screenshot();
+    assert(rawFullShot.ok && rawElementShot.ok && rawViewportShot.ok, 'تعذّر أخذ PNG الخام لقياس الصيغتين');
+    events.length = 0;
     const fullShot = await preview.screenshotFull({ modelImage: true });
     const elementShot = await preview.screenshotElement('#shot-fixture', { modelImage: true });
     const viewportShot = await preview.screenshot({ modelImage: true });
     assert(fullShot.ok && elementShot.ok && viewportShot.ok, 'تعذّر أخذ عينات قياس اللقطات');
     assert.strictEqual(preview.SHOT_MAX_EDGE, 1280, 'سقف لقطة النموذج المعلن انحرف');
     assert.strictEqual(preview.SHOT_JPEG_QUALITY, 72, 'جودة JPEG المعلنة انحرفت');
-    const shotBytes = {};
-    for (const [name, shot] of [['full', fullShot], ['element', elementShot], ['viewport', viewportShot]]) {
-      const data = Buffer.from(shot.base64, 'base64');
-      const image = nativeImage.createFromBuffer(data);
-      const size = image.getSize();
-      shotBytes[name] = data.length;
-      assert(data[0] === 0xff && data[1] === 0xd8, 'لقطة النموذج ' + name + ' ليست JPEG برأس FFD8');
-      assert(size.width > 0 && size.height > 0 && Math.max(size.width, size.height) <= preview.SHOT_MAX_EDGE,
-        'لقطة النموذج ' + name + ' تجاوزت السقف: ' + size.width + 'x' + size.height);
-    }
+    const actualViewport = await preview.evaluate('String(window.innerWidth)');
+    const viewportWidth = Number(actualViewport.value);
+    const fullModelSize = nativeImage.createFromBuffer(Buffer.from(fullShot.base64, 'base64')).getSize();
+    assert(actualViewport.ok && viewportWidth > 0 && viewportWidth <= preview.SHOT_MAX_EDGE,
+      'عرض نافذة القياس غير صالح لاختبار حفظ عرض full_page: ' + actualViewport.value);
+    assert(fullModelSize.width >= viewportWidth,
+      'full_page صُغّرت عن عرض النافذة: ' + fullModelSize.width + ' < ' + viewportWidth);
+    assert(fullModelSize.height > preview.SHOT_MAX_EDGE,
+      'الحارس لا يثبت بقاء طول full_page فوق السقف الأفقي: ' + fullModelSize.height);
+    const measurements = {
+      full: verifyModelEncoding('full', rawFullShot, fullShot),
+      element: verifyModelEncoding('element', rawElementShot, elementShot),
+      viewport: verifyModelEncoding('viewport', rawViewportShot, viewportShot),
+    };
     assert(fullShot.page_metrics && fullShot.page_metrics.content_height > fullShot.page_metrics.viewport_height,
       'لقطة الصفحة الكاملة فقدت page_metrics بعد التصغير');
+    const pickShot = await preview.screenshotElement('#shot-fixture', {
+      emitThumbnail: false, modelImage: true, preserveDisplayImage: true,
+    });
+    assert(pickShot.ok && pickShot.mimeType === 'image/png' && imageMime(Buffer.from(pickShot.base64, 'base64')) === 'image/png',
+      'نسخة العرض في عقد 🎯 لم تبق PNG');
+    assert(pickShot.modelBase64 && pickShot.modelMimeType === measurements.element.selectedMime
+      && imageMime(Buffer.from(pickShot.modelBase64, 'base64')) === pickShot.modelMimeType,
+      'عقد 🎯 لم يعد نسخة النموذج ومطابقة mimeType منفصلين');
     const thumbnailEvents = events.filter((event) => event.type === 'agent_screenshot');
     assert.strictEqual(thumbnailEvents.length, 3, 'لم تُبث مصغّرات المستخدم للعينات الثلاث');
     for (const event of thumbnailEvents) {
@@ -111,9 +232,14 @@ async function main() {
       assert(data.length <= 512 * 1024 && size.width <= 360,
         'مصغّرة agent_screenshot تجاوزت 360px/512KiB: ' + size.width + 'px/' + data.length + 'B');
     }
-    console.log('preview-member-live shot bytes (JPEG q' + preview.SHOT_JPEG_QUALITY + ', max '
-      + preview.SHOT_MAX_EDGE + 'px): full=' + shotBytes.full + ' element=' + shotBytes.element
-      + ' viewport=' + shotBytes.viewport);
+    console.log('preview-member-live encoding bytes (real Arabic UI, width cap ' + preview.SHOT_MAX_EDGE
+      + 'px, JPEG q' + preview.SHOT_JPEG_QUALITY + '):');
+    console.log('| sample | PNG | JPEG | selected |');
+    for (const name of ['full', 'element', 'viewport']) {
+      const item = measurements[name];
+      console.log('| ' + name + ' | ' + item.png + ' | ' + item.jpeg + ' | '
+        + item.selectedMime + ' (' + item.selectedBytes + ') |');
+    }
     win.hide();
 
     const firstSnapshot = await preview.snapshot();
@@ -205,7 +331,7 @@ async function main() {
     const saved = events.find((event) => event.type === 'preview_download_saved');
     assert(saved && saved.path.startsWith(temp) && fs.readFileSync(saved.path, 'utf8') === 'downloaded', 'will-download لم يحفظ الملف في Downloads الفعلي');
 
-    console.log('preview-member-live: نجح — أجيال refs وDOM delta المحدودة وstale_ref، صدق الأفعال، الوميض، contenteditable، evaluate، viewport، history، التنزيل، وحصر الشهادة محلياً.');
+    console.log('preview-member-live: نجح — أصغر PNG/JPEG وحفظ عرض full_page وعقد 🎯، أجيال refs وDOM delta المحدودة وstale_ref، صدق الأفعال، الوميض، contenteditable، evaluate، viewport، history، التنزيل، وحصر الشهادة محلياً.');
   } finally {
     preview.destroy();
     if (!win.isDestroyed()) win.destroy();

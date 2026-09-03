@@ -51,8 +51,8 @@ function safeEqual(a, b) {
 function textResult(text, isError) {
   return { content: [{ type: 'text', text: String(text) }], isError: !!isError };
 }
-function imageResult(base64, note) {
-  const content = [{ type: 'image', data: base64, mimeType: 'image/jpeg' }];
+function imageResult(base64, note, mimeType) {
+  const content = [{ type: 'image', data: base64, mimeType: mimeType || 'image/jpeg' }];
   if (note) content.push({ type: 'text', text: note });
   return { content };
 }
@@ -153,6 +153,13 @@ function screenshotLengthHint(result) {
     : source.metrics && typeof source.metrics === 'object' ? source.metrics : source;
   const contentHeight = Number(metrics.content_height ?? metrics.contentHeight ?? metrics.scroll_height ?? metrics.scrollHeight);
   const viewportHeight = Number(metrics.viewport_height ?? metrics.viewportHeight ?? metrics.inner_height ?? metrics.innerHeight);
+  if (source.full_page === true) {
+    if (!source.truncated) return '';
+    const capturedHeight = Number(source.captured_height ?? source.capturedHeight);
+    const captured = capturedHeight > 0 ? Math.round(capturedHeight) + 'px' : 'السقف المسموح';
+    const total = contentHeight > 0 ? ' من أصل ' + Math.round(contentHeight) + 'px' : '';
+    return 'قُصّت لقطة الصفحة عند ' + captured + total + ' — افحص بقية الصفحة بالتمرير أو بلقطات عناصر.';
+  }
   if (!(contentHeight > 0) || !(viewportHeight > 0) || contentHeight < viewportHeight * 3) return '';
   const ratio = Math.max(3, Math.round(contentHeight / viewportHeight));
   return 'الصفحة أطول من المعروض نحو ' + ratio + '× — خذ `full_page:true` للحكم على التخطيط كاملاً.';
@@ -347,7 +354,7 @@ function buildTools(deps) {
     },
     {
       name: 'screenshot',
-      description: 'لقطة JPEG مضغوطة للمعاينة. ابدأ بـ browser_snapshot للبنية؛ الصورة للحكم '
+      description: 'لقطة محسّنة للمعاينة بأصغر ترميز PNG/JPEG. ابدأ بـ browser_snapshot للبنية؛ الصورة للحكم '
         + 'على التخطيط فقط. لوحة «سطر» أضيق وأقصر: full_page=true للصفحة كاملة، أو '
         + 'browser_set_viewport لمقاس بعينه.',
       inputSchema: { type: 'object', properties: { full_page: { type: 'boolean' } } },
@@ -356,12 +363,12 @@ function buildTools(deps) {
         const r = full ? await preview.screenshotFull({ modelImage: true })
           : await preview.screenshot({ includePageMetrics: true, modelImage: true });
         if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّر التقاط اللقطة'), true);
-        return imageResult(r.base64, full ? '' : screenshotLengthHint(r));
+        return imageResult(r.base64, screenshotLengthHint(r), r.mimeType);
       },
     },
     {
       name: 'browser_screenshot_element',
-      description: 'لقطة JPEG مضغوطة لعنصر بـ ref من browser_snapshot أو مُحدِّد CSS؛ '
+      description: 'لقطة محسّنة لعنصر بأصغر ترميز PNG/JPEG، بـ ref من browser_snapshot أو مُحدِّد CSS؛ '
         + 'أوفر من الصفحة كاملة. قراءة فقط.',
       inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'ref (مثل s3:e6) أو مُحدِّد CSS' } }, required: ['ref'] },
       handler: async (args) => {
@@ -371,7 +378,7 @@ function buildTools(deps) {
             : r && r.error === 'not_visible' ? 'العنصر غير ظاهر (بلا أبعاد).' : whyClosed(r && r.error, 'تعذّر التقاط اللقطة');
           return textResult(why, true);
         }
-        return imageResult(r.base64);
+        return imageResult(r.base64, '', r.mimeType);
       },
     },
     {
