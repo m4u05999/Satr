@@ -1491,33 +1491,53 @@ function testSecurityAndWiring() {
   assert.ok(main.includes("thinking: payload.thinking === 'on' ? 'on' : null"));
   assert.ok(main.includes('kimi._internals.loginCommand(bin)') && main.includes('kimi._internals.loginCwd(cwd)'));
   assert.ok(preload.includes('kimiLogin:'));
+  // OBS-075: خريطة cwd الموثوقة تتغذّى من send/list المملوكين لـmain ويستهلكها معالج التفريع
+  assert.ok(main.includes('const kimiSessionCwd = new Map()'));
+  assert.ok(main.includes('function noteKimiSessionCwd(') && main.includes('function trustedKimiSessionCwd('));
+  assert.ok(/ipcMain\.handle\('satr:listKimiSessions'[\s\S]{0,300}noteKimiSessionCwd/.test(main));
+  assert.ok(main.includes('noteKimiSessionCwd(obj.session_id, cwd)'));
+  assert.ok(main.includes("result.error === 'session_not_found'") && main.includes("'kimi_session_not_found'"));
+  assert.ok(preload.includes('sessionFork: (sessionId, upToMessageId, title, engine)'));
 }
 
-// استخراج نصّي لمعالج satr:sessionFork الخاص بـKimi، مع mocks لما يحتاجه من main.js
-function loadKimiForkHandler() {
+// استخراج نصّي لمعالج satr:sessionFork الخاص بـKimi، مع mocks لما يحتاجه من main.js.
+// يشمل خريطة kimiSessionCwd التي تملكها العملية الرئيسية (OBS-075) — cwd الموثوق
+// يجب أن يأتي منها لا من الحمولة.
+function loadKimiForkHandler(options = {}) {
   const mainSource = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
   const safeSessionMatch = mainSource.match(/const SAFE_SESSION = [^\r\n]+;/);
+  const mapStart = mainSource.indexOf('const kimiSessionCwd = new Map()');
   const start = mainSource.indexOf('async function handleKimiSessionForkRequest(');
   const end = mainSource.indexOf('async function handleRewindFilesRequest(', start);
-  assert.ok(safeSessionMatch && start >= 0 && end > start, 'تعذّر استخراج معالج تفريع Kimi من main.js');
+  assert.ok(safeSessionMatch && mapStart >= 0 && mapStart < start && start >= 0 && end > start,
+    'تعذّر استخراج معالج تفريع Kimi وخريطة cwd الموثوقة من main.js');
 
+  const forkResult = options.forkResult || { ok: true, sessionId: 'kimi_fork_123', from: 'end' };
   const calls = [];
   const sandbox = {
+    require,
     sessionmeta: { cleanTitle: sessionmeta.cleanTitle },
     kimi: {
       forkSession: async (args) => {
         calls.push(args);
-        return { ok: true, sessionId: 'kimi_fork_123', from: 'end' };
+        return forkResult;
       },
     },
     exported: {},
   };
   vm.runInNewContext(
-    `${safeSessionMatch[0]}\n${mainSource.slice(start, end)}\nObject.assign(exported, { handleKimiSessionForkRequest });`,
+    'const fs = require(\'fs\'); const path = require(\'path\');\n'
+    + `${safeSessionMatch[0]}\n${mainSource.slice(mapStart, end)}\n`
+    + 'Object.assign(exported, { handleKimiSessionForkRequest, noteKimiSessionCwd, trustedKimiSessionCwd });',
     sandbox,
     { filename: 'main-kimi-fork-extract.js' },
   );
-  return { handler: sandbox.exported.handleKimiSessionForkRequest, calls };
+  return {
+    handler: sandbox.exported.handleKimiSessionForkRequest,
+    calls,
+    noteKimiSessionCwd: sandbox.exported.noteKimiSessionCwd,
+    trustedKimiSessionCwd: sandbox.exported.trustedKimiSessionCwd,
+  };
 }
 
 async function testMainForkLink() {
@@ -1551,6 +1571,135 @@ async function testMainForkLink() {
   assert.strictEqual(calls.length, 0, 'وصل طلب فاسد إلى kimi.forkSession');
 }
 
+// OBS-075 (أ): cwd التفريع يأتي من خريطة تملكها العملية الرئيسية فقط، لا من الحمولة.
+async function testMainForkTrustedCwd() {
+  const { handler, calls, noteKimiSessionCwd, trustedKimiSessionCwd } = loadKimiForkHandler();
+  const payload = { sessionId: 'kimi_session_1', upToMessageId: '', title: 'فرع', engine: 'kimi-code' };
+
+  // بلا مصدر موثوق في الخريطة: لا cwd يُمرَّر — السلوك القديم (السرد داخل kimi.js)
+  let result = await handler(payload);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cwd, undefined, 'بلا مصدر موثوق يجب أن يعود kimi.forkSession للسرد القديم');
+
+  // إصابة الخريطة (كما تفعل main عند الإرسال/السرد) ⇒ cwd يصل forkSession مباشرة
+  noteKimiSessionCwd('kimi_session_1', root);
+  calls.length = 0;
+  result = await handler(payload);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(calls.length, 1, 'مع cwd موثوق يجب أن يكون forkSession هو النداء الوحيد — لا سرد');
+  assert.strictEqual(calls[0].cwd, root);
+
+  // الحدّ الأمني غير القابل للتفاوض: حقن cwd في الحمولة من renderer يُتجاهل تماماً
+  calls.length = 0;
+  result = await handler({ ...payload, cwd: 'C:\\evil\\path' });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(calls[0].cwd, root, 'cwd الحمولة من renderer يجب ألا يُقبل أبداً');
+
+  // cwd مُخزَّن لمجلد لم يعد قائماً ⇒ لا يُمرَّر، ويعود السلوك القديم
+  noteKimiSessionCwd('kimi_gone', path.join(root, 'no-such-dir-kimi-fork-test'));
+  calls.length = 0;
+  result = await handler({ ...payload, sessionId: 'kimi_gone' });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(calls[0].cwd, undefined, 'cwd لمجلد مفقود يجب ألا يُمرَّر إلى forkSession');
+
+  // معرّفات فاسدة تُرفض عند التسجيل: لا حقن مسارات عبر مفتاح الخريطة
+  noteKimiSessionCwd('../../evil', root);
+  noteKimiSessionCwd('kimi_rel', 'relative/not/absolute');
+  assert.strictEqual(trustedKimiSessionCwd('../../evil'), null);
+  assert.strictEqual(trustedKimiSessionCwd('kimi_rel'), null);
+}
+
+// OBS-075 (ب): غياب الجلسة من سرد Kimi ⇒ رمز مميّز ورسالة عربية مرشدة، بلا تسريب upstream.
+async function testMainForkSessionNotFound() {
+  const { handler } = loadKimiForkHandler({
+    // كما يعيده kimi.forkSession تماماً عند غياب الجلسة من السرد (مع حقول داخلية خام)
+    forkResult: { ok: false, error: 'session_not_found', upstream: 'raw upstream detail 0xdeadbeef' },
+  });
+  const result = await handler({
+    sessionId: 'kimi_old_1', upToMessageId: '', title: 'فرع', engine: 'kimi-code',
+  });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.error, 'kimi_session_not_found',
+    'غياب الجلسة من سرد Kimi يجب أن يرجع رمزاً مميّزاً لا kimi_fork_failed العام');
+  assert.ok(result.message && result.message.includes('200'),
+    'الرسالة المرشدة يجب أن تذكر سبباً محتملاً (سقف 200 جلسة في سرد Kimi)');
+  assert.ok(!JSON.stringify(result).includes('raw upstream detail'),
+    'نص خطأ upstream الخام تسرّب إلى renderer');
+  assert.ok(!JSON.stringify(result).includes('kimi_fork_failed'),
+    'الرمز العام خالف حالة الغياب المحدّدة');
+}
+
+// OBS-075 (ج): العدّ المقيس لعمليات `kimi acp` — مع cwd عملية واحدة، بلا cwd عمليتان.
+async function testForkSessionProcessCount() {
+  let directSpawns = 0;
+  let directListSeen = 0;
+  const directEngine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      directSpawns++;
+      return new FakeProcess((message, proc) => {
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/list') {
+          directListSeen++;
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { sessions: [] } });
+        } else if (message.method === 'session/fork') {
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_fork_fast' } });
+        }
+      });
+    },
+  });
+  const fast = await directEngine.forkSession({ cwd: root, sessionId: 'kimi_session_1' });
+  assert.deepStrictEqual(fast, { ok: true, sessionId: 'kimi_fork_fast', from: 'end' });
+  assert.strictEqual(directSpawns, 1, 'مع cwd يجب أن تُطلق عملية kimi acp واحدة فقط (كانت اثنتين قبل OBS-075)');
+  assert.strictEqual(directListSeen, 0, 'مع cwd يجب ألا يُسرد أي طلب session/list داخل العملية');
+
+  // بلا cwd: السلوك القديم سليم — سرد (عملية) ثم تفريع (عملية) — أي لا تراجع
+  let fallbackSpawns = 0;
+  let fallbackListSeen = 0;
+  let fallbackForkSeen = 0;
+  const fallbackEngine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      fallbackSpawns++;
+      return new FakeProcess((message, proc) => {
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/list') {
+          fallbackListSeen++;
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { sessions: [{ sessionId: 'kimi_session_1', cwd: root }] } });
+        } else if (message.method === 'session/fork') {
+          fallbackForkSeen++;
+          proc.send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'kimi_fork_fb' } });
+        }
+      });
+    },
+  });
+  const fallback = await fallbackEngine.forkSession({ sessionId: 'kimi_session_1' });
+  assert.strictEqual(fallback.ok, true);
+  assert.strictEqual(fallbackListSeen, 1, 'بلا cwd يجب أن يسبق التفريع سرد واحد');
+  assert.strictEqual(fallbackForkSeen, 1);
+  assert.strictEqual(fallbackSpawns, 2, 'بلا cwd تبقى عمليتان (سرد + تفريع) — أي عملية كاملة هباءً');
+
+  // بلا cwd والجلسة خارج السرد: session_not_found من kimi.js نفسه بعد عملية السرد الواحدة
+  let missingSpawns = 0;
+  const missingEngine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    spawn: () => {
+      missingSpawns++;
+      return new FakeProcess((message, proc) => {
+        if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+        else if (message.method === 'session/list') proc.send({ jsonrpc: '2.0', id: message.id, result: { sessions: [] } });
+        else if (message.method === 'session/fork') {
+          assert.fail('session/fork وصل رغم غياب الجلسة من السرد');
+        }
+      });
+    },
+  });
+  const missing = await missingEngine.forkSession({ sessionId: 'kimi_session_1' });
+  assert.deepStrictEqual(missing, { ok: false, error: 'session_not_found' });
+  assert.strictEqual(missingSpawns, 1, 'عند غياب الجلسة تكفي عملية السرد الواحدة — لا تفريع بلا cwd');
+}
+
 (async () => {
   testSecurityAndWiring();
   await testNativeTurnAndPermission();
@@ -1571,6 +1720,9 @@ async function testMainForkLink() {
   await testContextUsageCommand();
   await testForkSession();
   await testMainForkLink();
+  await testMainForkTrustedCwd();
+  await testMainForkSessionNotFound();
+  await testForkSessionProcessCount();
   await testToolLabelsAndAvailableCommands();
   await testListModelsFromAcp();
   await testFullModelValueApplied();
@@ -1609,6 +1761,9 @@ async function testMainForkLink() {
   console.log('✓ OBS-023: المرساة اللغوية تصل Kimi آخرَ كتلة بصيغتها القوية، والمعزول خارجها');
   console.log('✓ OBS-052: انهيار الأنبوب في موضعَي spawn لا يسرّب استثناءً، والمستمع عند spawn لا لكل دور');
   console.log('✓ وصلة تفريع Kimi عبر preload: الفراغ يصل kimi.forkSession والمعرّف الفاسد يُرفض');
+  console.log('✓ OBS-075: cwd التفريع من خريطة main الموثوقة فقط (لا من renderer) وبلا سرد إضافي');
+  console.log('✓ OBS-075: غياب الجلسة من سرد Kimi يرجع kimi_session_not_found برسالة عربية بلا تسريب upstream');
+  console.log('✓ OBS-075: العدّ المقيس — مع cwd عملية kimi acp واحدة، وبلا cwd تبقى السلسلة القديمة سليمة');
 })().catch((error) => {
   console.error(error.stack || error);
   process.exitCode = 1;

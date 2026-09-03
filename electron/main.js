@@ -2506,6 +2506,29 @@ async function handleSessionForkRequest(payload, sessionAgent = agent) {
   }
 }
 
+// خريطة sessionId → cwd لجلسات Kimi تبنيها العملية الرئيسية حصراً من مصادر تملكها
+// وتتحقق منها (cwd المُتحقَّق منه عند الإرسال، وسرد الجلسات عبر satr:listKimiSessions)
+// — لا تُقبل قيمة cwd من renderer أبداً (الحدّ الأمني لـOBS-075). عند التفريع: إصابة
+// الخريطة تُمرَّر إلى kimi.forkSession فيُغني عن سرد `kimi acp` كامل قبل التفريع،
+// وإلا سقط kimi.js تلقائياً إلى سلوكه القديم (سرد ثم تفريع) — لا يُخترع مصدر.
+const kimiSessionCwd = new Map();
+const KIMI_SESSION_CWD_MAX = 500;
+function noteKimiSessionCwd(sessionId, dir) {
+  const id = String(sessionId || '');
+  if (!SAFE_SESSION.test(id) || typeof dir !== 'string' || !path.isAbsolute(dir)) return;
+  if (kimiSessionCwd.size >= KIMI_SESSION_CWD_MAX && !kimiSessionCwd.has(id)) return;
+  kimiSessionCwd.set(id, dir);
+}
+function trustedKimiSessionCwd(sessionId) {
+  const cached = kimiSessionCwd.get(String(sessionId || ''));
+  if (typeof cached !== 'string' || !cached) return null;
+  // تحقق كما تتحقق بقية main.js من المسارات: المجلد قائم فعلاً وإلا لا يُمرَّر
+  try {
+    return fs.statSync(cached).isDirectory() ? cached : null;
+  } catch {
+    return null;
+  }
+}
 
 async function handleKimiSessionForkRequest(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -2529,8 +2552,22 @@ async function handleKimiSessionForkRequest(payload) {
     : payload.title;
   const title = sessionmeta.cleanTitle(rawTitle);
   try {
-    const result = await kimi.forkSession({ sessionId, upToMessageId, title: title || undefined });
+    // cwd موثوق من حالة تملكها العملية الرئيسية لا من الحمولة — إصابته تُغني
+    // kimi.forkSession عن سرد `kimi acp` كامل قبل التفريع (OBS-075)
+    const trustedCwd = trustedKimiSessionCwd(sessionId);
+    const result = await kimi.forkSession({
+      sessionId, upToMessageId, title: title || undefined, ...(trustedCwd ? { cwd: trustedCwd } : {}),
+    });
     if (!result || result.ok !== true || !SAFE_SESSION.test(String(result.sessionId || ''))) {
+      // غياب الجلسة من سرد Kimi (مثلاً أقدم من آخر 200 جلسة يسردها) سبب محدّد يستحق
+      // رمزاً ورسالة مرشدة لا الخطأ العام — دون تسريب أي نص خام من upstream
+      if (result && result.error === 'session_not_found') {
+        return {
+          ok: false,
+          error: 'kimi_session_not_found',
+          message: 'لم يُفرَّع الفرع: لم يعثر Kimi Code على الجلسة في سجلّه. السبب المحتمل أنها أقدم من آخر 200 جلسة يسردها Kimi — أرسل فيها رسالة واحدة ليُدرجها في السرد ثم أعد المحاولة.',
+        };
+      }
       return { ok: false, error: 'kimi_fork_failed', message: 'تعذّر تفريع جلسة Kimi؛ بقيت الجلسة الحالية كما هي.' };
     }
     return { ok: true, sessionId: result.sessionId, from: result.from || 'end' };
@@ -2764,6 +2801,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
     }
     if (obj.type === 'system' && SAFE_SESSION.test(obj.session_id || '')) {
       activeSessionId = obj.session_id;
+      if (runEngine === kimi.ENGINE_ID) noteKimiSessionCwd(obj.session_id, cwd);
       browserBudgets.set(runEngine + ':session:' + activeSessionId, browserBudget);
       checkpoints.bindSession(runId, activeSessionId);
     }
@@ -3560,7 +3598,15 @@ ipcMain.handle('satr:deleteCodexSession', (event, p) => codexSessions.deleteCode
 ipcMain.handle('satr:forkCodexSession', (event, p) => codexSessions.forkCodexSession(p && p.id));
 
 // جلسات Kimi تُقرأ عبر ACP الرسمي (`session/list` و`session/load`) لا بتحليل wire.jsonl.
-ipcMain.handle('satr:listKimiSessions', () => kimi.listSessions());
+ipcMain.handle('satr:listKimiSessions', async () => {
+  const sessions = await kimi.listSessions();
+  // تغذية خريطة cwd الموثوقة من سرد تملكه العملية الرئيسية (OBS-075) — توفّر عملية
+  // `kimi acp` كاملة عند «فرّع من هنا» لأي جلسة ظاهرة في لوحة الجلسات
+  for (const item of Array.isArray(sessions) ? sessions : []) {
+    noteKimiSessionCwd(item && item.id, item && item.cwd);
+  }
+  return sessions;
+});
 ipcMain.handle('satr:readKimiSession', (event, p) => kimi.readSession(p && p.id));
 
 // ---------- سرد ملفات المشروع لمنصّة @ (قراءة فقط) ----------
