@@ -23,6 +23,7 @@ const SUITE = [
   'test:farsi-content',
   'test:memory',
   'test:design-guard',
+  'test:gitdiff',
   'test:repomap',
   'test:context',
   'test:orchestrator',
