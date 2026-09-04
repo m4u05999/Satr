@@ -44,7 +44,14 @@ async function main() {
     onTarget(webContents) {
       captureContents = webContents;
       const captureWindow = webContents && BrowserWindow.fromWebContents(webContents);
-      if (captureWindow) expectedSourceId = captureWindow.getMediaSourceId();
+      if (captureWindow) {
+        expectedSourceId = captureWindow.getMediaSourceId();
+        // OBS-036: الالتقاط يحتاج نافذة مقدَّمة مرسومة — تحت حمل الطقم قد تتغطّى
+        // نافذة الالتقاط بنافذة اختبار أخرى فتصل إطارات صفرية. نواجهها ونمنحها التركيز
+        // قبل بدء التسجيل.
+        captureWindow.moveTop();
+        captureWindow.focus();
+      }
     },
     emit(event) {
       if (event.type === 'capture_start') {
@@ -95,8 +102,17 @@ async function main() {
   }
   await new Promise((resolve) => setTimeout(resolve, 1200));
   const stopped = await controller.stop();
-  if (!stopped.ok || !recorded || !recorded.start || recorded.start.tracks !== 1 || !recorded.stop || recorded.stop.size < 1024) {
+  if (!stopped.ok || !recorded || !recorded.start || recorded.start.tracks !== 1 || !recorded.stop) {
     throw new Error('فشل stream/MediaRecorder: ' + JSON.stringify({ stopped, recorded }));
+  }
+  // فشل صريح مميّز لعثرة OBS-036: المسار كله نجح لكن الترميز أنتج صفر بايت —
+  // أي لم تصل إطارات، وهذا عطب التقاط النافذة تحت الحمل لا عطب الترميز.
+  if (recorded.stop.size === 0 || !recorded.stop.head.length) {
+    throw new Error('لم تصل إطارات إلى MediaRecorder رغم نجاح المسار — عثرة بيئية في التقاط (نافذة الالتقاط لم تُرسَم، انظر OBS-036): '
+      + JSON.stringify({ stopped, tracks: recorded.start.tracks, frameRate: recorded.start.settings.frameRate, size: recorded.stop.size, head: recorded.stop.head }));
+  }
+  if (recorded.stop.size < 1024) {
+    throw new Error('حجم تسجيل مشبوه (<1024 بايت): ' + JSON.stringify({ stopped, size: recorded.stop.size, head: recorded.stop.head }));
   }
   const mp4 = /mp4/.test(recorded.stop.type);
   const ascii = String.fromCharCode(...recorded.stop.head);

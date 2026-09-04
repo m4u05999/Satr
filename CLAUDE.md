@@ -308,6 +308,13 @@ scripts/agent-eval.js ← مرصد واختبارات الوكيل (الأولو
                        الدفعة. traces تحت dist/agent-eval تحفظ hashes/metadata لا prompts أو
                        خرج أدوات افتراضياً. التشغيل: npm run eval:agent؛ baseline الملتزم في
                        docs/AGENT-EVAL-BASELINE.md (تحديثه الصريح: npm run eval:agent:baseline).
+scripts/full-suite.js ← مشغّل البوابة (‏`npm run test:full`): ‏SUITE المعلنة +
+                       EXCLUDED_FROM_SUITE بأسباب ومهل مقيسة (‏OBS-056) وتخطٍّ معلن على POSIX.
+                       ومن `OBS-036`: إعادة محاولة معلَنة لعثرات بيئية مقيسة — ‏RETRYABLE مغلقة
+                       (كل اسم بتبرير OBS-### في RETRYABLE_OBS محفور بجواره في المصدر)، سقف
+                       ‏MAX_RETRIES=1، إعلان صاخب عند التعثّر وذكر المُعاد في الخاتمة. العقد
+                       مفحوص ساكناً وسلوكياً في `test:suite-coverage` (زرع spawnSync وثلاثة
+                       سيناريوهات على `main()` الحقيقي: فشل-ثم-نجاح، فشل مرتين، اسم غير مقيّس).
 docs/AGENT-CLI-FLAGS.md ← أعلام تشغيل محرّكات الوكلاء من سطر الأوامر (codex/kimi/claude)
                        موسومة **مثبت** (من `--help` حيّ أو استعمال في المستودع) مقابل
                        **مُبلَّغ** (تقرير خارجي غير متحقَّق منه). سببها عطل مكلف: قائد
