@@ -15,6 +15,7 @@ const codexmcp = require('../electron/codexmcp');
 const codex = require('../electron/codex');
 const tools = require('../electron/tools');
 const envbrief = require('../electron/envbrief');
+const hookguard = require('../electron/hookguard');
 const browserAudit = require('./browser-session-audit');
 
 // preview مزيّف يحاكي عقد electron/preview.js دون WebContentsView
@@ -183,7 +184,114 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
     && ['kind', 'prompt', 'model', 'count', 'refs', 'budget_usd'].every((field) => Object.hasOwn(adapterMediaDef.function.parameters.properties, field)),
   'generate_media مصنّفة exec في tools.js وتعلن حقول العقد');
   const agentSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'agent.js'), 'utf8');
+  const hookguardSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'hookguard.js'), 'utf8');
   const codexMcpSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'codexmcp.js'), 'utf8');
+
+  // OBS-087 (أ): مستودع غير موثوق قد يزرع SessionStart/setup.mjs. الحارس يثبت
+  // التنبيه مرة لكل بصمة، تغيّرها، الصمت للمشروع النظيف/فشل القراءة، وعدم تسريب الأمر.
+  const hookRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-hookguard-'));
+  try {
+    const riskyProject = path.join(hookRoot, 'risky-project');
+    const claudeDir = path.join(riskyProject, '.claude');
+    const settingsFile = path.join(claudeDir, 'settings.json');
+    const stateFile = path.join(hookRoot, 'state', 'claude-hook-fingerprints.json');
+    const leakedCommand = 'node .claude/setup.mjs api_key=sk-OBS087MUSTNOTLEAK123456';
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(settingsFile, JSON.stringify({ hooks: { SessionStart: [{
+      matcher: 'startup', hooks: [{ type: 'command', command: leakedCommand }],
+    }] } }), 'utf8');
+    const guard = hookguard.createGuard({
+      file: stateFile,
+      now: () => new Date('2026-09-04T00:00:00.000Z'),
+    });
+
+    const firstNotice = await guard.inspectProject(riskyProject);
+    ok(typeof firstNotice === 'string' && firstNotice.includes('خطّاف SessionStart')
+      && firstNotice.includes('.claude/settings.json'),
+    'OBS-087: مستودع SessionStart يصدر تنبيهاً عربياً واحداً بمساره النسبي');
+    const noticeEvent = hookguard.noticeEvent(firstNotice);
+    const scrubbedNoticeEvent = hookguard.noticeEvent(
+      'تنبيه دفاعي authorization=Bearer sk-OBS087SECONDARYMUSTNOTLEAK123456');
+    ok(noticeEvent && noticeEvent.type === 'assistant'
+      && noticeEvent.message.content.length === 1
+      && noticeEvent.message.content[0].text === firstNotice
+      && scrubbedNoticeEvent.message.content[0].text.includes('[secret]')
+      && !JSON.stringify(scrubbedNoticeEvent).includes('OBS087SECONDARYMUSTNOTLEAK'),
+    'OBS-087: التنبيه غير حاجب ويعبر بعقد عرض واحد بلا طلب قرار');
+    ok(!JSON.stringify(noticeEvent).includes('OBS087MUSTNOTLEAK')
+      && !JSON.stringify(noticeEvent).includes('api_key=')
+      && !JSON.stringify(noticeEvent).includes('node .claude/setup.mjs'),
+    'OBS-087: لا يعبر محتوى أمر SessionStart ولا السر إلى renderer');
+
+    const stored = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    const storedText = JSON.stringify(stored);
+    const storedEntry = stored.projects[hookguard.projectKey(riskyProject)];
+    ok(stored.version === hookguard.STORE_VERSION
+      && Object.keys(stored.projects).length === 1
+      && storedEntry && /^[a-f0-9]{64}$/.test(storedEntry.fingerprint)
+      && storedEntry.updated_at === '2026-09-04T00:00:00.000Z'
+      && !storedText.includes(riskyProject) && !storedText.includes('OBS087MUSTNOTLEAK')
+      && !fs.readdirSync(path.dirname(stateFile)).some((name) => name.includes('.tmp-')),
+    'OBS-087: البصمة ذرية ومحدودة ولا تحفظ مسار المشروع أو محتوى الخطّاف');
+
+    const reopenedNotice = await guard.inspectProject(riskyProject);
+    ok(reopenedNotice === null, 'OBS-087: إعادة فتح البصمة نفسها لا تكرر التنبيه');
+
+    fs.writeFileSync(settingsFile, JSON.stringify({ hooks: { SessionStart: [{
+      matcher: 'startup', hooks: [{ type: 'command', command: leakedCommand + ' --changed' }],
+    }] } }), 'utf8');
+    const changedNotice = await guard.inspectProject(riskyProject);
+    ok(typeof changedNotice === 'string' && changedNotice.includes('.claude/settings.json'),
+      'OBS-087: تغيّر محتوى الخطّاف يصدر تنبيهاً ثانياً');
+
+    const setupProject = path.join(hookRoot, 'setup-project');
+    fs.mkdirSync(path.join(setupProject, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(setupProject, '.claude', 'setup.mjs'),
+      'const token = "sk-SETUPMUSTNOTLEAK123456";\n', 'utf8');
+    const setupNotice = await guard.inspectProject(setupProject);
+    ok(typeof setupNotice === 'string' && setupNotice.includes('.claude/setup.mjs')
+      && !setupNotice.includes('SETUPMUSTNOTLEAK'),
+    'OBS-087: setup.mjs وحده يُرصد بمساره ولا يتسرّب محتواه');
+
+    const cleanProject = path.join(hookRoot, 'clean-project');
+    fs.mkdirSync(cleanProject, { recursive: true });
+    const cleanNotice = await guard.inspectProject(cleanProject);
+    ok(cleanNotice === null, 'OBS-087: المشروع النظيف يبقى صامتاً');
+
+    const failingState = path.join(hookRoot, 'failing-state', 'fingerprints.json');
+    const failingPromises = Object.create(fs.promises);
+    failingPromises.readFile = async (file, ...args) => {
+      if (path.resolve(String(file)) === path.resolve(settingsFile)) {
+        const error = new Error('OBS087_READ_FAILURE_MUST_NOT_LOG');
+        error.code = 'EACCES';
+        throw error;
+      }
+      return fs.promises.readFile(file, ...args);
+    };
+    const silentGuard = hookguard.createGuard({ file: failingState, fs: { promises: failingPromises } });
+    const failedReadNotice = await silentGuard.inspectProject(riskyProject);
+    ok(failedReadNotice === null && !fs.existsSync(failingState),
+      'OBS-087: تعذّر القراءة يتدهور إلى الصمت بلا تنبيه أو بصمة مدّعاة');
+
+    ok(!hookguardSource.includes('child_process')
+      && hookguard.MAX_SETTINGS_BYTES === 256 * 1024
+      && hookguard.MAX_SETUP_BYTES === 512 * 1024
+      && hookguard.MAX_PROJECTS === 256,
+    'OBS-087: الفحص ثابت المسارات بلا عملية أو مشي شجرة وبسقوف معلنة');
+    const hookCall = agentSource.indexOf('void hookguard.inspectProject(cwd)');
+    const sdkLoad = agentSource.indexOf('const { query } = await loadSdk()', hookCall);
+    ok(hookCall >= 0 && sdkLoad > hookCall
+      && !agentSource.includes('await hookguard.inspectProject(cwd)')
+      && /hookguard\.noticeEvent\(notice\)/.test(agentSource)
+      && /if \(!internalPolicy\) \{[\s\S]{0,500}hookguard\.inspectProject/.test(agentSource),
+    'OBS-087: agent يبدأ الحارس قبل تحميل SDK بلا await ويعزل تشغيلات السياسة الداخلية');
+    ok(agentSource.includes("settingSources: isolatedPolicy ? [] : ['user', 'project', 'local']")
+      && agentSource.includes("const options = { cwd, settingSources: ['user', 'project', 'local'] }"),
+    'OBS-087: settingSources بقيت مطابقة لـClaude Code في الدور والتحكم');
+  } finally {
+    fs.rmSync(hookRoot, { recursive: true, force: true });
+  }
+
   const leaseMessages = {
     input_changed: 'تدخّل المستخدم في الصفحة بعد لقطتك؛ لم يُنفَّذ الفعل. خذ browser_snapshot جديدة قبل المتابعة.',
     target_changed: 'تغيّر العنصر الهدف منذ لقطتك — كان «زر الحذف 1» وصار «زر الحذف 100»؛ لم يُنفَّذ الفعل. خذ لقطة جديدة وتحقق من نيّتك.',
