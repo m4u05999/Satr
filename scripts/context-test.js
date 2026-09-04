@@ -134,9 +134,10 @@ function messageText(message) {
   return '';
 }
 
-function lastUserText(items) {
-  const users = (Array.isArray(items) ? items : []).filter((item) => item && item.role === 'user');
-  return messageText(users[users.length - 1]);
+function turnText(items) {
+  const list = Array.isArray(items) ? items : [];
+  const userIndex = list.findLastIndex((item) => item && item.role === 'user');
+  return list.slice(Math.max(0, userIndex)).map(messageText).filter(Boolean).join('\n');
 }
 
 function assertTurnContext(text, prompt, label) {
@@ -297,8 +298,8 @@ async function main() {
       model: body.model, system: body.messages[0], tools: body.tools,
     }));
     assertStablePrefix(compatiblePrefixes[0], compatiblePrefixes[1], 'openai-compatible');
-    assertTurnContext(lastUserText(requestBodies[0].messages), compatibleFirstPrompt, 'openai-compatible');
-    assertTurnContext(lastUserText(requestBodies[1].messages), compatibleSecondPrompt, 'openai-compatible');
+    assertTurnContext(turnText(requestBodies[0].messages), compatibleFirstPrompt, 'openai-compatible');
+    assertTurnContext(turnText(requestBodies[1].messages), compatibleSecondPrompt, 'openai-compatible');
     assert(compatibleSecond.usage && compatibleSecond.usage.estimate === true);
     assert(compatibleSecond.context_estimate && compatibleSecond.context_estimate.estimate === true);
 
@@ -336,15 +337,15 @@ async function main() {
       system: geminiBodies[1].systemInstruction, tools: geminiBodies[1].tools,
     });
     assertStablePrefix(geminiFirstPrefix, geminiSecondPrefix, 'gemini');
-    assertTurnContext(lastUserText(geminiBodies[0].contents), geminiFirstPrompt, 'gemini');
-    assertTurnContext(lastUserText(geminiBodies[1].contents), geminiSecondPrompt, 'gemini');
+    assertTurnContext(turnText(geminiBodies[0].contents), geminiFirstPrompt, 'gemini');
+    assertTurnContext(turnText(geminiBodies[1].contents), geminiSecondPrompt, 'gemini');
     const responsesPrefixes = responsesBodies.map((body) => JSON.stringify({
       model: body.model, instructions: body.instructions, tools: body.tools,
       tool_choice: body.tool_choice, parallel_tool_calls: body.parallel_tool_calls,
     }));
     assertStablePrefix(responsesPrefixes[0], responsesPrefixes[1], 'openai-responses');
-    assertTurnContext(lastUserText(responsesBodies[0].input), responsesFirstPrompt, 'openai-responses');
-    assertTurnContext(lastUserText(responsesBodies[1].input), responsesSecondPrompt, 'openai-responses');
+    assertTurnContext(turnText(responsesBodies[0].input), responsesFirstPrompt, 'openai-responses');
+    assertTurnContext(turnText(responsesBodies[1].input), responsesSecondPrompt, 'openai-responses');
 
     console.log('✓ compact repo summary stays within its context cap');
     console.log('✓ blind context keeps the stable prefix separate from its estimated turn tail');

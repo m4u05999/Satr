@@ -221,14 +221,11 @@ function start(input, cwd, emit) {
       const calls = new Map();
       const done = (result) => { if (!settled) { settled = true; resolve(result); } };
 
-      // ذيل الدور المتغير يدخل الطلب لا السجل، فتثبت instructions من أول بايت دون ضجيج في عرض الجلسة.
-      const requestItems = items.map((item, index) => {
-        if (!turnPrompt || index !== turnItemIndex || !item || item.role !== 'user') return item;
-        const content = Array.isArray(item.content)
-          ? item.content.concat([{ type: 'input_text', text: turnPrompt }])
-          : String(item.content || '') + '\n\n' + turnPrompt;
-        return { ...item, content };
-      });
+      // رسالة سياق لاحقة تثبّت instructions وتحفظ رسالة المستخدم الأصلية والصور بلا تعديل.
+      const requestItems = items.slice();
+      if (turnPrompt && turnItemIndex >= 0 && turnItemIndex < requestItems.length) {
+        requestItems.splice(turnItemIndex + 1, 0, { role: 'system', content: turnPrompt });
+      }
       const bodyObject = {
         model,
         input: requestItems,

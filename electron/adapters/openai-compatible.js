@@ -281,14 +281,11 @@ function make(config) {
         let settled = false;
         const done = (r) => { if (!settled) { settled = true; resolve(r); } };
 
-        // الأجزاء المتغيرة تلحق برسالة الدور عند الطلب فقط؛ السجل المحفوظ يبقى نص المستخدم الأصلي.
-        const messagesWithTurnPrompt = messages.map((message, index) => {
-          if (!turnPrompt || index !== turnMessageIndex || !message || message.role !== 'user') return message;
-          const content = Array.isArray(message.content)
-            ? message.content.concat([{ type: 'text', text: turnPrompt }])
-            : String(message.content || '') + '\n\n' + turnPrompt;
-          return { ...message, content };
-        });
+        // رسالة سياق لاحقة تبقي رسالة المستخدم (ومنها الصور) بايتياً كما هي ولا تدخل السجل المحفوظ.
+        const messagesWithTurnPrompt = messages.slice();
+        if (turnPrompt && turnMessageIndex >= 0 && turnMessageIndex < messagesWithTurnPrompt.length) {
+          messagesWithTurnPrompt.splice(turnMessageIndex + 1, 0, { role: 'system', content: turnPrompt });
+        }
         const requestMessages = contextPrompt
           ? [{ role: 'system', content: contextPrompt }].concat(messagesWithTurnPrompt)
           : messagesWithTurnPrompt;
