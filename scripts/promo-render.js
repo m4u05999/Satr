@@ -45,8 +45,6 @@ const SCENE_FILES = {
 
 function resolveFfmpeg() {
   if (process.env.FFMPEG && fs.existsSync(process.env.FFMPEG)) return process.env.FFMPEG;
-  const guess = path.join('D:', 'sater', 'tools', 'ffmpeg.exe');
-  if (fs.existsSync(guess)) return guess;
   return 'ffmpeg'; // من PATH
 }
 const FFMPEG = resolveFfmpeg();

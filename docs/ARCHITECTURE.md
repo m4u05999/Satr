@@ -98,8 +98,12 @@ if (ee) ee.register(seams); // يمرّر نقاط الربط لـ Enterprise ل
 يفعّل الأعلام؛ في البناء المجتمعي كلها معطّلة (النواة لا تعرض قدرات Enterprise).
 
 ### 4.5 خطّافات IPC (نمط قائم في `main.js`)
-Enterprise يسجّل معالجات IPC إضافية عبر `ee.registerIpc(ipcMain)` — لا تعديل على
-معالجات النواة، فقط إضافة.
+Enterprise يسجّل معالجات IPC إضافية عبر `ee.registerIpc(channel, handler)` — لا تعديل
+على معالجات النواة، فقط إضافة. القناة تلتزم `satr:ee:` حصراً وإلا رُفضت
+(‏`electron/features.js`)، والمضيف الذي تُسجَّل عليه ليس `ipcMain` الخام بل **الغلاف
+المحروس** `renderertrust.guardIpcMain(...)` الذي يحقنه `main.js` عبر
+`features.init({ ipcMain })` — فتخضع قنوات `satr:ee:*` لتحقّق المرسِل والإطار نفسه الذي
+تخضع له قنوات النواة. وغياب المضيف المحروس (اختبار Node بلا Electron) يُتجاهل بأمان بلا تسجيل.
 
 ### 4.6 نقاط امتداد الواجهة (بعد التفكيك — §5)
 عند تحويل `src/index.html` إلى **Web Components**، تُعرَّف «فتحات» (slots/mount points)
