@@ -189,6 +189,8 @@ function start(input, cwd, emit) {
   let currentRequest = null;
   let aborted = false;
   let contextEstimate = null;
+  let turnPrompt = '';
+  let turnItemIndex = -1;
   const mediaCostState = { total: 0 }; // generate_media فقط: تراكمي تقديري للجلسة
 
   emit({ type: 'system', subtype: 'init', session_id: sessionId, model });
@@ -219,9 +221,17 @@ function start(input, cwd, emit) {
       const calls = new Map();
       const done = (result) => { if (!settled) { settled = true; resolve(result); } };
 
+      // ذيل الدور المتغير يدخل الطلب لا السجل، فتثبت instructions من أول بايت دون ضجيج في عرض الجلسة.
+      const requestItems = items.map((item, index) => {
+        if (!turnPrompt || index !== turnItemIndex || !item || item.role !== 'user') return item;
+        const content = Array.isArray(item.content)
+          ? item.content.concat([{ type: 'input_text', text: turnPrompt }])
+          : String(item.content || '') + '\n\n' + turnPrompt;
+        return { ...item, content };
+      });
       const bodyObject = {
         model,
-        input: items,
+        input: requestItems,
         stream: true,
         store: false,
         tools: RESPONSE_TOOLS,
@@ -366,12 +376,14 @@ function start(input, cwd, emit) {
       // فجوة مثبتة سدّها العصف الثلاثي (OBS-001، 2026-08-15): كان هذا المحوّل
       // الوحيد بلا envbrief إطلاقاً — فلا هوية «سطر» ولا تعليمة العربية تصلانه.
       // النمط نفسه في gemini.js:226 وopenai-compatible.js:274 حرفياً.
-      systemParts: [envbrief.build('adapter', model, { compact: true }), skillPrompt, memoryPrompt, backgroundPrompt],
+      systemParts: [envbrief.build('adapter', model, { compact: true }), skillPrompt],
+      turnParts: [memoryPrompt, backgroundPrompt],
       history,
       toolDefinitions: RESPONSE_TOOLS,
     });
     if (aborted) return;
     contextEstimate = builtContext.estimate;
+    turnPrompt = builtContext.turnPrompt;
     // الصور لا تأتي إلا من sanitizeImages في main.js؛ نبني data URL محلياً من العقد المنقّى.
     const userContent = capabilities.vision && Array.isArray(input.images) && input.images.length
       ? [{ type: 'input_text', text: prompt }].concat(input.images.map((image) => ({
@@ -381,6 +393,7 @@ function start(input, cwd, emit) {
       : prompt;
     const userItem = { role: 'user', content: userContent };
     const items = history.concat([userItem]);
+    turnItemIndex = history.length;
     let rounds = 0;
     let structuredEnabled = true;
 
