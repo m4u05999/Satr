@@ -328,6 +328,124 @@ async function testMainSanitization() {
     assert.equal(orderActual.ok, true, 'غيّر ترتيب SDK وحده بصمة المعاينة');
     assert.deepEqual(orderModes, [true, true, false]);
 
+    // ——— صدق نتيجة الاسترجاع: العدد من إعادة بصم القرص لا من المعاينة الجافة ———
+    // canRewind:true في SDK 0.3.176 لا يضمن استعادة أي ملف (معطوب upstream،
+    // أصلح ≥0.3.260)؛ لذلك يقيس main ما تغيّرت بصمته فعلاً بعد التنفيذ.
+    let partialRestore = false;
+    const truthModes = [];
+    const truthAgent = {
+      async rewindFiles(receivedCwd, sessionId, userMessageId, dryRun) {
+        truthModes.push(dryRun);
+        if (!dryRun) {
+          if (partialRestore) fs.writeFileSync(trackedFile, 'RESTORED\n');
+          return { ok: true, canRewind: true, filesChanged: [] };
+        }
+        return {
+          ok: true,
+          canRewind: true,
+          filesChanged: ['src/app.js', 'src/second.js'],
+          insertions: 9,
+          deletions: 4,
+        };
+      },
+    };
+    const truthPreview = await handlers.handleRewindFilesRequest({
+      cwd, sessionId: GOOD_SESSION, userMessageId: GOOD_MESSAGE, dryRun: true,
+    }, truthAgent);
+    assert.equal(truthPreview.fileCount, 2, 'عدد المعاينة الجافة في الـfixture');
+    partialRestore = true;
+    const truthActual = await handlers.handleRewindFilesRequest({
+      cwd,
+      sessionId: GOOD_SESSION,
+      userMessageId: GOOD_MESSAGE,
+      dryRun: false,
+      confirmed: true,
+      previewToken: truthPreview.previewToken,
+    }, truthAgent);
+    assert.equal(truthActual.ok, true);
+    assert.equal(truthActual.canRewind, true);
+    assert.equal(truthActual.restoredCount, 1, 'عُدّ الملف المتغيّر بصمته فعلاً لا عدد dry-run');
+    assert.notEqual(truthActual.restoredCount, truthActual.fileCount, 'تطابق العدد مع dry-run يعني أن القياس لم يعمل');
+    assert.equal(truthActual.unchanged, undefined);
+    assert.equal(truthActual.verifyFailed, undefined);
+    assert.equal(truthActual.suppressedCheckpointId, 'cp-test-123');
+    fs.writeFileSync(trackedFile, 'AAAA\n');
+    assert.deepEqual(truthModes, [true, true, false]);
+
+    const noChangeModes = [];
+    const noChangeAgent = {
+      async rewindFiles(receivedCwd, sessionId, userMessageId, dryRun) {
+        noChangeModes.push(dryRun);
+        // canRewind:true دون أي تغيّر على القرص — السيناريو الكاذب المعروف
+        return { ok: true, canRewind: true, filesChanged: dryRun ? ['src/app.js'] : [] };
+      },
+    };
+    const noChangePreview = await handlers.handleRewindFilesRequest({
+      cwd, sessionId: GOOD_SESSION, userMessageId: GOOD_MESSAGE, dryRun: true,
+    }, noChangeAgent);
+    const noChange = await handlers.handleRewindFilesRequest({
+      cwd,
+      sessionId: GOOD_SESSION,
+      userMessageId: GOOD_MESSAGE,
+      dryRun: false,
+      confirmed: true,
+      previewToken: noChangePreview.previewToken,
+    }, noChangeAgent);
+    assert.equal(noChange.ok, true, 'تنفيذ حدث فلا يُقال إنه فشل قاطعاً');
+    assert.equal(noChange.canRewind, true);
+    assert.equal(noChange.restoredCount, 0, 'لم تتغيّر أي بصمة ⇒ العدد الصادق صفر');
+    assert.equal(noChange.unchanged, true, 'أُعلن عدم التغيّر بدل رسالة نجاح');
+    assert.equal(noChange.verifyFailed, undefined);
+    assert.equal(
+      noChange.message,
+      'أكمل Claude الاسترجاع لكن لم يتغيّر أي ملف على القرص؛ قد تكون الملفات مطابقة لحالة الرسالة المحددة أصلاً — راجع تغييرات الملفات للتأكد.',
+    );
+    assert.equal(handlers.sdkrewinds.get(GOOD_SESSION).checkpointId, 'cp-test-123', 'مُسح حاجز checkpoint رغم نتيجة غير مؤكدة');
+    assert.deepEqual(noChangeModes, [true, true, false]);
+
+    const verifyTarget = path.join(cwd, 'src', 'verify-target.js');
+    fs.writeFileSync(verifyTarget, 'before\n');
+    let swapToDir = false;
+    const verifyFailModes = [];
+    const verifyFailAgent = {
+      async rewindFiles(receivedCwd, sessionId, userMessageId, dryRun) {
+        verifyFailModes.push(dryRun);
+        if (!dryRun) {
+          if (swapToDir) {
+            // تعطيل إعادة البصم بعد التنفيذ: المسار لم يعد ملفاً عادياً
+            fs.rmSync(verifyTarget, { force: true });
+            fs.mkdirSync(verifyTarget);
+          }
+          return { ok: true, canRewind: true, filesChanged: [] };
+        }
+        return { ok: true, canRewind: true, filesChanged: ['src/verify-target.js'] };
+      },
+    };
+    const verifyFailPreview = await handlers.handleRewindFilesRequest({
+      cwd, sessionId: GOOD_SESSION, userMessageId: GOOD_MESSAGE, dryRun: true,
+    }, verifyFailAgent);
+    swapToDir = true;
+    const verifyFail = await handlers.handleRewindFilesRequest({
+      cwd,
+      sessionId: GOOD_SESSION,
+      userMessageId: GOOD_MESSAGE,
+      dryRun: false,
+      confirmed: true,
+      previewToken: verifyFailPreview.previewToken,
+    }, verifyFailAgent);
+    assert.equal(verifyFail.ok, true, 'تعذّر القياس لا يُحوَّل إلى ادعاء فشل');
+    assert.equal(verifyFail.canRewind, true);
+    assert.equal(verifyFail.verifyFailed, true, 'فشل إعادة البصم أعلن صراحة');
+    assert.equal(verifyFail.restoredCount, null, 'لا عدد كاذبًا عند تعذّر القياس');
+    assert.equal(
+      verifyFail.message,
+      'تعذّر التحقق مما إذا غيّر الاسترجاع الملفات بعد اكتماله؛ راجع تغييرات الملفات يدوياً قبل المتابعة.',
+    );
+    assert.equal(handlers.sdkrewinds.get(GOOD_SESSION).checkpointId, 'cp-test-123', 'مُسح حاجز checkpoint رغم تعذّر التحقق');
+    assert.equal(verifyFail.suppressedCheckpointId, 'cp-test-123');
+    assert.deepEqual(verifyFailModes, [true, true, false]);
+    fs.rmSync(verifyTarget, { recursive: true, force: true });
+
     const largeFile = path.join(cwd, 'src', 'large.bin');
     fs.writeFileSync(largeFile, Buffer.alloc(16 * 1024 * 1024 + 1));
     const fingerprintLimited = await handlers.handleRewindFilesRequest({
@@ -687,6 +805,12 @@ function testWiring() {
   assert.match(mainSource, /ipcMain\.handle\('satr:stop',[\s\S]*?cancelPendingSendRequest\(\)/);
   assert.match(mainSource, /await stopAll\(\)/);
   assert.match(mainSource, /payload\.userMessageId,\s*false/);
+  assert.match(mainSource, /countChangedFingerprints/);
+  assert.match(mainSource, /restoredCount/);
+  assert.match(mainSource, /verifyFailed/);
+  assert.match(mainSource, /unchanged/);
+  assert.match(appSource, /restoredCount/);
+  assert.match(appSource, /verifyFailed/);
   assert.match(preloadSource, /sessionFork:\s*\(/);
   assert.match(preloadSource, /rewindFiles:\s*\(/);
   assert.match(preloadSource, /previewToken/);
@@ -712,7 +836,7 @@ async function main() {
   testSdkRewindStore();
   await testAgentControls();
   testWiring();
-  console.log('fork-rewind-test: ok — UUID صارم، previewToken، تتبّع UUID، مسارات fail-closed، وقفل ثنائي الاتجاه');
+  console.log('fork-rewind-test: ok — UUID صارم، previewToken، تتبّع UUID، مسارات fail-closed، وقفل ثنائي الاتجاه، وعدد استعادة صادق من بصم القرص');
 }
 
 main().catch((error) => {
