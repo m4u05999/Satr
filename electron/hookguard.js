@@ -4,6 +4,13 @@
  * يفحص مسارات ثابتة فقط تحت .claude/، ولا يمشي الشجرة ولا يشغّل عملية. يحفظ
  * بصمة المحتوى ذي الصلة لكل مشروع بلا مساره أو أوامر الخطّاف، بكتابة ذرية
  * أفضل جهد. أي فشل قراءة/تحليل/كتابة يتدهور إلى الصمت بلا تسجيل (fail-open).
+ *
+ * OBS-087 (ب): ومعه بصمة تكوين كل خادم MCP — من `.mcp.json` في المشروع، ومن
+ * `~/.claude.json` لنطاقَي المستخدم والمحلي (وهو هدف اختطاف التوجيه إلى proxy) —
+ * وتنبيه عربي غير حاجب عند تغيّرها خارج «سطر». يُخزَّن **النطاق والاسم وبصمة**
+ * التكوين فقط: لا رابط ولا رمز ولا أي حقل من التكوين نفسه. وأوّل رصد يُسجَّل
+ * صامتاً فلا ينبّه إلا التغيّر. ومسح MCP معزول عن مسح الخطّافات: فشله يعني «غير
+ * معروف» فيُبقي الأساس المسجّل كما هو ولا يُسقط تنبيه البند (أ).
  */
 
 'use strict';
@@ -24,14 +31,45 @@ const MAX_SETUP_BYTES = 512 * 1024;
 const SAFE_DIGEST = /^[a-f0-9]{64}$/;
 const SETTINGS_FILES = ['settings.json', 'settings.local.json'];
 
+// ── OBS-087 (ب): بصمة تكوين خوادم MCP ────────────────────────────────────
+const MCP_PROJECT_FILE = '.mcp.json';
+const MAX_MCP_FILE_BYTES = 256 * 1024;
+// ~/.claude.json ينمو بسجل المشاريع — المقيس على جهاز التطوير 73,915 بايت.
+const MAX_CLAUDE_JSON_BYTES = 4 * 1024 * 1024;
+// سقف الخوادم المسمّاة في المخزن؛ ما تجاوزه يحرسه مجموع '#' فلا يمرّ بلا رصد.
+const MAX_MCP_SERVERS = 16;
+const MAX_MCP_NAME = 48;
+const MAX_NAMED_IN_NOTICE = 6;
+const MCP_AGGREGATE_KEY = '#';
+const SAFE_MCP_DIGEST = /^[a-f0-9]{16}$/;
+const SAFE_MCP_KEY = /^(?:#|[pul]:[^\x00-\x1F\x7F-\x9F]{1,96})$/;
+// محارف التحكم وBidi بالهروب لا حرفيّةً — الحرفية تُتلف الملف عند تحريره.
+const MCP_UNSAFE_NAME = /[\x00-\x1F\x7F-\x9F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+const MCP_SCOPE_LABELS = Object.freeze({ p: 'مشروع', u: 'مستخدم', l: 'محلي' });
+
 function digest(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
-function projectKey(cwd) {
-  let normalized = path.resolve(String(cwd || '')).replace(/[\\/]+$/, '');
+function normalizePath(value) {
+  let normalized = path.resolve(String(value || '')).replace(/[\\/]+$/, '');
   if (process.platform === 'win32') normalized = normalized.toLowerCase();
-  return digest(Buffer.from(normalized, 'utf8'));
+  return normalized;
+}
+
+function projectKey(cwd) {
+  return digest(Buffer.from(normalizePath(cwd), 'utf8'));
+}
+
+// مقارنة مسار مسجَّل في ~/.claude.json بمسار المشروع: المفاتيح هناك مكتوبة بفواصل
+// مختلطة (رُصد حيّاً "D:\\spsa101" و"D:/sater/satr-2" معاً)، ومسار مشوّه قد يُسقط
+// path.resolve فيُتخطّى المدخل بدل إسقاط المسح كله.
+function samePath(candidate, target) {
+  try {
+    return normalizePath(candidate) === target;
+  } catch {
+    return false;
+  }
 }
 
 async function readLimited(io, file, maxBytes, missingOk) {
@@ -97,6 +135,136 @@ async function scanProject(io, cwd) {
   return findings.sort((left, right) => left.path.localeCompare(right.path));
 }
 
+// ── OBS-087 (ب): جمع بصمات خوادم MCP ──────────────────────────────────────
+
+// ترتيب المفاتيح ثابت كي لا تُقرأ إعادة ترتيب حقول التكوين تغييراً.
+function stableStringify(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort()
+      .map((key) => JSON.stringify(key) + ':' + stableStringify(value[key])).join(',') + '}';
+  }
+  const encoded = JSON.stringify(value);
+  return encoded === undefined ? 'null' : encoded;
+}
+
+// الاسم يأتي من ملف قد يكون في مستودع غير موثوق: تُزال محارف التحكم وBidi، وتُطوى
+// الفراغات، ويُقصّ بنقاط Unicode. الاسم الفارغ بعد التنقية يُستبدل ببصمة قصيرة كي
+// يبقى مفتاح المخزن ثابتاً ومميّزاً بدل أن يبتلع خادماً آخر.
+function sanitizeMcpName(raw) {
+  const source = raw == null ? '' : String(raw);
+  const text = source.replace(MCP_UNSAFE_NAME, '').replace(/\s+/g, ' ').trim();
+  const points = Array.from(text);
+  if (!points.length) return '#' + digest(Buffer.from(source, 'utf8')).slice(0, 8);
+  return points.slice(0, MAX_MCP_NAME).join('');
+}
+
+function serversFrom(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const servers = parsed.mcpServers;
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return null;
+  return servers;
+}
+
+async function readJson(io, file, maxBytes) {
+  const raw = await readLimited(io, file, maxBytes, true);
+  if (raw == null) return null;
+  return JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+}
+
+// يعيد خريطة { '<نطاق>:<اسم>': '<بصمة 16>' } ومعها مجموع '#' لكل الخوادم قبل القصّ.
+// لا يدخلها رابط ولا رمز ولا أي حقل من التكوين — البصمة وحدها.
+async function collectMcpServers(io, cwd, claudeJsonFile) {
+  const entries = [];
+  const push = (prefix, servers) => {
+    if (!servers) return;
+    for (const [name, config] of Object.entries(servers)) {
+      entries.push([
+        prefix + ':' + sanitizeMcpName(name),
+        digest(Buffer.from(stableStringify(config), 'utf8')).slice(0, 16),
+      ]);
+    }
+  };
+
+  push('p', serversFrom(await readJson(
+    io, path.join(path.resolve(cwd), MCP_PROJECT_FILE), MAX_MCP_FILE_BYTES)));
+
+  const home = await readJson(io, claudeJsonFile, MAX_CLAUDE_JSON_BYTES);
+  push('u', serversFrom(home));
+  if (home && home.projects && typeof home.projects === 'object' && !Array.isArray(home.projects)) {
+    const target = normalizePath(cwd);
+    for (const [recorded, entry] of Object.entries(home.projects)) {
+      if (samePath(recorded, target)) push('l', serversFrom(entry));
+    }
+  }
+
+  entries.sort((left, right) => left[0].localeCompare(right[0]) || left[1].localeCompare(right[1]));
+  const map = {
+    [MCP_AGGREGATE_KEY]: digest(Buffer.from(
+      entries.map((pair) => pair.join('\u0000')).join('\n'), 'utf8')).slice(0, 16),
+  };
+  for (const [key, value] of entries.slice(0, MAX_MCP_SERVERS)) map[key] = value;
+  return map;
+}
+
+function cleanMcpMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const map = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (Object.keys(map).length >= MAX_MCP_SERVERS + 1) break;
+    if (!SAFE_MCP_KEY.test(key) || !SAFE_MCP_DIGEST.test(String(entry || ''))) continue;
+    map[key] = entry;
+  }
+  // غياب المجموع يعني خريطة مشوّهة: تُعامَل كـ«لم تُرصد بعد» فيُسجَّل أساس جديد صامتاً.
+  return Object.prototype.hasOwnProperty.call(map, MCP_AGGREGATE_KEY) ? map : null;
+}
+
+function diffMcp(before, after) {
+  const added = [];
+  const removed = [];
+  const changed = [];
+  for (const key of Object.keys(after)) {
+    if (key === MCP_AGGREGATE_KEY) continue;
+    if (!Object.prototype.hasOwnProperty.call(before, key)) added.push(key);
+    else if (before[key] !== after[key]) changed.push(key);
+  }
+  for (const key of Object.keys(before)) {
+    if (key === MCP_AGGREGATE_KEY) continue;
+    if (!Object.prototype.hasOwnProperty.call(after, key)) removed.push(key);
+  }
+  return {
+    added: added.sort(),
+    changed: changed.sort(),
+    removed: removed.sort(),
+    // المجموع يغطي ما تجاوز سقف الأسماء فلا يمرّ خادم زائد بلا رصد.
+    aggregate: before[MCP_AGGREGATE_KEY] !== after[MCP_AGGREGATE_KEY],
+  };
+}
+
+function mcpChangedIn(diff) {
+  return !!diff && (diff.aggregate || diff.added.length > 0
+    || diff.changed.length > 0 || diff.removed.length > 0);
+}
+
+function describeMcpKey(verb, key) {
+  return verb + ' «' + key.slice(2) + '» ('
+    + (MCP_SCOPE_LABELS[key.slice(0, 1)] || 'نطاق غير معروف') + ')';
+}
+
+function mcpNoticeText(diff) {
+  const segments = [
+    ...diff.added.map((key) => describeMcpKey('أُضيف', key)),
+    ...diff.changed.map((key) => describeMcpKey('تغيّر تكوين', key)),
+    ...diff.removed.map((key) => describeMcpKey('أُزيل', key)),
+  ];
+  const shown = segments.slice(0, MAX_NAMED_IN_NOTICE);
+  const hidden = segments.length - shown.length;
+  if (hidden > 0) shown.push('و' + hidden + ' تغييراً آخر');
+  if (!shown.length) shown.push('تغيّر خادم غير مسمّى (تجاوز سقف الأسماء المسجّلة)');
+  return scrubSecrets('⚠️ تنبيه أمني: تغيّر تكوين خوادم MCP لهذا المشروع خارج «سطر»: '
+    + shown.join('، ') + '. راجع الخوادم قبل متابعة العمل؛ لن يوقف «سطر» هذا الدور.');
+}
+
 function cleanProjects(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
       || value.version !== STORE_VERSION || !value.projects
@@ -109,10 +277,15 @@ function cleanProjects(value) {
     if (Object.keys(projects).length >= MAX_PROJECTS) break;
     if (!SAFE_DIGEST.test(key) || !entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
     if (!SAFE_DIGEST.test(String(entry.fingerprint || ''))) continue;
-    projects[key] = {
+    const cleaned = {
       fingerprint: entry.fingerprint,
       updated_at: typeof entry.updated_at === 'string' ? entry.updated_at.slice(0, 40) : '',
     };
+    // OBS-087 (ب): الحقل اختياري — مخزن سابق للبند (أ) بلا `mcp` يبقى صالحاً،
+    // ويُسجَّل أساس MCP له صامتاً عند أول رصد. لا رفع لـSTORE_VERSION ولا هجرة.
+    const mcp = cleanMcpMap(entry.mcp);
+    if (mcp) cleaned.mcp = mcp;
+    projects[key] = cleaned;
   }
   return projects;
 }
@@ -127,7 +300,15 @@ async function persist(io, file, projects) {
   const temp = file + '.tmp-' + process.pid + '-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
   try {
     await io.promises.mkdir(path.dirname(file), { recursive: true });
-    const body = JSON.stringify({ version: STORE_VERSION, projects }, null, 2);
+    // OBS-087 (ب): خرائط MCP تكبّر المدخل، فتجاوز السقف يُعالَج بإخلاء الأقدم (أوّل
+    // المفاتيح) بدل الامتناع عن الكتابة — الامتناع كان يُسكِت الحارس بصمت. مشروع
+    // الدور الحالي أُعيد إدخاله آخِراً فهو آخر ما يُخلى.
+    const kept = { ...projects };
+    let body = JSON.stringify({ version: STORE_VERSION, projects: kept }, null, 2);
+    while (Buffer.byteLength(body, 'utf8') > MAX_STORE_BYTES && Object.keys(kept).length > 1) {
+      delete kept[Object.keys(kept)[0]];
+      body = JSON.stringify({ version: STORE_VERSION, projects: kept }, null, 2);
+    }
     if (Buffer.byteLength(body, 'utf8') > MAX_STORE_BYTES) return false;
     await io.promises.writeFile(temp, body, 'utf8');
     await io.promises.rename(temp, file);
@@ -158,6 +339,7 @@ function createGuard(options = {}) {
   const io = options.fs || fs;
   const file = options.file || process.env.SATR_HOOK_GUARD_FILE || DEFAULT_FILE;
   const now = typeof options.now === 'function' ? options.now : () => new Date();
+  const claudeJson = options.claudeJson || path.join(os.homedir(), '.claude.json');
   let queue = Promise.resolve();
 
   async function inspect(cwd) {
@@ -169,14 +351,41 @@ function createGuard(options = {}) {
       }))), 'utf8'));
       const key = projectKey(cwd);
       const projects = await loadProjects(io, file);
-      if (projects[key] && projects[key].fingerprint === fingerprint) return null;
+      const previous = projects[key] || null;
+
+      // OBS-087 (ب): مسح MCP معزول — فشله «غير معروف» لا «لا خوادم»، فيُبقي الأساس
+      // المسجّل كما هو (وإلا محا عطبٌ عابر خطَّ الأساس فأسكت تنبيهاً حقيقياً بعده).
+      let mcpNow = null;
+      try {
+        mcpNow = await collectMcpServers(io, cwd, claudeJson);
+      } catch {
+        mcpNow = null;
+      }
+      const mcpBefore = previous && previous.mcp && typeof previous.mcp === 'object'
+        ? previous.mcp : null;
+      const mcpStored = mcpNow || mcpBefore;
+      const mcpDiff = mcpNow && mcpBefore ? diffMcp(mcpBefore, mcpNow) : null;
+
+      // لا كتابة ولا تنبيه ما لم يتغيّر شيء فعلاً — وأوّل رصد لـMCP تغيّرٌ في المخزن
+      // بلا تنبيه (لا يوجد أساس يُقارَن به).
+      const previousSignature = previous
+        ? JSON.stringify([previous.fingerprint, previous.mcp || null]) : null;
+      const nextSignature = JSON.stringify([fingerprint, mcpStored || null]);
+      if (previousSignature === nextSignature) return null;
 
       const next = { ...projects };
       delete next[key];
-      next[key] = { fingerprint, updated_at: now().toISOString() };
+      const entry = { fingerprint, updated_at: now().toISOString() };
+      if (mcpStored) entry.mcp = mcpStored;
+      next[key] = entry;
       while (Object.keys(next).length > MAX_PROJECTS) delete next[Object.keys(next)[0]];
       if (!await persist(io, file, next)) return null;
-      return findings.length ? noticeText(findings) : null;
+
+      const notices = [];
+      const hooksChanged = !previous || previous.fingerprint !== fingerprint;
+      if (hooksChanged && findings.length) notices.push(noticeText(findings));
+      if (mcpChangedIn(mcpDiff)) notices.push(mcpNoticeText(mcpDiff));
+      return notices.length ? notices.join(' ') : null;
     } catch {
       return null;
     }
@@ -204,4 +413,9 @@ module.exports = {
   MAX_STORE_BYTES,
   MAX_SETTINGS_BYTES,
   MAX_SETUP_BYTES,
+  MAX_MCP_SERVERS,
+  MAX_MCP_NAME,
+  MAX_MCP_FILE_BYTES,
+  MAX_CLAUDE_JSON_BYTES,
+  MCP_AGGREGATE_KEY,
 };
