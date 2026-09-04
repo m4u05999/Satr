@@ -18,6 +18,7 @@ const SUITE = [
   'test:tasks',
   'test:observations',
   'test:suite-coverage',
+  'test:radar-graveyard',
   'test:probe-runner',
   'test:langmetric',
   'test:langshadow',
