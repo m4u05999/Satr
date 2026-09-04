@@ -15,8 +15,10 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
-const FILE = path.resolve(__dirname, '..', 'docs', 'OBSERVATIONS.md');
+const REPO_ROOT = path.resolve(__dirname, '..');
+const FILE = path.join(REPO_ROOT, 'docs', 'OBSERVATIONS.md');
 
 // قوائم مغلقة: وسمٌ خارجها يعني ملاحظة لا يجدها أحد حين يسحب دفعته
 const TAGS = new Set(['mobile', 'ui', 'ops-room', 'engines', 'preview', 'generation',
@@ -36,6 +38,73 @@ function assert(condition, message) {
 function field(block, name) {
   const match = block.match(new RegExp('^- \\*\\*' + name + '\\*\\*:\\s*(.+)$', 'm'));
   return match ? match[1].trim() : null;
+}
+
+// ── مرجع الالتزام: من «أي hex» إلى «التزام موجود فعلاً» ──────────────────────
+// الشرط القديم قبل **أي** `[0-9a-f]{7,40}` في الكتلة، فسلسلةٌ عابرة تمرّ كأنها
+// مرجع. مقيس على `main` (2026-09-04): من 63 منجزة كانت 10 بلا أي hex يطابق
+// التزاماً — أوضحها `OBS-060` ومرشّحها الوحيد `ec550b65` وهو **معرّف ملف جلسة**،
+// وخمسٌ (‏OBS-028/029/030/032/033) مرّت بمعرّف الجلسة `7ad95229` الوارد في حقل
+// دليلها بينما حالتها بلا مرجع أصلاً. الشرط لم يتغيّر — تغيّرت دقّته.
+const COMMIT_TOKEN = /[0-9a-f]{7,40}/g;
+
+// الباب المعلن — المرجع الخارجي المشروع.
+//
+// بعض العلاجات تقع خارج Git هذا المستودع فعلاً: `satr-enterprise` مستودع خاص
+// (‏CLAUDE.md: «لا يدخل Git العام»)، و`executor.ps1` ليس في Git أصلاً. حارسٌ
+// يرفضها **يكسر السجل بدل أن يحرسه**. فالباب يقبلها بشرط أن تكون الملاحظة قد
+// **صرّحت بالسبب في نصّها** — لا قائمة أسماء مدفونة هنا، وإلا انتقل العرف من
+// الملاحظة إلى السكربت فلا يقرؤه كاتب الملاحظة القادم.
+//
+// الشكلان المعلنان (كلاهما مكتوب داخل الملاحظة):
+//   `<hex>` في `<مستودع>`  ← التزام في مستودع آخر مسمّى
+//   `sha256:<hex>`          ← بصمة نسخة، مصرَّح بأنها ليست رقم التزام
+//
+// ⚠️ حدّ مُصرَّح به: الباب يتحقق من **وجود التصريح** لا من الكائن الخارجي نفسه —
+// لا وصول لهذا الحارس إلى `satr-enterprise`.
+const EXTERNAL_REPO = /`[0-9a-f]{7,40}`\s*في\s*`[^`\n]+`/;
+const EXTERNAL_DIGEST = /sha256:[0-9a-f]{7,64}/;
+
+/**
+ * تدهور رشيق: بيئةٌ بلا git — أو **نسخة سطحية** — لا تُسقط الطقم.
+ *
+ * ⚠️ هذا ليس احتياطاً نظرياً: `.github/workflows/release.yml` يشغّل `test:full`
+ * بـ`actions/checkout@v6` بلا `fetch-depth`، أي نسخة سطحية بالتزام واحد؛ فبلا هذا
+ * الفحص كان الحارس سيصبغ بوابة الإصدار حمراء على 53 ملاحظة سليمة.
+ */
+function gitProbe() {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--is-shallow-repository'], {
+      cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 20000, windowsHide: true,
+    }).trim();
+    if (out === 'true') return { ok: false, why: 'المستودع نسخة سطحية (shallow) فلا تاريخ يُطابَق' };
+    return { ok: true, why: '' };
+  } catch {
+    return { ok: false, why: 'git غير متاح أو المسار ليس مستودعاً' };
+  }
+}
+
+/** يحلّ كل المرشّحات في نداء git واحد — مرة لكل مرجع فريد لا لكل ملاحظة. */
+function resolveCommits(refs) {
+  const resolved = new Set();
+  if (!refs.length) return resolved;
+  let out;
+  try {
+    out = execFileSync('git', ['cat-file', '--batch-check'], {
+      cwd: REPO_ROOT, input: refs.map((r) => r + '^{commit}').join('\n') + '\n',
+      encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 20000, windowsHide: true,
+    });
+  } catch {
+    return null; // فشل النداء نفسه ⇒ تدهور رشيق لا حكم كاذب
+  }
+  // `--batch-check` يطبع سطراً لكل مدخل بالترتيب: `<sha> commit <size>` أو `<input> missing`
+  const lines = out.split('\n');
+  for (let i = 0; i < refs.length; i += 1) {
+    const parts = (lines[i] || '').trim().split(/\s+/);
+    if (parts[1] === 'commit') resolved.add(refs[i]); // إيجابي صريح: أي شكل آخر يفشل مغلقاً
+  }
+  return resolved;
 }
 
 function parse(source) {
@@ -60,6 +129,15 @@ function run() {
 
   const entries = parse(source);
   assert(entries.length > 0, 'الملف يحوي ملاحظة واحدة على الأقل');
+
+  // مرور تمهيدي: كل مرشّح فريد في الملف يُحلّ مرة واحدة قبل حلقة الفحص
+  const probe = gitProbe();
+  const candidates = [...new Set(entries.flatMap(({ block }) => block.match(COMMIT_TOKEN) || []))];
+  const resolved = probe.ok ? resolveCommits(candidates) : null;
+  if (resolved === null) {
+    console.log('observations-test: تنبيه — تعذّر التحقق من مراجع الالتزام ('
+      + (probe.why || 'فشل نداء git') + ')؛ الفحص يسقط إلى الشرط الشكلي وحده.');
+  }
 
   const seen = new Set();
   for (const { id, block } of entries) {
@@ -87,8 +165,16 @@ function run() {
 
       // منجزة بلا مرجع التزام = ادّعاء إنجاز لا يمكن التحقق منه
       if (head === 'منجزة') {
-        assert(/[0-9a-f]{7,40}/.test(state) || /[0-9a-f]{7,40}/.test(block),
-          id + ': المنجزة تحمل مرجع التزام');
+        const found = [...new Set(block.match(COMMIT_TOKEN) || [])];
+        const ok = resolved === null
+          ? found.length > 0 // تدهور رشيق: الشرط الشكلي القديم حرفياً
+          : found.some((ref) => resolved.has(ref))
+            || EXTERNAL_REPO.test(block) || EXTERNAL_DIGEST.test(block);
+        assert(ok, id + ': المنجزة تحمل مرجع التزام'
+          + (resolved === null ? '' : ' يطابق كائناً في Git — '
+            + (found.length ? 'مرشّحات لا تطابق التزاماً: ' + found.join('، ')
+              : 'لا مرشّح hex أصلاً')
+            + ' (والباب المعلن للمرجع الخارجي غير مستعمل)'));
       }
       // مرفوضة بلا سبب = قرار يُعاد فتحه بعد أشهر بلا ذاكرة
       if (head === 'مرفوضة') {
@@ -115,4 +201,5 @@ if (failures.length) {
   for (const failure of failures) console.error('  - ' + failure);
   process.exit(1);
 }
-console.log('observations-test: ok — ' + checks + ' فحصاً (الشكل والأوسمة والأدلة والترقيم).');
+console.log('observations-test: ok — ' + checks
+  + ' فحصاً (الشكل والأوسمة والأدلة والترقيم ومراجع الالتزام).');
