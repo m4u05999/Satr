@@ -162,6 +162,26 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
  * نفسه تكشف التعليق خلال دقائق لا بعد 1000 ثانية كما وقع في بوابة 2026-08-26.
  * القاعدة عند التعديل: قِس ثم اضرب، ولا تُدخل رقماً بلا سطر قياس يسنده.
  */
+/**
+ * إعادة محاولة معلَنة لعثرات بيئية مقيسة (‏OBS-036) — النمط منقول من
+ * `opsroom-suite.js` (‏OBS-025) حرفياً: تُعاد **مرة واحدة** لكل تشغيل وبإعلان
+ * صاخب، والتراجع الحقيقي يفشل مرتين فيسقط.
+ *
+ * الدليل: في بوابة 2.16.1 سقط `test:promocapture-live` وحيداً من 72 مجموعة
+ * بحمولة `stop:{size:0, head:[]}` رغم نجاح المسار كله (`stopped.ok:true`،
+ * `start.tracks:1`، `frameRate:30`) — أي لم تصل إطارات، ونجح فوراً منفرداً
+ * (`bytes=14958`). وقرينة `test:promo-studio` الناجحة في الطقم نفسه
+ * (‏`558497 bytes`) تثبت أن الترميز سليم وأن العطب في التقاط النافذة وحده تحت
+ * الحمل. القائمة **مغلقة**: لا اسم يدخلها بلا سابقة مقيسة مسجّلة برقم ملاحظة
+ * في `RETRYABLE_OBS` — ويُفحص هذا العقد ساكناً وسلوكياً في `test:suite-coverage`.
+ */
+const RETRYABLE = new Set([
+  'test:promocapture-live', // OBS-036 — بوابة 2.16.1: صفر إطار تحت الحمل، ونجح منفرداً فوراً
+]);
+// تبرير كل اسم — رقم الملاحظة التي سجّلت العثرة البيئية المقيسة. لا اسم بلا سابقة.
+const RETRYABLE_OBS = Object.freeze({ 'test:promocapture-live': 'OBS-036' });
+const MAX_RETRIES = 1;
+
 const SUITE_TIMEOUT_MS = 240000;
 // المجموعات المجمَّعة تشغّل اختبارات متعددة بالتسلسل فمدّتها الطبيعية أطول بمراتب.
 const TIMEOUT_OVERRIDES = Object.freeze({
@@ -227,6 +247,7 @@ function main() {
   const failures = [];
   const durations = [];
   const skipped = [];
+  const retried = [];
   console.log(`full-suite: بدء ${SUITE.length} مجموعة اختبار قطعية/حية بالتسلسل.`);
   // تُشتق من القائمة المعلنة لا من نصّ يدوي يبيت — الأسباب كاملة في EXCLUDED_FROM_SUITE.
   console.log(`مستبعدة عمداً (${EXCLUDED_FROM_SUITE.length}، بأسباب موثّقة في EXCLUDED_FROM_SUITE): `
@@ -245,24 +266,40 @@ function main() {
     const args = process.platform === 'win32' ? ['/d', '/s', '/c', 'npm', 'run', name] : ['run', name];
     const limit = timeoutFor(name);
     const startedAt = Date.now();
-    const result = spawnSync(command, args, {
-      cwd: ROOT,
-      env: process.env,
-      stdio: 'inherit',
-      shell: false,
-      timeout: limit,
-      killSignal: 'SIGKILL',
-    });
+    // ميزانية الإعادة مغلقة: اسم غير مقيّس في RETRYABLE لا يحصل على محاولة ثانية أبداً.
+    const budget = RETRYABLE.has(name) ? MAX_RETRIES : 0;
+    let passed = false;
+    let lastFailure = null;
+    for (let attempt = 0; attempt <= budget; attempt++) {
+      const result = spawnSync(command, args, {
+        cwd: ROOT,
+        env: process.env,
+        stdio: 'inherit',
+        shell: false,
+        timeout: limit,
+        killSignal: 'SIGKILL',
+      });
+      const timedOut = !!(result.error && result.error.code === 'ETIMEDOUT');
+      if (timedOut) {
+        killTree(result.pid);
+        console.error(`\nfull-suite: ⏱ تجاوزت «${name}» مهلتها (${Math.round(limit / 1000)}ث) — قُتلت شجرتها والبوابة تكمل.`);
+        lastFailure = { name, status: 'timeout', signal: `تجاوز ${Math.round(limit / 1000)}ث` };
+      } else if (result.status !== 0) {
+        lastFailure = { name, status: result.status, signal: result.signal || '' };
+      } else {
+        passed = true;
+        // العثرة البيئية لا تُخفى: أي نجاح جاء بعد إعادة يُسجَّل ويُذكر في الخاتمة.
+        if (attempt > 0) retried.push(name);
+        break;
+      }
+      if (attempt < budget) {
+        console.error(`\nfull-suite: ⚠ تعثّر «${name}» (المحاولة ${attempt + 1}/${budget + 1}) — يُعاد مرة واحدة بحكم ${RETRYABLE_OBS[name]}.`);
+        console.error('   إن فشل ثانيةً فهو تراجع حقيقي لا عثرة بيئية.');
+      }
+    }
     const elapsed = Date.now() - startedAt;
     durations.push({ name, ms: elapsed });
-    const timedOut = !!(result.error && result.error.code === 'ETIMEDOUT');
-    if (timedOut) {
-      killTree(result.pid);
-      console.error(`\nfull-suite: ⏱ تجاوزت «${name}» مهلتها (${Math.round(limit / 1000)}ث) — قُتلت شجرتها والبوابة تكمل.`);
-      failures.push({ name, status: 'timeout', signal: `تجاوز ${Math.round(limit / 1000)}ث` });
-    } else if (result.status !== 0) {
-      failures.push({ name, status: result.status, signal: result.signal || '' });
-    }
+    if (!passed && lastFailure) failures.push(lastFailure);
   }
 
   // مدد المجموعات — عليها تُعايَر المهل أعلاه، ولا تُخمَّن. تُطبع مرتَّبة تنازلياً
@@ -277,16 +314,24 @@ function main() {
   }
 
   const ran = SUITE.length - skipped.length;
+  // الإعلان الصاخب لا يكتمل بخاتمة صامتة: أي مجموعة أُعيدت تُذكر صراحةً —
+  // «كله أخضر» مع إعادة مخفيّة حارس أخضر كاذب (الغرض نفسه من قيد القائمة المغلقة).
+  const retriedNote = retried.length ? ` (أُعيد بعد تعثّر بيئي: ${retried.join('، ')})` : '';
   if (failures.length) {
     console.error('\nfull-suite: فشلت المجموعات التالية:');
     for (const failure of failures) console.error(`- ${failure.name}: ${failure.signal || failure.status}`);
+    if (retried.length) console.error(`full-suite: ملاحظة: أُعيد قبل أن تسقط ثم نجح: ${retried.join('، ')}.`);
     process.exitCode = 1;
   } else {
-    console.log(`\nfull-suite: نجحت المجموعات كلها — ${ran}/${ran}${skipped.length ? ` (و${skipped.length} متخطّاة بحدّ معلَن)` : ''}.`);
+    console.log(`\nfull-suite: نجحت المجموعات كلها — ${ran}/${ran}${skipped.length ? ` (و${skipped.length} متخطّاة بحدّ معلَن)` : ''}${retriedNote}.`);
   }
 
 }
 
 if (require.main === module) main();
 
-module.exports = { main, timeoutFor, killTree, skipReasonFor, SUITE, EXCLUDED_FROM_SUITE, SKIP_ON_POSIX, SUITE_TIMEOUT_MS, TIMEOUT_OVERRIDES };
+module.exports = {
+  main, timeoutFor, killTree, skipReasonFor,
+  SUITE, EXCLUDED_FROM_SUITE, SKIP_ON_POSIX, SUITE_TIMEOUT_MS, TIMEOUT_OVERRIDES,
+  RETRYABLE, RETRYABLE_OBS, MAX_RETRIES,
+};
