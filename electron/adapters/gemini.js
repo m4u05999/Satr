@@ -81,7 +81,9 @@ function start(input, cwd, emit) {
   const memoryPrompt = memory.retrieve(cwd, prompt).text;
   // مهام خلفية خرجت بلا دور نشط — كتلة سياق تُحقن مرة واحدة (termjobs.pendingNoticeText)
   const backgroundPrompt = termjobs.pendingNoticeText(cwd);
-  let contextPrompt = [skillPrompt, memoryPrompt, backgroundPrompt].filter(Boolean).join('\n\n');
+  let contextPrompt = '';
+  let turnPrompt = '';
+  let turnContentIndex = -1;
   const autoAllowWrites = permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions';
 
   const apiKey = resolveApiKey();
@@ -143,7 +145,12 @@ function start(input, cwd, emit) {
       let settled = false;
       const done = (r) => { if (!settled) { settled = true; resolve(r); } };
 
-      const bodyObj = { contents };
+      // الأجزاء المتغيرة تلحق بدور المستخدم عند الإرسال ولا تلوّث سجل المحادثة المعروض.
+      const requestContents = contents.map((content, index) => {
+        if (!turnPrompt || index !== turnContentIndex || !content || content.role !== 'user') return content;
+        return { ...content, parts: (Array.isArray(content.parts) ? content.parts : []).concat([{ text: turnPrompt }]) };
+      });
+      const bodyObj = { contents: requestContents };
       if (contextPrompt) bodyObj.systemInstruction = { parts: [{ text: contextPrompt }] };
       if (withTools) bodyObj.tools = geminiToolDefs();
       estimatedUsage.input_tokens += contextBudget.estimateTokens(bodyObj);
@@ -226,14 +233,17 @@ function start(input, cwd, emit) {
     const builtContext = await contextBudget.buildBlindContext({
       cwd,
       prompt,
-      systemParts: [envbrief.build('adapter', useModel, { compact: true }), skillPrompt, memoryPrompt],
+      systemParts: [envbrief.build('adapter', useModel, { compact: true }), skillPrompt],
+      turnParts: [memoryPrompt, backgroundPrompt],
       history,
       toolDefinitions: tools.defs(),
     });
     if (aborted) return;
     contextPrompt = builtContext.systemPrompt;
+    turnPrompt = builtContext.turnPrompt;
     contextEstimate = builtContext.estimate;
     const contents = history.concat([{ role: 'user', parts: [{ text: prompt }] }]);
+    turnContentIndex = history.length;
     let rounds = 0;
     while (true) {
       const r = await requestOnce(contents, toolsOk);

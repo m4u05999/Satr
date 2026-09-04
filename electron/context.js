@@ -63,6 +63,8 @@ function budgetBlock(inputTokens, repoTokens) {
 async function buildBlindContext(input, options) {
   const info = input || {};
   const parts = Array.isArray(info.systemParts) ? info.systemParts.filter((part) => typeof part === 'string' && part) : [];
+  // سياق الدور المسترجع حسب البرومبت يبقى في الذيل كي تظل بادئة المزوّد ثابتة وقابلة للكاش.
+  const turnParts = Array.isArray(info.turnParts) ? info.turnParts.filter((part) => typeof part === 'string' && part) : [];
   let repo = null;
   try {
     repo = await repomap.summarize(info.cwd, info.prompt, options && options.repomap);
@@ -71,15 +73,17 @@ async function buildBlindContext(input, options) {
   }
   const summary = repo && typeof repo.summary === 'string' ? repo.summary : '';
   const repoTokens = estimateTextTokens(summary);
-  const withoutBudget = parts.concat(summary ? [summary] : []).join('\n\n');
+  const withoutBudget = parts.concat(turnParts, summary ? [summary] : []).join('\n\n');
   const baseValue = [withoutBudget, info.history || [], info.prompt || '', info.toolDefinitions || []];
   let inputTokens = estimateTokens(baseValue);
   let budget = budgetBlock(inputTokens, repoTokens);
   inputTokens = estimateTokens([withoutBudget, budget, info.history || [], info.prompt || '', info.toolDefinitions || []]);
   budget = budgetBlock(inputTokens, repoTokens);
-  const systemPrompt = parts.concat(summary ? [summary] : [], [budget]).join('\n\n');
+  const systemPrompt = parts.join('\n\n');
+  const turnPrompt = turnParts.concat(summary ? [summary] : [], [budget]).join('\n\n');
   return {
     systemPrompt,
+    turnPrompt,
     repo,
     estimate: {
       estimate: true,
