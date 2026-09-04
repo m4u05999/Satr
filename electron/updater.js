@@ -25,6 +25,10 @@
  *    دورة؛ الفحص اليدوي وحده يتجاوز ذلك. التنزيل والتثبيت يبقيان بموافقة صريحة.
  *    طورا `none` و`check_failed` يُبثّان **للفحص اليدوي فقط** كي لا يزعج الفحص
  *    الدوري الصامت المستخدم بنتيجة «لا جديد».
+ *  - **نسخة المتجر (‏MSIX) لا تحدّث نفسها**: حزمة Microsoft Store موقّعة من مايكروسوفت
+ *    ومثبّتة للقراءة فقط، والمتجر هو من يحدّثها؛ فتنزيل مثبّت NSIS من GitHub داخلها
+ *    عبثٌ ينتهي بنسختين متوازيتين. `main.js` يمرّر `msix: process.windowsStore === true`
+ *    (علم Electron الرسمي للتشغيل من حاوية appx) فيصمت المُحدِّث تماماً.
  */
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;   // الفحص الدوري
@@ -37,7 +41,10 @@ let manualPending = false; // فحص يدوي ينتظر نتيجة ⇒ يستح
 
 // يُهيّأ من main.js بدالة بثّ للواجهة (obj → satr:event) — نفس نمط بقية المحرّكات
 function shouldEnableUpdates(app, options = {}) {
-  return !!(app && app.isPackaged) && options.edition !== 'enterprise' && options.signed !== false;
+  return !!(app && app.isPackaged)
+    && options.edition !== 'enterprise'
+    && options.signed !== false
+    && options.msix !== true;
 }
 
 function initUpdater(app, emit, options = {}) {

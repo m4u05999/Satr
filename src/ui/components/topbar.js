@@ -278,8 +278,18 @@ class SatrTopbar extends HTMLElement {
       if (appVersionData && appVersionData.version) {
         $('appVersionLabel').textContent = 'v' + appVersionData.version;
         // OBS-026 + OBS-031: تُعلَّم نسخة التطوير وحدها — المثبّتة هي القاعدة فلا تحتاج وسماً،
-        // ووجود الشارة يفصلها عن نسخة مثبّتة قد تحمل رقم الإصدار نفسه
-        $('appEnvBadge').hidden = appVersionData.packaged !== false;
+        // ووجود الشارة يفصلها عن نسخة مثبّتة قد تحمل رقم الإصدار نفسه.
+        // ونسخة المتجر تُعلَّم كذلك لأن سلوكها يختلف: لا تحدّث نفسها (المتجر يفعل).
+        const envBadge = $('appEnvBadge');
+        if (appVersionData.msix === true) {
+          envBadge.textContent = 'نسخة المتجر';
+          envBadge.hidden = false;
+          // زرّ لا يفعل شيئاً أسوأ من غيابه: المُحدِّث معطّل في الحزمة عمداً
+          const updRow = $('checkUpdatesRow');
+          if (updRow) updRow.hidden = true;
+        } else {
+          envBadge.hidden = appVersionData.packaged !== false;
+        }
         appVersionLoaded = true;
       }
     }

@@ -7,6 +7,12 @@
  * نبني PNG لكل مقاس يدوياً (zlib من Node) ثم نحزمها في ملف ICO (PNG مضمّن، مدعوم على
  * ويندوز فيستا فما فوق). يُشغَّل عبر `node scripts/make-icon.js` — وثّقناه ليُعاد توليده عند
  * تغيير العلامة. لا نضيف اعتمادية رسم؛ هذا متعمّد (قاعدة «أقل اعتماديات» في CLAUDE.md).
+ *
+ * **أصول Microsoft Store (‏MSIX)**: `node scripts/make-icon.js --appx` يكتب معها شعارات
+ * `build/appx/*.png` التي يقرأها `electron-builder` عند `target: appx` (الأسماء ثابتة في
+ * `app-builder-lib/out/targets/AppxTarget.js` — لا تُغيَّر). إن غابت استعمل electron-builder
+ * شعارات `SampleAppx` الافتراضية، فتظهر علامة غريبة في المتجر. المستطيلات (البلاطة العريضة)
+ * ترسم العلامة في مربع مركزي بمقياس الضلع الأقصر، والخلفية تملأ الباقي.
  */
 const fs = require('fs');
 const path = require('path');
@@ -19,21 +25,25 @@ const GOLD = [0xD9, 0xA4, 0x41]; // --gold (المؤشّر)
 
 const SIZES = [256, 128, 64, 48, 32, 16];
 
-// رسم بكسلات مقاس واحد (RGBA) — مستطيلات صريحة، بلا تنعيم، فتبقى حادة بكل المقاسات
-function drawRGBA(S) {
-  const buf = Buffer.alloc(S * S * 4);
+// رسم بكسلات مقاس واحد (RGBA) — مستطيلات صريحة، بلا تنعيم، فتبقى حادة بكل المقاسات.
+// العرض والارتفاع منفصلان (شعارات المتجر ليست كلها مربعة): العلامة في مربع مركزي
+// بمقياس الضلع الأقصر، والخلفية تملأ الإطار كاملاً.
+function drawRGBA(W, H = W) {
+  const buf = Buffer.alloc(W * H * 4);
+  const S = Math.min(W, H);
+  const offX = Math.round((W - S) / 2), offY = Math.round((H - S) / 2);
   const put = (x, y, c) => {
-    const i = (y * S + x) * 4;
+    const i = (y * W + x) * 4;
     buf[i] = c[0]; buf[i + 1] = c[1]; buf[i + 2] = c[2]; buf[i + 3] = 255;
   };
-  // إحداثيات نسبية → بكسلات
+  // الخلفية تملأ الإطار كله (بإحداثيات بكسل مطلقة لا نسبة العلامة)
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) put(x, y, BG);
+  // إحداثيات نسبية داخل مربع العلامة → بكسلات
   const rect = (x0, y0, x1, y1, c) => {
-    const X0 = Math.round(x0 * S), Y0 = Math.round(y0 * S);
-    const X1 = Math.round(x1 * S), Y1 = Math.round(y1 * S);
-    for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) if (x >= 0 && x < S && y >= 0 && y < S) put(x, y, c);
+    const X0 = offX + Math.round(x0 * S), Y0 = offY + Math.round(y0 * S);
+    const X1 = offX + Math.round(x1 * S), Y1 = offY + Math.round(y1 * S);
+    for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) if (x >= 0 && x < W && y >= 0 && y < H) put(x, y, c);
   };
-  // الخلفية
-  rect(0, 0, 1, 1, BG);
   // سطر النص الباهت (يمتدّ يميناً بعد المؤشّر)
   rect(0.34, 0.560, 0.80, 0.632, TEXT);
   // المؤشّر الذهبي عند يسار السطر (بداية الكتابة في RTL)
@@ -63,16 +73,17 @@ function chunk(type, data) {
   const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body), 0);
   return Buffer.concat([len, body, crc]);
 }
-function makePNG(S) {
-  const rgba = drawRGBA(S);
+function makePNG(W, H = W) {
+  const rgba = drawRGBA(W, H);
   // إضافة بايت المرشّح (0) لبداية كل سطر
-  const raw = Buffer.alloc(S * (S * 4 + 1));
-  for (let y = 0; y < S; y++) {
-    raw[y * (S * 4 + 1)] = 0;
-    rgba.copy(raw, y * (S * 4 + 1) + 1, y * S * 4, (y + 1) * S * 4);
+  const stride = W * 4 + 1;
+  const raw = Buffer.alloc(H * stride);
+  for (let y = 0; y < H; y++) {
+    raw[y * stride] = 0;
+    rgba.copy(raw, y * stride + 1, y * W * 4, (y + 1) * W * 4);
   }
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(S, 0); ihdr.writeUInt32BE(S, 4);
+  ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4);
   ihdr[8] = 8;  // عمق البت
   ihdr[9] = 6;  // نوع اللون RGBA
   ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
@@ -82,7 +93,7 @@ function makePNG(S) {
 
 // ---- تجميع ICO (إدخالات PNG مضمّنة) ----
 function makeICO(sizes) {
-  const pngs = sizes.map(makePNG);
+  const pngs = sizes.map((s) => makePNG(s, s));
   const count = pngs.length;
   const header = Buffer.alloc(6);
   header.writeUInt16LE(0, 0); header.writeUInt16LE(1, 2); header.writeUInt16LE(count, 4);
@@ -106,3 +117,25 @@ const out = path.join(__dirname, '..', 'build', 'icon.ico');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, makeICO(SIZES));
 console.log('make-icon: كُتبت ' + out + ' (' + SIZES.join('، ') + ')');
+
+// ---- شعارات MSIX (‏--appx) ----
+// الأسماء ثابتة يقرؤها electron-builder؛ الأربعة الأولى تحلّ محلّ شعارات SampleAppx
+// الافتراضية، والأخيرتان تُفعّلان بلاطتَي 310×310 و71×71 في قائمة ابدأ (اختياريتان لكن
+// غيابهما يجعل البلاطة الكبيرة تسقط إلى الافتراضي).
+const APPX_ASSETS = [
+  ['StoreLogo.png', 50, 50],
+  ['Square44x44Logo.png', 44, 44],
+  ['Square150x150Logo.png', 150, 150],
+  ['Wide310x150Logo.png', 310, 150],
+  ['LargeTile.png', 310, 310],
+  ['SmallTile.png', 71, 71],
+];
+
+if (process.argv.includes('--appx')) {
+  const dir = path.join(__dirname, '..', 'build', 'appx');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [name, w, h] of APPX_ASSETS) {
+    fs.writeFileSync(path.join(dir, name), makePNG(w, h));
+  }
+  console.log('make-icon: كُتبت شعارات MSIX في ' + dir + ' (' + APPX_ASSETS.length + ' ملفاً)');
+}

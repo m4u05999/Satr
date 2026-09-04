@@ -142,6 +142,8 @@
     "dist:dir": "electron-builder --win --dir",
     "predist:ee": "node scripts/update-csp.js",
     "dist:ee": "electron-builder --win --config scripts/ee-builder-config.js --publish never",
+    "predist:appx": "node scripts/update-csp.js",
+    "dist:appx": "electron-builder --win appx --publish never",
     "site:serve": "node scripts/site-serve.js",
     "vendor:site": "node scripts/vendor-site.js",
     "site:shots": "electron scripts/site-shots.js",
@@ -222,6 +224,18 @@
             "x64"
           ]
         }
+      ]
+    },
+    "appx": {
+      "identityName": "Moxa.Satr",
+      "publisher": "CN=3016A96C-A16E-463B-BCE8-54F46BF3D5D8",
+      "publisherDisplayName": "Moxa",
+      "applicationId": "Satr",
+      "displayName": "سطر — Satr",
+      "backgroundColor": "#151B23",
+      "languages": [
+        "ar-SA",
+        "en-US"
       ]
     },
     "nsis": {

@@ -437,8 +437,12 @@ function createWindow() {
     stopAll();
   });
 
-  // التحديث التلقائي معطّل حتى يعلن بناء موقّع ذلك صراحةً؛ updater.js يحرس الشرطين.
-  updater.initUpdater(app, emitToWindow, { edition: features.edition() });
+  // التحديث التلقائي معطّل حتى يعلن بناء موقّع ذلك صراحةً؛ updater.js يحرس الشروط.
+  // نسخة المتجر (‏MSIX) يحدّثها المتجر نفسه — `process.windowsStore` علم Electron الرسمي.
+  updater.initUpdater(app, emitToWindow, {
+    edition: features.edition(),
+    msix: process.windowsStore === true,
+  });
 }
 
 // ملاحظة: منطق إيقاف مسار cli (detached + taskkill /T) انتقل إلى adapters/claude-cli.js
@@ -835,10 +839,14 @@ ipcMain.handle('satr:genProviders', async () => {
 // `packaged` أُضيف لـOBS-026: نسخة مثبّتة قديمة تعرض الرقم نفسه الذي يعرضه
 // `npm start`، فضاعت ثلاث تجارب حية قِيست على كود لا يحوي الميزة. علامة منطقية
 // فقط — لا مسار تنفيذ ولا اسم ملف يعبر إلى renderer.
+// `msix`: تشغيل من حاوية Microsoft Store (‏`process.windowsStore` — علم Electron الرسمي).
+// علامة منطقية تخدم غرضين: تفسير غياب زر التحديث للمستخدم (المتجر يحدّثها)، وقياس أن
+// العلم يُرفع فعلاً داخل الحزمة بدل افتراضه — وهو الشرط الذي يعطّل `updater.js`.
 ipcMain.handle('satr:appVersion', () => ({
   ok: true,
   version: String(app.getVersion()),
   packaged: app.isPackaged === true,
+  msix: process.windowsStore === true,
 }));
 
 // «ما الجديد؟» — يفتح صفحة ملاحظات الإصدار في متصفح النظام. **لا يقبل URL من

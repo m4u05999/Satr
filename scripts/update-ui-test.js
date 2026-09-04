@@ -153,6 +153,11 @@ function testUpdaterContract() {
     assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: true }), true);
     assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', signed: false }), false,
       'التعطيل الصريح signed:false يبقى محترماً');
+    // نسخة المتجر (‏MSIX): المتجر يحدّثها، وتنزيل مثبّت NSIS داخلها ينتج نسختين متوازيتين
+    assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', msix: true }), false,
+      'msix:true يعطّل قناة GitHub داخل حزمة المتجر');
+    assert.strictEqual(updater.shouldEnableUpdates({ isPackaged: true }, { edition: 'community', msix: false }), true,
+      'msix:false لا يغيّر السلوك القائم');
     // قبل init: الفحص اليدوي يعيد unavailable بدل الانفجار (وضع التطوير)
     assert.deepStrictEqual(updater.checkNow(), { ok: false, error: 'unavailable' });
 

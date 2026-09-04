@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * حارس شارة «نسخة تطوير» في الشريط العلوي (OBS-031 — المرشّح ب).
- * فحص ساكن: لا يحتاج متصفحاً، يكفي أن يثبت أن الشارة موجودة ومشروطة بـ
- * `app.isPackaged` عبر القناة القائمة `satr:appVersion`.
+ * حارس شارات بيئة التشغيل (OBS-031 — المرشّح ب، ثم نسخة المتجر 2026-09-04).
+ * فحص ساكن: لا يحتاج متصفحاً، يكفي أن يثبت أن الشارتين موجودتان ومشروطتان
+ * بالعلمين اللذين تعيدهما القناة القائمة `satr:appVersion` — `app.isPackaged`
+ * لنسخة التطوير، و`process.windowsStore` لنسخة Microsoft Store (‏MSIX).
  */
 
 'use strict';
@@ -48,7 +49,23 @@ function run() {
     'main.js يعرّف معالج satr:appVersion');
   assert(/packaged:\s*app\.isPackaged\s*===\s*true/.test(main),
     'satr:appVersion يعيد packaged من app.isPackaged');
+
+  // ---- نسخة المتجر (‏MSIX) ----
+  // العلم يُقاس لا يُفترض: هو نفسه الشرط الذي يعطّل المُحدِّث، فلو لم يُرفع داخل
+  // الحاوية لحاولت نسخة المتجر تنزيل مثبّت NSIS موازٍ.
+  assert(/msix:\s*process\.windowsStore\s*===\s*true/.test(main),
+    'satr:appVersion يعيد msix من process.windowsStore');
+  assert(/appVersionData\.msix\s*===\s*true/.test(topbar),
+    'topbar.js يفرّع على علم msix');
+  assert(/appVersionData\.msix[\s\S]{0,400}checkUpdatesRow/.test(topbar),
+    'نسخة المتجر تُخفي صف «تحقق من التحديثات» — المتجر هو من يحدّث');
+  assert(/نسخة المتجر/.test(topbar),
+    'شارة ⚙ تقول «نسخة المتجر» صراحةً');
+
+  const updater = read('electron/updater.js');
+  assert(/options\.msix\s*!==\s*true/.test(updater),
+    'shouldEnableUpdates يشترط غياب msix');
 }
 
 run();
-console.log('topbar-dev-badge-test: ok — الشارة مشروطة بـ app.isPackaged عبر satr:appVersion.');
+console.log('topbar-dev-badge-test: ok — الشارتان مشروطتان بـ app.isPackaged وprocess.windowsStore عبر satr:appVersion.');
