@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { app, BrowserWindow, nativeImage } = require('electron');
 const preview = require('../electron/preview');
+const codexmcp = require('../electron/codexmcp');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -66,6 +67,10 @@ function startServer() {
     if (request.url === '/two') {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end('<!doctype html><html><body><h1>الثانية</h1></body></html>'); return;
+    }
+    if (request.url === '/oauth-close') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end('<!doctype html><html><body><h1>اكتمل OAuth</h1><script>window.close()</script></body></html>'); return;
     }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     response.end(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>
@@ -330,6 +335,100 @@ async function main() {
     for (let index = 0; index < 80 && !events.some((event) => event.type === 'preview_download_saved'); index += 1) await delay(50);
     const saved = events.find((event) => event.type === 'preview_download_saved');
     assert(saved && saved.path.startsWith(temp) && fs.readFileSync(saved.path, 'utf8') === 'downloaded', 'will-download لم يحفظ الملف في Downloads الفعلي');
+
+    // OBS-078 — تشخيص قبل العلاج: نفصل الفرضيات الثلاث بلا استنتاج من سجل التفكير.
+    // (أ) دورتا handoff متتاليتان، (ب) origin آخر أثناء الثانية، ثم callback يطلب
+    // window.close كما تفعل تدفقات OAuth المنبثقة. الناتج المطبوع هو دليل السبب.
+    let handoffAction = async () => true;
+    const handoffTool = codexmcp.buildTools({
+      preview,
+      requestHandoff: (...args) => handoffAction(...args),
+    }).find((tool) => tool.name === 'browser_handoff');
+    const firstHandoff = await handoffTool.handler({ reason: 'التسليم الأول' });
+    const firstActiveAfter = preview.isHandoffActive();
+    const crossOriginUrl = url.replace('127.0.0.1', 'localhost');
+    let crossOriginNavigate = null;
+    let crossOriginAliveDuring = false;
+    let secondActiveDuring = false;
+    handoffAction = async () => {
+      secondActiveDuring = preview.isHandoffActive();
+      crossOriginNavigate = preview.navigate(crossOriginUrl + '/two');
+      await delay(350);
+      crossOriginAliveDuring = !!preview.currentUrl();
+      return true;
+    };
+    const secondHandoff = await handoffTool.handler({ reason: 'التسليم الثاني' });
+    const secondActiveAfter = preview.isHandoffActive();
+    const crossOriginRead = await preview.readPage();
+    console.log('OBS078_FILTER_A=' + JSON.stringify({
+      first_ok: !firstHandoff.isError,
+      first_active_after: firstActiveAfter,
+      second_ok: !secondHandoff.isError,
+      second_active_during: secondActiveDuring,
+      second_active_after: secondActiveAfter,
+    }));
+    console.log('OBS078_FILTER_B=' + JSON.stringify({
+      navigate_ok: crossOriginNavigate.ok === true,
+      alive_during_handoff: crossOriginAliveDuring,
+      read_after_handoff: crossOriginRead.ok === true,
+    }));
+
+    let oauthNavigate = null;
+    handoffAction = async () => {
+      oauthNavigate = preview.navigate(crossOriginUrl + '/oauth-close');
+      await delay(350);
+      return true;
+    };
+    const oauthHandoff = await handoffTool.handler({ reason: 'أكمل تسجيل الدخول' });
+    const oauthAliveAfter = !!preview.currentUrl();
+    console.log('OBS078_OAUTH_CLOSE=' + JSON.stringify({
+      handoff_result_ok: !oauthHandoff.isError,
+      navigate_ok: oauthNavigate.ok === true,
+      alive_after_callback: oauthAliveAfter,
+    }));
+    assert.strictEqual(oauthAliveAfter, false,
+      'صفحة OAuth المضبوطة لم تعد تنتج حالة العرض المدمّر المرصودة في OBS-078');
+
+    // التسلسل الفعلي المطلوب حراسته: handoff ⇒ استلام ⇒ open_preview ⇒ أداة قراءة.
+    // openPreview هنا يحاكي satr:event/renderer: الطلب يعود إلى main في نبضة لاحقة.
+    let reopenRequested = false;
+    let reopenApplied = false;
+    let reopenTimer = null;
+    const recoveryTools = codexmcp.buildTools({
+      preview,
+      openPreview: (requestedUrl) => {
+        reopenRequested = true;
+        reopenTimer = setTimeout(() => {
+          reopenApplied = preview.open(win, (event) => events.push(event), requestedUrl).ok === true;
+        }, 80);
+      },
+    });
+    const openTool = recoveryTools.find((tool) => tool.name === 'open_preview');
+    const readTool = recoveryTools.find((tool) => tool.name === 'read_page');
+    const reopened = await openTool.handler({ url: url + '/one' });
+    const appliedWhenOpenReturned = reopenApplied;
+    const readAfterReopen = await readTool.handler({});
+    const aliveAfterRead = !!preview.currentUrl();
+    // في زرع الكود القديم ندع نبضة المحاكاة تكتمل بعد التقاط النتيجة الخاطئة؛ يمنع
+    // Electron من إنهاء fixture قبل أن يطبع assertion، ولا يغيّر ما قاسه الحارس.
+    if (!appliedWhenOpenReturned && reopenTimer) await delay(120);
+    console.log('OBS078_RECOVERY=' + JSON.stringify({
+      requested: reopenRequested,
+      open_error: reopened.isError,
+      applied_when_open_returned: appliedWhenOpenReturned,
+      read_error: readAfterReopen.isError,
+      alive_after_read: aliveAfterRead,
+    }));
+    const openConfirmed = reopenRequested && !reopened.isError && appliedWhenOpenReturned;
+    if (!openConfirmed) {
+      console.error('preview-member-live: AssertionError [ERR_ASSERTION]: OBS-078: open_preview أعلن النجاح قبل تأكيد إعادة إنشاء العرض بعد callback OAuth');
+      app.exit(1);
+      return;
+    }
+    assert(openConfirmed,
+      'OBS-078: open_preview أعلن النجاح قبل تأكيد إعادة إنشاء العرض بعد callback OAuth');
+    assert(!readAfterReopen.isError && /الأزرار/.test(readAfterReopen.content[0].text),
+      'OBS-078: أداة القراءة بقيت ترى المعاينة مغلقة بعد handoff ⇒ استلام ⇒ open_preview');
 
     console.log('preview-member-live: نجح — أصغر PNG/JPEG وحفظ عرض full_page وعقد 🎯، أجيال refs وDOM delta المحدودة وstale_ref، صدق الأفعال، الوميض، contenteditable، evaluate، viewport، history، التنزيل، وحصر الشهادة محلياً.');
   } finally {

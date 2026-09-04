@@ -214,7 +214,18 @@ function buildTools(deps) {
         if (handoffActive()) return textResult(HANDOFF_BLOCKED, true);
         const url = String((args && args.url) || '').trim();
         if (!preview.isHttpUrl(url)) return textResult('عنوان غير صالح — http/https فقط', true);
-        if (openPreview) { openPreview(url); return textResult('فُتحت المعاينة المدمجة على ' + url); }
+        if (openPreview) {
+          const before = typeof preview.openRequestVersion === 'function' ? preview.openRequestVersion() : null;
+          try { await openPreview(url); }
+          catch (e) { return textResult('تعذّر إرسال طلب فتح المعاينة.', true); }
+          if (before == null || typeof preview.waitForOpenRequest !== 'function') {
+            return textResult('طُلب فتح المعاينة على ' + url + '، لكن لم يتوفر تأكيد إنشاء العرض.', true);
+          }
+          const confirmed = await preview.waitForOpenRequest(url, before);
+          return confirmed && confirmed.ok
+            ? textResult('فُتحت المعاينة المدمجة على ' + url)
+            : textResult('طُلب فتح المعاينة على ' + url + '، لكن لم يُؤكَّد إنشاء العرض.', true);
+        }
         const r = preview.navigate(url);
         return (r && r.ok) ? textResult('انتقلت المعاينة إلى ' + url)
           : textResult('المعاينة غير مفتوحة بعد — اطلب من المستخدم فتحها أو شغّل الخادم.', true);

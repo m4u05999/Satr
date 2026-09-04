@@ -22,6 +22,9 @@ let hostWin = null;   // النافذة المضيفة
 let sender = null;    // دالة بثّ الأحداث للواجهة (يمرّرها main.js)
 let lastBounds = null; // آخر مستطيل أبلغته الواجهة — يُطبَّق عند إنشاء عرض جديد
 let viewportOverride = null; // مقاس طلبه الوكيل للتحقق المتجاوب؛ يُطبّق داخل مساحة اللوحة
+let openRequestRevision = 0; // إيصال داخلي: لا يصدق open_preview حتى يصل طلبه إلى WebContents حيّة
+let lastOpenRequest = null; // {revision, urlKey, webContentsId} — لا يحتفظ بعنوان قد يحمل سراً
+const OPEN_CONFIRM_TIMEOUT_MS = 3000;
 // وضع محاكاة الأجهزة النشط في اللوحة (زر 📱/📲) — تبلّغه الواجهة مع المستطيل، ويُستعمل
 // حصراً لتفسير سبب تضييق browser_set_viewport. قائمة مغلقة تطابق DEVICES في المكوّن.
 const DEVICE_LABELS = Object.freeze({ mobile: 'موبايل', tablet: 'لوحي' });
@@ -517,6 +520,12 @@ function ensureView(win, send) {
     win.on('resize', () => { if (lastBounds) applyBounds(lastBounds); });
   }
   if (view && view.webContents && !view.webContents.isDestroyed()) return view;
+  // window.close داخل صفحة callback قد يدمّر WebContents من دون المرور بـ close().
+  // أزل الغلاف الميت من شجرة العرض قبل إنشاء بديله كي لا يبقى child يتيم فوق الجديد.
+  if (view) {
+    try { if (hostWin && !hostWin.isDestroyed()) hostWin.contentView.removeChildView(view); } catch (e) {}
+    view = null;
+  }
   wirePermissions();
   wireNetwork();
   wireDownloads();
@@ -538,6 +547,42 @@ function ensureView(win, send) {
   return view;
 }
 
+function recordOpenRequest(url, wc) {
+  openRequestRevision += 1;
+  lastOpenRequest = {
+    revision: openRequestRevision,
+    urlKey: crypto.createHash('sha256').update(String(url)).digest('hex'),
+    webContentsId: wc && Number.isInteger(wc.id) ? wc.id : null,
+  };
+}
+
+// open_preview يعبر agent/codex → حدث الواجهة → IPC → open/navigate. هذا الإيصال
+// يثبت وصول الطلب إلى WebContents حيّة؛ لا يعني نجاح الشبكة أو اكتمال تحميل الصفحة.
+async function waitForOpenRequest(url, afterRevision, timeoutMs) {
+  const expectedUrl = String(url || '');
+  if (!isHttpUrl(expectedUrl)) return { error: 'bad_url' };
+  const expectedKey = crypto.createHash('sha256').update(expectedUrl).digest('hex');
+  const baseline = Number.isInteger(afterRevision) ? afterRevision : openRequestRevision;
+  const limit = Number.isFinite(timeoutMs)
+    ? Math.max(50, Math.min(10000, Math.round(timeoutMs))) : OPEN_CONFIRM_TIMEOUT_MS;
+  const deadline = Date.now() + limit;
+  while (Date.now() <= deadline) {
+    const receipt = lastOpenRequest;
+    const wc = currentWC();
+    if (receipt && receipt.revision > baseline && receipt.urlKey === expectedKey
+        && wc && wc.id === receipt.webContentsId) {
+      // نبضة قصيرة تمنع اعتماد WebContents أغلقها callback في المهمة نفسها.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const stable = currentWC();
+      if (stable && stable.id === receipt.webContentsId) {
+        return { ok: true, revision: receipt.revision };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return { error: currentWC() ? 'not_confirmed' : 'closed' };
+}
+
 // فتح المعاينة على عنوان (تُنشأ الـ view عند أول فتح بعد كل إغلاق — دورة حياة بسيطة)
 function open(win, send, url) {
   if (!isHttpUrl(url)) return { error: 'bad_url' };
@@ -545,10 +590,12 @@ function open(win, send, url) {
   if (external) {
     sender = send;
     try { external.loadURL(String(url)); } catch (e) { return { error: 'load_failed' }; }
+    recordOpenRequest(url, external);
     return { ok: true };
   }
   const v = ensureView(win, send);
   try { v.webContents.loadURL(String(url)); } catch (e) { return { error: 'load_failed' }; }
+  recordOpenRequest(url, v.webContents);
   return { ok: true };
 }
 
@@ -557,6 +604,7 @@ function navigate(url) {
   if (!wc) return { error: 'closed' };
   if (!isHttpUrl(url)) return { error: 'bad_url' };
   try { wc.loadURL(String(url)); } catch (e) { return { error: 'load_failed' }; }
+  recordOpenRequest(url, wc);
   return { ok: true };
 }
 
@@ -2311,6 +2359,7 @@ module.exports = {
   selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
   fillForm, transferField, requestSecret, resolveSecretRequest, clearSecretTransfers, clearSensitiveState,
   currentUrl, navigationTarget, browserTarget, browserActionContext, browserInputError, leaseError,
+  openRequestVersion: () => openRequestRevision, waitForOpenRequest,
   captureFrame, emitAgentActivity, startHandoff, endHandoff,
   isHandoffActive, close, destroy, isHttpUrl, setExternalTargetProvider, attachExternalWebContents,
   setCaptureEventSink, showCaptureBeacon,

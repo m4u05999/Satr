@@ -1452,8 +1452,13 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           okUrl = (p.protocol === 'http:' || p.protocol === 'https:') && url.length <= 2048;
         } catch (e) {}
         if (!okUrl) return { content: [{ type: 'text', text: 'عنوان غير صالح — http/https فقط' }], isError: true };
-        emit({ type: 'preview_open', url });
-        return { content: [{ type: 'text', text: 'فُتحت المعاينة المدمجة على ' + url }] };
+        const before = preview.openRequestVersion();
+        try { emit({ type: 'preview_open', url }); }
+        catch (e) { return { content: [{ type: 'text', text: 'تعذّر إرسال طلب فتح المعاينة.' }], isError: true }; }
+        const confirmed = await preview.waitForOpenRequest(url, before);
+        return confirmed && confirmed.ok
+          ? { content: [{ type: 'text', text: 'فُتحت المعاينة المدمجة على ' + url }] }
+          : { content: [{ type: 'text', text: 'طُلب فتح المعاينة على ' + url + '، لكن لم يُؤكَّد إنشاء العرض.' }], isError: true };
       }
     );
     // OBS-020: أداة إغلاق المعاينة — نظيرة open_preview بالعكس. تبثّ preview_close

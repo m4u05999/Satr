@@ -84,6 +84,44 @@ async function main() {
   try {
     await win.loadFile(FIXTURE);
     const result = await waitForResult(win);
+    win.showInactive();
+    await delay(100);
+    const holdProbe = await win.webContents.executeJavaScript(`(async () => {
+      const panel = document.querySelector('satr-preview-panel');
+      const openCalls = [];
+      const navigateCalls = [];
+      const boundsCalls = [];
+      panel.shadowRoot.getElementById('pvBox').getBoundingClientRect = () => ({
+        left: 20, top: 30, width: 420, height: 360, right: 440, bottom: 390,
+      });
+      window.satr.previewOpenAgent = async (url) => { openCalls.push(url); return { ok: true }; };
+      window.satr.previewNavigateAgent = async (url) => { navigateCalls.push(url); return { error: 'closed' }; };
+      window.satr.previewBounds = (...args) => { boundsCalls.push(args); return Promise.resolve({ ok: true }); };
+      panel.holdForDialog(true);
+      panel.openWith('https://hold-probe.example/path', { agent: true });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const during = boundsCalls.slice();
+      const openDuringHold = openCalls.length;
+      panel.holdForDialog(false);
+      panel.remeasure();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      panel.openWith('https://hold-probe.example/reopen', { agent: true });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return { open_during_hold: openDuringHold, open_calls: openCalls.length, bounds_during_hold: during.length,
+        bounds_after_release: boundsCalls.length - during.length, navigate_calls: navigateCalls.length };
+    })()`, true);
+    win.hide();
+    console.log('OBS078_FILTER_C=' + JSON.stringify(holdProbe));
+    assert.strictEqual(holdProbe.open_during_hold, 1,
+      'holdForDialog منع طلب إنشاء العرض بدلاً من حجب مستطيله فقط.');
+    assert.strictEqual(holdProbe.bounds_during_hold, 0,
+      'holdForDialog سرّب مستطيل العرض أثناء الحوار.');
+    assert(holdProbe.bounds_after_release > 0,
+      'رفع holdForDialog لم يُعد إبلاغ مستطيل العرض.');
+    assert.strictEqual(holdProbe.navigate_calls, 1,
+      'فحص OBS-078 لم يمرّ بحالة started القديمة قبل إعادة الفتح.');
+    assert.strictEqual(holdProbe.open_calls, 2,
+      'حالة started القديمة لم تتراجع من navigate:closed إلى إنشاء عرض جديد.');
     assert.strictEqual(result.pass, true, result.error || 'فشل اختبار شريط التسليم داخل الصفحة.');
     assert.deepStrictEqual(result.calls, [
       { id: 'ho_live_done', done: true },
