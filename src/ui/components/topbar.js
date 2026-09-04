@@ -115,8 +115,12 @@ class SatrTopbar extends HTMLElement {
   // لوحة الإعدادات المنبثقة (⚙): تُفتح وتُغلق بالزر، وتُغلق بالنقر خارجها أو بـ Escape
   const settingsPop = $('settingsPop'), settingsBtn = $('settingsBtn');
   function setSettingsOpen(open) {
+    const wasHidden = settingsPop.hidden;
     settingsPop.hidden = !open;
     settingsBtn.classList.toggle('active', open);
+    // OBS-099: إشعار صريح عند الفتح — القشرة تستمع للحدث بدل استنتاج الحالة داخل
+    // microtask (سباق ترتيب المستمعين بين app.js وtopbar.js كان يجمّد قسمَي الحساب).
+    if (open && wasHidden) settingsBtn.dispatchEvent(new CustomEvent('settings-open', { bubbles: true }));
   }
   settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); closeTopPops(); setSettingsOpen(settingsPop.hidden); });
   settingsPop.addEventListener('click', (e) => e.stopPropagation());

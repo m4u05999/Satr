@@ -31,6 +31,7 @@
     "test:gitdiff": "node scripts/gitdiff-test.js",
     "test:chat-rtl": "electron scripts/chat-rtl-test.js",
     "test:update-ui": "electron scripts/update-ui-test.js",
+    "test:settings-account": "electron scripts/settings-account-test.js",
     "test:task-ledger-ui": "electron scripts/task-ledger-ui-test.js",
     "test:daily-loop-ui": "electron scripts/daily-loop-ui-test.js",
     "test:repomap": "node scripts/repomap-test.js",
