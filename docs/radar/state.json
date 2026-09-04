@@ -1,0 +1,314 @@
+{
+  "project": "Satr",
+  "editions": [
+    {
+      "n": 1,
+      "date": "2026-09-03",
+      "items": 29,
+      "window_days": 90
+    },
+    {
+      "n": 2,
+      "date": "2026-09-04",
+      "items": 7,
+      "window_days": 1,
+      "fronts": [
+        "F1",
+        "F2",
+        "F5",
+        "F8"
+      ]
+    },
+    {
+      "n": 3,
+      "date": "2026-09-04",
+      "items": 24,
+      "window_days": 90,
+      "fronts": [
+        "F11"
+      ],
+      "note": "F11 baseline: 11 open / 8 watch / 5 grave"
+    }
+  ],
+  "baseline": {
+    "satr": "2.16.15",
+    "electron": "33.4.11",
+    "claude-agent-sdk": "0.3.176",
+    "electron-builder": "25.1.8",
+    "electron-updater": "6.8.9",
+    "node-pty": "1.1.0",
+    "xterm": "6.0.0",
+    "zod": "4.4.3",
+    "codex": "0.144.3",
+    "kimi": "kimi-cli 0.38.0",
+    "_checked": "2026-09-04 من package-lock.json — بلا تغيير عن العدد ٠٠١",
+    "_repo_moved": "المالك أنجز منذ العدد ٠٠١: هجرة DeepSeek إلى v4-flash/v4-pro، فصل كتالوج NIM عن Groq (+allam-2-7b)، manifests winget، حزمة MSIX، مولّد لقطات المتجر، OBS-096/099/100",
+    "_main_advanced": "origin/main تقدّم 38 التزاماً بعد 1b0a6d4 حتى 2026-09-04 06:03 (+03) — OBS حتى 100؛ MSIX، winget#429004، Certum، DeepSeek v4، allam-2-7b منجزة"
+  },
+  "latest_seen": {
+    "electron": "44.2.0",
+    "claude-agent-sdk": "0.3.260",
+    "claude-code": "2.1.260",
+    "codex": "0.153.2",
+    "kimi-code": "0.40.1",
+    "electron-builder": "26.15.3",
+    "electron-updater": "6.8.9",
+    "xterm": "6.0.0",
+    "xterm-beta": "6.1.0-beta.304",
+    "node-pty": "1.1.0",
+    "node-pty-beta": "1.2.0-beta.15",
+    "zod": "4.5.4",
+    "mcp-spec": "2026-07-28",
+    "acp": "1.6.0 / 2.0.0-alpha.2",
+    "gemini-cli": "0.58.0",
+    "opencode": "1.18.27"
+  },
+  "open_threads": [
+    "NIM gpt-oss-120b: served past its 09-02 deprecation banner (Satr NIM catalog does not include it — no exposure)",
+    "Certum: does Open Source tier accept FSL-1.1-MIT? (owner drafted the message, OBS-096-b)",
+    "winget PR microsoft/winget-pkgs#429004: pending manual review, unsigned installer trips SmartScreen",
+    "MS Partner Center: individual account availability in Saudi Arabia (MSIX package now built locally)",
+    "SDK upgrade branch: verify rewindFiles canRewind semantics, user_message_uuids batching, permissionPrompts",
+    "xterm.js #5686 libghostty proposal: any decision?",
+    "Ghostty 1.4 release: did itijah land?",
+    "Kimi Code 0.41+: ACP changes (still 0.40.1 on 09-04)",
+    "Unverified: claim that Claude Code weekly limits drop ~17% on 2026-09-14 — no first-party source found"
+  ],
+  "tech_watch": {
+    "axes": {
+      "A_preview": [
+        "قارئ ويب رخيص بالرموز للوكيل",
+        "تحكّم قياسي للوكيل بالمعاينة عبر CDP/MCP",
+        "محرّك تصيير خفيف يشكّل العربية"
+      ],
+      "B_terminal": [
+        "تشكيل نملكه داخل العارض المزدوج (cluster map)",
+        "خريطة logical↔visual لكل سطر",
+        "مؤشّر وتحديد صحيحان في النص المختلط",
+        "مواصفة terminal-wg BiDi"
+      ],
+      "C_distribution": [
+        "تحديث تفاضلي بلا شهادة (قِس blockmap أولاً)",
+        "تقليص الحزمة (electronLanguages)",
+        "بدائل Electron فقط إن حفظت node-pty + xterm"
+      ],
+      "D_skills": [
+        "توافق مواصفة agentskills.io + validator في load_skill",
+        "استيراد من npx skills / marketplace.json",
+        "evals.json لكل مهارة satr-*",
+        "مهارات عربية/خليجية"
+      ],
+      "E_tokens": [
+        "استقرار البادئة للكاش (كتلة الميزانية وrepo_map خارج system prompt)",
+        "مسح نتائج الأدوات قبل التلخيص",
+        "قياس ضريبة الرموز العربية في usage.js",
+        "تحصين edit_file",
+        "أدوات عند الطلب إن اعتُمد Groq مساراً رئيسياً"
+      ],
+      "F_own_agent": [
+        "أنماط الحلقات المفتوحة (pi/OpenCode/Cline) بلا تبعية",
+        "عزل على ويندوز بلا admin",
+        "أفضل مزيج مجاني: DeepSeek V4 عبر NIM + gpt-oss-120b على Groq"
+      ]
+    },
+    "open_obs": [
+      "E: prefix stability for prompt caching (budget block + repo_map out of system prompt)",
+      "E: tool-result clearing before summarization (keep/buffer params à la OpenCode)",
+      "E: Arabic token-tax metric in usage.js/langmetric.js",
+      "E/F: edit_file hardening (multi-block, whitespace-normalized fallback, read-before-edit) + Cline-style eval",
+      "A: chrome-devtools-mcp over Electron CDP (test Electron breakage #1197; fork holepunchto/electron-devtools-mcp)",
+      "A: @mozilla/readability + turndown injected in preview; agent-browser optional",
+      "B: bidi-js vendored + CodeMirror 6 bidi model + terminal-wg CSI handlers",
+      "B: harfbuzzjs limited experiment (adds ~510KB dep — justify or bury)",
+      "C: measure electron-updater blockmap differential; electronLanguages ar/en-US (−40.8MB disk, −7.3MB installer)",
+      "D: agentskills.io validator in load_skill + license/metadata fields on satr-* skills",
+      "D: npx skills import + marketplace.json reader + skill-creator evals.json; hurmoz contribution (platforms: windows)",
+      "F: study pi / OpenCode compaction / Cline diff-edit eval — patterns only, no deps"
+    ],
+    "watching": [
+      {
+        "name": "Kitesurf",
+        "why": "Cloudflare promised open source; hosted only; Blitz block direction not wired (dir=rtl ignored)",
+        "recheck": "monthly"
+      },
+      {
+        "name": "Blitz/Parley",
+        "why": "shapes Arabic at text level (HarfRust + UAX#9); pre-alpha; no JS bindings",
+        "recheck": "monthly"
+      },
+      {
+        "name": "Playwright MCP",
+        "why": "0.0.x, pulls full playwright; plan B to chrome-devtools-mcp",
+        "recheck": "quarterly"
+      },
+      {
+        "name": "agent-browser (Vercel)",
+        "why": "API 0.3x changes weekly; 93MB binary download",
+        "recheck": "monthly"
+      },
+      {
+        "name": "Velopack",
+        "why": "open only if electron-updater blockmap measurement fails",
+        "recheck": "after C1 measurement"
+      },
+      {
+        "name": "Electrobun / Bun.Terminal",
+        "why": "does Electrobun expose Bun.Terminal on Windows?",
+        "recheck": "quarterly"
+      },
+      {
+        "name": "deferred tool schemas (tool search)",
+        "why": "Satr under 10k-token threshold; becomes direct if Groq free is primary",
+        "recheck": "when Groq primary"
+      },
+      {
+        "name": "speculative decoding (llama-server)",
+        "why": "speed not tokens; Ollama support unverified",
+        "recheck": "quarterly"
+      },
+      {
+        "name": "small-model routing",
+        "why": "RouteLLM numbers are chat not agent",
+        "recheck": "quarterly"
+      },
+      {
+        "name": "mini-swe-agent bash-only fallback",
+        "why": "only if tool-calling failure rate on free models is measured high",
+        "recheck": "after measurement"
+      },
+      {
+        "name": "@anthropic-ai/sandbox-runtime (Windows alpha)",
+        "why": "needs one UAC; per-user tools invisible to sandbox account",
+        "recheck": "monthly"
+      },
+      {
+        "name": "Microsoft MXC",
+        "why": "Win11 24H2+, policies too permissive per README",
+        "recheck": "quarterly"
+      },
+      {
+        "name": "WezTerm bidi model / Ghostty itijah",
+        "why": "design references; Ghostty selection part unwritten",
+        "recheck": "monthly"
+      },
+      {
+        "name": "ICU4X npm",
+        "why": "20.5MB monolithic wasm; wait for split packages",
+        "recheck": "quarterly"
+      },
+      {
+        "name": "@mapbox/mapbox-gl-rtl-text",
+        "why": "cell-locked shaping trick, loses ligatures",
+        "recheck": "quarterly"
+      },
+      {
+        "name": "hurmoz / ArabAgentSkills / openai skills",
+        "why": "Arabic content thin or alpha; contribute windows platforms",
+        "recheck": "monthly"
+      },
+      {
+        "name": "OpenRouter endpoint",
+        "why": "zero-code OpenAI-compatible host; free tier 50 req/day",
+        "recheck": "quarterly"
+      }
+    ],
+    "graveyard": [
+      {
+        "name": "Lightpanda",
+        "reason": "AGPL-3.0; no Windows binary; no rendering/shaping",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "Tauri 2 + Node sidecar",
+        "reason": "weeks of rewrite; sidecar ~50MB; node-pty outside bundle; solves neither SmartScreen nor signing",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "V8 snapshots (electron-link/mksnapshot)",
+        "reason": "size increased 227→238MB; last commit 2024-11",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "electron-delta",
+        "reason": "UNLICENSED; last publish 2022-08; requires signing function",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "mem0 / Letta as dependency",
+        "reason": "numbers vs 'send whole conversation'; file memory proven; memory.js exists",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "LiteLLM / Portkey",
+        "reason": "Python/server-side; not embeddable in Node",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "rustybuzz-wasm",
+        "reason": "dead since 2021",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "fontkit / opentype.js (for shaping)",
+        "reason": "5.6MB+9 deps (2024) / feature engine not HarfBuzz-grade",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "unicode-bidirectional",
+        "reason": "2017, immutable+lodash deps",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "Servo / Stylo (for Satr)",
+        "reason": "MPL; Stylo is CSS only; Servo bidi limited",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "WebDriver BiDi",
+        "reason": "Electron doesn't expose it; CDP available directly",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "Windows Sandbox CLI (wsb exec)",
+        "reason": "no process I/O",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "raw AppContainer (RunInSandbox)",
+        "reason": "C++ tooling; no gain over MXC",
+        "date": "2026-09-04"
+      },
+      {
+        "name": "Roo Code",
+        "reason": "archived 2026-05-15",
+        "date": "2026-09-04"
+      }
+    ],
+    "done_by_owner_since_001": [
+      "MSIX package for Microsoft Store",
+      "winget manifests + PR microsoft/winget-pkgs#429004",
+      "Certum facts verified (OBS-096)",
+      "DeepSeek v4-flash/v4-pro migration",
+      "NIM/Groq catalog split + allam-2-7b",
+      "OBS-097 RTL issues channel",
+      "OBS-098 ar-terminal"
+    ],
+    "npm_blocklist": [
+      "@lightpanda/browser",
+      "lightpanda",
+      "mem0ai",
+      "letta",
+      "letta-client",
+      "litellm",
+      "@portkey-ai/gateway",
+      "portkey-ai",
+      "electron-delta",
+      "rustybuzz-wasm",
+      "fontkit",
+      "opentype.js",
+      "unicode-bidirectional",
+      "icu"
+    ],
+    "_npm_blocklist_note": "أسماء حزم npm المقابلة لمدخلات المقبرة (وicu لأن حزمة ICU4X 20MB) — يحرسها scripts/radar-graveyard-test.js"
+  }
+}

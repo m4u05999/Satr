@@ -2631,6 +2631,15 @@ import { createPreviewShield } from './lib/preview-shield.js';
         addNotice('✕ ' + (result && result.message || 'تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.'));
         return;
       }
+      // صدق الرسالة: restoredCount يقيسه main بإعادة بصم القرص بعد التنفيذ،
+      // لا عدد المعاينة الجافة — canRewind وحده لا يضمن أن ملفاً واحداً استُعيد.
+      if (result.verifyFailed) {
+        addNotice('⚠ ' + (result.message || 'تعذّر التحقق من نتيجة الاسترجاع؛ راجع تغييرات الملفات يدوياً.'));
+      } else if (!(Number(result.restoredCount) > 0)) {
+        addNotice(result.message || 'أكمل Claude الاسترجاع لكن لم يتغيّر أي ملف على القرص؛ راجع تغييرات الملفات للتأكد.');
+      } else {
+        addNotice('↩ استُرجعت ملفات Claude إلى حالة الرسالة المحددة (' + (Number(result.restoredCount) || 0) + ' ملف).');
+      }
       if (SAFE_CHECKPOINT_ID.test(String(result.suppressedCheckpointId || ''))) {
         try {
           localStorage.setItem(
@@ -2641,7 +2650,6 @@ import { createPreviewShield } from './lib/preview-shield.js';
       }
       resetSessionChanges();
       chatEl.clearCheckpoint();
-      addNotice('↩ استُرجعت ملفات Claude إلى حالة الرسالة المحددة (' + (Number(result.fileCount) || 0) + ' ملف).');
       if (previewEl.reloadIfLive) previewEl.reloadIfLive();
     } catch {
       addNotice('✕ تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.');
