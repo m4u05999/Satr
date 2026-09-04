@@ -767,9 +767,16 @@ class SatrPreviewPanel extends HTMLElement {
       err.classList.remove('show');
       // loadURL يعود ok فور بدء التحميل؛ فشل خادم متوقف يصل لاحقاً عبر حدث failed
       const fromAgent = source === 'agent';
-      const r = started
-        ? await (fromAgent ? window.satr.previewNavigateAgent(u) : window.satr.previewNavigate(u))
-        : await (fromAgent ? window.satr.previewOpenAgent(u) : window.satr.previewOpen(u));
+      const openTarget = () => fromAgent ? window.satr.previewOpenAgent(u) : window.satr.previewOpen(u);
+      const navigateTarget = () => fromAgent ? window.satr.previewNavigateAgent(u) : window.satr.previewNavigate(u);
+      const wasStarted = started;
+      let r = wasStarted ? await navigateTarget() : await openTarget();
+      // صفحات callback قد تنفّذ window.close فتدمّر WebContents وحدها، بينما تبقى اللوحة
+      // مفتوحة وstarted قديمة. closed هنا إيصال فقد العرض: أنشئ واحداً جديداً مرة واحدة.
+      if (wasStarted && r && r.error === 'closed') {
+        started = false;
+        r = await openTarget();
+      }
       if (r && r.ok) {
         started = true;
         hint.style.display = 'none';
@@ -1456,7 +1463,7 @@ class SatrPreviewPanel extends HTMLElement {
     // ---------- العقد العام ----------
     // فتح بعنوان جاهز (اقتراح localhost المرصود / أداة open_preview — القشرة تستدعيها).
     // autoLast=false: العنوان القادم أدقّ من المحفوظ فلا نفتح الأخير أولاً (تفادي سباق).
-    this.openWith = (url, options) => { openPanel(false); go(url, options && options.agent ? 'agent' : 'user'); };
+    this.openWith = (url, options) => { openPanel(false); return go(url, options && options.agent ? 'agent' : 'user'); };
     // م-1-ج: تحديث تلقائي — القشرة تستدعيها عند اكتمال دور عدّل ملفات والمعاينة مفتوحة.
     // reload فعلي فقط إن كان الوضع مُفعّلاً والعرض حيّاً (خارج ذلك تجاهل صامت آمن).
     this.reloadIfLive = () => {
