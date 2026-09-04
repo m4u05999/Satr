@@ -205,7 +205,9 @@ function make(config) {
     const memoryPrompt = memory.retrieve(cwd, prompt).text;
     // مهام خلفية خرجت بلا دور نشط — كتلة سياق تُحقن مرة واحدة (termjobs.pendingNoticeText)
     const backgroundPrompt = termjobs.pendingNoticeText(cwd);
-    let contextPrompt = [skillPrompt, memoryPrompt, backgroundPrompt].filter(Boolean).join('\n\n');
+    let contextPrompt = '';
+    let turnPrompt = '';
+    let turnMessageIndex = -1;
     // acceptEdits/bypassPermissions تمرّان الكتابة بلا سؤال (نفس دلالة أوضاع SDK)
     const autoAllowWrites = permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions';
 
@@ -279,9 +281,14 @@ function make(config) {
         let settled = false;
         const done = (r) => { if (!settled) { settled = true; resolve(r); } };
 
+        // رسالة سياق لاحقة تبقي رسالة المستخدم (ومنها الصور) بايتياً كما هي ولا تدخل السجل المحفوظ.
+        const messagesWithTurnPrompt = messages.slice();
+        if (turnPrompt && turnMessageIndex >= 0 && turnMessageIndex < messagesWithTurnPrompt.length) {
+          messagesWithTurnPrompt.splice(turnMessageIndex + 1, 0, { role: 'system', content: turnPrompt });
+        }
         const requestMessages = contextPrompt
-          ? [{ role: 'system', content: contextPrompt }].concat(messages)
-          : messages;
+          ? [{ role: 'system', content: contextPrompt }].concat(messagesWithTurnPrompt)
+          : messagesWithTurnPrompt;
         const bodyObj = { model: useModel, messages: requestMessages, stream: true };
         if (config.promptCacheKey === true) bodyObj.prompt_cache_key = sid;
         if (reasoningEffort) bodyObj.reasoning_effort = reasoningEffort;
@@ -391,12 +398,14 @@ function make(config) {
       const builtContext = await contextBudget.buildBlindContext({
         cwd,
         prompt,
-        systemParts: [envbrief.build('adapter', useModel, { compact: true }), skillPrompt, memoryPrompt],
+        systemParts: [envbrief.build('adapter', useModel, { compact: true }), skillPrompt],
+        turnParts: [memoryPrompt, backgroundPrompt],
         history,
         toolDefinitions: tools.defs({ strictTools }),
       });
       if (aborted) return;
       contextPrompt = builtContext.systemPrompt;
+      turnPrompt = builtContext.turnPrompt;
       contextEstimate = builtContext.estimate;
       // الصور لا تأتي إلا من sanitizeImages في main.js؛ لا نقبل URL أو مساراً من النموذج.
       const userContent = supportsVision && Array.isArray(input.images) && input.images.length
@@ -406,6 +415,7 @@ function make(config) {
         })))
         : prompt;
       const messages = history.concat([{ role: 'user', content: userContent }]);
+      turnMessageIndex = history.length;
       let rounds = 0;
       const rateLimit = { attempts: 0, spentMs: 0 }; // حالة تراجع 429 لهذا الدور وحده
       while (true) {
