@@ -178,9 +178,13 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
  */
 const RETRYABLE = new Set([
   'test:promocapture-live', // OBS-036 — بوابة 2.16.1: صفر إطار تحت الحمل، ونجح منفرداً فوراً
+  'test:preview-member-live', // OBS-101 — تجاوز 240ث تحت الحمل ومرّ في 4.7ث منفرداً (×51)
 ]);
 // تبرير كل اسم — رقم الملاحظة التي سجّلت العثرة البيئية المقيسة. لا اسم بلا سابقة.
-const RETRYABLE_OBS = Object.freeze({ 'test:promocapture-live': 'OBS-036' });
+const RETRYABLE_OBS = Object.freeze({
+  'test:promocapture-live': 'OBS-036',
+  'test:preview-member-live': 'OBS-101',
+});
 const MAX_RETRIES = 1;
 
 const SUITE_TIMEOUT_MS = 240000;

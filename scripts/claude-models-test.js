@@ -478,9 +478,13 @@ function testUiAndIpcContracts() {
   assert.match(appSource, /fallbackModel: engine === 'sdk' \? \$\('fallbackModel'\)\.value : ''/);
   assert.match(appSource, /window\.satr\.claudeAccount\(\)/);
   assert.match(appSource, /مسجّل الدخول: /);
-  // بعد دمج C4 صارت الكتلة متعددة الأسطر وتحدّث حسابي Claude وCodex معاً؛ العقد الثابت:
-  // خروج مبكر إن كانت ⚙ مخفية ثم استدعاء refreshClaudeAccountView الكسول.
-  assert.match(appSource, /queueMicrotask\(\(\) => \{\s*if \(\$\('settingsPop'\)\.hidden\) return;\s*refreshClaudeAccountView\(\);/);
+  // بعد دمج C4 صارت الكتلة تحدّث حسابي Claude وCodex معاً. وبعد OBS-099 تغيّرت آليتها:
+  // كانت تقرأ `settingsPop.hidden` داخل queueMicrotask، وهي قراءة تسبق مبدّل الحالة في
+  // topbar.js (ترتيب المستمعين) فلم تُستدعَ الدالتان قط منذ دفعتَي B وC4. العقد الثابت
+  // اليوم: topbar يبثّ settings-open عند الفتح، وapp.js يستمع له ويحدّث كسولاً.
+  // ⚠️ لا تُعِد تثبيت queueMicrotask هنا — كان هذا السطر يحرس بنية العطل نفسها.
+  assert.match(appSource, /addEventListener\('settings-open', \(\) => \{\s*refreshClaudeAccountView\(\);/);
+  assert.doesNotMatch(appSource, /queueMicrotask\(\(\) => \{\s*if \(\$\('settingsPop'\)\.hidden\) return;/);
   assert.match(htmlSource, /نموذج احتياطي عند انشغال النموذج/);
   assert.match(htmlSource, /<option value="">بلا<\/option>/);
   assert.match(htmlSource, /id="claudeAccountEmail"/);
