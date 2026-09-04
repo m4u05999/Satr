@@ -2402,6 +2402,28 @@ function fingerprintRewindFiles(cwd, files) {
   return { ok: true, fingerprints };
 }
 
+// عدّ الملفات التي تغيّرت بصمتها بين قبل التنفيذ وبعده. ملف يُحسب متغيّراً إذا
+// اختلفت علامته أو حجمها أو mtimeها أو SHA-256 محتواها، أو ظهر/غاب بين البصمتين.
+// هذا العدد هو العدد الصادق الوحيد للاستعادة لأن canRewind في SDK 0.3.176 لا
+// يضمن استعادة أي ملف (أصلح upstream ≥0.3.260). حدّ TOCTOU معلن ولا ندّعي حلّه:
+// عملية خارجية قد تغيّر ملفاً أثناء استدعاء SDK نفسه، فهذا قياس لا ضمان.
+function countChangedFingerprints(before, after) {
+  const beforeMap = new Map();
+  for (const entry of Array.isArray(before) ? before : []) {
+    beforeMap.set(entry[0], JSON.stringify(entry.slice(1)));
+  }
+  let changed = 0;
+  const seen = new Set();
+  for (const entry of Array.isArray(after) ? after : []) {
+    seen.add(entry[0]);
+    if (beforeMap.get(entry[0]) !== JSON.stringify(entry.slice(1))) changed += 1;
+  }
+  for (const key of beforeMap.keys()) {
+    if (!seen.has(key)) changed += 1;
+  }
+  return changed;
+}
+
 function normalizeRewindPreview(cwd, result) {
   if (!result || result.ok !== true) {
     return { ok: false, error: 'sdk_unavailable', message: 'تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.' };
@@ -2452,6 +2474,11 @@ function normalizeRewindPreview(cwd, result) {
       message: labels[fingerprint.error] || labels.fingerprint_failed,
     };
   }
+  // حقول خاصة لمسار التنفيذ الفعلي فقط (تُنزع في publicRewindPreview): القائمة
+  // المُبصَمة وبصمات ما قبل التنفيذ كي تُقارَن بإعادة البصم بعد نجاح SDK —
+  // لأن canRewind في 0.3.176 المعطوب قد يكون true دون أن يُستعاد ملف واحد.
+  response._allFiles = safeFiles.allFiles;
+  response._fingerprints = fingerprint.fingerprints;
   response._previewDigest = createHash('sha256').update(JSON.stringify({
     files: safeFiles.allFiles.slice().sort(),
     fingerprints: fingerprint.fingerprints.slice().sort((left, right) => (
@@ -2467,7 +2494,7 @@ function normalizeRewindPreview(cwd, result) {
 
 function publicRewindPreview(preview) {
   if (!preview || typeof preview !== 'object') return preview;
-  const { _previewDigest, ...safe } = preview;
+  const { _previewDigest, _allFiles, _fingerprints, ...safe } = preview;
   return safe;
 }
 
@@ -2646,10 +2673,35 @@ async function handleRewindFilesRequest(payload, sessionAgent = agent) {
     if (!result || result.ok !== true || result.canRewind !== true) {
       return { ok: false, error: 'sdk_unavailable', message: 'تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.' };
     }
-    return {
+    const baseResult = {
       ...publicRewindPreview(finalPreview),
       ...(staleCheckpointId ? { suppressedCheckpointId: staleCheckpointId } : {}),
     };
+    // إعادة بصم المجموعة نفسها بعد التنفيذ وقياس ما تغيّر فعلاً — العدد
+    // الصادق الوحيد. فشل إعادة البصم (سقف/قراءة/symlink جديد) لا يدّعي نجاحاً
+    // ولا فشلاً: فشل SDK قد يقع بعد بدء التنفيذ فتبقى «غير مؤكد» مع حاجزه.
+    const afterRun = fingerprintRewindFiles(cwd, finalPreview._allFiles);
+    if (!afterRun.ok) {
+      return {
+        ...baseResult,
+        restoredCount: null,
+        verifyFailed: true,
+        message: 'تعذّر التحقق مما إذا غيّر الاسترجاع الملفات بعد اكتماله؛ راجع تغييرات الملفات يدوياً قبل المتابعة.',
+      };
+    }
+    const restoredCount = countChangedFingerprints(finalPreview._fingerprints, afterRun.fingerprints);
+    if (restoredCount === 0) {
+      // لم تتغيّر أي بصمة: لا رسالة نجاح. لا ندّعي فشلاً قاطعاً أيضاً — قد
+      // تكون الملفات مطابقة لنقطة الاسترجاع أصلاً — لكن الادعاء القديم
+      // «استُرجعت N ملف» كان يعوّل على عدد المعاينة الجافة لا على القرص.
+      return {
+        ...baseResult,
+        restoredCount: 0,
+        unchanged: true,
+        message: 'أكمل Claude الاسترجاع لكن لم يتغيّر أي ملف على القرص؛ قد تكون الملفات مطابقة لحالة الرسالة المحددة أصلاً — راجع تغييرات الملفات للتأكد.',
+      };
+    }
+    return { ...baseResult, restoredCount };
   } catch {
     return { ok: false, error: 'sdk_unavailable', message: 'تعذّر التأكد من اكتمال استرجاع ملفات Claude؛ راجع تغييرات الملفات.' };
   }
