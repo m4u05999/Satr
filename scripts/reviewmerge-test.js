@@ -145,10 +145,23 @@ function startReview(reviewer, teamId, artifact, producerEngines) {
   }, () => {});
 }
 
+const REVIEW_TERMINAL_STATES = ['completed', 'failed', 'timed_out', 'stopped'];
+
+// OBS-083 — إغلاق بنيوي لسباق زمني، لا تمديد مهلة: حالة الدفعة الطرفية **لا تعني**
+// أن كل عقد الزوايا بلغت حالتها. عقد `aggregateLensState` المجمَّد يعيد الأسوأ
+// (‏`failed > timed_out > stopped > running`)، فتصير الدفعة `failed` فور فشل أول
+// زاوية بينما تعمل الأخريان — مُعاد إنتاجه حتمياً بإبطاء زاويتين:
+// `batch.state=failed` عند 28ms و`lenses=["failed","running","running"]`.
+// وكل ما يلي هذا الانتظار من assertions يفحص **الزوايا** لا الدفعة (حالة كل عقدة،
+// وحكمها، وعدد `stop`)، فكان المسند أضعف مما يؤكّده الاختبار. الانتظار هنا صار
+// يطابق شرط ما يُؤكَّد بالضبط: الدفعة طرفية **وكل** عقدة زاوية طرفية.
 async function completedReview(reviewer, teamId, label) {
   return waitFor(() => {
     const review = reviewer.latest(teamId);
-    return review && ['completed', 'failed', 'timed_out', 'stopped'].includes(review.state) ? review : null;
+    if (!review || !REVIEW_TERMINAL_STATES.includes(review.state)) return null;
+    const lensesSettled = review.reviews.every((item) => item.lenses
+      .every((node) => REVIEW_TERMINAL_STATES.includes(node.state)));
+    return lensesSettled ? review : null;
   }, WAIT_TIMEOUT_MS, label);
 }
 
@@ -382,6 +395,14 @@ async function main() {
     assert.strictEqual(reviewerModule.aggregateLensState([
       { state: 'completed' }, { state: 'completed' }, { state: 'running' },
     ]), 'running');
+    // OBS-083 — تثبيت الحالة المختلطة التي لم تكن مثبَّتة: زاوية فاشلة تغلب زاوية
+    // ما زالت تعمل (fail-fast). هذا هو مصدر السباق أعلاه، وهو **عقد مقصود** لأن
+    // `aggregateLensVerdict` fail-closed فلا يستطيع المحرك بلوغ `approve` بعد فشل
+    // زاوية ⇒ الحالة الطرفية معلومة لا مخمَّنة. تثبيتها هنا يمنع قلبها صامتاً إلى
+    // «انتظر كل الزوايا» بلا تعديل معلن للعقد المجمَّد في CLAUDE.md.
+    assert.strictEqual(reviewerModule.aggregateLensState([
+      { state: 'failed' }, { state: 'running' }, { state: 'completed' },
+    ]), 'failed');
 
     // ---------- هيئة القضاة: المحلل والتقرير المدموج ----------
     const parsed = reviewerModule.parseRiskItems([
