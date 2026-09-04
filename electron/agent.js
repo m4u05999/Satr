@@ -35,6 +35,7 @@ const testsprite = require('./testsprite');
 const testspritejobs = require('./testspritejobs');
 const envbrief = require('./envbrief');
 const adapterTools = require('./tools');
+const hookguard = require('./hookguard'); // OBS-087: تنبيه كسول لإعدادات SessionStart/setup غير المرئية
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_METADATA_TTL_MS = 2 * 60 * 1000;
@@ -825,6 +826,15 @@ async function prepareTestSpriteJob(prompt, cwd, siteRound) {
 async function start({ prompt, images, sessionId, model, fallbackModel, permissionMode, skills, effort, extraDirs, browserControl, trustedBrowserOrigins, browserBudget }, cwd, emit, internalPolicy) {
   const policyMode = internalPolicy && internalPolicy.mode;
   const isolatedPolicy = policyMode === 'text-only' || policyMode === 'read-only-planner';
+  // الفحص قراءة قرص محدودة لمسارات ثابتة ويعمل بلا await كي لا يؤخر إقلاع الدور.
+  // لا نعبر أي محتوى من الإعدادات: الوحدة تعيد نصاً ثابتاً بمسارات نسبية فقط، ثم
+  // تمرره ثانيةً عبر بوابة الأسرار قبل بنائه كحدث عرض لا يدخل prompt أو أدوات SDK.
+  if (!internalPolicy) {
+    void hookguard.inspectProject(cwd).then((notice) => {
+      const event = hookguard.noticeEvent(notice);
+      if (event) emit(event);
+    }).catch(() => {});
+  }
   const promptUserMessageId = randomUUID();
   let promptUserEventEmitted = false;
   let unsupportedElicitationNotified = false;
