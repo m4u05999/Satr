@@ -108,6 +108,7 @@ class SatrGate extends HTMLElement {
           '<h2>أو ابدأ الآن بمفتاح API مجاني</h2>' +
           '<p class="gate-key-intro">مفتاح API هو رمز خاص يربط «سطر» بحسابك لدى مزوّد الذكاء الاصطناعي. أنشئه ثم الصقه هنا، ولا تشاركه مع أحد.</p>' +
           '<p class="gate-key-links">تمنحك <a href="https://build.nvidia.com/" target="_blank" rel="noopener">NVIDIA NIM</a> و<a href="https://console.groq.com/" target="_blank" rel="noopener">Groq</a> مفتاحاً مجانياً بإنشاء حساب فقط، بلا بطاقة ائتمان.</p>' +
+          '<p class="gate-key-limits">حدود الطبقة المجانية: Groq نحو 30 طلباً و8000 رمز في الدقيقة، وNVIDIA NIM نحو 40 طلباً في الدقيقة — تكفي للتجربة والمهام القصيرة. وعند بلوغ الحدّ ينتظر «سطر» ثم يعيد المحاولة.</p>' +
           '<div class="gate-key-fields">' +
             '<div class="gate-key-field"><label for="gateKeyProvider">اختر المزوّد</label><select id="gateKeyProvider"></select></div>' +
             '<div class="gate-key-field"><label for="gateKeyValue">مفتاح API</label><input id="gateKeyValue" type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="الصق المفتاح هنا"></div>' +
@@ -130,7 +131,8 @@ class SatrGate extends HTMLElement {
     this._keyProvidersPromise = null;
     for (const el of [this._title, this._sub, r.querySelector('.gate-foot'),
       r.querySelector('.gate-key h2'), r.querySelector('.gate-key-intro'),
-      r.querySelector('.gate-key-links'), r.querySelector('label[for="gateKeyProvider"]'),
+      r.querySelector('.gate-key-links'), r.querySelector('.gate-key-limits'),
+      r.querySelector('label[for="gateKeyProvider"]'),
       r.querySelector('label[for="gateKeyValue"]')]) {
       applyTextDirection(el);
     }

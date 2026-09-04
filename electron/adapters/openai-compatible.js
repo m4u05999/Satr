@@ -44,6 +44,111 @@ const MAX_TURNS = 40;       // آخر 40 رسالة لكل جلسة (سقف ال
 const MAX_SESSIONS = 50;    // سقف الجلسات في الكاش الحيّ لكل مزوّد
 const MAX_TOOL_ROUNDS = 8;  // سقف جولات الأدوات في الدور الواحد (حارس حلقة لانهائية)
 
+// ---- حدود المعدّل: 429 (‏OBS-086) ----
+// الطبقات المجانية التي تفتح بها البوابة اليوم ضيّقة: Groq ‏30 طلباً و8000 رمز في
+// الدقيقة، وNVIDIA NIM نحو 40 طلباً في الدقيقة — فجلسة وكيلية تصطدم بالحدّ من أول
+// مخرج CLI طويل. قبل هذه الكتلة لم يكن للمصنع أي تطابق على 429: تعبر رسالة المزوّد
+// الخام إلى المستخدم بلا معنى، أو تُقرأ رفضاً لعقد الأدوات. الآن: تراجع محدود ثم
+// رسالة عربية **تسمّي الحدّ** الذي اصطُدم به.
+//
+// ⚠️ ترويسات هذا المسار (`Retry-After` و`x-ratelimit-*`) **بيانات شبكة غير موثوقة**:
+// تُقبل بأنماط رقمية صارمة، ويُرفض ما تجاوز السقف بدل النوم دقائق لأن ترويسة قالت ذلك.
+// ولا يدخل جسم الاستجابة الخام أيَّ رسالة تُبثّ — النص كله من جدول مغلق أدناه.
+const RATE_LIMIT_STATUS = 429;
+const MAX_RATE_LIMIT_RETRIES = 3;               // سقف صريح — لا حلقة إعادة محاولة مفتوحة
+const RATE_LIMIT_BACKOFF_MS = [1000, 2000, 4000]; // تراجع أسّي حين لا يعلن المزوّد مهلة
+const RETRY_AFTER_MAX_MS = 20000;               // أطول انتظار نقبله من ترويسة واحدة
+const RATE_LIMIT_BUDGET_MS = 30000;             // سقف مجموع الانتظار في الدور الواحد
+const MAX_RETRY_AFTER_SECONDS = 86400;          // أكبر من يوم ⇒ ترويسة مشوّهة تُهمَل
+
+const RATE_KIND_PHRASE = { tokens: 'الرموز', requests: 'الطلبات' };
+const RATE_WINDOW_PHRASE = { minute: 'في الدقيقة', day: 'في اليوم' };
+
+// تصريف «ثانية» بالعربية — الأرقام هنا ديناميكية فلا تصحّ صيغة واحدة لكل الحالات
+function secondsPhrase(seconds) {
+  if (seconds <= 1) return 'ثانية واحدة';
+  if (seconds === 2) return 'ثانيتين';
+  if (seconds <= 10) return seconds + ' ثوانٍ';
+  return seconds + ' ثانية';
+}
+
+/**
+ * `Retry-After` بالثواني حصراً. صيغة HTTP-date مشروعة في المعيار لكنها **غير مدعومة
+ * عمداً**: تحليلها يجعل ساعةَ مزوّد منحرفة تُترجَم إلى نوم ساعات؛ غيابها يسقط إلى
+ * التراجع الأسّي. يعيد ميلي ثانية أو null.
+ */
+function parseRetryAfterMs(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  if (!/^\d{1,7}(?:\.\d{1,3})?$/.test(text)) return null;
+  const seconds = Number(text);
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > MAX_RETRY_AFTER_SECONDS) return null;
+  return Math.round(seconds * 1000);
+}
+
+// عدد صحيح من ترويسة — أي شيء غير رقم خالص (≤9 خانات) يُهمَل بلا تأويل
+function headerNumber(headers, name) {
+  const raw = headers && headers[name];
+  const text = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof text !== 'string' || !/^\d{1,9}$/.test(text.trim())) return null;
+  return Number(text.trim());
+}
+
+/**
+ * أي حدّ اصطُدم به؟ الجواب من قائمة مغلقة (`tokens|requests|''` × `minute|day|''`).
+ * جسم الاستجابة يُقرأ **إشارةً فقط** (مقصوصاً) ولا يخرج منه حرف إلى المستخدم.
+ */
+function classifyRateLimit(headers, body) {
+  const text = typeof body === 'string' ? body.slice(0, 2000) : '';
+  let kind = '';
+  if (/tokens\s+per\s+(?:minute|day)|\bTPM\b|\bTPD\b/i.test(text)) kind = 'tokens';
+  else if (/requests\s+per\s+(?:minute|day)|\bRPM\b|\bRPD\b/i.test(text)) kind = 'requests';
+  else if (headerNumber(headers, 'x-ratelimit-remaining-tokens') === 0) kind = 'tokens';
+  else if (headerNumber(headers, 'x-ratelimit-remaining-requests') === 0) kind = 'requests';
+  let window = '';
+  if (/per\s+day|\bTPD\b|\bRPD\b/i.test(text)) window = 'day';
+  else if (/per\s+minute|\bTPM\b|\bRPM\b/i.test(text)) window = 'minute';
+  const limit = kind === 'tokens' ? headerNumber(headers, 'x-ratelimit-limit-tokens')
+    : kind === 'requests' ? headerNumber(headers, 'x-ratelimit-limit-requests') : null;
+  return { kind, window, limit, retryAfterMs: parseRetryAfterMs(headers && headers['retry-after']) };
+}
+
+// جملة «بلغتَ حدّ …» — مبنية من الجدول المغلق أعلاه لا من نص المزوّد
+function rateLimitHead(label, info) {
+  const kindPhrase = RATE_KIND_PHRASE[info.kind];
+  const windowPhrase = RATE_WINDOW_PHRASE[info.window];
+  let head = kindPhrase
+    ? 'بلغتَ حدّ ' + kindPhrase + (windowPhrase ? ' ' + windowPhrase : '') + ' لدى ' + label
+    : 'بلغتَ حدّ الاستخدام لدى ' + label;
+  if (kindPhrase && info.limit !== null) head += ' (الحدّ المعلن: ' + info.limit + ')';
+  return head + '.';
+}
+
+// الرسالة النهائية حين ينفد التراجع. `/ضغط` غير متاح لمحوّلات REST (‏engines في
+// app.js: sdk/codex/kimi-code) فلا يُقترح هنا — البدائل الصادقة وحدها.
+function rateLimitMessage(label, info) {
+  const wait = info.retryAfterMs !== null
+    ? ' أعِد المحاولة بعد ' + secondsPhrase(Math.max(1, Math.ceil(info.retryAfterMs / 1000))) + '.'
+    : ' انتظر قليلاً ثم أعِد المحاولة.';
+  const advice = info.kind === 'tokens'
+    ? ' لتخفيف الاستهلاك: قلّل مخرجات الطرفية والملفات المرفقة، أو ابدأ جلسة جديدة، أو بدّل المحرّك من قائمة «المحرك».'
+    : ' أبطئ وتيرة الطلبات، أو بدّل المحرّك من قائمة «المحرك».';
+  return rateLimitHead(label, info) + wait + advice;
+}
+
+/**
+ * كم ننتظر قبل المحاولة التالية؟ `null` = لا تراجع بعد (نفدت المحاولات، أو طلب
+ * المزوّد أطول من سقفنا، أو تجاوز مجموعُ الانتظار ميزانيةَ الدور) ⇒ فشل صريح.
+ */
+function planRateLimitWait(state, retryAfterMs) {
+  if (state.attempts >= MAX_RATE_LIMIT_RETRIES) return null;
+  const wait = retryAfterMs === null ? RATE_LIMIT_BACKOFF_MS[state.attempts] : retryAfterMs;
+  if (!Number.isFinite(wait) || wait < 0 || wait > RETRY_AFTER_MAX_MS) return null;
+  if (state.spentMs + wait > RATE_LIMIT_BUDGET_MS) return null;
+  return wait;
+}
+
 // تحليل وسائط أداة قادمة من النموذج — نص JSON قد يكون معطوباً، فلا استثناء أبداً
 function safeParse(s) {
   try { const o = JSON.parse(s || '{}'); return (o && typeof o === 'object') ? o : {}; }
@@ -127,6 +232,15 @@ function make(config) {
     const startedAt = Date.now();
     let aborted = false;
     let currentReq = null;
+    // نوم تراجع 429 قابل للقطع: `stop()` يمسح المؤقّت ويحسم الوعد فوراً، فلا يبقى
+    // دورٌ معلّقاً في نوم بعد الإيقاف (ولا مؤقّت يتيم يبقي حلقة الأحداث حيّة).
+    let sleepTimer = null;
+    let wakeSleep = null;
+    const sleep = (ms) => new Promise((resolve) => {
+      if (aborted) return resolve();
+      wakeSleep = resolve;
+      sleepTimer = setTimeout(() => { sleepTimer = null; wakeSleep = null; resolve(); }, ms);
+    });
     let toolsOk = true; // يُعطَّل بعد رفض المزوّد للأدوات (نموذج لا يدعم tool-calling)
     // استهلاك الرموز عبر جولات الدور (3.3): يُجمَع من إطارات usage إن وفّرها المزوّد
     const usageTotal = usage.emptyActual();
@@ -173,7 +287,8 @@ function make(config) {
         if (reasoningEffort) bodyObj.reasoning_effort = reasoningEffort;
         if (includeUsage) bodyObj.stream_options = { include_usage: true };
         if (withTools) bodyObj.tools = tools.defs({ strictTools });
-        estimatedUsage.input_tokens += contextBudget.estimateTokens(bodyObj);
+        const requestInputEstimate = contextBudget.estimateTokens(bodyObj);
+        estimatedUsage.input_tokens += requestInputEstimate;
         const body = JSON.stringify(bodyObj);
 
         let requestUsage = null; // الإطار الأخير يحمل إجمالي الطلب؛ لا نجمعه أكثر من مرة
@@ -222,7 +337,9 @@ function make(config) {
               let msg = 'رمز HTTP ' + res.statusCode;
               try { const j = JSON.parse(errBody); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
               if ((res.statusCode === 401 || res.statusCode === 403) && authHint) msg = authHint;
-              done({ error: msg, status: res.statusCode });
+              // `headers`/`errBody` **داخليان**: يستهلكهما تصنيف 429 وحده ولا يُبثّان.
+              done({ error: msg, status: res.statusCode, headers: res.headers, errorBody: errBody,
+                estimatedInput: requestInputEstimate });
             });
             return;
           }
@@ -290,10 +407,29 @@ function make(config) {
         : prompt;
       const messages = history.concat([{ role: 'user', content: userContent }]);
       let rounds = 0;
+      const rateLimit = { attempts: 0, spentMs: 0 }; // حالة تراجع 429 لهذا الدور وحده
       while (true) {
         const r = await requestOnce(messages, toolsOk);
         if (aborted || r.error === '__aborted__') return;
         if (r.error) {
+          // 429 (‏OBS-086): تراجع محدود ثم رسالة تسمّي الحدّ. مشروط بالحالة وحدها،
+          // فلا يمسّ المسار السليم ولا بقية رموز الخطأ لأي مزوّد من مزوّدي المصنع.
+          if (r.status === RATE_LIMIT_STATUS) {
+            const info = classifyRateLimit(r.headers, r.errorBody);
+            const wait = planRateLimitWait(rateLimit, info.retryAfterMs);
+            if (wait === null) { fail(rateLimitMessage(label, info)); return; }
+            rateLimit.attempts++;
+            rateLimit.spentMs += wait;
+            // الطلب رُفض قبل التنفيذ، فلا يُحتسب إدخاله مرتين في التقدير
+            estimatedUsage.input_tokens -= r.estimatedInput || 0;
+            emit({ type: 'stream_text', phase: 'commentary',
+              text: '⏳ ' + rateLimitHead(label, info) + ' أنتظر '
+                + secondsPhrase(Math.max(1, Math.ceil(wait / 1000))) + ' ثم أعيد المحاولة ('
+                + rateLimit.attempts + '/' + MAX_RATE_LIMIT_RETRIES + ').\n\n' });
+            await sleep(wait);
+            if (aborted) return;
+            continue;
+          }
           // رفض صيغة الطلب في أول جولة قد يعني أن النموذج لا يدعم الأدوات؛ لا نعيد أخطاء المصادقة.
           if (toolsOk && rounds === 0 && (r.status === 400 || r.status === 422)) {
             toolsOk = false;
@@ -373,6 +509,9 @@ function make(config) {
     return {
       stop() {
         aborted = true;
+        // قطع نوم تراجع 429 فوراً — لا انتظار معلّق بعد الإيقاف
+        if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null; }
+        if (wakeSleep) { const wake = wakeSleep; wakeSleep = null; wake(); }
         // إنهاء أي إذن معلّق بالرفض حتى لا تبقى الحلقة منتظرة للأبد
         for (const [, p] of pendingPerms) { try { p.resolve(false); } catch (e) {} }
         pendingPerms.clear();
@@ -395,4 +534,9 @@ function make(config) {
   return { start };
 }
 
-module.exports = { make };
+// `make` هو العقد العام؛ البقية دوال نقية مُصدَّرة ليحرسها test:adapters بحالاتها
+// الحدّية (ترويسة مشوّهة/HTTP-date/سقف) بلا نوم حقيقي لكل حالة.
+module.exports = {
+  make, parseRetryAfterMs, classifyRateLimit, rateLimitMessage, planRateLimitWait,
+  MAX_RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_MS, RETRY_AFTER_MAX_MS, RATE_LIMIT_BUDGET_MS,
+};

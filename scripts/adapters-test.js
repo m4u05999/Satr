@@ -9,7 +9,8 @@ const https = require('https');
 const os = require('os');
 const path = require('path');
 
-const { make } = require('../electron/adapters/openai-compatible');
+const openaiCompatible = require('../electron/adapters/openai-compatible');
+const { make } = openaiCompatible;
 const openaiResponses = require('../electron/adapters/openai-responses');
 const adapters = require('../electron/adapters');
 
@@ -147,6 +148,49 @@ function installChatMock(requests) {
   return () => { https.request = originalRequest; };
 }
 
+
+// ---- خادم حدود المعدّل (‏OBS-086) ----
+// `plan` خطوة لكل طلب؛ آخر خطوة تتكرر لما بعدها. تُسجَّل أزمنة الطلبات لقياس التراجع فعلياً.
+async function openRateLimitServer(state) {
+  const server = http.createServer((request, response) => {
+    request.resume();
+    request.on('end', () => {
+      state.requests.push(Date.now());
+      const step = state.plan[Math.min(state.requests.length - 1, state.plan.length - 1)];
+      if (step.ok) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.end('data: {"choices":[{"delta":{"content":"تم"}}]}\n\ndata: [DONE]\n\n');
+        return;
+      }
+      response.writeHead(429, Object.assign({ 'Content-Type': 'application/json' }, step.headers || {}));
+      response.end(JSON.stringify({ error: { message: step.body || 'Too Many Requests' } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return server;
+}
+
+function rateLimitConfig(port) {
+  return {
+    id: '', label: 'Fixture', protocol: 'http', host: '127.0.0.1', port,
+    path: '/v1/chat/completions', requiresKey: false, defaultModel: 'fixture-model',
+  };
+}
+
+const RATE_INPUT = {
+  prompt: 'اختبار حدّ المعدّل', sessionId: null, model: null,
+  permissionMode: 'default', skills: [], images: [], effort: null,
+};
+
+function commentaryText(events) {
+  return events.filter((event) => event.type === 'stream_text' && event.phase === 'commentary')
+    .map((event) => event.text).join('');
+}
+
+function allEmittedText(events) {
+  return events.map((event) => JSON.stringify(event)).join(' ');
+}
+
 async function main() {
   const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'satr-adapters-test-'));
   const chatBodies = [];
@@ -154,6 +198,7 @@ async function main() {
   let server;
   let kimiServer;
   let authErrorServer;
+  let rateServer;
   let restoreResponses;
   let restoreChat;
   const previousKey = process.env.OPENAI_API_KEY;
@@ -323,6 +368,170 @@ async function main() {
     }, temp);
     assert.deepStrictEqual(responseBodies[1].reasoning, { effort: 'high' });
 
+    // ---- حدود المعدّل 429 (‏OBS-086) ----
+    // أولاً الدوال النقية (حالات حدّية بلا نوم حقيقي)، ثم السلوك الحيّ عبر خادم HTTP.
+    const { parseRetryAfterMs, classifyRateLimit, rateLimitMessage, planRateLimitWait } = openaiCompatible;
+
+    assert.strictEqual(parseRetryAfterMs('12'), 12000);
+    assert.strictEqual(parseRetryAfterMs(' 0.5 '), 500);
+    assert.strictEqual(parseRetryAfterMs(['3']), 3000);
+    // صيغة HTTP-date مشروعة في المعيار وغير مدعومة عمداً ⇒ السقوط للتراجع الأسّي
+    assert.strictEqual(parseRetryAfterMs('Wed, 21 Oct 2026 07:28:00 GMT'), null);
+    assert.strictEqual(parseRetryAfterMs('-5'), null);
+    assert.strictEqual(parseRetryAfterMs('86401'), null);    // أكبر من يوم ⇒ ترويسة مشوّهة
+    assert.strictEqual(parseRetryAfterMs('99999999'), null); // أكثر من سبع خانات
+    assert.strictEqual(parseRetryAfterMs('12; sleep'), null);
+    assert.strictEqual(parseRetryAfterMs(null), null);
+    assert.strictEqual(parseRetryAfterMs(7), null);
+
+    const tpmInfo = classifyRateLimit({
+      'retry-after': '7',
+      'x-ratelimit-limit-tokens': '8000',
+      'x-ratelimit-remaining-tokens': '0',
+    }, 'Rate limit reached for model x on tokens per minute (TPM): Limit 8000, Used 8000');
+    assert.deepStrictEqual(tpmInfo, { kind: 'tokens', window: 'minute', limit: 8000, retryAfterMs: 7000 });
+    const rpdInfo = classifyRateLimit({ 'x-ratelimit-remaining-requests': '0', 'x-ratelimit-limit-requests': '30' }, '');
+    assert.deepStrictEqual(rpdInfo, { kind: 'requests', window: '', limit: 30, retryAfterMs: null });
+    // ترويسة حدّ مشوّهة تُهمَل بلا تأويل، والنوع يبقى مشتقاً من الترويسة السليمة
+    const dirtyInfo = classifyRateLimit({ 'x-ratelimit-remaining-tokens': '0', 'x-ratelimit-limit-tokens': '8000; drop' }, '');
+    assert.strictEqual(dirtyInfo.kind, 'tokens');
+    assert.strictEqual(dirtyInfo.limit, null);
+    // حدود الكلمة إلزامية: مطابقة TPM/RPM داخل كلمة أطول تصنيف كاذب (عطل هروب مرصود)
+    assert.strictEqual(classifyRateLimit({}, 'ATPMB ARPMB failure').kind, '');
+    assert.strictEqual(classifyRateLimit({}, 'Too Many Requests').kind, '');
+
+    assert.strictEqual(planRateLimitWait({ attempts: 0, spentMs: 0 }, null), 1000);
+    assert.strictEqual(planRateLimitWait({ attempts: 1, spentMs: 1000 }, null), 2000);
+    assert.strictEqual(planRateLimitWait({ attempts: 2, spentMs: 3000 }, null), 4000);
+    assert.strictEqual(planRateLimitWait({ attempts: 3, spentMs: 7000 }, null), null);
+    assert.strictEqual(planRateLimitWait({ attempts: 0, spentMs: 0 }, 20000), 20000);
+    assert.strictEqual(planRateLimitWait({ attempts: 0, spentMs: 0 }, 20001), null);
+    assert.strictEqual(planRateLimitWait({ attempts: 1, spentMs: 20000 }, 15000), null);
+
+    const tokenMessage = rateLimitMessage('Groq', { kind: 'tokens', window: 'minute', limit: 8000, retryAfterMs: 12000 });
+    assert.strictEqual(tokenMessage, 'بلغتَ حدّ الرموز في الدقيقة لدى Groq (الحدّ المعلن: 8000). أعِد المحاولة بعد 12 ثانية.'
+      + ' لتخفيف الاستهلاك: قلّل مخرجات الطرفية والملفات المرفقة، أو ابدأ جلسة جديدة، أو بدّل المحرّك من قائمة «المحرك».');
+    // ‏/ضغط محصور بـsdk/codex/kimi-code في app.js فاقتراحه على محوّل REST نصيحة كاذبة
+    assert.ok(!tokenMessage.includes('/ضغط') && !tokenMessage.includes('ضغط المحادثة'));
+    assert.strictEqual(rateLimitMessage('Fixture', { kind: '', window: '', limit: null, retryAfterMs: null }),
+      'بلغتَ حدّ الاستخدام لدى Fixture. انتظر قليلاً ثم أعِد المحاولة. أبطئ وتيرة الطلبات، أو بدّل المحرّك من قائمة «المحرك».');
+
+    // (1) 429 ثم نجاح: تراجع فعلي بمهلة Retry-After، ورسالة عربية تسمّي الحدّ
+    const LEAK_MARKER = 'RAW-PROVIDER-BODY-MARKER';
+    const LEAK_SECRET = 'sk-livetestsecret0123456789';
+    const rateState = {
+      requests: [],
+      plan: [{
+        headers: { 'retry-after': '0.2', 'x-ratelimit-limit-tokens': '8000', 'x-ratelimit-remaining-tokens': '0' },
+        body: LEAK_MARKER + ' on tokens per minute (TPM): Limit 8000 ' + LEAK_SECRET,
+      }, { ok: true }],
+    };
+    rateServer = await openRateLimitServer(rateState);
+    const ratePort = rateServer.address().port;
+    const retried = await runAdapter(make(rateLimitConfig(ratePort)), RATE_INPUT, temp);
+    assert.strictEqual(retried.code, 0, 'التراجع لم ينتهِ إلى نجاح');
+    assert.strictEqual(rateState.requests.length, 2, 'عدد الطلبات بعد التراجع: ' + rateState.requests.length);
+    const gap = rateState.requests[1] - rateState.requests[0];
+    assert.ok(gap >= 180, 'لم يُنتظر Retry-After فعلياً — الفاصل ' + gap + 'ms');
+    const retriedNotice = commentaryText(retried.events);
+    assert.ok(retriedNotice.includes('بلغتَ حدّ الرموز في الدقيقة لدى Fixture (الحدّ المعلن: 8000).'),
+      'إشعار التراجع لا يسمّي الحدّ: ' + retriedNotice);
+    assert.ok(retriedNotice.includes('(1/3)'), 'إشعار التراجع بلا عدّاد محاولات');
+    const retriedText = allEmittedText(retried.events);
+    assert.ok(!retriedText.includes(LEAK_MARKER) && !retriedText.includes(LEAK_SECRET),
+      'جسم استجابة المزوّد الخام تسرّب إلى الأحداث');
+
+    // (2) 429 دائم: ثلاث محاولات ثم فشل صريح برسالة تسمّي الحدّ، بلا حلقة مفتوحة
+    rateState.requests.length = 0;
+    rateState.plan = [{
+      headers: { 'retry-after': '0.05', 'x-ratelimit-limit-tokens': '8000', 'x-ratelimit-remaining-tokens': '0' },
+      body: LEAK_MARKER + ' on tokens per minute (TPM) ' + LEAK_SECRET,
+    }];
+    const exhausted = await runAdapter(make(rateLimitConfig(ratePort)), RATE_INPUT, temp);
+    assert.strictEqual(exhausted.code, 1);
+    assert.strictEqual(rateState.requests.length, 4, 'عدد الطلبات عند النفاد: ' + rateState.requests.length);
+    const failure = exhausted.events.find((event) => event.type === 'spawn_error');
+    assert.ok(failure && failure.text.includes('بلغتَ حدّ الرموز في الدقيقة لدى Fixture (الحدّ المعلن: 8000).'),
+      'رسالة الفشل لا تسمّي الحدّ: ' + (failure && failure.text));
+    assert.ok(failure.text.includes('قلّل مخرجات الطرفية والملفات المرفقة'));
+    const exhaustedText = allEmittedText(exhausted.events);
+    assert.ok(!exhaustedText.includes(LEAK_MARKER) && !exhaustedText.includes(LEAK_SECRET),
+      'جسم استجابة المزوّد الخام تسرّب عند النفاد');
+
+    // (3) Retry-After أطول من سقفنا: لا نوم إطلاقاً — فشل فوري يُبلّغ المهلة المعلنة
+    rateState.requests.length = 0;
+    rateState.plan = [{
+      headers: { 'retry-after': '3600', 'x-ratelimit-limit-requests': '1000', 'x-ratelimit-remaining-requests': '0' },
+      body: 'Rate limit reached on requests per day (RPD): Limit 1000',
+    }];
+    const cappedStart = Date.now();
+    const capped = await runAdapter(make(rateLimitConfig(ratePort)), RATE_INPUT, temp);
+    const cappedElapsed = Date.now() - cappedStart;
+    assert.strictEqual(capped.code, 1);
+    assert.strictEqual(rateState.requests.length, 1, 'أُعيدت المحاولة رغم تجاوز الترويسة للسقف');
+    assert.ok(cappedElapsed < 3000, 'نام المحوّل على ترويسة غير موثوقة: ' + cappedElapsed + 'ms');
+    const cappedFailure = capped.events.find((event) => event.type === 'spawn_error');
+    assert.ok(cappedFailure.text.includes('بلغتَ حدّ الطلبات في اليوم لدى Fixture (الحدّ المعلن: 1000).'),
+      'رسالة الحدّ اليومي غير صحيحة: ' + cappedFailure.text);
+    assert.ok(cappedFailure.text.includes('أعِد المحاولة بعد 3600 ثانية.'));
+    assert.strictEqual(commentaryText(capped.events), '', 'أُعلن انتظار لم يقع');
+
+    // (4) بلا Retry-After ولا ترويسات: تراجع أسّي افتراضي (1000ms) ثم نجاح
+    rateState.requests.length = 0;
+    rateState.plan = [{ body: 'Too Many Requests' }, { ok: true }];
+    const backedOff = await runAdapter(make(rateLimitConfig(ratePort)), RATE_INPUT, temp);
+    assert.strictEqual(backedOff.code, 0);
+    assert.strictEqual(rateState.requests.length, 2);
+    const defaultGap = rateState.requests[1] - rateState.requests[0];
+    assert.ok(defaultGap >= 900, 'التراجع الافتراضي أقصر من المعلن: ' + defaultGap + 'ms');
+    assert.ok(commentaryText(backedOff.events).includes('بلغتَ حدّ الاستخدام لدى Fixture.'));
+
+    // (5) الإيقاف يقطع التراجع فوراً ولا يترك مؤقّتاً يتيماً.
+    // مسبار المؤقّتات الطويلة (≥300ms) يعضّ: بلا clearTimeout في stop() تبقى المجموعة غير فارغة.
+    rateState.requests.length = 0;
+    rateState.plan = [{ headers: { 'retry-after': '2' }, body: 'Too Many Requests' }];
+    const originalSetTimeout = global.setTimeout;
+    const originalClearTimeout = global.clearTimeout;
+    const longTimers = new Set();
+    global.setTimeout = (fn, ms, ...rest) => {
+      const timer = originalSetTimeout(fn, ms, ...rest);
+      if (typeof ms === 'number' && ms >= 300) longTimers.add(timer);
+      return timer;
+    };
+    global.clearTimeout = (timer) => { longTimers.delete(timer); return originalClearTimeout(timer); };
+    try {
+      const stopEvents = [];
+      const stopHandle = make(rateLimitConfig(ratePort)).start(RATE_INPUT, temp, (event) => { stopEvents.push(event); });
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline && !stopEvents.some((event) => event.phase === 'commentary')) {
+        await new Promise((resolve) => originalSetTimeout(resolve, 10));
+      }
+      assert.ok(stopEvents.some((event) => event.phase === 'commentary'), 'لم يبدأ تراجع 429 قبل الإيقاف');
+      assert.strictEqual(longTimers.size, 1, 'مؤقّت النوم غير مرصود: ' + longTimers.size);
+      const stopStart = Date.now();
+      await stopHandle.stop();
+      const stopElapsed = Date.now() - stopStart;
+      assert.ok(stopElapsed < 500, 'stop() انتظر انتهاء النوم: ' + stopElapsed + 'ms');
+      assert.strictEqual(longTimers.size, 0, 'بقي مؤقّت تراجع يتيم بعد الإيقاف');
+      await new Promise((resolve) => originalSetTimeout(resolve, 250));
+      assert.strictEqual(rateState.requests.length, 1, 'أُعيدت المحاولة بعد الإيقاف');
+      assert.ok(!stopEvents.some((event) => event.type === 'proc_done' || event.type === 'result'),
+        'أُنهي دور مُوقَف بنتيجة');
+    } finally {
+      global.setTimeout = originalSetTimeout;
+      global.clearTimeout = originalClearTimeout;
+    }
+
+    // (6) عدم تراجع: رمز غير 429 يبقى على مساره القديم حرفياً (بلا انتظار ولا إعادة)
+    rateState.requests.length = 0;
+    rateState.plan = [{ ok: true }];
+    const healthyStart = Date.now();
+    const healthy = await runAdapter(make(rateLimitConfig(ratePort)), RATE_INPUT, temp);
+    assert.strictEqual(healthy.code, 0);
+    assert.strictEqual(rateState.requests.length, 1);
+    assert.ok(Date.now() - healthyStart < 3000);
+    assert.strictEqual(commentaryText(healthy.events), '', 'المسار السليم بثّ إشعار تراجع');
+
     console.log('✓ Chat content array is gated by capabilities.vision');
     console.log('✓ Chat ignores images without vision and does not invent reasoning_effort');
     console.log('✓ Responses receives input_image and model-compatible reasoning.effort');
@@ -336,6 +545,15 @@ async function main() {
     console.log('✓ DeepSeek defaults to deepseek-v4-flash, maps effort to V4 levels, and lists no retired model name');
     console.log('✓ Authentication rejection is not retried as a tool compatibility failure');
     console.log('✓ REST provider failures are not mislabeled as Claude executable failures');
+    console.log('✓ Retry-After parsing accepts seconds only and rejects HTTP-date, negatives, and oversized values');
+    console.log('✓ Rate-limit classification is a closed set derived from headers and word-bounded body signals');
+    console.log('✓ 429 backs off for the announced Retry-After and then succeeds');
+    console.log('✓ 429 retries are capped at three attempts and fail with an Arabic message naming the limit');
+    console.log('✓ A Retry-After beyond the cap fails immediately instead of sleeping on untrusted input');
+    console.log('✓ Missing Retry-After falls back to the declared exponential backoff');
+    console.log('✓ stop() cancels the backoff sleep at once and leaves no orphan timer');
+    console.log('✓ Non-429 responses and the healthy path are untouched by the rate-limit branch');
+    console.log('✓ Raw provider bodies never reach any emitted event on the 429 path');
   } finally {
     if (restoreChat) restoreChat();
     if (restoreResponses) restoreResponses();
@@ -348,6 +566,7 @@ async function main() {
     if (server) await new Promise((resolve) => server.close(resolve));
     if (kimiServer) await new Promise((resolve) => kimiServer.close(resolve));
     if (authErrorServer) await new Promise((resolve) => authErrorServer.close(resolve));
+    if (rateServer) await new Promise((resolve) => rateServer.close(resolve));
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }

@@ -188,6 +188,46 @@ async function auditGateSurface(win, width, height, theme) {
   })()`, true);
 }
 
+// ‏OBS-086 (ب): البوابة صارت مسار الدخول الأول (مفتاح مجاني بلا بطاقة)، وحدود Groq
+// المجانية ‏30 طلباً و8000 رمز في الدقيقة تُصطدَم من أول مخرج CLI طويل — فوعدُ
+// «مجاني» بلا حدّه نصفُ حقيقة. الحدّ يُضاف **بجانب** الوعد لا بدلاً منه؛ لذلك يفحص
+// الحارس بقاء كلمة «مجاني» كما يفحص ظهور الحدّ.
+async function assertFreeTierLimits(win) {
+  const seen = await win.webContents.executeJavaScript(`(() => {
+    const root = document.getElementById('gate').shadowRoot;
+    const section = root.querySelector('.gate-key');
+    const limits = root.querySelector('.gate-key-limits');
+    if (!limits) return { missing: true };
+    const style = getComputedStyle(limits);
+    const box = limits.getBoundingClientRect();
+    return {
+      missing: false,
+      inKeySection: !!(section && section.contains(limits)),
+      sectionHidden: !section || section.hidden === true,
+      visible: style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0,
+      dir: limits.getAttribute('dir'),
+      text: limits.textContent || '',
+      sectionText: section ? (section.textContent || '') : '',
+      order: Array.from(section ? section.children : []).indexOf(limits),
+      linksOrder: Array.from(section ? section.children : []).indexOf(root.querySelector('.gate-key-links')),
+    };
+  })()`, true);
+  assert.strictEqual(seen.missing, false, 'غاب سطر حدود الطبقة المجانية من شاشة المفتاح.');
+  assert.strictEqual(seen.sectionHidden, false, 'قسم المفتاح المجاني محجوب فلا يُقاس سطر الحدود.');
+  assert.strictEqual(seen.inKeySection, true, 'سطر الحدود خارج قسم المفتاح المجاني.');
+  assert.strictEqual(seen.visible, true, 'سطر الحدود غير مرئي.');
+  assert.strictEqual(seen.dir, 'rtl', 'سطر الحدود بلا اتجاه rtl محسوم.');
+  assert.ok(seen.order > seen.linksOrder && seen.linksOrder >= 0,
+    'سطر الحدود يجب أن يلي سطر الروابط لا أن يسبقه.');
+  // الحدّان المنشوران لكلتا المنصتين — الرقم بلا اسم منصته لا يفيد المستخدم
+  for (const needle of ['Groq', 'NVIDIA NIM', '30', '8000', '40', 'في الدقيقة']) {
+    assert.ok(seen.text.includes(needle), 'سطر حدود الطبقة المجانية بلا: ' + needle);
+  }
+  // الوعد يبقى: الحدّ إضافة لا إلغاء (قيد الدفعة الصريح)
+  assert.ok(seen.sectionText.includes('مجاني'), 'اختفت كلمة «مجاني» من قسم المفتاح.');
+  assert.ok(seen.sectionText.includes('بلا بطاقة ائتمان'), 'اختفى وعد «بلا بطاقة ائتمان».');
+}
+
 async function main() {
   assertPreflightContract();
   assertFixtureContract();
@@ -210,6 +250,7 @@ async function main() {
     assert.deepStrictEqual(result.violations, [], 'رُصد securitypolicyviolation في البوابة.');
     assert.deepStrictEqual(consoleErrors, [], 'ظهرت أخطاء console أثناء اختبار البوابة.');
     for (const check of CHECKS) assert(result.checks.includes(check), 'غاب فحص البوابة الحي: ' + check);
+    await assertFreeTierLimits(win);
     const audits = [];
     for (const theme of ['dark', 'light']) {
       audits.push(await auditGateSurface(win, 390, 700, theme));
@@ -226,6 +267,7 @@ async function main() {
     }
     console.log('gate-live: نجح — البوابة تفتح على محرك أصيل أو مفتاح REST محفوظ، وتعرض مسار المفتاح المجاني '
       + 'وتحفظه بلا صدى ثم تعيد الفحص، و«أعد الفحص» يرسل force؛ وتتراجع للعقد القديم؛ '
+      + 'وتعلن حدود الطبقة المجانية بجانب وعد «مجاني»؛ '
       + 'قياس 390/1280px في الداكن/الفاتح: اتجاه/خط/تباين/تجاوز = 0؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
