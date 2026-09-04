@@ -229,20 +229,95 @@ function timeoutFor(name) {
   return TIMEOUT_OVERRIDES[name] || SUITE_TIMEOUT_MS;
 }
 
+// سقفان يمنعان لقطة جدول عمليات ضخمة (أو نسباً دائرياً مشوّهاً) من التحوّل إلى مسحٍ
+// لا ينتهي داخل مسار فشل يُفترض أن يكون سريعاً.
+const MAX_TREE_DEPTH = 12;
+const MAX_TREE_NODES = 400;
+
+/**
+ * جدول العمليات على POSIX من **لقطة واحدة**: خريطة `ppid → [pid…]`.
+ * `ps -A -o pid=,ppid=` صيغة XSI تدعمها GNU وBSD معاً، ونداءٌ واحد بدل نداء لكل عقدة.
+ * السطر المشوّه يُتجاهَل، و`pid <= 1` يُستبعد فلا يقترب المسح من `init`.
+ */
+function parseProcessTable(text) {
+  const children = new Map();
+  for (const line of String(text || '').split('\n')) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
+    if (pid <= 1) continue;
+    const bucket = children.get(ppid);
+    if (bucket) bucket.push(pid); else children.set(ppid, [pid]);
+  }
+  return children;
+}
+
+/**
+ * ذرّية `pid` مرتَّبة **من الأعمق إلى الأضحل** — والترتيب ليس زينة: قتلُ الأب أولاً
+ * يُيتِّم أبناءه فيُعادون إلى `init` وتنقطع نسبتهم قبل أن نبلغهم. الجذر نفسه ليس في
+ * القائمة؛ يُقتل بعدها.
+ */
+function descendantsDeepestFirst(pid, children) {
+  const levels = [];
+  const seen = new Set([pid]);
+  let frontier = [pid];
+  let count = 0;
+  for (let depth = 0; depth < MAX_TREE_DEPTH && frontier.length; depth++) {
+    const next = [];
+    for (const parent of frontier) {
+      for (const child of children.get(parent) || []) {
+        if (seen.has(child) || count >= MAX_TREE_NODES) continue;
+        seen.add(child);
+        next.push(child);
+        count += 1;
+      }
+    }
+    if (next.length) levels.push(next);
+    frontier = next;
+  }
+  const ordered = [];
+  for (let index = levels.length - 1; index >= 0; index--) ordered.push(...levels[index]);
+  return ordered;
+}
+
 /**
  * قتل شجرة العملية عند المهلة — **أفضل جهد معلَن**.
  * `spawnSync` يقتل الابن المباشر (`cmd`) وحده، بينما المعلِّق الفعلي حفيدٌ
  * (‏powershell/electron). بلا هذا القتل تبقى الأيتام تلوّث المجموعات التالية.
+ *
+ * **POSIX (‏OBS-079)**: كان الفرع `process.kill(-pid, 'SIGKILL')` — وقتلُ مجموعة
+ * بالسالب يوجب أن يكون `pid` قائدَ مجموعة، وهو ما لا يحدث لأن `spawnSync` أدناه
+ * يُطلق الابن **بلا `detached`** فيرث مجموعة الأب. فالمجموعة ذات المعرّف `pid` غير
+ * موجودة أصلاً، والنداء يرمي `ESRCH` فيبتلعه `catch` الصامت: **لا يموت أحد**.
+ * ولم يُعَد `detached:true` هنا لأن تجربته على لينكس أظهرت قتلاً غير مفسَّر لمجموعات
+ * تالية فسُحبت (‏OBS-079)، ولأن معرّف مجموعة مُعاد تدويره يجعل `kill(-pid)` سلاحاً
+ * يصيب غير هدفه. البديل نَسَبٌ **صريح** من لقطة واحدة: لا يُقتل إلا ما ثبت أنه ذرّية
+ * `pid` لحظة النداء.
+ *
+ * ⚠️ **حدّ مقيس ومعلَن**: عند المهلة يكون `spawnSync` قد قتل الجذر وحصده **قبل**
+ * العودة، فالأيتام تكون قد أُعيدت إلى `init` وانقطع نسبها. لذلك لا يبلغها هذا الفرع
+ * ولا `taskkill /T` على ويندوز (قيس: يعيد 128 و«The process not found» والحفيد يحيا).
+ * فما يُصلَح هنا هو **آلة القتل** لا لحظة استدعائها؛ اللحظة عيبٌ في موضع النداء
+ * يخصّ الطرفين معاً.
  */
 function killTree(pid) {
   if (!pid) return;
-  try {
-    if (process.platform === 'win32') {
+  if (process.platform === 'win32') {
+    try {
       spawnSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore' });
-    } else {
-      process.kill(-pid, 'SIGKILL');
-    }
-  } catch { /* ماتت أصلاً */ }
+    } catch { /* ماتت أصلاً */ }
+    return;
+  }
+  let table = new Map();
+  try {
+    const snapshot = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' });
+    table = parseProcessTable(snapshot && snapshot.stdout);
+  } catch { /* بلا `ps`: يبقى قتل الجذر وحده أصدق من لا شيء */ }
+  for (const target of descendantsDeepestFirst(pid, table)) {
+    try { process.kill(target, 'SIGKILL'); } catch { /* ماتت أصلاً */ }
+  }
+  try { process.kill(pid, 'SIGKILL'); } catch { /* ماتت أصلاً */ }
 }
 
 /**
@@ -338,7 +413,7 @@ function main() {
 if (require.main === module) main();
 
 module.exports = {
-  main, timeoutFor, killTree, skipReasonFor,
+  main, timeoutFor, killTree, skipReasonFor, parseProcessTable, descendantsDeepestFirst,
   SUITE, EXCLUDED_FROM_SUITE, SKIP_ON_POSIX, SUITE_TIMEOUT_MS, TIMEOUT_OVERRIDES,
   RETRYABLE, RETRYABLE_OBS, MAX_RETRIES,
 };

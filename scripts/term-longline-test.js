@@ -247,12 +247,116 @@ async function main() {
   // مِحَثّ الصدفة. تبقى المحاذاة دفاعاً معلَناً لا مغطّى، لا يُسجَّل كأنه مُختبَر.
 
   term.killTerm(id);
+
+  console.log('\n— 6 عناقيد الحرف العربي عند حافة الالتفاف (OBS-106 — قياس لا إصلاح) —');
+  // OBS-106 دخلت السجل **مؤشّر اختبار لا عطل مرصود**: سلوك سطر عند العمودين الأخيرين
+  // لم يكن قد قيس. هذا القسم يقيسه. وما يلي **تثبيت لما رُصد** (pinning) لا إقرار بأنه
+  // صواب: سقوط أيٍّ من فحصَي «مرصود» أدناه يعني أن القياس تغيّر — يُعاد ويُحدَّث
+  // OBS-106، ولا يُمرَّر صامتاً. الإصلاح خارج هذه الدفعة (يمسّ عارض الطرفية).
+  if (!isPwsh) {
+    console.log('  تخطٍّ: صدفة غير PowerShell — بناء النصّ المشكَّل يستعمل صياغة PowerShell (حدّ معلَن)');
+  } else {
+    const WRAP_COLS = 40;
+    const PREFIX = WRAP_COLS - 3;   // فيقع العنقود الأول عند العمودين الأخيرين تماماً
+    const CLUSTERS = 3;
+    // تُبنى المحارف من رموزها لا حرفياً: علامات التشكيل غير مرئية في المصدر، وكتابتها
+    // برمزها تجعل ما يُقاس مقروءاً ولا تعتمد على ترميز الملف.
+    const BEH = String.fromCharCode(0x0628);    // باء — حرف أساس أحادي العرض
+    const FATHA = String.fromCharCode(0x064E);  // فتحة — علامة واصلة عرضها صفر بالتصميم
+    const DAMMA = String.fromCharCode(0x064F);
+    const ESC = String.fromCharCode(27);
+    const BEL = String.fromCharCode(7);
+    const MARK_CODES = [0x064B, 0x064C, 0x064D, 0x064E, 0x064F, 0x0650, 0x0651, 0x0652, 0x0670];
+    const startsWithMark = (line) => {
+      const first = [...line][0];
+      return first !== undefined && MARK_CODES.includes(first.codePointAt(0));
+    };
+    // تجريد تسلسلات ANSI بلا تعابير فيها محارف تحكم: تُشقّ السلسلة عند ESC ويُقصّ رأس
+    // كل شقّ حسب نوعه (CSI بمعاملاته وحرفه النهائي، وOSC حتى BEL).
+    const stripAnsi = (text) => {
+      const parts = String(text).split(ESC);
+      let out = parts[0];
+      for (let index = 1; index < parts.length; index++) {
+        let chunk = parts[index];
+        if (chunk.startsWith('[')) {
+          let cut = 1;
+          while (cut < chunk.length && '0123456789;?'.includes(chunk[cut])) cut++;
+          if (cut < chunk.length) cut++;
+          chunk = chunk.slice(cut);
+        } else if (chunk.startsWith(']')) {
+          const bel = chunk.indexOf(BEL);
+          chunk = bel === -1 ? '' : chunk.slice(bel + 1);
+        } else {
+          chunk = chunk.slice(1);
+        }
+        out += chunk;
+      }
+      return out;
+    };
+    const countChar = (text, ch) => text.split(ch).length - 1;
+    const promptBack = (text) => /PS .*>\s*$/.test(text.trim().slice(-60));
+
+    const wrapTerm = term.startTerm(ROOT, WRAP_COLS, 14, { label: 'longline-wrap' });
+    ok('أُنشئت طرفية القياس بعرض ' + WRAP_COLS + ' عموداً', wrapTerm.ok, JSON.stringify(wrapTerm));
+    await sleep(2600);
+    term.readBuffer(wrapTerm.id);
+
+    // (أ) **الالتفاف**: النصّ يُبنى داخل PowerShell من رموز [char] فلا يمرّ محرف غير
+    //     ASCII في الإدخال — عزلٌ مقصود عن العطل (ب) أدناه، وإلا اختلط سببان في قياس.
+    const build = '$b=[string][char]0x628; $f=[string][char]0x64E; '
+      + 'Write-Output ((($b)*' + PREFIX + ')+(($b+$f)*' + CLUSTERS + '))';
+    term.writeTermPasted(wrapTerm.id, build + '\r');
+    let wrapOut = '';
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await sleep(200);
+      wrapOut = stripAnsi(term.readBuffer(wrapTerm.id).data);
+      if (countChar(wrapOut, FATHA) >= CLUSTERS && promptBack(wrapOut)) break;
+    }
+    const emittedMarks = countChar(wrapOut, FATHA);
+    const arabicLines = wrapOut.split(/\r?\n/).filter((line) => line.includes(BEH));
+    const splitLines = arabicLines.filter(startsWithMark).length;
+    console.log('    قياس الالتفاف: أسطر عربية=' + arabicLines.length
+      + ' · تبدأ بحركة عارية=' + splitLines + ' · حركات وصلت=' + emittedMarks);
+
+    // ثابتٌ يجب أن يصمد مهما تغيّر الالتفاف: لا تُفقد حركة من المجرى.
+    ok('لا تُفقد علامة تشكيل عبر الالتفاف (' + CLUSTERS + ' متوقَّعة)',
+      emittedMarks === CLUSTERS, 'المرصود: ' + emittedMarks);
+    ok('مرصود (OBS-106): العنقود ينقسم على سطرين — سطر ملتفّ يبدأ بحركة عارية',
+      splitLines > 0,
+      'اختفى الانقسام (splitLines=' + splitLines + ') — القياس تغيّر: أعِد القياس وحدّث OBS-106');
+
+    // (ب) عطل ثانٍ **مستقل** رُصد أثناء القياس نفسه: نصّ مشكَّل يُلصق في سطر الطرفية
+    //     تسقط حركاته قبل أن تبلغ الصدفة أصلاً — عطل إدخال لا عطل عرض، وليس في كودنا
+    //     (writeTermPasted يمرّر النصّ كما هو) بل في مسار ConPTY/محرِّر السطر.
+    const literal = BEH + FATHA + BEH + DAMMA;
+    term.writeTermPasted(wrapTerm.id, "Write-Output 'MARK<" + literal + ">'" + '\r');
+    let pasteOut = '';
+    for (let attempt = 0; attempt < 50; attempt++) {
+      await sleep(200);
+      pasteOut = stripAnsi(term.readBuffer(wrapTerm.id).data);
+      if (pasteOut.includes('MARK<') && promptBack(pasteOut)) break;
+    }
+    // المخزن دائري تراكمي، فحركات الفقرة (أ) ما زالت فيه: يُقصّ ما قبل أول «MARK<»
+    // كي يُقاس هذا النداء وحده — وإلا صار الفحص يعدّ قياساً سابقاً ويُقرأ نجاحاً كاذباً.
+    const pasteTail = pasteOut.slice(Math.max(0, pasteOut.indexOf('MARK<')));
+    const pastedMarks = countChar(pasteTail, FATHA) + countChar(pasteTail, DAMMA);
+    console.log('    قياس اللصق: حركات وصلت=' + pastedMarks + ' من 2 · الأساس وصل='
+      + pasteTail.includes(BEH));
+    ok('مرصود: الحركات المُلصقة تسقط في مسار الإدخال قبل الصدفة (0 اليوم)',
+      pastedMarks === 0,
+      'وصلت ' + pastedMarks + ' حركة — القياس تغيّر: أعِد القياس وحدّث OBS-106');
+    ok('والحرف الأساس نفسه يصل سليماً — فالفقد يخصّ العلامات الواصلة وحدها',
+      pasteTail.includes(BEH), JSON.stringify(pasteTail.slice(0, 120)));
+
+    term.killTerm(wrapTerm.id);
+  }
+
   term.killAll();
   try { fs.rmSync(temp, { recursive: true, force: true, maxRetries: 15, retryDelay: 200 }); }
   catch (e) { console.warn('term-longline: تعذّر تنظيف المجلد المؤقت (غير مُفشل)'); }
 
   console.log('\nterm-longline: نجح — ' + checks
-    + ' فحصاً (حفظ الأسطر، إقلاع السكربت في وسائط spawn، فشل صريح بلا علق، وقصّ ذيل معلَن).');
+    + ' فحصاً (حفظ الأسطر، إقلاع السكربت في وسائط spawn، فشل صريح بلا علق، وقصّ ذيل معلَن، وعناقيد الحرف عند حافة الالتفاف مقيسة).');
   process.exit(0);
 }
 
