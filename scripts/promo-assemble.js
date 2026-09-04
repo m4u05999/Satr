@@ -5,7 +5,7 @@
  * مجمّع إعلان «سطر» (60ث) — يقصّ مقاطع promo/footage/ حسب قائمة المونتاج (EDIT-PLAN.md)
  * ويوحّد ترميزها (1080p60 H.264) ثم يدمجها بقطع حادّ، ويركّب الموسيقى مع خفوت النهاية.
  *
- * صفر اعتماديات — يستدعي ffmpeg (من FFMPEG أو D:\sater\tools أو PATH). المقاطع الغائبة
+ * صفر اعتماديات — يستدعي ffmpeg (من FFMPEG أو روابط winget أو PATH). المقاطع الغائبة
  * (لقطات الواجهة قبل تسجيلها) تُستبدَل ببطاقة نائبة داكنة بشريط ذهبي فيظهر الإيقاع كاملاً؛
  * الناتج يُسمّى -rough ما دام فيها نائب، و-60s حين تكتمل كلها. لا قصّ صامت — كل نائب يُسجَّل.
  *
@@ -24,7 +24,6 @@ const W = 1920, H = 1080, FPS = 60;
 function resolveFfmpeg() {
   if (process.env.FFMPEG && fs.existsSync(process.env.FFMPEG)) return process.env.FFMPEG;
   const guesses = [
-    path.join('D:', 'sater', 'tools', 'ffmpeg.exe'),
     // تثبيت winget الرسمي (Gyan.FFmpeg) — روابطه لا تدخل PATH الجلسات القائمة
     path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
   ];

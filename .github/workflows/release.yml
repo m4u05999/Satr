@@ -61,8 +61,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
+      # التاريخ الكامل هنا وحده من مواضع checkout الستة: هذه الوظيفة تشغّل `test:full`
+      # وهي المرشّحة لتصير فحصاً مطلوباً على `main`، فثمن الأخضر الكاذب فيها أعلى ما يكون.
+      # ودليل الخطر حيّ لا مفترض: `scripts/full-suite-evidence.js:53-59` يبتلع فشل git في
+      # `catch` ويعيد `null` — نمطٌ يجعل حارساً يقرأ التاريخ يصمت بدل أن يصرخ. الكلفة
+      # مقيسة: 595 التزاماً و‏16م.ب كامل `.git`. البقية تقرأ شجرة العمل لا التاريخ فتبقى سطحية.
       - name: جلب المستودع
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: إعداد Node.js
         uses: actions/setup-node@v4
