@@ -19,6 +19,7 @@
     "test:observations": "node scripts/observations-test.js",
     "test:suite-coverage": "node scripts/suite-coverage-test.js",
     "test:radar-graveyard": "node scripts/radar-graveyard-test.js",
+    "test:hookguard": "node scripts/hookguard-test.js",
     "test:probe-runner": "node scripts/probe-runner-test.js",
     "probe:run": "node scripts/probe-runner.js",
     "test:webpush-probe": "node scripts/webpush-probe.js",
