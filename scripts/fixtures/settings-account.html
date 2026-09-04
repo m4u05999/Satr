@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>settings account</title>
+</head>
+<body>
+<!-- كتلة satr-topbar منقولة حرفياً من src/index.html (‏OBS-099) — الجسر المزيّف
+     يعرّف window.satr قبل الوحدات، والسائق يسجّل أحداث settings-open، ثم يُحمَّل
+     topbar.js الإنتاجي نفسه. القشرة الحقيقية (app.js) تُحقن وظائف حساباتها من
+     مصدرها الفعلي بواسطة الاختبار، فلا نسخة يدوية تبيت سلوكاً قديماً. -->
+<satr-topbar>
+<header>
+  <div class="wordmark">سطر<span class="cursor" aria-hidden="true"></span></div>
+  <span id="topbarDevBadge" class="dev-badge" hidden title="التفضيلات (النموذج، الثيمة، المسودات، المجلد) منفصلة عن النسخة المثبتة — مجلد بيانات مختلف">نسخة تطوير</span>
+  <div class="controls">
+    <div class="field">
+      <label for="cwd">مجلد المشروع</label>
+      <input type="text" id="cwd" placeholder="اختر مجلداً…" spellcheck="false" value="D:\fixture-proj">
+      <button id="pickFolder" title="اختيار مجلد">📁</button>
+    </div>
+    <button id="newSession">جلسة جديدة</button>
+    <button id="sessionsToggle" title="تصفح الجلسات المحفوظة واستئنافها">الجلسات</button>
+    <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
+    <button id="previewToggle" title="المعاينة المدمجة — متصفح لمشروعك (م-1)">🌐</button>
+    <button id="opsRoomToggle" title="غرفة العمليات">غرفة العمليات</button>
+    <!-- درج الأدوات الأقل استعمالاً: صفٌّ في التدفق لا قائمة منبثقة، كي تبقى
+         منبثقات Δ و«؟» على غلافها النسبي وتعمل كما هي (نمط درج المعاينة) -->
+    <button id="topMore" type="button" aria-expanded="false" aria-controls="topTools"
+            title="أدوات إضافية: الملفات، تغييرات المشروع، ملخّص الجلسة، التصدير، الثيم، الاختصارات">⋯</button>
+    <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
+    <div class="settings-wrap">
+      <button id="settingsBtn" title="الإعدادات">⚙</button>
+      <div id="settingsPop" hidden>
+        <!-- رأس اللوحة: اتساق مع بقية اللوحات (كانت الوحيدة بلا عنوان ولا زر إغلاق) -->
+        <div class="settings-head">
+          <span>الإعدادات</span>
+          <button id="settingsClose" type="button" title="إغلاق الإعدادات" aria-label="إغلاق الإعدادات">✕</button>
+        </div>
+        <!-- المحرك/النموذج/الصلاحيات انتقلت إلى شريط المؤلّف قرب زر الإرسال (§5-د) -->
+        <div class="field ct-hint">التبديل السريع للمحرك والنموذج والصلاحيات بجوار زر الإرسال أسفل ↓</div>
+        <div class="field">
+          <label for="effort">جهد التفكير</label>
+          <select id="effort" title="كم يفكّر النموذج قبل الرد — الأعلى أدق وأبطأ وأكلف (يُخفَّض صامتاً إن لم يدعمه النموذج)">
+            <option value="">الافتراضي</option>
+            <option value="minimal">أدنى — لأقصر زمن استجابة</option>
+            <option value="low">منخفض — أسرع وأرخص</option>
+            <option value="medium">متوسط</option>
+            <option value="high">مرتفع</option>
+            <option value="xhigh">مرتفع جداً</option>
+            <option value="max">أقصى — للمهام المعقدة</option>
+            <option value="ultra">فائق — للوكلاء المتعددين</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="perm">وضع الأذونات</label>
+          <select id="perm" title="وضع الأذونات — تجاوز كل الأذونات خيار خطر لا يدخل التدوير السريع">
+            <option value="acceptEdits">قبول التعديلات تلقائياً</option>
+            <option value="plan">تخطيط فقط (بدون تنفيذ)</option>
+            <option value="default">افتراضي</option>
+            <option value="auto">تلقائي ذكي (يسأل عن التنفيذ والكتابة)</option>
+            <option value="bypassPermissions">⚠ تجاوز كل الأذونات</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="fallbackModel">نموذج احتياطي عند انشغال النموذج</label>
+          <select id="fallbackModel" title="يستخدمه Claude تلقائياً إذا كان النموذج الأساسي محمّلاً فوق طاقته">
+            <option value="">بلا</option>
+          </select>
+        </div>
+        <div class="settings-keys" id="claudeAccountSection">
+          <div class="dirs-head"><span>حساب Claude</span><span id="claudeAccountState" class="key-status">يُحدّث عند فتح الإعدادات</span></div>
+          <div class="dirs-head"><span>البريد</span><span id="claudeAccountEmail" class="key-status claude-account-value" dir="ltr">—</span></div>
+          <div class="dirs-head"><span>المنظمة</span><span id="claudeAccountOrganization" class="key-status claude-account-value" dir="auto">—</span></div>
+          <div class="dirs-head"><span>نوع الاشتراك</span><span id="claudeAccountSubscription" class="key-status claude-account-value" dir="ltr">—</span></div>
+        </div>
+        <!-- C4: حساب Codex واستهلاكه — تحديث كسول عند فتح الإعدادات، أرقام LTR -->
+        <div class="settings-keys" id="codexAccountSection">
+          <div class="dirs-head"><span>حساب Codex</span><span id="codexAccountState" class="key-status">يُحدّث عند فتح الإعدادات</span></div>
+          <div class="dirs-head"><span>طريقة الاعتماد</span><span id="codexAccountMethod" class="key-status claude-account-value" dir="ltr">—</span></div>
+          <div class="dirs-head"><span>الخطة</span><span id="codexAccountPlan" class="key-status claude-account-value" dir="ltr">—</span></div>
+          <div class="dirs-head"><span>استهلاك النافذة</span><span id="codexAccountWindow" class="key-status claude-account-value" dir="ltr">—</span></div>
+          <div class="dirs-head"><span>رموز آخر 30 يوماً</span><span id="codexAccountRecent" class="key-status claude-account-value" dir="ltr">—</span></div>
+          <div class="dirs-head"><span>الإجمالي التراكمي</span><span id="codexAccountLifetime" class="key-status claude-account-value" dir="ltr">—</span></div>
+          <div class="dirs-head" id="codexLoginRow" hidden><span>تسجيل الدخول</span><button id="codexLoginBtn" type="button" title="افتح صفحة مصادقة Codex في متصفح النظام بعد تأكيدك">سجّل دخول Codex</button></div>
+        </div>
+        <!-- مجلدات إضافية (المرحلة 14.4): تُمنح للنموذج وصولاً بجانب مجلد المشروع -->
+        <div class="settings-dirs">
+          <div class="dirs-head">
+            <span>مجلدات إضافية</span>
+            <button id="addDir" type="button" title="منح النموذج وصولاً لمجلد آخر بجانب مجلد المشروع">📁 إضافة</button>
+          </div>
+          <div id="dirChips"></div>
+        </div>
+        <div class="settings-keys" id="activitySection">
+          <div class="dirs-head">
+            <span>النشاط المحلي</span>
+            <div class="activity-actions">
+              <button id="activityRefresh" type="button">تحديث</button>
+              <button id="activityClear" type="button">مسح</button>
+            </div>
+          </div>
+          <div class="ct-hint">آخر أحداث المشروع المختصرة؛ لا يُحفظ نص الطلب أو محتوى الأدوات أو المخرجات.</div>
+          <div id="activityList" class="activity-list" aria-live="polite"></div>
+        </div>
+        <!-- قسم «سطر Enterprise»: يظهر لهوية البناء التجارية ولو تعذر تحميل وحدتها -->
+        <div class="settings-keys" id="eeSection" hidden>
+          <div class="dirs-head"><span>سطر Enterprise</span><span id="eeLicense" class="key-status"></span></div>
+          <div id="eeUsageBox" class="ct-hint" dir="auto"></div>
+          <div id="eeAuditBox" class="ct-hint" dir="auto"></div>
+        </div>
+        <!-- مركز مفاتيح المزوّدين والتكاملات (§5-ب): الأسرار لا تُعاد إلى الواجهة بعد حفظها -->
+        <div class="settings-keys" id="keysMgr">
+          <div class="dirs-head"><span>مفاتيح المزوّدين والتكاملات</span></div>
+          <div class="key-row">
+            <select id="keyProvider"></select>
+            <span id="keyStatus" class="key-status"></span>
+          </div>
+          <div class="key-row">
+            <input id="keyValue" type="password" placeholder="ألصق مفتاح API…" autocomplete="off" spellcheck="false">
+            <button id="keySave" type="button">حفظ</button>
+            <button id="keyClear" type="button">مسح</button>
+          </div>
+        </div>
+        <!-- رقم إصدار التطبيق (ملاحظة مالك 2026-08-05) — يُملأ كسولاً عند فتح ⚙ -->
+        <div class="dirs-head" id="appVersionRow"><span>إصدار سطر</span><span id="appEnvBadge" class="key-status" hidden>نسخة تطوير</span><span id="appVersionLabel" class="key-status" dir="ltr">—</span><button id="appNotesBtn" type="button">ما الجديد؟</button></div>
+        <!-- فحص يدوي للتحديثات (جولة الصقل 2026-08-08) — النتيجة تصل توستاً غير حاجب -->
+        <div class="key-row" id="checkUpdatesRow">
+          <button id="checkUpdatesBtn" type="button">🔄 تحقق من التحديثات الآن</button>
+          <span id="checkUpdatesStatus" class="key-status"></span>
+        </div>
+        <!-- إصدارات المحرّكات (2.16.3): كشف التأخّر بمقارنة حية، والتحديث بضغطة صريحة
+             في طرفية مرئية — لا تحديث تلقائي، فكسر عقد محرك يعطّل التطبيق كله. -->
+        <div class="dirs-head" id="engineUpdatesHead"><span>إصدارات المحرّكات</span><span id="engineUpdatesStatus" class="key-status">—</span></div>
+        <div id="engineUpdatesList"></div>
+      </div>
+    </div>
+  </div>
+</header>
+<!-- درج أدوات الشريط العلوي: مخفي افتراضياً، ويُفتح بزر ⋯ -->
+<div id="topTools" hidden>
+  <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄 الملفات</button>
+  <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">± التغييرات</button>
+  <button id="galleryToggle" title="صور وفيديوهات ولّدها الوكيل في هذا المشروع">🖼 المعرض</button>
+  <!-- مخفي افتراضياً حتى يُبنى الـrelay ويصير للميزة بند «برو». الإظهار من العملية
+       الرئيسية حصراً عبر `mobileStatus().available` (‏تشغيل تطوير أو SATR_MOBILE=1
+       أو ~/.satr/labs.json) — القنوات نفسها مغلقة لا الزر فقط.
+       انظر docs/MOBILE-CONTROL-PLAN.md §5.5.9 -->
+  <button id="mobileToggle" type="button" title="إدارة التحكم من الجوال" hidden>📱 الجوال</button>
+  <div class="top-pop-wrap">
+    <button id="sessionChangesToggle" type="button" title="تغييرات هذه الجلسة">Δ ملخّص الجلسة <span id="sessionChangesCount" hidden>0</span></button>
+    <div id="sessionChangesPop" class="top-pop" hidden>
+      <div class="top-pop-head">تغييرات هذه الجلسة</div>
+      <div id="sessionChangesList" class="session-changes-list"></div>
+    </div>
+  </div>
+  <button id="exportChat" title="تصدير المحادثة الحالية (Markdown)">📤 تصدير</button>
+  <button id="themeToggle" title="تبديل الوضع الفاتح/الداكن">🌙</button>
+  <div class="top-pop-wrap">
+    <button id="shortcutsToggle" type="button" title="اختصارات لوحة المفاتيح">؟ اختصارات</button>
+    <div id="shortcutsPop" class="top-pop shortcuts-pop" hidden>
+      <div class="top-pop-head">اختصارات سريعة</div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+N</kbd><span>جلسة جديدة</span></div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+S</kbd><span>إيقاف الدور الجاري</span></div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+I</kbd><span>تركيز المحرّر</span></div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+T</kbd><span>طيّ/فرد الطرفية</span></div>
+      <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+P</kbd><span>طيّ/فرد المعاينة</span></div>
+    </div>
+  </div>
+</div>
+</satr-topbar>
+
+<script src="settings-account-bridge.js"></script>
+<script type="module" src="settings-account-page.js"></script>
+<script type="module" src="../../src/ui/components/topbar.js"></script>
+</body>
+</html>

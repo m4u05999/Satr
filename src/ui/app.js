@@ -629,12 +629,11 @@ import { createPreviewShield } from './lib/preview-shield.js';
 
   // ---------- مدير المفاتيح + زر اختيار المجلد: انتقلا لمكوّن <satr-topbar> (تفكيك ت-11) ----------
   const topbarEl = document.querySelector('satr-topbar');
-  $('settingsBtn').addEventListener('click', () => {
-    queueMicrotask(() => {
-      if ($('settingsPop').hidden) return;
-      refreshClaudeAccountView();
-      refreshCodexAccountView(); // C4: تحديث كسول لقسم حساب Codex
-    });
+  // OBS-099: ⚙ يبث settings-open من داخل setSettingsOpen عند الفتح — الاستماع للحدث
+  // بدل قراءة الحالة داخل مهمة دقيقة (‏microtask كانت تُصرَّف قبل مستمع topbar.js).
+  topbarEl.addEventListener('settings-open', () => {
+    refreshClaudeAccountView();
+    refreshCodexAccountView(); // C4: تحديث كسول لقسم حساب Codex
   });
   const sessionChanges = new Map();
   function sessionChangesPayload() {
