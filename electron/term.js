@@ -65,9 +65,13 @@ function loadPty() {
 // (اكتشاف مراجعة الوكيل muraji-amn: القيمة كانت تمرّ لـ pty.spawn بلا تنقية)
 const ALLOWED_SHELLS = new Set(['powershell.exe', 'pwsh.exe', 'cmd.exe']);
 
-// سطر ضبط ترميز الكونسول — نسخة واحدة يستعملها مسارا الإقلاع (سطر تفاعلي/سكربت مُرمَّز)
+// سطر ضبط ترميز الكونسول — نسخة واحدة يستعملها مسارا الإقلاع (سطر تفاعلي/سكربت مُرمَّز).
+// رابطَا Ctrl+V باللصق عمداً: علاج OBS-106 (أدناه) يمرّر النص المشكَّل عبر حافظة
+// اللصق بدل أحداث المفاتيح، فإن أعاد المستخدم ربط المفتاح في ملفه انكسر العلاج صامتاً.
+// الخطأ هنا غير قاطع (cmdlet) فلا يعطّل سكربت الإقلاع لو تعذّرت الوحدة.
 const PWSH_UTF8_PRELUDE =
-  '[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8';
+  '[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; '
+  + 'Set-PSReadLineKeyHandler -Key Ctrl+v -Function Paste';
 
 // سقف نصّ base64 المُمرَّر في `-EncodedCommand`. حدّ `CreateProcess` هو 32767 محرفاً
 // لسطر الأوامر كله؛ نترك هامشاً لاسم الصدفة والعلَم. التجاوز يُرصد قبل spawn لا بعده.
@@ -207,6 +211,101 @@ function startTerm(cwd, cols, rows, meta) {
 
 // كتابة خام إلى pty — البيانات آمنة لأنها تذهب لمجرى الطرفية لا لوسائط spawn.
 // تحقق دفاعي مكرر لتنقية main.js تحسّباً لإعادة هيكلة مستقبلية (مراجعة muraji-amn)
+// ---------- OBS-106: الحركات الواصلة تسقط في PSReadLine القديم (مسار الإدخال) ----------
+// القياس (‏`test:term-longline` مشهد 6): PSReadLine 2.0.0 المرافق لـWindows PowerShell 5.1
+// يسقط علامات التشكيل الواصلة من **أحداث المفاتيح ومن اللصق المُقوّس معاً**، بينما يحفظها
+// محرِّك سطر cmd وأي محرِّك بلا PSReadLine (قياس: إزالة الوحدة في نفس الجلسة أعادت الحركات)
+// — فالمُسقط الوحدة لا ConPTY ولا نقلنا. والحل المعتمد: لصق PSReadLine ذاته يقرأ الحافظة
+// **نصاً** فيحفظ الحركات، فنضع النص في الحافظة ونرسل Ctrl+V بدل الكتابة الخامة.
+// قيود مقصودة: طرفيات المستخدم التفاعلية فقط (لا مهام خلفية ولا طرفيات النموذج — التلاعب
+// بالحافظة من كتابة غير مرئية خطر)، وصدف PowerShell فقط، وسطر واحد (اللصق المتعدد
+// الأسطر يبقى خاماً حفاظاً على تنفيذه سطراً سطراً)، وحافظة نصية فقط (غير ذلك ⇐ خام).
+// حدّ معلَن: لو كان أمام المستخدم برنامج يقرأ الكونسول مباشرة (Python تفاعلي مثلاً) لا
+// PSReadLine، فإن Ctrl+V قد لا يلصق — الكتابة الخامة كانت لتصل في تلك الحالة.
+const COMBINING_MARK_RE = /[\u064B-\u0652\u0670]/;
+const PASTE_KEY = '\x16'; // Ctrl+V — رُبط باللصق في مقدمة الإقلاع (PWSH_UTF8_PRELUDE)
+const CLIPBOARD_RESTORE_MS = 500; // هامش أمان حتى تستهلك الصدفة الحافظة عند معالجة المفتاح
+
+// حافظة Electron في العملية الرئيسية؛ وفي وضع node الصرف (الاختبارات) يقوم مقامها
+// PowerShell بشقة STA (‏Windows.Forms لا يعمل بلا شقة أحادية).
+let electronClipboard = null;
+try {
+  const electron = require('electron');
+  if (electron && electron.clipboard) electronClipboard = electron.clipboard;
+} catch (e) { /* مقصود: الاختبارات تأخذ مسار PowerShell أدناه */ }
+
+// لقطة الحافظة إن كانت نصية فقط، وإلا null (يُكتفى عندها بالكتابة الخامة كالسابق).
+function clipboardSnapshot() {
+  if (electronClipboard) {
+    try {
+      const formats = electronClipboard.availableFormats() || [];
+      const textOnly = formats.every((f) => f === 'text/plain' || f === 'text/plain;charset=utf-8');
+      if (!textOnly) return null;
+      const text = electronClipboard.readText();
+      return {
+        text,
+        write: (s) => electronClipboard.writeText(s),
+        clear: () => electronClipboard.clear(),
+      };
+    } catch (e) { return null; }
+  }
+  try {
+    const { execFileSync } = require('child_process');
+    const run = (script) => execFileSync('powershell.exe',
+      ['-NoProfile', '-Sta', '-Command', script], { stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8');
+    // GetDataObject() يعود null حين تكون الحافظة فارغة — تُعامل كقائمة صيغ فارغة
+    const rawFormats = run('Add-Type -AssemblyName System.Windows.Forms; '
+      + '$o = [Windows.Forms.Clipboard]::GetDataObject(); '
+      + 'if ($o -eq $null) { "" } else { [string]::Join("|", $o.GetFormats()) }').trim();
+    // «System.String» صيغة نصية يولّدها Set-Clipboard نفسه (.NET)
+    const allowed = new Set(['', 'Text', 'UnicodeText', 'OEMText', 'Locale', 'System.String']);
+    const list = rawFormats ? rawFormats.split('|') : [];
+    if (!list.every((f) => allowed.has(f))) return null;
+    // Out.Write لا يُلحق سطراً جديداً بعرض النص — Write-Output كان سيلصق CRLF بالمحتوى
+    const text = run('Add-Type -AssemblyName System.Windows.Forms; '
+      + '[Console]::OutputEncoding=[Text.Encoding]::UTF8; '
+      + '[Console]::Out.Write([Windows.Forms.Clipboard]::GetText())');
+    return {
+      text,
+      write: (s) => {
+        // النص عربي: يمرّ عبر ملف مؤقت UTF-8 لا عبر سطر الأوامر حتى لا يُشوَّه
+        const file = path.join(os.tmpdir(), 'satr-clip-' + process.pid + '-' + Date.now() + '.txt');
+        fs.writeFileSync(file, s, 'utf8');
+        run('Set-Clipboard -Value ([IO.File]::ReadAllText("' + file.replace(/\\/g, '\\\\') + '", [Text.Encoding]::UTF8))');
+        try { fs.unlinkSync(file); } catch (e) {}
+      },
+      clear: () => run('Set-Clipboard -Value $null'),
+    };
+  } catch (e) { return null; }
+}
+
+// إن انطبقت شروط العطل كلها: اكتب باللصق عبر الحافظة وأرجع النتيجة، وإلا أرجع null
+// لتعني «اكتب خاماً كما كانت». الاستهلاك متزامن داخل PSReadLine عند معالجة Ctrl+V،
+// فنُرجع محتوى الحافظة السابق بعد هامش أمان.
+function clusterPasteWrite(t, data) {
+  if (!IS_WIN) return null;
+  if (t.isJob || t.isModel) return null; // لا تلاعب بالحافظة من كتابة غير مرئية
+  const shell = String(t.shell || '').toLowerCase();
+  if (!shell.includes('powershell') && !shell.includes('pwsh')) return null;
+  if (!COMBINING_MARK_RE.test(data)) return null;
+  const CR = data.slice(-1) === '\r' ? '\r' : '';
+  const body = CR ? data.slice(0, -1) : data;
+  if (!body.length || /[\r\n]/.test(body)) return null; // متعدد الأسطر يبقى خاماً
+  const clip = clipboardSnapshot();
+  if (!clip) return null;
+  const saved = clip.text;
+  try { clip.write(body); } catch (e) { return null; }
+  try { t.proc.write(PASTE_KEY + CR); }
+  catch (e) {
+    try { if (saved) clip.write(saved); else clip.clear(); } catch (_) {}
+    return { ok: false, error: 'write_failed' };
+  }
+  setTimeout(() => {
+    try { if (saved) clip.write(saved); else clip.clear(); } catch (e) {}
+  }, CLIPBOARD_RESTORE_MS).unref();
+  return { ok: true };
+}
+
 /**
  * كتابة سطر أمر باللصق المُقوّس (bracketed paste) — PSReadLine يعالج المحتوى وحدةً
  * واحدة بلا إعادة رسم ولا إسقاط محارف (تحقق قبول 16.1: الحقن الخام يُسقط محارف
@@ -218,6 +317,9 @@ function startTerm(cwd, cols, rows, meta) {
  * تبدو حيّة بلا عمل. أي أن الحماية كانت في الملف نفسه ولا تصل نصف مستعمليها.
  */
 function writePasted(t, line) {
+  // OBS-106: الحركات الواصلة تسقط حتى داخل اللصق المُقوّس — نفس علاج writeTerm
+  const pasted = clusterPasteWrite(t, line);
+  if (pasted) return pasted.ok;
   const CR = line.slice(-1) === '\r' ? '\r' : '';
   const body = CR ? line.slice(0, -1) : line;
   try { t.proc.write('\x1b[200~' + body + '\x1b[201~' + CR); return true; }
@@ -239,6 +341,9 @@ function writeTerm(id, data) {
   if (!t) return { ok: false, error: 'no_term' };
   if (typeof data !== 'string' || !data.length || data.length > 1024 * 1024)
     return { ok: false, error: 'bad_data' };
+  // OBS-106: الحركات الواصلة تسقط في PSReadLine القديم — لصق عبر الحافظة عند انطباق الشروط
+  const pasted = clusterPasteWrite(t, data);
+  if (pasted) return pasted;
   try { t.proc.write(data); } catch (e) { return { ok: false, error: 'write_failed' }; }
   return { ok: true };
 }
@@ -395,6 +500,55 @@ function structuralDelta(before, after) {
 const MAX_CAPTURE = 512 * 1024;   // سقف خرج ملتقَط (يحمي ذاكرة النموذج والعملية)
 const DEFAULT_CAP_TIMEOUT = 120000; // مهلة افتراضية للأمر (قابلة للتخصيص من المستدعي)
 
+/**
+ * بناء سطر الالتقاط لفرع صدفة — مُستخرج **دالة نقية** (‏OBS-072) كي يُختبر منطق
+ * البروتوكول بلا pty (لا لينكس على جهاز التطوير؛ القياس الحيّ يبقى للبوابة).
+ * يلتزم كل فرع بالعقد نفسه: علامة بداية سطر مستقل، ثم الأمر، ثم علامة نهاية
+ * بثلاثة حقول `END:<رمز>:<علم>` — رمز خروج رقمي دائماً + علم الصدفة.
+ * السطر المُعاد يشمل `\r` الختامي كما كان يُبنى داخلياً (‏writePasted يعيده خارج
+ * علامتَي اللصق)، فمسار PowerShell المثبَّت في العقود يبقى **بايتاً ببايت**.
+ */
+function buildCaptureLine(shell, mBeg, mEnd, clean) {
+  const sh = (shell || '').toLowerCase();
+  if (sh.includes('powershell') || sh.includes('pwsh')) {
+    // رمز الخروج رقمي دائماً. تصحيح 2026-08-24 (تغذية راجعة «exit 0 رغم خطأ الأمر»):
+    // التصفير كان `=0` فيبقى $LASTEXITCODE رقماً حتى حين يفشل cmdlet لا يضبطه أصلاً،
+    // فلا يُستشار $? أبداً ويُعلَن نجاح كاذب. صار التصفير $null، و$? يُلتقط **فور**
+    // الأمر (كان يُقرأ بعد إسناد فيصف نجاح الإسناد لا الأمر — نمط termjobs.js المثبت).
+    // الأولوية لـ$LASTEXITCODE حين يكون رقماً: أمر أصلي رمزه هو الحقيقة، فلا ينقلب
+    // نجاح `... 2>&1` إلى فشل بسبب NativeCommandError الذي يضبط $?=false في PS 5.1.
+    return '$global:LASTEXITCODE=$null; Write-Output "' + mBeg + '"; ' + clean +
+      ' ; $ok=$?; $c=$LASTEXITCODE; if($null -eq $c){$c=if($ok){0}else{1}}' +
+      '; Write-Output ("' + mEnd + ':"+$c+":"+$(if($ok){1}else{0}))\r';
+  }
+  if (sh.includes('cmd')) {
+    return 'echo ' + mBeg + ' & ' + clean + ' & echo ' + mEnd + ':%ERRORLEVEL%\r';
+  }
+  // POSIX (sh/bash — OBS-072): لا نسخة Cmdlet/أصلي منفصلة في $? كما في PowerShell،
+  // فالالتقاط الفوري في متغيّر `c=$?` دفاعٌ ضد أوامر تنتهي بـ`&` تُطلق خلفياً وتصفّر
+  // $? قبل أن يُقرأ، والعلم يُشتق حسابياً من الرمز — بقاء الحقل الثالث موحّداً مع
+  // PowerShell يصل كشف «فشل الصدفة مع رمز خروج 0» (‏shellFailed) بكل الصدفات.
+  return 'printf "%s\\n" "' + mBeg + '"; ' + clean +
+    ' ; c=$?; printf "%s:%s:%s\\n" "' + mEnd + '" "$c" "$(($c == 0))"\r';
+}
+
+/**
+ * مطابقة علامة النهاية في مخزن خام — مُستخرجة **دالة نقية** (‏OBS-072). تحت POSIX
+ * تُقيَّد العلامة ببداية سطر كي لا يُطابق صدًى ملتفّ أو خرج أمرٍ يتضمّن نصّها: إنهاء
+ * مبكّر كاذب كان يجعل النداء اللاحق يتسرّب إلى خرج سابق (تشابك النداءين). المجموعة
+ * الثالثة اختيارية: النمط القديم بلا علم (‏cmd وصدفات سابقة) يبقى مقبولاً — لا نعرف
+ * أي صدفة على جهاز المستخدم. تُعيد موضع المطابقة ورمز الخروج وعلم الفشل، أو null.
+ */
+function matchCaptureEnd(buf, mEnd, isPosix) {
+  const re = isPosix
+    ? new RegExp('(?:^|\\n)' + mEnd + ':(-?\\d+)(?::([01]))?')
+    : new RegExp(mEnd + ':(-?\\d+)(?::([01]))?');
+  const m = String(buf || '').match(re);
+  if (!m) return null;
+  const exitCode = parseInt(m[1], 10);
+  return { index: m.index, exitCode, shellFailed: m[2] === '0' && exitCode === 0 };
+}
+
 function runCaptureNow(id, command, opts) {
   return new Promise((resolve) => {
     const t = terminals.get(id);
@@ -411,25 +565,9 @@ function runCaptureNow(id, command, opts) {
     const tok = '__SATR_' + Math.random().toString(36).slice(2) + Date.now().toString(36) + '__';
     const mBeg = tok + 'B', mEnd = tok + 'E';
     const sh = (t.shell || '').toLowerCase();
-    let line;
-    if (sh.includes('powershell') || sh.includes('pwsh')) {
-      // رمز الخروج رقمي دائماً. تصحيح 2026-08-24 (تغذية راجعة «exit 0 رغم خطأ الأمر»):
-      // التصفير كان `=0` فيبقى $LASTEXITCODE رقماً حتى حين يفشل cmdlet لا يضبطه أصلاً،
-      // فلا يُستشار $? أبداً ويُعلَن نجاح كاذب. صار التصفير $null، و$? يُلتقط **فور**
-      // الأمر (كان يُقرأ بعد إسناد فيصف نجاح الإسناد لا الأمر — نمط termjobs.js المثبت).
-      // الأولوية لـ$LASTEXITCODE حين يكون رقماً: أمر أصلي رمزه هو الحقيقة، فلا ينقلب
-      // نجاح `... 2>&1` إلى فشل بسبب NativeCommandError الذي يضبط $?=false في PS 5.1.
-      line = '$global:LASTEXITCODE=$null; Write-Output "' + mBeg + '"; ' + clean +
-        ' ; $ok=$?; $c=$LASTEXITCODE; if($null -eq $c){$c=if($ok){0}else{1}}' +
-        '; Write-Output ("' + mEnd + ':"+$c+":"+$(if($ok){1}else{0}))\r';
-    } else if (sh.includes('cmd')) {
-      line = 'echo ' + mBeg + ' & ' + clean + ' & echo ' + mEnd + ':%ERRORLEVEL%\r';
-    } else {
-      line = 'printf "%s\\n" "' + mBeg + '"; ' + clean + ' ; printf "%s:%s\\n" "' + mEnd + '" "$?"\r';
-    }
+    const isPosix = !sh.includes('powershell') && !sh.includes('pwsh') && !sh.includes('cmd');
+    const line = buildCaptureLine(t.shell, mBeg, mEnd, clean);
 
-    // المجموعة الثانية اختيارية: صدف cmd/sh لا تُصدر علم $? فيبقى النمط القديم صالحاً
-    const endRe = new RegExp(mEnd + ':(-?\\d+)(?::([01]))?'); // اكتمال + رمز الخروج + علم الصدفة
     let buf = '';
     let settled = false;
     let disp = null;
@@ -458,13 +596,11 @@ function runCaptureNow(id, command, opts) {
     // مِقبس مؤقت على نفس مجرى الخرج (المِقبس الدائم notify يبقى — المستخدم يرى حياً)
     disp = t.proc.onData((data) => {
       if (buf.length < MAX_CAPTURE + 8192) buf += data;
-      const m = buf.match(endRe);
+      const m = matchCaptureEnd(buf, mEnd, isPosix);
       if (m) {
-        const exitCode = parseInt(m[1], 10);
         // الصدفة أبلغت فشلاً بينما رمز الخروج 0 (شائع حين يطبع أمر أصلي خطأً على
         // stderr ثم يخرج بنجاح): لا نكذّب رمزه ولا نخفي إشارته — نعيد الاثنين.
-        const shellFailed = m[2] === '0' && exitCode === 0;
-        finish({ ok: true, exitCode, shellFailed, output: cleanOutput(buf.slice(0, m.index)) });
+        finish({ ok: true, exitCode: m.exitCode, shellFailed: m.shellFailed, output: cleanOutput(buf.slice(0, m.index)) });
       }
     });
 
@@ -505,5 +641,6 @@ module.exports = {
   setNotifier, subscribe, startTerm, writeTerm, writeTermPasted, resizeTerm, killTerm, listTerms, readBuffer,
   sanitizeCommand, sanitizeScript, pwshSingleQuote, defaultShell,
   structuralShape, structuralDelta,
+  buildCaptureLine, matchCaptureEnd,
   runCapture, ensureModelTerm, getModelTermId, killAll,
 };
