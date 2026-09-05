@@ -583,7 +583,11 @@ const DEFS = [
     type: 'function',
     function: {
       name: 'edit_file',
-      description: "Edit an existing file with one or more atomic search/replace blocks. Pass old_string/new_string for one block, or edits for multiple order-independent blocks. Read the file with read_file first. Exact matching is tried first; a unique whole-line match that differs only in leading/trailing whitespace is accepted as a fallback. The user is asked for permission first.",
+      // الوصف مشدود عمداً: يُشحن للنموذج كل دور، ويدخل حزمة satr-guide المسقوفة بـ40KiB
+      // (تجاوزها التوليدُ بـ61 بايتاً بعد تحصين OBS-108/edit_file). القاعدة المكتوبة في
+      // CLAUDE.md: «شدّ النثر لا رفع السقف». المعاني الخمسة كلها محفوظة: الذرّية،
+      // استقلال الترتيب، القراءة أولاً، الارتداد الوحيد بالمسافات، والإذن.
+      description: "Edit an existing file with atomic search/replace blocks: old_string/new_string for one, or edits[] for several (order-independent). Read the file first. Exact match, then a unique whitespace-only fallback. Asks permission.",
       parameters: {
         type: 'object',
         properties: {
