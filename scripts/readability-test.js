@@ -107,6 +107,13 @@ const APP_PAGE = '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="
   + '<input placeholder="ابحث"><select><option>الأول</option></select>'
   + '</body></html>';
 
+// صفحة متنها فوق 4000 محرف — قصّ read_page عنها يجب أن يُعلَن برقميه لا أن يسكت (OBS-113).
+const LONG_LINE = 'هذا سطر اختبار طويل من النصّ العربي يمتدّ في المتن حتى يتجاوز حدّ القصّ '
+  + 'المعلن في أداة القراءة فتظهر علامته ويذكر الطول الكامل للمتن المقروء. ';
+const LONG_PAGE = '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
+  + '<title>صفحة طويلة للاختبار</title></head><body><article><p>' + LONG_LINE.repeat(40)
+  + '</p></article></body></html>';
+
 // بكسل PNG صالح — وجوده يجعل عدّاد موارد الشبكة قابلاً للمقارنة قبل القراءة وبعدها.
 const PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -121,7 +128,8 @@ function startArticleServer() {
       return;
     }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    response.end(request.url === '/app' ? APP_PAGE : ARTICLE_PAGE);
+    response.end(request.url === '/app' ? APP_PAGE
+      : request.url === '/long' ? LONG_PAGE : ARTICLE_PAGE);
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1',
     () => resolve({ server, url: 'http://127.0.0.1:' + server.address().port })));
@@ -272,6 +280,44 @@ async function runArticleChecks() {
     });
     ok('القصّ يُعلَن مع سقفه وطريق تجاوزه',
       /قُصّ عند سقف 20000 محرف/.test(truncNote) && /max_chars/.test(truncNote), truncNote);
+
+    // ---- (9) OBS-113: قصّ read_page حيّ — الطويلة تُعلَن برقميها والقصيرة لا تُنذر كاذباً ----
+    // يقيس السلسلة كاملة: READ_SCRIPT يورّد bodyCap/bodyChars، وformatPage الوحيدة يصوغ العلامة.
+    console.log('\n— إعلان قصّ read_page —');
+    ok('فُتحت الصفحة الطويلة', preview.open(win, () => {}, url + '/long').ok === true);
+    await preview.waitFor({ selector: 'article p' }, 8000);
+    const fullLen = await read('(document.body.textContent||"").replace(/\\s+/g," ").trim().length');
+    ok('متن الصفحة الطويلة فوق حدّ القصّ فعلاً', fullLen > 4000, 'len=' + fullLen);
+    const longReport = await callTool('read_page');
+    ok('القصّ يُعلَن عند الحدّ مع الطول الكامل للمتن',
+      longReport.includes('⚠️ قُصّ نصّ الصفحة عند 4000 محرف من أصل ' + fullLen + ' —')
+        && /read_article/.test(longReport),
+      longReport.slice(0, 300));
+    const snippet = (longReport.match(/\[نصّ الصفحة\]\n([\s\S]*)$/) || [null, ''])[1];
+    ok('المقتطف نفسه مقصوص عند الحدّ لا دونه', snippet.length > 3500 && snippet.length <= 4000,
+      'len=' + snippet.length);
+    ok('فُتحت صفحة المقال (متن قصير تحت الحدّ)', preview.open(win, () => {}, url + '/article').ok === true);
+    await preview.waitFor({ selector: 'article h2' }, 8000);
+    const shortLen = await read('(document.body.textContent||"").replace(/\\s+/g," ").trim().length');
+    const shortReport = await callTool('read_page');
+    ok('المتن القصير الكامل لا يحمل علامة قصّ إطلاقاً',
+      shortLen <= 4000 && !/⚠️/.test(shortReport) && !/قُصّ/.test(shortReport),
+      'len=' + shortLen + ' | ' + shortReport.slice(0, 160));
+
+    // حالات لا تُنتَج بصفحة اختبار: صياغة formatPage نفسها على مدخلات مباشرة.
+    const longForm = codexmcp.formatPage({
+      ok: true, title: 'طويلة', url: 'http://x/', bodyText: 'ن'.repeat(4000), bodyCap: 4000, bodyChars: 9000,
+    });
+    ok('صياغة الطويلة تذكر الرقمين والبديل',
+      /قُصّ نصّ الصفحة عند 4000 محرف من أصل 9000/.test(longForm) && /read_article/.test(longForm),
+      longForm.slice(0, 200));
+    const shortForm = codexmcp.formatPage({
+      ok: true, title: 'قصيرة', url: 'http://x/', bodyText: 'نصّ كامل قصير', bodyCap: 4000, bodyChars: 14,
+    });
+    ok('صياغة القصيرة تحت الحدّ بلا علامة إطلاقاً',
+      !/⚠️/.test(shortForm) && !/قُصّ/.test(shortForm), shortForm);
+    const legacyForm = codexmcp.formatPage({ ok: true, title: 'قديم', url: 'http://x/', bodyText: 'نصّ من نسخة بلا حقول قصّ' });
+    ok('ناتج قديم بلا حقول القصّ لا يُنذر كاذباً', !/⚠️/.test(legacyForm), legacyForm);
   } finally {
     try { preview.close(); } catch (error) { void error; }
     try { win.destroy(); } catch (error) { void error; }
@@ -431,6 +477,22 @@ app.whenReady().then(async () => {
     ok('وصف read_article نسخة واحدة في codexmcp وagent.js',
       inCodex.length > 80 && inCodex === inAgent,
       'codexmcp=' + inCodex.slice(0, 60) + ' | agent=' + inAgent.slice(0, 60));
+  })();
+  // جملة حدّ read_page نسخة واحدة بين المحرّكين — تباعدها يعني حدّين مختلفين لنفس
+  // القياس (OBS-113): جملة الوصف نفسها تُجمَع من وصلات السلاسل وتُقارَن بعد طيّ الفراغات.
+  (function () {
+    const grab = (rel) => {
+      const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+      const match = src.match(/يقصّ مقتطف[\s\S]*?read_article\./);
+      return match ? match[0].replace(/'[\s\S]*?'/g, '').replace(/\s+/g, ' ').trim() : '';
+    };
+    const inCodex = grab('electron/codexmcp.js');
+    const inAgent = grab('electron/agent.js');
+    ok('جملة حدّ read_page نسخة واحدة في codexmcp وagent.js',
+      inCodex.length > 40 && inCodex === inAgent,
+      'codexmcp=' + inCodex.slice(0, 60) + ' | agent=' + inAgent.slice(0, 60));
+    ok('جملة الحدّ تذكر الرقم وتوجّه إلى read_article',
+      /4000 محرف/.test(inCodex) && /read_article/.test(inCodex), inCodex);
   })();
   // المكتبة المُضمَّنة وإسنادها — رخصة Apache-2.0 توجب النصّ لا الرابط وحده.
   assertStaticContract('reader.js مولَّد لا محرَّر يدوياً', 'src/vendor/reader.js',
