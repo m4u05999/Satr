@@ -65,9 +65,13 @@ function loadPty() {
 // (اكتشاف مراجعة الوكيل muraji-amn: القيمة كانت تمرّ لـ pty.spawn بلا تنقية)
 const ALLOWED_SHELLS = new Set(['powershell.exe', 'pwsh.exe', 'cmd.exe']);
 
-// سطر ضبط ترميز الكونسول — نسخة واحدة يستعملها مسارا الإقلاع (سطر تفاعلي/سكربت مُرمَّز)
+// سطر ضبط ترميز الكونسول — نسخة واحدة يستعملها مسارا الإقلاع (سطر تفاعلي/سكربت مُرمَّز).
+// رابطَا Ctrl+V باللصق عمداً: علاج OBS-106 (أدناه) يمرّر النص المشكَّل عبر حافظة
+// اللصق بدل أحداث المفاتيح، فإن أعاد المستخدم ربط المفتاح في ملفه انكسر العلاج صامتاً.
+// الخطأ هنا غير قاطع (cmdlet) فلا يعطّل سكربت الإقلاع لو تعذّرت الوحدة.
 const PWSH_UTF8_PRELUDE =
-  '[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8';
+  '[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; '
+  + 'Set-PSReadLineKeyHandler -Key Ctrl+v -Function Paste';
 
 // سقف نصّ base64 المُمرَّر في `-EncodedCommand`. حدّ `CreateProcess` هو 32767 محرفاً
 // لسطر الأوامر كله؛ نترك هامشاً لاسم الصدفة والعلَم. التجاوز يُرصد قبل spawn لا بعده.
@@ -207,6 +211,101 @@ function startTerm(cwd, cols, rows, meta) {
 
 // كتابة خام إلى pty — البيانات آمنة لأنها تذهب لمجرى الطرفية لا لوسائط spawn.
 // تحقق دفاعي مكرر لتنقية main.js تحسّباً لإعادة هيكلة مستقبلية (مراجعة muraji-amn)
+// ---------- OBS-106: الحركات الواصلة تسقط في PSReadLine القديم (مسار الإدخال) ----------
+// القياس (‏`test:term-longline` مشهد 6): PSReadLine 2.0.0 المرافق لـWindows PowerShell 5.1
+// يسقط علامات التشكيل الواصلة من **أحداث المفاتيح ومن اللصق المُقوّس معاً**، بينما يحفظها
+// محرِّك سطر cmd وأي محرِّك بلا PSReadLine (قياس: إزالة الوحدة في نفس الجلسة أعادت الحركات)
+// — فالمُسقط الوحدة لا ConPTY ولا نقلنا. والحل المعتمد: لصق PSReadLine ذاته يقرأ الحافظة
+// **نصاً** فيحفظ الحركات، فنضع النص في الحافظة ونرسل Ctrl+V بدل الكتابة الخامة.
+// قيود مقصودة: طرفيات المستخدم التفاعلية فقط (لا مهام خلفية ولا طرفيات النموذج — التلاعب
+// بالحافظة من كتابة غير مرئية خطر)، وصدف PowerShell فقط، وسطر واحد (اللصق المتعدد
+// الأسطر يبقى خاماً حفاظاً على تنفيذه سطراً سطراً)، وحافظة نصية فقط (غير ذلك ⇐ خام).
+// حدّ معلَن: لو كان أمام المستخدم برنامج يقرأ الكونسول مباشرة (Python تفاعلي مثلاً) لا
+// PSReadLine، فإن Ctrl+V قد لا يلصق — الكتابة الخامة كانت لتصل في تلك الحالة.
+const COMBINING_MARK_RE = /[\u064B-\u0652\u0670]/;
+const PASTE_KEY = '\x16'; // Ctrl+V — رُبط باللصق في مقدمة الإقلاع (PWSH_UTF8_PRELUDE)
+const CLIPBOARD_RESTORE_MS = 500; // هامش أمان حتى تستهلك الصدفة الحافظة عند معالجة المفتاح
+
+// حافظة Electron في العملية الرئيسية؛ وفي وضع node الصرف (الاختبارات) يقوم مقامها
+// PowerShell بشقة STA (‏Windows.Forms لا يعمل بلا شقة أحادية).
+let electronClipboard = null;
+try {
+  const electron = require('electron');
+  if (electron && electron.clipboard) electronClipboard = electron.clipboard;
+} catch (e) { /* مقصود: الاختبارات تأخذ مسار PowerShell أدناه */ }
+
+// لقطة الحافظة إن كانت نصية فقط، وإلا null (يُكتفى عندها بالكتابة الخامة كالسابق).
+function clipboardSnapshot() {
+  if (electronClipboard) {
+    try {
+      const formats = electronClipboard.availableFormats() || [];
+      const textOnly = formats.every((f) => f === 'text/plain' || f === 'text/plain;charset=utf-8');
+      if (!textOnly) return null;
+      const text = electronClipboard.readText();
+      return {
+        text,
+        write: (s) => electronClipboard.writeText(s),
+        clear: () => electronClipboard.clear(),
+      };
+    } catch (e) { return null; }
+  }
+  try {
+    const { execFileSync } = require('child_process');
+    const run = (script) => execFileSync('powershell.exe',
+      ['-NoProfile', '-Sta', '-Command', script], { stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8');
+    // GetDataObject() يعود null حين تكون الحافظة فارغة — تُعامل كقائمة صيغ فارغة
+    const rawFormats = run('Add-Type -AssemblyName System.Windows.Forms; '
+      + '$o = [Windows.Forms.Clipboard]::GetDataObject(); '
+      + 'if ($o -eq $null) { "" } else { [string]::Join("|", $o.GetFormats()) }').trim();
+    // «System.String» صيغة نصية يولّدها Set-Clipboard نفسه (.NET)
+    const allowed = new Set(['', 'Text', 'UnicodeText', 'OEMText', 'Locale', 'System.String']);
+    const list = rawFormats ? rawFormats.split('|') : [];
+    if (!list.every((f) => allowed.has(f))) return null;
+    // Out.Write لا يُلحق سطراً جديداً بعرض النص — Write-Output كان سيلصق CRLF بالمحتوى
+    const text = run('Add-Type -AssemblyName System.Windows.Forms; '
+      + '[Console]::OutputEncoding=[Text.Encoding]::UTF8; '
+      + '[Console]::Out.Write([Windows.Forms.Clipboard]::GetText())');
+    return {
+      text,
+      write: (s) => {
+        // النص عربي: يمرّ عبر ملف مؤقت UTF-8 لا عبر سطر الأوامر حتى لا يُشوَّه
+        const file = path.join(os.tmpdir(), 'satr-clip-' + process.pid + '-' + Date.now() + '.txt');
+        fs.writeFileSync(file, s, 'utf8');
+        run('Set-Clipboard -Value ([IO.File]::ReadAllText("' + file.replace(/\\/g, '\\\\') + '", [Text.Encoding]::UTF8))');
+        try { fs.unlinkSync(file); } catch (e) {}
+      },
+      clear: () => run('Set-Clipboard -Value $null'),
+    };
+  } catch (e) { return null; }
+}
+
+// إن انطبقت شروط العطل كلها: اكتب باللصق عبر الحافظة وأرجع النتيجة، وإلا أرجع null
+// لتعني «اكتب خاماً كما كانت». الاستهلاك متزامن داخل PSReadLine عند معالجة Ctrl+V،
+// فنُرجع محتوى الحافظة السابق بعد هامش أمان.
+function clusterPasteWrite(t, data) {
+  if (!IS_WIN) return null;
+  if (t.isJob || t.isModel) return null; // لا تلاعب بالحافظة من كتابة غير مرئية
+  const shell = String(t.shell || '').toLowerCase();
+  if (!shell.includes('powershell') && !shell.includes('pwsh')) return null;
+  if (!COMBINING_MARK_RE.test(data)) return null;
+  const CR = data.slice(-1) === '\r' ? '\r' : '';
+  const body = CR ? data.slice(0, -1) : data;
+  if (!body.length || /[\r\n]/.test(body)) return null; // متعدد الأسطر يبقى خاماً
+  const clip = clipboardSnapshot();
+  if (!clip) return null;
+  const saved = clip.text;
+  try { clip.write(body); } catch (e) { return null; }
+  try { t.proc.write(PASTE_KEY + CR); }
+  catch (e) {
+    try { if (saved) clip.write(saved); else clip.clear(); } catch (_) {}
+    return { ok: false, error: 'write_failed' };
+  }
+  setTimeout(() => {
+    try { if (saved) clip.write(saved); else clip.clear(); } catch (e) {}
+  }, CLIPBOARD_RESTORE_MS).unref();
+  return { ok: true };
+}
+
 /**
  * كتابة سطر أمر باللصق المُقوّس (bracketed paste) — PSReadLine يعالج المحتوى وحدةً
  * واحدة بلا إعادة رسم ولا إسقاط محارف (تحقق قبول 16.1: الحقن الخام يُسقط محارف
@@ -218,6 +317,9 @@ function startTerm(cwd, cols, rows, meta) {
  * تبدو حيّة بلا عمل. أي أن الحماية كانت في الملف نفسه ولا تصل نصف مستعمليها.
  */
 function writePasted(t, line) {
+  // OBS-106: الحركات الواصلة تسقط حتى داخل اللصق المُقوّس — نفس علاج writeTerm
+  const pasted = clusterPasteWrite(t, line);
+  if (pasted) return pasted.ok;
   const CR = line.slice(-1) === '\r' ? '\r' : '';
   const body = CR ? line.slice(0, -1) : line;
   try { t.proc.write('\x1b[200~' + body + '\x1b[201~' + CR); return true; }
@@ -239,6 +341,9 @@ function writeTerm(id, data) {
   if (!t) return { ok: false, error: 'no_term' };
   if (typeof data !== 'string' || !data.length || data.length > 1024 * 1024)
     return { ok: false, error: 'bad_data' };
+  // OBS-106: الحركات الواصلة تسقط في PSReadLine القديم — لصق عبر الحافظة عند انطباق الشروط
+  const pasted = clusterPasteWrite(t, data);
+  if (pasted) return pasted;
   try { t.proc.write(data); } catch (e) { return { ok: false, error: 'write_failed' }; }
   return { ok: true };
 }
