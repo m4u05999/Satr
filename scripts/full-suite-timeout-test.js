@@ -5,9 +5,9 @@
  * سطر — حارس مهلة المجموعة في `full-suite.js` (‏OBS-056، قطعي بلا شبكة).
  *
  * ما يحرسه ليس «هل كُتبت مهلة» بل **هل تعمل فعلاً على هذه المنصة**: الافتراض
- * الخطر أن `spawnSync({timeout})` يكفي، بينما المعلِّق في الحادثة الحقيقية كان
- * **حفيداً** (‏pty) لا الابن المباشر. فيبني هذا الاختبار الشكل نفسه — أبٌ يبقى
- * حياً بسبب حفيدٍ معمّر — ويثبت أن المهلة تنطق وأن `killTree` تُنهي الحفيد.
+ * الخطر أن `spawnSync({timeout})` يكفي، بينما هو يحصد الجذر قبل أن تستطيع
+ * `killTree` رؤية **الحفيد** (‏pty). فيبني هذا الاختبار النسب الطبيعي نفسه، ويثبت
+ * أن المتحكّم الجديد يقتل الشجرة والجذر حي ثم لا يعود إلا بعد حصده.
  *
  * ولولاه لكان الحارس «أخضر كاذباً»: مهلةٌ تُقتل الابن ويبقى الحفيد يلتهم الجهاز.
  */
@@ -16,8 +16,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync, spawn } = require('child_process');
-
+const { spawnSync } = require('child_process');
 const suite = require('./full-suite');
 
 let checks = 0;
@@ -40,61 +39,83 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
     'وقائمة المجموعات سليمة بعد التغليف في main');
 }
 
-// ── 2) السلوك الفعلي: أبٌ يبقى حياً بحفيدٍ معمّر ────────────────────────────
-// هذا هو شكل الحادثة حرفياً: العملية المباشرة تنتهي منطقياً لكن حفيداً يُبقي
-// الأنبوب مفتوحاً، فينتظر المشغّل إلى الأبد.
-{
+// ── 2) السلوك الفعلي: القتل يسبق حصد الجذر (OBS-108) ────────────────────────
+// حفيد عادي غير detached: عند رجوع close يكون الجذر محصوداً، ومع ذلك يجب أن يكون
+// الحفيد قد مات لأن killTree مشت نسبه قبل الحصد لا بعده.
+async function checkManagedTimeout() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-suite-timeout-'));
   const marker = path.join(dir, 'grandchild.txt');
+  const parentMarker = path.join(dir, 'parent.txt');
   const grandchild = path.join(dir, 'grandchild.js');
   const parent = path.join(dir, 'parent.js');
+  let grandPid = 0;
+  let parentPid = 0;
+  let rootPid = 0;
+  const alive = (pid) => {
+    try { process.kill(pid, 0); } catch { return false; }
+    if (process.platform === 'win32') return true;
+    // العملية Z ماتت فعلاً وإن بقي سجلّها لحظة حتى يحصده init في عدّاء الحاوية.
+    try {
+      const state = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+      return state.status === 0 && !/^\s*Z/.test(String(state.stdout || ''));
+    } catch { return true; }
+  };
   try {
     // حفيد معمّر يكتب معرّفه ثم يبقى حياً — نظير pty اليتيم
     fs.writeFileSync(grandchild, 'require("fs").writeFileSync('
       + JSON.stringify(marker) + ', String(process.pid));\nsetInterval(() => {}, 1000);\n', 'utf8');
-    // **`detached` ليست زينة**: قيس أولاً بحفيدٍ عادي فمات مع أبيه، فكان فحص
-    // `killTree` يمرّ على عمليةٍ ميتة أصلاً — أخضر كاذب. الحفيد المنفصل وحده ينجو
-    // من قتل الابن، وهو شكل pty الذي علّق البوابة فعلاً (‏node-pty يطلق conhost
-    // مستقلاً). فبهذا الشكل يقيس الفحص نجاةً حقيقية لا فراغاً.
-    fs.writeFileSync(parent, 'const { spawn } = require("child_process");\n'
-      + 'spawn(process.execPath, [' + JSON.stringify(grandchild) + '], '
-      + '{ stdio: "ignore", detached: true }).unref();\n'
-      + 'setInterval(() => {}, 1000);\n', 'utf8');
+    // لا `detached` ولا `unref`: ذانك كانا يجعلان الحارس القديم يقتل الحفيد نفسه
+    // بعد فوات الأوان، بدل قياس موضع نداء killTree في مشغّل الإنتاج.
+    const parentSource = 'require("fs").writeFileSync('
+      + JSON.stringify(parentMarker) + ', String(process.pid));\n'
+      + 'const { spawn } = require("child_process");\n'
+      + 'spawn(process.execPath, [' + JSON.stringify(grandchild) + '], { stdio: "ignore" });\n'
+      + 'setInterval(() => {}, 1000);\n';
+    fs.writeFileSync(parent, parentSource, 'utf8');
+    ok(!/detached\s*:/.test(parentSource),
+      'fixture يطلق الحفيد بنَسَبه الطبيعي — detached كانت تقيس لحظة غير لحظة الإنتاج');
 
     const limit = 3000;
     const startedAt = Date.now();
-    const result = spawnSync(process.execPath, [parent], {
-      stdio: 'ignore', timeout: limit, killSignal: 'SIGKILL',
+    const fixtureCommand = process.platform === 'win32' ? 'cmd' : process.execPath;
+    const fixtureArgs = process.platform === 'win32'
+      ? ['/d', '/s', '/c', 'node', 'parent.js']
+      : [parent];
+    const result = await suite.runManagedProcess(fixtureCommand, fixtureArgs, {
+      cwd: dir, env: process.env, stdio: 'ignore', timeout: limit,
     });
     const elapsed = Date.now() - startedAt;
+    rootPid = result.pid;
 
-    ok(result.error && result.error.code === 'ETIMEDOUT',
+    ok(result.timedOut && result.error && result.error.code === 'ETIMEDOUT',
       'المهلة تُبلَّغ بـETIMEDOUT — وعليها يقوم فرع الفشل الصريح في full-suite');
     ok(elapsed < limit * 4,
       'وتُحسم قرب مهلتها لا بعد انتظار مفتوح (' + elapsed + 'ms مقابل ' + limit + 'ms)');
+    ok(result.reaped === true, 'الحكم يعود من حدث close — الجذر حُصد فعلاً قبل فحص الحفيد');
+    ok(rootPid > 0 && !alive(rootPid), 'الجذر له pid حقيقي وليس حياً بعد close');
 
     // الحفيد: يجب أن يكون قد وُلد فعلاً، وإلا كان الاختبار يقيس فراغاً
-    let grandPid = 0;
-    for (let attempt = 0; attempt < 50 && !grandPid; attempt++) {
-      try { grandPid = Number(fs.readFileSync(marker, 'utf8')) || 0; } catch { /* لم يُكتب بعد */ }
-      if (!grandPid) { try { spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},60)']); } catch {} }
-    }
+    try { parentPid = Number(fs.readFileSync(parentMarker, 'utf8')) || 0; } catch { /* لم يُكتب */ }
+    try { grandPid = Number(fs.readFileSync(marker, 'utf8')) || 0; } catch { /* لم يُكتب */ }
+    ok(parentPid > 0, 'الأب الوسيط وُلد فعلاً — سلسلة ويندوز تقيس cmd ثم node لا جذراً مصطنعاً');
     ok(grandPid > 0, 'الحفيد وُلد فعلاً — وإلا فالاختبار يقيس فراغاً لا نجاةً');
 
-    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-    // **شرط صدق الفحص التالي**: لو مات الحفيد مع أبيه لصار فحص killTree يمرّ على
-    // عمليةٍ ميتة — أخضر كاذب. فيُثبَت أولاً أنه نجا فعلاً.
-    ok(alive(grandPid), 'الحفيد المنفصل نجا من قتل الابن — وإلا فالفحص التالي بلا معنى');
-    suite.killTree(grandPid);
     let cleared = false;
     for (let attempt = 0; attempt < 40 && !cleared; attempt++) {
       cleared = !alive(grandPid);
-      if (!cleared) spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},50)']);
+      if (!cleared) await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    ok(cleared, 'killTree أنهت الحفيد الناجي — بدونها تتراكم الأيتام وتلوّث بقية البوابة');
+    ok(cleared,
+      'الحفيد اليتيم مات بعد حصد الجذر — killTree المتأخرة تتركه حياً وتُسقط هذا الحارس');
     ok(suite.killTree(0) === undefined && suite.killTree(null) === undefined,
       'ومعرّف غائب لا يرمي (تُستدعى في مسار فشل — رميُها يخفي الفشل الأصلي)');
+    console.log('full-suite-timeout: دليل OBS-108 — root_pid=' + rootPid
+      + '؛ root_reaped=' + result.reaped + '؛ grandchild_pid=' + grandPid
+      + '؛ detached=false؛ grandchild_alive_after_reap=' + alive(grandPid) + '.');
   } finally {
+    if (parentPid && alive(parentPid)) suite.killTree(parentPid);
+    if (grandPid && alive(grandPid)) suite.killTree(grandPid);
+    if (rootPid && alive(rootPid)) suite.killTree(rootPid);
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* أفضل جهد */ }
   }
 }
@@ -129,7 +150,7 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
 
 // ── 5) فرع POSIX في killTree يعضّ فعلاً (OBS-079) ──────────────────────────
 // كان الفرع `process.kill(-pid, 'SIGKILL')`، وقتلُ مجموعة بالسالب يوجب أن يكون `pid`
-// قائدَ مجموعة — وهو ما لا يقع لأن `spawnSync` يُطلق الابن **بلا `detached`**. فكان
+// قائدَ مجموعة — وهو ما لا يقع لأن المشغّل يُطلق الابن **بلا `detached`**. فكان
 // النداء يرمي ESRCH ويبتلعه `catch` الصامت: **لا يموت أحد**. البديل نَسَبٌ صريح من
 // لقطة `ps` واحدة. ولأن جهاز التطوير ويندوز، يُقاس هنا **منطق المشي** قطعياً بجدول
 // مزروع (لا يحتاج POSIX)، ويبقى القتل الحيّ على لينكس مسؤولية البوابة — حدٌّ معلَن.
@@ -197,5 +218,13 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
     'وفرع POSIX يأخذ لقطة جدول العمليات فعلاً — بدونها يمشي على خريطة فارغة');
 }
 
-console.log('full-suite-timeout: نجح — ' + checks
-  + ' فحصاً (معايرة المهل من قياس، وETIMEDOUT ينطق، وkillTree تُنهي الحفيد اليتيم، وفرع POSIX يمشي النَسَب لا مجموعةً وهمية، وعقد الخلاصة سليم، والتخطّي المعلَن على POSIX مقيّد).');
+async function main() {
+  await checkManagedTimeout();
+  console.log('full-suite-timeout: نجح — ' + checks
+    + ' فحصاً (معايرة المهل من قياس، وETIMEDOUT ينطق، وkillTree تسبق حصد الجذر فتُنهي الحفيد اليتيم، وفرع POSIX يمشي النَسَب لا مجموعةً وهمية، وعقد الخلاصة سليم، والتخطّي المعلَن على POSIX مقيّد).');
+}
+
+main().catch((error) => {
+  console.error(error && error.stack || error);
+  process.exit(1);
+});

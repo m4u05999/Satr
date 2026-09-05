@@ -1359,7 +1359,22 @@ class SatrChat extends HTMLElement {
         } // خنق إعادة الرسم لكل مرحلة على حدة
       },
       updateAgentProgress(event) {
-        if (!event || !event.summary) return false;
+        if (!event || typeof event !== 'object') return false;
+        // OBS-094: إشعار حالة خلفية بلا ملخص (‏is_backgrounded من task_started/task_updated
+        // عبر سماح agent.js) ⇐ شارة «يعمل في الخلفية» على بطاقة الوكيل تفسّر غياب التقدّم الحي.
+        // spawn_depth مقصوص من القناة مقصوداً: كل بطاقة عندنا عمقها 1 بحكم البناء، فالعمق ضجيج.
+        if (event.backgrounded === true) {
+          const toolUseId = String(event.toolUseId || '');
+          const taskId = String(event.taskId || '');
+          if (!SAFE_SDK_TOOL_USE_ID.test(toolUseId)) return false;
+          const entry = sdkToolsByUseId.get(toolUseId);
+          if (!entry || entry.finished) return false;
+          markSdkBackground(toolUseId, SAFE_SDK_TASK_ID.test(taskId) ? taskId : '');
+          revealActivity('وكيل فرعي يعمل في الخلفية');
+          scrollDown();
+          return true;
+        }
+        if (!event.summary) return false;
         const direct = event.toolUseId ? agentCards[event.toolUseId] : null;
         const registered = sdkToolsByTaskId.get(event.taskId);
         const progress = direct && direct.progress

@@ -270,14 +270,33 @@ function safeSdkTaskText(value, maxLength) {
   return text && !memory.hasSecret(text) ? text : '';
 }
 
+// OBS-094: قناة sdk_agent_progress الواحدة تحمل حالتين — ملخص تقدّم الوكيل (‏task_progress،
+// كما كان) وحالة الخلفية (‏is_backgrounded من task_started ابتداءً أو من task_updated.patch
+// عند انتقال لاحق) بحقول مقصوصة من سماح صريحة: backgrounded فقط. spawn_depth مقصوص مقصوداً —
+// نموذج البطاقة عندنا مسطّح بحكم البناء (‏task_started الوحيدة صاحبة بطاقة هي أبناء الخيط
+// الرئيسي بعمق 1؛ الوكيل الأعمق يظهر رقاقة Task متداخلة لا بطاقة)، فالعمق على البطاقة ضجيج.
+// parent_agent_id لا يصل في البث الحي أصلاً (‏sdk.d.ts يضعه على SessionMessage لقراءات
+// الملفات التاريخية وحدها) — أثبت المسبار الحي (‏scripts/subagent-tree-probe.js) غيابه عن
+// رسائل assistant وtask_started معاً.
 function sdkAgentProgressEvent(message) {
-  if (!message || message.type !== 'system' || message.subtype !== 'task_progress') return null;
+  if (!message || message.type !== 'system') return null;
   const taskId = String(message.task_id || '');
-  const toolUseId = String(message.tool_use_id || '');
+  if (!SAFE_SDK_TASK_ID.test(taskId)) return null;
+  const rawToolUseId = String(message.tool_use_id || '');
+  const toolUseId = SAFE_SDK_TOOL_USE_ID.test(rawToolUseId) ? rawToolUseId : '';
+  const backgrounded = message.subtype === 'task_started' ? message.is_backgrounded === true
+    : message.subtype === 'task_updated' ? !!(message.patch && message.patch.is_backgrounded === true)
+    : false;
+  if (backgrounded) {
+    // بلا tool_use_id لا بطاقة تُشير إليها — المهمة غير المربوطة بأداة إطلاق لا سطح لها عندنا
+    if (!toolUseId) return null;
+    return { type: 'sdk_agent_progress', taskId, toolUseId, backgrounded: true };
+  }
+  if (message.subtype !== 'task_progress') return null;
   const summary = safeSdkTaskText(message.summary, 300);
-  if (!SAFE_SDK_TASK_ID.test(taskId) || !summary) return null;
+  if (!summary) return null;
   const event = { type: 'sdk_agent_progress', taskId, summary };
-  if (SAFE_SDK_TOOL_USE_ID.test(toolUseId)) event.toolUseId = toolUseId;
+  if (toolUseId) event.toolUseId = toolUseId;
   return event;
 }
 

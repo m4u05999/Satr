@@ -205,6 +205,62 @@ async function main() {
     return true;
   })(), 'استُدعيت في مسار إنتاج — القرار كان ألّا يُكتب أثرها إلى أي قرص');
 
+  console.log('\n— ⑦ بروتوكول الالتقاط تحت bash/sh (OBS-072 — منطق نقي، بلا pty ولا لينكس محلي) —');
+  // العطل المقيس في بوابة لينكس (‏33697105032): فرع sh/bash طابق النمط القديم بلا الحقل
+  // الثالث، وعلامة النهاية بلا تقييد بداية سطر كانت قد تُطابق صدًى ملتفّاً فتُنهي الالتقاط
+  // مبكراً ويتسرّب النداء التالي إلى خرج سابق («خرج النداء الأول متشابك»). هذه الفحوص
+  // تثبت المنطق نقيّاً؛ القياس الحيّ تحت bash يبقى لـ`test:termjobs` على البوابة.
+
+  // (أ) فرع POSIX يبني الحقول الثلاثة كاملة: رمز خروج رقمي دائماً + علم مشتق منه.
+  const capLine = term.buildCaptureLine('/bin/bash', 'MK_B', 'MK_E', 'echo hi');
+  ok('POSIX: علامة النهاية بثلاثة حقول (‏END:<رمز>:<علم>)',
+    capLine.includes('printf "%s:%s:%s\\n" "MK_E"'), capLine);
+  ok('POSIX: رمز الخروج يُلتقط رقمياً فور الأمر (‏c=$? قبل العلامة)',
+    capLine.indexOf('c=$?;') !== -1 && capLine.indexOf('c=$?;') < capLine.indexOf('"MK_E" "$c"'),
+    capLine);
+  ok('POSIX: علم الصدفة مشتق حسابياً من الرمز (رقم 0/1 دائماً)',
+    capLine.includes('"$(($c == 0))"'), capLine);
+  ok('POSIX: علامة البداية سطر مستقل قبل الأمر',
+    capLine.indexOf('printf "%s\\n" "MK_B";') !== -1
+    && capLine.indexOf('printf "%s\\n" "MK_B";') < capLine.indexOf('echo hi'), capLine);
+
+  // (ب) مسار PowerShell بلا انحراف بايت واحد — السطر الملتصق للصدفة مثبَّت حرفياً
+  // (نفس البنية التي عقدت في OBS-065 وtermjobs؛ أي تغيير مستقبلي هنا يتطلب قراراً
+  // موثّقاً وتحديث هذا الثابت عن سابق قصد).
+  const PS_CAPTURE_PIN = '$global:LASTEXITCODE=$null; Write-Output "MK_B"; echo hi'
+    + ' ; $ok=$?; $c=$LASTEXITCODE; if($null -eq $c){$c=if($ok){0}else{1}}'
+    + '; Write-Output ("MK_E:"+$c+":"+$(if($ok){1}else{0}))\r';
+  ok('PowerShell: سطر الالتقاط مطابق للثابت المثبَّت بايتاً ببايت (بما فيه \\r الختامي)',
+    term.buildCaptureLine('powershell.exe', 'MK_B', 'MK_E', 'echo hi') === PS_CAPTURE_PIN,
+    JSON.stringify(term.buildCaptureLine('powershell.exe', 'MK_B', 'MK_E', 'echo hi')));
+  const CMD_CAPTURE_PIN = 'echo MK_B & echo hi & echo MK_E:%ERRORLEVEL%\r';
+  ok('cmd: سطر الالتقاط بلا انحراف', term.buildCaptureLine('cmd.exe', 'MK_B', 'MK_E', 'echo hi') === CMD_CAPTURE_PIN);
+
+  // (ج) تحليل العلامة: الحقول الثلاثة، وعلم الفشل، والتوافق الخلفي مع النمط القديم.
+  const newOk = term.matchCaptureEnd('خرج الأمر\nMK_E:0:1\n', 'MK_E', true);
+  ok('التحليل: النمط الجديد ثلاثي الحقول — نجاح',
+    newOk && newOk.exitCode === 0 && newOk.shellFailed === false, JSON.stringify(newOk));
+  const newFail = term.matchCaptureEnd('MK_E:0:0', 'MK_E', true);
+  ok('التحليل: علم الفشل مع رمز خروج 0 (‏shellFailed)',
+    newFail && newFail.exitCode === 0 && newFail.shellFailed === true, JSON.stringify(newFail));
+  const oldTwo = term.matchCaptureEnd('MK_E:3', 'MK_E', true);
+  ok('التوافق الخلفي: النمط القديم بلا الحقل الثالث يُقبل — رمزه يُقرأ وعلمه غير مفترض',
+    oldTwo && oldTwo.exitCode === 3 && oldTwo.shellFailed === false, JSON.stringify(oldTwo));
+  const crlf = term.matchCaptureEnd('سطر\r\nMK_E:7:1\r\n', 'MK_E', true);
+  ok('التحليل: العلامة بعد \\r\\n (سطر بداية حقيقي) تُطابَق',
+    crlf && crlf.exitCode === 7 && crlf.shellFailed === false, JSON.stringify(crlf));
+  ok('التحليل: خرج بلا علامة يردّ null', term.matchCaptureEnd('لا شيء هنا', 'MK_E', true) === null);
+  ok('التحليل: رمز غير رقمي لا يُطابَق', term.matchCaptureEnd('MK_E:abc', 'MK_E', true) === null);
+
+  // (د) تقييد بداية السطر (‏POSIX): صدًى ملتفّ أو خرج أمر يحوي نصّ العلامة بلا أن
+  // يكون سطراً مستقلاً **لا يُنهي الالتقاط** — هذا هو منع التشابك تحديداً.
+  const echoTrap = term.matchCaptureEnd('صدى: printf "%s" "MK_E" ثم MK_E:0 في المنتصف', 'MK_E', true);
+  ok('POSIX: علامة في منتصف سطر (صدًى/خرج) لا تُطابَق — لا إنهاء مبكّر كاذب',
+    echoTrap === null, JSON.stringify(echoTrap));
+  const legacyMid = term.matchCaptureEnd('prefix MK_E:5', 'MK_E', false);
+  ok('غير POSIX: سلوك المطابقة الحرّة باقٍ للمسارات المثبَّتة (‏cmd/PowerShell)',
+    legacyMid && legacyMid.exitCode === 5, JSON.stringify(legacyMid));
+
   console.log('\n— ⑤ قصّ الذيل: حدود UTF-8 وإعلان القصّ —');
   const started = term.startTerm(ROOT, 120, 30, { label: 'longline-buffer' });
   ok('أُنشئت طرفية الاختبار', started.ok, JSON.stringify(started));
@@ -360,7 +416,7 @@ async function main() {
   catch (e) { console.warn('term-longline: تعذّر تنظيف المجلد المؤقت (غير مُفشل)'); }
 
   console.log('\nterm-longline: نجح — ' + checks
-    + ' فحصاً (حفظ الأسطر، إقلاع السكربت في وسائط spawn، فشل صريح بلا علق، وقصّ ذيل معلَن، وعناقيد الحرف عند حافة الالتفاف مقيسة).');
+    + ' فحصاً (حفظ الأسطر، إقلاع السكربت في وسائط spawn، فشل صريح بلا علق، وقصّ ذيل معلَن، وبروتوكول الالتقاط تحت bash/sh نقيّاً، وعناقيد الحرف عند حافة الالتفاف مقيسة).');
   process.exit(0);
 }
 
