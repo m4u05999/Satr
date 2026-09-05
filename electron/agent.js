@@ -1198,12 +1198,24 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const bin = resolveClaudeBin();
   if (bin) options.pathToClaudeCodeExecutable = bin;
   if (!internalPolicy) options.enableFileCheckpointing = true;
+  // كاسر 0.3.233 (‏OBS-084): مع Fable 5+ يزيل CLI أدوات Todo/Task افتراضياً فيخلو
+  // Task Ledger صامتاً؛ هذا المتغيّر المعلن في CHANGELOG يعيدها. عقد SDK: env تستبدل
+  // بيئة العملية الفرعية كلياً ولا تدمج، لذا نبثّ process.env صراحةً. يمر للتشغيل العادي
+  // فقط — سياسات text-only/read-only لا تملك الأدوات أصلاً فلا يغيّر لهن شيئاً.
+  if (!internalPolicy) options.env = Object.assign({}, process.env, options.env, { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' });
   applyClaudePolishOptions(options, internalPolicy);
   applyClaudeElicitation(options, elicitationController.handle, internalPolicy);
   if (sessionId) options.resume = sessionId;
   if (model) options.model = model;
   applyClaudeFallbackModel(options, model, fallbackModel, internalPolicy);
-  if (permissionMode && permissionMode !== 'default') options.permissionMode = permissionMode;
+  // كاسر سلوكي قُس حيّاً على 0.3.261: تحت bypassPermissions لم يعد SDK يستدعي
+  // canUseTool إطلاقاً (تحذير CLAUDE_SDK_CAN_USE_TOOL_SHADOWED، وتحقق حيّ أعاد
+  // canUseToolCalls:0) فتسقط حراسات «سطر» الصارمة التي تعمل داخل المعالج (سر ظاهر
+  // في أدوات المتصفح، أخطاء preview lease، stale_ref). الإصلاح: لا نمرّر bypassPermissions
+  // إلى SDK — يبقى وضعاً داخلياً وcanUseTool يعيد allow لكل أداة بعد الحراسات، فيلتزم
+  // سلوك «تجاوز كل الأذونات» بما كان عليه قبل الترقية تماماً (المعالج هو البوابة
+  // الوحيدة في الوضع الافتراضي ولا تظلله قواعد allowedTools لأننا لا نمرّرها أصلاً).
+  if (permissionMode && permissionMode !== 'default' && permissionMode !== 'bypassPermissions') options.permissionMode = permissionMode;
   if (policyMode === 'text-only') {
     options.tools = [];
     options.persistSession = false;
@@ -2161,7 +2173,12 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     try {
       for await (const msg of q) {
         const inputAlreadyEmitted = promptUserEventEmitted;
-        const matchingPromptUser = msg && msg.type === 'user' && msg.uuid === promptUserMessageId;
+        // OBS-105: الرسائل المتقاربة تُدمج في دور واحد ومعرّفها المُعاد هو معرّف آخر الأعضاء،
+        // فابحث عن معرّفنا داخل user_message_uuids مع بقاء المطابقة الأحادية ارتداداً للمنتِجين الأقدم.
+        const matchingPromptUser = msg && msg.type === 'user' && (
+          msg.uuid === promptUserMessageId
+          || (Array.isArray(msg.user_message_uuids) && msg.user_message_uuids.includes(promptUserMessageId))
+        );
         const observedSessionId = SAFE_UUID.test(String(msg && msg.session_id || '')) ? msg.session_id : '';
         if (!internalPolicy && !promptUserEventEmitted && observedSessionId) {
           rememberUserMessage(observedSessionId, promptUserMessageId);
