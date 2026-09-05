@@ -4055,7 +4055,7 @@ un-suite-instrumented.ps1` (خارج المستودع)
 ## OBS-129 — Electron 44: لقطة `full_page` تعود أضيق من عرض النافذة
 - **الوسم**: `preview`
 - **النوع**: عطل
-- **الحالة**: مفتوحة
+- **الحالة**: منجزة — `e976f42`
 - **الدليل**: الدفعة ٣ (2026-09-06). `npm run test:preview-member-live` على Electron
   `44.2.0`: `AssertionError: full_page صُغّرت عن عرض النافذة: 685 < 700`
   (‏`scripts/preview-member-live-test.js:267`). **سقط مرتين**: أعاده المشغّل مرة ثانية
