@@ -11,6 +11,57 @@ const codexmcp = require('../electron/codexmcp');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function verifyFullScreenshotDeadline(win, events) {
+  const wc = win.contentView.children[0].webContents;
+  const dbg = wc.debugger;
+  const send = dbg.sendCommand;
+  const capture = wc.capturePage;
+  const schedule = global.setTimeout;
+  // تسريع ساعة المهلة فقط؛ التعليق مزروع في حد Electron الحقيقي دون استبدال دالة الإنتاج.
+  global.setTimeout = (fn, ms, ...args) => schedule(fn, ms === 30000 ? 100 : ms, ...args);
+  try {
+    for (const phase of ['metrics', 'capture', 'fallback']) {
+      let release;
+      const hung = new Promise(resolve => { release = resolve; });
+      dbg.sendCommand = function(method, params) {
+        if (phase === 'metrics' || method === 'Page.captureScreenshot') {
+          return phase === 'fallback' ? Promise.reject(new Error('PRIVATE_UPSTREAM')) : hung;
+        }
+        return send.call(this, method, params);
+      };
+      wc.capturePage = () => hung;
+      dbg.attach('1.3');
+      const before = events.filter(e => e.type === 'agent_screenshot').length;
+      let watchdog;
+      const result = await Promise.race([preview.screenshotFull(), new Promise(resolve => {
+        watchdog = schedule(() => resolve({error:'guard_deadline'}), 1500);
+      })]);
+      clearTimeout(watchdog);
+      assert.match(result.error || '', /انتهت مهلة التقاط الصفحة كاملة بعد 30 ثانية/,
+        'OBS-112: screenshotFull لم يُنهِ التعليق برسالة المهلة العربية (' + phase + ')');
+      assert(!JSON.stringify(result).includes('PRIVATE_UPSTREAM'), 'تسرّب خطأ upstream');
+      assert(dbg.isAttached(), 'فصل الالتقاط debugger غير مملوك له');
+      release(phase === 'fallback' ? nativeImage.createEmpty() : {data:''});
+      await delay(20);
+      assert.strictEqual(events.filter(e => e.type === 'agent_screenshot').length, before,
+        'وصلت مصغّرة بعد إعلان المهلة');
+      dbg.detach();
+      console.log('OBS112_DEADLINE=' + phase + ': ' + result.error);
+    }
+  } finally {
+    global.setTimeout = schedule;
+    dbg.sendCommand = send;
+    wc.capturePage = capture;
+    if (dbg.isAttached()) dbg.detach();
+  }
+  const recovered = await preview.screenshotFull();
+  assert(recovered.ok && !dbg.isAttached(), 'لم يتعافَ الالتقاط أو لم يفصل مرفقه الخاص');
+  dbg.attach('1.3');
+  try {
+    assert((await preview.screenshotFull()).ok && dbg.isAttached(), 'نجاح الالتقاط فصل debugger المستعار');
+  } finally { dbg.detach(); }
+}
+
 function imageMime(data) {
   if (data.length >= 8 && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) return 'image/png';
   if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
@@ -185,6 +236,9 @@ async function main() {
     assert(preview._internals.isLocalHttpsUrl('https://localhost:5173') && preview._internals.isLocalHttpsUrl('https://127.0.0.1:8443'), 'شهادة localhost ليست ضمن الاستثناء');
     assert(!preview._internals.isLocalHttpsUrl('https://example.com'), 'استثناء الشهادة يتسرب إلى نطاق خارجي');
     preview.setBounds({ x: 10, y: 10, width: 700, height: 760 });
+    // OBS-112: ابدأ التحميل في نافذة ظاهرة كما في مصفوفة القياس؛ الإظهار بعد التحميل
+    // المخفي لا يضمن أن Chromium قد قدّم إطاراً صالحاً للالتقاط.
+    win.showInactive();
     assert.strictEqual(preview.open(win, (event) => events.push(event), url + '/one').ok, true);
     const ready = await preview.waitFor({ selector: '#change' }, 5000);
     assert(ready.ok && ready.found, 'لم تجهز صفحة المسبار');
@@ -196,7 +250,8 @@ async function main() {
     const rawFullShot = await preview.screenshotFull();
     const rawElementShot = await preview.screenshotElement('#shot-fixture', { emitThumbnail: false });
     const rawViewportShot = await preview.screenshot();
-    assert(rawFullShot.ok && rawElementShot.ok && rawViewportShot.ok, 'تعذّر أخذ PNG الخام لقياس الصيغتين');
+    assert(rawFullShot.ok && rawElementShot.ok && rawViewportShot.ok, 'تعذّر أخذ PNG الخام لقياس الصيغتين: '
+      + JSON.stringify({full:rawFullShot.error, element:rawElementShot.error, viewport:rawViewportShot.error}));
     events.length = 0;
     const fullShot = await preview.screenshotFull({ modelImage: true });
     const elementShot = await preview.screenshotElement('#shot-fixture', { modelImage: true });
@@ -245,6 +300,7 @@ async function main() {
       console.log('| ' + name + ' | ' + item.png + ' | ' + item.jpeg + ' | '
         + item.selectedMime + ' (' + item.selectedBytes + ') |');
     }
+    await verifyFullScreenshotDeadline(win, events);
     win.hide();
 
     const firstSnapshot = await preview.snapshot();
