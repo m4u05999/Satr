@@ -167,6 +167,41 @@ async function main() {
       host.remove();
       return rows;
     })()`, true);
+    // فقرة المحادثة: `chat.js` يبني `<p dir="...">` نصّاً في HTML عبر `dirAttr`، فلا
+    // يمرّ بـ`applyDir` ولا يقبل `style` (‏CSP). والـfixture يحمّل `base.css` الحقيقية،
+    // فهذا قياسٌ لبنية الإنتاج لا لمحاكاتها.
+    const chatRow = await win.webContents.executeJavaScript(`(() => {
+      const host = document.createElement('div');
+      host.className = 'md';
+      host.innerHTML = '<p dir="ltr">Install Claude Code first</p>'
+        + '<p dir="rtl">هذه فقرة عربية عادية للمقارنة</p>';
+      document.body.appendChild(host);
+      const measure = (p) => {
+        const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+        const node = walk.nextNode();
+        const range = document.createRange();
+        range.setStart(node, 0); range.setEnd(node, 1);
+        const first = range.getBoundingClientRect();
+        const box = p.getBoundingClientRect();
+        const fromRight = Math.round(box.right - first.right);
+        const fromLeft = Math.round(first.left - box.left);
+        return {
+          dir: p.getAttribute('dir'),
+          textAlign: getComputedStyle(p).textAlign,
+          anchored: Math.abs(fromRight - fromLeft) < 1 ? 'متعادل' : (fromRight <= fromLeft ? 'rtl' : 'ltr'),
+          fromRight, fromLeft,
+        };
+      };
+      const rows = [...host.querySelectorAll('p')].map(measure);
+      host.remove();
+      return rows;
+    })()`, true);
+    console.log('\n  — فقرة المحادثة (بنية .md فوق base.css الحقيقية) —');
+    for (const c of chatRow) {
+      console.log('    p[dir=' + c.dir + '] ⇒ text-align محسوبة=' + c.textAlign
+        + ' · الرسو=' + c.anchored + '  (fromRight=' + c.fromRight + ' · fromLeft=' + c.fromLeft + ')');
+    }
+
     console.log('\n  — الاختبار الحاسم: ابن داخل حاوية dir=rtl، والنصّ «ثبّت Claude Code» —');
     for (const s of synthetic) {
       console.log('    الحاوية text-align=' + (s.explicit ? 'right (صريحة)' : 'start (موروثة)')
