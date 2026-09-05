@@ -93,6 +93,7 @@ const SUITE = [
   'test:readme-version',
   'test:opsroom-all-live',
   'test:terminal-tabs',
+  'test:bidi-parity',
   'test:background-ui-live',
   'test:browser-member-live',
   'test:preview-member-live',
@@ -126,6 +127,7 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
   { name: 'eval:agent:baseline', reason: 'يكتب وثيقة baseline في docs/ — يُشغَّل يدوياً عند تحديث خط الأساس لا في كل بوابة' },
   // ── مسابير حيّة: تستهلك أدواراً حقيقية وتحتاج محرّكاً مثبّتاً ومسجَّل الدخول ──
   { name: 'test:codex-executor-probe', reason: 'مسبار حيّ خارج الطقم — يشغّل Codex فعلياً' },
+  { name: 'test:conpty-resize-probe', reason: 'مسبار حيّ خارج الطقم — يفتح pty حقيقياً ويقيس إعادة رسم ConPTY عند تغيّر الصفوف (OBS-124)' },
   { name: 'test:loop-live-probe', reason: 'مسبار حيّ خارج الطقم — حلقة محدودة بمحرك SDK حقيقي يستهلك أدواراً' },
   { name: 'test:codex-subagent-live', reason: 'مسبار حيّ خارج الطقم — يطلق وكلاء Codex فرعيين فعليين' },
   { name: 'test:browser-loop-probe', reason: 'مسبار حيّ خارج الطقم — حلقة متصفح بمحرك حقيقي' },
