@@ -104,9 +104,16 @@ async function waitFor(fn, label, timeout = 12000) {
 
   const model = term.ensureModelTerm(temp);
   assert(model.ok, model.message || model.error);
+  // OBS-072: طرفية النموذج على لينكس/ماك صدفة النظام (‏bash) — لا بد أوامر التقاط
+  // بصياغتها هي. بصياغة PowerShell على bash كان الأمران يفشلان كلاهما «أمر غير
+  // موجود» ويُقرأ فشلهما تشابكاً — وهي الرسالة التي سقط بها test:termjobs على
+  // البوابة (‏33697105032). بقاء المقارنة FIFO ذاتها مقيساً هو الغرض من النداءين.
+  const captureIsPwsh = /powershell|pwsh/i.test(String(model.shell || ''));
+  const sleepCmd = captureIsPwsh ? 'Start-Sleep -Milliseconds 250; Write-Output FIRST' : 'sleep 0.25; echo FIRST';
+  const echoCmd = captureIsPwsh ? 'Write-Output SECOND' : 'echo SECOND';
   const order = [];
-  const first = term.runCapture(model.id, 'Start-Sleep -Milliseconds 250; Write-Output FIRST', { timeoutMs: 5000 }).then((result) => { order.push('first'); return result; });
-  const second = term.runCapture(model.id, 'Write-Output SECOND', { timeoutMs: 5000 }).then((result) => { order.push('second'); return result; });
+  const first = term.runCapture(model.id, sleepCmd, { timeoutMs: 5000 }).then((result) => { order.push('first'); return result; });
+  const second = term.runCapture(model.id, echoCmd, { timeoutMs: 5000 }).then((result) => { order.push('second'); return result; });
   const [one, two] = await Promise.all([first, second]);
   assert.deepStrictEqual(order, ['first', 'second'], 'runCapture لم يعد FIFO');
   assert(one.ok && /FIRST/.test(one.output) && !/SECOND/.test(one.output), 'خرج النداء الأول متشابك');
