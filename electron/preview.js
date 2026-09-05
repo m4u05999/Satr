@@ -1324,17 +1324,30 @@ async function screenshotElement(locator, options) {
 // Page.captureScreenshot بـ captureBeyondViewport، لقطة واحدة للمحتوى القابل للتمرير كلّه.
 // سقف ارتفاع 20000px (أداء/رموز)، وسقوط للقطة العادية إن تعذّر CDP. scale:1 ⇒ 1 CSS px = 1 بكسل.
 const MAX_FULL_HEIGHT = 20000;
+// OBS-112: أطول نجاح مقاس على Electron 33.4.11 كان 4365ms (توثيق Node fs،
+// لقطة 20000px). 30 ثانية تتسع لانتظار التحميل 8 ثوانٍ ثم نحو خمسة أمثال القياس؛
+// النافذة المخفية قد لا تُتم captureScreenshot، لذا تشمل المهلة مسار التراجع أيضاً.
+const FULL_SCREENSHOT_TIMEOUT_MS = 30000;
 async function screenshotFull(options) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
-  await waitReady(wc);
   const dbg = wc.debugger;
   let attached = false;
   let pageMetrics;
+  const timeoutError = new Error('full_screenshot_timeout');
+  let timer;
+  const deadline = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(timeoutError), FULL_SCREENSHOT_TIMEOUT_MS);
+  });
+  // كل انتظار يُسابق الموعد نفسه؛ وصول رد متأخر لا يستأنف الالتقاط أو بث المصغّرة.
+  const bounded = pending => Promise.race([pending, deadline]);
+  const timeoutResult = () => ({ error: 'انتهت مهلة التقاط الصفحة كاملة بعد 30 ثانية؛ أعد المحاولة مع معاينة ظاهرة أو استخدم لقطة نافذة العرض.' });
   try {
-    try { dbg.attach('1.3'); attached = true; } catch (e) { attached = dbg.isAttached && dbg.isAttached(); }
-    const metrics = await dbg.sendCommand('Page.getLayoutMetrics');
+    await bounded(waitReady(wc));
+    // لا نفصل عميلاً استعاره الالتقاط (مثلاً محاكاة الشبكة).
+    if (!dbg.isAttached()) { dbg.attach('1.3'); attached = true; }
+    const metrics = await bounded(dbg.sendCommand('Page.getLayoutMetrics'));
     const size = metrics.cssContentSize || metrics.contentSize || {};
     const width = Math.max(1, Math.ceil(size.width || 0));
     const contentHeight = Math.max(1, Math.ceil(size.height || 0));
@@ -1345,9 +1358,9 @@ async function screenshotFull(options) {
       viewport_height: Math.max(1, Math.ceil(viewport.clientHeight || 0)),
     };
     const clip = { x: 0, y: 0, width, height, scale: 1 };
-    const shot = await dbg.sendCommand('Page.captureScreenshot', {
+    const shot = await bounded(dbg.sendCommand('Page.captureScreenshot', {
       format: 'png', captureBeyondViewport: true, clip,
-    });
+    }));
     if (!shot || !shot.data) return { error: 'empty' };
     const img = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'));
     emitScreenshotThumbnail(img, 'full_page');
@@ -1359,20 +1372,22 @@ async function screenshotFull(options) {
       full_page: true,
     };
   } catch (e) {
+    if (e === timeoutError) return timeoutResult();
     // سقوط رشيق للقطة نافذة العرض العادية إن فشل مسار CDP
     try {
-      const img = await wc.capturePage();
-      emitScreenshotThumbnail(img, 'page');
+      const img = await bounded(wc.capturePage());
       const encoded = encodeScreenshot(img, options && options.modelImage === true);
       if (!encoded) return { error: 'empty' };
-      if (!pageMetrics) pageMetrics = await readPageMetrics(wc);
+      if (!pageMetrics) pageMetrics = await bounded(readPageMetrics(wc));
+      emitScreenshotThumbnail(img, 'page');
       return {
         ok: true, base64: encoded.data.toString('base64'), mimeType: encoded.mimeType,
         page_metrics: pageMetrics, fellBack: true, full_page: true,
       };
-    } catch (e2) {}
+    } catch (e2) { if (e2 === timeoutError) return timeoutResult(); }
     return { error: 'shot_failed' };
   } finally {
+    clearTimeout(timer);
     if (attached) { try { dbg.detach(); } catch (e) {} }
   }
 }
