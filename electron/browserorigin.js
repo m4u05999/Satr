@@ -8,7 +8,7 @@ const LOCAL_ORIGINS = Object.freeze([
 ]);
 
 const READ_TOOLS = new Set([
-  'read_page', 'browser_readability', 'browser_snapshot', 'browser_console', 'browser_network', 'screenshot',
+  'read_page', 'read_article', 'browser_readability', 'browser_snapshot', 'browser_console', 'browser_network', 'screenshot',
   'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover',
   'browser_set_viewport', 'browser_perf',
 ]);

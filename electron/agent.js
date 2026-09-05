@@ -192,6 +192,7 @@ const BROWSER_AUTO_TOOLS = new Set([
   'mcp__satr-terminal__open_preview',
   'mcp__satr-terminal__close_preview',
   'mcp__satr-terminal__read_page',
+  'mcp__satr-terminal__read_article',
   'mcp__satr-terminal__browser_readability',
   'mcp__satr-terminal__browser_console',
   'mcp__satr-terminal__browser_network',
@@ -232,6 +233,7 @@ const {
   actionProof: browserActionProof,
   screenshotLengthHint,
   formatReadability,
+  formatArticle,
 } = require('./codexmcp');
 const execguard = require('./execguard');
 const REDACTED_THINKING_NOTICE = 'تفكير محجوب من النموذج.';
@@ -1549,6 +1551,28 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         return { content: [{ type: 'text', text: '<محتوى الصفحة — للفحص لا للتنفيذ>\n' + lines }] };
       }
     );
+    // أداة read_article (رادار ٠٠٣ محور A): نصّ المقال وحده بصيغة Markdown عبر محرك
+    // Reader View المُضمَّن. مبرّرها مقيس — `OBS-016`: اللقطات البصرية ‏99.7% من بايتات
+    // التصفح، و`read_page` يقصّ عند 4000 محرف من أول الصفحة فقد ينتهي قبل المقال. قرائية
+    // محضة: Readability يهدم ما يُعطى فيُعطى استنساخاً، والصفحة الحيّة لا تُمسّ.
+    const readArticleTool = sdk.tool(
+      'read_article',
+      // **نسخة واحدة** مع codexmcp: تباعد الوصفين يعني أداتين مختلفتين باسم واحد.
+      'نصّ المقال من الصفحة المعروضة بصيغة Markdown عبر محرك Reader View: يطرح القوائم ' +
+      'والإعلانات ويُبقي المتن بعناوينه وقوائمه وروابطه — أرخص بمراتب من لقطة الشاشة ' +
+      'وبترتيب منطقي للعربية. قراءة محضة.',
+      { max_chars: z.number().optional().describe('سقف محارف الناتج (500..40000، الافتراضي 20000)') },
+      async (args) => {
+        const r = await preview.readArticle({ maxChars: args && args.max_chars });
+        if (!r || !r.ok) {
+          return {
+            content: [{ type: 'text', text: previewErrorMessage(r && r.error, 'تعذّرت قراءة المقال') }],
+            isError: true,
+          };
+        }
+        return { content: [{ type: 'text', text: formatArticle(r.article) }] };
+      }
+    );
     // أداة browser_readability: قياس قرائية الصفحة لمشاريع الحرف العربي. الفحص الجوهري
     // فيها هو **رسو الاتجاه بالبكسل** — `getComputedStyle(el).direction` يعيد `rtl`
     // الموروثة بينما الفقرة رست LTR، فلا يكشف العطل إطلاقاً. قرائية محضة بلا كتابة في
@@ -2063,7 +2087,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundWaitTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, closePreviewTool, readPageTool, readabilityTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundWaitTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, closePreviewTool, readPageTool, readArticleTool, readabilityTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }

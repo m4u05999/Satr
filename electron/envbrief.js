@@ -8,7 +8,7 @@ const langanchor = require('./langanchor');
 const SDK_TOOL_NAMES = Object.freeze([
   'run_in_terminal', 'run_in_background', 'get_background_output', 'wait_for_background_task',
   'list_background_tasks', 'stop_background_task',
-  'open_preview', 'close_preview', 'browser_navigate', 'read_page', 'browser_readability', 'browser_snapshot', 'browser_console', 'browser_network',
+  'open_preview', 'close_preview', 'browser_navigate', 'read_page', 'read_article', 'browser_readability', 'browser_snapshot', 'browser_console', 'browser_network',
   'screenshot', 'browser_screenshot_element', 'browser_wait_for', 'browser_scroll', 'browser_hover', 'browser_click',
   'browser_type', 'browser_select_option', 'browser_press_key', 'browser_handoff',
   'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
@@ -67,6 +67,7 @@ function browserPolicy(hasBrowser) {
     '## المعاينة والمتصفح',
     '- افتح صفحات الويب داخل معاينة «سطر» بأداة open_preview، لا Chrome/Edge/Firefox ولا أوامر فتح متصفح خارجي.',
     '- ابدأ بـ browser_snapshot لفهم البنية، واستعمل screenshot البصرية للحكم على التخطيط فقط؛ وأكمل الفحص عبر read_page وbrowser_console وbrowser_network.',
+    '- لقراءة توثيق أو مقال: read_article يعيد نصّ المقال وحده بصيغة Markdown، وبالترتيب المنطقي للنصّ العربي لأنه من DOM لا من صورة. مقيس على صفحة توثيق ارتفاعها خمسة أضعاف نافذة المعاينة: المقال كاملاً 4.7ك.ب نصّاً، ولقطة واحدة من نافذتها 194ك.ب ولا تُري إلا خُمسه. لا تلتقط لقطة شاشة لتقرأ نصّاً — اللقطة للحكم على التخطيط. وread_page لبنية الصفحة وحقولها وأزرارها لا لمتنها (يقصّ المتن عند 4000 محرف). إن قال read_article إنه لم يجد مقالاً فهي صفحة تطبيق أو فهرس — انتقل إلى صفحة المقال نفسها أو استعمل read_page.',
     '- لصفحة فيها نصّ بالحرف العربي (عربية/فارسية/دَرية/أردو/بشتو/كردية/سندية/أويغورية) استعمل browser_readability: يقيس رسو اتجاه كل فقرة بالبكسل والتباين والتجاوز الأفقي وتحميل الخط. لا تحكم على الاتجاه بالنظر ولا بـ getComputedStyle — كلاهما يعيد rtl الموروثة بينما الفقرة رست LTR. أصلح ثم أعد القياس، ولا تدّعِ السلامة قبل صفر مخالفات مع ذكر ما لم يُرَ (unseen).',
     '- خذ browser_snapshot قبل التفاعل، واستعمل refs مع browser_click/browser_type. إذا تدخّل المستخدم أو تغيّر/أزيل الهدف بعد اللقطة، لا تكرر الفعل؛ خذ browser_snapshot جديدة وتحقق من الهدف.',
     '- لوحة معاينة «سطر» أضيق وأقصر من متصفح عادي؛ للحكم على تخطيط الصفحة كاملةً استعمل screenshot مع full_page:true، أو اضبط browser_set_viewport أولاً إن كنت تختبر مقاساً بعينه.',

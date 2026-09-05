@@ -2283,6 +2283,146 @@ async function readability() {
   } catch { return { error: 'readability_failed' }; }
 }
 
+// ---------- قارئ المقال (read_article) — رادار ٠٠٣ محور A ----------
+// **المشكلة المقيسة**: `OBS-016` — اللقطات البصرية ‏99.7% من بايتات التصفح الوكيلي.
+// و`read_page` البديل النصّي يقصّ نصّ الجسم عند 4000 محرف **من أول الصفحة**، فيغرق
+// في القوائم والإعلانات وقد ينتهي قبل بلوغ المقال. فصار «اقرأ توثيق المكتبة» يُدفع
+// إلى `screenshot` — أغلى مسار في الطقم.
+//
+// **العلاج**: محرك Reader View من فايرفوكس (‏`@mozilla/readability` المُضمَّن في
+// `src/vendor/reader.js`) يستخرج المقال وحده، ثم `turndown` يحوّله Markdown فتبقى
+// العناوين والقوائم والروابط والكود — بنيةٌ يفقدها النصّ الخام ويفقدها اللقطة معها.
+// وللنصّ العربي فائدة ثانية: يخرج **بترتيبه المنطقي** لأنه من DOM لا من صورة، فلا
+// يُقرأ معكوساً ولا يحتاج نموذجاً بصرياً يفكّه (‏OBS-001).
+//
+// **قرائية محضة — شرط أمني لا راحة**: `Readability.parse()` **يعدّل** المستند الذي
+// يُعطاه (سلوك مُعلَن في توثيق المكتبة نفسها). لذلك يُستنسخ المستند أولاً
+// (‏`document.cloneNode(true)` — قراءة صرفة تنتج نسخة منفصلة بلا سياق تصفّح، فلا
+// سكربت يعمل فيها ولا مورد يُجلب) ويُهدَم **الاستنساخ** لا الصفحة. و`turndown` في
+// بناء المتصفح يحلّل نصّاً بـ`DOMParser` فلا يلمس مستنداً قائماً أصلاً. يثبت ذلك
+// `test:readability` بمقارنة `outerHTML` الحيّ قبل القياس وبعده بايتاً ببايت، وبعدّ
+// موارد الشبكة — ولذلك وحدها مع `browser_readability` تدخل `AUTO_SAFE_TOOLS`.
+//
+// **حدود معلنة في الناتج لا مسكوت عنها**: سقف المحارف، وسقف حجم المستند، وعمى
+// `Readability` عن Shadow DOM و`<iframe>` (يمشي على الشجرة الضوئية فقط)، وصفحة ليست
+// مقالاً تُقال صراحةً بدل نصّ فارغ يُقرأ «لا محتوى».
+const READER_LIB_PATH = path.join(__dirname, '..', 'src', 'vendor', 'reader.js');
+const READER_DEFAULT_CHARS = 20000;
+const READER_MIN_CHARS = 500;
+const READER_MAX_CHARS = 40000;
+let readerLibCache = null;
+
+// تحميل كسول مرة واحدة: 116ك.ب تُقرأ من القرص عند أول نداء لا عند الإقلاع.
+function readerLib() {
+  if (readerLibCache === null) readerLibCache = fs.readFileSync(READER_LIB_PATH, 'utf8');
+  return readerLibCache;
+}
+
+// دالة الاستخراج داخل الصفحة. تأخذ المكتبتين والسقف وسيطين — بلا استبدال قوالب في
+// النصّ (‏`${`) كي يبقى قابلاً للاستخراج الحرفي في الحارس.
+const READER_FN = `(async function(LIB, MAX){
+  var MAX_NODES = 40000;
+
+  function count(sel){ try { return document.querySelectorAll(sel).length; } catch(e) { return 0; } }
+  // قصّ لا يشطر زوج surrogate (رموز خارج BMP) — النصّ المقصوص يبقى صالحاً.
+  function cut(s, n){
+    if (s.length <= n) return s;
+    var c = s.charCodeAt(n - 1);
+    return s.slice(0, c >= 0xD800 && c <= 0xDBFF ? n - 1 : n);
+  }
+
+  var shadowRoots = 0;
+  try {
+    var all = Array.prototype.slice.call(document.querySelectorAll('*'), 0, 5000);
+    for (var k = 0; k < all.length; k++) { if (all[k].shadowRoot) shadowRoots++; }
+  } catch(e) {}
+  var unseen = { shadow_roots: shadowRoots, iframes: count('iframe,frame') };
+
+  var nodes = 0;
+  try { nodes = document.getElementsByTagName('*').length; } catch(e) {}
+  if (nodes > MAX_NODES) return { ok: false, reason: 'too_large', nodes: nodes, cap: MAX_NODES };
+
+  // مرجع المقارنة: طول نصّ الصفحة الخام كما يراه read_page (‏textContent لا innerText —
+  // الثاني يفرض إعادة تخطيط). يُعاد كي يظهر التوفير رقماً بدل ادّعائه.
+  var rawChars = 0;
+  try {
+    var body = document.body ? document.body.textContent : '';
+    rawChars = String(body || '').replace(/\\s+/g, ' ').trim().length;
+  } catch(e) {}
+
+  // الاستنساخ هو ما يجعل الأداة قرائية: Readability يهدم ما يُعطى، فيهدم النسخة.
+  var clone = null;
+  try { clone = document.cloneNode(true); } catch(e) { return { ok: false, reason: 'clone_failed' }; }
+  if (!clone || !clone.documentElement) return { ok: false, reason: 'clone_failed' };
+
+  var article = null;
+  try {
+    article = new LIB.Readability(clone, { charThreshold: 250, keepClasses: false }).parse();
+  } catch(e) { article = null; }
+  if (!article || !article.content) {
+    return { ok: false, reason: 'not_article', url: location.href,
+      title: String(document.title || '').slice(0, 300), raw_chars: rawChars, unseen: unseen };
+  }
+
+  var md = '';
+  try {
+    var td = new LIB.TurndownService({
+      headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-',
+      hr: '---', emDelimiter: '*', linkStyle: 'inlined',
+    });
+    td.remove(['script', 'style', 'noscript', 'iframe', 'form']);
+    md = td.turndown(article.content);
+  } catch(e) {
+    // سقوط رشيق: النصّ المجرّد الذي استخرجه Readability أصلاً — أفقر بنيةً لا أفرغ.
+    md = String(article.textContent || '');
+  }
+  md = md.replace(/\\n{3,}/g, '\\n\\n').replace(/[ \\t]+\\n/g, '\\n').trim();
+
+  var full = md.length;
+  var truncated = full > MAX;
+  if (truncated) md = cut(md, MAX);
+
+  function s(v, n){ return String(v == null ? '' : v).replace(/\\s+/g, ' ').trim().slice(0, n); }
+  return {
+    ok: true,
+    url: location.href,
+    title: s(article.title || document.title, 300),
+    byline: s(article.byline, 160),
+    site_name: s(article.siteName, 120),
+    lang: s(article.lang || (document.documentElement && document.documentElement.getAttribute('lang')), 32),
+    markdown: md,
+    markdown_chars: full,
+    cap: MAX,
+    truncated: truncated,
+    raw_chars: rawChars,
+    unseen: unseen,
+  };
+})`;
+
+function readerCap(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return READER_DEFAULT_CHARS;
+  return Math.min(READER_MAX_CHARS, Math.max(READER_MIN_CHARS, n));
+}
+
+async function readArticle(options) {
+  if (handoffActive) return { error: 'handoff' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
+  await waitReady(wc);
+  let lib;
+  try { lib = readerLib(); } catch { return { error: 'reader_unavailable' }; }
+  const cap = readerCap(options && options.maxChars);
+  // التركيب بالوصل لا بقالب: `reader.js` نصّ مُضمَّن فيه `${` و«`» بكثرة.
+  // `cap` عدد صحيح مقصوص أعلاه، فلا مدخل نصّي يدخل التعبير.
+  const expression = '(function(){var __LIB=' + lib + ';return (' + READER_FN + ')(__LIB,' + cap + ');})()';
+  try {
+    const data = await runIsolated(wc, expression); // OBS-018
+    if (!data || typeof data !== 'object') return { error: 'reader_failed' };
+    return { ok: true, article: data };
+  } catch { return { error: 'reader_failed' }; }
+}
+
 async function historyNavigate(direction) {
   if (handoffActive) return { error: 'handoff' };
   const wc = currentWC();
@@ -2354,7 +2494,7 @@ function destroy() { close(); hostWin = null; sender = null; }
 
 module.exports = {
   SHOT_MAX_EDGE, SHOT_JPEG_QUALITY,
-  open, navigate, action, setBounds, startPick, cancelPick, readPage, readability, snapshot, waitFor,
+  open, navigate, action, setBounds, startPick, cancelPick, readPage, readability, readArticle, snapshot, waitFor,
   getConsole, getNetwork, screenshot, screenshotFull, screenshotElement, clickElement, typeText,
   selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
   fillForm, transferField, requestSecret, resolveSecretRequest, clearSecretTransfers, clearSensitiveState,

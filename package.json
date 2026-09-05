@@ -150,6 +150,7 @@
     "dist:appx": "electron-builder --win appx --publish never",
     "site:serve": "node scripts/site-serve.js",
     "vendor:site": "node scripts/vendor-site.js",
+    "vendor:readability": "node scripts/vendor-readability.js",
     "site:shots": "electron scripts/site-shots.js",
     "ui:audit": "electron scripts/ui-audit.js",
     "test:pty-shutdown": "node scripts/pty-shutdown-probe.js",
@@ -176,12 +177,14 @@
   },
   "devDependencies": {
     "@fontsource/ibm-plex-sans-arabic": "^5.2.9",
+    "@mozilla/readability": "^0.6.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "gsap": "^3.15.0",
-    "lenis": "^1.3.25"
+    "lenis": "^1.3.25",
+    "turndown": "^7.2.4"
   },
   "build": {
     "appId": "ai.satr.app",

@@ -27,6 +27,9 @@ const AUTO_SAFE_TOOLS = new Set([
   // قرائية محضة مُثبَتة بفحص حيّ: لا سمة ولا عنصر ولا تمرير بعد القياس (‏test:readability
   // يفحص DOM بعده). لولا ذلك لبقيت خارج القائمة مثل snapshot/scroll/hover.
   'mcp__satr-terminal__browser_readability',
+  // كذلك: Readability يهدم ما يُعطى، فيُعطى **استنساخاً** والصفحة الحيّة لا تُمسّ —
+  // يثبته test:readability بمطابقة outerHTML قبل وبعد بايتاً ببايت وبعدّ موارد الشبكة.
+  'mcp__satr-terminal__read_article',
   'mcp__satr-terminal__screenshot',
   'mcp__satr-terminal__browser_console',
   'mcp__satr-terminal__browser_network',
