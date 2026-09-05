@@ -579,6 +579,10 @@ async function main() {
   try {
     for (const task of tasks) {
       if (Array.isArray(task.platforms) && !task.platforms.includes(process.platform)) {
+        // التخطّي يُسمّى صراحةً (‏OBS-081): كان يُعرَف عددُ المتخطّى من النسبة ولا يُعرف
+        // أيّها ولا لماذا — والصمت يُقرأ عطلاً غامضاً. النسبة ورمز الخروج لم يتغيّرا.
+        process.stdout.write('⏭ ' + task.id + ' — متخطّاة على ' + process.platform
+          + ': المهمة تعلن platforms: [' + task.platforms.join('، ') + ']\n');
         results.push({ id: task.id, status: 'متخطاة', skipped: 'المنصة', events: 0, tool_calls: 0, permission_requests: 0, prompt_sha256: sha256(task.prompt) });
         continue;
       }
@@ -587,6 +591,8 @@ async function main() {
         ? await runReplay(task, workspace, options)
         : await runLive(task, workspace, options);
       if (result.skipped) {
+        // موضع التخطّي الثاني — الصنف نفسه: يُسمّى بدل أن يُطرح من النسبة صامتاً.
+        process.stdout.write('⏭ ' + task.id + ' — متخطّاة: ' + result.skipped + '\n');
         results.push({ id: task.id, status: 'متخطاة', skipped: result.skipped, events: 0, tool_calls: 0, permission_requests: 0, prompt_sha256: sha256(task.prompt) });
         continue;
       }
