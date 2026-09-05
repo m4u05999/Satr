@@ -63,6 +63,14 @@ function nonSdkPerm(mode) {
 function decideAutoApproval(toolName, ctx) {
   ctx = ctx || {};
   const gated = autoNeedsPrompt(toolName, ctx.permissionMode);
+  // ‏OBS-084 (تكملة الكاسر الخامس): منذ ترقية SDK لم يعد `bypassPermissions` يُمرَّر إلى
+  // SDK — يبقى وضعاً داخلياً و`canUseTool` هو البوابة الوحيدة (وإلا سقطت حراسات «سطر»
+  // الصارمة لأن SDK يتوقف عن استدعاء المعالج تحت bypass). ولأن هذه الدالة لم تكن تعرف
+  // الوضع أصلاً، كانت الأدوات غير المتصفحية تعود `prompt` فيظهر مربع إذن في وضع «تجاوز
+  // كل الأذونات» — تراجع مقيس: `Bash`/`Write`/`Edit`/`Read` ⇒ `prompt`. الموضع هنا
+  // **بعد** الحراسات الصارمة في `canUseTool` (حجب المتصفح الخارجي، السر الظاهر، lease،
+  // stale_ref) وهي تسبق هذه الدالة في المسار، فيطابق ما تفعله كتلة المتصفح لنفسها.
+  if (ctx.permissionMode === 'bypassPermissions') return 'allow';
   if (!gated && ctx.alwaysAllowed && ctx.alwaysAllowed.has(toolName)) return 'allow';
   if (ctx.readOnly) return 'allow';
   if (ctx.browserControl && ctx.browserTool) return 'allow';

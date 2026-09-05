@@ -41,8 +41,59 @@ const envbrief = require('../envbrief');
 const usage = require('./usage'); // عقد input/output/cached/reasoning موحّد للمحوّلات
 
 const MAX_TURNS = 40;       // آخر 40 رسالة لكل جلسة (سقف الرموز)
+const PROTECTED_TOOL_ROUNDS = 1; // آخر جولة أدوات تبقى كاملة ليستطيع النموذج متابعة عمله
+const CLEARED_TOOL_RESULT_TAIL_CHARS = 2000; // ذيل مفيد من النتائج الأقدم (رادار ٠٠٣، محور E)
 const MAX_SESSIONS = 50;    // سقف الجلسات في الكاش الحيّ لكل مزوّد
 const MAX_TOOL_ROUNDS = 8;  // سقف جولات الأدوات في الدور الواحد (حارس حلقة لانهائية)
+
+const CLEARED_TOOL_RESULT_NOTICE = '[مُسحت نتيجة أداة قديمة لتقليل حجم السياق. '
+  + 'لا تفترض محتواها الكامل؛ لاستعادته شغّل read_file أو run_command مرة أخرى.]';
+
+/**
+ * ينسخ سجل الطلب ويمسح **محتوى** نتائج الأدوات الأقدم فقط. لا يحذف الرسائل ولا
+ * يغيّر اقتران tool_call_id، وآخر جولة محمية كاملة. الأصل الذي تحفظه chats.js
+ * لا يُمسّ؛ هذه نسخة عابرة لجسم الطلب وحده.
+ */
+function clearOldToolResults(messages) {
+  if (!Array.isArray(messages) || !messages.length) return [];
+  const protectedIds = new Set();
+  let protectedRounds = 0;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    const calls = message && message.role === 'assistant' && Array.isArray(message.tool_calls)
+      ? message.tool_calls : [];
+    if (!calls.length) continue;
+    if (protectedRounds < PROTECTED_TOOL_ROUNDS) {
+      for (const call of calls) {
+        if (call && typeof call.id === 'string' && call.id) protectedIds.add(call.id);
+      }
+    }
+    protectedRounds++;
+  }
+
+  return messages.map((message) => {
+    if (!message || message.role !== 'tool' || protectedIds.has(message.tool_call_id)
+        || typeof message.content !== 'string'
+        || message.content.startsWith(CLEARED_TOOL_RESULT_NOTICE)) return message;
+    const tail = message.content.slice(-CLEARED_TOOL_RESULT_TAIL_CHARS);
+    return { ...message, content: CLEARED_TOOL_RESULT_NOTICE + '\n\n[ذيل النتيجة المحفوظ]\n' + tail };
+  });
+}
+
+// السقف القائم يبقى مستقلاً: نسخة الحفظ تمرّ هنا بلا مسح فتظل حقيقة القرص كاملة.
+function capHistory(messages) {
+  const capped = Array.isArray(messages) ? messages.slice() : [];
+  while (capped.length > MAX_TURNS) capped.shift();
+  // لا رسالة أداة يتيمة في المقدمة بعد القصّ (المزوّد يرفض tool بلا نداء يسبقها)
+  while (capped.length && capped[0].role === 'tool') capped.shift();
+  return capped;
+}
+
+/** المسح يسبق سقف الرسائل، ثم تُضاف بادئة OBS-103 بايتياً كما بناها context.js. */
+function prepareRequestMessages(messages, systemPrompt) {
+  const prepared = capHistory(clearOldToolResults(messages));
+  return systemPrompt ? [{ role: 'system', content: systemPrompt }].concat(prepared) : prepared;
+}
 
 // ---- حدود المعدّل: 429 (‏OBS-086) ----
 // الطبقات المجانية التي تفتح بها البوابة اليوم ضيّقة: Groq ‏30 طلباً و8000 رمز في
@@ -286,9 +337,7 @@ function make(config) {
         if (turnPrompt && turnMessageIndex >= 0 && turnMessageIndex < messagesWithTurnPrompt.length) {
           messagesWithTurnPrompt.splice(turnMessageIndex + 1, 0, { role: 'system', content: turnPrompt });
         }
-        const requestMessages = contextPrompt
-          ? [{ role: 'system', content: contextPrompt }].concat(messagesWithTurnPrompt)
-          : messagesWithTurnPrompt;
+        const requestMessages = prepareRequestMessages(messagesWithTurnPrompt, contextPrompt);
         const bodyObj = { model: useModel, messages: requestMessages, stream: true };
         if (config.promptCacheKey === true) bodyObj.prompt_cache_key = sid;
         if (reasoningEffort) bodyObj.reasoning_effort = reasoningEffort;
@@ -369,6 +418,7 @@ function make(config) {
               text: textBuf,
               reasoning: reasoningBuf,
               calls: [...calls.values()].filter((c) => c.id && c.name),
+              usage: requestUsage,
             });
           });
         });
@@ -449,6 +499,11 @@ function make(config) {
           return;
         }
         estimatedUsage.output_tokens += contextBudget.estimateTokens({ text: r.text, calls: r.calls });
+        // عدّاد الطلب الحقيقي مقدّم؛ إن غاب وحده يسقط القياس إلى character_heuristic
+        // الموسوم. نداءات الأدوات مستثناة لأن عدادها يجمع النص وJSON ولا يمكن فصلُهما.
+        if (r.text && !r.calls.length) {
+          usage.recordOutputMetric((providerId || 'openai-compatible') + ':' + useModel, r.text, r.usage);
+        }
 
         if (r.calls.length && rounds < MAX_TOOL_ROUNDS) {
           rounds++;
@@ -494,10 +549,8 @@ function make(config) {
           messages.push(assistantMessage);
           emit({ type: 'assistant', message: { content: [{ type: 'text', text: r.text }] } });
         }
-        const h = messages.slice();
-        while (h.length > MAX_TURNS) h.shift();
-        // لا رسالة أداة يتيمة في المقدمة بعد القصّ (المزوّد يرفض tool بلا نداء يسبقها)
-        while (h.length && h[0].role === 'tool') h.shift();
+        // الحفظ يأخذ الأصل الكامل؛ المسح خاص بنسخة الطلب ولا يسرّب إلى chats.js.
+        const h = capHistory(messages);
         if (!histories.has(sid) && histories.size >= MAX_SESSIONS) {
           histories.delete(histories.keys().next().value); // إخلاء الأقدم من الكاش
         }
@@ -548,5 +601,7 @@ function make(config) {
 // الحدّية (ترويسة مشوّهة/HTTP-date/سقف) بلا نوم حقيقي لكل حالة.
 module.exports = {
   make, parseRetryAfterMs, classifyRateLimit, rateLimitMessage, planRateLimitWait,
+  clearOldToolResults, capHistory, prepareRequestMessages,
+  MAX_TURNS, PROTECTED_TOOL_ROUNDS, CLEARED_TOOL_RESULT_TAIL_CHARS, CLEARED_TOOL_RESULT_NOTICE,
   MAX_RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_MS, RETRY_AFTER_MAX_MS, RATE_LIMIT_BUDGET_MS,
 };
