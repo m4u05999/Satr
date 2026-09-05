@@ -525,8 +525,15 @@ ipcMain.handle('satr:codexModels', async () => {
   const models = await codex.listModels();
   const efforts = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
   return (Array.isArray(models) ? models : [])
-    .filter((item) => item && item.hidden !== true && SAFE_MODEL.test(item.id || '')
-      && (/^gpt-5\.6-/.test(item.id) || item.id === 'gpt-5.5'))
+    // كان هنا مرشّح عائلة مثبَّت نصّياً `(/^gpt-5\.6-/ || 'gpt-5.5')` كُتب في 2.10.0
+    // (‏`ee2f89e`، يوليو 2026) حين كانت تلك عائلة اليوم، بلا تعليق يبرّره — **فتعفّن
+    // بجيلٍ واحد بالضبط**: أعلن Codex ‏`gpt-6-astra` (مقيس 2026-09-05 على codex-cli
+    // ‏0.153.0 بحساب مصادَق `method:"chatgpt"`) و«سطر» يُسقطه قبل أن يبلغ الواجهة، فيبدو
+    // للمستخدم أن اشتراكه لا يشمل النموذج بينما المزوّد يعلنه. وكان يُسقط معه
+    // `gpt-5.4-mini` و`gpt-5.3-codex-spark`.
+    // المرجع الآن إعلان Codex نفسه: `hidden` علامته الرسمية لما يريد إخفاءه، و`SAFE_MODEL`
+    // يبقى حارس التنقية، والسقف 12 يبقى. فلا يتعفّن الاشتقاق مع كل جيل جديد.
+    .filter((item) => item && item.hidden !== true && SAFE_MODEL.test(item.id || ''))
     .map((item) => ({
       id: item.id,
       name: String(item.displayName || item.id).slice(0, 60),
