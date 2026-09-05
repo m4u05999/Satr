@@ -27,6 +27,19 @@ process.env.SATR_DEVSERVER_FILE = path.join(temp, 'devservers.json');
 const term = require(path.join(ROOT, 'electron', 'term.js'));
 const termjobs = require(path.join(ROOT, 'electron', 'termjobs.js'));
 
+// ‏`OBS-118`: مشهد اللصق يقيس `clusterPasteWrite`، وهو يبطل مساره ويكتب خاماً إن حملت
+// الحافظة صيغة خارج قائمة السماح النصية. فبلا تطبيع تصير نتيجة المشهد تابعةً لما نسخه
+// المستخدم آخر مرة — أخضر أو أحمر بلا علاقة بالكود. التطبيع أفضل جهد: تعذُّره لا يُسقط
+// الطقم (بيئة بلا حافظة)، ويبقى المشهد يقيس ما يستطيع.
+function normalizeClipboardForPaste() {
+  if (process.platform !== 'win32') return;
+  try {
+    require('child_process').execFileSync('powershell.exe',
+      ['-NoProfile', '-Sta', '-Command', 'Set-Clipboard -Value "satr-term-longline-fixture"'],
+      { stdio: 'ignore' });
+  } catch (e) { /* مقصود: بيئة بلا حافظة — لا يُسقط الطقم */ }
+}
+
 let checks = 0;
 function ok(label, cond, detail) {
   checks++;
@@ -388,6 +401,13 @@ async function main() {
     //     الوحدة، ويحفظ لصقها عبر الحافظة (تقرأ نصاً لا أحداث مفاتيح). العلاج في
     //     `term.js` (‏`clusterPasteWrite`): لصق عبر الحافظة + Ctrl+V للإدخال التفاعلي
     //     أحادي السطر. والفحص أدناه يثبت **السلوك الجديد** ويسقط إن عاد الفقد القديم.
+    //     ⚠️ حتمية الحافظة (‏`OBS-118`): `clusterPasteWrite` يبطل مساره ويكتب خاماً إن حملت
+    //     الحافظة **أي** صيغة خارج قائمة السماح النصية — فكانت نتيجة هذا المشهد تتبع محتوى
+    //     حافظة الجهاز لا الكود. مقيس: بحافظة فيها `HTML Format` من Chromium سقط الفحص،
+    //     وبحافظة نصية صرفة مرّ ‏58/58. فتُضبط هنا صراحةً كي يقيس المشهدُ الكودَ وحده.
+    //     وهذا **لا يغطّي** المسار المتدهور نفسه — ذاك عطل منتج مستقل في [OBS-121]، ولا
+    //     يُثبَّت سلوكه هنا عمداً كي لا يصير الحارس عائقاً يوم يُصلَح.
+    normalizeClipboardForPaste();
     const literal = BEH + FATHA + BEH + DAMMA;
     term.writeTermPasted(wrapTerm.id, "Write-Output 'MARK<" + literal + ">'" + '\r');
     let pasteOut = '';
