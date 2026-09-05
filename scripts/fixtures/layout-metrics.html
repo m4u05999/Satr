@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>قياس cssContentSize مقابل innerWidth (OBS-129)</title>
+</head>
+<body>
+  <!-- الارتفاع يحقنه المسبار بـCSSOM لا بسمة `style` المضمّنة (‏CSP، ويرفضها حارس
+       التصميم في fixtures أيضاً). الغاية صفحة أطول من نافذة العرض بلا تجاوز أفقي:
+       تُظهر شريط تمرير رأسياً وحده، وهي حالة `#shot-fixture` في حارس المعاينة. -->
+  <div id="tall">
+    <p>قياس عرض المحتوى مقابل عرض النافذة</p>
+  </div>
+</body>
+</html>

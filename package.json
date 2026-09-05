@@ -60,6 +60,7 @@
     "test:bidi-parity": "electron scripts/bidi-parity-test.js",
     "test:conpty-resize-probe": "node scripts/conpty-resize-probe.js",
     "test:gate-direction-probe": "electron scripts/gate-direction-probe.js",
+    "test:layout-metrics-probe": "electron scripts/layout-metrics-probe.js",
     "test:codex-executor-probe": "node scripts/codex-executor-probe.js",
     "test:loop-live-probe": "node scripts/loop-live-probe.js",
     "test:codex-subagent-live": "node scripts/codex-subagent-live-probe.js",
