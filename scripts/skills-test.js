@@ -290,7 +290,212 @@ async function assertSatrDiverge(discoveryOptions) {
   console.log('✓ satr-diverge packaging and portable contract for Claude, Codex, and Kimi');
 }
 
+// ── مدقّق مواصفة Agent Skills ─────────────────────────────────────────────────
+//
+// المواصفة (agentskills.io/specification) صارت معياراً تقرؤه عشرات العملاء، ومهارات
+// هذا المشروع منقولة إليها. فالفهرسة تُدقّق قبل أن يصل اسم أو وصف إلى نموذج، والعقد
+// المحروس هنا **مزدوج**: المكسورة تُستبعد بسبب مُعلن (fail-closed)، والسليمة تبقى
+// مهما جاورتها مكسورة (fail-open) — لأن حارساً يُخلي فهرس المستخدم عند أول مهارة
+// معطوبة أسوأ من غياب التدقيق أصلاً.
+//
+// المهارات المكسورة تُكتب داخل `project` نفسه عمداً: تأكيد الفهرس الحصري القائم
+// (`['global','legacy','portable','satr-diverge']`) يصير **هو** الدليل أن ستّ مهارات
+// معطوبة لا تُسقط ولا تزحزح البقية، بلا تعديل حرفٍ في ذلك التأكيد.
+const BROKEN_FIXTURES = Object.freeze([
+  { dir: 'mismatch', error: 'name_mismatch', body: ['---', 'name: another-name', 'description: اسم لا يطابق مجلده', '---', 'MISMATCH_MARKER', ''] },
+  { dir: 'Upper-Case', error: 'bad_name', body: ['---', 'name: Upper-Case', 'description: اسم بأحرف كبيرة يخالف المواصفة', '---', 'UPPER_MARKER', ''] },
+  { dir: 'nodesc', error: 'missing_description', body: ['---', 'name: nodesc', '---', 'NODESC_MARKER', ''] },
+  { dir: 'longdesc', error: 'description_too_long', body: ['---', 'name: longdesc', 'description: ' + 'و'.repeat(1025), '---', 'LONGDESC_MARKER', ''] },
+  { dir: 'noyaml', error: 'no_frontmatter', body: ['# بلا ترويسة إطلاقاً', 'NOYAML_MARKER', ''] },
+  { dir: 'noname', error: 'missing_name', body: ['---', 'description: وصف بلا اسم', '---', 'NONAME_MARKER', ''] },
+]);
+
+async function writeBrokenFixtures(project) {
+  for (const fixture of BROKEN_FIXTURES) {
+    await write(project, '.agents/skills/' + fixture.dir + '/SKILL.md', fixture.body.join('\n'));
+  }
+}
+
+// (أ) عقود الدالة النقية — تُقرأ من المصدر الواحد `skills.validateSkillMeta` لا من نسخة
+// ثانية تتباعد بصمت. الحدود مُثبَّتة بالرقم: 1024 محرفاً تمرّ و1025 تُرفض.
+function assertValidatorUnit() {
+  const good = skills.validateSkillMeta('demo-skill', { name: 'demo-skill', description: 'وصف صالح' });
+  assert.strictEqual(good.ok, true);
+  assert.strictEqual(good.name, 'demo-skill');
+  assert.strictEqual(good.description, 'وصف صالح');
+  assert.strictEqual(good.license, '');
+  assert.strictEqual(good.metadata, null);
+
+  const cases = [
+    [null, 'no_frontmatter'],
+    ['نص لا كائن', 'no_frontmatter'],
+    [{ description: 'بلا اسم' }, 'missing_name'],
+    [{ name: '   ', description: 'اسم فارغ' }, 'missing_name'],
+    [{ name: 'Demo-Skill', description: 'حرف كبير' }, 'bad_name'],
+    [{ name: 'demo_skill', description: 'شرطة سفلية' }, 'bad_name'],
+    [{ name: 'demo skill', description: 'فراغ' }, 'bad_name'],
+    [{ name: 'd'.repeat(65), description: 'أطول من 64' }, 'bad_name'],
+    [{ name: 'other-skill', description: 'اسم آخر' }, 'name_mismatch'],
+    [{ name: 'demo-skill' }, 'missing_description'],
+    [{ name: 'demo-skill', description: '   ' }, 'missing_description'],
+    [{ name: 'demo-skill', description: 'و'.repeat(1025) }, 'description_too_long'],
+  ];
+  for (const [frontmatter, expected] of cases) {
+    const verdict = skills.validateSkillMeta('demo-skill', frontmatter);
+    assert.strictEqual(verdict.ok, false, 'مرّت ترويسة مخالفة: ' + JSON.stringify(frontmatter).slice(0, 80));
+    assert.strictEqual(verdict.error, expected, 'رمز خطأ غير متوقع لـ' + JSON.stringify(frontmatter).slice(0, 80));
+    assert(typeof verdict.message === 'string' && verdict.message.length > 8,
+      'الاستبعاد بلا سبب مقروء — وهو نصف العقد');
+  }
+  // الحدّ نفسه لا يُرفض: 64 محرفاً للاسم و1024 للوصف
+  const edgeName = 'd'.repeat(64);
+  assert.strictEqual(skills.validateSkillMeta(edgeName, { name: edgeName, description: 'x' }).ok, true);
+  const edgeDescription = 'و'.repeat(1024);
+  const edge = skills.validateSkillMeta('demo-skill', { name: 'demo-skill', description: edgeDescription });
+  assert.strictEqual(edge.ok, true);
+  assert.strictEqual(edge.description.length, skills.MAX_DESCRIPTION_CHARS);
+
+  // الوصف حقل سطر واحد: يُطوى الفراغ وتُزال محارف التحكم قبل أن يدخل كتالوج البرومبت
+  // (`- name: description`)، وإلا كسر السطرُ الجديدُ بنيةَ القائمة التي يقرؤها النموذج.
+  const noisy = skills.validateSkillMeta('demo-skill', {
+    name: 'demo-skill',
+    description: '  سطر\nأول\tوثانٍ\u0007 بعد جرس  ',
+  });
+  assert.strictEqual(noisy.ok, true);
+  assert.strictEqual(noisy.description, 'سطر أول وثانٍ بعد جرس');
+
+  // الحقل الاختياري المشوّه يسقط وحده ولا يُسقط المهارة — زينة لا يُبنى عليها قرار.
+  const optional = skills.validateSkillMeta('demo-skill', {
+    name: 'demo-skill',
+    description: 'وصف',
+    license: 'L'.repeat(200),
+    metadata: ['ليست خريطة'],
+  });
+  assert.strictEqual(optional.ok, true);
+  assert.strictEqual(optional.license, '');
+  assert.strictEqual(optional.metadata, null);
+
+  const kept = skills.validateSkillMeta('demo-skill', {
+    name: 'demo-skill',
+    description: 'وصف',
+    license: 'MIT',
+    metadata: { project: 'x', 'مفتاح غير لاتيني': 'يسقط', empty: '   ' },
+  });
+  assert.deepStrictEqual(kept.metadata, { project: 'x' });
+  assert.strictEqual(kept.license, 'MIT');
+
+  // كل اسم يقبله المدقّق يجب أن يجتاز SAFE_NAME أيضاً، وإلا سقط في تنقية القنوات
+  // العليا (`SAFE_SKILL` في العملية الرئيسية) بعد أن أجازته الفهرسة.
+  for (const name of ['a', 'demo-skill', '0-9', 'd'.repeat(64)]) {
+    assert(skills.SPEC_NAME.test(name) && skills.SAFE_NAME.test(name),
+      'اسم يقبله SPEC_NAME ويرفضه SAFE_NAME: ' + name);
+  }
+  console.log('✓ مدقّق المواصفة: الحقول الإلزامية وحدودها، والاختياري المشوّه يسقط وحده');
+}
+
+// (ب) عقود الفهرسة الحقيقية على القرص
+async function assertSpecDiscovery(project, temp, discoveryOptions) {
+  const invalid = [];
+  const catalog = skills.discoverSkills(project, Object.assign({ invalid }, discoveryOptions));
+
+  // fail-closed: لا مكسورة في الفهرس، ولا تحت اسمها المُعلن ولا تحت اسم مجلدها
+  for (const fixture of BROKEN_FIXTURES) {
+    assert(!catalog.some((skill) => skill.name === fixture.dir),
+      'مهارة مخالفة للمواصفة دخلت الفهرس: ' + fixture.dir);
+  }
+  assert(!catalog.some((skill) => skill.name === 'another-name'),
+    'اسم لا يطابق مجلده دخل الفهرس — `load_skill` كان سيسلّم محتوى مجلد آخر');
+
+  // ولا يكون الاستبعاد صامتاً: سبب لكل واحدة، بالرمز المتوقع وباسم مجلدها في الرسالة
+  for (const fixture of BROKEN_FIXTURES) {
+    const reason = invalid.find((entry) => entry.name === fixture.dir);
+    assert(reason, 'استُبعدت ' + fixture.dir + ' بلا سبب مُبلَّغ');
+    assert.strictEqual(reason.error, fixture.error, 'رمز استبعاد غير متوقع لـ' + fixture.dir);
+    assert(reason.message.includes(fixture.dir) || reason.message.includes('another-name'),
+      'رسالة الاستبعاد لا تسمّي المهارة: ' + reason.message);
+    assert(reason.file.includes('SKILL.md'), 'سبب الاستبعاد بلا مسار الملف');
+  }
+
+  // fail-open: المهارات السليمة كلها باقية رغم ستّ مكسورة بجوارها
+  assert.deepStrictEqual(catalog.map((skill) => skill.name), ['global', 'legacy', 'portable', 'satr-diverge'],
+    'مهارة مكسورة أسقطت بقية الفهرس أو زحزحته');
+
+  // المكسورة محجوبة عن البرومبت وعن التحميل، لا مستبعَدة من العرض فقط
+  const selection = skills.resolveSelection(project, 'all', discoveryOptions);
+  const prompt = skills.catalogPrompt(selection);
+  for (const fixture of BROKEN_FIXTURES) assert(!prompt.includes(fixture.dir), 'مكسورة في كتالوج البرومبت: ' + fixture.dir);
+  assert.strictEqual(skills.loadSkill(selection, 'mismatch').ok, false);
+  assert.strictEqual(skills.loadSkill(selection, 'another-name').ok, false);
+
+  // السبب يُعلَن ولو لم يطلب المتصل مجمّعاً — وإلا صار الاستبعاد صمتاً عند الاستدعاء
+  // الإنتاجي (main.js يستدعي discoverSkills بلا `invalid`). المهارة هنا جديدة كي لا
+  // يبتلعها إسقاط التكرار (مرة واحدة لكل ملف/سبب في عمر العملية).
+  const quiet = path.join(temp, 'quiet-project');
+  await write(quiet, '.agents/skills/silent-check/SKILL.md', ['---', 'name: not-silent-check', 'description: يجب أن يُعلَن سبب استبعادها', '---', ''].join('\n'));
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  try { skills.discoverSkills(quiet, discoveryOptions); } finally { console.warn = original; }
+  assert(warnings.some((line) => line.includes('silent-check') && line.includes('not-silent-check')),
+    'استُبعدت مهارة بلا أي إعلان: ' + JSON.stringify(warnings));
+
+  // خطأ تحليل حقيقي: خريطة `metadata` المتداخلة كانت تُقرأ مفاتيحَ عليا، فمفتاح
+  // `name` بداخلها يخطف اسم المهارة ويصير `load_skill` بابَ خلط بين مجلدين.
+  const nested = path.join(temp, 'nested-project');
+  await write(nested, '.agents/skills/nested-meta/SKILL.md', [
+    '---', 'name: nested-meta', 'description: خريطة متداخلة',
+    'license: FSL-1.1-MIT', 'metadata:', '  name: hijacked', '  project: satr', '---', 'NESTED_MARKER', '',
+  ].join('\n'));
+  const nestedCatalog = skills.discoverSkills(nested, discoveryOptions);
+  const nestedSkill = nestedCatalog.find((skill) => skill.name === 'nested-meta');
+  assert(nestedSkill, 'مهارة صالحة بخريطة metadata لم تُكتشف');
+  assert(!nestedCatalog.some((skill) => skill.name === 'hijacked'),
+    'مفتاح داخل metadata خطف اسم المهارة — عاد خطأ تحليل الخريطة المتداخلة');
+  assert.strictEqual(nestedSkill.license, 'FSL-1.1-MIT');
+  assert.deepStrictEqual(nestedSkill.metadata, { name: 'hijacked', project: 'satr' });
+  const nestedPublic = (await skills.listSkills(nested)).find((skill) => skill.name === 'nested-meta');
+  assert.strictEqual(nestedPublic.license, 'FSL-1.1-MIT');
+  // ولا يدخل الحقلان كتالوج البرومبت: بيانات ترخيص/نسخة تستهلك رموزاً كل دور بلا أثر
+  // في قرار التحميل.
+  const nestedPrompt = skills.catalogPrompt(skills.resolveSelection(nested, 'all', discoveryOptions));
+  assert(!nestedPrompt.includes('FSL-1.1-MIT') && !nestedPrompt.includes('hijacked'),
+    'حقول المواصفة الاختيارية تسرّبت إلى كتالوج البرومبت');
+  console.log('✓ الفهرسة تستبعد المخالف بسبب مُعلن وتُبقي السليم، وخريطة metadata لا تخطف الاسم');
+}
+
+// (ج) حقول المواصفة على مهارات «سطر» — الرخصة تُقرأ من LICENSE لا تُفترض.
+// القائمة تُشتقّ من القرص لا من نسخة مكتوبة هنا: مهارة satr-* جديدة بلا الحقول تسقط.
+function assertSkillSpecFields() {
+  const licenseText = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8');
+  const abbreviation = licenseText.match(/##\s*Abbreviation\s*\r?\n\s*\r?\n(.+)/);
+  assert(abbreviation && abbreviation[1].trim(), 'تعذّرت قراءة اختصار الرخصة من LICENSE');
+  const declared = abbreviation[1].trim();
+
+  const root = path.join(ROOT, '.agents', 'skills');
+  const owned = fs.readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('satr-'))
+    .map((entry) => entry.name)
+    .sort();
+  assert(owned.length >= 7, 'عدد مهارات سطر أقل من المتوقع: ' + owned.length);
+
+  const catalog = skills.discoverSkills(ROOT, { home: path.join(ROOT, 'no-such-home'), builtinRoot: path.join(ROOT, 'no-such-builtin') });
+  for (const name of owned) {
+    const skill = catalog.find((item) => item.name === name);
+    assert(skill, 'مهارة سطر غير مكتشفة (أو رفضها المدقّق): ' + name);
+    assert.strictEqual(skill.license, declared,
+      'رخصة ' + name + ' لا تطابق LICENSE في الجذر: ' + JSON.stringify(skill.license) + ' ≠ ' + declared);
+    assert(skill.metadata && skill.metadata.project === 'satr',
+      'مهارة سطر بلا metadata.project: ' + name);
+    assert(skill.metadata.author, 'مهارة سطر بلا metadata.author: ' + name);
+  }
+  // tafqeet مثال مشروع لا مهارة سطر — لا يُفرض عليها الإعلان، ويبقى اكتشافها سليماً.
+  const example = catalog.find((item) => item.name === 'tafqeet');
+  assert(example && !example.license, 'مثال المشروع tafqeet تغيّر عقده');
+  console.log('✓ مهارات سطر (' + owned.length + ') تعلن license مطابقة لـLICENSE ‏(' + declared + ') وmetadata');
+}
+
 async function main() {
+  assertValidatorUnit();
   const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'satr-skills-test-'));
   const project = path.join(temp, 'project');
   const home = path.join(temp, 'home');
@@ -322,6 +527,10 @@ async function main() {
     await write(discoveryOptions.builtinRoot, 'untrusted/SKILL.md', [
       '---', 'name: untrusted', 'description: يجب ألا تُكتشف من المضمّنات', '---', 'UNTRUSTED_MARKER', '',
     ].join('\n'));
+
+    // ستّ مهارات مخالفة للمواصفة بجوار السليمة: التأكيد التالي (الفهرس الحصري) هو
+    // الدليل أنها لا تُسقط البقية ولا تزحزحها — انظر assertSpecDiscovery.
+    await writeBrokenFixtures(project);
 
     const catalog = skills.discoverSkills(project, discoveryOptions);
     assert.deepStrictEqual(catalog.map((skill) => skill.name), ['global', 'legacy', 'portable', 'satr-diverge']);
@@ -378,6 +587,8 @@ async function main() {
     console.log('✓ satr-accept: مضمّنة ومحزومة، وقواعدها الملزمة وحدودها ومثالها الحيّ في النص');
     await assertSatrDesignAr(discoveryOptions);
     console.log('✓ satr-design-ar: مضمّنة ومحزومة، وفحصها المركزي وحدودها في النص، ومحمولة بلا مسار من مستودعنا');
+    await assertSpecDiscovery(project, temp, discoveryOptions);
+    assertSkillSpecFields();
     if (process.argv.includes('--live-codex')) await runLiveProbe('codex', project);
     if (process.argv.includes('--live-sdk')) await runLiveProbe('sdk', project);
   } finally {
