@@ -22,7 +22,13 @@ const PROVIDER = 'openai';
 const API_HOST = 'api.openai.com';
 const API_PATH = '/v1/responses';
 const DEFAULT_MODEL = 'gpt-5.6-terra';
+// `gpt-6-astra` (أُطلق 2026-09-03) نموذج OpenAI الرائد، ويعمل عبر Responses API نفسه
+// فلا يحتاج مساراً جديداً. الحقول من صفحته الرسمية لا من مُجمِّع: سياق 1,050,000
+// (‏922K إدخال · 128K إخراج) · رؤية · الجهد الخمسة كاملةً.
+// **ولم يُجعل الافتراضي عمداً**: سعره 10/1/50 لكل مليون مقابل 2.5/0.25/15 لـTerra —
+// أي أربعة أضعافه إدخالاً و3.3× إخراجاً، فجعله افتراضياً يضاعف فاتورة كل دور بلا طلب.
 const MODELS = new Set([
+  'gpt-6-astra',
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna',
@@ -30,6 +36,7 @@ const MODELS = new Set([
   'gpt-5.4-nano',
 ]);
 const MODEL_CAPABILITIES = new Map([
+  ['gpt-6-astra', { vision: true, effort: new Set(['low', 'medium', 'high', 'xhigh', 'max']) }],
   ['gpt-5.6-sol', { vision: true, effort: new Set(['low', 'medium', 'high', 'xhigh', 'max']) }],
   ['gpt-5.6-terra', { vision: true, effort: new Set(['low', 'medium', 'high', 'xhigh', 'max']) }],
   ['gpt-5.6-luna', { vision: true, effort: new Set(['low', 'medium', 'high', 'xhigh', 'max']) }],
