@@ -165,7 +165,7 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
    'generate_media',
    'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
-  ok(names.length === 37, 'عدد أدوات Codex MCP أصبح 37 (27 متصفح — منها close_preview ‏OBS-020 وbrowser_readability — + 5 خلفية، منها wait_for_background_task، + generate_media + 4 برومو)');
+  ok(names.length === 38, 'عدد أدوات Codex MCP أصبح 38 (28 متصفح — منها close_preview ‏OBS-020 وbrowser_readability وread_article — + 5 خلفية، منها wait_for_background_task، + generate_media + 4 برومو)');
   ok(names.includes('wait_for_background_task'), 'أداة الانتظار الحاجب غائبة عن tools/list');
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
   const builtTools = codexmcp.buildTools({ preview, cwd: process.cwd(), genmedia, promoCapture, promoStudio });

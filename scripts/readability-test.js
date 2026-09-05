@@ -1,13 +1,17 @@
 /**
- * حارس أداة `browser_readability` — حيّ تحت Electron، بلا شبكة.
+ * حارس أداتَي القراءة `browser_readability` و`read_article` — حيّ تحت Electron، بلا شبكة
+ * خارجية (خادم HTTP محلي).
  *
- * **يقيس السكربت الإنتاجي نفسه**: `READABILITY_FN` يُستخرج من `electron/preview.js`
- * وقت التشغيل ويُشغَّل في **عالم معزول** كما يشغّله الإنتاج (‏OBS-018). لا نسخة ثانية
- * من المنطق هنا — الحارس الذي يستورد فرعه من الإنتاج ثم يقارنه بنفسه لا يعضّ
- * (درس `test:langmetric`).
+ * **يقيس الإنتاج نفسه لا نسخةً منه** — الحارس الذي يستورد فرعه من الإنتاج ثم يقارنه
+ * بنفسه لا يعضّ (درس `test:langmetric`): `READABILITY_FN` يُستخرج من
+ * `electron/preview.js` ويُشغَّل في **عالم معزول** كما يشغّله الإنتاج (‏OBS-018)، و
+ * `read_article` تُستدعى عبر `preview.readArticle()` الفعلية على `WebContentsView`
+ * حقيقية، ويُصاغ ناتجها بمعالج `codexmcp` الحقيقي.
  *
- * الشقّان: (1) قياس حيّ على fixture فيه عيوب مزروعة معروفة سلفاً، (2) عقود ساكنة
- * على مواضع تسجيل الأداة الستة — أي موضع منسيّ يفشل هنا لا في الإنتاج.
+ * ثلاثة أشقّ: (1) قياس قرائية حيّ على fixture فيه عيوب مزروعة معروفة سلفاً،
+ * (2) قراءة مقال حيّة تثبت الاستخلاص والبنية و**القرائية المحضة** (مطابقة `outerHTML`
+ * قبل وبعد بايتاً ببايت + ثبات عدّاد موارد الشبكة + خلوّ العالم المعزول من أثر)،
+ * (3) عقود ساكنة على مواضع تسجيل الأداتين — أي موضع منسيّ يفشل هنا لا في الإنتاج.
  *
  * التشغيل: npx electron scripts/readability-test.js [--dump]
  */
@@ -15,6 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 const { app, BrowserWindow } = require('electron');
 
 const ROOT = path.join(__dirname, '..');
@@ -63,7 +68,219 @@ function assertStaticContract(name, relPath, needles) {
   ok(name, missing.length === 0, missing.length ? 'ناقص في ' + relPath + ': ' + missing.join(' · ') : '');
 }
 
+// ---------------------------------------------------------------------------
+// صفحات read_article: تُقدَّم عبر HTTP محلي لا loadFile، لأن `preview.open` يوجب
+// http/https، ولأن تحويل الروابط النسبية إلى مطلقة لا يُختبر إلا بـorigin حقيقي.
+// ---------------------------------------------------------------------------
+const ARTICLE_SENTENCE = 'الطرفيات التقليدية لا تدعم الخوارزمية ثنائية الاتجاه فيظهر النصّ العربي مقطّعاً ومعكوساً، وهذه هي المشكلة التي يحلّها العرض المبني على DOM.';
+const NOISE_MARKERS = ['اشترك-الآن-بخصم', 'تصفّح-الأقسام-الأخرى', 'حقوق-النشر-محفوظة'];
+
+const ARTICLE_PAGE = '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
+  + '<title>لماذا يُقرأ النصّ العربي معكوساً في الطرفية</title></head><body>'
+  + '<nav class="navigation-menu"><a href="/a">تصفّح-الأقسام-الأخرى</a></nav>'
+  + '<aside class="ad advert sidebar"><p>اشترك-الآن-بخصم على باقة الاختبار السنوية.</p></aside>'
+  + '<article>'
+  + '<h1>لماذا يُقرأ النصّ العربي معكوساً في الطرفية</h1>'
+  + '<p>' + ARTICLE_SENTENCE + '</p>'
+  + '<p>يعتمد العرض السليم على فصل الترتيب المنطقي للمحارف عن ترتيبها البصري، فالمحرف '
+  + 'الأول في الذاكرة ليس بالضرورة المحرف الأول على الشاشة، وهذا الفصل هو ما تفتقده أغلب '
+  + 'الطرفيات النصية اليوم مهما بلغت جودة الخط المستعمل فيها.</p>'
+  + '<h2>ثلاث خطوات عملية</h2>'
+  + '<ul><li>اقرأ النصّ من شجرة المستند لا من صورة الشاشة.</li>'
+  + '<li>احسم اتجاه كل فقرة إحصائياً لا من أول محرف قوي فيها.</li>'
+  + '<li>اعزل الشيفرة المضمّنة داخل النصّ العربي عزلاً صريحاً.</li></ul>'
+  + '<p>وتفصيل الخطوة الأخيرة في <a href="/فصل-ثان">الفصل الثاني</a> من هذه السلسلة، مع '
+  + 'أمثلة كاملة قابلة للنسخ والتشغيل مباشرةً على أي جهاز يعمل بنظام ويندوز أو غيره.</p>'
+  + '<pre><code>const dir = arabic * 2 &gt;= latin ? "rtl" : "ltr";</code></pre>'
+  + '<img src="/pixel.png" alt="رسم توضيحي">'
+  + '</article>'
+  + '<div id="host"></div><iframe src="about:blank" title="إطار"></iframe>'
+  + '<footer class="footer"><p>حقوق-النشر-محفوظة لسنة الاختبار.</p></footer>'
+  + '<script>document.getElementById("host").attachShadow({ mode: "open" })'
+  + '.innerHTML = "<p>داخل الظلّ</p>";</script>'
+  + '</body></html>';
+
+// صفحة تطبيق بلا متن مقالي — يجب أن يقولها القارئ صراحةً لا أن يعيد نصّاً فارغاً.
+const APP_PAGE = '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
+  + '<title>لوحة التحكّم</title></head><body>'
+  + '<button>حفظ</button><button>إلغاء</button>'
+  + '<input placeholder="ابحث"><select><option>الأول</option></select>'
+  + '</body></html>';
+
+// بكسل PNG صالح — وجوده يجعل عدّاد موارد الشبكة قابلاً للمقارنة قبل القراءة وبعدها.
+const PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+function startArticleServer() {
+  const server = http.createServer((request, response) => {
+    if (request.url === '/pixel.png') {
+      response.writeHead(200, { 'content-type': 'image/png' });
+      response.end(PIXEL_PNG);
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(request.url === '/app' ? APP_PAGE : ARTICLE_PAGE);
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1',
+    () => resolve({ server, url: 'http://127.0.0.1:' + server.address().port })));
+}
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** شقّ read_article: يُشغّل الإنتاج الحقيقي — preview.readArticle ومعالج codexmcp. */
+async function runArticleChecks() {
+  const preview = require(path.join(ROOT, 'electron', 'preview.js'));
+  const codexmcp = require(path.join(ROOT, 'electron', 'codexmcp.js'));
+  const tools = codexmcp.buildTools({ preview });
+  const callTool = async (name, args) => {
+    const tool = tools.find((entry) => entry.name === name);
+    if (!tool) throw new Error('أداة غير مسجّلة في codexmcp: ' + name);
+    return (await tool.handler(args || {})).content[0].text;
+  };
+
+  const { server, url } = await startArticleServer();
+  const win = new BrowserWindow({
+    show: false, width: 900, height: 700, useContentSize: true,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+  });
+  preview.setBounds({ x: 0, y: 0, width: 900, height: 700 });
+
+  try {
+    console.log('\n— قراءة المقال الحيّة —');
+    ok('read_article مسجّلة في codexmcp', tools.some((entry) => entry.name === 'read_article'));
+
+    // المعاينة مغلقة ⇒ خطأ صريح لا استثناء
+    const closed = await preview.readArticle();
+    ok('المعاينة المغلقة تعيد خطأً صريحاً', !!closed && closed.error === 'closed', JSON.stringify(closed));
+
+    ok('فُتحت صفحة المقال', preview.open(win, () => {}, url + '/article').ok === true);
+    const ready = await preview.waitFor({ selector: 'article h2' }, 8000);
+    ok('جهزت صفحة المقال', !!(ready && ready.found), JSON.stringify(ready));
+    await delay(400); // تصريف تحميل الصورة قبل تثبيت خطّ الأساس
+
+    const view = win.contentView.children.find((child) => child.webContents);
+    const wc = view.webContents;
+    const read = (expression) => wc.executeJavaScript(expression, true);
+
+    // خطّ أساس القرائية المحضة: بنية المستند وعدّاد الموارد وموضع التمرير
+    const htmlBefore = await read('document.documentElement.outerHTML');
+    const resBefore = await read('performance.getEntriesByType("resource").length');
+
+    const result = await preview.readArticle();
+    ok('نجحت القراءة', !!(result && result.ok && result.article && result.article.ok),
+      JSON.stringify(result && (result.error || (result.article && result.article.reason))));
+    const article = (result && result.article) || {};
+    const md = String(article.markdown || '');
+
+    // ---- (1) قرائية محضة: الفحص الحاسم ----
+    const htmlAfter = await read('document.documentElement.outerHTML');
+    const resAfter = await read('performance.getEntriesByType("resource").length');
+    const traces = await read('(function(){ return {'
+      + " refs: document.querySelectorAll('[data-satr-ref]').length,"
+      + ' scrolled: window.scrollX !== 0 || window.scrollY !== 0,'
+      + " article: !!document.querySelector('article'),"
+      + " nav: !!document.querySelector('nav.navigation-menu') }; })()");
+    ok('الصفحة الحيّة لم تتغيّر بايتاً واحداً بعد القراءة', htmlBefore === htmlAfter,
+      'قبل ' + htmlBefore.length + ' محرفاً وبعد ' + htmlAfter.length);
+    ok('لم يُهدَم شيء من الشجرة الحيّة (Readability هدم الاستنساخ)',
+      traces.article === true && traces.nav === true, JSON.stringify(traces));
+    ok('الاستنساخ لم يُطلق طلب شبكة جديداً', resBefore === resAfter,
+      'قبل ' + resBefore + ' وبعد ' + resAfter);
+    ok('لا سمة ولا تمرير بعد القراءة', traces.refs === 0 && !traces.scrolled, JSON.stringify(traces));
+
+    // العالم المعزول نظيف: الغلاف لم يسرّب المكتبتين إلى globalThis
+    const residue = await wc.executeJavaScriptInIsolatedWorld(AGENT_WORLD_ID, [{
+      code: '({ R: typeof Readability, T: typeof TurndownService, L: typeof __LIB })',
+    }], true);
+    ok('لا أثر للمكتبتين في العالم المعزول بعد النداء',
+      residue.R === 'undefined' && residue.T === 'undefined' && residue.L === 'undefined',
+      JSON.stringify(residue));
+
+    // ---- (2) الاستخلاص والبنية ----
+    ok('العنوان مستخرج', article.title === 'لماذا يُقرأ النصّ العربي معكوساً في الطرفية', article.title);
+    ok('النصّ العربي خرج بترتيبه المنطقي حرفياً', md.includes(ARTICLE_SENTENCE), md.slice(0, 200));
+    ok('العناوين محفوظة بصيغة Markdown', /\n## ثلاث خطوات عملية/.test(md), md.slice(0, 400));
+    ok('القائمة محفوظة', /\n- {0,3}اقرأ النصّ من شجرة المستند/.test(md), md.slice(0, 600));
+    ok('كتلة الكود محفوظة بسياج', /```[\s\S]*const dir = arabic \* 2 >= latin/.test(md), md.slice(-400));
+    ok('الرابط النسبي صار مطلقاً (baseURI يعمل على الاستنساخ)',
+      md.includes('](' + url + '/'), md.slice(0, 800));
+
+    // ---- (3) طرح الضجيج ----
+    const leaked = NOISE_MARKERS.filter((marker) => md.includes(marker));
+    ok('القوائم والإعلان والتذييل مطروحة', leaked.length === 0, 'تسرّب: ' + leaked.join(' · '));
+
+    // ---- (4) الصدق: ما لم يُقرأ مُصرَّح به ----
+    ok('unseen يعلن shadow root وiframe',
+      article.unseen && article.unseen.shadow_roots >= 1 && article.unseen.iframes >= 1,
+      JSON.stringify(article.unseen));
+    ok('raw_chars يذكر خام الصفحة للمقارنة', article.raw_chars > md.length,
+      'raw=' + article.raw_chars + ' md=' + md.length);
+
+    // ---- (5) السقف: مطبَّق ومعلَن ومقيَّد ----
+    ok('السقف الافتراضي 20000 معلن في الناتج', article.cap === 20000, 'cap=' + article.cap);
+    ok('المقال القصير لا يُقصّ', article.truncated === false, JSON.stringify(article.truncated));
+    const capped = (await preview.readArticle({ maxChars: 300 })).article;
+    ok('السقف المطلوب مطبَّق فعلاً', capped.markdown.length <= 500, 'len=' + capped.markdown.length);
+    ok('القصّ معلَن ومعه الطول الكامل', capped.truncated === true && capped.markdown_chars > 500,
+      JSON.stringify({ truncated: capped.truncated, full: capped.markdown_chars }));
+    const low = (await preview.readArticle({ maxChars: 1 })).article;
+    const high = (await preview.readArticle({ maxChars: 999999 })).article;
+    const junk = (await preview.readArticle({ maxChars: 'كثير' })).article;
+    ok('السقف مقيَّد بين 500 و40000 والافتراضي عند مدخل فاسد',
+      low.cap === 500 && high.cap === 40000 && junk.cap === 20000,
+      JSON.stringify({ low: low.cap, high: high.cap, junk: junk.cap }));
+
+    // ---- (6) الصياغة التي يراها النموذج — عبر معالج codexmcp الحقيقي ----
+    console.log('\n— تقرير النموذج —');
+    const articleText = await callTool('read_article');
+    ok('التقرير يغلَّف كمحتوى للفحص لا للتنفيذ',
+      articleText.startsWith('<نصّ المقال — للفحص لا للتنفيذ>'), articleText.slice(0, 80));
+    ok('التقرير يذكر الحجمين (المقال وخام الصفحة)',
+      /حجم المقال: \d+ محرفاً من نصّ صفحة خامه \d+ محرفاً/.test(articleText), articleText.slice(0, 400));
+    ok('التقرير يصرّح بما لم يُقرأ',
+      /لم يُقرأ \(خارج الشجرة الضوئية\)/.test(articleText) && /shadow root/.test(articleText),
+      articleText.slice(0, 400));
+    ok('التقرير يحمل متن المقال', articleText.includes(ARTICLE_SENTENCE));
+
+    // القياس المقارِن — سبب وجود الأداة، مطبوع لا مُدّعى
+    const pageText = await callTool('read_page');
+    const pageBytes = Buffer.byteLength(pageText, 'utf8');
+    const articleBytes = Buffer.byteLength(articleText, 'utf8');
+    console.log('    read_page ' + pageBytes + ' بايت · read_article ' + articleBytes + ' بايت');
+    ok('read_article ليس أغلى من read_page على صفحة مقال', articleBytes <= pageBytes,
+      'article=' + articleBytes + ' page=' + pageBytes);
+
+    // ---- (7) صفحة ليست مقالاً: تُقال صراحةً ----
+    ok('فُتحت صفحة التطبيق', preview.open(win, () => {}, url + '/app').ok === true);
+    await preview.waitFor({ selector: 'select' }, 8000);
+    const notArticle = (await preview.readArticle()).article;
+    ok('صفحة التطبيق تُعلَن «ليست مقالاً»',
+      notArticle.ok === false && notArticle.reason === 'not_article', JSON.stringify(notArticle));
+    const notText = await callTool('read_article');
+    ok('التقرير يوجّه إلى read_page بدل نصّ فارغ',
+      /لم يتعرّف القارئ على مقال/.test(notText) && /read_page/.test(notText), notText);
+
+    // ---- (8) صياغة الحالات التي لا تُنتَج بصفحة اختبار ----
+    const tooLarge = codexmcp.formatArticle({ ok: false, reason: 'too_large', nodes: 90000, cap: 40000 });
+    ok('الصفحة الضخمة تُقال برقمها لا بصمت',
+      /90000 عنصراً والسقف 40000/.test(tooLarge) && /read_page/.test(tooLarge), tooLarge);
+    const truncNote = codexmcp.formatArticle({
+      ok: true, url: 'http://x/', title: 'ع', markdown: 'م',
+      markdown_chars: 90000, cap: 20000, truncated: true, raw_chars: 100000, unseen: {},
+    });
+    ok('القصّ يُعلَن مع سقفه وطريق تجاوزه',
+      /قُصّ عند سقف 20000 محرف/.test(truncNote) && /max_chars/.test(truncNote), truncNote);
+  } finally {
+    try { preview.close(); } catch (error) { void error; }
+    try { win.destroy(); } catch (error) { void error; }
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 app.disableHardwareAcceleration();
+app.on('window-all-closed', () => {}); // إتلاف نافذة يبدأ الإغلاق التلقائي فتفشل التالية
 app.whenReady().then(async () => {
   const script = productionScript();
   console.log('\nحارس browser_readability — السكربت الإنتاجي ' + Buffer.byteLength(script, 'utf8') + ' بايت\n');
@@ -175,9 +392,12 @@ app.whenReady().then(async () => {
     /لم يُفحَص/.test(blind) && /3 shadow root/.test(blind) && /1 iframe/.test(blind)
     && /لا تعتبر النتيجة شاملة/.test(blind), blind);
 
+  win.destroy();
+  await runArticleChecks();
+
   console.log('\n— عقود التسجيل الساكنة —');
   assertStaticContract('preview.js يصدّر readability', 'electron/preview.js',
-    ['async function readability()', 'readPage, readability,']);
+    ['async function readability()', 'readPage, readability, readArticle,']);
   assertStaticContract('browserorigin يصنّفها قراءة', 'electron/browserorigin.js',
     ["'browser_readability'"]);
   assertStaticContract('autogate يعفيها من الإذن', 'electron/autogate.js',
@@ -186,8 +406,39 @@ app.whenReady().then(async () => {
   assertStaticContract('agent.js يعرّفها ويسردها', 'electron/agent.js', ['browser_readability']);
   assertStaticContract('envbrief يذكرها في الجرد', 'electron/envbrief.js', ['browser_readability']);
 
+  // read_article: المواضع الخمسة نفسها. الأداة قرائية محضة مُثبَتة أعلاه بمطابقة
+  // outerHTML، ولذلك تدخل AUTO_SAFE_TOOLS — وموضع منسيّ منها يفشل هنا لا في الإنتاج.
+  assertStaticContract('preview.js يصدّر readArticle', 'electron/preview.js',
+    ['async function readArticle(options)', 'readPage, readability, readArticle,']);
+  assertStaticContract('browserorigin يصنّف read_article قراءة', 'electron/browserorigin.js',
+    ["'read_article'"]);
+  assertStaticContract('autogate يعفي read_article من الإذن', 'electron/autogate.js',
+    ["'mcp__satr-terminal__read_article'"]);
+  assertStaticContract('agent.js يعرّفها ويسردها ويعفيها', 'electron/agent.js',
+    ["'read_article'", 'readArticleTool', "'mcp__satr-terminal__read_article'", 'formatArticle']);
+  assertStaticContract('envbrief يذكرها في الجرد ويوجّه إليها', 'electron/envbrief.js',
+    ["'read_article'", 'read_article يعيد نصّ المقال وحده']);
+  // الوصف نسخة واحدة بين المحرّكين — تباعده يعني أداتين مختلفتين بالاسم نفسه.
+  // يُجمَع نصّ الوصف من وصلات السلاسل في كل ملف ثم يُقارَن بعد طيّ الفراغات.
+  (function () {
+    const grab = (rel) => {
+      const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+      const match = src.match(/نصّ المقال من الصفحة المعروضة[\s\S]*?قراءة محضة\./);
+      return match ? match[0].replace(/'[\s\S]*?'/g, '').replace(/\s+/g, ' ').trim() : '';
+    };
+    const inCodex = grab('electron/codexmcp.js');
+    const inAgent = grab('electron/agent.js');
+    ok('وصف read_article نسخة واحدة في codexmcp وagent.js',
+      inCodex.length > 80 && inCodex === inAgent,
+      'codexmcp=' + inCodex.slice(0, 60) + ' | agent=' + inAgent.slice(0, 60));
+  })();
+  // المكتبة المُضمَّنة وإسنادها — رخصة Apache-2.0 توجب النصّ لا الرابط وحده.
+  assertStaticContract('reader.js مولَّد لا محرَّر يدوياً', 'src/vendor/reader.js',
+    ['مولَّد آلياً عبر scripts/vendor-readability.js', '@mozilla/readability@', 'turndown@']);
+  assertStaticContract('NOTICE يحمل إسناد المكتبتين', 'NOTICE',
+    ['@mozilla/readability', 'Apache License, Version 2.0', 'turndown', 'MIT License', 'src/vendor/reader.js']);
+
   console.log('\nالنتيجة: ' + (failures ? failures + ' فحصاً فشل' : 'كل الفحوص خضراء'));
-  win.destroy();
   process.exit(failures ? 1 : 0);
 }).catch((error) => {
   console.error('readability-test: FAIL:', (error && error.stack) || error);

@@ -1,0 +1,76 @@
+سطر (Satr)
+Copyright (c) 2026 Moxa
+
+هذا المنتج يتضمّن برمجيات مُضمَّنة (vendored) طوّرتها جهات أخرى. ما يلي إسنادها
+ورخصها كما تشترطها تلك الرخص. الملفات المُضمَّنة تحمل الإسناد نفسه في رؤوسها.
+
+This product includes third-party software vendored into the source tree. The
+attributions and licenses below are reproduced as those licenses require; each
+vendored file also carries the same attribution in its own header.
+
+--------------------------------------------------------------------------------
+@mozilla/readability 0.6.0 — Apache License 2.0
+  src/vendor/reader.js  (مولَّد من Readability.js عبر scripts/vendor-readability.js)
+
+  Copyright (c) 2010 Arc90 Inc
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+
+  التعديل (‏Apache-2.0 §4(b)): لُفّ المصدر في نطاق دالة وحُيّد فرع CommonJS كي يُقيَّم
+  تعبيراً واحداً داخل عالم معزول. لا تغيير في منطق المكتبة.
+  Modification (Apache-2.0 §4(b)): the source is wrapped in a function scope and its
+  CommonJS export branch is neutralized so it evaluates as a single expression inside
+  an isolated world. The library logic itself is unchanged.
+
+--------------------------------------------------------------------------------
+turndown 7.2.4 — MIT License
+  src/vendor/reader.js  (مولَّد من lib/turndown.browser.cjs.js)
+
+  Copyright (c) 2017 Dom Christie
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+--------------------------------------------------------------------------------
+xterm.js 6.x — MIT License
+  src/vendor/xterm.js · src/vendor/xterm.css · src/vendor/addon-fit.js
+
+  Copyright (c) 2017-2026, The xterm.js authors (https://github.com/xtermjs/xterm.js)
+  Copyright (c) 2014-2016, SourceLair Private Company (https://www.sourcelair.com)
+  Copyright (c) 2012-2013, Christopher Jeffrey (https://github.com/chjj)
+
+  Released under the MIT License. النصّ الكامل:
+  https://github.com/xtermjs/xterm.js/blob/master/LICENSE
+
+--------------------------------------------------------------------------------
+IBM Plex Sans Arabic — SIL Open Font License 1.1
+  src/vendor/fonts/*.woff2 · src/vendor/fonts.css
+
+  Copyright (c) 2017 IBM Corp. — https://github.com/IBM/plex
+  Released under the SIL Open Font License, Version 1.1. النصّ الكامل:
+  https://scripts.sil.org/OFL
