@@ -136,6 +136,7 @@
     "test:full-evidence": "node scripts/full-suite-evidence-test.js",
     "test:full-timeout": "node scripts/full-suite-timeout-test.js",
     "test:full:evidence": "node scripts/full-suite-evidence.js",
+    "test:full:external": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-full-suite.ps1",
     "version": "node scripts/sync-readme-version.js && git add README.md",
     "test:readme-version": "node scripts/readme-version-test.js",
     "prestart": "node scripts/update-csp.js",

@@ -122,6 +122,7 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
   // ── المشغّلات نفسها: إدراجها يعني طقماً يشغّل نفسه ──
   { name: 'test:full', reason: 'هو المشغّل نفسه (هذا الملف)' },
   { name: 'test:full:evidence', reason: 'غلاف المشغّل الذي يكتب أدلّة التشغيل في dist/test-runs — يشغّل الطقم كاملاً بدوره' },
+  { name: 'test:full:external', reason: 'غلاف PowerShell يشغّل الطقم كاملاً في كونسول مستقل (‏OBS-107) — إدراجه يعني طقماً يشغّل نفسه، وهو ويندوزي بحت' },
   { name: 'eval:agent:baseline', reason: 'يكتب وثيقة baseline في docs/ — يُشغَّل يدوياً عند تحديث خط الأساس لا في كل بوابة' },
   // ── مسابير حيّة: تستهلك أدواراً حقيقية وتحتاج محرّكاً مثبّتاً ومسجَّل الدخول ──
   { name: 'test:codex-executor-probe', reason: 'مسبار حيّ خارج الطقم — يشغّل Codex فعلياً' },
