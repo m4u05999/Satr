@@ -42,6 +42,41 @@ async function testOptionsAndLifecycleSanitizing() {
   assert.equal(sdkAgentProgressEvent({
     type: 'system', subtype: 'task_progress', task_id: TASK_ID, summary: SECRET,
   }), null);
+
+  // OBS-094: حالة الخلفية (‏is_backgrounded) تمرّ كحدث sdk_agent_progress بلا ملخص وبسماح
+  // ‏{backgrounded} فقط — من task_started ابتداءً ومن task_updated.patch عند انتقال لاحق.
+  const startedBg = sdkAgentProgressEvent({
+    type: 'system', subtype: 'task_started', task_id: TASK_ID, tool_use_id: TOOL_USE_ID,
+    is_backgrounded: true, spawn_depth: 1, task_type: 'local_agent',
+  });
+  assert.deepEqual(plain(startedBg), {
+    type: 'sdk_agent_progress', taskId: TASK_ID, toolUseId: TOOL_USE_ID, backgrounded: true,
+  });
+  assert.ok(!('spawnDepth' in startedBg) && !('spawn_depth' in startedBg),
+    'spawn_depth ضجيج (كل بطاقة عمقها 1 بحكم البناء) — يجب ألا يعبر القناة');
+  assert.equal(sdkAgentProgressEvent({
+    type: 'system', subtype: 'task_started', task_id: TASK_ID, tool_use_id: TOOL_USE_ID,
+    is_backgrounded: false, spawn_depth: 1,
+  }), null, 'الوكيل الأمامي حالة افتراضية معروفة — لا حدث لها');
+  assert.equal(sdkAgentProgressEvent({
+    type: 'system', subtype: 'task_started', task_id: TASK_ID, is_backgrounded: true,
+  }), null, 'بلا tool_use_id لا بطاقة تُشير إليها — يُسقط');
+  const movedBg = sdkAgentProgressEvent({
+    type: 'system', subtype: 'task_updated', task_id: TASK_ID, tool_use_id: TOOL_USE_ID,
+    patch: { is_backgrounded: true, status: 'running' },
+  });
+  assert.deepEqual(plain(movedBg), {
+    type: 'sdk_agent_progress', taskId: TASK_ID, toolUseId: TOOL_USE_ID, backgrounded: true,
+  });
+  assert.equal(sdkAgentProgressEvent({
+    type: 'system', subtype: 'task_updated', task_id: TASK_ID, tool_use_id: TOOL_USE_ID,
+    patch: { is_backgrounded: false, status: 'completed' },
+  }), null, 'patch.is_backgrounded=false لا يولّد حدثاً');
+  // عقد عدم التراجع: الملخصات تبقى بلا تغيير (‏toolUseId اختياري كما كان)
+  const summaryNoTool = sdkAgentProgressEvent({
+    type: 'system', subtype: 'task_progress', task_id: TASK_ID, summary: 'يفحص المسارات',
+  });
+  assert.deepEqual(plain(summaryNoTool), { type: 'sdk_agent_progress', taskId: TASK_ID, summary: 'يفحص المسارات' });
   const compact = sdkCompactSummaryEvent({ hook_event_name: 'PostCompact', compact_summary: '  خلاصة\u2066 آمنة  ', transcript_path: SECRET });
   assert.deepEqual(plain(compact), { type: 'system', subtype: 'compact_summary', compact_summary: 'خلاصة آمنة' });
   assert.equal(sdkCompactSummaryEvent({ hook_event_name: 'PostCompact', compact_summary: SECRET }), null);
@@ -119,6 +154,14 @@ async function testIpcAndUiAllowlists() {
   const sanitizer = main.slice(main.indexOf('function sanitizeClaudePolishEvent'), main.indexOf('// إيقاف أي تشغيل'));
   assert.doesNotMatch(sanitizer, /uuid|usage|transcript_path|duration_ms|prompt_id/);
   assert.match(agentSource(), /rawPrivateLifecycle[\s\S]*?task_progress/);
+  // OBS-094: تجميد سماح القناة — شجرة الوكلاء تعبر بـbackgrounded وحده، ولا حقلا
+  // spawn_depth/parent_agent_id في تطبيع الرسالة (ضجيج/غائب عن البث الحي)، والواجهة
+  // تربط الحدث بشارة الخلفية القائمة.
+  const progressSlice = agentSource().slice(
+    agentSource().indexOf('function sdkAgentProgressEvent'),
+    agentSource().indexOf('function sdkCompactSummaryEvent'));
+  assert.doesNotMatch(progressSlice, /spawn_depth|parent_agent_id/);
+  assert.match(chat, /event\.backgrounded === true[\s\S]*?markSdkBackground/);
 
   assert.match(app, /ev\.type === 'prompt_suggestion'[\s\S]*?showPromptSuggestion\(ev\.suggestion\)/);
   assert.match(app, /ev\.type === 'sdk_agent_progress'[\s\S]*?updateAgentProgress/);

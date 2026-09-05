@@ -65,6 +65,47 @@ async function assertStoppedToolResult(win) {
   assert.strictEqual(result.stopped, true, 'يجب أن تبقى كتلة العمل في حالة stopped.');
 }
 
+async function assertSubagentBackgroundBadge(win) {
+  const result = await win.webContents.executeJavaScript(`(() => {
+    const chat = document.querySelector('satr-chat');
+    const block = chat.newAssistantBlock('اختبار شجرة الوكلاء');
+    const toolUseId = 'toolu_' + 'A1b2C3d4E5f6G7h8J9k0Lm2N';
+    block.addTool(toolUseId, 'Task', { subagent_type: 'general-purpose', description: 'فحص الخلفية' }, null, true);
+    // حدث حالة خلفية بلا ملخص (‏OBS-094) ⇐ شارة على رأس البطاقة + زر إيقاف مربوط بالمهمة
+    const handled = block.updateAgentProgress({
+      type: 'sdk_agent_progress', taskId: 'ab12cd34e', toolUseId, backgrounded: true,
+    });
+    const card = block.el.querySelector('.agent-card');
+    // حدث ملخص عادي بلا backgrounded ⇐ يبقى مسار التقدّم كما كان
+    const progressHandled = block.updateAgentProgress({
+      type: 'sdk_agent_progress', taskId: 'ab12cd34e', toolUseId, summary: 'يفحص المسارات',
+    });
+    const progressText = card.querySelector('.agent-progress-summary').textContent;
+    return {
+      handled,
+      badge: card.classList.contains('sdk-backgrounded'),
+      stateText: card.querySelector('.state').textContent,
+      stopButton: !!card.querySelector('.sdk-task-stop'),
+      progressHandled,
+      progressText,
+      rawToolUseIdVisible: card.textContent.includes(toolUseId),
+    };
+  })()`, true);
+  assert.strictEqual(result.handled, true,
+    'حدث الحالة الخلفية يجب أن تستقبله بطاقة الوكيل.');
+  assert.strictEqual(result.badge, true,
+    'بطاقة الوكيل يجب أن تحمل شارة sdk-backgrounded عند is_backgrounded.');
+  assert.strictEqual(result.stateText, 'يعمل في الخلفية',
+    'رأس البطاقة يجب أن يفسّر حالة الخلفية بالعربية.');
+  assert.strictEqual(result.stopButton, true,
+    'المهمة الخلفية المربوطة بمعرّف يجب أن تحصل على زر إيقاف.');
+  assert.strictEqual(result.progressHandled, true, 'مسار ملخص التقدّم يجب ألا يتدهور.');
+  assert.strictEqual(result.progressText, 'يفحص المسارات',
+    'ملخص التقدّم يُعرض في سطر التقدّم كما كان.');
+  assert.strictEqual(result.rawToolUseIdVisible, false,
+    'المعرّفات التقنية الخام يجب ألا تظهر نصاً في البطاقة.');
+}
+
 async function assertOpsEventCard(win) {
   const suffix = Date.now();
   const result = await win.webContents.executeJavaScript(`((suffix) => {
@@ -163,8 +204,9 @@ async function main() {
     assert(result.pass, 'فشل اختبار الاتجاه:\n' + (result.error || '') +
       '\nviolations: ' + JSON.stringify(result.violations || []));
     await assertStoppedToolResult(win);
+    await assertSubagentBackgroundBadge(win);
     await assertOpsEventCard(win);
-    console.log('chat-rtl: نجح — الحسم الإحصائي للفقرات والقوائم وفقاعة المستخدم؛ الكود LTR؛ عنوان الإيقاف ثابت بعد نتيجة أداة متأخرة؛ بطاقات ops معرّبة بلا تكرار ولا نص lifecycle خام؛ صفر CSP.');
+    console.log('chat-rtl: نجح — الحسم الإحصائي للفقرات والقوائم وفقاعة المستخدم؛ الكود LTR؛ عنوان الإيقاف ثابت بعد نتيجة أداة متأخرة؛ شارة الخلفية على بطاقة الوكيل بزر إيقاف ولا معرّفات خام؛ بطاقات ops معرّبة بلا تكرار ولا نص lifecycle خام؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }
