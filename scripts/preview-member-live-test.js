@@ -259,13 +259,25 @@ async function main() {
     assert(fullShot.ok && elementShot.ok && viewportShot.ok, 'تعذّر أخذ عينات قياس اللقطات');
     assert.strictEqual(preview.SHOT_MAX_EDGE, 1280, 'سقف لقطة النموذج المعلن انحرف');
     assert.strictEqual(preview.SHOT_JPEG_QUALITY, 72, 'جودة JPEG المعلنة انحرفت');
-    const actualViewport = await preview.evaluate('String(window.innerWidth)');
-    const viewportWidth = Number(actualViewport.value);
+    // ‏OBS-129: المرجع هو **عرض المحتوى** لا `innerWidth`. ‏`screenshotFull` يبني قُصاصته
+    // من `Page.getLayoutMetrics().cssContentSize` (‏`preview.js`)، وتلك تساوي
+    // `documentElement.clientWidth` — أي **بلا** شريط التمرير — بينما `innerWidth` يشمله.
+    // فمقارنة الناتج بـ`innerWidth` تقارن مرجعين مختلفين، ومرورُها قبلاً كان يعتمد على
+    // عرض شريط التمرير: مقيس `17px` على Chromium 130 و`15px` على 152، وكلاهما يجعل
+    // عرض القُصاصة أقلّ من `innerWidth`. والعقد المقصود من [OBS-016] هو ألّا **تُصغَّر**
+    // اللقطة عن محتواها حين يسع السقف الأفقي — وذاك ما يحرسه المرجع الصحيح.
+    const actualViewport = await preview.evaluate(
+      'JSON.stringify({ inner: window.innerWidth, content: document.documentElement.clientWidth })');
+    let viewportDims = null;
+    try { viewportDims = JSON.parse(actualViewport.value); } catch (e) { viewportDims = null; }
+    const contentWidth = viewportDims ? Number(viewportDims.content) : NaN;
+    const innerWidth = viewportDims ? Number(viewportDims.inner) : NaN;
     const fullModelSize = nativeImage.createFromBuffer(Buffer.from(fullShot.base64, 'base64')).getSize();
-    assert(actualViewport.ok && viewportWidth > 0 && viewportWidth <= preview.SHOT_MAX_EDGE,
+    assert(actualViewport.ok && contentWidth > 0 && contentWidth <= preview.SHOT_MAX_EDGE,
       'عرض نافذة القياس غير صالح لاختبار حفظ عرض full_page: ' + actualViewport.value);
-    assert(fullModelSize.width >= viewportWidth,
-      'full_page صُغّرت عن عرض النافذة: ' + fullModelSize.width + ' < ' + viewportWidth);
+    assert(fullModelSize.width >= contentWidth,
+      'full_page صُغّرت عن عرض المحتوى: ' + fullModelSize.width + ' < ' + contentWidth
+      + ' (‏innerWidth=' + innerWidth + ' · شريط التمرير=' + (innerWidth - contentWidth) + ')');
     assert(fullModelSize.height > preview.SHOT_MAX_EDGE,
       'الحارس لا يثبت بقاء طول full_page فوق السقف الأفقي: ' + fullModelSize.height);
     const measurements = {
@@ -292,6 +304,11 @@ async function main() {
       assert(data.length <= 512 * 1024 && size.width <= 360,
         'مصغّرة agent_screenshot تجاوزت 360px/512KiB: ' + size.width + 'px/' + data.length + 'B');
     }
+    // مرجع عرض full_page ظاهراً لا مستوراً (‏OBS-129): الفرق بين العمودين هو شريط
+    // التمرير، وهو ما جعل المقارنة القديمة بـinnerWidth تتعلّق بعرضه لا بصحة اللقطة.
+    console.log('preview-member-live full_page width: shot=' + fullModelSize.width
+      + ' · content=' + contentWidth + ' · innerWidth=' + innerWidth
+      + ' · scrollbar=' + (innerWidth - contentWidth));
     console.log('preview-member-live encoding bytes (real Arabic UI, width cap ' + preview.SHOT_MAX_EDGE
       + 'px, JPEG q' + preview.SHOT_JPEG_QUALITY + '):');
     console.log('| sample | PNG | JPEG | selected |');
