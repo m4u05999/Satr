@@ -296,7 +296,14 @@ async function wiring() {
       resolveEngine: (engine) => taggingRunner(engine, 'brainstorm-' + engine, 'رأي'),
     });
     assert.strictEqual(brainstorm.start({ brief: 'قيّم' }, temp, () => {}).ok, true);
-    await waitUntil(() => brainstormSpy.tagged.length >= 2, 3000, 'brainstorm tag');
+    // انتظر **الشرط الذي تؤكّده** لا شرطاً أضعف منه (درس OBS-083 في موضع ثانٍ): العصف
+    // يشغّل ثلاثة عمّال — SDK وCodex إلزاميان وKimi ينضم ثالثاً حين يعيد `resolveEngine`
+    // مشغّلاً (‏OBS-012 بند ب) — وكلُّ عاملٍ يسم **مرتين**. فشرط `length >= 2` يستوفيه
+    // عاملٌ واحد وحده، فيمرّ الانتظار ثم يسقط التأكيد على الغائب: مقيسٌ حيّاً أن الوسوم
+    // ستة (‏sdk×2 · codex×2 · kimi-code×2) وأن السابق منها يتبدّل بين تشغيلين.
+    const brainstormTagged = () => brainstormSpy.tagged.includes('brainstorm-sdk:tool')
+      && brainstormSpy.tagged.includes('brainstorm-codex:tool');
+    await waitUntil(brainstormTagged, 3000, 'brainstorm tag');
     assert(brainstormSpy.tagged.includes('brainstorm-sdk:tool'), 'العصف لم يسم جلسة SDK');
     assert(brainstormSpy.tagged.includes('brainstorm-codex:tool'), 'العصف لم يسم جلسة Codex');
 
