@@ -65,6 +65,7 @@
         }
       },
       "replay": [
+        { "type": "tool", "id": "edit-1-read", "name": "read_file", "args": { "path": "src/app.js" } },
         {
           "type": "tool",
           "id": "edit-1",
@@ -103,6 +104,8 @@
         }
       },
       "replay": [
+        { "type": "tool", "id": "multi-1-read", "name": "read_file", "args": { "path": "client/version.js" } },
+        { "type": "tool", "id": "multi-2-read", "name": "read_file", "args": { "path": "server/version.js" } },
         {
           "type": "tool",
           "id": "multi-1",
@@ -184,6 +187,7 @@
         }
       },
       "replay": [
+        { "type": "tool", "id": "arabic-path-1-read", "name": "read_file", "args": { "path": "مصدر/رسالة.txt" } },
         {
           "type": "tool",
           "id": "arabic-path-1",
