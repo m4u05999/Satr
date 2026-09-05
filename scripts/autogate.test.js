@@ -73,6 +73,18 @@ check('Write بلا إعفاء في auto ⇒ prompt', decideAutoApproval('Write'
 // browserControl لا يعفي أداة **غير** متصفح (run_in_terminal مثلاً) ⇒ prompt
 check('run_in_terminal مع browserControl ⇒ prompt', decideAutoApproval('mcp__satr-terminal__run_in_terminal', { permissionMode: 'auto', browserControl: true, browserTool: false }) === 'prompt');
 
+// 6ب) OBS-084 — bypassPermissions صار وضعاً **داخلياً** لا يُمرَّر إلى SDK (وإلا توقّف
+// عن استدعاء canUseTool فسقطت حراسات «سطر» الصارمة). فالبوابة الوحيدة صارت هذه الدالة،
+// وعليها أن تعيد allow بعد تلك الحراسات — وإلا ظهر مربع إذن في وضع «تجاوز كل الأذونات».
+// العضّة المقيسة قبل الإصلاح: Bash/Write/Edit/Read كلها كانت تعيد prompt.
+for (const tool of ['Bash', 'Write', 'Edit', 'Read', 'mcp__satr-terminal__run_in_terminal']) {
+  check('bypassPermissions ⇒ allow لـ' + tool,
+    decideAutoApproval(tool, { permissionMode: 'bypassPermissions', alwaysAllowed: new Set() }) === 'allow');
+}
+// ولا يتسرّب الإعفاء إلى وضع آخر: default بلا alwaysAllowed يبقى prompt لأداة غير قرائية.
+check('default بلا alwaysAllowed ⇒ prompt (لا تسرّب من bypass)',
+  decideAutoApproval('Bash', { permissionMode: 'default', alwaysAllowed: new Set() }) === 'prompt');
+
 // 7) nonSdkPerm: auto يسقط لـ default لغير SDK؛ الأوضاع الأخرى تُصان
 check('nonSdkPerm(auto) = default', nonSdkPerm('auto') === 'default');
 check('nonSdkPerm(acceptEdits) = acceptEdits', nonSdkPerm('acceptEdits') === 'acceptEdits');

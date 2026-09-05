@@ -127,5 +127,75 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
   ok(/⏭ \$\{name\} — متخطّاة على/.test(source), 'والمشغّل يطبع المتخطّى صراحةً — الصمت لا يُقرأ نجاحاً (‏OBS-042)');
 }
 
+// ── 5) فرع POSIX في killTree يعضّ فعلاً (OBS-079) ──────────────────────────
+// كان الفرع `process.kill(-pid, 'SIGKILL')`، وقتلُ مجموعة بالسالب يوجب أن يكون `pid`
+// قائدَ مجموعة — وهو ما لا يقع لأن `spawnSync` يُطلق الابن **بلا `detached`**. فكان
+// النداء يرمي ESRCH ويبتلعه `catch` الصامت: **لا يموت أحد**. البديل نَسَبٌ صريح من
+// لقطة `ps` واحدة. ولأن جهاز التطوير ويندوز، يُقاس هنا **منطق المشي** قطعياً بجدول
+// مزروع (لا يحتاج POSIX)، ويبقى القتل الحيّ على لينكس مسؤولية البوابة — حدٌّ معلَن.
+{
+  const NL = String.fromCharCode(10);
+  const table = suite.parseProcessTable([
+    '  100     1',
+    '  200   100',
+    '  300   200',
+    '  400   200',
+    '  500   300',
+    'سطر مشوّه يُتجاهَل',
+    '    1     0',
+    '',
+  ].join(NL));
+
+  ok(table.get(100) && table.get(100).join(',') === '200', 'جدول العمليات يُقرأ: أبناء 100 هم 200');
+  ok(table.get(200) && table.get(200).join(',') === '300,400', 'وأبناء 200 هم 300 و400');
+  ok(!table.has(0), 'وpid <= 1 مستبعد فلا يقترب المسح من init');
+
+  const walk = suite.descendantsDeepestFirst(100, table);
+  // العمق أولاً ليس زينة: قتلُ الأب أولاً يُعيد أبناءه إلى init فتنقطع نسبتهم.
+  ok(walk.join(',') === '500,300,400,200',
+    'الذرّية مرتَّبة من الأعمق إلى الأضحل — الواقع: ' + walk.join(','));
+  ok(walk.includes(500) && walk.includes(300),
+    'المشي يبلغ الحفيد وابن الحفيد — لا مستوى واحداً (هذا ما لم يكن يفعله kill(-pid))');
+  ok(!walk.includes(100), 'والجذر ليس في القائمة — يُقتل بعدها لا قبلها');
+  ok(suite.descendantsDeepestFirst(999, table).length === 0, 'وجذر مجهول يعطي قائمة فارغة');
+
+  // نسب دائري مشوّه لا يعلّق المسار (يُستدعى في مسار فشل يُفترض أن يكون سريعاً)
+  const cyclic = suite.parseProcessTable(['200 100', '100 200', '100 1'].join(NL));
+  const cycleWalk = suite.descendantsDeepestFirst(100, cyclic);
+  ok(cycleWalk.length <= 2 && !cycleWalk.includes(100),
+    'النسب الدائري لا يعلّق ولا يعيد الجذر — الواقع: ' + JSON.stringify(cycleWalk));
+
+  // السقفان مثبَّتان رقماً: سلسلة أعمق من الحدّ تُقصّ، وذرّية أعرض منه تُقصّ.
+  const chain = [];
+  for (let i = 0; i < 20; i++) chain.push(String(1001 + i) + ' ' + String(1000 + i));
+  ok(suite.descendantsDeepestFirst(1000, suite.parseProcessTable(chain.join(NL))).length === 12,
+    'سقف العمق 12 مثبَّت — سلسلة من 20 تُقصّ عنده');
+  const wide = [];
+  for (let i = 0; i < 500; i++) wide.push(String(2001 + i) + ' 2000');
+  ok(suite.descendantsDeepestFirst(2000, suite.parseProcessTable(wide.join(NL))).length === 400,
+    'وسقف العقد 400 مثبَّت — 500 ابناً تُقصّ عنده');
+
+  // **الفحص البنيوي للاقتران** الذي طلبته OBS-079: قتلُ مجموعة بالسالب لا يصحّ إلا مع
+  // إطلاق `detached`. فإن عاد أحدهما بلا الآخر سقط الحارس — وهو الانفصال الذي أنتج
+  // العطل أصلاً. اليوم لا وجود لأيّهما، وهذه حالة مقبولة (النَسَب الصريح بديلهما).
+  const source = fs.readFileSync(path.join(__dirname, 'full-suite.js'), 'utf8');
+  // **التعليقات تُجرَّد أولاً**: الشرح أعلاه يذكر `process.kill(-pid)` و`detached` نصّاً،
+  // فبلا التجريد يطابق الفحصُ نثرَه ويمرّ على أي كود — أُثبت ذلك بعضّة سقطت قبل الإصلاح.
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split(String.fromCharCode(10))
+    .map((line) => { const at = line.indexOf('//'); return at === -1 ? line : line.slice(0, at); })
+    .join(String.fromCharCode(10));
+  ok(!/OBS-079/.test(code) && /OBS-079/.test(source),
+    'تجريد التعليقات يعمل فعلاً — وإلا فالفحص التالي يقيس نثراً لا كوداً');
+  const groupKill = /process\.kill\(\s*-/.test(code);
+  const detached = /detached\s*:\s*true/.test(code);
+  ok(groupKill === detached,
+    'اقتران kill(-pid) مع detached:true مكسور — kill(-pid)=' + groupKill
+    + ' وdetached=' + detached + '؛ أحدهما بلا الآخر هو عطل OBS-079 بعينه');
+  ok(/OBS-079/.test(source), 'وسبب الفرع موثّق في المصدر — الشرح جزء من الإصلاح لا زينة');
+  ok(/ps'?,\s*\['-A', '-o', 'pid=,ppid='\]/.test(source) || /'-o', 'pid=,ppid='/.test(source),
+    'وفرع POSIX يأخذ لقطة جدول العمليات فعلاً — بدونها يمشي على خريطة فارغة');
+}
+
 console.log('full-suite-timeout: نجح — ' + checks
-  + ' فحصاً (معايرة المهل من قياس، وETIMEDOUT ينطق، وkillTree تُنهي الحفيد اليتيم، وعقد الخلاصة سليم، والتخطّي المعلَن على POSIX مقيّد).');
+  + ' فحصاً (معايرة المهل من قياس، وETIMEDOUT ينطق، وkillTree تُنهي الحفيد اليتيم، وفرع POSIX يمشي النَسَب لا مجموعةً وهمية، وعقد الخلاصة سليم، والتخطّي المعلَن على POSIX مقيّد).');

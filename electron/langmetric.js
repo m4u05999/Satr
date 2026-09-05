@@ -45,6 +45,9 @@ const AR_MARK_RE = /[\u0629\u0643\u064a\u0649\u0660-\u0669]/g;
  * الإقصاءات أو العتبات يرفع الرقم، والأرقام لا تُقارن عبر إصدارين.
  */
 const METRIC_VERSION = 4; // ‏1 قبل PascalCase · 2 قبل وعي الخط · 3 قبل استثناء صفوف الجداول
+// إصدار مستقل: إضافة كثافة الرموز لا تغيّر arabicShare/isSlip ولا تهدر معايرة v4.
+const OUTPUT_TOKEN_METRIC_VERSION = 1;
+const MAX_OUTPUT_TOKEN_SCOPES = 64; // أرقام مجمعة فقط لكل provider:model، بلا نصوص
 
 /**
  * **توافق ضيّق ومحروس**: `arabicShare` والعتبات لم تُمَسّ في أيٍّ من الرفعين، وفحصُ
@@ -195,7 +198,145 @@ function isSlip(text) {
   return { slip: false, reason: 'ok', script, structural: slips.length, ...measured };
 }
 
+/**
+ * عيّنة كثافة مخرجات أحادية اللغة. عداد المزوّد إجمالي للطلب، لذلك لا نقسمه
+ * تخميناً بين نص مختلط: العينة العربية/الإنجليزية الصافية وحدها قابلة للنسبة.
+ * `characters` هو عدد محارف Unicode في النص المرمَّز فعلاً، بما فيها الفراغات.
+ */
+function outputTokenSample(text, usageInfo) {
+  if (typeof text !== 'string' || !text || !usageInfo || typeof usageInfo !== 'object') return null;
+  const measured = arabicShare(text);
+  let language = null;
+  if (measured.arabic > 0 && measured.latin === 0) language = 'arabic';
+  else if (measured.latin > 0 && measured.arabic === 0) language = 'english';
+  if (!language) return null;
+
+  const rawTokens = Object.prototype.hasOwnProperty.call(usageInfo, 'output_tokens')
+    ? usageInfo.output_tokens : usageInfo.output;
+  if (typeof rawTokens !== 'number' || !Number.isFinite(rawTokens) || rawTokens <= 0) return null;
+  const outputTokens = Math.floor(rawTokens);
+  const characters = Array.from(text).length;
+  if (!characters || !outputTokens) return null;
+
+  const isEstimate = usageInfo.estimate === true || usageInfo.source === 'estimate';
+  const isActual = usageInfo.source === 'actual' && usageInfo.estimate !== true;
+  if ((!isEstimate && !isActual) || (isEstimate && isActual)) return null;
+  if (isEstimate) {
+    const method = typeof usageInfo.method === 'string' && usageInfo.method
+      ? usageInfo.method : 'character_heuristic';
+    return {
+      language, characters, output_tokens: outputTokens,
+      tokens_per_character: outputTokens / characters,
+      source: 'estimate', estimate: true, method, tokenizer: null,
+    };
+  }
+  return {
+    language, characters, output_tokens: outputTokens,
+    tokens_per_character: outputTokens / characters,
+    source: 'actual', estimate: false, method: 'provider_usage',
+  };
+}
+
+function emptyOutputTokenState() {
+  return { buckets: new Map() };
+}
+
+function addOutputTokenSample(state, sample) {
+  if (!sample || (sample.language !== 'arabic' && sample.language !== 'english')) return;
+  // المصدر وطريقة التقدير جزء من المفتاح: لا يوجد مسار حسابي يخلطهما في نسبة واحدة.
+  const bucketKey = sample.estimate ? 'estimate:' + sample.method : 'actual';
+  if (!state.buckets.has(bucketKey)) {
+    state.buckets.set(bucketKey, {
+      source: sample.estimate ? 'estimate' : 'actual',
+      estimate: sample.estimate === true,
+      method: sample.method,
+      arabic: { output_tokens: 0, characters: 0, samples: 0 },
+      english: { output_tokens: 0, characters: 0, samples: 0 },
+    });
+  }
+  const total = state.buckets.get(bucketKey)[sample.language];
+  total.output_tokens += sample.output_tokens;
+  total.characters += sample.characters;
+  total.samples += 1;
+}
+
+function summarizedLanguage(total) {
+  if (!total || !total.samples || !total.characters) return null;
+  return {
+    output_tokens: total.output_tokens,
+    characters: total.characters,
+    samples: total.samples,
+    tokens_per_character: total.output_tokens / total.characters,
+  };
+}
+
+function summarizeOutputTokenState(state) {
+  let actual = null;
+  const estimates = [];
+  for (const bucket of state.buckets.values()) {
+    const arabic = summarizedLanguage(bucket.arabic);
+    const english = summarizedLanguage(bucket.english);
+    const summary = {
+      source: bucket.source,
+      estimate: bucket.estimate,
+      method: bucket.method,
+      arabic,
+      english,
+      arabic_to_english_ratio: arabic && english && english.tokens_per_character > 0
+        ? arabic.tokens_per_character / english.tokens_per_character : null,
+    };
+    if (bucket.estimate) {
+      summary.tokenizer = null; // تقدير محلي، فلا يُنسب إلى tokenizer المزوّد
+      estimates.push(summary);
+    } else actual = summary;
+  }
+  estimates.sort((a, b) => a.method.localeCompare(b.method));
+  return { metric_version: OUTPUT_TOKEN_METRIC_VERSION, actual, estimates };
+}
+
+function outputTokenTax(samples) {
+  const state = emptyOutputTokenState();
+  for (const sample of Array.isArray(samples) ? samples : []) addOutputTokenSample(state, sample);
+  return summarizeOutputTokenState(state);
+}
+
+// سجل داخلي محدود يستهلكه المحوّلان والحارس؛ لا IPC ولا satr:event ولا نص محفوظ.
+const outputTokenScopes = new Map();
+
+function normalizedOutputTokenScope(scope) {
+  return typeof scope === 'string' && scope.trim() ? scope.trim().slice(0, 160) : '';
+}
+
+function recordOutputTokenSample(scope, text, usageInfo) {
+  const key = normalizedOutputTokenScope(scope);
+  const sample = outputTokenSample(text, usageInfo);
+  if (!key || !sample) return null;
+  let state = outputTokenScopes.get(key);
+  if (!state) {
+    if (outputTokenScopes.size >= MAX_OUTPUT_TOKEN_SCOPES) {
+      outputTokenScopes.delete(outputTokenScopes.keys().next().value);
+    }
+    state = emptyOutputTokenState();
+  } else outputTokenScopes.delete(key); // إبقاء الأكثر نشاطاً عند حدّ النطاقات
+  addOutputTokenSample(state, sample);
+  outputTokenScopes.set(key, state);
+  return sample;
+}
+
+function readOutputTokenMetric(scope) {
+  const state = outputTokenScopes.get(normalizedOutputTokenScope(scope));
+  return summarizeOutputTokenState(state || emptyOutputTokenState());
+}
+
+function resetOutputTokenMetric(scope) {
+  const key = normalizedOutputTokenScope(scope);
+  if (key) outputTokenScopes.delete(key);
+  else outputTokenScopes.clear();
+}
+
 module.exports = {
   arabicShare, structuralSlips, proseOf, scriptOf, isSlip,
+  outputTokenSample, outputTokenTax, recordOutputTokenSample, readOutputTokenMetric, resetOutputTokenMetric,
   METRIC_VERSION, SHARE_THRESHOLD, MIN_STRONG_CHARS, STRUCTURAL_THRESHOLD,
+  OUTPUT_TOKEN_METRIC_VERSION, MAX_OUTPUT_TOKEN_SCOPES,
 };

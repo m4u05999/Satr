@@ -10,7 +10,10 @@
 const assert = require('assert');
 const {
   arabicShare, structuralSlips, proseOf, scriptOf, isSlip, METRIC_VERSION, STRUCTURAL_THRESHOLD,
+  outputTokenSample, outputTokenTax, readOutputTokenMetric, resetOutputTokenMetric,
+  OUTPUT_TOKEN_METRIC_VERSION,
 } = require('../electron/langmetric');
+const usage = require('../electron/adapters/usage');
 
 /**
  * نسخة v2 **مجمَّدة** من دالة الحكم — مصدر الحقيقة لادعاء التوافق في `langmetric.js`.
@@ -271,7 +274,80 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
     'وخليةُ الجملة تُدان ولو كانت داخل جدول');
 }
 
+// ── رادار ٠٠٣، محور E: ضريبة رموز المخرجات العربية ────────────────────────
+let estimatedTokenTax;
+{
+  const AR = 'راجع الملف، ثم شغّل الاختبار، وأصلح الخطأ الظاهر.';
+  const EN = 'Review the file, then run the test, and fix the visible error.';
+
+  // عداد المزوّد الحقيقي مقدّم، وreasoning غير الظاهر لا يُنسب إلى محارف الجواب.
+  const actualUsage = usage.outputMetricUsage({ output: 42, reasoning: 2 }, AR);
+  ok(actualUsage.source === 'actual' && actualUsage.estimate === false
+    && actualUsage.output_tokens === 40,
+    'عداد المزوّد الحقيقي لم يُقدَّم على التقدير أو لم يُفصل reasoning');
+  const actualArabic = outputTokenSample(AR, actualUsage);
+  const actualEnglish = outputTokenSample(EN, usage.outputMetricUsage({ output: 21, reasoning: 1 }, EN));
+  ok(actualArabic.language === 'arabic' && actualEnglish.language === 'english',
+    'مقياس كثافة المخرجات لا يفصل العربي عن الإنجليزي');
+  const actualTax = outputTokenTax([actualArabic, actualEnglish]);
+  ok(actualTax.actual && actualTax.actual.arabic && actualTax.actual.english
+    && actualTax.actual.arabic_to_english_ratio > 0,
+    'عينتا usage الحقيقيتان لم تنتجا كثافة منفصلة ونسبة قابلة للقراءة');
+
+  // غياب العداد وحده يفعّل character_heuristic، بوسم صريح ومن دون اسم tokenizer.
+  const estimatedArabic = outputTokenSample(AR, usage.outputMetricUsage(null, AR));
+  const estimatedEnglish = outputTokenSample(EN, usage.outputMetricUsage(null, EN));
+  ok(estimatedArabic.estimate === true && estimatedEnglish.estimate === true
+    && estimatedArabic.method === 'character_heuristic' && estimatedArabic.tokenizer === null,
+    'التقدير المحلي غير موسوم أو نُسب خطأً إلى tokenizer المزوّد');
+  const estimatedReport = outputTokenTax([estimatedArabic, estimatedEnglish]);
+  estimatedTokenTax = estimatedReport.estimates.find((entry) => entry.method === 'character_heuristic');
+  ok(estimatedTokenTax && estimatedTokenTax.actual === undefined
+    && estimatedTokenTax.arabic_to_english_ratio > 0,
+    'العينة العربية/الإنجليزية التقديرية لم تنتج قراءة موسومة');
+
+  // لا نسبة هجينة: عربي actual + إنجليزي estimate يبقيان في مجموعتين ناقصتين.
+  const splitSources = outputTokenTax([actualArabic, estimatedEnglish]);
+  const splitEstimate = splitSources.estimates.find((entry) => entry.method === 'character_heuristic');
+  ok(splitSources.actual.arabic !== null && splitSources.actual.english === null
+    && splitSources.actual.arabic_to_english_ratio === null
+    && splitEstimate && splitEstimate.arabic === null && splitEstimate.english !== null
+    && splitEstimate.arabic_to_english_ratio === null,
+    'المقياس خلط usage الحقيقي والتقدير المحلي في رقم واحد');
+
+  // عداد الطلب لا يمكن توزيعه بصدق على نص ثنائي اللغة، فيُرفض بدل التخمين.
+  ok(outputTokenSample(AR + ' ' + EN, actualUsage) === null,
+    'النص المختلط نُسبت رموزه إلى لغة واحدة بلا دليل');
+  ok(OUTPUT_TOKEN_METRIC_VERSION === 1 && METRIC_VERSION === 4,
+    'إصدار الضريبة مستقل ولم يغيّر عقد langmetric القائم');
+
+  // الوصل الداخلي يجمع أرقاماً فقط تحت provider:model؛ لا حدث ولا IPC ولا نص محفوظ.
+  const scope = 'fixture:paired-model';
+  resetOutputTokenMetric(scope);
+  usage.recordOutputMetric(scope, AR, { output: 42, reasoning: 2 });
+  usage.recordOutputMetric(scope, EN, { output: 21, reasoning: 1 });
+  const recorded = readOutputTokenMetric(scope);
+  ok(recorded.actual && recorded.actual.arabic.samples === 1
+    && recorded.actual.english.samples === 1 && recorded.estimates.length === 0,
+    'المقياس الداخلي لم يقرأ عدادات المزوّد الفعلية منفصلة');
+  resetOutputTokenMetric(scope);
+
+  const geminiUsage = usage.parseGemini({
+    promptTokenCount: 90, candidatesTokenCount: 30,
+    cachedContentTokenCount: 20, thoughtsTokenCount: 5,
+  });
+  ok(geminiUsage.input === 90 && geminiUsage.output === 30
+    && geminiUsage.cached === 20 && geminiUsage.reasoning === 5
+    && geminiUsage.reasoningIncludedInOutput === false
+    && usage.outputMetricUsage(geminiUsage, AR).output_tokens === 30,
+    'عدادات Gemini الحقيقية لم تُطبَّع للمقياس');
+}
+
 console.log('langmetric-test: ok — ' + checks
   + ' فحوص (الجواب الصحيح لا يُعاقَب، ولقطة المالك تُمسَك، والحواف لا تكسر، '
   + 'ووعي الخط يمسك الفارسية دون أن يُهدر بيانات v2، '
   + 'وجداول المعرّفات التقنية لم تعد انزلاقاً بنيوياً بينما خلايا النثر تبقى).');
+console.log('langmetric-token-tax: estimate=true method=character_heuristic'
+  + ' · ar=' + estimatedTokenTax.arabic.tokens_per_character.toFixed(6) + ' token/char'
+  + ' · en=' + estimatedTokenTax.english.tokens_per_character.toFixed(6) + ' token/char'
+  + ' · ar/en=' + estimatedTokenTax.arabic_to_english_ratio.toFixed(6) + 'x');
