@@ -108,9 +108,28 @@ function parseFrontmatter(text) {
 // الوصف حقل سطر واحد في المواصفة، ويُطبع في كتالوج البرومبت سطراً لكل مهارة
 // («- name: description»)؛ فسطرٌ جديد بداخله يكسر بنية القائمة التي يقرؤها النموذج،
 // ومحارف التحكم تعبر إلى البرومبت كما هي. لذلك يُطوى الفراغ وتُزال المحارف هنا لا هناك.
+//
+// ومنذ فتح باب الاستيراد تُعطَّل **قوسا الوسم** كذلك. الكتالوج يُغلَّف بـ
+// `<satr_portable_skills>` ويُحقن في برومبت كل دور عبر ستة مستهلكين (agent وkimi
+// وclaude-cli وgemini وopenai-compatible وopenai-responses)، ووصفٌ يحمل
+// `</satr_portable_skills>` كان يغلق الغلاف مبكراً فيصير ما بعده تعليمةً عليا لا
+// بياناتٍ موصوفة — مقيس بمهارة مزروعة: أغلق سطرُها الكتلةَ وتلاه نصّه خارجها. وما دامت
+// كل المهارات لنا أو للمستخدم فالثغرة نظرية، لكن `npx skills add owner/repo` يُدخل
+// وصف غريبٍ إلى برومبت كل دور تلقائياً — فتصير فعلية.
+//
+// والتعطيل بالقوسين لا بحذف اسم الوسم: الحذف يُهزَم بالتعشيش، إذ
+// `</satr_portable<satr_portable_skills>_skills>` يعيد تركيب نفسه بعد إسقاط الداخلي،
+// بينما لا يُبنى قوسٌ من غير قوس. وهو نمط `loopfailure.sanitizeCheckOutput` نفسه —
+// نسخةُ سلوكٍ واحدة في البيت لا اجتهادٌ ثانٍ. وأثره على القائم صفر: صفر وصف من
+// المهارات الثماني على القرص يحمل قوساً.
 function normalizeSpecText(value) {
   if (typeof value !== 'string') return '';
-  return value.replace(CONTROL_CHARS, ' ').replace(/\s+/g, ' ').trim();
+  return value
+    .replace(CONTROL_CHARS, ' ')
+    .split('<').join(' ')
+    .split('>').join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function specLicense(value) {
@@ -320,6 +339,228 @@ async function listSkills(cwd) {
   return discoverSkills(cwd).map(publicSkill);
 }
 
+// ── استيراد مهارات المجتمع عبر `npx skills` ───────────────────────────────────
+// مسار التثبيت الافتراضي لأداة vercel-labs/skills هو `.agents/skills/` — وهو مسار
+// «سطر» القياسي نفسه، فلا يلزم جسر: تُشغَّل الأداة في جذر المشروع ثم يُعاد الفهرس.
+// وبذلك تمرّ المهارة الواردة بمدقّق المواصفة قبل أن يراها نموذج، لأن لا مدخل إلى
+// الفهرس إلا `scanRoot` (وهو يدقّق)، ولا يقرأ `loadSkill` إلا ما دخل الفهرس.
+//
+// مقيس حيّاً (‏skills@1.5.23 على ويندوز):
+//   npm exec --yes -- skills@1.5.23 add anthropics/skills -a universal -s skill-creator -y
+//   ⇒ ‏.agents/skills/skill-creator ⇒ اكتشفه discoverSkills وأجازه المدقّق (صفر مرفوضة)
+//     ونجح loadSkill ‏(33472 بايت و17 مورداً).
+//
+// وثلاثة أعلام مقيسة لا مفترضة:
+//  · `--copy` صريحة — الأداة تُنشئ **روابط رمزية** إلى مجلدات الوكلاء افتراضياً
+//    (‏`--copy  Copy files instead of symlinking to agent directories`)، و`scanRoot`
+//    يتخطّى المجلد الرمزي عمداً؛ فالافتراضي كان سيجعل المهارة غير مرئية لسطر. (نسخت
+//    الأداة فعلاً على ويندوز لأن الرابط الرمزي يحتاج صلاحية — والاتكال على ذلك يكسر
+//    على POSIX، فتُمرَّر العلامة صراحةً.)
+//  · `-y` صريحة — الأداة تسأل تفاعلياً وإلا، فيتعلّق spawn بلا طرفية.
+//  · النسخة مثبّتة كما ثُبِّت `@testsprite/testsprite-mcp@0.0.38`: أمرٌ بلا تثبيت يجلب
+//    أحدث ما نُشر، أي شيفرةً جديدة كل مرة.
+//
+// و`npm exec` لا `npx`: على جهاز التطوير يحجب `npx@10.2.2` المستقلّ المثبّت عالمياً
+// npx المدمج في npm ‏11.17.0، فيبتلع `--help` ولا يعرف `-y` — والشكل المقيس العامل
+// هو `npm exec --yes --`.
+const IMPORT_PACKAGE = 'skills@1.5.23';
+const IMPORT_AGENT = 'universal';
+const IMPORT_TIMEOUT_MS = 180 * 1000;
+const IMPORT_MAX_TAIL = 400;
+// مقطعا `owner/repo` يبدآن بحرف أو رقم أو شرطة سفلية: فلا يُقرأ مقطعٌ عَلَماً
+// (‏`-rf`) ولا يصير `..` صعوداً في مسار. والرابط الكامل خارج هذه الدفعة عمداً.
+const IMPORT_SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
+const ANSI_ESCAPE = /\[[0-9;?]*[ -\/]*[@-~]/g;
+
+function importArgv(repo, skill) {
+  const tail = [IMPORT_PACKAGE, 'add', repo, '-a', IMPORT_AGENT, '--copy', '-y'];
+  if (skill) tail.push('-s', skill);
+  // بمصفوفة وسائط بلا shell. و`cmd /d /s /c` على ويندوز لأن npm ملف `.cmd` لا يشغّله
+  // spawn مباشرةً — نمط `testsprite.js` نفسه.
+  return process.platform === 'win32'
+    ? { command: 'cmd', args: ['/d', '/s', '/c', 'npm', 'exec', '--yes', '--'].concat(tail) }
+    : { command: 'npm', args: ['exec', '--yes', '--'].concat(tail) };
+}
+
+// خرج أداة خارجية تطبع وصف مستودع غريب بألوان ANSI: يُنقّى ويُقصّ ذيلُه للتشخيص فقط،
+// ولا يُعاد خاماً (نمط «نتيجة بلا خرج خام» في integration.js).
+function importTail(value) {
+  const cleaned = String(value == null ? '' : value)
+    .replace(ANSI_ESCAPE, ' ')
+    .replace(CONTROL_CHARS, ' ')
+    .split('<').join(' ')
+    .split('>').join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length > IMPORT_MAX_TAIL ? cleaned.slice(cleaned.length - IMPORT_MAX_TAIL) : cleaned;
+}
+
+function defaultImportRunner(command, args, options) {
+  const { spawnSync } = require('child_process');
+  const result = spawnSync(command, args, {
+    cwd: options.cwd,
+    timeout: options.timeout,
+    encoding: 'utf8',
+    windowsHide: true,
+    shell: false,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  return {
+    status: Number.isInteger(result.status) ? result.status : null,
+    stdout: typeof result.stdout === 'string' ? result.stdout : '',
+    stderr: typeof result.stderr === 'string' ? result.stderr : '',
+    error: result.error ? String(result.error.message || result.error) : '',
+  };
+}
+
+/**
+ * استيراد مهارة/مستودع مهارات إلى `.agents/skills` داخل المشروع، ثم إعادة الفهرسة
+ * وتقرير ما دخل وما رفضه المدقّق. `runner` مُحقَن كي يُختبر العقد بلا شبكة ولا spawn.
+ * لا يُنفَّذ شيء من محتوى المهارة — الأداة تنسخ ملفات، والسكربتات تبقى نصاً.
+ */
+function importSkill(options) {
+  const opts = options && typeof options === 'object' ? options : {};
+  // الاستيراد يشغّل أداة خارجية تجلب شيفرة من الإنترنت: فعلٌ بإذن صريح لا استدعاء صامت.
+  if (opts.confirmed !== true) {
+    return { ok: false, error: 'confirmation_required',
+      message: 'الاستيراد يشغّل أداة خارجية تجلب شيفرة من الإنترنت — يلزم تأكيد صريح' };
+  }
+  const repo = typeof opts.repo === 'string' ? opts.repo.trim() : '';
+  const segments = repo.split('/');
+  if (segments.length !== 2 || !IMPORT_SEGMENT.test(segments[0]) || !IMPORT_SEGMENT.test(segments[1])) {
+    return { ok: false, error: 'bad_repo', message: 'المستودع يجب أن يكون بصيغة owner/repo' };
+  }
+  const skill = typeof opts.skill === 'string' ? opts.skill.trim() : '';
+  if (skill && !IMPORT_SEGMENT.test(skill)) {
+    return { ok: false, error: 'bad_skill', message: 'اسم المهارة المطلوبة غير صالح' };
+  }
+  let cwd = '';
+  try {
+    cwd = path.resolve(String(opts.cwd || ''));
+    if (!opts.cwd || !fs.statSync(cwd).isDirectory()) throw new Error('not a directory');
+  } catch {
+    return { ok: false, error: 'bad_cwd', message: 'مجلد المشروع غير موجود' };
+  }
+  const scan = { home: opts.home, builtinRoot: opts.builtinRoot };
+  const before = new Set(discoverSkills(cwd, scan).map((entry) => entry.name));
+  const { command, args } = importArgv(repo, skill);
+  let run;
+  try {
+    run = (typeof opts.runner === 'function' ? opts.runner : defaultImportRunner)(
+      command, args, { cwd, timeout: IMPORT_TIMEOUT_MS });
+  } catch (error) {
+    return { ok: false, error: 'import_failed', status: null, added: [], rejected: [],
+      message: 'تعذّر تشغيل أداة الاستيراد', detail: importTail((error && error.message) || error) };
+  }
+  const status = run && Number.isInteger(run.status) ? run.status : null;
+  // إعادة الفهرسة هي بوابة التدقيق: ما لم يجتز المدقّق لا يظهر في `added` أصلاً.
+  const invalid = [];
+  const after = discoverSkills(cwd, { home: scan.home, builtinRoot: scan.builtinRoot, invalid });
+  const added = after.filter((entry) => !before.has(entry.name) && entry.source === 'project');
+  // المرفوضة تُقصر على مهارات هذا المشروع: مهارةٌ مكسورة في مجلد المستخدم ليست أثراً
+  // لهذا الاستيراد، وعرضها كذلك كذبٌ على المستخدم.
+  const rejected = invalid.filter((entry) => realInside(cwd, entry.file))
+    .map((entry) => ({ name: entry.name, error: entry.error, message: entry.message }));
+  if (status !== 0 && !added.length) {
+    return { ok: false, error: 'import_failed', status, added: [], rejected,
+      message: 'فشل استيراد «' + repo + '»',
+      detail: importTail((run && (run.stderr || run.error || run.stdout)) || '') };
+  }
+  return { ok: true, repo, status, added: added.map(publicSkill), rejected };
+}
+
+// ── قارئ فهرس `.claude-plugin/marketplace.json` ───────────────────────────────
+// الصيغة فهرس مفتوح، وقُيست على ملفين حقيقيين مستقلّين: `anthropics/skills` (‏5
+// مدخلات) و`wshobson/agents` (‏94). المشترك بينهما: `name` و`owner` و`metadata`
+// و`plugins[]`، ولكل مدخل `name` و`source` و`description`. أما البقية فمتباينة
+// (‏`strict`/`skills[]` عند الأول، و`version`/`author`/`homepage`/`license`/
+// `category`/`keywords` عند الثاني) — لذلك يُقرأ المعلوم بقائمة سماح ويُهمَل ما عداه
+// بدل رفض الفهرس كله لحقلٍ لم نعرفه.
+//
+// والقارئ **لا يشبك**: يحلّل ملفاً على القرص فقط. الجلب فعل شبكة يخصّ العملية
+// الرئيسية، وفصله هنا يُبقي المحلّل نقياً قابلاً للاختبار بلا شبكة.
+const MARKETPLACE_MAX_BYTES = 512 * 1024;
+const MARKETPLACE_MAX_PLUGINS = 200;
+const MARKETPLACE_MAX_ENTRY_SKILLS = 50;
+const MARKETPLACE_MAX_NAME_CHARS = 120;
+const MARKETPLACE_MAX_SOURCE_CHARS = 200;
+
+// `source` مسار نسبي داخل المستودع (المقيس: `./` و`./plugins/<name>`). المطلق
+// والصاعد والرابط البعيد تُرفض fail-closed: لا جالب لها، وسلسلةٌ غير متحقَّقة قد
+// تُوصَل لاحقاً بـpath.join.
+function marketplaceSource(value) {
+  const clean = normalizeSpecText(value);
+  if (!clean || clean.length > MARKETPLACE_MAX_SOURCE_CHARS) return '';
+  if (clean.includes('\\') || clean.startsWith('/')) return '';
+  if (clean !== '.' && !clean.startsWith('./')) return '';
+  return clean.split('/').includes('..') ? '' : clean;
+}
+
+/** محلّل نقي فوق كائن JSON مُفكَّك — بلا قرص ولا شبكة. */
+function parseMarketplace(document) {
+  if (!document || typeof document !== 'object' || Array.isArray(document)) {
+    return { ok: false, error: 'bad_shape', message: 'الفهرس ليس كائن JSON' };
+  }
+  if (!Array.isArray(document.plugins)) {
+    return { ok: false, error: 'no_plugins', message: 'الفهرس بلا مصفوفة plugins' };
+  }
+  const owner = document.owner && typeof document.owner === 'object' && !Array.isArray(document.owner)
+    ? normalizeSpecText(document.owner.name).slice(0, MARKETPLACE_MAX_NAME_CHARS)
+    : '';
+  const plugins = [];
+  let skipped = 0;
+  for (const entry of document.plugins) {
+    if (plugins.length >= MARKETPLACE_MAX_PLUGINS) { skipped++; continue; }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) { skipped++; continue; }
+    const name = normalizeSpecText(entry.name);
+    const source = marketplaceSource(entry.source);
+    if (!name || name.length > MARKETPLACE_MAX_NAME_CHARS || !source) { skipped++; continue; }
+    const view = {
+      name,
+      source,
+      description: normalizeSpecText(entry.description).slice(0, MAX_DESCRIPTION_CHARS),
+    };
+    const skills = Array.isArray(entry.skills)
+      ? entry.skills.map(marketplaceSource).filter(Boolean).slice(0, MARKETPLACE_MAX_ENTRY_SKILLS)
+      : [];
+    if (skills.length) view.skills = skills;
+    plugins.push(view);
+  }
+  // بريد المالك لا يُعاد: الفهرس يحمله أحياناً (مقيس)، وهو بيانٌ شخصي لا يخدم قرار
+  // الاستيراد في شيء.
+  return {
+    ok: true,
+    name: normalizeSpecText(document.name).slice(0, MARKETPLACE_MAX_NAME_CHARS),
+    owner,
+    plugins,
+    skipped,
+  };
+}
+
+function readMarketplace(file) {
+  if (typeof file !== 'string' || !file.trim()) {
+    return { ok: false, error: 'bad_path', message: 'مسار الفهرس غير صالح' };
+  }
+  let raw;
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      return { ok: false, error: 'not_file', message: 'الفهرس ليس ملفاً عادياً' };
+    }
+    if (stat.size > MARKETPLACE_MAX_BYTES) {
+      return { ok: false, error: 'too_big', message: 'الفهرس أكبر من الحد المسموح' };
+    }
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    return { ok: false, error: 'read_failed', message: 'تعذّرت قراءة الفهرس' };
+  }
+  let document;
+  try { document = JSON.parse(raw); } catch {
+    return { ok: false, error: 'bad_json', message: 'الفهرس ليس JSON صالحاً' };
+  }
+  return parseMarketplace(document);
+}
+
 function resolveSelection(cwd, selection, options) {
   const catalog = discoverSkills(cwd, options);
   const requested = Array.isArray(selection) ? new Set(selection.filter((name) => SAFE_NAME.test(name))) : null;
@@ -473,6 +714,13 @@ module.exports = {
   catalogPrompt,
   codexInputs,
   SAFE_NAME,
+  // الاستيراد وقارئ الفهرس — مُصدَّران للحارس ولمستهلك الواجهة/الطرفية.
+  importSkill,
+  importArgv,
+  readMarketplace,
+  parseMarketplace,
+  IMPORT_PACKAGE,
+  MARKETPLACE_MAX_PLUGINS,
   // مدقّق المواصفة مُصدَّر ليقرأه الحارس من المصدر الواحد بدل نسخة ثانية تتباعد بصمت.
   validateSkillMeta,
   SPEC_NAME,
