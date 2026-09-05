@@ -200,6 +200,7 @@
     "files": [
       "electron/**/*",
       "src/**/*",
+      "NOTICE",
       ".agents/skills/satr-guide/**/*",
       ".agents/skills/satr-diverge/**/*",
       ".agents/skills/satr-generate/**/*",

@@ -75,7 +75,22 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
     const bundledBytes = bundledFiles.reduce((total, entry) => total + fs.statSync(path.join(dir, entry.name)).size, 0);
     // السقف حارس ضد التضخم/الثنائي لا ضد نمو النثر مع الميزات — بلغ 32KiB حده عند
     // توثيق «المسار الموجّه» (ب‑3) فرُفع بهامش صغير؛ يبقى هامشياً بمعيار الحزمة.
-    ok(bundledFiles.length === 3 && bundledFiles.every((entry) => entry.name.endsWith('.md')) && bundledBytes < 40 * 1024,
+    //
+    // ورُفع ثانيةً 40KiB ⇒ 64KiB بقرار مالك صريح (2026-09-05، ‏`OBS-114`) بعد أن بلغ
+    // المتبقي **55 بايتاً**. الحجّة مكتوبة لأن `CLAUDE.md` كان ينصّ «شدّ النثر لا رفع
+    // السقف»، والقرار يبطله بالأسباب الأربعة الآتية:
+    //   1. حارس التضخم الفعليّ هو `length === 3` و`every('.md')` أدناه — هما ما يمسك
+    //      ثنائياً مُقحَماً أو ملفاً رابعاً؛ أما مجموع البايتات فمقياس انضباط لا أمان.
+    //   2. **حجم الحزمة ليس كلفة كل دور**: التحميل التدريجي يجعل الفهرس يقرأ رأس
+    //      `SKILL.md` وحده (وكتالوج metadata مسقوف بـ16KiB مستقلاً)، و`features.md`
+    //      و`tools.md` لا يُقرآن إلا باستدعاء `read_skill_resource`. فالسقف كان يضغط
+    //      حيث لا كلفة، ويترك الكلفة الحقيقية بلا حارس محلي — وهو ما يعالجه فحص
+    //      `SKILL.md` المضاف بعده.
+    //   3. `tools.md` **مولَّد آلياً** وينمو مع كل أداة (‏29 بايتاً لأداة كاملة، مقيس
+    //      في `#36`). فسقفٌ يشتعل بنموّه يعاقب إضافة الأدوات — وهي اتجاه المنتج —
+    //      ويحيل الثمن إلى نثرٍ بشري لا علاقة له بالنمو (‏`features.md`).
+    //   4. كلفة التوزيع: 40KiB داخل مثبّت ‏~80م.ب = 0.05%.
+    ok(bundledFiles.length === 3 && bundledFiles.every((entry) => entry.name.endsWith('.md')) && bundledBytes < 64 * 1024,
       'المهارة المضمّنة ثلاثة ملفات Markdown وحجمها هامشي');
     builtinContext = skills.resolveSelection(path.join(temp, 'empty-project'), 'all', { home, builtinRoot });
   } finally {
@@ -88,6 +103,11 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
   ok(/features\.md/.test(skillMd) && /tools\.md/.test(skillMd), 'SKILL.md يحيل إلى features.md وtools.md');
   ok(/read_skill_resource/.test(skillMd), 'SKILL.md يوجّه للتحميل التدريجي عبر read_skill_resource');
   ok(Buffer.byteLength(skillMd) <= skills.MAX_SKILL_BYTES, 'SKILL.md ضمن سقف حجم المهارة');
+  // نقل الانضباط إلى حيث تقع الكلفة فعلاً (‏`OBS-114`): `MAX_SKILL_BYTES` ‏128KiB سقفُ
+  // المُحمِّل لا سقفُ ذوق، و`SKILL.md` هو **الوحيد** الذي يُقرأ كاملاً عند كل
+  // `load_skill` — أي كلّما سأل المستخدم عن «سطر». فالسقف المحلي هنا يشتعل حيث يهمّ،
+  // بينما سقف الحزمة أعلاه صار يقيس التوزيع وحده.
+  ok(Buffer.byteLength(skillMd) <= 4 * 1024, 'SKILL.md ضمن سقف كلفة التحميل المحلي (4KiB)');
 
   // 3) features.md: دليل مستخدم فعلي، بلا إحالة لوثائق التطوير الداخلية
   const feat = fs.readFileSync(path.join(dir, 'features.md'), 'utf8');
