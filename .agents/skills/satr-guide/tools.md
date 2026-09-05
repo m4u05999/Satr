@@ -73,5 +73,5 @@
 - **`wait_for_background_task`** — Block until a persistent Satr background job exits, then return its exit code and log tail. Use this instead of a sleep + list_background_tasks polling loop. On timeout it returns status=running so you can extend the wait with one more call.
 - **`list_background_tasks`** — List persistent Satr terminal jobs and legacy tracked background processes, plus the most recent jobs that exited with their exit codes. Call before starting another server.
 - **`stop_background_task`** — Stop one persistent background task. The user is asked for permission every time.
-- **`edit_file`** — Edit an existing file by exact string replacement. old_string must match the file content exactly (including whitespace) and must be unique unless replace_all is true. The user is asked for permission first.
+- **`edit_file`** — Edit an existing file with atomic search/replace blocks: old_string/new_string for one, or edits[] for several (order-independent). Read the file first. Exact match, then a unique whitespace-only fallback. Asks permission.
 
