@@ -14,7 +14,7 @@
  *
  * ── وضعان، لأن الملف يجمع صنفين لا يشتركان في شرط التشغيل (‏`OBS-122`) ─────────
  *
- * **محمول** (‏①②③④⑦⑤): `sanitizeScript` وإقلاع السكربت في وسائط spawn وبروتوكول
+ * **محمول** (‏①②③④⑦⑤⑧): `sanitizeScript` وإقلاع السكربت في وسائط spawn وبروتوكول
  * الالتقاط ورموز الخروج وقصّ الذيل. نجاحه يعني «الكود سليم»، وهو صالح بوابةً على أي
  * آلة ويندوز — وهو ما يحرس `OBS-065`.
  *
@@ -58,6 +58,32 @@ function normalizeClipboardForPaste() {
       { stdio: 'ignore' });
   } catch (e) { /* مقصود: بيئة بلا حافظة — لا يُسقط الطقم */ }
 }
+
+// ‏`OBS-121`: الحالة الغالبة التي كان المسار يسقط فيها **صامتاً** — حافظة تحمل صيغة غير
+// نصّية. تُضبط `HTML Format` وحدها لأنها ما رُصد حياً في حافظة الجهاز وقت سقوط `OBS-118`
+// (‏`HTML Format|System.String|UnicodeText|Text|Chromium internal source URL|…`)، وهي
+// مرفوضة في المسارات الثلاثة معاً: قائمة PowerShell، و`availableFormats` على 33، و
+// `read()` على 44. أفضل جهد مثل التطبيع أعلاه: تعذُّرها لا يُسقط الطقم.
+function setAdversarialClipboard() {
+  if (process.platform !== 'win32') return false;
+  try {
+    require('child_process').execFileSync('powershell.exe',
+      ['-NoProfile', '-Sta', '-Command', 'Add-Type -AssemblyName System.Windows.Forms; '
+        + '[Windows.Forms.Clipboard]::SetText("<b>satr-adversarial</b>", '
+        + '[Windows.Forms.TextDataFormat]::Html)'], { stdio: 'ignore' });
+    return true;
+  } catch (e) { return false; }
+}
+
+// إعلان التدهور يركب `data` على قناة `satr:term` القائمة (‏`terminal-panel.js` لا يعالج
+// إلا `data`/`exit`، فنوعٌ جديد كان سيُتجاهَل صامتاً). نرصده عبر `term.subscribe` المصدَّرة
+// بدل تثبيت صياغة الرسالة — الصياغة تتغيّر، ووجود الإعلان هو العقد.
+let noticeSeen = 0;
+term.subscribe((ev) => {
+  if (ev && ev.type === 'data' && typeof ev.data === 'string'
+    && ev.data.includes(term.CLIPBOARD_DEGRADE_MARK)) noticeSeen++;
+});
+const noticeCount = () => noticeSeen;
 
 // الوضع: الوسم للبشر، والمتغيّر للبوابة. المقيس أن `npm run … -- --portable` **يعمل**
 // (شُغّل ووصل)، لكن تمريره من داخل حلقة PowerShell يوجب مصفوفة وسائط لكل مدخل —
@@ -351,6 +377,56 @@ async function main() {
 
   term.killTerm(id);
 
+  console.log('\n— ⑧ عقد الحافظة عبر إصدارَي Electron (OBS-121/OBS-095) —');
+  // **محمول عمداً**: يفحص منطقاً نقيّاً بلا Electron ولا حافظة ولا pty، فيعمل على أي
+  // آلة وداخل أي إصدار. سببه أن `OBS-095` أثبت أن حافظة 44 واجهة أخرى لا حقلاً ناقصاً:
+  // ذهبت `availableFormats` وصارت `readText/writeText` وعوداً، فانكسر مسار التشكيل
+  // **كلياً** هناك (‏0 من 4 حركات) بينما يعمل على 33. والقيم أدناه **منسوخة من مسبار
+  // حيّ** شُغّل على 33.4.11 و44.2.0 معاً، لا مؤلَّفة.
+  {
+    const OSCLIP = 'electron application/osclipboard;format=';
+    const NOISE = [OSCLIP + '"DataObject"', OSCLIP + '"Ole Private Data"'];
+
+    // (أ) القرار «نصّية فقط؟» — الحالات الستّ المرصودة حرفياً على 44
+    ok('نصّ صرف (33) يُعدّ آمناً', term.formatsAreTextOnly(['text/plain']));
+    ok('حافظة فارغة (33) تُعدّ آمنة — دلالة ما قبل الدفعة محفوظة',
+      term.formatsAreTextOnly([]));
+    ok('ضوضاء 44 وحدها (حافظة فارغة) تُعدّ آمنة — وإلا رُفضت كل حافظة على 44',
+      term.formatsAreTextOnly(NOISE));
+    ok('نصّ + ضوضاء 44 يُعدّ آمناً', term.formatsAreTextOnly(['text/plain'].concat(NOISE)));
+    ok('نصّ + HTML (نسخٌ من متصفح — الحالة الغالبة) يُرفض فلا تُتلف الحافظة',
+      term.formatsAreTextOnly(['text/plain', 'text/html'].concat(NOISE)) === false);
+    ok('صورة تُرفض', term.formatsAreTextOnly(['image/png'].concat(NOISE)) === false);
+    ok('صيغة خاصّة يراها 44 وحده (osclipboard غير معروف) تُرفض — فشل مغلق',
+      term.formatsAreTextOnly(NOISE.concat([OSCLIP + '"SatrPrivateFormat"'])) === false);
+
+    // (ب) سلّم القدرات: أيّ واجهة تُقرأ، وأيّها يُرفض. `read` **موجودة في الإصدارين
+    //     بدلالتين متنافرتين** (‏33: `read(format)` نصّ صيغة مخصّصة · 44: `read()` عناصر)،
+    //     فالخلط بينهما هو العطل الذي يجب ألّا يعود.
+    const e33 = { availableFormats: () => ['text/plain', 'text/html'], read: (f) => 'x' };
+    const got33 = await term.electronClipboardFormats(e33);
+    ok('مسار 33: تُقرأ availableFormats ولا تُستعمل read ذات الوسيط',
+      JSON.stringify(got33) === JSON.stringify(['text/plain', 'text/html']), JSON.stringify(got33));
+
+    const e44 = { read: () => Promise.resolve([{ types: ['text/plain'].concat(NOISE) }]) };
+    const got44 = await term.electronClipboardFormats(e44);
+    ok('مسار 44: تُسطَّح types من ClipboardItem[]',
+      JSON.stringify(got44) === JSON.stringify(['text/plain'].concat(NOISE)), JSON.stringify(got44));
+
+    ok('ورأس إعلان التدهور عقدٌ مصدَّر يرصده الحارس (لا نسخة صياغة تتباعد)',
+      typeof term.CLIPBOARD_DEGRADE_MARK === 'string' && term.CLIPBOARD_DEGRADE_MARK.length > 8);
+
+    ok('واجهة بلا availableFormats وبـread ذات وسيط (شكل 33 مبتوراً) تُرفض بـnull',
+      (await term.electronClipboardFormats({ read: (f) => 'x' })) === null);
+    ok('عناصر بلا types تُرفض بـnull — لا تخمين شكل',
+      (await term.electronClipboardFormats({ read: () => Promise.resolve([{}]) })) === null);
+    ok('ناتج غير مصفوفة يُرفض بـnull',
+      (await term.electronClipboardFormats({ read: () => Promise.resolve(null) })) === null);
+    ok('واجهة مجهولة كلياً تُرفض بـnull — لا نلمس حافظة لا نفهمها',
+      (await term.electronClipboardFormats({ writeText: () => {} })) === null);
+    ok('غياب الحافظة يُرفض بـnull', (await term.electronClipboardFormats(null)) === null);
+  }
+
   console.log('\n— 6 عناقيد الحرف العربي عند حافة الالتفاف (OBS-106) —');
   // OBS-106 قِيست على عرض 40 عموداً فرصدت عطلَين: (أ) انقسام العنقود عند حافة الالتفاف
   // (تشويه عرض بصري بلا فقد — تثبيت قياس لا يزال قائماً، علاجه يمسّ العارض) و(ب) سقوط
@@ -475,6 +551,39 @@ async function main() {
       'عاد العطل القديم: الحركات ساقطة — الذيل: ' + JSON.stringify(pasteTail.slice(0, 120)));
     ok('والحرف الأساس نفسه يصل سليماً — فالوصل يشمل العلامات لا الأساس وحده',
       pasteTail.includes(BEH), JSON.stringify(pasteTail.slice(0, 120)));
+    ok('ولم يُعلَن تدهور في المسار السليم — الإشعار لا يُزعج بلا سبب',
+      noticeCount() === 0, 'أُعلن تدهور بلا داعٍ');
+
+    // (ج) **جوهر `OBS-121`**: الحالة الغالبة — حافظة المستخدم فيها محتوى غير نصّي.
+    //     كان المسار يسقط إلى الكتابة الخامة **صامتاً** فيفقد المستخدم تشكيله بلا إشارة.
+    //     المُسنَد **فصلٌ لا تثبيت**: إمّا تصل الحركات وإمّا يُعلَن التدهور. ولا يُثبَّت
+    //     أيّهما عمداً — تثبيت المسار المتدهور يصير عائقاً يوم يُصلَح (درس `OBS-118`).
+    setAdversarialClipboard();
+    const before = noticeCount();
+    term.writeTermPasted(wrapTerm.id, "Write-Output 'HTMLMARK<" + literal + ">'" + '\r');
+    let advOut = '';
+    for (let attempt = 0; attempt < 50; attempt++) {
+      await sleep(200);
+      advOut = stripAnsi(term.readBuffer(wrapTerm.id).data);
+      if (advOut.includes('HTMLMARK<') && promptBack(advOut)) break;
+    }
+    const advTail = advOut.slice(Math.max(0, advOut.indexOf('HTMLMARK<')));
+    const advMarks = countChar(advTail, FATHA) + countChar(advTail, DAMMA);
+    const announced = noticeCount() > before;
+    console.log('    قياس الحافظة المعادية: حركات وصلت=' + advMarks
+      + ' · أُعلن التدهور=' + announced + ' · الأساس وصل=' + advTail.includes(BEH));
+    ok('حافظة غير نصّية: إمّا تصل الحركات وإمّا يُعلَن التدهور — لا صمت (OBS-121)',
+      advMarks >= 2 || announced,
+      'سقط المسار صامتاً كما قبل العلاج — الذيل: ' + JSON.stringify(advTail.slice(0, 120)));
+    ok('والإدخال نفسه لا يضيع في المسار المتدهور — الأساس يصل',
+      advTail.includes(BEH), JSON.stringify(advTail.slice(0, 120)));
+    // الإشعار **مرة واحدة لكل تشغيل**: تكراره مع كل سطر عربي مشكَّل عطلٌ آخر.
+    const afterFirst = noticeCount();
+    term.writeTermPasted(wrapTerm.id, "Write-Output 'AGAIN<" + literal + ">'" + '\r');
+    await sleep(1200);
+    ok('ولا يتكرّر الإشعار مع كل لصقة — مرة واحدة لكل تشغيل',
+      noticeCount() === afterFirst, 'تكرّر ' + (noticeCount() - afterFirst) + ' مرة');
+    normalizeClipboardForPaste(); // لا نترك حافظة المستخدم على حالة الاختبار المعادية
 
     term.killTerm(wrapTerm.id);
   }
