@@ -11,6 +11,7 @@ const path = require('path');
 
 const openaiCompatible = require('../electron/adapters/openai-compatible');
 const { make } = openaiCompatible;
+const gemini = require('../electron/adapters/gemini');
 const openaiResponses = require('../electron/adapters/openai-responses');
 const adapters = require('../electron/adapters');
 
@@ -205,6 +206,91 @@ async function main() {
   const previousKimiKey = process.env.KIMI_API_KEY;
   const previousDeepseekKey = process.env.DEEPSEEK_API_KEY;
   try {
+    // ---- مسح نتائج الأدوات القديمة (رادار ٠٠٣، محور E) ----
+    // fixture يشبه خرج npm test: أسطر كثيرة، مع علامة في الرأس وأخرى في الذيل كي
+    // نثبت أن المنفَّذ ذيلٌ حقيقي لا مقتطف من الجهة الخطأ.
+    const oldToolResult = 'OLD_TOOL_HEAD_MUST_DISAPPEAR\n'
+      + Array.from({ length: 700 }, (_, index) => (
+        'PASS scripts/fixture-' + String(index).padStart(3, '0')
+        + '-test.js — assertions completed without network access\n'
+      )).join('')
+      + 'OLD_TOOL_TAIL_MUST_SURVIVE';
+    const latestToolResult = 'LATEST_TOOL_RESULT_MUST_STAY_FULL\n'
+      + Array.from({ length: 120 }, (_, index) => 'latest output line ' + index + '\n').join('');
+    const systemPrompt = '<satr_system>بادئة ثابتة\r\ncache-prefix-🔒</satr_system>';
+    const history = [
+      { role: 'user', content: 'شغّل الاختبارات السابقة' },
+      { role: 'assistant', content: null, tool_calls: [{
+        id: 'call-old', type: 'function', function: { name: 'run_command', arguments: '{"command":"npm test"}' },
+      }] },
+      { role: 'tool', tool_call_id: 'call-old', content: oldToolResult },
+      { role: 'assistant', content: 'سأفحص الملف الأخير.' },
+      { role: 'user', content: 'افحصه' },
+      { role: 'assistant', content: null, tool_calls: [{
+        id: 'call-latest', type: 'function', function: { name: 'read_file', arguments: '{"path":"src/app.js"}' },
+      }] },
+      { role: 'tool', tool_call_id: 'call-latest', content: latestToolResult },
+      { role: 'user', content: 'تابع من النتيجة الأخيرة' },
+    ];
+    const untouchedHistory = JSON.stringify(history);
+    const cleared = openaiCompatible.clearOldToolResults(history);
+    const beforeClearBytes = Buffer.byteLength(untouchedHistory, 'utf8');
+    const afterClearBytes = Buffer.byteLength(JSON.stringify(cleared), 'utf8');
+    const clearedOld = cleared.find((message) => message.tool_call_id === 'call-old');
+    const protectedLatest = cleared.find((message) => message.tool_call_id === 'call-latest');
+    assert.ok(openaiCompatible.PROTECTED_TOOL_ROUNDS >= 1, 'نافذة حماية الأدوات أقل من جولة واحدة');
+    assert.ok(clearedOld.content.includes('مُسحت')
+      && clearedOld.content.includes('read_file') && clearedOld.content.includes('run_command'),
+      'نتيجة الأداة القديمة لم تحمل إشارة المسح وطريقة الاستعادة');
+    assert.ok(!clearedOld.content.includes('OLD_TOOL_HEAD_MUST_DISAPPEAR'), 'رأس النتيجة القديمة لم يُمسح');
+    assert.ok(clearedOld.content.endsWith(oldToolResult.slice(-openaiCompatible.CLEARED_TOOL_RESULT_TAIL_CHARS)),
+      'ذيل النتيجة القديمة ليس آخر السجل حرفياً');
+    assert.strictEqual(protectedLatest.content, latestToolResult, 'أحدث جولة أدوات مُسحت رغم نافذة الحماية');
+    assert.strictEqual(JSON.stringify(history), untouchedHistory, 'المسح غيّر سجل الحقيقة بدلاً من نسخة الطلب');
+    assert.strictEqual(openaiCompatible.capHistory(history).find((message) => message.tool_call_id === 'call-old').content,
+      oldToolResult, 'نسخة الحفظ فقدت نتيجة الأداة الكاملة');
+    assert.ok(afterClearBytes < beforeClearBytes,
+      'المسح لم يقلّص fixture: ' + beforeClearBytes + ' → ' + afterClearBytes);
+
+    const prepared = openaiCompatible.prepareRequestMessages(history, systemPrompt);
+    assert.deepStrictEqual(Buffer.from(prepared[0].content, 'utf8'), Buffer.from(systemPrompt, 'utf8'),
+      'بادئة OBS-103 تغيّرت بايتياً عند مسح سجل الرسائل');
+    const knownCalls = new Set();
+    for (const message of prepared) {
+      if (message.role === 'assistant' && Array.isArray(message.tool_calls)) {
+        for (const call of message.tool_calls) knownCalls.add(call.id);
+      }
+      if (message.role === 'tool') {
+        assert.ok(knownCalls.has(message.tool_call_id), 'رسالة tool يتيمة بعد المسح/السقف: ' + message.tool_call_id);
+      }
+    }
+
+    // السقف يبدأ هنا عند tool عمداً؛ يجب إسقاطها بعدما سقط نداءها، بلا تغيير المحتوى المحفوظ.
+    const orphanAtCap = [{ role: 'assistant', content: null, tool_calls: [{
+      id: 'cap-call', type: 'function', function: { name: 'read_file', arguments: '{}' },
+    }] }, { role: 'tool', tool_call_id: 'cap-call', content: oldToolResult }]
+      .concat(Array.from({ length: openaiCompatible.MAX_TURNS - 1 }, (_, index) => ({
+        role: index % 2 ? 'assistant' : 'user', content: 'رسالة ' + index,
+      })));
+    const cappedHistory = openaiCompatible.prepareRequestMessages(orphanAtCap, '');
+    assert.ok(cappedHistory.length && cappedHistory[0].role !== 'tool', 'سقف الرسائل ترك tool يتيمة في المقدمة');
+
+    // العقد نفسه بصيغة Gemini (functionResponse): آخر جولة كاملة، والأقدم نسخة ممسوحة.
+    const geminiHistory = [
+      { role: 'model', parts: [{ functionCall: { name: 'run_command', args: { command: 'npm test' } } }] },
+      { role: 'user', parts: [{ functionResponse: { name: 'run_command', response: { result: oldToolResult } } }] },
+      { role: 'model', parts: [{ text: 'أفحص الملف الأخير.' }] },
+      { role: 'model', parts: [{ functionCall: { name: 'read_file', args: { path: 'src/app.js' } } }] },
+      { role: 'user', parts: [{ functionResponse: { name: 'read_file', response: { result: latestToolResult } } }] },
+    ];
+    const geminiUntouched = JSON.stringify(geminiHistory);
+    const geminiCleared = gemini.clearOldToolResults(geminiHistory);
+    assert.ok(geminiCleared[1].parts[0].functionResponse.response.result.includes('مُسحت'),
+      'نتيجة Gemini القديمة لم تُمسح');
+    assert.strictEqual(geminiCleared[4].parts[0].functionResponse.response.result, latestToolResult,
+      'أحدث نتيجة Gemini لم تبقَ كاملة');
+    assert.strictEqual(JSON.stringify(geminiHistory), geminiUntouched, 'مسح Gemini غيّر سجل الحقيقة');
+
     const ollama = adapters.list().find((provider) => provider.name === 'ollama');
     assert.ok(ollama, 'Ollama is registered in the Community adapter registry');
     assert.strictEqual(ollama.keyName, '');
@@ -554,6 +640,8 @@ async function main() {
     console.log('✓ stop() cancels the backoff sleep at once and leaves no orphan timer');
     console.log('✓ Non-429 responses and the healthy path are untouched by the rate-limit branch');
     console.log('✓ Raw provider bodies never reach any emitted event on the 429 path');
+    console.log('✓ Old tool results are cleared in request copies while the newest round, disk truth, and system prefix stay intact');
+    console.log('tool-result clearing fixture: ' + beforeClearBytes + ' bytes → ' + afterClearBytes + ' bytes');
   } finally {
     if (restoreChat) restoreChat();
     if (restoreResponses) restoreResponses();

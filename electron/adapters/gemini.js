@@ -28,6 +28,7 @@ const memory = require('../memory'); // ذاكرة مشروع شخصية مُق�
 const termjobs = require('../termjobs'); // مهام الخلفية المعمّرة — كتلة «انتهت بلا دور نشط»
 const contextBudget = require('../context'); // خلاصة repo map + usage تقديري موسوم estimate
 const envbrief = require('../envbrief');
+const usage = require('./usage'); // عدادات المزوّد + مقياس ضريبة المخرجات الداخلي
 
 // ---- بِتّات خاصة بمزوّد Gemini ----
 const API_HOST = 'generativelanguage.googleapis.com';
@@ -39,8 +40,66 @@ const GEMINI_MODEL_RE = /^gemini[A-Za-z0-9.-]*$/i; // نموذج Gemini صريح
 const PROVIDER = 'gemini';
 const histories = new Map(); // session_id → contents بصيغة Gemini (كاش حيّ فوق القرص)
 const MAX_TURNS = 40;        // آخر 40 مدخل contents لكل جلسة
+const PROTECTED_TOOL_ROUNDS = 1; // آخر جولة functionCall/functionResponse تبقى كاملة
+const CLEARED_TOOL_RESULT_TAIL_CHARS = 2000; // ذيل نتائج الجولات الأقدم
 const MAX_SESSIONS = 50;     // سقف الجلسات في الكاش الحيّ
 const MAX_TOOL_ROUNDS = 8;   // سقف جولات الأدوات في الدور (حارس حلقة لانهائية)
+
+const CLEARED_TOOL_RESULT_NOTICE = '[مُسحت نتيجة أداة قديمة لتقليل حجم السياق. '
+  + 'لا تفترض محتواها الكامل؛ لاستعادته شغّل read_file أو run_command مرة أخرى.]';
+
+function hasFunctionCall(content) {
+  return !!(content && content.role === 'model' && Array.isArray(content.parts)
+    && content.parts.some((part) => part && part.functionCall));
+}
+
+/** نسخة طلب ممسوحة بصيغة Gemini؛ لا تغيّر contents الأصلية التي يحفظها chats.js. */
+function clearOldToolResults(contents) {
+  if (!Array.isArray(contents) || !contents.length) return [];
+  const roundIndexes = [];
+  for (let index = 0; index < contents.length; index++) {
+    if (hasFunctionCall(contents[index])) roundIndexes.push(index);
+  }
+  const protectedStart = roundIndexes.length >= PROTECTED_TOOL_ROUNDS
+    ? roundIndexes[roundIndexes.length - PROTECTED_TOOL_ROUNDS] : -1;
+
+  return contents.map((content, index) => {
+    if (!content || !Array.isArray(content.parts) || index > protectedStart) return content;
+    let changed = false;
+    const parts = content.parts.map((part) => {
+      const response = part && part.functionResponse && part.functionResponse.response;
+      const result = response && response.result;
+      if (typeof result !== 'string' || result.startsWith(CLEARED_TOOL_RESULT_NOTICE)) return part;
+      changed = true;
+      return {
+        ...part,
+        functionResponse: {
+          ...part.functionResponse,
+          response: {
+            ...response,
+            result: CLEARED_TOOL_RESULT_NOTICE + '\n\n[ذيل النتيجة المحفوظ]\n'
+              + result.slice(-CLEARED_TOOL_RESULT_TAIL_CHARS),
+          },
+        },
+      };
+    });
+    return changed ? { ...content, parts } : content;
+  });
+}
+
+function capHistory(contents) {
+  const capped = Array.isArray(contents) ? contents.slice() : [];
+  while (capped.length > MAX_TURNS) capped.shift();
+  // لا functionResponse يتيم في المقدمة بعد القصّ (Gemini يطلب functionCall قبله)
+  while (capped.length && (capped[0].role === 'model'
+    || (Array.isArray(capped[0].parts) && capped[0].parts.some((part) => part.functionResponse)))) capped.shift();
+  return capped;
+}
+
+// الترتيب مقصود: المسح أولاً ثم السقف، وكلاهما على نسخة الطلب وحدها.
+function prepareRequestContents(contents) {
+  return capHistory(clearOldToolResults(contents));
+}
 
 // «موافقة دائمة» لعمر التطبيق (نفس نموذج openai-compatible — طبقة write فقط)
 const alwaysAllowed = new Set();
@@ -141,15 +200,17 @@ function start(input, cwd, emit) {
     return new Promise((resolve) => {
       let textBuf = '';
       let sseBuf = '';
+      let requestUsage = null;
       const calls = []; // { name, args } — تصل كاملة في أجزاء parts (لا تجزئة كالبروتوكول الآخر)
       let settled = false;
       const done = (r) => { if (!settled) { settled = true; resolve(r); } };
 
       // الأجزاء المتغيرة تلحق بدور المستخدم عند الإرسال ولا تلوّث سجل المحادثة المعروض.
-      const requestContents = contents.map((content, index) => {
+      const withTurnPrompt = contents.map((content, index) => {
         if (!turnPrompt || index !== turnContentIndex || !content || content.role !== 'user') return content;
         return { ...content, parts: (Array.isArray(content.parts) ? content.parts : []).concat([{ text: turnPrompt }]) };
       });
+      const requestContents = prepareRequestContents(withTurnPrompt);
       const bodyObj = { contents: requestContents };
       if (contextPrompt) bodyObj.systemInstruction = { parts: [{ text: contextPrompt }] };
       if (withTools) bodyObj.tools = geminiToolDefs();
@@ -162,6 +223,7 @@ function start(input, cwd, emit) {
         try { obj = JSON.parse(jsonStr); } catch (e) { return; }
         // استهلاك الرموز (3.3): usageMetadata يصل مع الإطارات الأخيرة — نأخذ آخر قيمة
         if (obj && obj.usageMetadata) {
+          requestUsage = usage.parseGemini(obj.usageMetadata) || requestUsage;
           usageTotal.input_tokens = obj.usageMetadata.promptTokenCount || usageTotal.input_tokens;
           usageTotal.output_tokens = obj.usageMetadata.candidatesTokenCount || usageTotal.output_tokens;
         }
@@ -209,7 +271,7 @@ function start(input, cwd, emit) {
             if (line.startsWith('data:')) handleFrame(line.slice(5).trim());
           }
         });
-        res.on('end', () => done({ text: textBuf, calls }));
+        res.on('end', () => done({ text: textBuf, calls, usage: requestUsage }));
       });
 
       req.on('error', (e) => {
@@ -258,6 +320,10 @@ function start(input, cwd, emit) {
         return;
       }
       estimatedUsage.output_tokens += contextBudget.estimateTokens({ text: r.text, calls: r.calls });
+      // لا نقيس جولة functionCall: عدادها يجمع النص والبنية ولا يمكن نسبه للنثر وحده.
+      if (r.text && !r.calls.length) {
+        usage.recordOutputMetric(PROVIDER + ':' + useModel, r.text, r.usage);
+      }
 
       if (r.calls.length && rounds < MAX_TOOL_ROUNDS) {
         rounds++;
@@ -299,11 +365,8 @@ function start(input, cwd, emit) {
         contents.push({ role: 'model', parts: [{ text: r.text }] });
         emit({ type: 'assistant', message: { content: [{ type: 'text', text: r.text }] } });
       }
-      const h = contents.slice();
-      while (h.length > MAX_TURNS) h.shift();
-      // لا functionResponse يتيم في المقدمة بعد القصّ (المزوّد يرفضه بلا functionCall يسبقه)
-      while (h.length && (h[0].role === 'model'
-        || (Array.isArray(h[0].parts) && h[0].parts.some((p) => p.functionResponse)))) h.shift();
+      // نسخة الحفظ كاملة المحتوى؛ المسح لم يدخلها.
+      const h = capHistory(contents);
       if (!histories.has(sid) && histories.size >= MAX_SESSIONS) {
         histories.delete(histories.keys().next().value); // إخلاء الأقدم
       }
@@ -340,4 +403,7 @@ function start(input, cwd, emit) {
   };
 }
 
-module.exports = { start };
+module.exports = {
+  start, clearOldToolResults, capHistory, prepareRequestContents,
+  MAX_TURNS, PROTECTED_TOOL_ROUNDS, CLEARED_TOOL_RESULT_TAIL_CHARS, CLEARED_TOOL_RESULT_NOTICE,
+};

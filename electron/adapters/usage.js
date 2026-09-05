@@ -6,6 +6,7 @@
 'use strict';
 
 const contextBudget = require('../context');
+const langmetric = require('../langmetric');
 
 function tokenCount(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
@@ -55,6 +56,25 @@ function parseResponses(raw) {
   };
 }
 
+function parseGemini(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const hasInput = typeof raw.promptTokenCount === 'number'
+    && Number.isFinite(raw.promptTokenCount) && raw.promptTokenCount >= 0;
+  const hasOutput = typeof raw.candidatesTokenCount === 'number'
+    && Number.isFinite(raw.candidatesTokenCount) && raw.candidatesTokenCount >= 0;
+  if (!hasInput && !hasOutput) return null;
+  const input = tokenCount(raw.promptTokenCount);
+  const output = tokenCount(raw.candidatesTokenCount);
+  return {
+    input,
+    output,
+    cached: Math.min(input, tokenCount(raw.cachedContentTokenCount)),
+    reasoning: tokenCount(raw.thoughtsTokenCount),
+    // Gemini يعلن candidates وthoughts عدّادين منفصلين؛ total وحده يجمعهما.
+    reasoningIncludedInOutput: false,
+  };
+}
+
 function add(total, current) {
   if (!current) return;
   total.input += current.input;
@@ -87,4 +107,42 @@ function normalize(actual, estimated) {
   };
 }
 
-module.exports = { add, emptyActual, normalize, parseChat, parseResponses };
+/**
+ * يحوّل عداد طلب واحد إلى مصدر مقياس المخرجات. يُطرح reasoning الموثّق لأنه لا
+ * يقابله نص ظاهر يمكن عدّ محارفه. غياب العداد وحده يفعّل التقدير المحلي الموسوم.
+ */
+function outputMetricUsage(actual, text) {
+  if (actual && typeof actual === 'object'
+      && actual.source !== 'estimate' && actual.estimate !== true) {
+    const rawOutput = Object.prototype.hasOwnProperty.call(actual, 'output')
+      ? actual.output : actual.output_tokens;
+    if (typeof rawOutput === 'number' && Number.isFinite(rawOutput) && rawOutput >= 0) {
+      const rawReasoning = Object.prototype.hasOwnProperty.call(actual, 'reasoning')
+        ? actual.reasoning : actual.reasoning_tokens;
+      const includedReasoning = actual.reasoningIncludedInOutput === false ? 0 : tokenCount(rawReasoning);
+      const visibleOutput = Math.max(0, tokenCount(rawOutput) - includedReasoning);
+      return visibleOutput > 0
+        ? { output_tokens: visibleOutput, source: 'actual', estimate: false, method: 'provider_usage' }
+        : null;
+    }
+  }
+  const fallback = contextBudget.resolveUsage({}, {
+    input_tokens: 0,
+    output_tokens: contextBudget.estimateTextTokens(typeof text === 'string' ? text : ''),
+  });
+  return {
+    output_tokens: fallback.output_tokens,
+    source: 'estimate',
+    estimate: true,
+    method: 'character_heuristic',
+  };
+}
+
+function recordOutputMetric(scope, text, actual) {
+  return langmetric.recordOutputTokenSample(scope, text, outputMetricUsage(actual, text));
+}
+
+module.exports = {
+  add, emptyActual, normalize, parseChat, parseResponses, parseGemini,
+  outputMetricUsage, recordOutputMetric,
+};
