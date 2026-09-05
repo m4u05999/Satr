@@ -202,6 +202,7 @@ function startTerm(cwd, cols, rows, meta) {
     const tail = entry.buffer.subarray(Math.max(0, entry.buffer.length - 32768)).toString('utf8');
     terminals.delete(id);
     captureQueues.delete(id);
+    writeChains.delete(id);
     emit({ type: 'exit', id, exitCode, tail });
   });
 
@@ -234,17 +235,91 @@ try {
   if (electron && electron.clipboard) electronClipboard = electron.clipboard;
 } catch (e) { /* مقصود: الاختبارات تأخذ مسار PowerShell أدناه */ }
 
+// ---------- OBS-121 + OBS-095: عقد حافظة واحد يعمل على Electron 33 و44 معاً ----------
+// قياس حيّ (2026-09-05، مسابير هذه الدفعة على 33.4.11 و44.2.0 معاً): حافظة Electron 44
+// **ليست** حافظة 33 بحقلٍ ناقص، بل واجهة أخرى بالكامل. المُعلَن عليها ستّ دوال فقط:
+// `clear · has · read · readText · write · writeText`؛ وذهب معها `availableFormats` و
+// `readHTML/writeHTML` و`readImage/writeImage` و`readRTF` و`readBuffer/writeBuffer` و
+// `readBookmark`. لذلك «توسيع الحفظ والاستعادة إلى HTML والصورة» — أحد مرشّحي علاج
+// `OBS-121` — **متعذّر على الهدف** لا مؤجَّل. وصارت `readText/writeText` تعيدان وعوداً،
+// بينما بقيت `clear` متزامنة تعيد undefined.
+//
+// البديل المقيس لـ`availableFormats` هو `read()` القياسية: تعيد `ClipboardItem[]` ولكل
+// عنصر `types` بصيغ MIME. المرصود حرفياً على 44:
+//   نصّ صرف   → ["text/plain", …ضوضاء…]
+//   HTML وحده → ["text/html", …ضوضاء…]              (و`readText()` تعيد "")
+//   نصّ+HTML  → ["text/plain","text/html", …ضوضاء…]   ← الحالة الغالبة من متصفح
+//   صورة      → ["image/png", …ضوضاء…]
+//   فارغة     → …ضوضاء… وحدها
+// و«الضوضاء» مدخلان يظهران على **كل** حافظة بما فيها الفارغة:
+//   electron application/osclipboard;format="DataObject"
+//   electron application/osclipboard;format="Ole Private Data"
+// فقائمةُ سماحٍ تشترط أن يكون كل مدخل نصّاً كانت سترفض كل حافظة على 44 — لذا يُستثنيان
+// بالاسم، وأي `osclipboard` **آخر** يعني حمولةً لا نعرفها فيُرفض المسار (فشل مغلق).
+// ولو أضاف إصدارٌ لاحق ضوضاء عامة ثالثة لصار الرفض دائماً: تدهورٌ **معلَن** بالإشعار
+// أدناه لا إتلافٌ صامت — وهذا هو الاتجاه الصحيح للفشل.
+//
+// وفرقٌ يستحق التسجيل: 44 هنا **أصدق** من 33. حافظةٌ فيها صيغة خاصة وحدها
+// (‏`SatrPrivateFormat` في المسبار) يراها 44 ‏`osclipboard;format="SatrPrivateFormat"`
+// فنرفض، بينما `availableFormats()` على 33 تعيد `[]` — أي «فارغة» — فنكتب فوقها.
+// وكذلك `Chromium internal source URL`: يراه 44 ولا يراه 33. هذا **حدّ قائم في 33 لم
+// تُحدثه هذه الدفعة ولم تُزله**، ومصرَّح به.
+const OSCLIP_PREFIX = 'electron application/osclipboard;format=';
+// المدخلان المرصودان على حافظة **فارغة** — أي أنهما وصف الغلاف لا محتوى المستخدم
+const OSCLIP_UNIVERSAL = new Set([
+  OSCLIP_PREFIX + '"DataObject"',
+  OSCLIP_PREFIX + '"Ole Private Data"',
+]);
+const PLAIN_TEXT_TYPES = new Set(['text/plain', 'text/plain;charset=utf-8']);
+
+// الدلالة محفوظة من قبل الدفعة: قائمة فارغة (حافظة فارغة) تُعدّ آمنة، وأي صيغة غير
+// نصية تُبطل المسار. الجديد وحده استثناء ضوضاء 44 ورفض ما عداها.
+function formatsAreTextOnly(formats) {
+  for (const f of formats) {
+    if (PLAIN_TEXT_TYPES.has(f)) continue;
+    if (OSCLIP_UNIVERSAL.has(f)) continue;
+    return false;
+  }
+  return true;
+}
+
+// سلّم قدرات صريح لا افتراض إصدار: `availableFormats` موجودة على 33 وغائبة على 44،
+// فحضورها وحده يفصل المسارين. و`read` موجودة في الاثنين **بدلالتين متنافرتين**
+// (‏33: `read(format)` تقرأ صيغة مخصّصة نصّاً · 44: `read()` تعيد ClipboardItem[])،
+// لذلك لا تُستعمل إلا بعد أن يثبت غياب `availableFormats`، ومع فحص أَرِيَّتها وشكل ناتجها.
+async function electronClipboardFormats(clip) {
+  if (!clip) return null;
+  if (typeof clip.availableFormats === 'function') {
+    const formats = clip.availableFormats();
+    return Array.isArray(formats) ? formats : [];
+  }
+  if (typeof clip.read === 'function' && clip.read.length === 0) {
+    const items = await clip.read();
+    if (!Array.isArray(items)) return null; // شكل غير متوقَّع ⇒ فشل مغلق
+    const types = [];
+    for (const item of items) {
+      const list = item && item.types;
+      if (!Array.isArray(list)) return null;
+      for (const type of list) types.push(String(type));
+    }
+    return types;
+  }
+  return null; // واجهة لا نعرفها ⇒ لا نلمس الحافظة
+}
+
 // لقطة الحافظة إن كانت نصية فقط، وإلا null (يُكتفى عندها بالكتابة الخامة كالسابق).
-function clipboardSnapshot() {
+// صارت **غير متزامنة** لأن نصف عملياتها وعودٌ على 44؛ و`await` على قيمة غير وعد يمرّرها
+// كما هي، فمسار 33 المتزامن ومسار PowerShell يعملان داخلها بلا فرع ثانٍ.
+async function clipboardSnapshot() {
   if (electronClipboard) {
     try {
-      const formats = electronClipboard.availableFormats() || [];
-      const textOnly = formats.every((f) => f === 'text/plain' || f === 'text/plain;charset=utf-8');
-      if (!textOnly) return null;
-      const text = electronClipboard.readText();
+      const formats = await electronClipboardFormats(electronClipboard);
+      if (!formats) return null;
+      if (!formatsAreTextOnly(formats)) return null;
+      const text = await electronClipboard.readText(); // 33: نصّ · 44: وعد
       return {
-        text,
-        write: (s) => electronClipboard.writeText(s),
+        text: typeof text === 'string' ? text : '',
+        write: (s) => electronClipboard.writeText(s),   // يُنتظر عند الاستدعاء
         clear: () => electronClipboard.clear(),
       };
     } catch (e) { return null; }
@@ -279,10 +354,51 @@ function clipboardSnapshot() {
   } catch (e) { return null; }
 }
 
-// إن انطبقت شروط العطل كلها: اكتب باللصق عبر الحافظة وأرجع النتيجة، وإلا أرجع null
-// لتعني «اكتب خاماً كما كانت». الاستهلاك متزامن داخل PSReadLine عند معالجة Ctrl+V،
-// فنُرجع محتوى الحافظة السابق بعد هامش أمان.
-function clusterPasteWrite(t, data) {
+// ---------- إعلان التدهور (جوهر `OBS-121`) ----------
+// الاحتراز سليم: لا نُتلف حافظة المستخدم لنكتب سطراً. العطل أنه **صامت** — المستخدم
+// ينسخ من متصفح (الحالة الغالبة: `text/plain + text/html`)، ثم يكتب عربية مشكَّلة،
+// فيفقد التشكيل بلا إشارة. والعقد القائم في المستودع يوجب إعلان التدهور: `readBuffer`
+// يعلن `truncated`، و`browser_readability` تعلن `unseen`.
+//
+// المركبة `data` على قناة `satr:term` القائمة **عمداً**: `main.js` يمرّر أي حدث طرفية
+// كما هو، لكن `terminal-panel.js` لا يعالج إلا `data` و`exit` — فنوعٌ جديد كان سيمرّ
+// **ويُتجاهَل صامتاً**، أي الصمتُ نفسه بثوب آخر. والنصّ يظهر حيث المستخدم يعمل.
+// ولا يبلغ سجلّ مهمة ولا التقاطاً: المسار محصور بالطرفيات التفاعلية (`!isJob && !isModel`).
+//
+// **مرة واحدة لكل تشغيل** لا لكل لصقة: إشعارٌ يتكرر مع كل سطر عربي مشكَّل عطلٌ آخر.
+// الرأس عقدٌ **مصدَّر** لا صياغةٌ حرّة: الحارس يرصد الإعلان به بدل أن يكرّر نصّه، فلا
+// يتباعد الاثنان ولا يتحوّل تحسينُ الصياغة إلى كسر حارس.
+const CLIPBOARD_DEGRADE_MARK = 'تعذّر حفظ التشكيل';
+let degradeNoticeShown = false;
+function announceClipboardDegrade(t) {
+  if (degradeNoticeShown) return false;
+  degradeNoticeShown = true;
+  const text = '\r\n\x1b[33m⚠ ' + CLIPBOARD_DEGRADE_MARK + ': حافظتك تحمل محتوى غير نصّي '
+    + '(صورة أو نصّاً منسّقاً من متصفح)، و«سطر» لا يستبدلها لئلّا يُتلفها.\r\n'
+    + '  انسخ نصّاً عادياً — أو أفرغ الحافظة — ثم أعد الإدخال إن لزمك التشكيل.\x1b[0m\r\n';
+  appendBuffer(t, text);
+  emit({ type: 'data', id: t.id, data: text });
+  return true;
+}
+
+// ---------- طابور كتابة لكل طرفية (لازمٌ لأن مسار الحافظة صار غير متزامن) ----------
+// على 44 يفصل بين قرار الحافظة وكتابة Ctrl+V دورةُ حدثٍ واحدة على الأقل. فبلا طابور
+// قد تسبق كتابةٌ خامّةٌ لاحقة (‏Ctrl+C مثلاً) لصقةً معلّقة، فينقلب ترتيب إدخال المستخدم —
+// وذاك عطلٌ أسوأ من العطل المُعالَج. المدخل يُحذف عند تفريغ سلسلته كي تعود الكتابات
+// اللاحقة إلى المسار المتزامن المباشر بلا تأجيل دائم.
+const writeChains = new Map();
+function enqueueWrite(t, fn) {
+  const previous = writeChains.get(t.id) || Promise.resolve();
+  const next = previous.then(fn, fn).catch(() => {});
+  writeChains.set(t.id, next);
+  next.then(() => { if (writeChains.get(t.id) === next) writeChains.delete(t.id); });
+  return next;
+}
+
+// البوابة المتزامنة: هل ينطبق علاج OBS-106 على هذه الكتابة أصلاً؟ تعيد الجسم و`\r`
+// الختامي، أو null بمعنى «اكتب خاماً كما كانت». فُصلت عن التنفيذ كي يبقى **قرار المسار**
+// متزامناً (يحتاجه `writeTerm`/`writePasted` لعقدهما) بينما ينتظر التنفيذُ الحافظة.
+function clusterPasteParts(t, data) {
   if (!IS_WIN) return null;
   if (t.isJob || t.isModel) return null; // لا تلاعب بالحافظة من كتابة غير مرئية
   const shell = String(t.shell || '').toLowerCase();
@@ -291,18 +407,36 @@ function clusterPasteWrite(t, data) {
   const CR = data.slice(-1) === '\r' ? '\r' : '';
   const body = CR ? data.slice(0, -1) : data;
   if (!body.length || /[\r\n]/.test(body)) return null; // متعدد الأسطر يبقى خاماً
-  const clip = clipboardSnapshot();
-  if (!clip) return null;
+  return { body, CR };
+}
+
+function rawWrite(t, data) {
+  try { t.proc.write(data); } catch (e) { return { ok: false, error: 'write_failed' }; }
+  return { ok: true };
+}
+
+// التنفيذ غير المتزامن: لقطة الحافظة ⇐ لصق ⇐ استعادة. تعذُّر اللقطة **لا يُسقط الإدخال**؛
+// يعود إلى الكتابة الخامة (سلوك ما قبل الدفعة حرفياً) ويُعلن التدهور مرّة.
+async function clusterPasteWrite(t, data, parts) {
+  const { body, CR } = parts;
+  const clip = await clipboardSnapshot();
+  if (!clip) {
+    announceClipboardDegrade(t);
+    return rawWrite(t, data);
+  }
   const saved = clip.text;
-  try { clip.write(body); } catch (e) { return null; }
+  const restore = () => {
+    try { return Promise.resolve(saved ? clip.write(saved) : clip.clear()).catch(() => {}); }
+    catch (e) { return Promise.resolve(); }
+  };
+  try { await clip.write(body); } catch (e) { return rawWrite(t, data); }
   try { t.proc.write(PASTE_KEY + CR); }
   catch (e) {
-    try { if (saved) clip.write(saved); else clip.clear(); } catch (_) {}
+    await restore();
     return { ok: false, error: 'write_failed' };
   }
-  setTimeout(() => {
-    try { if (saved) clip.write(saved); else clip.clear(); } catch (e) {}
-  }, CLIPBOARD_RESTORE_MS).unref();
+  // الاستهلاك متزامن داخل PSReadLine عند معالجة Ctrl+V، فنُرجع السابق بعد هامش أمان.
+  setTimeout(restore, CLIPBOARD_RESTORE_MS).unref();
   return { ok: true };
 }
 
@@ -317,12 +451,19 @@ function clusterPasteWrite(t, data) {
  * تبدو حيّة بلا عمل. أي أن الحماية كانت في الملف نفسه ولا تصل نصف مستعمليها.
  */
 function writePasted(t, line) {
-  // OBS-106: الحركات الواصلة تسقط حتى داخل اللصق المُقوّس — نفس علاج writeTerm
-  const pasted = clusterPasteWrite(t, line);
-  if (pasted) return pasted.ok;
+  // OBS-106: الحركات الواصلة تسقط حتى داخل اللصق المُقوّس — نفس علاج writeTerm.
+  // العقد هنا **متزامن ولا يتغيّر**: `runCaptureNow` يقرأ هذا المنطقي ليعلن
+  // `write_failed`. ولمّا صار مسار الحافظة غير متزامن يُقبل الطلب بـtrue ويُنفَّذ في
+  // الطابور — وهو مأمون هنا لأن `runCapture` كله على طرفية النموذج (`isModel`)
+  // فتردّ `clusterPasteParts` بـnull ويبقى مسار الالتقاط متزامناً حرفياً كما كان.
+  const parts = clusterPasteParts(t, line);
+  if (parts) { enqueueWrite(t, () => clusterPasteWrite(t, line, parts)); return true; }
   const CR = line.slice(-1) === '\r' ? '\r' : '';
   const body = CR ? line.slice(0, -1) : line;
-  try { t.proc.write('\x1b[200~' + body + '\x1b[201~' + CR); return true; }
+  const bracketed = '\x1b[200~' + body + '\x1b[201~' + CR;
+  // إن كان للطرفية طابور معلّق فحتى الكتابة الخامة تدخله، وإلا سبقت لصقةً قبلها
+  if (writeChains.has(t.id)) { enqueueWrite(t, () => rawWrite(t, bracketed)); return true; }
+  try { t.proc.write(bracketed); return true; }
   catch (e) { return false; }
 }
 
@@ -341,11 +482,15 @@ function writeTerm(id, data) {
   if (!t) return { ok: false, error: 'no_term' };
   if (typeof data !== 'string' || !data.length || data.length > 1024 * 1024)
     return { ok: false, error: 'bad_data' };
-  // OBS-106: الحركات الواصلة تسقط في PSReadLine القديم — لصق عبر الحافظة عند انطباق الشروط
-  const pasted = clusterPasteWrite(t, data);
-  if (pasted) return pasted;
-  try { t.proc.write(data); } catch (e) { return { ok: false, error: 'write_failed' }; }
-  return { ok: true };
+  // OBS-106: الحركات الواصلة تسقط في PSReadLine القديم — لصق عبر الحافظة عند انطباق الشروط.
+  // `{ok:true}` هنا تعني «قُبِلت الكتابة» لا «استهلكتها الصدفة» — وهي دلالتها قبل الدفعة
+  // أيضاً (‏`proc.write` يعود قبل أن تعالج الصدفة شيئاً). فشل الحافظة داخل الطابور يعود
+  // إلى الكتابة الخامة فلا يضيع إدخال المستخدم في أي حال.
+  const parts = clusterPasteParts(t, data);
+  if (parts) { enqueueWrite(t, () => clusterPasteWrite(t, data, parts)); return { ok: true }; }
+  // الترتيب أولاً: كتابة خامة تسبق لصقةً معلّقة تقلب إدخال المستخدم (‏Ctrl+C مثلاً)
+  if (writeChains.has(t.id)) { enqueueWrite(t, () => rawWrite(t, data)); return { ok: true }; }
+  return rawWrite(t, data);
 }
 
 function resizeTerm(id, cols, rows) {
@@ -361,6 +506,7 @@ function killTerm(id) {
   const t = terminals.get(id);
   if (!t) return { ok: false, error: 'no_term' };
   terminals.delete(id);
+  writeChains.delete(id);
   // ConPTY يُنهي شجرة العمليات المرتبطة به عند إغلاق الـ pty
   try { t.proc.kill(); } catch (e) {}
   return { ok: true };
@@ -633,6 +779,7 @@ function killAll() {
   }
   terminals.clear();
   captureQueues.clear();
+  writeChains.clear();
   modelTermId = null;
 }
 
@@ -643,4 +790,6 @@ module.exports = {
   structuralShape, structuralDelta,
   buildCaptureLine, matchCaptureEnd,
   runCapture, ensureModelTerm, getModelTermId, killAll,
+  // OBS-121/OBS-095: عقد الحافظة عبر الإصدارين — نقيّان يُختبران بلا Electron ولا حافظة
+  formatsAreTextOnly, electronClipboardFormats, CLIPBOARD_DEGRADE_MARK,
 };
