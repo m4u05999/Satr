@@ -19,8 +19,10 @@ const path = require('path');
 const langoverride = require('../electron/langoverride');
 const langanchor = require('../electron/langanchor');
 const { createShadow } = require('../electron/langshadow');
+const { pointLabel, extractWoff2Table, cmapHasGlyph } = require('./lib/woff2cmap');
 
 const { detectExplicitRequest, sessionOverride, sanitizeTag, MAX_SESSIONS } = langoverride;
+const { AR_LOCALES, buildRequestRes } = langoverride;
 
 let checks = 0;
 function ok(cond, msg) { checks += 1; assert(cond, msg); }
@@ -273,5 +275,144 @@ const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex').s
   ok(!/langoverride/.test(metric), 'ولا يعرف المقياس شيئاً عن التجاوز');
 }
 
+// ── 12) جدول لغات الحرف العربي (‏OBS-037): بنية الصفوف والاشتقاق منها ──────────
+{
+  const codes = new Set();
+  for (const row of AR_LOCALES) {
+    ok(row.code && !codes.has(row.code), 'رمز لغة فريد في الجدول: ' + row.code);
+    codes.add(row.code);
+    ok(Array.isArray(row.stems) && row.stems.length > 0, 'جذور عربية معلنة لـ ' + row.code);
+    ok(Array.isArray(row.en) && row.en.length > 0, 'أسماء إنجليزية معلنة لـ ' + row.code);
+    ok(row.diacritics === 'strip', 'معاملة تشكيل معلنة (strip) لـ ' + row.code);
+    ok(typeof row.letters === 'string', 'محارف مقارنة معلنة لـ ' + row.code);
+    ok(Array.isArray(row.samples) !== Boolean(row.untested),
+      'صف ' + row.code + ' إما عيّنات موثّقة أو موسوم untested — لا ادّعاء بلا تغطية');
+    if (row.samples) {
+      for (const s of row.samples) {
+        ok(typeof s.prompt === 'string' && typeof s.lang === 'string'
+          && typeof s.reset === 'boolean' && typeof s.origin === 'string',
+          'عيّنة موثّقة الحقول الأربعة: ' + row.code + ' / ' + s.origin);
+      }
+    }
+  }
+  // الجذر الأول لكل لغة يجب أن يظهر في مسار الكشط **مشتقّاً من الجدول** —
+  // توليد الحالة من بيانات الصف نفسه، لا من نسخة يدوية في الحارس
+  const built = buildRequestRes(AR_LOCALES);
+  for (const row of AR_LOCALES) {
+    const m = built[0].exec('أجبني بال' + row.stems[0] + 'ية');
+    ok(m && m[1] === row.stems[0] + 'ية',
+      'المسار العربي يشتقّ الجذر من الجدول: ' + row.code + ' ← ' + row.stems[0]);
+    const e = built[2].exec('answer in ' + row.en[0]);
+    ok(e && e[1].toLowerCase() === row.en[0],
+      'والمسار الإنجليزي يشتقّ الاسم: ' + row.code + ' ← ' + row.en[0]);
+  }
+}
+
+// ── 13) العيّنات الموثّقة تمرّ بالكاشف الحقيقي، والتشكيل لا يغيّر الحكم ─────────
+{
+  for (const row of AR_LOCALES) {
+    if (!row.samples) {
+      ok(row.untested === true, 'صف بلا عيّنة موسوم صراحةً: ' + row.code);
+      continue;
+    }
+    for (const s of row.samples) {
+      const hit = detectExplicitRequest(s.prompt);
+      ok(hit && hit.lang === s.lang && hit.reset === s.reset,
+        'عيّنة ' + row.code + ' (' + s.origin + '): ' + s.prompt
+        + ' ← ' + JSON.stringify(hit));
+      // التشكيل للمطابقة وحدها: نسخة مشدودة من العيّنة تحكم كحكمها —
+      // المدى والشدة بترميز ‏\u صريح (المحارف الحرفية تتلف صامتاً في المحررات)
+      if (/[ء-ي]/.test(s.prompt)) {
+        const marked = s.prompt.replace(/([ء-ي])/, '$1ّ');
+        const hit2 = detectExplicitRequest(marked);
+        ok(hit2 && hit2.lang === s.lang && hit2.reset === s.reset,
+          'التشكيل لا يغيّر حكم العيّنة: ' + marked);
+      }
+    }
+  }
+}
+
+// ── 14) الحارس يشتقّ حالاته من الجدول: لغة وهمية تظهر تلقائياً ─────────────────
+{
+  const fake = [{
+    code: 'zz', nameAr: 'الزيغلية', diacritics: 'strip', letters: '',
+    stems: ['زيغل'], en: ['ziglish'],
+    samples: [{ prompt: 'أجبني بالزيغلية', lang: 'الزيغلية', reset: false, origin: 'fake' }],
+  }];
+  const withFake = buildRequestRes(AR_LOCALES.concat(fake));
+  const arHit = withFake[0].exec(fake[0].samples[0].prompt);
+  ok(arHit && arHit[1] === 'زيغلية', 'صفّ وهمي واحد في الجدول يولّد كشطاً عربياً تلقائياً');
+  const enHit = withFake[2].exec('answer in Ziglish');
+  ok(enHit && enHit[1] === 'Ziglish', 'واسماً إنجليزياً تلقائياً');
+  // والجدول الحقيقي لم يُمسّ: اللغة الوهمية fail-closed خارج الجدول —
+  // الاشتقاق يولّد الكشط من الجدول، ولا يقبل ضمنياً ما ليس فيه
+  ok(detectExplicitRequest(fake[0].samples[0].prompt) === null
+    && detectExplicitRequest('answer in Ziglish') === null,
+    'واللغة الوهمية لا تُكشف في الجدول الحقيقي — الاشتقاق لا يعني القبول الضمني');
+}
+
+// ── 15) الجدول مصدر وحيد: لا جذر ولا اسماً من العائلة في القوائم اليدوية ───────
+{
+  const src = fs.readFileSync(path.join(__dirname, '..', 'electron', 'langoverride.js'), 'utf8');
+  const otherAr = (src.match(/const OTHER_AR_STEMS =([\s\S]*?);/) || [])[1] || '';
+  const otherEn = (src.match(/const OTHER_EN_LANG =([\s\S]*?);/) || [])[1] || '';
+  ok(otherAr.length > 0 && otherEn.length > 0, 'قوائم اللغات غير العائلية موجودة');
+  // تفكيك الأعضاء لا مطابقة موضعية: العضو المزروع في صدر الحرفية بعد علامة
+  // الاقتباس يفلت من ‏(^|\|) — فتصبح القائمة الموازية صامتة لا مكشوفة
+  const members = (block) => block.replace(/['"\s+]/g, '').split('|');
+  const arMembers = members(otherAr);
+  const enMembers = members(otherEn);
+  for (const row of AR_LOCALES) {
+    for (const stem of row.stems) {
+      ok(!arMembers.includes(stem),
+        'جذر «' + stem + '» (' + row.code + ') لا يوجد موازياً في OTHER_AR_STEMS');
+    }
+    for (const name of row.en) {
+      ok(!enMembers.includes(name),
+        'و«' + name + '» (' + row.code + ') لا يوجد موازياً في OTHER_EN_LANG');
+    }
+  }
+}
+
+// ── 16) الدَّرية والفارسية: الفرق معجمي لا محرفي (مقيس في OBS-037) ─────────────
+{
+  const faIR = AR_LOCALES.find((row) => row.code === 'fa-IR');
+  const faAF = AR_LOCALES.find((row) => row.code === 'fa-AF');
+  ok(Boolean(faIR && faAF), 'صفّا fa-IR وfa-AF موجودان في الجدول');
+  ok(faIR.letters === faAF.letters && faIR.letters.length > 0,
+    'محارف المقارنة متطابقة بين الدَّرية والفارسية — نجاحها لا يختبئ خلف فروق محارف');
+}
+
+// ── 17) تغطية الخط لمحارف كل لغة — مشتقّة من الجدول عبر قارئ cmap الموحّد ─────
+{
+  const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'vendor', 'fonts.css'), 'utf8');
+  const blocks = css.match(/@font-face\s*\{[\s\S]*?\}/g) || [];
+  const cmaps = [];
+  for (const weight of [400, 500, 700]) {
+    const block = blocks.find((candidate) => new RegExp('font-weight:\\s*' + weight + '\\s*;').test(candidate)
+      && new RegExp('arabic-' + weight + '-normal\\.woff2').test(candidate));
+    ok(block, '‏@font-face العربي معلن للوزن ' + weight);
+    const sourceMatch = block.match(/src:\s*url\(([^)]+)\)\s*format\(['"]woff2['"]\)/i);
+    ok(sourceMatch, 'ومصدر WOFF2 معلن للوزن ' + weight);
+    const fontFile = path.resolve(path.join(__dirname, '..', 'src', 'vendor'),
+      sourceMatch[1].replace(/^['"]|['"]$/g, ''));
+    cmaps.push(extractWoff2Table(fs.readFileSync(fontFile), 'cmap'));
+  }
+  for (const row of AR_LOCALES) {
+    if (!row.letters) {
+      ok(row.code === 'ar', 'الصفّ بلا محارف إضافية هو العربية وحدها: ' + row.code);
+      continue;
+    }
+    const points = Array.from(row.letters).map((ch) => ch.codePointAt(0));
+    ok(new Set(points).size === points.length, 'محارف ' + row.code + ' غير مكررة في الصف');
+    for (const cp of points) {
+      for (const cmap of cmaps) {
+        ok(cmapHasGlyph(cmap, cp),
+          'محرف ' + row.code + ' مرسوم في cmap: ' + pointLabel(String.fromCodePoint(cp), cp));
+      }
+    }
+  }
+}
+
 console.log('langoverride-test: ok — ' + checks
-  + ' فحصاً (كشف fail-closed، حالة الجلسة، المرساة بايتاً ببايت، علم الظلّ، والوصل).');
+  + ' فحصاً (كشف fail-closed، حالة الجلسة، المرساة بايتاً ببايت، علم الظلّ، الوصل، وجدول لغات الحرف العربي مشتقّ الحالات).');
