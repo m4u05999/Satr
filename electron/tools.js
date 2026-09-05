@@ -33,6 +33,8 @@ const MAX_RESULT = 48 * 1024;  // سقف نتيجة الأداة (محارف) �
 const MAX_LIST = 1500;         // سقف أسطر list_files
 const MAX_WRITE = 1024 * 1024; // سقف محتوى كتابة واحد (1م.ب)
 const MAX_EDIT_SRC = 2 * 1024 * 1024; // لا تعديل على ملف أكبر (حماية ذاكرة + تراجع مضمون)
+const MAX_EDIT_BLOCKS = 100;   // سقف كتل edit_file في النداء الذرّي الواحد
+const MAX_SESSION_READS = 512; // سقف الملفات المتذكّرة لكل جلسة أدوات
 const GENMEDIA_MISSING = 'ميزة التوليد لم تكتمل بعد';
 const GENMEDIA_FILE = path.join(__dirname, 'genmedia.js');
 const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
@@ -226,6 +228,39 @@ async function runGenerateMedia(cwd, args, ctx) {
 const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'delete_file']);
 const editSnapshots = new Map(); // call_id → { file_path, before|null }
 const MAX_SNAPSHOTS = 40;
+
+// بوابة «اقرأ قبل التعديل» لا ترى إلا read_file المنفّذة هنا. باعث الدور هو أقرب
+// هوية جلسة متاحة بلا توسيع عقد المحوّلات؛ كل محوّل يعيد استعماله بين نداءات أدوات
+// الدور نفسه. الغياب مخصّص للمستهلكات البرمجية القديمة ويأخذ جلسة محلية واحدة.
+const anonymousReadSession = {};
+const sessionReads = new WeakMap(); // session token → Set<absolute normalized path>
+
+function readSessionToken(ctx) {
+  if (ctx && (typeof ctx.sessionToken === 'object' || typeof ctx.sessionToken === 'function') && ctx.sessionToken) {
+    return ctx.sessionToken;
+  }
+  return ctx && typeof ctx.emit === 'function' ? ctx.emit : anonymousReadSession;
+}
+
+function canonicalReadPath(abs) {
+  const normalized = path.resolve(abs).normalize('NFC');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function rememberSessionRead(ctx, abs) {
+  const token = readSessionToken(ctx);
+  let reads = sessionReads.get(token);
+  if (!reads) { reads = new Set(); sessionReads.set(token, reads); }
+  const target = canonicalReadPath(abs);
+  reads.delete(target);
+  reads.add(target);
+  while (reads.size > MAX_SESSION_READS) reads.delete(reads.values().next().value);
+}
+
+function wasReadInSession(ctx, abs) {
+  const reads = sessionReads.get(readSessionToken(ctx));
+  return !!(reads && reads.has(canonicalReadPath(abs)));
+}
 
 function rememberSnapshot(id, snap) {
   editSnapshots.set(id, snap);
@@ -548,7 +583,11 @@ const DEFS = [
     type: 'function',
     function: {
       name: 'edit_file',
-      description: "Edit an existing file by exact string replacement. old_string must match the file content exactly (including whitespace) and must be unique unless replace_all is true. The user is asked for permission first.",
+      // الوصف مشدود عمداً: يُشحن للنموذج كل دور، ويدخل حزمة satr-guide المسقوفة بـ40KiB
+      // (تجاوزها التوليدُ بـ61 بايتاً بعد تحصين OBS-108/edit_file). القاعدة المكتوبة في
+      // CLAUDE.md: «شدّ النثر لا رفع السقف». المعاني الخمسة كلها محفوظة: الذرّية،
+      // استقلال الترتيب، القراءة أولاً، الارتداد الوحيد بالمسافات، والإذن.
+      description: "Edit an existing file with atomic search/replace blocks: old_string/new_string for one, or edits[] for several (order-independent). Read the file first. Exact match, then a unique whitespace-only fallback. Asks permission.",
       parameters: {
         type: 'object',
         properties: {
@@ -556,8 +595,21 @@ const DEFS = [
           old_string: { type: 'string', description: 'Exact text to replace' },
           new_string: { type: 'string', description: 'Replacement text' },
           replace_all: { type: 'boolean', description: 'Replace every occurrence (default false)' },
+          edits: {
+            type: 'array', minItems: 1, maxItems: MAX_EDIT_BLOCKS,
+            description: 'Atomic order-independent search/replace blocks; use instead of top-level old_string/new_string',
+            items: {
+              type: 'object',
+              properties: {
+                old_string: { type: 'string', description: 'Exact text to replace' },
+                new_string: { type: 'string', description: 'Replacement text' },
+                replace_all: { type: 'boolean', description: 'Replace every exact occurrence (default false)' },
+              },
+              required: ['old_string', 'new_string'],
+            },
+          },
         },
-        required: ['path', 'old_string', 'new_string'],
+        required: ['path'],
       },
     },
   },
@@ -657,6 +709,187 @@ function commitWrite(ctx, cwd, toolName, rel, abs, before, after) {
   }
 }
 
+function parseEditBlocks(args) {
+  const input = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  const hasBatch = input.edits != null;
+  const hasSingle = input.old_string != null || input.new_string != null;
+  if (hasBatch && hasSingle) {
+    return { ok: false, error: 'خطأ: مرّر edits أو old_string/new_string، لا الصيغتين معاً — لم يُكتب شيء' };
+  }
+  const raw = hasBatch ? input.edits : [{
+    old_string: input.old_string, new_string: input.new_string, replace_all: input.replace_all,
+  }];
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { ok: false, error: 'خطأ: edits يجب أن تكون مصفوفة غير فارغة — لم يُكتب شيء' };
+  }
+  if (raw.length > MAX_EDIT_BLOCKS) {
+    return { ok: false, error: 'خطأ: عدد كتل التعديل تجاوز السقف (' + MAX_EDIT_BLOCKS + ') — قسّم النداء ولم يُكتب شيء' };
+  }
+  const blocks = [];
+  for (let i = 0; i < raw.length; i++) {
+    const block = raw[i];
+    if (!block || typeof block !== 'object' || Array.isArray(block)
+        || typeof block.old_string !== 'string' || !block.old_string
+        || typeof block.new_string !== 'string') {
+      return { ok: false, error: 'خطأ: الكتلة ' + (i + 1) + ' تحتاج old_string غير فارغة وnew_string نصية — لم يُكتب شيء' };
+    }
+    blocks.push({
+      oldString: block.old_string,
+      newString: block.new_string,
+      replaceAll: !!block.replace_all,
+      index: i,
+    });
+  }
+  return { ok: true, blocks, multi: hasBatch };
+}
+
+function exactMatchRanges(content, needle) {
+  const ranges = [];
+  let from = 0;
+  while (from <= content.length - needle.length) {
+    const start = content.indexOf(needle, from);
+    if (start === -1) break;
+    ranges.push({ start, end: start + needle.length });
+    from = start + needle.length; // يطابق سلوك split/join القديم: مواضع غير متداخلة
+  }
+  return ranges;
+}
+
+function contentLineRecords(content) {
+  const records = [];
+  let start = 0;
+  while (start <= content.length) {
+    const newline = content.indexOf('\n', start);
+    if (newline === -1) {
+      records.push({ start, end: content.length, text: content.slice(start), eol: '' });
+      break;
+    }
+    const end = newline > start && content[newline - 1] === '\r' ? newline - 1 : newline;
+    records.push({ start, end, text: content.slice(start, end), eol: content.slice(end, newline + 1) });
+    start = newline + 1;
+  }
+  return records;
+}
+
+// الارتداد محدود عمداً: نفس عدد الأسطر ونفس متن كل سطر بعد حذف المسافات
+// البادئة/اللاحقة فقط. لا تشابه تقريبي ولا طيّ لمسافات داخلية.
+function whitespaceMatchRanges(content, needle) {
+  const records = contentLineRecords(content);
+  const oldLines = needle.replace(/\r\n?/g, '\n').split('\n');
+  const normalized = oldLines.map((line) => line.trim());
+  if (normalized.every((line) => !line)) return [];
+  const matches = [];
+  for (let startLine = 0; startLine + normalized.length <= records.length; startLine++) {
+    let matchesBlock = true;
+    for (let offset = 0; offset < normalized.length; offset++) {
+      if (records[startLine + offset].text.trim() !== normalized[offset]) {
+        matchesBlock = false;
+        break;
+      }
+    }
+    if (!matchesBlock) continue;
+    const endLine = startLine + normalized.length - 1;
+    matches.push({
+      start: records[startLine].start,
+      end: records[endLine].end,
+      actualLines: records.slice(startLine, endLine + 1).map((record) => record.text),
+      eol: records.slice(startLine, endLine + 1).find((record) => record.eol)?.eol
+        || (content.includes('\r\n') ? '\r\n' : '\n'),
+    });
+  }
+  return matches;
+}
+
+function leadingWhitespace(line) {
+  const match = /^[\t ]*/.exec(line);
+  return match ? match[0] : '';
+}
+
+function firstContentIndent(lines) {
+  const line = lines.find((item) => item.trim());
+  return line == null ? '' : leadingWhitespace(line);
+}
+
+function adaptFallbackReplacement(actualLines, oldString, newString, eol) {
+  const oldLines = oldString.replace(/\r\n?/g, '\n').split('\n');
+  const newLines = newString.replace(/\r\n?/g, '\n').split('\n');
+  const actualIndent = firstContentIndent(actualLines);
+  const oldIndent = firstContentIndent(oldLines);
+  return newLines.map((line) => {
+    if (!line.trim()) return line;
+    const leading = leadingWhitespace(line);
+    const relative = oldIndent && leading.startsWith(oldIndent) ? leading.slice(oldIndent.length) : leading;
+    return actualIndent + relative + line.slice(leading.length);
+  }).join(eol);
+}
+
+// كل المديات تُستخرج من نسخة «قبل» نفسها؛ لذلك لا تستطيع كتلة إنشاء مطابقة لكتلة
+// لاحقة أو إزاحة موضعها. أي تداخل يرفض الخطة كلها قبل commitWrite الوحيد.
+function planEditBlocks(content, blocks) {
+  const planned = [];
+  let fallbackCount = 0;
+  for (const block of blocks) {
+    let matches = exactMatchRanges(content, block.oldString);
+    if (matches.length > 1 && !block.replaceAll) {
+      return {
+        ok: false,
+        error: 'خطأ: الكتلة ' + (block.index + 1) + ' تتكرر ' + matches.length
+          + ' مرات حرفياً — وسّع سياق old_string أو مرّر replace_all: true؛ لم يُكتب شيء',
+      };
+    }
+    if (matches.length === 0) {
+      matches = whitespaceMatchRanges(content, block.oldString);
+      if (matches.length > 1) {
+        return {
+          ok: false,
+          error: 'خطأ: الكتلة ' + (block.index + 1) + ' تطابق ' + matches.length
+            + ' مواضع بعد تطبيع المسافات البادئة/اللاحقة — وسّع السياق ليصبح التطابق وحيداً؛ لم يُكتب شيء',
+        };
+      }
+      if (matches.length === 0) {
+        return {
+          ok: false,
+          error: 'خطأ: الكتلة ' + (block.index + 1)
+            + ' غير موجودة حرفياً ولا بعد تطبيع المسافات البادئة/اللاحقة — اقرأ الملف مجدداً وانسخ old_string من محتواه؛ لم يُكتب شيء',
+        };
+      }
+      matches[0].replacement = adaptFallbackReplacement(
+        matches[0].actualLines, block.oldString, block.newString, matches[0].eol,
+      );
+      fallbackCount++;
+    }
+    for (const match of matches) {
+      planned.push({
+        start: match.start, end: match.end,
+        replacement: match.replacement == null ? block.newString : match.replacement,
+        blockIndex: block.index,
+      });
+    }
+  }
+  const ascending = [...planned].sort((left, right) => left.start - right.start || left.end - right.end);
+  for (let i = 1; i < ascending.length; i++) {
+    const previous = ascending[i - 1];
+    const current = ascending[i];
+    if (current.start < previous.end) {
+      return {
+        ok: false,
+        error: 'خطأ: الكتلتان ' + (previous.blockIndex + 1) + ' و' + (current.blockIndex + 1)
+          + ' تتصادمان على المدى نفسه أو على مديين متداخلين — افصل التعديلين؛ رُفض النداء كله ولم يُكتب شيء',
+      };
+    }
+  }
+  return { ok: true, planned, fallbackCount };
+}
+
+function applyPlannedEdits(content, planned) {
+  let result = content;
+  const descending = [...planned].sort((left, right) => right.start - left.start || right.end - left.end);
+  for (const edit of descending) {
+    result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end);
+  }
+  return result;
+}
+
 /**
  * حفظ من عارض القراءة (تحرير خفيف — الدفعة 4): كتابة ملف **قائم** فقط بإعادة
  * استخدام المسار المؤمَّن نفسه — resolveExisting (تسامح NFC/NFD للأسماء العربية) +
@@ -688,7 +921,8 @@ function saveFromViewer(cwd, rel, content, expectedVersion) {
 /**
  * تنفيذ أداة باسمها — يعيد دائماً { ok, content } والمحتوى نص يُعاد للنموذج
  * (الفشل نص خطأ عربي، لا استثناء — النموذج يصحح مساره بنفسه).
- * ctx (اختياري): { emit, id } — لبطاقات diff وربطها ببطاقة الأداة (أدوات الكتابة).
+ * ctx (اختياري): { emit, id, sessionToken } — باعث الأحداث/رمز الجلسة يربطان قراءة
+ * read_file بتعديلها، وid يربط بطاقة diff ببطاقة الأداة (أدوات الكتابة).
  * ⚠️ أدوات الكتابة يجب ألا تُستدعى إلا بعد موافقة المستخدم (needsPermission في المحوّل).
  */
 async function run(name, cwd, args, ctx) {
@@ -698,6 +932,8 @@ async function run(name, cwd, args, ctx) {
       if (!rel) return { ok: false, content: 'خطأ: وسيطة path مطلوبة' };
       const r = files.readText(cwd, rel);
       if (!r.ok) return { ok: false, content: 'خطأ: ' + (READ_ERRORS[r.error] || r.error) };
+      const readAbs = resolveExisting(cwd, rel);
+      if (readAbs) rememberSessionRead(ctx, readAbs);
       let content = r.content;
       let truncated = r.truncated;
       if (content.length > MAX_RESULT) { content = content.slice(0, MAX_RESULT); truncated = true; }
@@ -818,22 +1054,32 @@ async function run(name, cwd, args, ctx) {
     }
     if (name === 'edit_file') {
       const rel = args && typeof args.path === 'string' ? args.path.trim() : '';
-      const oldStr = args && typeof args.old_string === 'string' ? args.old_string : '';
-      const newStr = args && typeof args.new_string === 'string' ? args.new_string : null;
-      if (!rel || !oldStr || newStr == null) return { ok: false, content: 'خطأ: الوسائط path و old_string و new_string مطلوبة' };
+      if (!rel) return { ok: false, content: 'خطأ: الوسيطة path مطلوبة — لم يُكتب شيء' };
+      const parsed = parseEditBlocks(args);
+      if (!parsed.ok) return { ok: false, content: parsed.error };
       const abs = resolveExisting(cwd, rel); // تسامح تطبيع (أسماء عربية)
       if (!abs) return { ok: false, content: 'خطأ: ' + READ_ERRORS.outside };
+      if (!wasReadInSession(ctx, abs)) {
+        return {
+          ok: false,
+          content: 'خطأ: لم يُقرأ الملف في جلسة أدوات سطر الحالية — استخدم read_file على المسار نفسه أولاً. '
+            + 'هذه البوابة تتتبّع read_file داخل أدوات سطر فقط، ولا تعرف ما قرأه المحرك الأصيل بأدواته؛ لم يُكتب شيء',
+        };
+      }
       const before = readBefore(abs);
       if (before == null) return { ok: false, content: 'خطأ: الملف غير موجود — استخدم write_file لإنشاء ملف جديد' };
-      const count = before.split(oldStr).length - 1;
-      if (count === 0) return { ok: false, content: 'خطأ: النص المطلوب استبداله غير موجود في الملف — اقرأ الملف مجدداً وطابق النص حرفياً' };
-      if (count > 1 && !(args && args.replace_all)) {
-        return { ok: false, content: 'خطأ: النص يتكرر ' + count + ' مرات — وسّع السياق ليكون فريداً أو مرّر replace_all: true' };
-      }
-      const after = (args && args.replace_all) ? before.split(oldStr).join(newStr) : before.replace(oldStr, newStr);
+      const plan = planEditBlocks(before, parsed.blocks);
+      if (!plan.ok) return { ok: false, content: plan.error };
+      const after = applyPlannedEdits(before, plan.planned);
       if (after.length > MAX_WRITE * 2) return { ok: false, content: 'خطأ: الناتج أكبر من الحد المسموح' };
       commitWrite(ctx, cwd, name, rel.replace(/\\/g, '/'), abs, before, after);
-      return { ok: true, content: 'عُدّل الملف ' + rel + (count > 1 ? ' (' + count + ' مواضع)' : '') };
+      const count = plan.planned.length;
+      const detail = parsed.multi ? ' (' + parsed.blocks.length + ' كتل، ' + count + ' مواضع)'
+        : (count > 1 ? ' (' + count + ' مواضع)' : '');
+      const fallback = plan.fallbackCount
+        ? ' — استُخدم تطبيع المسافات البادئة/اللاحقة في ' + plan.fallbackCount + ' كتلة فريدة'
+        : '';
+      return { ok: true, content: 'عُدّل الملف ' + rel + detail + fallback };
     }
     if (name === 'delete_file') {
       const rel = args && typeof args.path === 'string' ? args.path.trim() : '';

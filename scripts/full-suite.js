@@ -36,6 +36,7 @@ const SUITE = [
   'test:opsroom-all',
   'test:mobile',
   'test:qr',
+  'test:tools-edit',
   'test:codexmcp',
   'test:genmedia',
   'test:codex-contract',

@@ -63,6 +63,7 @@
     "test:browser-loop-probe": "electron scripts/browser-loop-live-probe.js",
     "test:browser-loop-sdk-probe": "electron scripts/browser-loop-sdk-probe.js",
     "test:browser-loop-kimi-probe": "electron scripts/browser-loop-kimi-probe.js",
+    "test:tools-edit": "node scripts/tools-edit-test.js",
     "test:codexmcp": "node scripts/codexmcp-test.js",
     "test:codex-contract": "node scripts/codex-contract-test.js",
     "test:send-liveness": "node scripts/send-liveness-test.js",
