@@ -256,8 +256,8 @@ const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex').s
   const dir = path.join(__dirname, '..');
   const metric = fs.readFileSync(path.join(dir, 'electron', 'langmetric.js'), 'utf8');
   const metricTest = fs.readFileSync(path.join(dir, 'scripts', 'langmetric-test.js'), 'utf8');
-  ok(/const METRIC_VERSION = 4;/.test(metric),
-    'إصدار المقياس هو 4 (وعي الخط OBS-022 ثم استثناء جداول المعرّفات OBS-057)');
+  ok(/const METRIC_VERSION = 5;/.test(metric),
+    'إصدار المقياس هو 5 (وعي الخط OBS-022، جداول المعرّفات OBS-057، بنود المعرّفات OBS-115)');
   ok(/توافق ضيّق ومحروس/.test(metric), 'والملف يعلن ادعاء التوافق صراحةً لا ضمناً');
   // البرهان لا الادعاء: نسخة v2 مجمَّدة تُشغَّل بجانب الحالية على مجموعة محايدة
   ok(/function isSlipV2\(/.test(metricTest) && /const SHARE_V2 = 0\.5;/.test(metricTest),
@@ -272,6 +272,10 @@ const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex').s
   // وإثبات موضع الاختلاف لا موضع التطابق وحده — وإلا صار «التوافق» ادعاءً فضفاضاً
   ok(/isSlipV2\(TABLE\)\.reason === 'structure'/.test(metricTest),
     'ويثبت أين **يجب** أن يختلفا — وإلا كان رفع الإصدار بلا داعٍ');
+  // موضعا الاختلاف المعلنان: جدول المعرّفات (‏v4) وبندا المعرّفات (‏v5) —
+  // الثاني يحرس امتداد الاستثناء إلى البنود تحديداً (‏OBS-115)
+  ok(/isSlipV2\(LISTITEM\)\.reason === 'structure'/.test(metricTest),
+    'ويثبت موضع الاختلاف الثاني (بنود المعرّفات) باسمه لا ضمناً');
   ok(!/langoverride/.test(metric), 'ولا يعرف المقياس شيئاً عن التجاوز');
 }
 

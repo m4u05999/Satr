@@ -223,7 +223,7 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
       'حكم v3 يطابق v2 لهذه العيّنة غير الفارسية — وإلا أُهدرت ‏906 قياساً متراكمة: '
         + JSON.stringify(sample.slice(0, 40)) + ' ⇒ v3=' + now.reason + ' vs v2=' + before.reason);
   }
-  ok(METRIC_VERSION === 4, 'وسم الإصدار ارتفع مع تغيّر الحكم');
+  ok(METRIC_VERSION === 5, 'وسم الإصدار ارتفع مع تغيّر الحكم (وعي الخط OBS-022، جداول OBS-057، بنود OBS-115)');
 
   // وحيث **يجب** أن يختلفا: صفّ جدول معرّفات كان v2 يُدينه (‏OBS-057). إثبات موضع
   // الاختلاف لا يقل أهمية عن إثبات موضع التطابق — بدونه يصير «التوافق» ادعاءً
@@ -274,6 +274,43 @@ function ok(cond, msg) { checks += 1; assert(cond, msg); }
     'وخليةُ الجملة تُدان ولو كانت داخل جدول');
 }
 
+// ── OBS-115: نموّ `structure` بعد الصقل كان إدانةً باطلة لبنود المعرّفات ─────
+// العيّنة **مقيسة لا مفترضة**: بُنيت من أنماط ردود «سطر» اليوم (جداول قياس،
+// قوائم مرقّمة بمسارات، أوامر مسيَّجة، مخرجات حرّاس، بصمات التزام، أسماء
+// نماذج، وسوم واجهات، فئات استبيانات) وقِست عليها v4 فأدانت ثلاثة أسطر
+// مشروعة في حالتين — آلية «كثافة المعرّفات تُقرأ انزلاقاً» بقيت حيّة في البنود
+// بعد أن عولجت في الجداول (‏OBS-057). المصدر الوحيد للعيّنة هو
+// `langmetric-synth-probe.js` حتى لا تتباعد نسخة القياس عن نسخة الحارس.
+{
+  const AR = 'راجعتُ الطبقات الثلاث ووجدتُ أن معالج الأذونات يبتلع الأخطاء، وأن منطق '
+    + 'إعادة المحاولة لا يعمل، وأن سجل التدقيق لا يحمل معرّفات الأدوات إطلاقاً. ';
+  const { CORPUS, wrap } = require('./langmetric-synth-probe');
+  let legitimate = 0, guilty = 0;
+  for (const c of CORPUS) {
+    const verdict = isSlip(wrap(c.lines));
+    ok(verdict.reason === c.expect,
+      'عيّنة OBS-115 «' + c.name + '» حُكمت ' + verdict.reason + ' والتصميم يوجب ' + c.expect);
+    if (c.cls === 'مشروع') legitimate += 1; else guilty += 1;
+  }
+  ok(legitimate === 7 && guilty === 5,
+    'العيّنة تغطي سبع حالات مشروعة وخمس حالات مُدانة — تضاؤل التغطية يسقط الحارس');
+
+  // إثبات موضع الاختلاف الصريح مع v2 — بندا المعرّفات (واحد لا يكفي للعتبة)
+  const LISTITEM = AR + '\n- أسماء نماذج Claude الرسمية: **Fable 5.1** وOpus 5 وSonnet 5 وHaiku 4.5.\n'
+    + '- فئات الاستبيان: Violence · Sexuality · Language · Controlled Substance · Age-Restricted.\n' + AR;
+  ok(isSlipV2(LISTITEM).reason === 'structure',
+    'بندا المعرّفات كان يُدانان في v2 — وإلا فرفع الإصدار إلى 5 بلا داعٍ');
+  ok(isSlip(LISTITEM).reason !== 'structure', 'ولم يعودا يُدانان في v5');
+
+  // حدود الاستثناء المعلنة: العناوين بحكمها (نمط شكوى المالك) والأمر البلا سياج
+  // يُقرأ جملة — كلاهما يبقى مُداناً عمداً، والبند الإنجليزي الحقيقي جملةٌ يتّهمها
+  ok(structuralSlips('## Where things stand').length === 1,
+    'العنوان الإنجليزي لم يدخل الاستثناء — العناوين نثرٌ بحكمها عمداً');
+  ok(structuralSlips('- The handler swallows every error silently').length === 1,
+    'والبند الإنجليزي الحقيقي جملة فلا يعفيه استثناء المعرّفات');
+}
+
+
 // ── رادار ٠٠٣، محور E: ضريبة رموز المخرجات العربية ────────────────────────
 let estimatedTokenTax;
 {
@@ -318,7 +355,7 @@ let estimatedTokenTax;
   // عداد الطلب لا يمكن توزيعه بصدق على نص ثنائي اللغة، فيُرفض بدل التخمين.
   ok(outputTokenSample(AR + ' ' + EN, actualUsage) === null,
     'النص المختلط نُسبت رموزه إلى لغة واحدة بلا دليل');
-  ok(OUTPUT_TOKEN_METRIC_VERSION === 1 && METRIC_VERSION === 4,
+  ok(OUTPUT_TOKEN_METRIC_VERSION === 1 && METRIC_VERSION === 5,
     'إصدار الضريبة مستقل ولم يغيّر عقد langmetric القائم');
 
   // الوصل الداخلي يجمع أرقاماً فقط تحت provider:model؛ لا حدث ولا IPC ولا نص محفوظ.
@@ -346,7 +383,8 @@ let estimatedTokenTax;
 console.log('langmetric-test: ok — ' + checks
   + ' فحوص (الجواب الصحيح لا يُعاقَب، ولقطة المالك تُمسَك، والحواف لا تكسر، '
   + 'ووعي الخط يمسك الفارسية دون أن يُهدر بيانات v2، '
-  + 'وجداول المعرّفات التقنية لم تعد انزلاقاً بنيوياً بينما خلايا النثر تبقى).');
+  + 'وجداول المعرّفات التقنية لم تعد انزلاقاً بنيوياً بينما خلايا النثر تبقى، '
+  + 'وبنود المعرّفات كذلك بعد OBS-115 والعناوين بحكمها).');
 console.log('langmetric-token-tax: estimate=true method=character_heuristic'
   + ' · ar=' + estimatedTokenTax.arabic.tokens_per_character.toFixed(6) + ' token/char'
   + ' · en=' + estimatedTokenTax.english.tokens_per_character.toFixed(6) + ' token/char'
