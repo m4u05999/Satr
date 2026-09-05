@@ -1836,8 +1836,16 @@ function sanitizeClaudePolishEvent(event) {
     const taskId = String(event.taskId || '');
     const toolUseId = String(event.toolUseId || '');
     const summary = sanitizeClaudePolishText(event.summary, 300);
-    if (!SAFE_SDK_POLISH_TASK.test(taskId) || !summary) return null;
-    const safe = { type: 'sdk_agent_progress', taskId, summary };
+    // ‏OBS-094 (وصلة التوصيل): حالة الخلفية تصل من `agent.js` بحقل `backgrounded` **بلا
+    // summary** (‏`is_backgrounded` من `task_started` أو من `task_updated.patch`)، وكان
+    // شرط `!summary` يحجبها كلياً — فبطاقة الوكيل لا ترى شارة «يعمل في الخلفية» رغم أن
+    // المحرك يبثّها والعارض يستهلكها. العطل «مبنيّ ولا يصل»، والعلاج سماح موازٍ لا
+    // تخفيف: `summary` يبقى إلزامياً لحدث التقدّم النصّي كما هو في عقد دفعة E.
+    const backgrounded = event.backgrounded === true;
+    if (!SAFE_SDK_POLISH_TASK.test(taskId) || (!summary && !backgrounded)) return null;
+    const safe = { type: 'sdk_agent_progress', taskId };
+    if (summary) safe.summary = summary;
+    if (backgrounded) safe.backgrounded = true;
     if (SAFE_SDK_POLISH_TOOL.test(toolUseId)) safe.toolUseId = toolUseId;
     return safe;
   }

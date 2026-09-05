@@ -149,7 +149,13 @@ async function testIpcAndUiAllowlists() {
   const css = read('src/styles/base.css');
 
   assert.match(main, /return suggestion \? \{ type: 'prompt_suggestion', suggestion \} : null/);
-  assert.match(main, /const safe = \{ type: 'sdk_agent_progress', taskId, summary \}/);
+  // ‏OBS-094: كان هذا الفحص يثبّت **الصياغة الحرفية** `{ type, taskId, summary }` فسقط يوم
+  // أُضيف السماح الموازي لحالة الخلفية (حدثٌ بلا summary كان يُحجب كلياً عند البوابة).
+  // حارسٌ يثبّت الشكل يصير عائقاً يوم يُصلَح العطل — فصار يثبّت **العقد**: الأساس ثم
+  // إضافة الحقلين بشرط، بلا تقييد ترتيب. والسلوك نفسه مغطّى بالتأكيدات الحيّة أدناه.
+  assert.match(main, /const safe = \{ type: 'sdk_agent_progress', taskId \}/);
+  assert.match(main, /if \(summary\) safe\.summary = summary;/);
+  assert.match(main, /if \(backgrounded\) safe\.backgrounded = true;/);
   assert.match(main, /return compactSummary \? \{ type: 'system', subtype: 'compact_summary', compact_summary: compactSummary \} : null/);
   const sanitizer = main.slice(main.indexOf('function sanitizeClaudePolishEvent'), main.indexOf('// إيقاف أي تشغيل'));
   assert.doesNotMatch(sanitizer, /uuid|usage|transcript_path|duration_ms|prompt_id/);
