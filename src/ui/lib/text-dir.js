@@ -33,11 +33,45 @@ export function dirAttr(text) {
   return dir ? ' dir="' + dir + '"' : '';
 }
 
-/** يضبط `dir` على عنصر من نصّه — الطريق المفضّل في المكوّنات التي تبني DOM. */
+/**
+ * اتجاه الوعاء الذي يعيش فيه العنصر — لا اتجاه العنصر نفسه.
+ *
+ * يُقرأ من أقرب جدٍّ يحمل `dir` صريحاً، ويسقط إلى اتجاه المستند ثم إلى `rtl`. القراءة
+ * بـ`closest` لا بـ`getComputedStyle` عمداً: الأولى استعلام شجرة رخيص، والثانية تُجبر
+ * حساب تخطيط في دالةٍ تُستدعى لكل فقرة. و`closest` لا يعبر حدّ Shadow، فمكوّنٌ داخل
+ * Shadow بلا `dir` على مضيفه يسقط إلى المستند — وهو الصحيح في «سطر» (الواجهة RTL).
+ */
+function containerDir(el) {
+  const holder = el.parentElement && el.parentElement.closest('[dir]');
+  const dir = holder ? holder.getAttribute('dir')
+    : (typeof document !== 'undefined' && document.documentElement
+      ? document.documentElement.getAttribute('dir') : '');
+  return dir === 'ltr' ? 'ltr' : 'rtl';
+}
+
+/**
+ * يضبط `dir` على عنصر من نصّه — الطريق المفضّل في المكوّنات التي تبني DOM.
+ *
+ * **ويثبّت معه `text-align` صريحة** (‏`OBS-128`، علاج مقيس): `dir` يحسم **ترتيب** النصّ،
+ * أما **محاذاته** فكانت تأتي من `text-align` الموروثة — وتلك تُورَّث `start` النسبيّة،
+ * فتُحلّ بـ`direction` العنصر نفسه لا بوعائه. فعنصرٌ حُسم `ltr` داخل عمودٍ عربيّ يقفز
+ * إلى اليسار. كان Chromium 130 يورّثها **محلولةً** (`right`) فيستر ذلك، وChromium 152
+ * يورّثها نسبيّةً فينكشف — والعطل في اتّكالنا على تفصيل التنفيذ لا في المتصفح.
+ *
+ * والمحاذاة تتبع **الوعاء** لا `dir` العنصر: نصّ لاتينيّ داخل واجهة عربية يبقى راسياً
+ * يميناً كما كان، ويتغيّر ترتيبُه وحده. ولذلك لا أثر بصريّ على العناصر التي يوافق
+ * `dir`ها وعاءها — وهي الغالبية — والتغيير محصور بالمخالفة، أي بالحالة المعطوبة.
+ */
 export function applyDir(el, text) {
   if (!el) return el;
   const dir = textDir(typeof text === 'string' ? text : el.textContent || '');
-  if (dir) el.setAttribute('dir', dir);
-  else el.removeAttribute('dir');
+  if (dir) {
+    el.setAttribute('dir', dir);
+    // CSSOM لا سمة `style=` — الأخيرة محجوبة بـCSP في «سطر»
+    el.style.textAlign = containerDir(el) === 'ltr' ? 'left' : 'right';
+  } else {
+    el.removeAttribute('dir');
+    el.style.textAlign = ''; // لا نترك محاذاة من استدعاءٍ سابق حين يزول الحسم
+  }
   return el;
 }

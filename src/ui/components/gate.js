@@ -6,7 +6,7 @@
 // (gated) وتعرض شريط النجاح (banner عنصر مشترك ملكها).
 import { sheet } from '../lib/sheet.js';
 import { controlsSheet } from '../lib/panel.css.js';
-import { textDir } from '../lib/text-dir.js';
+import { textDir, applyDir } from '../lib/text-dir.js';
 
 // `npm.cmd` لا `npm`: في PowerShell يسبق `npm.ps1` ملفَّ `npm.cmd` في ترتيب الأوامر،
 // و`ExecutionPolicy` الافتراضية لعميل ويندوز تحجب السكربتات — فيفشل الأمر **حتى وهو
@@ -15,8 +15,13 @@ import { textDir } from '../lib/text-dir.js';
 const INSTALL_CMD = 'npm.cmd install -g @anthropic-ai/claude-code';
 const LOGIN_CMD = 'claude auth login';
 
+// نسخة محلية كانت تضبط `dir` وحدها، فلم ترث علاج `text-align` (‏OBS-128) — وهي بعينها
+// الحالة التي حذّر منها استخراج `text-dir.js`: «نسخُ المنطق يعني تباعده بصمت». الفرق
+// الوحيد الباقي عن `applyDir` المشتركة هو الافتراض `rtl` عند غياب الحسم (نصّ بلا حروف
+// قوية)، وهو مقصود هنا: البوابة عربية، فالسقوط إليها لا إلى «بلا اتجاه».
 function applyTextDirection(el, text) {
-  el.setAttribute('dir', textDir(typeof text === 'string' ? text : el.textContent) || 'rtl');
+  const source = typeof text === 'string' ? text : (el.textContent || '');
+  applyDir(el, textDir(source) ? source : 'ا');
 }
 
 const ownSheet = sheet(`
