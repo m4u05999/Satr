@@ -6,6 +6,7 @@
  * أول اسم يفوز، والمصدر المضمّن مقصور على مهارات «سطر» الرسمية. الفهرس يعرض metadata فقط؛
  * محتوى SKILL.md والموارد لا يُقرأ إلا عند استدعاء loadSkill/readResource.
  * لا تُنفّذ السكربتات تلقائياً، وكل قراءة محصورة داخل جذر المهارة وبسقوف حجم.
+ * ومنذ مدقّق المواصفة: كل مهارة تُدقَّق عند الفهرسة قبل أن يصل اسمها أو وصفها إلى نموذج.
  */
 
 'use strict';
@@ -23,8 +24,44 @@ const MAX_RESOURCE_BYTES = 256 * 1024;
 const MAX_RESOURCES = 100;
 const MAX_RESOURCE_DEPTH = 5;
 const MAX_CATALOG_CHARS = 16 * 1024;
+// ── مواصفة Agent Skills (agentskills.io/specification، محدَّثة 2026-08-09) ─────
+// صارت المواصفة معياراً تقرؤه عشرات العملاء، ومهارات هذا المشروع قابلة للنقل إليها.
+// لذلك تُدقَّق كل مهارة **عند الفهرسة**، قبل أن يصل اسمها أو وصفها إلى أي نموذج:
+//   name        إلزامي · [a-z0-9-] · ≤64 محرفاً · **يطابق اسم المجلد**
+//   description إلزامي · ≤1024 محرفاً · سطر واحد
+//   license / metadata اختياريان
+// والتدرّج مقصود لا تهاوناً: ما يكسر **الحلّ أو القرار** يرفض المهارة كلها — اسم لا
+// يطابق مجلده يجعل load_skill(x) يسلّم محتوى مجلد آخر، ووصفٌ غائب يجعل التحميل
+// التدريجي عشوائياً — أما الحقل الاختياري المشوّه فيُهمَل وحده لأنه زينة لا يُبنى عليها
+// قرار، وإسقاط المهارة لأجله عقوبة بلا خطر. وحرف الاسم يُفرض ولو طابق مجلده، لأن
+// ويندوز (منصّتنا الأولى) نظام ملفات غير حسّاس للحالة: myskill وMySkill يحلّان إلى
+// المجلد نفسه، فتصير مطابقة الاسم للمجلد وحدها حارساً لا يُعتمد عليه.
+const SPEC_NAME = /^[a-z0-9-]{1,64}$/;
+const MAX_DESCRIPTION_CHARS = 1024;
+const MAX_LICENSE_CHARS = 64;
+const MAX_METADATA_KEYS = 20;
+const MAX_METADATA_VALUE_CHARS = 200;
+const SPEC_METADATA_KEY = /^[A-Za-z0-9_.-]{1,40}$/;
+const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
+
 const BUILTIN_SKILLS = new Set(['satr-guide', 'satr-diverge', 'satr-generate', 'satr-accept',
   'satr-design-ar', 'satr-youtube']);
+
+function unquoteScalar(value) {
+  if (value.length >= 2
+    && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+// بداية خريطة متداخلة: سطر تالٍ مُزاح يحمل «مفتاح: قيمة» ولا يبدأ بشرطة قائمة.
+function isNestedMapStart(lines, index) {
+  const next = lines[index + 1];
+  if (typeof next !== 'string' || !/^[ \t]+\S/.test(next)) return false;
+  const trimmed = next.trim();
+  return !trimmed.startsWith('-') && trimmed.indexOf(':') > 0;
+}
 
 function parseFrontmatter(text) {
   const clean = String(text || '').replace(/^﻿/, '');
@@ -48,13 +85,112 @@ function parseFrontmatter(text) {
         parts.push(lines[lineIndex].trim());
       }
       value = parts.join(folded ? ' ' : '\n').trim();
+    } else if (value === '' && isNestedMapStart(lines, lineIndex)) {
+      // خريطة متداخلة بمستوى واحد — يلزمها metadata في المواصفة. وقبلها كانت الأسطر
+      // المُزاحة تُقرأ **مفاتيح عليا**، فيتسرّب version إلى جذر الترويسة ويزاحم حقلاً
+      // قياسياً باسمه؛ خطأُ تحليلٍ لا تجميل.
+      const map = {};
+      while (lineIndex + 1 < lines.length && /^[ \t]+\S/.test(lines[lineIndex + 1])) {
+        lineIndex++;
+        const nested = lines[lineIndex].trim();
+        const at = nested.indexOf(':');
+        if (at <= 0) continue;
+        map[nested.slice(0, at).trim()] = unquoteScalar(nested.slice(at + 1).trim());
+      }
+      output[key] = map;
+      continue;
     }
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    output[key] = value;
+    output[key] = unquoteScalar(value);
   }
   return output;
+}
+
+// الوصف حقل سطر واحد في المواصفة، ويُطبع في كتالوج البرومبت سطراً لكل مهارة
+// («- name: description»)؛ فسطرٌ جديد بداخله يكسر بنية القائمة التي يقرؤها النموذج،
+// ومحارف التحكم تعبر إلى البرومبت كما هي. لذلك يُطوى الفراغ وتُزال المحارف هنا لا هناك.
+function normalizeSpecText(value) {
+  if (typeof value !== 'string') return '';
+  return value.replace(CONTROL_CHARS, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function specLicense(value) {
+  const clean = normalizeSpecText(value);
+  return clean && clean.length <= MAX_LICENSE_CHARS ? clean : '';
+}
+
+function specMetadata(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const output = {};
+  let count = 0;
+  for (const key of Object.keys(value)) {
+    if (count >= MAX_METADATA_KEYS) break;
+    if (!SPEC_METADATA_KEY.test(key)) continue;
+    const text = normalizeSpecText(value[key]);
+    if (!text) continue;
+    output[key] = text.slice(0, MAX_METADATA_VALUE_CHARS);
+    count++;
+  }
+  return count ? output : null;
+}
+
+/**
+ * مدقّق المواصفة — دالة نقية فوق ترويسة مُحلَّلة، بلا قرص ولا حالة.
+ * تعيد {ok:true, name, description, license, metadata} أو {ok:false, error, message}.
+ * الرسالة عربية وتسمّي المجلد كي لا يكون الاستبعاد صامتاً.
+ */
+function validateSkillMeta(directoryName, frontmatter) {
+  const at = ' في «' + directoryName + '»';
+  if (!frontmatter || typeof frontmatter !== 'object') {
+    return { ok: false, error: 'no_frontmatter', message: 'لا ترويسة YAML صالحة' + at };
+  }
+  const declared = typeof frontmatter.name === 'string' ? frontmatter.name.trim() : '';
+  if (!declared) return { ok: false, error: 'missing_name', message: 'حقل name إلزامي وغائب' + at };
+  if (!SPEC_NAME.test(declared)) {
+    return { ok: false, error: 'bad_name', message: 'الاسم «' + declared.slice(0, 64) + '»' + at
+      + ' يخالف المواصفة (أحرف لاتينية صغيرة وأرقام وشرطة، ≤64)' };
+  }
+  if (declared !== directoryName) {
+    return { ok: false, error: 'name_mismatch', message: 'الاسم «' + declared + '» لا يطابق مجلده «'
+      + directoryName + '» — التحميل بالاسم كان سيسلّم محتوى مجلد آخر' };
+  }
+  const description = normalizeSpecText(frontmatter.description);
+  if (!description) return { ok: false, error: 'missing_description', message: 'حقل description إلزامي وغائب' + at };
+  if (description.length > MAX_DESCRIPTION_CHARS) {
+    return { ok: false, error: 'description_too_long', message: 'الوصف' + at + ' بلغ '
+      + description.length + ' محرفاً والسقف ' + MAX_DESCRIPTION_CHARS };
+  }
+  return {
+    ok: true,
+    name: declared,
+    description,
+    license: specLicense(frontmatter.license),
+    metadata: specMetadata(frontmatter.metadata),
+  };
+}
+
+// سلوك ما قبل التدقيق — يُستعمل حصراً حين يرمي المدقّق نفسه (انظر scanRoot).
+function legacyMeta(directoryName, frontmatter) {
+  const fields = frontmatter && typeof frontmatter === 'object' ? frontmatter : {};
+  const declared = typeof fields.name === 'string' ? fields.name.trim() : '';
+  return {
+    ok: true,
+    name: SAFE_NAME.test(declared) ? declared : directoryName,
+    description: typeof fields.description === 'string' ? fields.description.trim().slice(0, 500) : '',
+    license: '',
+    metadata: null,
+  };
+}
+
+// الاستبعاد لا يكون صامتاً: يُجمَع في options.invalid إن طلبه المتصل، ويُطبع مرة واحدة
+// لكل (ملف، سبب) في عمر العملية — الفهرسة تجري كل دور، والتكرار ضجيج لا إفادة.
+const warnedInvalid = new Set();
+function noteInvalid(collector, entry) {
+  if (Array.isArray(collector)) collector.push(entry);
+  const key = entry.file + '\u0000' + entry.error;
+  if (warnedInvalid.has(key)) return;
+  if (warnedInvalid.size >= 500) warnedInvalid.clear();
+  warnedInvalid.add(key);
+  try { console.warn('[satr:skills] تجاهلت مهارة — ' + entry.message + ' (' + entry.file + ')'); } catch {}
 }
 
 function builtinSkillsRoot() {
@@ -98,7 +234,7 @@ function readHead(file) {
   }
 }
 
-function scanRoot(spec, seen, output) {
+function scanRoot(spec, seen, output, invalid) {
   let entries;
   try { entries = fs.readdirSync(spec.root, { withFileTypes: true }); } catch { return; }
   for (const entry of entries) {
@@ -114,16 +250,37 @@ function scanRoot(spec, seen, output) {
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SKILL_BYTES) continue;
       head = readHead(file);
     } catch { continue; }
-    const frontmatter = parseFrontmatter(head) || {};
-    const declared = typeof frontmatter.name === 'string' ? frontmatter.name.trim() : '';
-    const name = SAFE_NAME.test(declared) ? declared : entry.name;
+    let frontmatter = null;
+    try { frontmatter = parseFrontmatter(head); } catch { frontmatter = null; }
+    let meta;
+    try {
+      meta = validateSkillMeta(entry.name, frontmatter);
+    } catch (error) {
+      // خلل في المدقّق نفسه لا يجوز أن يُخلي فهرس المستخدم من مهاراته السليمة. نتراجع
+      // لهذه المهارة وحدها إلى سلوك ما قبل التدقيق — وهو السلوك المشحون حتى اليوم فلا
+      // خطر جديد — ونُبلّغ السبب كي لا يقع الصمت.
+      meta = legacyMeta(entry.name, frontmatter);
+      noteInvalid(invalid, {
+        name: entry.name,
+        file,
+        error: 'validator_error',
+        message: 'تعذّر تدقيق «' + entry.name + '» فعُوملت بسلوك ما قبل التدقيق: '
+          + String((error && error.message) || error).slice(0, 200),
+      });
+    }
+    if (!meta.ok) {
+      noteInvalid(invalid, { name: entry.name, file, error: meta.error, message: meta.message });
+      continue;
+    }
+    const name = meta.name;
     if (spec.allowedNames && !spec.allowedNames.has(name)) continue;
     if (!SAFE_NAME.test(name) || seen.has(name)) continue;
     seen.add(name);
     output.push({
       name,
-      description: typeof frontmatter.description === 'string'
-        ? frontmatter.description.trim().slice(0, 500) : '',
+      description: meta.description,
+      license: meta.license,
+      metadata: meta.metadata,
       source: spec.source,
       format: spec.format,
       location: spec.location,
@@ -136,21 +293,27 @@ function scanRoot(spec, seen, output) {
 function discoverSkills(cwd, options) {
   const output = [];
   const seen = new Set();
+  const invalid = options && Array.isArray(options.invalid) ? options.invalid : null;
   for (const root of rootsFor(cwd, options && options.home, options && options.builtinRoot)) {
-    scanRoot(root, seen, output);
+    scanRoot(root, seen, output, invalid);
   }
   output.sort((left, right) => left.name.localeCompare(right.name, 'en'));
   return output;
 }
 
 function publicSkill(skill) {
-  return {
+  const view = {
     name: skill.name,
     description: skill.description,
     source: skill.source,
     format: skill.format,
     location: skill.location,
   };
+  // اختياريان في المواصفة: يُعرضان حين أعلنتهما المهارة فقط، ولا يدخلان كتالوج
+  // البرومبت — بيانات ترخيص/نسخة لا تُغيّر قرار التحميل وتستهلك رموزاً كل دور.
+  if (skill.license) view.license = skill.license;
+  if (skill.metadata) view.metadata = skill.metadata;
+  return view;
 }
 
 async function listSkills(cwd) {
@@ -310,6 +473,10 @@ module.exports = {
   catalogPrompt,
   codexInputs,
   SAFE_NAME,
+  // مدقّق المواصفة مُصدَّر ليقرأه الحارس من المصدر الواحد بدل نسخة ثانية تتباعد بصمت.
+  validateSkillMeta,
+  SPEC_NAME,
+  MAX_DESCRIPTION_CHARS,
   MAX_SKILL_BYTES,
   MAX_RESOURCE_BYTES,
   // مُصدَّرة ليقرأها حارس `satr-guide` من المصدر الواحد بدل نسخة ثانية تتباعد بصمت.
