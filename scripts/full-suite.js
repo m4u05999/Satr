@@ -2,9 +2,12 @@
 'use strict';
 
 const path = require('path');
-const { spawnSync } = require('child_process');
+const fs = require('fs');
+const { spawnSync, spawn } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const INTERNAL_ATTEMPT_ARG = '--satr-full-suite-attempt';
+const INTERNAL_RESULT_FD = 3;
 const SUITE = [
   'test:skills',
   'test:slash-menu',
@@ -284,11 +287,11 @@ function descendantsDeepestFirst(pid, children) {
 
 /**
  * قتل شجرة العملية عند المهلة — **أفضل جهد معلَن**.
- * `spawnSync` يقتل الابن المباشر (`cmd`) وحده، بينما المعلِّق الفعلي حفيدٌ
- * (‏powershell/electron). بلا هذا القتل تبقى الأيتام تلوّث المجموعات التالية.
+ * المعلِّق الفعلي قد يكون حفيداً (‏powershell/electron)؛ فقتل الجذر وحده
+ * يترك يتيماً يلوّث المجموعات التالية.
  *
  * **POSIX (‏OBS-079)**: كان الفرع `process.kill(-pid, 'SIGKILL')` — وقتلُ مجموعة
- * بالسالب يوجب أن يكون `pid` قائدَ مجموعة، وهو ما لا يحدث لأن `spawnSync` أدناه
+ * بالسالب يوجب أن يكون `pid` قائدَ مجموعة، وهو ما لا يحدث لأن `spawn` المدار أدناه
  * يُطلق الابن **بلا `detached`** فيرث مجموعة الأب. فالمجموعة ذات المعرّف `pid` غير
  * موجودة أصلاً، والنداء يرمي `ESRCH` فيبتلعه `catch` الصامت: **لا يموت أحد**.
  * ولم يُعَد `detached:true` هنا لأن تجربته على لينكس أظهرت قتلاً غير مفسَّر لمجموعات
@@ -296,11 +299,9 @@ function descendantsDeepestFirst(pid, children) {
  * يصيب غير هدفه. البديل نَسَبٌ **صريح** من لقطة واحدة: لا يُقتل إلا ما ثبت أنه ذرّية
  * `pid` لحظة النداء.
  *
- * ⚠️ **حدّ مقيس ومعلَن**: عند المهلة يكون `spawnSync` قد قتل الجذر وحصده **قبل**
- * العودة، فالأيتام تكون قد أُعيدت إلى `init` وانقطع نسبها. لذلك لا يبلغها هذا الفرع
- * ولا `taskkill /T` على ويندوز (قيس: يعيد 128 و«The process not found» والحفيد يحيا).
- * فما يُصلَح هنا هو **آلة القتل** لا لحظة استدعائها؛ اللحظة عيبٌ في موضع النداء
- * يخصّ الطرفين معاً.
+ * **اللحظة (OBS-108)**: يستدعيها متحكّم `spawn` في حدث المهلة والجذر ما زال حياً،
+ * ثم ينتظر `close`. لذلك يظل النسب متصلاً لـ`taskkill /T` ولمشي POSIX حتى يموت الأعمق
+ * ثم الجذر. الحارس يثبت بعد `close` أن الحفيد غير المنفصل مات فعلاً.
  */
 function killTree(pid) {
   if (!pid) return;
@@ -321,12 +322,155 @@ function killTree(pid) {
   try { process.kill(pid, 'SIGKILL'); } catch { /* ماتت أصلاً */ }
 }
 
+/** يحوّل أخطاء child_process إلى قيمة صغيرة قابلة للنقل عبر قناة المتحكّم. */
+function plainProcessError(error) {
+  if (!error) return undefined;
+  return {
+    code: error.code == null ? '' : String(error.code),
+    message: String(error.message || error),
+  };
+}
+
+/**
+ * يشغّل جذراً واحداً بلا `detached`، ويقتله **وهو ما زال حياً** عند المهلة.
+ * الانتظار ينتهي عند `close` لا عند إرسال الإشارة؛ عندها يكون الجذر قد حُصد ويمكن
+ * للحارس أن يفحص الحفيد من الجهة الأخرى للحظة الحرجة.
+ */
+function runManagedProcess(command, args, options) {
+  const settings = options || {};
+  const timeout = Number(settings.timeout);
+  return new Promise((resolve) => {
+    if (!Number.isFinite(timeout) || timeout <= 0) {
+      resolve({
+        status: null, signal: null, pid: 0, timedOut: false, reaped: false,
+        error: { code: 'EINVAL', message: 'invalid managed-process timeout' },
+      });
+      return;
+    }
+
+    let child;
+    try {
+      child = spawn(command, args, {
+        cwd: settings.cwd,
+        env: settings.env,
+        stdio: settings.stdio || 'inherit',
+        shell: false,
+        windowsHide: process.platform === 'win32',
+      });
+    } catch (error) {
+      resolve({
+        status: null, signal: null, pid: 0, timedOut: false, reaped: false,
+        error: plainProcessError(error),
+      });
+      return;
+    }
+
+    const pid = Number(child.pid) || 0;
+    let timedOut = false;
+    let settled = false;
+    let timer = null;
+    const finish = (status, signal, error, reaped) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve({
+        status: Number.isInteger(status) ? status : null,
+        signal: signal || null,
+        pid,
+        timedOut,
+        reaped,
+        error: timedOut
+          ? { code: 'ETIMEDOUT', message: `process exceeded ${Math.round(timeout)}ms` }
+          : plainProcessError(error),
+      });
+    };
+
+    child.once('error', (error) => finish(null, null, error, false));
+    child.once('close', (status, signal) => finish(status, signal, null, true));
+    timer = setTimeout(() => {
+      timedOut = true;
+      // OBS-108: يجب أن تسبق هذه الجملة قتل الجذر وحصده؛ بعدها ينقطع نسب الأيتام.
+      killTree(pid);
+      // taskkill/ps أفضل جهد؛ قتل الجذر المباشر شبكة أخيرة كي لا يعلق المتحكّم نفسه.
+      try { child.kill('SIGKILL'); } catch { /* مات أصلاً */ }
+    }, timeout);
+  });
+}
+
+function suiteCommand(name) {
+  return process.platform === 'win32'
+    ? { command: 'cmd', args: ['/d', '/s', '/c', 'npm', 'run', name] }
+    : { command: 'npm', args: ['run', name] };
+}
+
+/** يكتب نتيجة المحاولة في fd مستقل كي يبقى stdout/stderr حرفياً كما كانا. */
+function writeInternalResult(result) {
+  fs.writeSync(INTERNAL_RESULT_FD, JSON.stringify(result));
+}
+
+async function runInternalAttempt(limitText, name) {
+  const limit = Number(limitText);
+  if (!SUITE.includes(name) || !Number.isFinite(limit) || limit < 1000 || limit > 3600000) {
+    writeInternalResult({
+      status: null, signal: null, pid: 0, timedOut: false, reaped: false,
+      error: { code: 'EINVAL', message: 'invalid internal suite attempt' },
+    });
+    return;
+  }
+  const invocation = suiteCommand(name);
+  const result = await runManagedProcess(invocation.command, invocation.args, {
+    cwd: ROOT, env: process.env, stdio: 'inherit', timeout: limit,
+  });
+  writeInternalResult(result);
+}
+
+/**
+ * تبقى حلقة البوابة متزامنة كي لا ينكسر عقد `suite-coverage` السلوكي، لكن العملية
+ * المستهدفة تعيش في متحكّم `spawn` غير متزامن داخل الملف نفسه. بذلك ينتظر الأب
+ * نتيجة واحدة كما كان، بينما يملك المتحكّم pid حياً لحظة المهلة (‏OBS-108).
+ */
+function runSuiteAttempt(name, limit) {
+  const wrapper = spawnSync(process.execPath,
+    [__filename, INTERNAL_ATTEMPT_ARG, String(limit), name], {
+      cwd: ROOT,
+      env: process.env,
+      stdio: ['inherit', 'inherit', 'inherit', 'pipe'],
+      shell: false,
+      windowsHide: process.platform === 'win32',
+    });
+  const raw = wrapper && wrapper.output && wrapper.output[INTERNAL_RESULT_FD];
+  if (raw) {
+    try { return JSON.parse(Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw)); }
+    catch { /* سقوط المتحكّم نفسه يظهر كفشل المجموعة أدناه */ }
+  }
+  return {
+    status: wrapper ? wrapper.status : null,
+    signal: wrapper && wrapper.signal || null,
+    pid: wrapper && wrapper.pid || 0,
+    timedOut: false,
+    reaped: !!wrapper,
+    error: wrapper && wrapper.error,
+  };
+}
+
 /**
  * مغلَّفة في دالة كي يصير الملف قابلاً للاستيراد: بلا حارس `require.main` كان
  * مجرّد `require` يشغّل الطقم كاملاً — فلا يمكن اختبار المهلة ولا قتل الشجرة ولا
  * قائمة المستبعَدات إلا بنسخ منطقها في الاختبار، وذاك حارسٌ يقارن الشيء بنفسه.
  */
 function main() {
+  if (process.argv[2] === INTERNAL_ATTEMPT_ARG) {
+    runInternalAttempt(process.argv[3], process.argv[4]).catch((error) => {
+      try {
+        writeInternalResult({
+          status: null, signal: null, pid: 0, timedOut: false, reaped: false,
+          error: plainProcessError(error),
+        });
+      } catch { process.exitCode = 1; }
+    });
+    return;
+  }
+
   const failures = [];
   const durations = [];
   const skipped = [];
@@ -345,8 +489,6 @@ function main() {
       continue;
     }
     console.log(`\n[${index + 1}/${SUITE.length}] npm run ${name}`);
-    const command = process.platform === 'win32' ? 'cmd' : 'npm';
-    const args = process.platform === 'win32' ? ['/d', '/s', '/c', 'npm', 'run', name] : ['run', name];
     const limit = timeoutFor(name);
     const startedAt = Date.now();
     // ميزانية الإعادة مغلقة: اسم غير مقيّس في RETRYABLE لا يحصل على محاولة ثانية أبداً.
@@ -354,17 +496,9 @@ function main() {
     let passed = false;
     let lastFailure = null;
     for (let attempt = 0; attempt <= budget; attempt++) {
-      const result = spawnSync(command, args, {
-        cwd: ROOT,
-        env: process.env,
-        stdio: 'inherit',
-        shell: false,
-        timeout: limit,
-        killSignal: 'SIGKILL',
-      });
-      const timedOut = !!(result.error && result.error.code === 'ETIMEDOUT');
+      const result = runSuiteAttempt(name, limit);
+      const timedOut = !!(result.timedOut || (result.error && result.error.code === 'ETIMEDOUT'));
       if (timedOut) {
-        killTree(result.pid);
         console.error(`\nfull-suite: ⏱ تجاوزت «${name}» مهلتها (${Math.round(limit / 1000)}ث) — قُتلت شجرتها والبوابة تكمل.`);
         lastFailure = { name, status: 'timeout', signal: `تجاوز ${Math.round(limit / 1000)}ث` };
       } else if (result.status !== 0) {
@@ -414,7 +548,7 @@ function main() {
 if (require.main === module) main();
 
 module.exports = {
-  main, timeoutFor, killTree, skipReasonFor, parseProcessTable, descendantsDeepestFirst,
+  main, timeoutFor, killTree, runManagedProcess, skipReasonFor, parseProcessTable, descendantsDeepestFirst,
   SUITE, EXCLUDED_FROM_SUITE, SKIP_ON_POSIX, SUITE_TIMEOUT_MS, TIMEOUT_OVERRIDES,
   RETRYABLE, RETRYABLE_OBS, MAX_RETRIES,
 };

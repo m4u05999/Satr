@@ -500,6 +500,55 @@ function structuralDelta(before, after) {
 const MAX_CAPTURE = 512 * 1024;   // سقف خرج ملتقَط (يحمي ذاكرة النموذج والعملية)
 const DEFAULT_CAP_TIMEOUT = 120000; // مهلة افتراضية للأمر (قابلة للتخصيص من المستدعي)
 
+/**
+ * بناء سطر الالتقاط لفرع صدفة — مُستخرج **دالة نقية** (‏OBS-072) كي يُختبر منطق
+ * البروتوكول بلا pty (لا لينكس على جهاز التطوير؛ القياس الحيّ يبقى للبوابة).
+ * يلتزم كل فرع بالعقد نفسه: علامة بداية سطر مستقل، ثم الأمر، ثم علامة نهاية
+ * بثلاثة حقول `END:<رمز>:<علم>` — رمز خروج رقمي دائماً + علم الصدفة.
+ * السطر المُعاد يشمل `\r` الختامي كما كان يُبنى داخلياً (‏writePasted يعيده خارج
+ * علامتَي اللصق)، فمسار PowerShell المثبَّت في العقود يبقى **بايتاً ببايت**.
+ */
+function buildCaptureLine(shell, mBeg, mEnd, clean) {
+  const sh = (shell || '').toLowerCase();
+  if (sh.includes('powershell') || sh.includes('pwsh')) {
+    // رمز الخروج رقمي دائماً. تصحيح 2026-08-24 (تغذية راجعة «exit 0 رغم خطأ الأمر»):
+    // التصفير كان `=0` فيبقى $LASTEXITCODE رقماً حتى حين يفشل cmdlet لا يضبطه أصلاً،
+    // فلا يُستشار $? أبداً ويُعلَن نجاح كاذب. صار التصفير $null، و$? يُلتقط **فور**
+    // الأمر (كان يُقرأ بعد إسناد فيصف نجاح الإسناد لا الأمر — نمط termjobs.js المثبت).
+    // الأولوية لـ$LASTEXITCODE حين يكون رقماً: أمر أصلي رمزه هو الحقيقة، فلا ينقلب
+    // نجاح `... 2>&1` إلى فشل بسبب NativeCommandError الذي يضبط $?=false في PS 5.1.
+    return '$global:LASTEXITCODE=$null; Write-Output "' + mBeg + '"; ' + clean +
+      ' ; $ok=$?; $c=$LASTEXITCODE; if($null -eq $c){$c=if($ok){0}else{1}}' +
+      '; Write-Output ("' + mEnd + ':"+$c+":"+$(if($ok){1}else{0}))\r';
+  }
+  if (sh.includes('cmd')) {
+    return 'echo ' + mBeg + ' & ' + clean + ' & echo ' + mEnd + ':%ERRORLEVEL%\r';
+  }
+  // POSIX (sh/bash — OBS-072): لا نسخة Cmdlet/أصلي منفصلة في $? كما في PowerShell،
+  // فالالتقاط الفوري في متغيّر `c=$?` دفاعٌ ضد أوامر تنتهي بـ`&` تُطلق خلفياً وتصفّر
+  // $? قبل أن يُقرأ، والعلم يُشتق حسابياً من الرمز — بقاء الحقل الثالث موحّداً مع
+  // PowerShell يصل كشف «فشل الصدفة مع رمز خروج 0» (‏shellFailed) بكل الصدفات.
+  return 'printf "%s\\n" "' + mBeg + '"; ' + clean +
+    ' ; c=$?; printf "%s:%s:%s\\n" "' + mEnd + '" "$c" "$(($c == 0))"\r';
+}
+
+/**
+ * مطابقة علامة النهاية في مخزن خام — مُستخرجة **دالة نقية** (‏OBS-072). تحت POSIX
+ * تُقيَّد العلامة ببداية سطر كي لا يُطابق صدًى ملتفّ أو خرج أمرٍ يتضمّن نصّها: إنهاء
+ * مبكّر كاذب كان يجعل النداء اللاحق يتسرّب إلى خرج سابق (تشابك النداءين). المجموعة
+ * الثالثة اختيارية: النمط القديم بلا علم (‏cmd وصدفات سابقة) يبقى مقبولاً — لا نعرف
+ * أي صدفة على جهاز المستخدم. تُعيد موضع المطابقة ورمز الخروج وعلم الفشل، أو null.
+ */
+function matchCaptureEnd(buf, mEnd, isPosix) {
+  const re = isPosix
+    ? new RegExp('(?:^|\\n)' + mEnd + ':(-?\\d+)(?::([01]))?')
+    : new RegExp(mEnd + ':(-?\\d+)(?::([01]))?');
+  const m = String(buf || '').match(re);
+  if (!m) return null;
+  const exitCode = parseInt(m[1], 10);
+  return { index: m.index, exitCode, shellFailed: m[2] === '0' && exitCode === 0 };
+}
+
 function runCaptureNow(id, command, opts) {
   return new Promise((resolve) => {
     const t = terminals.get(id);
@@ -516,25 +565,9 @@ function runCaptureNow(id, command, opts) {
     const tok = '__SATR_' + Math.random().toString(36).slice(2) + Date.now().toString(36) + '__';
     const mBeg = tok + 'B', mEnd = tok + 'E';
     const sh = (t.shell || '').toLowerCase();
-    let line;
-    if (sh.includes('powershell') || sh.includes('pwsh')) {
-      // رمز الخروج رقمي دائماً. تصحيح 2026-08-24 (تغذية راجعة «exit 0 رغم خطأ الأمر»):
-      // التصفير كان `=0` فيبقى $LASTEXITCODE رقماً حتى حين يفشل cmdlet لا يضبطه أصلاً،
-      // فلا يُستشار $? أبداً ويُعلَن نجاح كاذب. صار التصفير $null، و$? يُلتقط **فور**
-      // الأمر (كان يُقرأ بعد إسناد فيصف نجاح الإسناد لا الأمر — نمط termjobs.js المثبت).
-      // الأولوية لـ$LASTEXITCODE حين يكون رقماً: أمر أصلي رمزه هو الحقيقة، فلا ينقلب
-      // نجاح `... 2>&1` إلى فشل بسبب NativeCommandError الذي يضبط $?=false في PS 5.1.
-      line = '$global:LASTEXITCODE=$null; Write-Output "' + mBeg + '"; ' + clean +
-        ' ; $ok=$?; $c=$LASTEXITCODE; if($null -eq $c){$c=if($ok){0}else{1}}' +
-        '; Write-Output ("' + mEnd + ':"+$c+":"+$(if($ok){1}else{0}))\r';
-    } else if (sh.includes('cmd')) {
-      line = 'echo ' + mBeg + ' & ' + clean + ' & echo ' + mEnd + ':%ERRORLEVEL%\r';
-    } else {
-      line = 'printf "%s\\n" "' + mBeg + '"; ' + clean + ' ; printf "%s:%s\\n" "' + mEnd + '" "$?"\r';
-    }
+    const isPosix = !sh.includes('powershell') && !sh.includes('pwsh') && !sh.includes('cmd');
+    const line = buildCaptureLine(t.shell, mBeg, mEnd, clean);
 
-    // المجموعة الثانية اختيارية: صدف cmd/sh لا تُصدر علم $? فيبقى النمط القديم صالحاً
-    const endRe = new RegExp(mEnd + ':(-?\\d+)(?::([01]))?'); // اكتمال + رمز الخروج + علم الصدفة
     let buf = '';
     let settled = false;
     let disp = null;
@@ -563,13 +596,11 @@ function runCaptureNow(id, command, opts) {
     // مِقبس مؤقت على نفس مجرى الخرج (المِقبس الدائم notify يبقى — المستخدم يرى حياً)
     disp = t.proc.onData((data) => {
       if (buf.length < MAX_CAPTURE + 8192) buf += data;
-      const m = buf.match(endRe);
+      const m = matchCaptureEnd(buf, mEnd, isPosix);
       if (m) {
-        const exitCode = parseInt(m[1], 10);
         // الصدفة أبلغت فشلاً بينما رمز الخروج 0 (شائع حين يطبع أمر أصلي خطأً على
         // stderr ثم يخرج بنجاح): لا نكذّب رمزه ولا نخفي إشارته — نعيد الاثنين.
-        const shellFailed = m[2] === '0' && exitCode === 0;
-        finish({ ok: true, exitCode, shellFailed, output: cleanOutput(buf.slice(0, m.index)) });
+        finish({ ok: true, exitCode: m.exitCode, shellFailed: m.shellFailed, output: cleanOutput(buf.slice(0, m.index)) });
       }
     });
 
@@ -610,5 +641,6 @@ module.exports = {
   setNotifier, subscribe, startTerm, writeTerm, writeTermPasted, resizeTerm, killTerm, listTerms, readBuffer,
   sanitizeCommand, sanitizeScript, pwshSingleQuote, defaultShell,
   structuralShape, structuralDelta,
+  buildCaptureLine, matchCaptureEnd,
   runCapture, ensureModelTerm, getModelTermId, killAll,
 };
