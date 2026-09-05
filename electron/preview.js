@@ -1074,8 +1074,11 @@ const READ_SCRIPT = `(function(){
   var links = q('a[href]').slice(0,50).map(function(a){ var t=txt(a).slice(0,60); return (t||'(بلا نص)')+' → '+a.getAttribute('href'); });
   var buttons = q('button,[role=button],input[type=submit],input[type=button]').slice(0,40).map(function(b){ return (txt(b)||b.value||'').slice(0,60); }).filter(Boolean);
   var inputs = q('input,textarea,select').slice(0,30).map(function(i){ return (i.tagName.toLowerCase())+(i.type?('['+i.type+']'):'')+(i.name?(' name='+i.name):'')+(i.placeholder?(' ph="'+i.placeholder.slice(0,40)+'"'):''); });
-  var body = txt(document.body).slice(0, 4000);
-  return { title: document.title, url: location.href, headings: headings, links: links, buttons: buttons, inputs: inputs, bodyText: body };
+  // OBS-113: القصّ عند 4000 محرف يُعلَن في الناتج (bodyCap/bodyChars) ولا يبقى صامتاً —
+  // العقد المعلن في المستودع (readBuffer/browser_readability/read_article) يوجب إعلان القصّ.
+  var full = txt(document.body);
+  var body = full.slice(0, 4000);
+  return { title: document.title, url: location.href, headings: headings, links: links, buttons: buttons, inputs: inputs, bodyText: body, bodyCap: 4000, bodyChars: full.length };
 })()`;
 
 async function readPage() {
