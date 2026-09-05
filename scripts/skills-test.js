@@ -638,6 +638,12 @@ function assertMarketplaceReader() {
       { name: 'remote', source: { source: 'git-subdir', url: 'https://example.com/x.git' } },
       { name: 'absolute', source: '/etc/passwd' },
       { name: 'climb', source: './../../etc' },
+      // هاتان وحدهما تحرسهما قاعدة «نسبيّ يبدأ بـ‎./‎»: الرابط البعيد لا جالب له،
+      // والمسار العاري غير مُلزِم بالنسبية فقد يُقرأ مطلقاً على منصّة أخرى. أُضيفتا
+      // بعد أن أثبتت عضّةٌ أن إسقاط القاعدة لا يُسقط الحارس — كانت بقية الحالات
+      // تُلتقط بقواعد أخرى فبقيت هذه بلا تغطية.
+      { name: 'remote-url', source: 'https://github.com/owner/repo' },
+      { name: 'bare', source: 'plugins/a' },
       { name: '', source: './empty-name' },
       null,
       'string-entry',
@@ -645,7 +651,7 @@ function assertMarketplaceReader() {
   });
   assert.strictEqual(parsed.ok, true);
   assert.deepStrictEqual(parsed.plugins.map((entry) => entry.name), ['a', 'b'], 'قُبل مدخل كان يجب رفضه');
-  assert.strictEqual(parsed.skipped, 6, 'عدّ المتخطّى غير صحيح: ' + parsed.skipped);
+  assert.strictEqual(parsed.skipped, 8, 'عدّ المتخطّى غير صحيح: ' + parsed.skipped);
   assert.strictEqual(parsed.plugins[0].description, 'وصف أ');
   assert.strictEqual(parsed.plugins[0].unknownFuture, undefined, 'عبر حقل مجهول إلى الناتج');
   assert.deepStrictEqual(parsed.plugins[1].skills, ['./skills/x', './skills/y']);
