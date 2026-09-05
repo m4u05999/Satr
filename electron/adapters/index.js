@@ -55,6 +55,9 @@ register('openai', openaiResponses, {
   models: [
     { value: '', label: 'الافتراضي (Terra)' },
     { value: 'gpt-6-astra', label: 'GPT-6 Astra (الأقوى · الأغلى)' },
+    // الوسم صريح لأن النموذج **لا يوجد** لحساب غير مفحوص في Daybreak Red: اختياره بلا
+    // موافقة يعيد 404. خيارٌ بلا هذا الوسم كان سيبدو عطلاً في «سطر» وهو حجب من المزوّد.
+    { value: 'gpt-5.6-cyber', label: 'GPT-5.6 Cyber (يتطلب موافقة Daybreak)' },
     { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
     { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
     { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
