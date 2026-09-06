@@ -30,4 +30,31 @@ for (const entry of graveyard) {
   assert(entry.name && entry.reason && entry.date, `مدخل مقبرة بلا اسم أو سبب أو تاريخ: ${JSON.stringify(entry)}`);
 }
 
-console.log(`radar-graveyard: نجح — ${blocklist.length} حزمة محظورة، ${graveyard.length} مدخل مقبرة بسبب وتاريخ، ولا تبعية محظورة في package.json.`);
+// ── حالة الأساس: العمودان اللذان يقرأهما الرادار من عندنا ─────────────────────
+// الملف يحرس «حالة الرادار» لا المقبرة وحدها (اسمه أضيق من دوره — أُبقي كما هو لأنه
+// معرّف فحص مسجَّل في package.json وSUITE، وتغييره يفكّ البوابة صامتاً).
+//
+// **لماذا هذان الفحصان**: الرادار يقرأ npm registry ولا يرى `codex --version` على جهاز
+// المالك، فحقل `engines_on_owner_machine` هو العمود الوحيد الذي نملؤه نحن — وحقلٌ
+// يتقادم بصمت أسوأ من غيابه لأنه يُقرأ حقيقةً. و`baseline.satr` تقادم فعلاً إلى
+// إصدارين كاملين (‏2.16.15 بينما المنشور 2.16.17) قبل أن يُكتشف بالصدفة.
+const baseline = state.baseline || {};
+assert.strictEqual(baseline.satr, pkg.version,
+  `baseline.satr في state.json (${baseline.satr}) لا يطابق package.json (${pkg.version}) — ` +
+  'الرادار يقارن بهذا الرقم، فتقادمه يجعل كل مقارناته خاطئة. حدّثه في التزام الإصدار.');
+
+const machine = baseline.engines_on_owner_machine;
+assert(machine && typeof machine === 'object',
+  'baseline.engines_on_owner_machine غائب — شغّل `npm run radar:baseline -- --write`.');
+assert(/^\d{4}-\d{2}-\d{2}$/.test(String(machine._updated || '')),
+  `engines_on_owner_machine._updated ليس تاريخاً بصيغة YYYY-MM-DD: ${machine._updated}`);
+for (const key of ['codex', 'kimi-code', 'claude-code', 'node', 'npm']) {
+  assert(key in machine, `engines_on_owner_machine ينقصه المفتاح ${key} — أعد تشغيل radar:baseline.`);
+  const value = machine[key];
+  assert(value === null || /^\d+\.\d+/.test(String(value)),
+    `engines_on_owner_machine.${key} ليس رقم إصدار ولا null: ${JSON.stringify(value)}`);
+}
+
+console.log(`radar-graveyard: نجح — ${blocklist.length} حزمة محظورة، ${graveyard.length} مدخل مقبرة بسبب وتاريخ، ` +
+  `ولا تبعية محظورة في package.json؛ وbaseline.satr=${baseline.satr} يطابق الحزمة، ` +
+  `وإصدارات جهاز المالك الخمسة مقروءة (‏${machine._updated}).`);

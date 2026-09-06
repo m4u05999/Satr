@@ -31,7 +31,7 @@
     }
   ],
   "baseline": {
-    "satr": "2.16.15",
+    "satr": "2.16.17",
     "electron": "33.4.11",
     "claude-agent-sdk": "0.3.176",
     "electron-builder": "25.1.8",
@@ -43,7 +43,15 @@
     "kimi": "kimi-cli 0.38.0",
     "_checked": "2026-09-04 من package-lock.json — بلا تغيير عن العدد ٠٠١",
     "_repo_moved": "المالك أنجز منذ العدد ٠٠١: هجرة DeepSeek إلى v4-flash/v4-pro، فصل كتالوج NIM عن Groq (+allam-2-7b)، manifests winget، حزمة MSIX، مولّد لقطات المتجر، OBS-096/099/100",
-    "_main_advanced": "origin/main تقدّم 38 التزاماً بعد 1b0a6d4 حتى 2026-09-04 06:03 (+03) — OBS حتى 100؛ MSIX، winget#429004، Certum، DeepSeek v4، allam-2-7b منجزة"
+    "_main_advanced": "origin/main تقدّم 38 التزاماً بعد 1b0a6d4 حتى 2026-09-04 06:03 (+03) — OBS حتى 100؛ MSIX، winget#429004، Certum، DeepSeek v4، allam-2-7b منجزة",
+    "engines_on_owner_machine": {
+      "codex": "0.153.4",
+      "kimi-code": "0.41.0",
+      "claude-code": "2.1.261",
+      "node": "26.5.0",
+      "npm": "11.17.0",
+      "_updated": "2026-09-06"
+    }
   },
   "latest_seen": {
     "electron": "44.2.0",
