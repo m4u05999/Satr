@@ -22,6 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const inject = require('./inject'); // looksBinary — كشف الثنائي الموحّد
 const { computeDiff } = require('./diff');
+const { gitArgs } = require('./gitsafe'); // OBS-136: يُبطل مفاتيح الإعداد المُنفِّذة
 
 const MAX_FILES = 100;               // سقف الملفات المعروضة
 const MAX_SRC = 2 * 1024 * 1024;     // لا فرق لملف أكبر (حد MAX_EDIT_SRC نفسه)
@@ -32,7 +33,8 @@ const TIME_BUDGET = 10000;           // ميزانية كلية للمسح (مل
 // (أسماء الملفات بايتات UTF-8 مع -z؛ النص يُفكّ عند الحاجة)
 function runGit(cwd, args) {
   return new Promise((resolve) => {
-    execFile('git', args, {
+    // OBS-136: `.git/config` قد يسمّي برنامجاً يشغّله git (‏fsmonitor · diff.external)
+    execFile('git', gitArgs(args), {
       cwd, timeout: GIT_TIMEOUT, maxBuffer: 16 * 1024 * 1024,
       windowsHide: true, encoding: 'buffer',
     }, (err, stdout) => {

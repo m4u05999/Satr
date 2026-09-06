@@ -14,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const gitdiff = require('./gitdiff');
+const { gitArgs } = require('./gitsafe'); // OBS-136: يُبطل مفاتيح الإعداد المُنفِّذة
 
 const ROOT = path.join(os.homedir(), '.satr', 'worktrees');
 const GIT_TIMEOUT_MS = 30000;
@@ -28,7 +29,8 @@ function runGit(cwd, args, options) {
   const settings = options || {};
   const execute = typeof settings.execFile === 'function' ? settings.execFile : execFile;
   return new Promise((resolve) => {
-    execute('git', args, {
+    // OBS-136: تحصين إعداد المستودع المُنفِّذ
+    execute('git', gitArgs(args), {
       cwd,
       timeout: Math.min(Number(settings.gitTimeoutMs) || GIT_TIMEOUT_MS, GIT_TIMEOUT_MS),
       maxBuffer: Math.min(Number(settings.maxBuffer) || MAX_BUFFER, MAX_BUFFER),

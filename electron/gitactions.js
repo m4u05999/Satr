@@ -21,6 +21,7 @@
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { gitArgs } = require('./gitsafe'); // OBS-136: يُبطل مفاتيح الإعداد المُنفِّذة
 
 const GIT_TIMEOUT = 15000;
 const MAX_MSG = 2000; // سقف طول رسالة الالتزام
@@ -28,7 +29,9 @@ const MAX_MSG = 2000; // سقف طول رسالة الالتزام
 // تشغيل git بمصفوفة وسائط (بلا shell) — يعيد {ok, out, err, code}
 function runGit(cwd, args, opts) {
   return new Promise((resolve) => {
-    execFile('git', args, {
+    // OBS-136: فئةٌ **غير** التي تحرسها كتلة الأمان أدناه — تلك تمنع حقن الوسائط،
+    // وهذه تمنع تنفيذاً يقع داخل git نفسه بمفتاح من `.git/config`.
+    execFile('git', gitArgs(args), {
       cwd, timeout: GIT_TIMEOUT, maxBuffer: 16 * 1024 * 1024,
       windowsHide: true, encoding: 'buffer', ...(opts || {}),
     }, (err, stdout, stderr) => {

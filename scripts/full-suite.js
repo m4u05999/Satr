@@ -32,6 +32,7 @@ const SUITE = [
   'test:memory',
   'test:design-guard',
   'test:gitdiff',
+  'test:gitsafe',
   'test:keys',
   'test:topbar-dev-badge',
   'test:repomap',

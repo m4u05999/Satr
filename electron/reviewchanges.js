@@ -28,6 +28,7 @@ const path = require('path');
 
 const memory = require('./memory');
 const reviewer = require('./reviewer');
+const { gitArgs } = require('./gitsafe'); // OBS-136: يُبطل مفاتيح الإعداد المُنفِّذة
 
 const MAX_PATCH_CHARS = 400000;      // سقف reviewer.MAX_PATCH_CHARS نفسه
 const MAX_UNTRACKED_FILES = 40;      // ملف جديد لكل نداء git منفصل — سقف يمنع الزحف
@@ -48,7 +49,8 @@ const FALLBACK_PREFERENCE = Object.freeze(['sdk', 'codex', 'kimi-code']);
 
 function git(cwd, args) {
   return new Promise((resolve) => {
-    execFile('git', args, {
+    // OBS-136: تحصين إعداد المستودع المُنفِّذ
+    execFile('git', gitArgs(args), {
       cwd, windowsHide: true, encoding: 'utf8', timeout: GIT_TIMEOUT_MS,
       maxBuffer: 64 * 1024 * 1024,
     }, (error, stdout) => {
