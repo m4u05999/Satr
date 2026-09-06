@@ -33,6 +33,7 @@
     "test:memory": "node scripts/memory-test.js",
     "test:design-guard": "node scripts/design-guard-test.js",
     "test:gitdiff": "node scripts/gitdiff-test.js",
+    "test:gitsafe": "node scripts/gitsafe-test.js",
     "test:chat-rtl": "electron scripts/chat-rtl-test.js",
     "test:update-ui": "electron scripts/update-ui-test.js",
     "test:settings-account": "electron scripts/settings-account-test.js",
