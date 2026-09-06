@@ -28,12 +28,45 @@
         "F11"
       ],
       "note": "F11 baseline: 11 open / 8 watch / 5 grave"
+    },
+    {
+      "n": 4,
+      "date": "2026-09-05",
+      "items": 7,
+      "window_days": 1,
+      "fronts": [
+        "F1",
+        "F2",
+        "F5",
+        "F8"
+      ],
+      "note": "SDK baseline jumped 0.3.176 -> 0.3.261 in repo; 1 direct / 4 obs / 2 fyi"
+    },
+    {
+      "n": 5,
+      "date": "2026-09-06",
+      "items": 20,
+      "window_days": 3,
+      "fronts": [
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6",
+        "F7",
+        "F8",
+        "F9",
+        "F10",
+        "F11"
+      ],
+      "note": "Sunday full sweep: 4 direct / 7 obs / 4 fyi + 5 F11 (2 open / 3 watch / 1 grave). Headline: GitSpawn .git/config RCE class touches Satr's own git subprocesses"
     }
   ],
   "baseline": {
     "satr": "2.16.17",
     "electron": "33.4.11",
-    "claude-agent-sdk": "0.3.176",
+    "claude-agent-sdk": "0.3.261",
     "electron-builder": "25.1.8",
     "electron-updater": "6.8.9",
     "node-pty": "1.1.0",
@@ -41,9 +74,14 @@
     "zod": "4.4.3",
     "codex": "0.144.3",
     "kimi": "kimi-cli 0.38.0",
-    "_checked": "2026-09-04 من package-lock.json — بلا تغيير عن العدد ٠٠١",
-    "_repo_moved": "المالك أنجز منذ العدد ٠٠١: هجرة DeepSeek إلى v4-flash/v4-pro، فصل كتالوج NIM عن Groq (+allam-2-7b)، manifests winget، حزمة MSIX، مولّد لقطات المتجر، OBS-096/099/100",
-    "_main_advanced": "origin/main تقدّم 38 التزاماً بعد 1b0a6d4 حتى 2026-09-04 06:03 (+03) — OBS حتى 100؛ MSIX، winget#429004، Certum، DeepSeek v4، allam-2-7b منجزة",
+    "mcp-sdk": "1.29.0",
+    "hono-node-server": "1.19.14 (transitive via MCP SDK, runtime)",
+    "_checked": "2026-09-06 من package-lock.json — لا تغيّر في القفل منذ العدد ٠٠٤؛ نسخة المشروع 2.16.15 -> 2.16.17",
+    "_repo_head": "4d55ace (2026-09-06 06:33 +03) docs(obs) يغلق OBS-133/134/135 (#71) — الوسم v2.16.17",
+    "_probes_stale": "كل مسابير SDK (دفعات A/B/C/D/E) جُسّت على 0.3.176 وCC 2.1.214-2.1.220 ولم تُعَد على 0.3.261؛ و0.3.263 مطابق لـ0.3.261 في sdk.d.ts فالجسّ على 0.3.261 يكفي للاثنين",
+    "_git_unhardened": "أُغلق — كان صحيحاً عند 4d55ace الذي قرأه الرادار، ونزل الإصلاح بعده: OBS-136 في 968fcd3 أنشأ electron/gitsafe.js وتستورد منه gitArgs الملفاتُ الخمسة كلها (gitdiff · gitactions · merger · reviewchanges · worktrees) فتُبطل core.fsmonitor وأخواته. حدّان معلنان: hooks وLFS خارج التحصين",
+    "_sdk_installed_drift": "package.json والقفل يعلنان claude-agent-sdk 0.3.261 بينما node_modules فيه 0.3.176 (قياس 2026-09-06) — أي أن التطوير والاختبار محلياً يجريان على SDK غير الذي يثبّته npm ci في CI. فأي إعادة جسّ للعقود الخمسة تلزمها إعادة تثبيت أولاً وإلا أُعيد قياس 0.3.176 وخُلص إلى «لا شيء تغيّر». مسجَّل في OBS-137",
+    "_repo_moved": "المالك أنجز منذ العدد ٠٠١: هجرة DeepSeek إلى v4، فصل كتالوج NIM عن Groq، manifests winget، حزمة MSIX، ترقية SDK، تحصين edit_file، بوابة ويندوز (PR #42)، وOBS-133/134/135 (PR #71)",
     "engines_on_owner_machine": {
       "codex": "0.153.4",
       "kimi-code": "0.41.0",
@@ -55,11 +93,13 @@
   },
   "latest_seen": {
     "electron": "44.2.0",
-    "claude-agent-sdk": "0.3.260",
-    "claude-code": "2.1.260",
-    "codex": "0.153.2",
-    "kimi-code": "0.40.1",
-    "electron-builder": "26.15.3",
+    "claude-agent-sdk": "0.3.263",
+    "claude-code": "2.1.263",
+    "codex": "0.153.4",
+    "kimi-code": "0.41.0",
+    "mcp-sdk": "1.30.0",
+    "hono-node-server": "2.1.1 (v1 line fixed at 1.19.15)",
+    "electron-builder": "26.15.3 (latest tag) / 26.16.0 (v26 tag)",
     "electron-updater": "6.8.9",
     "xterm": "6.0.0",
     "xterm-beta": "6.1.0-beta.304",
@@ -67,20 +107,32 @@
     "node-pty-beta": "1.2.0-beta.15",
     "zod": "4.5.4",
     "mcp-spec": "2026-07-28",
-    "acp": "1.6.0 / 2.0.0-alpha.2",
+    "acp-crate": "2.1.0 (protocol v2 behind unstable_protocol_v2 flag; protocol v1 is stable)",
+    "acp-npm-sdk": "1.4.0",
     "gemini-cli": "0.58.0",
-    "opencode": "1.18.27"
+    "opencode": "1.18.27",
+    "ghostty": "1.3.1 (1.4.0 milestone 93%, no due date)",
+    "_checked": "2026-09-06"
   },
   "open_threads": [
-    "NIM gpt-oss-120b: served past its 09-02 deprecation banner (Satr NIM catalog does not include it — no exposure)",
-    "Certum: does Open Source tier accept FSL-1.1-MIT? (owner drafted the message, OBS-096-b)",
-    "winget PR microsoft/winget-pkgs#429004: pending manual review, unsigned installer trips SmartScreen",
-    "MS Partner Center: individual account availability in Saudi Arabia (MSIX package now built locally)",
-    "SDK upgrade branch: verify rewindFiles canRewind semantics, user_message_uuids batching, permissionPrompts",
-    "xterm.js #5686 libghostty proposal: any decision?",
-    "Ghostty 1.4 release: did itijah land?",
-    "Kimi Code 0.41+: ACP changes (still 0.40.1 on 09-04)",
-    "Unverified: claim that Claude Code weekly limits drop ~17% on 2026-09-14 — no first-party source found"
+    "GitSpawn: pass -c core.fsmonitor=false on all five git callers; warn on .git/config keys that name a program; do not expose `claude ultrareview` (unpatched at 2.1.252)",
+    "NIM deepseek-v4-pro-0813: free endpoint shows Deprecated — live probe with a key needed before removing it from the shipped NIM catalog",
+    "Certum Open Source: no license clause published, so FSL is not disqualified — remaining unknowns are certificate validity period and whether Certum ships the card to Saudi Arabia (cloud variant avoids it)",
+    "MS Partner Center: is Saudi Arabia among the ~200 markets for a FREE individual account? Cheapest test is to attempt registration",
+    "MSIX + node-pty: can node-pty spawn ConPTY from inside an MSIX container? Gate for both the Store path and @microsoft/winappcli",
+    "winget PR microsoft/winget-pkgs#429004: open, Needs-Attention, assigned to stephengillie 2026-09-03 — but read via GitHub HTML (API 403), so state is not certain",
+    "Re-probe the five frozen SDK contracts (A/B/C/D/E) on 0.3.261 — still not done; 0.3.263 needs no separate probe (sdk.d.ts identical)",
+    "rewindFiles skippedLinks: agent.js closed-field response drops it before main.js (ed. 004 direct item)",
+    "xterm.js #5686 libghostty proposal: still no decision",
+    "Ghostty PR #11079: still open on the 1.4.0 milestone, awaiting review; Ghostty 1.4 not shipped",
+    "Anthropic legal-and-compliance page carries no update date — cannot prove it changed or did not; re-quote each sweep",
+    "humain-m3 open weights targeted October 2026 — read the MiniMax Community License before any integration (commercial clause vs FSL)",
+    "CLOSED 2026-09-06: Certum license question — no OSI or license requirement is published; only 'publicly available project' + identity + utility bill",
+    "CLOSED 2026-09-06: SignPath — 'OSI-approved Open Source license without commercial dual-licensing' disqualifies FSL-1.1-MIT definitively",
+    "CLOSED 2026-09-06: Azure Artifact Signing — individuals limited to US/Canada, organizations to US/CA/EU/UK; Saudi Arabia on neither list",
+    "CLOSED 2026-09-06: the '17% weekly limit drop' claim — first-party source found for the half that is real (the +50% promotion ends 2026-09-13); the permanent +25% raise and the 17% figure remain without any Anthropic source (deleted X post via BleepingComputer)",
+    "CLOSED 2026-09-06: GHSA-frvp-7c67-39w9 exists (OSV + honojs/node-server advisories); only the github.com/advisories page 404s to automated fetch. CVE-2026-39406 is a different advisory (GHSA-92pp-h63x-v22m)",
+    "CLOSED 2026-09-06: ACP versioning — crate 2.x is an SDK bump, not a protocol bump; protocol v1 stable, v2 behind unstable_protocol_v2. Satr's protocolVersion:1 is safe"
   ],
   "tech_watch": {
     "axes": {
@@ -98,12 +150,14 @@
       "C_distribution": [
         "تحديث تفاضلي بلا شهادة (قِس blockmap أولاً)",
         "تقليص الحزمة (electronLanguages)",
+        "تغليف MSIX/winget بتوقيع المتجر",
         "بدائل Electron فقط إن حفظت node-pty + xterm"
       ],
       "D_skills": [
         "توافق مواصفة agentskills.io + validator في load_skill",
         "استيراد من npx skills / marketplace.json",
         "evals.json لكل مهارة satr-*",
+        "قياس أثر المهارة على سلوك الوكيل",
         "مهارات عربية/خليجية"
       ],
       "E_tokens": [
@@ -111,29 +165,58 @@
         "مسح نتائج الأدوات قبل التلخيص",
         "قياس ضريبة الرموز العربية في usage.js",
         "تحصين edit_file",
-        "أدوات عند الطلب إن اعتُمد Groq مساراً رئيسياً"
+        "أدوات عند الطلب إن اعتُمد Groq مساراً رئيسياً",
+        "قارئ HTML→Markdown أرخص بالرموز"
       ],
       "F_own_agent": [
         "أنماط الحلقات المفتوحة (pi/OpenCode/Cline) بلا تبعية",
         "عزل على ويندوز بلا admin",
-        "أفضل مزيج مجاني: DeepSeek V4 عبر NIM + gpt-oss-120b على Groq"
+        "أفضل مزيج مجاني",
+        "الاستدعاء البرمجي للأدوات (نمط PTC) داخل looprunner"
       ]
     },
     "open_obs": [
       "E: prefix stability for prompt caching (budget block + repo_map out of system prompt)",
       "E: tool-result clearing before summarization (keep/buffer params à la OpenCode)",
       "E: Arabic token-tax metric in usage.js/langmetric.js",
-      "E/F: edit_file hardening (multi-block, whitespace-normalized fallback, read-before-edit) + Cline-style eval",
-      "A: chrome-devtools-mcp over Electron CDP (test Electron breakage #1197; fork holepunchto/electron-devtools-mcp)",
+      "E: bashOutputMaxChars / taskOutputMaxChars on the Claude Code path",
+      "E: /skill-doctor measurement for the seven satr-* skills (pairs with OBS-114)",
+      "E: mdream vs turndown A/B measured through usage.js (20 pages, 10 Arabic) + U+200F/U+202B preservation test — replace or reject with a number",
+      "A: chrome-devtools-mcp over Electron CDP",
       "A: @mozilla/readability + turndown injected in preview; agent-browser optional",
       "B: bidi-js vendored + CodeMirror 6 bidi model + terminal-wg CSI handlers",
       "B: harfbuzzjs limited experiment (adds ~510KB dep — justify or bury)",
-      "C: measure electron-updater blockmap differential; electronLanguages ar/en-US (−40.8MB disk, −7.3MB installer)",
+      "C: measure electron-updater blockmap differential; electronLanguages ar/en-US",
+      "C: @microsoft/winappcli MSIX channel — GATED on a node-pty/ConPTY-inside-MSIX spike first",
       "D: agentskills.io validator in load_skill + license/metadata fields on satr-* skills",
-      "D: npx skills import + marketplace.json reader + skill-creator evals.json; hurmoz contribution (platforms: windows)",
+      "D: npx skills import + marketplace.json reader + skill-creator evals.json; hurmoz contribution",
       "F: study pi / OpenCode compaction / Cline diff-edit eval — patterns only, no deps"
     ],
+    "evaluated_2026_09_06": [
+      "@microsoft/winappcli (MIT, 0.6.2 2026-08-19) -> open OBS, gated on node-pty in MSIX",
+      "mdream (MIT, 1.7.1 2026-09-02, zero deps) -> open OBS as a measured bake-off vs turndown",
+      "headroom-ai (Apache-2.0, 0.37.0 2026-08-27) -> watch",
+      "NVIDIA/SkillEvaluator (Apache-2.0, 21 stars) -> watch",
+      "text-shaper (MIT, 0.1.28 2026-07-17) -> watch",
+      "Skilldex -> graveyard",
+      "open-ptc-agent -> deferred as a design note on looprunner.js, not a candidate"
+    ],
     "watching": [
+      {
+        "name": "headroom-ai",
+        "why": "Apache-2.0, real compression numbers (21-57%), but canonical repo ambiguous across mirrors, star signal implausible, and the npm TS SDK's independence from the Python core is unconfirmed; Satr cannot ship Python. ML component (Kompress-v2-base) has no Arabic coverage and must be hard-disabled",
+        "recheck": "when the TS SDK is confirmed standalone"
+      },
+      {
+        "name": "NVIDIA/SkillEvaluator",
+        "why": "Apache-2.0, runs on the free NVIDIA gateway Satr already uses, Tier 3 would measure whether the Arabic language contract actually changes agent behavior — but 21 stars and last-commit date unverifiable",
+        "recheck": "monthly; a 2-day Tier 1+2 spike is allowed as an experiment"
+      },
+      {
+        "name": "text-shaper",
+        "why": "MIT, zero-dep TS, Arabic shaping + UAX#9 in one package — but 0.1.x, solo maintainer, 7 weeks stale, and glyph->source cluster maps are absent from the API reference (the load-bearing capability)",
+        "recheck": "4 weeks, or promote immediately if a 1-day cluster-map spike confirms"
+      },
       {
         "name": "Kitesurf",
         "why": "Cloudflare promised open source; hosted only; Blitz block direction not wired (dir=rtl ignored)",
@@ -195,9 +278,14 @@
         "recheck": "quarterly"
       },
       {
-        "name": "WezTerm bidi model / Ghostty itijah",
-        "why": "design references; Ghostty selection part unwritten",
+        "name": "WezTerm bidi model / Ghostty #11079",
+        "why": "design references; PR still open on the 1.4.0 milestone awaiting review, last commits 2026-05-17; author is DiaaEddin, 'itijah' is the Zig UAX#9 library it uses",
         "recheck": "monthly"
+      },
+      {
+        "name": "coder/ghostty-web",
+        "why": "libghostty to WASM, drop-in API-compatible with @xterm/xterm, claims complex-script advantage — but that is grapheme handling, not bidi reordering; dormant since 2026-06-28",
+        "recheck": "quarterly"
       },
       {
         "name": "ICU4X npm",
@@ -210,6 +298,11 @@
         "recheck": "quarterly"
       },
       {
+        "name": "@devsamhan/arabic-bidi / bidi-shaper / kashida",
+        "why": "npm prior art for terminal Arabic reshaping + BiDi; not yet assessed against the dual renderer",
+        "recheck": "next F11 sweep"
+      },
+      {
         "name": "hurmoz / ArabAgentSkills / openai skills",
         "why": "Arabic content thin or alpha; contribute windows platforms",
         "recheck": "monthly"
@@ -218,6 +311,11 @@
         "name": "OpenRouter endpoint",
         "why": "zero-code OpenAI-compatible host; free tier 50 req/day",
         "recheck": "quarterly"
+      },
+      {
+        "name": "humain-m3 open weights",
+        "why": "428B Arabic MoE, weights targeted October 2026 under MiniMax Community License; self-reported benchmarks only; read the license before integrating via ollama.js",
+        "recheck": "October 2026"
       }
     ],
     "graveyard": [
@@ -233,7 +331,7 @@
       },
       {
         "name": "V8 snapshots (electron-link/mksnapshot)",
-        "reason": "size increased 227→238MB; last commit 2024-11",
+        "reason": "size increased 227->238MB; last commit 2024-11",
         "date": "2026-09-04"
       },
       {
@@ -290,6 +388,11 @@
         "name": "Roo Code",
         "reason": "archived 2026-05-15",
         "date": "2026-09-04"
+      },
+      {
+        "name": "Skilldex",
+        "reason": "third skill registry after two already evaluated, and stale: skilldex@0.1.1 last published 2026-02-21, solo author",
+        "date": "2026-09-06"
       }
     ],
     "done_by_owner_since_001": [
@@ -299,7 +402,12 @@
       "DeepSeek v4-flash/v4-pro migration",
       "NIM/Groq catalog split + allam-2-7b",
       "OBS-097 RTL issues channel",
-      "OBS-098 ar-terminal"
+      "OBS-098 ar-terminal",
+      "edit_file hardening landed (OBS-108)",
+      "SDK upgraded 0.3.176 -> 0.3.261; user_message_uuids batching read at agent.js:2223",
+      "OBS-114 satr-guide bundle cap with written justification; 4KiB cap on SKILL.md",
+      "OBS-117/118/121/122 Windows gate work (PR #42)",
+      "OBS-133/134/135 sessions-panel grouping fix — buildProjectCwdMap, orphan-joins-project guard (PR #71, 2026-09-06)"
     ],
     "npm_blocklist": [
       "@lightpanda/browser",
