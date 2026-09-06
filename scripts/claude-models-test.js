@@ -495,6 +495,127 @@ function testUiAndIpcContracts() {
   assert.match(mainSource, /ipcMain\.handle\('satr:claudeAccount', \(\) => handleClaudeAccountRequest\(\)\)/);
 }
 
+// ── OBS-134: إعادة جلب نماذج Codex بدل السقوط الصامت ────────────────────────
+// الملف يغطي **منتقي النماذج في الواجهة** عامةً (‏`modelsForEngine` يخدم المحرّكات كلها)،
+// فموضع هذا الفحص هنا لا في اختبار محرك Codex. والاستخراج من المصدر وقت التشغيل — لا
+// نسخة موازية — كي يكسر أيُّ انحراف في `refreshCodexModels` الاختبارَ بدل أن يمرّ صامتاً.
+function loadCodexModelsRefresh(fetcher) {
+  const source = read('src/ui/app.js');
+  const start = source.indexOf('  const CODEX_MODELS_RETRIES =');
+  const end = source.indexOf('  // نماذج Kimi الديناميكية', start);
+  assert.ok(start >= 0 && end > start, 'تعذّر استخراج إعادة جلب نماذج Codex من app.js');
+
+  const timers = [];
+  const notices = [];
+  let rebuilds = 0;
+  const sandbox = {
+    exported: {},
+    window: { satr: { codexModels: fetcher } },
+    $: () => ({ value: 'codex' }),
+    rebuildModels: () => { rebuilds += 1; },
+    addNotice: (text) => notices.push(text),
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+  };
+  vm.runInNewContext(`
+    let codexDynamicModels = [];
+    ${source.slice(start, end)}
+    exported.refresh = refreshCodexModels;
+    exported.models = () => codexDynamicModels;
+  `, sandbox, { filename: 'ui-codex-models-extract.js' });
+
+  return Object.assign(sandbox.exported, {
+    timers, notices, rebuilds: () => rebuilds,
+    // تشغيل المؤقّتات المعلّقة يدوياً: لا انتظار حقيقي في اختبار قطعي
+    async flush() {
+      const pending = timers.splice(0, timers.length);
+      for (const t of pending) await t.fn();
+    },
+  });
+}
+
+async function testCodexModelsRetry() {
+  // 1) النجاح من أول محاولة: لا إعادة ولا إشعار
+  {
+    let calls = 0;
+    const ui = loadCodexModelsRefresh(async () => {
+      calls += 1;
+      return [{ id: 'gpt-6-astra', name: 'GPT-6-Astra' }, { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' }];
+    });
+    await ui.refresh();
+    assert.equal(calls, 1, 'نداء واحد يكفي عند النجاح');
+    assert.equal(ui.timers.length, 0, 'لا مؤقّت إعادة عند النجاح');
+    assert.equal(ui.notices.length, 0, 'لا إشعار عند النجاح');
+    assert.deepEqual(ui.models().map((m) => m.value), ['gpt-6-astra', 'gpt-5.6-sol']);
+  }
+
+  // 2) الرمي: محاولتان إضافيتان ثم إشعار واحد — لا صمت (جوهر OBS-134)
+  {
+    let calls = 0;
+    const ui = loadCodexModelsRefresh(async () => { calls += 1; throw new Error('codex_rpc_timeout'); });
+    await ui.refresh();
+    assert.equal(ui.timers.length, 1, 'المحاولة الأولى تجدول إعادة');
+    await ui.flush();
+    assert.equal(ui.timers.length, 1, 'المحاولة الثانية تجدول إعادة');
+    await ui.flush();
+    assert.equal(calls, 3, 'محاولة أصلية + إعادتان');
+    assert.equal(ui.timers.length, 0, 'لا إعادة بعد استنفاد السقف');
+    assert.equal(ui.notices.length, 1, 'إشعار واحد بعد الاستنفاد');
+    assert.match(ui.notices[0], /تعذّر جلب نماذج Codex/);
+    assert.match(ui.notices[0], /احتياطية/, 'الإشعار يقول إن المعروض احتياطي');
+    // نداء رابع لا يكرر الإشعار
+    await ui.refresh();
+    assert.equal(ui.notices.length, 1, 'الإشعار لا يتكرر');
+  }
+
+  // 3) قائمة فارغة بلا رمي — «النجاح الفارغ» الذي كان يمرّ صامتاً
+  {
+    let calls = 0;
+    const ui = loadCodexModelsRefresh(async () => { calls += 1; return []; });
+    await ui.refresh();
+    await ui.flush();
+    await ui.flush();
+    assert.equal(calls, 3, 'القائمة الفارغة تُعامل فشلاً لا نجاحاً');
+    assert.equal(ui.notices.length, 1);
+  }
+
+  // 4) نجاحٌ بعد فشل: يتوقف كل شيء ولا إشعار
+  {
+    let calls = 0;
+    const ui = loadCodexModelsRefresh(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('عابر');
+      return [{ id: 'gpt-6-astra', name: 'GPT-6-Astra' }];
+    });
+    await ui.refresh();
+    await ui.flush();
+    assert.equal(ui.notices.length, 0, 'لا إشعار — الإعادة نجحت');
+    assert.equal(ui.timers.length, 0);
+    assert.deepEqual(ui.models().map((m) => m.value), ['gpt-6-astra']);
+  }
+
+  // 5) قائمة سابقة ناجحة تحمي من الإزعاج: فشلٌ لاحق لا يعيد المحاولة ولا يُشعر
+  {
+    let calls = 0;
+    const ui = loadCodexModelsRefresh(async () => {
+      calls += 1;
+      if (calls === 1) return [{ id: 'gpt-6-astra', name: 'GPT-6-Astra' }];
+      throw new Error('فشل لاحق');
+    });
+    await ui.refresh();
+    await ui.refresh();
+    assert.equal(ui.timers.length, 0, 'لا إعادة ما دامت لدينا قائمة');
+    assert.equal(ui.notices.length, 0, 'ولا إشعار — الاحتياط حديث فعلاً');
+    assert.deepEqual(ui.models().map((m) => m.value), ['gpt-6-astra'], 'القائمة السابقة تبقى');
+  }
+
+  // 6) القائمة الثابتة الاحتياطية تبقى موجودة (شبكة الأمان الأخيرة)
+  {
+    const source = read('src/ui/app.js');
+    assert.match(source, /const CODEX_MODELS = \[/, 'الاحتياط الثابت لا يُحذف');
+    assert.match(source, /codexDynamicModels\.length \? codexDynamicModels : CODEX_MODELS/);
+  }
+}
+
 function testProbeContract() {
   const source = read('scripts/claude-models-probe.js');
   assert.ok(source.includes('Promise.all([query.supportedModels(), query.accountInfo()])'));
@@ -508,9 +629,10 @@ function testProbeContract() {
   await testMainSanitization();
   testFallbackIsolation();
   testUiEffortPicker();
+  await testCodexModelsRetry();
   testUiAndIpcContracts();
   testProbeContract();
-  console.log('claude-models-test: OK — cache/IPC/allowlist/effort levels/UI fallback/internal isolation');
+  console.log('claude-models-test: OK — cache/IPC/allowlist/effort levels/UI fallback/internal isolation/codex retry');
 })().catch((error) => {
   console.error(error && error.stack || error);
   process.exitCode = 1;
