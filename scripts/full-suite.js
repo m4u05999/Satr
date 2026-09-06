@@ -129,6 +129,7 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
   { name: 'eval:agent:baseline', reason: 'يكتب وثيقة baseline في docs/ — يُشغَّل يدوياً عند تحديث خط الأساس لا في كل بوابة' },
   // ── مسابير حيّة: تستهلك أدواراً حقيقية وتحتاج محرّكاً مثبّتاً ومسجَّل الدخول ──
   { name: 'test:codex-executor-probe', reason: 'مسبار حيّ خارج الطقم — يشغّل Codex فعلياً' },
+  { name: 'probe:obs132', reason: 'مسبار حيّ خارج الطقم — يفتح عشرات pty ويقيس معدّل تلوّث خرج runCapture (OBS-132)؛ 306 محاولة في ~310ث، وقياسٌ لا حارس' },
   { name: 'test:conpty-resize-probe', reason: 'مسبار حيّ خارج الطقم — يفتح pty حقيقياً ويقيس إعادة رسم ConPTY عند تغيّر الصفوف (OBS-124)' },
   { name: 'test:gate-direction-probe', reason: 'مسبار حيّ خارج الطقم — يقيس رسو الاتجاه في البوابة عبر إصدارَي Electron للمقارنة (OBS-128)' },
   { name: 'test:layout-metrics-probe', reason: 'مسبار حيّ خارج الطقم — يقارن cssContentSize بـinnerWidth عبر إصدارَي Electron (OBS-129)' },
