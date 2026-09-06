@@ -62,6 +62,7 @@
     "test:terminal-tabs": "electron scripts/terminal-tabs-test.js",
     "test:bidi-parity": "electron scripts/bidi-parity-test.js",
     "probe:obs132": "electron scripts/obs132-capture-pollution-probe.js",
+    "probe:obs140": "node scripts/obs140-settings-allow-probe.js",
     "test:conpty-resize-probe": "node scripts/conpty-resize-probe.js",
     "test:gate-direction-probe": "electron scripts/gate-direction-probe.js",
     "test:layout-metrics-probe": "electron scripts/layout-metrics-probe.js",
