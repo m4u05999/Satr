@@ -11,6 +11,14 @@
  *   ② ما نصّ `IndexExpression` — خطأ تحليل حقيقي أم صدى مُعاد رسمه؟
  *   ③ أيّ مرشّحات العلاج الثلاثة أرجح؟
  *
+ * ثم أضاف **القياس الثاني** (مشهد `M`) سؤالاً رابعاً بعد أن أسقط الأولُ الالتفافَ
+ * وحصر الشرط في «عربيةٌ في الصدى + نافذة طول ضيقة»:
+ *
+ *   ④ هل **اللصق المقوّس** نفسه هو ناقل العطل؟ يُثبَّت كلُّ شيء — الأمر والصدفة والأعمدة
+ *      و**الطول البايتي الداخل إلى ConPTY** — ولا يتغيّر إلا وجود غلاف `ESC[200~…201~`.
+ *      الاعتراض يقع **تحت** `term.js` على `pty.spawn` فيبقى `runCaptureNow` إنتاجياً
+ *      حرفياً؛ وحشوُ أمر `M2` باثني عشر بايتاً إلزاميٌّ وإلّا قِيس الطولُ لا اللصقُ.
+ *
  * **الطريقة**: يستدعي `term.js` الإنتاجي نفسه (بلا نسخة موازية من `cleanOutput`)،
  * ويشترك على مجرى الخرج الخام عبر `term.subscribe` كي يرى ما يراه `runCaptureNow`
  * في `buf` بالضبط. وكل محاولة تحمل **برهان تنفيذ مستقلاً عن نصّ الخرج**: الأمر
@@ -71,6 +79,55 @@ function log(s) {
   process.stdout.write(line + '\n');
   try { fs.appendFileSync(LOG_FILE, line + '\n'); } catch (e) {}
 }
+
+// ── اعتراض كتابة pty — المتغيّر الوحيد الذي يعزله مشهد M ───────────────────────
+/**
+ * **لا يعدّل `electron/term.js` بحرف**: الاعتراض يقع **تحته**، على `pty.spawn`، فيبقى
+ * `runCaptureNow` يعمل حرفياً كما في الإنتاج — `cleanOutput` و`matchCaptureEnd`
+ * والمهلة وطابور الالتقاط كلها الإنتاجية — ولا يفترق `M1` عن `M2` إلا في **ما يدخل
+ * أنبوب ConPTY فعلاً**: بغلاف اللصق المقوّس أو بدونه. أي نسخة موازية من بروتوكول
+ * الالتقاط كانت ستقيس نفسها لا الإنتاج، ولذلك رُفضت.
+ *
+ * ويُركَّب الغلاف على **كل** الطرفيات (‏M1 وM2 معاً) فلا يفترق المساران في تكلفة نداء
+ * ولا ترتيب؛ الفرق كله في سطر القرار المنطقي وحده.
+ */
+const PASTE_BEG = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+const PASTE_WRAP_BYTES = Buffer.byteLength(PASTE_BEG + PASTE_END, 'utf8'); // 12
+
+const plainWriteProcs = new Set(); // مقابض pty التي يُفكّ عنها الغلاف (‏M2 وحدها)
+let lastSpawnedProc = null;        // آخر pty أُنشئ — يربط الطرفية بمقبضها
+let writeWatch = null;             // مرقاب كتابة الخلية الجارية (أطوال مرصودة لا محسوبة)
+
+const PTY_PATCHED = (function patchPtyWrite() {
+  let nodePty = null;
+  try { nodePty = require('node-pty'); } catch (e) { return false; }
+  if (!nodePty || typeof nodePty.spawn !== 'function') return false;
+  const origSpawn = nodePty.spawn;
+  nodePty.spawn = function obs132Spawn() {
+    const proc = origSpawn.apply(this, arguments);
+    lastSpawnedProc = proc;
+    let origWrite = null;
+    try { origWrite = proc.write.bind(proc); } catch (e) { return proc; }
+    proc.write = function obs132Write(data) {
+      let payload = data;
+      let unwrapped = false;
+      if (plainWriteProcs.has(proc) && typeof payload === 'string'
+        && payload.slice(0, PASTE_BEG.length) === PASTE_BEG
+        && payload.indexOf(PASTE_END) > 0) {
+        payload = payload.slice(PASTE_BEG.length).replace(PASTE_END, '');
+        unwrapped = true;
+      }
+      if (writeWatch) {
+        writeWatch.sizes.push(Buffer.byteLength(String(payload), 'utf8'));
+        if (unwrapped) writeWatch.unwrapped++;
+      }
+      return origWrite(payload);
+    };
+    return proc;
+  };
+  return true;
+})();
 
 const term = require(path.join(ROOT, 'electron', 'term.js'));
 
@@ -227,7 +284,10 @@ function rateRow(label, trials) {
   const worst = trials.reduce((m, t) => Math.max(m, t.excess), 0);
   const timedOut = trials.filter((t) => t.timedOut).length;
   const stray = trials.filter((t) => t.diag.strayPasteTail > 0).length;
-  return { label, n, bad, pct, notExec, noStandalone, worst, timedOut, stray };
+  // متوسط المدّة: الحالة الملوّثة تنتهي بمهلة لا بقصٍّ فاشل (‏6008ms مقابل 91ms في
+  // القياس الأول)، فالزمن مؤشّرٌ مستقلّ على «لم تُرَ علامة النهاية» لا زينة جدول.
+  const msAvg = n ? Math.round(trials.reduce((sum, t) => sum + t.ms, 0) / n) : 0;
+  return { label, n, bad, pct, notExec, noStandalone, worst, timedOut, stray, msAvg };
 }
 
 // حشو بصريّ: يعدّ نقاط Unicode كي لا يختلّ الجدول مع العناوين العربية
@@ -240,16 +300,17 @@ function pad(s, n) {
 function printTable(title, rows) {
   log('');
   log('  ' + title);
-  log('  ' + '-'.repeat(110));
-  log('  ' + pad('الحالة', 42) + pad('محاولات', 9) + pad('ملوّث', 7) + pad('النسبة', 9)
-    + pad('مهلة', 6) + pad('لصق-مشوّه', 11) + pad('بلا-سطر-علامة', 15) + 'أقصى زيادة');
+  log('  ' + '-'.repeat(122));
+  log('  ' + pad('الحالة', 46) + pad('محاولات', 9) + pad('ملوّث', 7) + pad('النسبة', 9)
+    + pad('مهلة', 6) + pad('لصق-مشوّه', 11) + pad('بلا-سطر-علامة', 15) + pad('زمن', 9) + 'أقصى زيادة');
   for (const r of rows) {
-    log('  ' + pad(r.label, 42) + pad(String(r.n), 9) + pad(String(r.bad), 7) + pad(r.pct + '%', 9)
+    log('  ' + pad(r.label, 46) + pad(String(r.n), 9) + pad(String(r.bad), 7) + pad(r.pct + '%', 9)
       + pad(String(r.timedOut === undefined ? 0 : r.timedOut), 6)
       + pad(String(r.stray === undefined ? 0 : r.stray), 11)
-      + pad(String(r.noStandalone), 15) + String(r.worst));
+      + pad(String(r.noStandalone), 15)
+      + pad(r.msAvg === undefined ? '—' : r.msAvg + 'ms', 9) + String(r.worst));
   }
-  log('  ' + '-'.repeat(110));
+  log('  ' + '-'.repeat(122));
 }
 
 // طول سطر الالتقاط لأمر ما — العلامة الحقيقية 27 محرفاً + حرف الصنف
@@ -267,6 +328,17 @@ function writeBytes(cmd) {
   const line = term.buildCaptureLine('powershell.exe', 'X'.repeat(28), 'X'.repeat(28), cmd);
   const body = line.slice(-1) === '\r' ? line.slice(0, -1) : line;
   return Buffer.byteLength('\x1b[200~' + body + '\x1b[201~' + '\r', 'utf8');
+}
+
+/**
+ * **الطول البايتي لو كُتب السطر نفسه بلا غلاف اللصق** (‏`write` عادي) — أي ما يدخل
+ * أنبوب ConPTY في `M2`. الفرق عن `writeBytes` هو `PASTE_WRAP_BYTES` بالضبط، وهو
+ * سببُ وجوب حشو أمر `M2` باثني عشر بايتاً إضافياً: بدونه يقصر عن نافذة الطول فيصير
+ * المقيس **الطولَ لا اللصقَ** ويسقط القياس كله.
+ */
+function plainWriteBytes(cmd) {
+  const line = term.buildCaptureLine('powershell.exe', 'X'.repeat(28), 'X'.repeat(28), cmd);
+  return Buffer.byteLength(line, 'utf8');
 }
 
 // حشو خامل حتى يبلغ الأمرُ طولاً بايتياً محدداً بالضبط (كل حرف `p` بايت واحد).
@@ -607,6 +679,99 @@ async function scenarioL(rows, detail) {
   return out;
 }
 
+async function scenarioM(rows, detail) {
+  // ⭐⭐⭐⭐ **القياس الثاني — عزل الناقل**: القياس الأول أسقط الالتفاف وحصر الشرط في
+  // «عربيةٌ في الصدى + نافذة طول `259..262`»، ورجّح أن الناقل هو **اللصق المقوّس** لأن
+  // `[201~` ظهر ملتصقاً بالعلامة والمِحَثّ. لكنه **لم يعزل المتغيّر**: كل محاولاته الـ306
+  // مرّت بـ`writePasted`، فلا شاهد على أن الغلاف سببٌ لا مصاحِب.
+  //
+  // هنا يثبت كلُّ شيء — الأمر، والصدفة، والأعمدة، و**الطول البايتي الداخل إلى ConPTY** —
+  // ولا يتغيّر إلا وجود الغلاف. ومعه شاهدٌ سالب خارج النافذة كي لا يُقرأ فرقٌ عام على
+  // أنه أثر النافذة، وصنفان (عربي/لاتيني) لأن القياس الأول أثبت أن العربية **تضاعف**
+  // الاحتمال ولا تخلقه (‏L3 لاتيني تلوّث 40%).
+  //
+  // ⚠️ الحشو غير قابل للتفاوض: `writeBytes` يعدّ الغلاف (‏12 بايتاً)، فأمر `M2` بلا
+  // حشو يدخل الأنبوب أقصرَ بـ12 بايتاً ⇒ خارج النافذة ⇒ يقيس الطولَ لا اللصقَ.
+  const N = SCALE || (QUICK ? 10 : 30);
+  const REPRO_CWD = String(optOf('repro-cwd', 'D:\\sater'));
+  const cwd = fs.existsSync(REPRO_CWD) ? REPRO_CWD : ROOT;
+  const arabicCmd = 'Write-Output "سطر يعمل"';
+  const latinCmd = 'Write-Output "satrwork"';
+  const IN = writeBytes(arabicCmd);   // 259 — النافذة التي تلوّثت في L1 (عربي) وL3 (لاتيني)
+  const OUT = IN + 24;                // 283 — قِيس نظيفاً في L2 ⇒ شاهد سالب
+  const classes = [
+    ['عربي', arabicCmd, 'سطر يعمل'],
+    ['لاتيني', latinCmd, 'satrwork'],
+  ];
+
+  // بناء الخلايا: لكل (منطقة × صنف) زوجٌ M1/M2 متجاوران في الجدول للمقارنة المباشرة.
+  const cells = [];
+  for (const zone of [['داخل', IN], ['خارج', OUT]]) {
+    for (const cls of classes) {
+      const m1 = padToBytes(cls[1], zone[1]);                      // الغلاف داخل العدّ
+      const m2 = padToBytes(cls[1], zone[1] + PASTE_WRAP_BYTES);   // بلا غلاف ⇒ العدّ نفسه
+      if (m1) cells.push({ tag: 'M1', plain: false, cmd: m1.cmd, expect: cls[2],
+        conpty: writeBytes(m1.cmd), zone: zone[0], cls: cls[0] });
+      if (m2) cells.push({ tag: 'M2', plain: true, cmd: m2.cmd, expect: cls[2],
+        conpty: plainWriteBytes(m2.cmd), zone: zone[0], cls: cls[0] });
+    }
+  }
+
+  const out = [];
+  const detailRows = [];
+  for (const cell of cells) {
+    // «اسمي» صراحةً في الوسم: الطول الحقيقي يتذبذب بجيتر العلامة، والمقارنة المضبوطة
+    // أدناه تقوم على المرصود — فلا يُقرأ رقمُ الجدول على أنه ما دخل الأنبوب فعلاً.
+    const label = cell.tag + ' ' + (cell.plain ? 'write عادي' : 'writePasted') + ' · '
+      + cell.cls + ' · ' + cell.zone + ' اسمي' + cell.conpty + 'ب';
+    const id = startProbeTerm(cwd, 200, 30);
+    const proc = lastSpawnedProc;
+    // fail-closed: خليةُ `M2` بلا اعتراض فعّال ليست قياساً — تُلغى ولا تُعرض رقماً كاذباً.
+    if (cell.plain && (!PTY_PATCHED || !proc)) {
+      term.killTerm(id);
+      detailRows.push({ label, plain: true, invalid: 'الاعتراض غير مركَّب — الخلية أُلغيت' });
+      continue;
+    }
+    if (cell.plain) plainWriteProcs.add(proc);
+    await waitShellIdle(id, 600, 12000);
+    writeWatch = { sizes: [], unwrapped: 0, last: null };
+    const trials = [];
+    for (let i = 0; i < N; i++) {
+      writeWatch.last = null;
+      const rec = await trial('M', id, cell.cmd, cell.expect,
+        { case: label, nominal: cell.conpty, plain: cell.plain, zone: cell.zone, cls: cell.cls });
+      // ⚠️ **الطول الاسمي ليس الطول الحقيقي**: علامة الالتقاط تُبنى من
+      // `Math.random().toString(36)` فيتذبذب طولها — قِيس على 200 ألف عيّنة: 27 محرفاً
+      // بنسبة 26% · 28 بنسبة 71% · 29 بنسبة 2% — وتظهر مرّتين في سطر الالتقاط، فالطول
+      // الفعلي = الاسمي + {0, 2, 4} بايتات. ولذلك تُقارَن الأزواج أدناه **بالطول المرصود**
+      // من الاعتراض لا بالهدف الاسمي؛ وإلّا قُورنت أعمدةٌ غير متكافئة وسقط الضبطُ كلُّه.
+      rec.meta.bytesIn = writeWatch.last;
+      trials.push(rec);
+    }
+    const watch = writeWatch;
+    writeWatch = null;
+    if (proc) plainWriteProcs.delete(proc);
+    term.killTerm(id);
+
+    // برهانان مستقلان عن النصّ: كتابةٌ واحدة لكل محاولة، والغلاف فُكّ فعلاً في كل كتابات M2.
+    const hist = new Map();
+    for (const b of watch.sizes) hist.set(b, (hist.get(b) || 0) + 1);
+    const writesOk = watch.sizes.length === trials.length && trials.every((t) => t.meta.bytesIn > 0);
+    const unwrapOk = !cell.plain || watch.unwrapped === watch.sizes.length;
+    const warn = (writesOk ? '' : ' ⚠️كتابات') + (unwrapOk ? '' : ' ⚠️بلا-فكّ');
+    rows.push(rateRow(label + warn, trials));
+    detailRows.push({ label, plain: cell.plain, nominal: cell.conpty,
+      hist: [...hist.entries()].sort((a, b) => a[0] - b[0]),
+      writes: watch.sizes.length, unwrapped: watch.unwrapped, writesOk, unwrapOk });
+    out.push(...trials);
+  }
+
+  detail.mWrites = detailRows;
+  detail.mPatched = PTY_PATCHED;
+  detail.mWindow = { IN, OUT, wrap: PASTE_WRAP_BYTES, n: N };
+  return out;
+}
+
 // ── التشغيل ────────────────────────────────────────────────────────────────────
 async function main() {
   const started = Date.now();
@@ -637,6 +802,7 @@ async function main() {
   if (wanted('J')) await scenarioJ(rows);
   if (wanted('K')) await scenarioK(rows, detail);
   if (wanted('L')) await scenarioL(rows, detail);
+  if (wanted('M')) await scenarioM(rows, detail);
 
   printTable('جدول القياس — معدّل التلوّث لكل حالة', rows);
 
@@ -714,6 +880,71 @@ async function main() {
       log('     ⇒ حدُّ القصّ المستنتَج : ' + (Math.min(...badB) - 1)
         + '  (المدى المتوقَّع لو كان الحدّ H هو H+1..H+7)');
     }
+  }
+
+  // ── ③ المسار الكاتب: هل اللصق المقوّس هو الناقل؟ (مشهد M) ────────────────────
+  if (detail.mWrites) {
+    const w = detail.mWindow || {};
+    log('');
+    log('  ③ المسار الكاتب (‏M) — الطول الداخل إلى ConPTY **مرصودٌ من الاعتراض لا محسوب**');
+    log('     اعتراض pty مركَّب      : ' + (detail.mPatched ? 'نعم' : '**لا** ⇒ خلايا M2 مُلغاة'));
+    log('     النافذة/الشاهد        : داخل=' + w.IN + 'ب · خارج=' + w.OUT + 'ب · غلاف اللصق='
+      + w.wrap + 'ب · تكرار=' + w.n);
+    for (const d of detail.mWrites) {
+      if (d.invalid) { log('     ' + pad(d.label, 46) + '⚠️ ' + d.invalid); continue; }
+      log('     ' + pad(d.label, 46)
+        + 'كتابات=' + pad(String(d.writes), 5)
+        + 'اسمي=' + pad(String(d.nominal), 6)
+        + 'مرصود=' + pad(d.hist.map((e) => e[0] + '×' + e[1]).join(' ') || '—', 22)
+        + (d.plain ? 'فُكّ الغلاف=' + d.unwrapped + '/' + d.writes : 'بالغلاف')
+        + (d.writesOk ? '' : '  ⚠️ عدد الكتابات لا يطابق المحاولات')
+        + (d.unwrapOk ? '' : '  ⚠️ لم يُفكّ الغلاف'));
+    }
+
+    // المقارنة الزوجية — **مشروطة بالطول المرصود** لا بالهدف الاسمي. جيتر طول العلامة
+    // العشوائية يوزّع كل خلية على 2–3 أطوال، فمقارنةُ الخلايا اسمياً تخلط أعمدة غير
+    // متكافئة؛ أما التقاطع الفعلي بين الذراعين فهو وحده المقارنةُ المضبوطة.
+    const byLen = new Map();
+    for (const t of allTrials) {
+      if (t.scenario !== 'M' || !t.meta.bytesIn) continue;
+      const k = t.meta.cls + '|' + t.meta.bytesIn + '|' + (t.meta.plain ? 'M2' : 'M1');
+      const cur = byLen.get(k) || { n: 0, bad: 0, to: 0, notExec: 0 };
+      cur.n++; if (t.polluted) cur.bad++; if (t.timedOut) cur.to++;
+      if (!t.executed) cur.notExec++;
+      byLen.set(k, cur);
+    }
+    const lens = [...new Set([...byLen.keys()].map((k) => Number(k.split('|')[1])))].sort((a, b) => a - b);
+    log('');
+    log('     المقارنة المضبوطة — نفس الصنف ونفس **الطول المرصود** الداخل إلى ConPTY:');
+    log('     ' + pad('الصنف · بايتات', 24) + pad('M1 لصق مقوّس', 20) + pad('M2 write عادي', 20) + 'الحكم');
+    const fmt = (x) => (x ? ((x.bad / x.n) * 100).toFixed(0) + '% (' + x.bad + '/' + x.n + ')' : '—');
+    for (const cls of ['عربي', 'لاتيني']) {
+      for (const L of lens) {
+        const a = byLen.get(cls + '|' + L + '|M1');
+        const b = byLen.get(cls + '|' + L + '|M2');
+        if (!a && !b) continue;
+        // «مضبوط» = الذراعان حاضران بالطول نفسه؛ ما دونه شاهدٌ مفرد لا مقارنة.
+        // «لم يُنفَّذ» معروضٌ لأن العطل ليس تلوّثَ عرضٍ خالصاً: القياس الأول رصد 14 محاولة
+        // من 306 لم يُنفَّذ أمرها فعلاً، فالعدّ هنا يفصل «نصٌّ زائد» عن «أمرٌ ضاع».
+        const ne = (a ? a.notExec : 0) + (b ? b.notExec : 0);
+        const verdict = (a && b)
+          ? 'مضبوط · فرق ' + (((b.bad / b.n) - (a.bad / a.n)) * 100).toFixed(0) + ' نقطة'
+            + (ne ? ' · لم يُنفَّذ ' + (a ? a.notExec : 0) + '/' + (b ? b.notExec : 0) : '')
+          : 'ذراع واحد — لا مقارنة' + (ne ? ' · لم يُنفَّذ ' + ne : '');
+        log('     ' + pad(cls + ' · ' + L + 'ب', 24) + pad(fmt(a), 20) + pad(fmt(b), 20) + verdict);
+      }
+    }
+    log('');
+    log('     ⚠️ ما لا يقيسه هذا المشهد (تصريح لازم — لا يُقرأ صمتُه نفياً):');
+    log('        • صدفاً غير PowerShell/PSReadLine على ConPTY، ولا أوامر متعددة الأسطر.');
+    log('        • مسار الحافظة (‏OBS-106): الطرفية isModel فتردّ clusterPasteParts بـnull.');
+    log('        • أطوالاً غير القيمتين المختارتين، ولا أعمدةً غير 200.');
+    log('        • ⚠️ ويصحّح القياسَ الأول: الطول «الاسمي» في K/L يَقِلّ عن الحقيقي بـ{0,2,4}');
+    log('          بايتات لأن علامة الالتقاط عشوائية الطول وتظهر مرّتين — فنافذة 259..262');
+    log('          المعلنة هناك **اسميّة لا حقيقية**، وهذا المشهد يقارن بالمرصود لا بالاسمي.');
+    log('        • **هل write العادي علاجٌ صالح** — يقيس هل هو ناقلٌ للعطل فقط. سلامةُ');
+    log('          السطر الطويل بلا لصق مقوّس عطلٌ آخر معروف (‏OBS-065 وقبول 16.1) لم يُقَس هنا.');
+    log('        • جهازٌ واحد وإصدار Electron واحد وجلسةٌ واحدة لكل خلية.');
   }
 
   // ── علاقة التلوّث بالتوقيت/الأجزاء ───────────────────────────────────────────
