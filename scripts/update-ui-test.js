@@ -174,25 +174,34 @@ function testUpdaterContract() {
     assert.deepStrictEqual(calls, { check: 0, download: 0, quit: 0 });
 
     // ① الفحوص التلقائية: إقلاع + خنق التركيز + الدوري — كلها صامتة بلا حدث
+    // OBS-131: أول browser-window-focus قد يسبق مؤقّت الإقلاع (8000ms) — يجب ألا يضاعف الفحص
+    fakeApp.emit('browser-window-focus');
+    assert.strictEqual(calls.check, 0, 'OBS-131: فحص مزدوج عند الإقلاع — التركيز سبق مؤقّت الإقلاع.');
     scheduled[0].callback();
     assert.strictEqual(calls.check, 1, 'فحص الإقلاع لم يعمل.');
     fakeApp.emit('browser-window-focus');
     assert.strictEqual(calls.check, 1, 'فحص التركيز تجاهل نافذة الخنق (30 دقيقة).');
+    // الفحص اليدوي يتجاوز خنق التركيز عمداً حتى داخل نافذته (عقد زرّ ⚙)
+    assert.deepStrictEqual(updater.checkNow(), { ok: true });
+    assert.strictEqual(calls.check, 2, 'الفحص اليدوي يجب أن يتجاوز خنق التركيز.');
+    fake.emit('update-not-available');
+    assert.deepStrictEqual(emitted, [{ type: 'update', phase: 'none' }], 'الفحص اليدوي لم يستلم ردّ «لا جديد».');
+    emitted.length = 0;
     Date.now = () => originalDateNow() + 31 * 60 * 1000;
     fakeApp.emit('browser-window-focus');
-    assert.strictEqual(calls.check, 2, 'فحص التركيز لم يعمل بعد انقضاء الخنق.');
+    assert.strictEqual(calls.check, 3, 'فحص التركيز لم يعمل بعد انقضاء الخنق.');
     intervals[0].callback();
-    assert.strictEqual(calls.check, 3, 'الفحص الدوري لم يعمل.');
+    assert.strictEqual(calls.check, 4, 'الفحص الدوري لم يعمل.');
     fake.emit('update-not-available');
     assert.deepStrictEqual(emitted, [], 'فحص تلقائي صامت بثّ «لا جديد» للمستخدم.');
 
     // ② الفحص اليدوي: none عند «لا جديد» وcheck_failed عند الخطأ — بلا نص خام
     assert.deepStrictEqual(updater.checkNow(), { ok: true });
-    assert.strictEqual(calls.check, 4);
+    assert.strictEqual(calls.check, 5);
     fake.emit('update-not-available');
     assert.deepStrictEqual(emitted, [{ type: 'update', phase: 'none' }]);
     assert.deepStrictEqual(updater.checkNow(), { ok: true });
-    assert.strictEqual(calls.check, 5);
+    assert.strictEqual(calls.check, 6);
     const silencedError = console.error;
     console.error = () => {};
     try { fake.emit('error', new Error('OFFLINE_RAW_DETAIL')); } finally { console.error = silencedError; }
@@ -218,9 +227,9 @@ function testUpdaterContract() {
     // ④ بعد «تتوفّر نسخة» تتوقف الفحوص التلقائية؛ اليدوي وحده يتجاوز
     intervals[0].callback();
     fakeApp.emit('browser-window-focus');
-    assert.strictEqual(calls.check, 5, 'استمر فحص تلقائي بعد معرفة التحديث — إزعاج متكرر.');
+    assert.strictEqual(calls.check, 6, 'استمر فحص تلقائي بعد معرفة التحديث — إزعاج متكرر.');
     assert.deepStrictEqual(updater.checkNow(), { ok: true });
-    assert.strictEqual(calls.check, 6, 'الفحص اليدوي يجب أن يتجاوز حارس updateKnown.');
+    assert.strictEqual(calls.check, 7, 'الفحص اليدوي يجب أن يتجاوز حارس updateKnown.');
     Date.now = originalDateNow;
 
     updater.downloadUpdate();

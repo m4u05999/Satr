@@ -84,6 +84,10 @@ function initUpdater(app, emit, options = {}) {
     else emit({ type: 'update', phase: 'error' });
   });
 
+  // OBS-131: نافذة خنق التركيز تبدأ من لحظة التفعيل لا من الصفر — وإلا مرّ أول
+  // browser-window-focus (قبل مؤقّت الإقلاع 8000ms) حتماً فتضاعف الفحص عند كل إقلاع
+  lastCheckAt = Date.now();
+
   // فحص بعد ثوانٍ من الإقلاع (لا نزاحم تحميل الواجهة والبوابة)
   setTimeout(() => { doCheck(); }, 8000);
 
