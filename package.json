@@ -24,6 +24,7 @@
     "probe:run": "node scripts/probe-runner.js",
     "test:webpush-probe": "node scripts/webpush-probe.js",
     "test:sessionmeta": "node scripts/sessionmeta-test.js",
+    "test:codexsessions": "node scripts/codexsessions-test.js",
     "test:sessions-cwd": "node scripts/sessions-cwd-test.js",
     "test:sessions-panel": "electron scripts/sessions-panel-live-test.js",
     "test:verify": "node scripts/verify-test.js",

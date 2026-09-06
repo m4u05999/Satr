@@ -428,7 +428,17 @@ import { createPreviewShield } from './lib/preview-shield.js';
     localStorage.setItem('satr_fallback_model', $('fallbackModel').value);
   });
   let codexDynamicModels = [];
+  // OBS-134: فشلُ جلبٍ واحد كان يسقط **صامتاً** إلى `CODEX_MODELS` الثابتة — وهي متقادمة
+  // بجيل (بلا `gpt-6-astra` ولا `gpt-5.4-mini` ولا `gpt-5.3-codex-spark`) — فيبدو
+  // للمستخدم أن نموذجاً يملكه «اختفى». والجلب يُستدعى من موضعين فقط (الإقلاع وتبديل
+  // المحرك) فلا فرصة ثانية إلا بإعادة تشغيل. بلاغ مالك 2026-09-06: النموذج المفقود
+  // كان مستعملاً 346 مرة آخرها اليوم، وCodex يعلنه فعلاً (‏7 نماذج مقيسة).
+  const CODEX_MODELS_RETRIES = 2;
+  const CODEX_MODELS_RETRY_MS = 4000;
+  let codexModelsRetries = 0;
+  let codexModelsNotified = false;
   async function refreshCodexModels() {
+    let fetched = false;
     try {
       const list = await window.satr.codexModels();
       if (Array.isArray(list) && list.length) {
@@ -439,9 +449,26 @@ import { createPreviewShield } from './lib/preview-shield.js';
           efforts: Array.isArray(model.efforts) ? model.efforts : [],
           defaultEffort: model.defaultEffort || '',
         }));
+        fetched = true;
+        codexModelsRetries = 0;
+        codexModelsNotified = false; // نجاحٌ لاحق يعيد فتح باب الإعلام لو تكرر الفشل
       }
     } catch (e) { /* يبقى الاحتياط الحديث */ }
     if ($('engine').value === 'codex') rebuildModels();
+
+    // قائمةٌ سابقة ناجحة تعني أن الاحتياط حديثٌ فعلاً — لا نعيد المحاولة ولا نُزعج.
+    if (fetched || codexDynamicModels.length) return;
+    if (codexModelsRetries < CODEX_MODELS_RETRIES) {
+      codexModelsRetries += 1;
+      // نُعيد الوعد (‏`setTimeout` يتجاهله) كي يبقى تسلسل الإعادة قابلاً للانتظار حتمياً
+      // في الحارس، بدل انتظار دورات microtask تخمينية.
+      setTimeout(() => ($('engine').value === 'codex' ? refreshCodexModels() : null), CODEX_MODELS_RETRY_MS);
+    } else if (!codexModelsNotified) {
+      // الصمت هو العطل: بعد استنفاد المحاولات يعرف المستخدم أن ما يراه ناقص، ويعرف
+      // كيف يعيد المحاولة بلا إعادة تشغيل (تبديل المحرك يستدعي الجلب ثانيةً).
+      codexModelsNotified = true;
+      addNotice('⚠️ تعذّر جلب نماذج Codex — القائمة المعروضة احتياطية وقد تنقصها نماذج. بدّل المحرك ثم أعده للمحاولة ثانيةً.');
+    }
   }
   // نماذج Kimi الديناميكية من ACP (satr:kimiModels). عند الفشل أو قبل وصولها تبقى
   // القائمة الثابتة من publicInfo (k3) — لا كسر أبداً.

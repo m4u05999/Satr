@@ -1,10 +1,26 @@
 /**
  * سطر 2.0 — قراءة جلسات Codex المحفوظة محلياً (قراءة فقط) — تلميع المرحلة 4
  * المصدر: ~/.codex/sessions/YYYY/MM/DD/rollout-<ISO>-<thread-id>.jsonl
- * كل سطر JSON مستقل. الأنواع المهمة:
- *  - session_meta (السطر الأول): payload.session_id / cwd / timestamp
- *  - event_msg من نوع user_message (نصّ المستخدم النظيف) و agent_message (رد المساعد)
- * (نتجاهل response_item لأنها تحمل السياق المحقون <recommended_plugins>/<permissions>…)
+ * كل سطر JSON مستقل. `session_meta` (السطر الأول) يحمل payload.session_id / cwd.
+ *
+ * **صيغتان للرسائل** (‏OBS-133 — 2026-09-06):
+ *  - القديمة: `event_msg` بـ`payload.type` ∈ {user_message, agent_message} والنصّ في
+ *    `payload.message`. تبقى مقروءة للأرشيف.
+ *  - الحديثة: `response_item` بـ`payload.type='message'` ودور `user`/`assistant`،
+ *    والنصّ في `payload.content[].text`.
+ *
+ * كان هذا القارئ يقرأ القديمة **وحدها** ويتجاهل `response_item` كلها بحجة أنها «تحمل
+ * السياق المحقون» — وصحّ ذلك يوم كُتب، ثم نقل Codex الرسائل نفسها إليها فصار القارئ
+ * أعمى: قياس على جلسة المالك (‏`01a0721d`، ‏6678 سطراً و24.8 م.ب، ‏codex-cli 0.153.4)
+ * أعطى **صفر** `event_msg/user_message` مقابل `message/user × 101` و
+ * `message/assistant × 140`. فكانت الجلسة تُستأنف بمحادثة فارغة.
+ *
+ * ويبقى ترشيح السياق لازماً — لكنه على **الرسالة كاملةً** لأن الحقن يأتي رسالةً
+ * منفصلة لا ملتصقاً بنصّ المستخدم: من 101 رسالة `user` كانت 92 سياقاً يبدأ بوسم
+ * زاوية (`<recommended_plugins>` من Codex · `<satr_project_memory>` منّا · `<skill>`)
+ * والتسع الباقيات رسائل المستخدم الفعلية بلا وسم.
+ * (ونتجاهل `message/developer` لأنها سياق، و`agent_message` داخل `response_item` لأن
+ *  نصّها فارغ وهي تواصل وكلاء لا رسالة عرض — مقيس: 40 منها بلا نصّ.)
  */
 
 const path = require('path');
@@ -52,20 +68,45 @@ async function walkJsonl(root) {
   return files;
 }
 
-// نصّ رسالة من سطر event_msg (user_message/agent_message) أو null
-function eventMessage(e) {
-  if (!e || e.type !== 'event_msg' || !e.payload) return null;
+// نصّ عناصر المحتوى في الصيغة الحديثة (`input_text` للمستخدم و`output_text` للمساعد).
+// نقرأ `text` أياً كان `type` كي لا ينكسر العقد بنوع محتوى جديد يضيفه Codex.
+function contentText(content) {
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((item) => (item && typeof item.text === 'string' ? item.text : ''))
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+// رسالة مستخدم — أو null إن كانت كتلة سياق محقونة (تبدأ بوسم زاوية؛ انظر رأس الملف)
+function userLine(raw) {
+  const t = typeof raw === 'string' ? raw.trim() : '';
+  if (!t || t.startsWith('<')) return null;
+  return { role: 'user', text: t };
+}
+
+function assistantLine(raw) {
+  const t = typeof raw === 'string' ? raw.trim() : '';
+  return t ? { role: 'assistant', text: t } : null;
+}
+
+// نصّ رسالة من سطر سجلّ — يدعم صيغتَي Codex معاً (انظر رأس الملف) — أو null
+function sessionMessage(e) {
+  if (!e || !e.payload) return null;
   const p = e.payload;
-  if (p.type === 'user_message' && typeof p.message === 'string') {
-    const t = p.message.trim();
-    // نتخطّى نصوصاً محقونة نادرة تبدأ بوسم زاوية (سياق لا رسالة)
-    if (!t || t.startsWith('<')) return null;
-    return { role: 'user', text: t };
+
+  // الصيغة القديمة
+  if (e.type === 'event_msg') {
+    if (p.type === 'user_message') return userLine(p.message);
+    if (p.type === 'agent_message') return assistantLine(p.message);
+    return null;
   }
-  if (p.type === 'agent_message' && typeof p.message === 'string') {
-    const t = p.message.trim();
-    if (!t) return null;
-    return { role: 'assistant', text: t };
+
+  // الصيغة الحديثة — `message` بدور صريح حصراً (developer/system سياق فيُتجاهل)
+  if (e.type === 'response_item' && p.type === 'message') {
+    if (p.role === 'user') return userLine(contentText(p.content));
+    if (p.role === 'assistant') return assistantLine(contentText(p.content));
   }
   return null;
 }
@@ -100,7 +141,7 @@ async function listCodexSessionsLegacy() {
         if (!cwd && typeof e.payload.cwd === 'string') cwd = e.payload.cwd;
       }
       if (!title) {
-        const m = eventMessage(e);
+        const m = sessionMessage(e);
         if (m && m.role === 'user') title = m.text;
       }
       if (id && cwd && title) break;
@@ -137,7 +178,7 @@ async function readCodexSessionLegacy(id) {
   const messages = [];
   for (const e of parseLines(raw)) {
     if (e.type === 'session_meta' && e.payload && typeof e.payload.cwd === 'string' && !cwd) cwd = e.payload.cwd;
-    const m = eventMessage(e);
+    const m = sessionMessage(e);
     if (m) messages.push(m);
   }
   return { cwd, total: messages.length, messages: messages.slice(-MAX_MESSAGES) };
@@ -248,4 +289,7 @@ module.exports = {
   archiveCodexSession,
   deleteCodexSession,
   forkCodexSession,
+  // OBS-133: نقيّة بلا قرص ولا شبكة — يستهلكها `test:codexsessions` وحده كي يحرس
+  // دعم صيغتَي السجلّ معاً. لا مستدعي لها في مسار الإنتاج خارج هذا الملف.
+  sessionMessage,
 };
