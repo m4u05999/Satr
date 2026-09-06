@@ -5,6 +5,11 @@
    المسار، وهو ما يعالجه الوسم وقت الإنشاء (البند ب). */
 
 window.__panelProgress = 'boot';
+// الحالة لا تتسرّب بين التشغيلات: المكوّن يقرأ التفضيل عند بنائه
+// (‏`sessions-panel.js:145`) — أي قبل أن تبلغ كتلةُ الاختبار سطرَ المسح — فتشغيلٌ سقط
+// بعد إطفاء مرشّح الأدوات كان يُفشل التالي **زوراً** بفحص لا علاقة له بالتغيير.
+// هنا يقع المسح قبل تحميل وحدة المكوّن (‏script كلاسيكي يسبق `type="module"`).
+localStorage.removeItem('satr_sessions_show_tools');
 const violations = [];
 document.addEventListener('securitypolicyviolation', (e) => {
   violations.push(String(e.violatedDirective || '') + ' ' + String(e.blockedURI || ''));
@@ -38,6 +43,10 @@ const CLAUDE = [
   S('p1', CWD, 'مخطط مهام غرفة العمليات', 6),
   S('p2', CWD, 'راجع خطة الإصدار', 7),
   S('p3', CWD, 'عصف ثلاثي مثبّت', 9),
+  // ‏OBS-135: جلسة بلا `cwd` — `sessions.js` يلتقطه من رأس الملف (‏64ك.ب) فقط وقد
+  // يغيب. يجب أن تنضمّ لمجموعة مشروعها عبر `project` المُرمَّز، لا أن تشقّ مجموعة
+  // ثانية باسم المجلد فيبدو الطيّ معطوباً ونصفُ المشروع «مختفياً».
+  { id: 'o1', project: CWD.replace(/[\\:]/g, '-'), cwd: '', title: 'جلسة بلا مجلد مسجَّل', mtime: now - 2 * HOUR },
 ];
 const CHATS = [{ id: 'c1', provider: 'openai', title: 'صف الصورة', mtime: now - 8 * HOUR }];
 
@@ -97,6 +106,31 @@ function view(root) {
     if (!v.groups.length) fail('لم تُرسم أي مجموعة');
     checks.push('grouped');
 
+    // 1‑ب) ‏OBS-135: الجلسة بلا `cwd` تنضمّ لمجموعة مشروعها ولا تشقّ مجموعة ثانية
+    //      باسم المجلد المُرمَّز. الفحص على **الانتماء** لا على مجرد الظهور: صفٌّ يظهر
+    //      في المجموعة الخطأ كان سيمرّ لو اكتفينا بوجود العنوان في الصفحة.
+    const encoded = CWD.replace(/[\\:]/g, '-');
+    if (v.groups.some((g) => g.name === encoded)) {
+      fail('المشروع انشقّ مجموعة ثانية باسم المجلد المُرمَّز: ' + encoded);
+    }
+    const groupTitles = (name) => {
+      const nodes = [...root.querySelectorAll('.grp, .sess')];
+      const start = nodes.findIndex((n) => n.classList.contains('grp')
+        && n.querySelector('.name').textContent === name);
+      if (start < 0) return null;
+      const out = [];
+      for (let i = start + 1; i < nodes.length && !nodes[i].classList.contains('grp'); i++) {
+        out.push(nodes[i].querySelector('.t').textContent);
+      }
+      return out;
+    };
+    const alphaTitles = groupTitles(CWD);
+    if (!alphaTitles) fail('مجموعة المشروع الحالي غائبة');
+    if (!alphaTitles.includes('جلسة بلا مجلد مسجَّل')) {
+      fail('الجلسة بلا cwd لم تنضمّ لمجموعة مشروعها: ' + JSON.stringify(alphaTitles));
+    }
+    checks.push('orphan-joins-project');
+
     // 2) جلسات الأدوات مخفية افتراضياً (‏t1 وt2 خارج العدّ)
     if (v.groups.some((g) => /worktrees|Temp/i.test(g.name))) fail('جلسات الأدوات ظاهرة رغم الإخفاء الافتراضي');
     // 2‑ب) الوسم (‏OBS-068 ب): جلسة أداة **داخل مجلد مشروع حقيقي** تُخفى، وتوأمها غير
@@ -108,7 +142,7 @@ function view(root) {
     if (!titles().includes('عصف ثلاثي مثبّت')) fail('الموسومة المثبّتة أُخفيت — التثبيت قرار صريح');
     checks.push('tagged-tool-hidden-untagged-visible');
 
-    if (v.tally !== '24 من 27') fail('العدّاد لا يعلن الإخفاء: ' + v.tally);
+    if (v.tally !== '25 من 28') fail('العدّاد لا يعلن الإخفاء: ' + v.tally);
     checks.push('tools-hidden-by-default');
 
     // 3) المثبّتة أولاً، ثم المشروع الحالي
@@ -140,7 +174,7 @@ function view(root) {
     await sleep(20);
     v = view(root);
     if (!v.groups.some((g) => /worktrees/i.test(g.name))) fail('إطفاء المرشّح لم يُظهر جلسات الأدوات');
-    if (v.tally !== '27 جلسة') fail('العدّاد لم يعد كاملاً: ' + v.tally);
+    if (v.tally !== '28 جلسة') fail('العدّاد لم يعد كاملاً: ' + v.tally);
     if (!titles().includes('مخطط مهام غرفة العمليات')) fail('إطفاء المرشّح لم يُظهر الجلسة الموسومة');
     box.checked = true; box.dispatchEvent(new Event('change'));
     await sleep(20);

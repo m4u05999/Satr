@@ -21,7 +21,7 @@ const CHECKS = [
   'grouped', 'tools-hidden-by-default', 'tagged-tool-hidden-untagged-visible',
   'pinned-and-current-first', 'current-expanded-others-collapsed', 'collapse-toggles-rows',
   'tools-filter-toggles', 'search-reaches-collapsed', 'chat-grouped-by-provider',
-  'row-click-resumes',
+  'orphan-joins-project', 'row-click-resumes',
 ];
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

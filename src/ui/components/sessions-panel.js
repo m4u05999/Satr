@@ -83,6 +83,18 @@ function isToolSession(s) {
   return TOOL_PATH.test(String((s && s.cwd) || ''));
 }
 
+// ‏OBS-135: خريطة «اسم مجلد Claude المُرمَّز ⇒ مسار المشروع»، تُبنى ممّا رأيناه مقترناً
+// في جلسة واحدة على الأقل. أول اقتران يفوز — والمصدر واحد (‏`sessions.js` يقرأ **أول**
+// `cwd` في الملف، وهو مجلد بدء الجلسة الثابت) فلا تعارض متوقّع. ودالة نقية كي يختبرها
+// الحارس بلا DOM.
+function buildProjectCwdMap(list) {
+  const map = new Map();
+  for (const s of Array.isArray(list) ? list : []) {
+    if (s && s.project && s.cwd && !map.has(s.project)) map.set(s.project, s.cwd);
+  }
+  return map;
+}
+
 // عمر الجلسة بصيغة عربية سليمة: مفرد/مثنى/جمع 3–10/تمييز 11+ (جولة الصقل 2026-08-08 —
 // كانت «قبل 1 س» و«قبل 2 يوم» أرقاماً واختصارات بلا مثنى)
 function agoUnit(n, one, two, few, many) {
@@ -174,9 +186,22 @@ class SatrSessionsPanel extends HTMLElement {
   }
 
   // مفتاح التجميع: المجلد للمحرّكات الأصيلة، واسم المزوّد لمحادثات المحوّلات (بلا مجلد).
-  _groupOf(s) {
+  //
+  // ‏OBS-135: جلسةٌ بلا `cwd` كانت تُجمَّع باسم مجلد Claude **المُرمَّز**، فينشقّ المشروع
+  // الواحد مجموعتين متجاورتين (‏`D--sater-satr-2` و`D:\sater\satr-2`) لكلٍّ طيُّها
+  // المستقل — فيبدو الطيّ معطوباً ويظهر نصف المشروع «مختفياً». و`cwd` ليس مضموناً:
+  // `sessions.js` يلتقطه من رأس الملف (‏64ك.ب) فقط، وقياسٌ على أربع جلسات أعطى
+  // ثلاثاً تحمله وواحدة بصفر.
+  //
+  // نتعرّف على الاسم عبر خريطة رأيناها مقترنة بمسار في جلسة أخرى من المجلد نفسه —
+  // **ولا نشتقّ مساراً من الاسم**: الاتجاه من المسار إلى الاسم أحادي المعنى، أما
+  // العكس فمستحيل بأمان (`D--sater-satr-2` قد يكون `D:\sater\satr-2` أو
+  // `D:\sater\satr\2`، و`D--sater-satr-2-opus` مجلد مستقل فعلاً).
+  _groupOf(s, projectMap) {
     if (s.kind === 'chat') return this._label(s.provider);
-    return String(s.cwd || s.project || '(بلا مجلد)');
+    if (s.cwd) return String(s.cwd);
+    const known = projectMap && s.project ? projectMap.get(s.project) : '';
+    return String(known || s.project || '(بلا مجلد)');
   }
 
   _render() {
@@ -210,7 +235,10 @@ class SatrSessionsPanel extends HTMLElement {
       if ((s.mtime || 0) > g.mtime) g.mtime = s.mtime || 0;
     };
     const PINNED = '📌 المثبّتة';
-    for (const s of list) push(s.pinned ? PINNED : this._groupOf(s), s);
+    // من `_data` كلها لا من `list` المرشَّحة: اقتران المجلد بمساره حقيقةٌ عن المشروع
+    // لا عن العرض، فبحثٌ يخفي الجلسة حاملةَ المسار يجب ألّا يشقّ المجموعة (‏OBS-135).
+    const projectMap = buildProjectCwdMap(this._data);
+    for (const s of list) push(s.pinned ? PINNED : this._groupOf(s, projectMap), s);
 
     const cwd = String(this._cwd || '');
     const order = [...groups.values()].sort((a, b) =>
