@@ -132,6 +132,7 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
   { name: 'test:codex-executor-probe', reason: 'مسبار حيّ خارج الطقم — يشغّل Codex فعلياً' },
   { name: 'probe:obs132', reason: 'مسبار حيّ خارج الطقم — يفتح عشرات pty ويقيس معدّل تلوّث خرج runCapture (OBS-132)؛ 306 محاولة في ~310ث، وقياسٌ لا حارس' },
   { name: 'probe:obs140', reason: 'مسبار حيّ خارج الطقم — يزرع .claude/settings.json في مجلد مؤقت ويستهلك أربعة أدوار SDK حقيقية ليقيس هل تظلّل قواعد السماح مربعَ الإذن (OBS-140)؛ قياسٌ لا حارس' },
+  { name: 'probe:obs140-user', reason: 'مسبار حيّ خارج الطقم — يبني HOME معزولاً ويربط الاعتماد برابط صلب ويستهلك أربعة أدوار SDK ليقيس شقّ إعدادات المستخدم من OBS-140؛ قياسٌ لا حارس' },
   { name: 'test:conpty-resize-probe', reason: 'مسبار حيّ خارج الطقم — يفتح pty حقيقياً ويقيس إعادة رسم ConPTY عند تغيّر الصفوف (OBS-124)' },
   { name: 'test:gate-direction-probe', reason: 'مسبار حيّ خارج الطقم — يقيس رسو الاتجاه في البوابة عبر إصدارَي Electron للمقارنة (OBS-128)' },
   { name: 'test:layout-metrics-probe', reason: 'مسبار حيّ خارج الطقم — يقارن cssContentSize بـinnerWidth عبر إصدارَي Electron (OBS-129)' },
