@@ -64,7 +64,7 @@
     }
   ],
   "baseline": {
-    "satr": "2.16.17",
+    "satr": "2.16.18",
     "electron": "33.4.11",
     "claude-agent-sdk": "0.3.261",
     "electron-builder": "25.1.8",
