@@ -18,6 +18,7 @@ const SUITE = [
   'test:daily-loop-ui',
   'test:sessionmeta',
   'test:sessions-cwd',
+  'test:codexsessions',
   'test:tasks',
   'test:observations',
   'test:suite-coverage',
