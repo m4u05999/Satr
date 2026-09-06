@@ -8,7 +8,6 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { createHash, randomUUID, randomBytes } = require('crypto');
-const { spawn } = require('child_process');
 
 const sessions = require('./sessions');
 const sessionmeta = require('./sessionmeta');
@@ -454,23 +453,8 @@ function createWindow() {
 // طلب صامتاً. لذا الواجهة تحجب المحادثة خلف بوابة عربية حتى يتوفّر، وهذا الفحص مصدرها.
 // نفحص node و npm أيضاً لأن خطوات الإرشاد تستخدمهما (npm install -g …).
 
-// تشغيل أمر «--version» وإرجاع {ok, version}. shell على ويندوز لأن node/npm/claude قد تكون .cmd
-function probeVersion(cmd, args) {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (r) => { if (!done) { done = true; resolve(r); } };
-    let child;
-    try {
-      child = spawn(cmd, args, { shell: IS_WIN, windowsHide: true });
-    } catch (e) { return finish({ ok: false }); }
-    let out = '';
-    child.stdout.on('data', (d) => (out += d));
-    child.on('error', () => finish({ ok: false }));
-    child.on('close', (code) => finish(code === 0 ? { ok: true, version: out.trim() } : { ok: false }));
-    // حماية: بعض الأوامر قد تتعلّق — لا نُبقي البوابة منتظرة للأبد
-    setTimeout(() => { try { child.kill(); } catch (e) {} finish({ ok: false }); }, 8000);
-  });
-}
+// دالة الإنتاج مصدّرة من claudeauth كي يشغّل الحارس المسار نفسه بلا نسخة اختبارية.
+const probeVersion = claudeauth.probeVersion;
 
 // مقارنة semver ثلاثية [major, minor, patch] — تُرجع سالباً/صفراً/موجباً
 function cmpVer(a, b) {

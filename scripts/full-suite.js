@@ -70,6 +70,7 @@ const SUITE = [
   'test:promo-studio',
   'test:promostudio-batch1',
   'test:claude-auth',
+  'test:probe-version',
   'test:readiness',
   'test:enginesupdate',
   'test:gate-live',

@@ -113,6 +113,7 @@
     "test:promocapture-live": "electron scripts/promocapture-live-test.js",
     "test:promo-studio": "node scripts/promostudio-test.js && electron scripts/promo-studio-live-test.js",
     "test:claude-auth": "node scripts/claude-auth-test.js",
+    "test:probe-version": "node scripts/probe-version-test.js",
     "test:readiness": "node scripts/readiness-test.js",
     "test:enginesupdate": "node scripts/enginesupdate-test.js",
     "test:gate-live": "electron scripts/gate-live-test.js",
