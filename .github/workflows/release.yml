@@ -97,11 +97,33 @@ jobs:
             'test:codex-contract',
             'test:term-longline'
           )
+          # ‏OBS-139: هذه الحلقة **لا تمرّ بـ`scripts/full-suite.js`**، فإدراج اسمٍ في
+          # `RETRYABLE` هناك لم يكن يصل إليها — و`test:termjobs` (ينهار بـ`0xC0000005`
+          # بلا سطر خرج) صبغ هذه البوابة حمراء في أول تشغيل لأربعة طلبات في يوم واحد،
+          # ونجح كلٌّ منها بإعادة تشغيل بلا تغيير. الإصلاح يقرأ القائمة **من مصدرها
+          # الواحد** لا من نسخة ثانية هنا: قائمةٌ ثانية تتباعد بصمت، وهو الدرس نفسه
+          # الذي فُرض على `BUILTIN_SKILLS`. والانضباط محفوظ: من ليس في القائمة المغلقة
+          # لا يُعاد أبداً، والإعادة **واحدة** وبإعلان صاخب، والسقوط مرتين يبقى تراجعاً.
+          $retryable = node -e "const s=require('./scripts/full-suite.js');console.log([...s.RETRYABLE].join(','))"
+          $retrySet = @($retryable -split ',' | Where-Object { $_ })
+          Write-Host "قابلة للإعادة (من full-suite.js): $($retrySet -join ', ')"
           $failed = @()
+          $retried = @()
           foreach ($g in $groups) {
             Write-Host "=== $g ==="
             npm run $g
-            if ($LASTEXITCODE -ne 0) { $failed += $g }
+            if ($LASTEXITCODE -ne 0) {
+              if ($retrySet -contains $g) {
+                Write-Host "::warning::تعثّرت «$g» (المحاولة 1/2) — تُعاد مرة واحدة بحكم قائمة RETRYABLE المبرَّرة."
+                npm run $g
+                if ($LASTEXITCODE -ne 0) { $failed += $g } else { $retried += $g }
+              } else {
+                $failed += $g
+              }
+            }
+          }
+          if ($retried.Count -gt 0) {
+            Write-Host "أُعيد بعد تعثّر بيئي: $($retried -join ', ')"
           }
           if ($failed.Count -gt 0) {
             throw "سقطت المجموعات: $($failed -join ', ')"
