@@ -315,6 +315,38 @@ async function collectUserAllowRules(io, userSettingsFile) {
   return names.sort();
 }
 
+/**
+ * قراءة **متزامنة** لأسماء الأدوات المسموح بها في إعداد المستخدم — للإنفاذ لا للإخبار.
+ *
+ * لماذا متزامنة: خطّاف `PreToolUse` قد يقع قبل أن تُحسم أي قراءة غير متزامنة، ومجموعةٌ
+ * تصل متأخرةً تعني نافذة لا يحرسها شيء. والملف واحد صغير بسقفه المعلن، فالكلفة مهملة
+ * مقابل ضمان أن المجموعة جاهزة قبل أول أداة.
+ *
+ * fail-open: أي فشل يعيد مجموعة فارغة — فلا يُعطَّل الدور بسبب إعداد لا يُقرأ.
+ */
+function userAllowToolNamesSync(file) {
+  const target = file || path.join(os.homedir(), '.claude', USER_SETTINGS_NAME);
+  try {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_SETTINGS_BYTES) return new Set();
+    const raw = fs.readFileSync(target, 'utf8');
+    const parsed = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Set();
+    const permissions = parsed.permissions;
+    if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return new Set();
+    const allow = permissions.allow;
+    if (!Array.isArray(allow)) return new Set();
+    const names = new Set();
+    for (const rule of allow.slice(0, MAX_ALLOW_RULES)) {
+      const name = allowRuleToolName(rule);
+      if (name) names.add(name);
+    }
+    return names;
+  } catch {
+    return new Set();
+  }
+}
+
 function allowDigest(names) {
   return digest(Buffer.from(names.join('\u0000'), 'utf8')).slice(0, 16);
 }
@@ -507,6 +539,7 @@ module.exports = {
   MCP_AGGREGATE_KEY,
   // OBS-140
   allowRuleToolName,
+  userAllowToolNamesSync,
   MAX_ALLOW_RULES,
   MAX_ALLOW_TOOL_NAME,
   MAX_ALLOW_NAMED_IN_NOTICE,
