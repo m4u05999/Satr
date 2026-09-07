@@ -39,7 +39,7 @@ $report = [ordered]@{
   locale_files = @()
   startup = [ordered]@{
     proof = 'none'; pid = $null; window_handle = $null; class_name = $null
-    title_matches_shell = $false; visible = $null; observed_ms = 0; stable_ms = 0; dom_checked = $false
+    title_matches_shell = $false; title_utf16_hex = $null; visible = $null; observed_ms = 0; stable_ms = 0; dom_checked = $false
     launch_mode = $null; stdout_file = $null; stderr_file = $null; script_session_id = $null; process_session_id = $null
     windows_on_failure = @(); diagnostic_error = $null
   }
@@ -165,6 +165,14 @@ public static class SatrCandidateOwnedShellWindow {
   [return: MarshalAs(UnmanagedType.Bool)]
   private static extern bool IsWindowVisible(IntPtr window);
 
+  // Chromium يلف عنوان Win32 بعلامتَي RLE/PDF مع --lang=ar؛ قيس في تشغيل 34170642004.
+  // نقبل الغلاف المحدد فقط، ولا نمسح علامات الاتجاه أو نسمح باختلاف نص القشرة.
+  public static bool MatchesShellTitle(string title) {
+    const string expected = "\u0633\u0637\u0631 \u2014 Satr";
+    return String.Equals(title, expected, StringComparison.Ordinal) ||
+      String.Equals(title, "\u202B" + expected + "\u202C", StringComparison.Ordinal); // RTL_TITLE_MATCH
+  }
+
   public static SatrCandidateShellWindow Find(uint ownedProcessId) {
     SatrCandidateShellWindow found = null;
     EnumWindowsCallback callback = delegate(IntPtr window, IntPtr parameter) {
@@ -176,7 +184,7 @@ public static class SatrCandidateOwnedShellWindow {
           !String.Equals(className.ToString(), "Chrome_WidgetWin_1", StringComparison.Ordinal)) return true;
       StringBuilder title = new StringBuilder(512);
       if (GetWindowTextW(window, title, title.Capacity) == 0 ||
-          !String.Equals(title.ToString(), "\u0633\u0637\u0631 \u2014 Satr", StringComparison.Ordinal)) return true;
+          !MatchesShellTitle(title.ToString())) return true;
       if (!IsWindow(window) ||
           GetWindowThreadProcessId(window, out processId) == 0 || processId != ownedProcessId) return true;
       found = new SatrCandidateShellWindow {
@@ -212,7 +220,7 @@ public static class SatrCandidateOwnedShellWindow {
         Handle = window.ToInt64(),
         ProcessId = processId,
         ClassName = className.ToString(),
-        TitleMatchesShell = String.Equals(title.ToString(), "\u0633\u0637\u0631 \u2014 Satr", StringComparison.Ordinal),
+        TitleMatchesShell = MatchesShellTitle(title.ToString()),
         Visible = IsWindowVisible(window),
         TitleUtf16Hex = BitConverter.ToString(Encoding.Unicode.GetBytes(title.ToString()))
       });
@@ -373,6 +381,7 @@ try {
       $report.startup.window_handle = $shellWindow.Handle
       $report.startup.class_name = $shellWindow.ClassName
       $report.startup.title_matches_shell = $shellWindow.TitleMatchesShell
+      $report.startup.title_utf16_hex = $shellWindow.TitleUtf16Hex
       $report.startup.visible = $shellWindow.Visible
       $report.startup.stable_ms = $startupTimer.ElapsedMilliseconds - $windowFirstSeen
       if ($report.startup.stable_ms -ge 5000) { break }
@@ -382,6 +391,7 @@ try {
       $report.startup.window_handle = $null
       $report.startup.class_name = $null
       $report.startup.title_matches_shell = $false
+      $report.startup.title_utf16_hex = $null
       $report.startup.visible = $null
       $report.startup.stable_ms = 0
     }
