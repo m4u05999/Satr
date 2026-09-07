@@ -17,6 +17,9 @@
   --text: #eeeeec;
   --text-dim: #b5b3ad;
   --text-faint: #7c7b74;
+  /* OBS-143: درجة أخفّ تتجاوز عتبة WCAG AA للنصّ العادي على `--surface` (5.30:1
+     مقاسة). تُستعمل حيث يكون النصّ الخافت **متناً يُقرأ** لا تسميةً ثانوية. */
+  --note-readable: #8f8d86;
   --gold: #D9A441;
   --gold-strong: #E5B655;
   --on-gold: #1A1408;
@@ -1142,9 +1145,12 @@ section {
   cursor: pointer;
 }
 
+/* OBS-143: كان `--text-faint` فأعطى 4.14:1 على `--surface` — تحت عتبة WCAG AA
+   للنصّ العادي (4.5:1). و`--note-readable` أفتحُ درجةً: 5.30:1 مقاسة، فيتجاوز
+   العتبة بهامش بلا قفزة بصرية. والفقرة نصٌّ إرشادي يُقرأ فعلاً لا تسمية ثانوية. */
 .platform-note {
   margin: 0;
-  color: var(--text-faint);
+  color: var(--note-readable);
   font-size: .85rem;
   line-height: 1.7;
 }

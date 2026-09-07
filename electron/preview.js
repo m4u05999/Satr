@@ -2108,13 +2108,49 @@ const READABILITY_FN = `(async function(){
     }
     return out.slice(0, WHERE);
   }
+  // OBS-143: سليلٌ يفرض اتجاهه بنفسه — \`dir\` صريح أو \`<bdi>\` أو عزل bidi — يجعل
+  // موضعَ أول محرف فيه يصف **السليل** لا العنصر. وقياسه ونسبتُه إلى العنصر كان يشتعل
+  // زوراً على ترميز سليم: وسمٌ لاتيني مقصود (\`<span dir="ltr">01 · Prompt</span>\`
+  // بـ\`display:block\`) و\`<bdi>\` عريض يرسو يميناً فتبدأ حافتُه اليسرى بعيداً عن اليمين.
+  function overridesDir(node, root){
+    for (var p = node.parentElement; p && p !== root; p = p.parentElement) {
+      if (p.tagName === 'BDI') return true;
+      try { if (p.hasAttribute('dir')) return true; } catch(e) {}
+      try {
+        var ub = getComputedStyle(p).unicodeBidi;
+        if (ub === 'isolate' || ub === 'isolate-override' || ub === 'bidi-override' || ub === 'plaintext') return true;
+      } catch(e) {}
+    }
+    return false;
+  }
   function firstText(el){
     try {
       var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
       var t;
-      while ((t = w.nextNode())) { if (t.data && t.data.trim()) return t; }
+      // أوّلُ نصٍّ **لا يفرض سليلُه اتجاهه** — وإلا فالقياس يصف غير ما نسأل عنه.
+      while ((t = w.nextNode())) {
+        if (t.data && t.data.trim() && !overridesDir(t, el)) return t;
+      }
     } catch(e) {}
     return null;
+  }
+  // OBS-143 (الشرط الثاني): حتى بعد تخطّي السلائل المُتحكِّمة، لا يدلّ موضعُ النصّ
+  // إلا إن كان **في بداية العنصر بصرياً**. ونصٌّ عربي يقع بين \`<bdi>\`ين يبدأ في وسط
+  // السطر، فموضعه لا يقول شيئاً عن الرسو. فإن وُجد محتوى مرسوم قبله ⇒ غيرُ قابل
+  // للقياس، ويُعلَن كذلك ولا يُخمَّن.
+  function hasContentBefore(el, node, lead){
+    try {
+      var r = document.createRange();
+      r.setStart(el, 0); r.setEnd(node, lead);
+      var rects = r.getClientRects();
+      // ⚠️ **العرض وحده** هو الدلالة: مدىً فارغ عند بداية العنصر يعيد مستطيلاً
+      // بعرض 0 و**ارتفاع سطرٍ كامل** (مقيس: w=0 h=21). فشرطُ الارتفاع كان يعدّه
+      // «محتوى قبله» فيُسكت المخالفات الحقيقية — أي فرَّط في الاتجاه المعاكس.
+      for (var i = 0; i < rects.length; i++) {
+        if (rects[i].width > 0.5) return true;
+      }
+    } catch(e) { return true; }
+    return false;
   }
   // موضع أول محرف بالبكسل — الدليل الوحيد على الرسو الفعلي. Range لا يعدّل الشجرة.
   function anchorOf(el){
@@ -2122,6 +2158,7 @@ const READABILITY_FN = `(async function(){
     if (!node) return null;
     var lead = node.data.length - node.data.replace(/^\\s+/, '').length;
     if (lead >= node.data.length) return null;
+    if (hasContentBefore(el, node, lead)) return null; // OBS-143: ليس بداية العنصر
     var first, box;
     try {
       var r = document.createRange();
@@ -2165,7 +2202,7 @@ const READABILITY_FN = `(async function(){
   }
 
   var findings = [], counts = { direction: 0, contrast: 0, overflow: 0, font: 0 };
-  var stacks = {}, scanned = 0, truncated = false;
+  var stacks = {}, scanned = 0, truncated = false, directionUnmeasured = 0;
   var vw = Math.round(innerWidth || 0), vh = Math.round(innerHeight || 0);
 
   var els;
@@ -2188,6 +2225,7 @@ const READABILITY_FN = `(async function(){
     var want = expectDir(text);
     if (want) {
       var got = anchorOf(el);
+      if (!got) directionUnmeasured++;
       if (got && got !== want) {
         counts.direction++;
         var startsLatin = /^[A-Za-z0-9$#@\\[(<]/.test(text);
@@ -2281,7 +2319,7 @@ const READABILITY_FN = `(async function(){
     counts: counts, total_findings: total, findings: findings,
     page_overflow: pageOverflow,
     font_stacks: Object.keys(stacks).slice(0, 5),
-    unseen: { shadow_roots: shadowRoots, iframes: iframes }
+    unseen: { shadow_roots: shadowRoots, iframes: iframes, direction: directionUnmeasured }
   };
 })()`;
 
