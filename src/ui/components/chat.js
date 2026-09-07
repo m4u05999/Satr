@@ -1242,6 +1242,15 @@ class SatrChat extends HTMLElement {
       worklog.classList.toggle('collapsed', collapsed);
       workToggle.setAttribute('aria-expanded', String(!collapsed));
     }
+    // OBS-142: الطيّ عند نهاية الدور مشروطٌ **بوجود إجابة تحلّ محلّ المطويّ**. كان
+    // غير مشروط، فدورٌ ينتهي بلا نصّ `final_answer` يُعرض كتلةً خاليةً تماماً بعنوان
+    // «اكتمل العمل» — بينما تعليقُه وبطاقاتُ أدواته حاضرةٌ في DOM داخل المطويّ، وبلا
+    // أيّ إشارة أن ثمّة مطويّاً. مقيس في `test:empty-block`: مشهد «تعليق + أدوات»
+    // أعطى `commentaryShown:false` والنصّ في الكتلة.
+    // ولا يُمسّ طيّ `startAnswer` — هناك الإجابة **تبدأ فعلاً** فالطيّ في محلّه.
+    function collapseWorklogIfAnswered() {
+      if (hasActivity && phaseText('final_answer')) setWorklogCollapsed(true);
+    }
     // إطار الكتلة يتناسب مع محتواها (دفعة الصقل): ردّ بسيط بلا أدوات ولا تفكير كان
     // يحمل خمسة عناصر إطار حول سطر واحد («اكتمل العمل» + فاصل + «الإجابة» + …).
     // سجل العمل يُخفى فقط حين تحلّ الإجابة محلّه: لا نشاط مسجَّل، ولا حالة طرفية
@@ -1493,7 +1502,7 @@ class SatrChat extends HTMLElement {
         worklog.classList.remove('working', 'answering');
         worklog.classList.add(resultObj && resultObj.is_error ? 'failed' : 'done');
         workTitle.textContent = resultObj && resultObj.is_error ? 'اكتمل مع خطأ' : 'اكتمل العمل';
-        if (hasActivity) setWorklogCollapsed(true);
+        collapseWorklogIfAnswered();
         syncFrameChrome();
         // أزرار النسخ تُحقن بعد اكتمال النص (البث يعيد بناء innerHTML فيضيعها).
         const answerText = phaseText('final_answer');
@@ -1540,7 +1549,7 @@ class SatrChat extends HTMLElement {
         worklog.classList.remove('working', 'answering');
         worklog.classList.add('stopped');
         workTitle.textContent = 'أُوقِف الدور';
-        if (hasActivity) setWorklogCollapsed(true);
+        collapseWorklogIfAnswered();
         syncFrameChrome();
         const answerText = phaseText('final_answer');
         const commentaryText = phaseText('commentary');
