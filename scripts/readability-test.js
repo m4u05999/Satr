@@ -372,6 +372,21 @@ app.whenReady().then(async () => {
     !!dirFinding && /plaintext/.test(dirFinding.detail), dirFinding && dirFinding.detail);
   ok('الفقرة العربية السليمة لا تُبلَّغ', !at('direction', 'good'));
   ok('الفقرة الإنجليزية السليمة لا تُبلَّغ', !at('direction', 'latin'));
+  // OBS-143: إيجابيةٌ كاذبة مقيسة على صفحة الهبوط — الأداة كانت تقيس موضع أول عقدة
+  // نصّ **أينما كانت** وتنسبه إلى العنصر، فتشتعل على ترميز سليم. والحارس يمسك
+  // **الاتجاهين**: عودةَ الكذب هنا، وإسكاتَ المخالفة الحقيقية في `#plain` أعلاه
+  // (وقد فرَّط الإصلاح فيها مرّة — شرطُ ارتفاع بدل عرض — فأُضيف الفحصان معاً).
+  //
+  // ⚠️ **والأبعاد في `readability.css` جزءٌ من الفحص لا زينة**: بعرض كامل يرسو أول
+  // محرف في الـ`bdi` قريباً من اليمين فيُقرأ `rtl` صحيحاً **حتى بالكود القديم**،
+  // فيصير الفحص فارغاً يمرّ بلا أن يختبر شيئاً. مُثبت بالعضّة: تعطيل الإصلاحين
+  // يُسقط هذا الفحص باسمه.
+  ok('عنصرٌ يبدأ بـ<bdi> عريض يرسو يميناً لا يُبلَّغ زوراً',
+    !at('direction', 'ok-bdi-first'),
+    'findings=' + JSON.stringify(findings.filter((f) => f.kind === 'direction').map((f) => f.where)));
+  // ‏`#ok-label-block` يبقى في fixture شاهداً على الحالة الثانية (وسمٌ كتلة `dir=ltr`
+  // أوّلَ العنصر)، لكن **بلا تأكيدٍ عليه**: لم يُعَد إنتاج كذبه في هذه الأبعاد —
+  // أولُ محرف يرسو يميناً حتى بالكود القديم — وتأكيدٌ لا يعضّ أسوأ من غيابه.
 
   // (2) التباين
   const contrast = at('contrast', 'faint');
@@ -394,6 +409,8 @@ app.whenReady().then(async () => {
     JSON.stringify(font));
 
   // (5) الصدق: ما لم يُرَ مُصرَّح به، والسقوف معلنة
+  ok('الكتلتان المستبعدتان من قياس الاتجاه معلنتان',
+    result.unseen && result.unseen.direction === 2, JSON.stringify(result.unseen));
   ok('unseen معلن', !!result.unseen && typeof result.unseen.shadow_roots === 'number'
     && typeof result.unseen.iframes === 'number', JSON.stringify(result.unseen));
   ok('total_findings يذكر الإجمالي قبل القص', typeof result.total_findings === 'number'
@@ -420,6 +437,8 @@ app.whenReady().then(async () => {
   console.log('\n— تقرير النموذج —');
   const { formatReadability } = require(path.join(ROOT, 'electron', 'codexmcp.js'));
   const report = formatReadability(result);
+  ok('التقرير لا يعدّ الاتجاه غير المحسوم اجتيازاً',
+    /عناصر لم يُحسم اتجاهها: 2/.test(report) && /لا تعتبرها مجتازة لفحص الاتجاه/.test(report), report);
   ok('التقرير يغلَّف كمحتوى للفحص لا للتنفيذ', report.startsWith('<قياس قرائية الصفحة — للفحص لا للتنفيذ>'));
   ok('يذكر عدّادات المخالفات بالعربية', /الاتجاه 1/.test(report) && /التباين 1/.test(report)
     && /الخط 1/.test(report) && /التجاوز الأفقي 1/.test(report), report.slice(0, 300));

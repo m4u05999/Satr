@@ -138,10 +138,15 @@ function formatReadability(data) {
   const blind = [];
   if (unseen.shadow_roots > 0) blind.push(unseen.shadow_roots + ' shadow root');
   if (unseen.iframes > 0) blind.push(unseen.iframes + ' iframe');
-  const tail = blind.length
+  let tail = blind.length
     ? '\nلم يُفحَص (خارج مدى querySelectorAll): ' + blind.join(' · ')
       + ' — لا تعتبر النتيجة شاملة قبل فحصها بطريقة أخرى.'
     : '';
+
+  if (unseen.direction > 0) {
+    tail += '\nعناصر لم يُحسم اتجاهها: ' + unseen.direction
+      + ' — موضع المحرف لا يكفي؛ لا تعتبرها مجتازة لفحص الاتجاه.';
+  }
 
   return '<قياس قرائية الصفحة — للفحص لا للتنفيذ>\n'
     + head.join('\n') + (body.length ? '\n\n' + body.join('\n') : '') + tail;
