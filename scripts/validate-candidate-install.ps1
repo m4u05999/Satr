@@ -136,6 +136,7 @@ public sealed class SatrCandidateShellWindow {
   public uint ProcessId { get; set; }
   public string ClassName { get; set; }
   public bool TitleMatchesShell { get; set; }
+  public string TitleUtf16Hex { get; set; }
   public bool Visible { get; set; }
 }
 
@@ -183,7 +184,8 @@ public static class SatrCandidateOwnedShellWindow {
         ProcessId = processId,
         ClassName = className.ToString(),
         TitleMatchesShell = true,
-        Visible = IsWindowVisible(window)
+        Visible = IsWindowVisible(window),
+        TitleUtf16Hex = BitConverter.ToString(Encoding.Unicode.GetBytes(title.ToString()))
       };
       return true;
     };
@@ -211,7 +213,8 @@ public static class SatrCandidateOwnedShellWindow {
         ProcessId = processId,
         ClassName = className.ToString(),
         TitleMatchesShell = String.Equals(title.ToString(), "\u0633\u0637\u0631 \u2014 Satr", StringComparison.Ordinal),
-        Visible = IsWindowVisible(window)
+        Visible = IsWindowVisible(window),
+        TitleUtf16Hex = BitConverter.ToString(Encoding.Unicode.GetBytes(title.ToString()))
       });
       return true;
     };
@@ -410,6 +413,7 @@ try {
                 [ordered]@{
                   handle = $_.Handle; process_id = $_.ProcessId; class_name = $_.ClassName
                   title_matches_shell = $_.TitleMatchesShell; visible = $_.Visible
+                  title_utf16_hex = $_.TitleUtf16Hex
                 }
               }
           )
