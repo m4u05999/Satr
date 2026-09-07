@@ -5,6 +5,13 @@
  * بصمة المحتوى ذي الصلة لكل مشروع بلا مساره أو أوامر الخطّاف، بكتابة ذرية
  * أفضل جهد. أي فشل قراءة/تحليل/كتابة يتدهور إلى الصمت بلا تسجيل (fail-open).
  *
+ * OBS-140: ومعه قواعد السماح في `~/.claude/settings.json` للمستخدم. **مقيس بفخّ حيّ**
+ * (`npm run probe:obs140-user`، SDK 0.3.261): قاعدة `permissions.allow` هناك تجعل
+ * SDK **لا يستدعي `canUseTool` إطلاقاً** فتُنفَّذ الأداة بلا مربع الإذن العربي — بينما
+ * قاعدة المشروع نفسها **تمرّ بالمربع** (`npm run probe:obs140`). فالتنبيه محصور
+ * بملف المستخدم وحده لأنه وحده ما ثبت تظليله: تحذيرٌ عن ملفٍ لا يظلّل كذبٌ بالزيادة.
+ * وهو **إخبارٌ لا إنفاذ** — الإنفاذ يحتاج `PreToolUse` hook وهو دفعة مستقلة.
+ *
  * OBS-087 (ب): ومعه بصمة تكوين كل خادم MCP — من `.mcp.json` في المشروع، ومن
  * `~/.claude.json` لنطاقَي المستخدم والمحلي (وهو هدف اختطاف التوجيه إلى proxy) —
  * وتنبيه عربي غير حاجب عند تغيّرها خارج «سطر». يُخزَّن **النطاق والاسم وبصمة**
@@ -46,6 +53,15 @@ const SAFE_MCP_KEY = /^(?:#|[pul]:[^\x00-\x1F\x7F-\x9F]{1,96})$/;
 // محارف التحكم وBidi بالهروب لا حرفيّةً — الحرفية تُتلف الملف عند تحريره.
 const MCP_UNSAFE_NAME = /[\x00-\x1F\x7F-\x9F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
 const MCP_SCOPE_LABELS = Object.freeze({ p: 'مشروع', u: 'مستخدم', l: 'محلي' });
+
+// ── OBS-140: قواعد السماح في إعدادات المستخدم ─────────────────────────────
+// السقوف مقصودة: القائمة تُختصر إلى **أسماء الأدوات** بلا وسائطها (الوسيطة قد تحمل
+// مساراً أو أمراً)، وتُخزَّن بصمةٌ قصيرة لا القائمة — فلا يعبر المخزنَ محتوى إعداد.
+const MAX_ALLOW_RULES = 64;
+const MAX_ALLOW_TOOL_NAME = 48;
+const MAX_ALLOW_NAMED_IN_NOTICE = 6;
+const SAFE_ALLOW_DIGEST = /^[a-f0-9]{16}$/;
+const USER_SETTINGS_NAME = 'settings.json';
 
 function digest(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -265,6 +281,55 @@ function mcpNoticeText(diff) {
     + shown.join('، ') + '. راجع الخوادم قبل متابعة العمل؛ لن يوقف «سطر» هذا الدور.');
 }
 
+// ── OBS-140: جمع أسماء الأدوات المسموح بها في إعداد المستخدم ───────────────
+
+// القاعدة تأتي بصيغتين: اسم مجرّد (`Write`) أو مقيَّدة (`Bash(npm run test:*)`).
+// يُؤخذ **الاسم وحده** — الوسيطة قد تحمل مساراً أو أمراً، ولا حاجة إليها للتنبيه.
+function allowRuleToolName(raw) {
+  const text = String(raw == null ? '' : raw)
+    .replace(MCP_UNSAFE_NAME, '').replace(/\s+/g, ' ').trim();
+  const head = text.split('(')[0].trim();
+  if (!head) return null;
+  return Array.from(head).slice(0, MAX_ALLOW_TOOL_NAME).join('');
+}
+
+/**
+ * يعيد أسماء الأدوات المسموح بها في `~/.claude/settings.json` — مرتّبة بلا تكرار —
+ * أو `null` إن تعذّر المسح. **و`null` ليست «لا قواعد»**: هي «غير معروف»، فتُبقي
+ * الأساس المسجّل كما هو بدل أن يمحو عطبٌ عابر خطَّ الأساس فيُسكِت تنبيهاً لاحقاً
+ * (الدرس نفسه المطبَّق على مسح MCP).
+ */
+async function collectUserAllowRules(io, userSettingsFile) {
+  const parsed = await readJson(io, userSettingsFile, MAX_SETTINGS_BYTES);
+  if (parsed == null) return [];
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+  const permissions = parsed.permissions;
+  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return [];
+  const allow = permissions.allow;
+  if (!Array.isArray(allow)) return [];
+  const names = [];
+  for (const rule of allow.slice(0, MAX_ALLOW_RULES)) {
+    const name = allowRuleToolName(rule);
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names.sort();
+}
+
+function allowDigest(names) {
+  return digest(Buffer.from(names.join('\u0000'), 'utf8')).slice(0, 16);
+}
+
+function allowNoticeText(names) {
+  const shown = names.slice(0, MAX_ALLOW_NAMED_IN_NOTICE);
+  const hidden = names.length - shown.length;
+  const list = shown.map((name) => '«' + name + '»').join('، ')
+    + (hidden > 0 ? '، و' + hidden + ' غيرها' : '');
+  return scrubSecrets('⚠️ تنبيه أمني: إعدادات Claude لديك (~/.claude/settings.json) '
+    + 'تسمح تلقائياً بهذه الأدوات: ' + list + ' — فلن يعرض «سطر» مربع الإذن قبل تنفيذها '
+    + '(مقيس: قاعدة السماح تتخطّى المربع). احذفها من permissions.allow إن أردت استعادة السؤال؛ '
+    + 'لن يوقف «سطر» هذا الدور.');
+}
+
 function cleanProjects(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
       || value.version !== STORE_VERSION || !value.projects
@@ -285,6 +350,8 @@ function cleanProjects(value) {
     // ويُسجَّل أساس MCP له صامتاً عند أول رصد. لا رفع لـSTORE_VERSION ولا هجرة.
     const mcp = cleanMcpMap(entry.mcp);
     if (mcp) cleaned.mcp = mcp;
+    // OBS-140: حقل اختياري آخر — مخزن سابق بلا `allow` يبقى صالحاً بلا هجرة.
+    if (SAFE_ALLOW_DIGEST.test(String(entry.allow || ''))) cleaned.allow = entry.allow;
     projects[key] = cleaned;
   }
   return projects;
@@ -340,6 +407,9 @@ function createGuard(options = {}) {
   const file = options.file || process.env.SATR_HOOK_GUARD_FILE || DEFAULT_FILE;
   const now = typeof options.now === 'function' ? options.now : () => new Date();
   const claudeJson = options.claudeJson || path.join(os.homedir(), '.claude.json');
+  // OBS-140: مسار قابل للحقن كي يُختبَر الحارس بلا لمس بيت المالك الحقيقي.
+  const userSettings = options.userSettings
+    || path.join(os.homedir(), '.claude', USER_SETTINGS_NAME);
   let queue = Promise.resolve();
 
   async function inspect(cwd) {
@@ -366,17 +436,33 @@ function createGuard(options = {}) {
       const mcpStored = mcpNow || mcpBefore;
       const mcpDiff = mcpNow && mcpBefore ? diffMcp(mcpBefore, mcpNow) : null;
 
+      // OBS-140: معزول مثل مسح MCP — فشله «غير معروف» لا «لا قواعد».
+      let allowNames = null;
+      try {
+        allowNames = await collectUserAllowRules(io, userSettings);
+      } catch {
+        allowNames = null;
+      }
+      const allowBefore = previous && SAFE_ALLOW_DIGEST.test(String(previous.allow || ''))
+        ? previous.allow : null;
+      const allowNow = allowNames ? allowDigest(allowNames) : null;
+      const allowStored = allowNow || allowBefore;
+      // التنبيه عند **وجود** قواعد وتغيّر بصمتها (وأوّل رصد تغيّرٌ) — بخلاف MCP الذي
+      // يصمت أوّل مرة: هناك الخطر حدثٌ (تغيّر تكوين)، وهنا الخطر **حالةٌ قائمة**.
+      const allowChanged = !!allowNames && allowNames.length > 0 && allowNow !== allowBefore;
+
       // لا كتابة ولا تنبيه ما لم يتغيّر شيء فعلاً — وأوّل رصد لـMCP تغيّرٌ في المخزن
       // بلا تنبيه (لا يوجد أساس يُقارَن به).
       const previousSignature = previous
-        ? JSON.stringify([previous.fingerprint, previous.mcp || null]) : null;
-      const nextSignature = JSON.stringify([fingerprint, mcpStored || null]);
+        ? JSON.stringify([previous.fingerprint, previous.mcp || null, previous.allow || null]) : null;
+      const nextSignature = JSON.stringify([fingerprint, mcpStored || null, allowStored || null]);
       if (previousSignature === nextSignature) return null;
 
       const next = { ...projects };
       delete next[key];
       const entry = { fingerprint, updated_at: now().toISOString() };
       if (mcpStored) entry.mcp = mcpStored;
+      if (allowStored) entry.allow = allowStored;
       next[key] = entry;
       while (Object.keys(next).length > MAX_PROJECTS) delete next[Object.keys(next)[0]];
       if (!await persist(io, file, next)) return null;
@@ -385,6 +471,7 @@ function createGuard(options = {}) {
       const hooksChanged = !previous || previous.fingerprint !== fingerprint;
       if (hooksChanged && findings.length) notices.push(noticeText(findings));
       if (mcpChangedIn(mcpDiff)) notices.push(mcpNoticeText(mcpDiff));
+      if (allowChanged) notices.push(allowNoticeText(allowNames));
       return notices.length ? notices.join(' ') : null;
     } catch {
       return null;
@@ -418,4 +505,9 @@ module.exports = {
   MAX_MCP_FILE_BYTES,
   MAX_CLAUDE_JSON_BYTES,
   MCP_AGGREGATE_KEY,
+  // OBS-140
+  allowRuleToolName,
+  MAX_ALLOW_RULES,
+  MAX_ALLOW_TOOL_NAME,
+  MAX_ALLOW_NAMED_IN_NOTICE,
 };

@@ -323,8 +323,86 @@ function serverConfig(extra) {
     'OBS-087(ب): السقوف معلنة ومصدَّرة');
   }
 
+  // ── OBS-140: تنبيه قواعد السماح في إعداد المستخدم ────────────────────────
+  // البيت المُحقَن مؤقت — لا يُلمس بيت المالك، ولا يُقرأ إعداده الحقيقي.
+  {
+    const dir = projectDir('obs140');
+    const store = path.join(ROOT, 'obs140-store.json');
+    const claudeJson = path.join(ROOT, 'obs140-claude.json');
+    const userSettings = path.join(ROOT, 'fake-home', '.claude', 'settings.json');
+    const make = () => hookguard.createGuard({
+      file: store, claudeJson, userSettings, now: () => new Date('2026-09-07T00:00:00.000Z'),
+    });
+
+    // (١) لا ملف إعداد ⇒ لا تنبيه (والحارس لا يخترع خطراً).
+    ok(!(await make().inspectProject(dir) || '').includes('permissions.allow'),
+      'OBS-140: بلا إعداد مستخدم لا تنبيه سماح');
+
+    // (٢) قاعدتان — إحداهما مقيَّدة — ⇒ تنبيه يسمّي الأداتين بلا وسائطهما.
+    writeJson(userSettings, { permissions: { allow: ['Write', 'Bash(npm run test:*)'] } });
+    const first = await make().inspectProject(dir) || '';
+    ok(first.includes('permissions.allow') && first.includes('«Write»') && first.includes('«Bash»'),
+      'OBS-140: التنبيه يسمّي الأدوات المسموح بها');
+    ok(!first.includes('npm run test'),
+      'OBS-140: وسيطة القاعدة لا تعبر التنبيه — الاسم وحده');
+    ok(first.includes('لن يعرض «سطر» مربع الإذن'),
+      'OBS-140: التنبيه يقول الأثر صراحةً لا يلمّح');
+
+    // (٣) لا يتكرّر ما دامت القواعد كما هي.
+    ok(!(await make().inspectProject(dir) || '').includes('permissions.allow'),
+      'OBS-140: لا تكرار بلا تغيّر');
+
+    // (٤) تغيّر القواعد ⇒ تنبيه جديد.
+    writeJson(userSettings, { permissions: { allow: ['Write', 'Bash(npm run test:*)', 'Edit'] } });
+    ok((await make().inspectProject(dir) || '').includes('«Edit»'),
+      'OBS-140: تغيّر القواعد ينبّه ثانيةً');
+
+    // (٥) قواعد المشروع **لا** تنبّه: القياس أثبت أنها تمرّ بالمربع، فالتحذير عنها
+    // كذبٌ بالزيادة. تُكتب في مجلد مشروع نظيف كي لا تختلط ببصمة أعلاه.
+    const projOnly = projectDir('obs140-project-only');
+    const store2 = path.join(ROOT, 'obs140-store2.json');
+    const emptyUser = path.join(ROOT, 'fake-home-2', '.claude', 'settings.json');
+    writeJson(path.join(projOnly, '.claude', 'settings.json'), {
+      permissions: { allow: ['Write'] },
+    });
+    const projNotice = await hookguard.createGuard({
+      file: store2, claudeJson, userSettings: emptyUser,
+      now: () => new Date('2026-09-07T00:00:00.000Z'),
+    }).inspectProject(projOnly) || '';
+    ok(!projNotice.includes('permissions.allow'),
+      'OBS-140: قاعدة سماح في المشروع لا تنبّه — مقيس أنها تمرّ بالمربع');
+
+    // (٦) تنقية الاسم: محارف التحكم/Bidi تُزال، والاسم يُقصّ.
+    ok(hookguard.allowRuleToolName('Bash(rm -rf /)') === 'Bash'
+      && hookguard.allowRuleToolName('  Write  ') === 'Write'
+      && hookguard.allowRuleToolName('') === null,
+    'OBS-140: allowRuleToolName يأخذ الاسم وحده ويرفض الفارغ');
+    // محارف التحكم/Bidi بالهروب لا حرفيّةً — الحرفية تُتلف الملف عند تحريره.
+    ok(hookguard.allowRuleToolName('W\u200Fri\u202Ete') === 'Write',
+      'OBS-140: محارف التحكم وBidi تُزال من الاسم');
+    ok(Array.from(hookguard.allowRuleToolName('T'.repeat(200))).length
+      === hookguard.MAX_ALLOW_TOOL_NAME,
+    'OBS-140: الاسم مقصوص بسقفه المعلن');
+
+    // (٧) المخزن يحمل **بصمة** لا القائمة — فلا يعبر محتوى الإعداد إلى القرص.
+    const saved = JSON.stringify(readStore(store));
+    ok(!saved.includes('Write') && !saved.includes('npm run test'),
+      'OBS-140: المخزن بلا أسماء أدوات ولا وسائط — بصمة فقط');
+
+    // (٨) فشل قراءة إعداد المستخدم لا يُسقط الحارس ولا يخترع تنبيهاً.
+    const broken = path.join(ROOT, 'fake-home-3', '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(broken), { recursive: true });
+    fs.writeFileSync(broken, '{ not json', 'utf8');
+    const brokenNotice = await hookguard.createGuard({
+      file: path.join(ROOT, 'obs140-store3.json'), claudeJson, userSettings: broken,
+      now: () => new Date('2026-09-07T00:00:00.000Z'),
+    }).inspectProject(projectDir('obs140-broken'));
+    ok(!(brokenNotice || '').includes('permissions.allow'),
+      'OBS-140: إعداد مستخدم تالف يتدهور صامتاً (fail-open)');
+  }
+
   fs.rmSync(ROOT, { recursive: true, force: true });
-  console.log('\nhookguard-test: ok — ' + passed + ' فحصاً لبصمة خوادم MCP (‏OBS-087 ب).');
+  console.log('\nhookguard-test: ok — ' + passed + ' فحصاً لبصمة خوادم MCP (‏OBS-087 ب) وقواعد السماح (‏OBS-140).');
   process.exit(0);
 })().catch((error) => {
   try { fs.rmSync(ROOT, { recursive: true, force: true }); } catch {}
