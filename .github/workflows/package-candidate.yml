@@ -1,0 +1,132 @@
+# تحقق دفعة 2.16.21 قبل النشر؛ رفع Artifacts وحده لا ينشئ GitHub Release.
+name: تحقق حزمة 2.16.21 قبل النشر
+
+'on':
+  push:
+    branches:
+      - release/2.16.21
+    paths:
+      - package.json
+      - package-lock.json
+      - electron/**
+      - src/**
+      - scripts/validate-candidate-install.ps1
+      - .github/workflows/package-candidate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: npm
+      - name: تثبيت الاعتماديات المقفلة
+        run: npm ci
+      - name: بناء مثبّت NSIS دون نشر
+        run: npm run dist -- --config.directories.output=dist/candidate --publish never
+      - name: بناء حزمة المتجر دون نشر
+        run: npm run dist:appx -- --config.directories.output=dist/candidate
+      - name: التحقق من هوية APPX وبصمات الحزمتين
+        shell: pwsh
+        run: |
+          $expected = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($expected -ne '2.16.21') { throw 'This workflow qualifies candidate 2.16.21 only.' }
+          $appxFiles = @(Get-ChildItem dist/candidate -Filter *.appx -File)
+          $exeFiles = @(Get-ChildItem dist/candidate -Filter *.exe -File)
+          if ($appxFiles.Count -ne 1 -or $exeFiles.Count -ne 1) { throw 'Expected exactly one APPX and one installer.' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($appxFiles[0].FullName)
+          try {
+            $entry = $zip.GetEntry('AppxManifest.xml')
+            if (-not $entry) { throw 'APPX manifest is missing.' }
+            $reader = [IO.StreamReader]::new($entry.Open())
+            try { [xml]$manifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            $identity = $manifest.Package.Identity
+            if ($identity.Name -ne 'Moxa.Satr') { throw 'APPX identity mismatch.' }
+            if ($identity.Publisher -ne 'CN=3016A96C-A16E-463B-BCE8-54F46BF3D5D8') { throw 'APPX publisher mismatch.' }
+            if ($identity.Version -ne ($expected + '.0')) { throw 'APPX version mismatch.' }
+            if ($identity.ProcessorArchitecture -ne 'x64') { throw 'APPX architecture mismatch.' }
+            $appxReport = @{ identity=$identity.Name; publisher=$identity.Publisher; version=$identity.Version; architecture=$identity.ProcessorArchitecture; installationTested=$false; signaturePresent=($null -ne $zip.GetEntry('AppxSignature.p7x')) }
+          } finally { $zip.Dispose() }
+          New-Item -ItemType Directory -Path dist/package-validation -Force | Out-Null
+          $appxReport | ConvertTo-Json | Set-Content dist/package-validation/appx-identity.json -Encoding utf8
+          @($appxFiles[0], $exeFiles[0]) | ForEach-Object {
+            [pscustomobject]@{ name=$_.Name; bytes=$_.Length; sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash }
+          } | ConvertTo-Json | Set-Content dist/package-validation/artifacts.json -Encoding utf8
+      - name: تنزيل المثبّت السابق والتحقق من بصمته المنشورة
+        shell: pwsh
+        run: |
+          $previous = Join-Path $env:RUNNER_TEMP 'Satr-Setup-2.16.20.exe'
+          Invoke-WebRequest 'https://github.com/m4u05999/Satr/releases/download/v2.16.20/Satr-Setup-2.16.20.exe' -OutFile $previous
+          $sha = (Get-FileHash $previous -Algorithm SHA256).Hash
+          if ($sha -ne '174F376D8BDC6A11EE4C70A451F58A9E044DD9C9766C244779F04BC568898048') { throw 'Previous installer SHA256 mismatch.' }
+          Write-Host "PREVIOUS_SHA256=$sha"
+      # استبدال المثبّت المرشح بالقديم يزرع ترقية لا تغيّر الإصدار فعلاً.
+      # يجب أن يرفضها حارس ARP؛ بعدها تُستعاد النسخة الأصلية وتُختبر الترقية الصحيحة.
+      - name: إثبات أن حارس الترقية يرفض بقاء الإصدار القديم
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $source = Join-Path $env:GITHUB_WORKSPACE 'scripts/validate-candidate-install.ps1'
+          $mutant = Join-Path $env:RUNNER_TEMP 'validate-candidate-install-mutant.ps1'
+          $originalLine = 'Invoke-Installer -Path $CandidateInstaller -Phase ''candidate'' # CANDIDATE_INSTALL_STEP'
+          $mutantLine = 'Invoke-Installer -Path $PreviousInstaller -Phase ''candidate'' # CANDIDATE_INSTALL_STEP'
+          $text = [IO.File]::ReadAllText($source)
+          $originalCount = [regex]::Matches($text, [regex]::Escape($originalLine)).Count
+          $mutantCount = [regex]::Matches($text, [regex]::Escape($mutantLine)).Count
+          Write-Host "BEFORE original=$originalCount mutant=$mutantCount"
+          if ($originalCount -ne 1 -or $mutantCount -ne 0) { throw 'Mutation anchors do not match exactly.' }
+          Write-Host 'PLANT: $text = $text.Replace($originalLine, $mutantLine); [IO.File]::WriteAllText($mutant, $text, [Text.UTF8Encoding]::new($true))'
+          $text = $text.Replace($originalLine, $mutantLine)
+          [IO.File]::WriteAllText($mutant, $text, [Text.UTF8Encoding]::new($true))
+          $written = [IO.File]::ReadAllText($mutant)
+          $afterOriginal = [regex]::Matches($written, [regex]::Escape($originalLine)).Count
+          $afterMutant = [regex]::Matches($written, [regex]::Escape($mutantLine)).Count
+          Write-Host "AFTER original=$afterOriginal mutant=$afterMutant"
+          if ($afterOriginal -ne 0 -or $afterMutant -ne 1) { throw 'Mutation did not apply.' }
+          $previous = Join-Path $env:RUNNER_TEMP 'Satr-Setup-2.16.20.exe'
+          $candidate = @(Get-ChildItem dist/candidate -Filter *.exe -File)[0].FullName
+          & pwsh -NoProfile -File $mutant -PreviousInstaller $previous -CandidateInstaller $candidate -ExpectedVersion '2.16.21' -ReportDir 'dist/package-validation/mutation' *> dist/package-validation/mutation.log
+          $mutationExit = $LASTEXITCODE
+          $mutationLog = Get-Content dist/package-validation/mutation.log -Raw
+          Get-Content dist/package-validation/mutation.log -Tail 30
+          if ($mutationExit -eq 0 -or $mutationLog -notmatch 'Upgrade ARP version mismatch') { throw 'Guard did not reject the wrong installer for the expected reason.' }
+          Write-Host 'RESTORE: Copy-Item -LiteralPath $source -Destination $mutant -Force'
+          Copy-Item -LiteralPath $source -Destination $mutant -Force
+          $restored = [IO.File]::ReadAllText($mutant)
+          $restoredOriginal = [regex]::Matches($restored, [regex]::Escape($originalLine)).Count
+          $restoredMutant = [regex]::Matches($restored, [regex]::Escape($mutantLine)).Count
+          Write-Host "RESTORED original=$restoredOriginal mutant=$restoredMutant"
+          if ($restoredOriginal -ne 1 -or $restoredMutant -ne 0) { throw 'Restoration failed.' }
+          exit 0
+      - name: التثبيت والترقية والإقلاع بالمثبّت الصحيح
+        shell: pwsh
+        run: |
+          $previous = Join-Path $env:RUNNER_TEMP 'Satr-Setup-2.16.20.exe'
+          $candidate = @(Get-ChildItem dist/candidate -Filter *.exe -File)
+          if ($candidate.Count -ne 1) { throw 'Expected one candidate installer.' }
+          ./scripts/validate-candidate-install.ps1 -PreviousInstaller $previous -CandidateInstaller $candidate[0].FullName -ExpectedVersion '2.16.21' -ReportDir 'dist/package-validation/success'
+      - name: حفظ الحزم وأدلة التحقق
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-2.16.21-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            dist/candidate/*.exe
+            dist/candidate/*.appx
+            dist/candidate/*.blockmap
+            dist/candidate/*.yml
+            dist/package-validation/**
