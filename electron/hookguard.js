@@ -5,12 +5,19 @@
  * بصمة المحتوى ذي الصلة لكل مشروع بلا مساره أو أوامر الخطّاف، بكتابة ذرية
  * أفضل جهد. أي فشل قراءة/تحليل/كتابة يتدهور إلى الصمت بلا تسجيل (fail-open).
  *
- * OBS-140: ومعه قواعد السماح في `~/.claude/settings.json` للمستخدم. **مقيس بفخّ حيّ**
- * (`npm run probe:obs140-user`، SDK 0.3.261): قاعدة `permissions.allow` هناك تجعل
- * SDK **لا يستدعي `canUseTool` إطلاقاً** فتُنفَّذ الأداة بلا مربع الإذن العربي — بينما
- * قاعدة المشروع نفسها **تمرّ بالمربع** (`npm run probe:obs140`). فالتنبيه محصور
- * بملف المستخدم وحده لأنه وحده ما ثبت تظليله: تحذيرٌ عن ملفٍ لا يظلّل كذبٌ بالزيادة.
- * وهو **إخبارٌ لا إنفاذ** — الإنفاذ يحتاج `PreToolUse` hook وهو دفعة مستقلة.
+ * OBS-140: ومعه قواعد السماح التي **تظلّل مربع الإذن**. والتظليل مقيسٌ ملفاً ملفاً
+ * لا مُعمَّماً — والنتيجة تفترق بالطبقة لا بالمجلد (SDK 0.3.261):
+ *
+ *   | الملف                                | يظلّل؟ | المسبار                  |
+ *   |--------------------------------------|--------|--------------------------|
+ *   | `~/.claude/settings.json`            | 🔴 نعم | `probe:obs140-user`      |
+ *   | `<cwd>/.claude/settings.local.json`  | 🔴 نعم | `probe:obs140-user`      |
+ *   | `<cwd>/.claude/settings.json`        | ✅ لا  | `probe:obs140`           |
+ *
+ * فالحارس يقرأ **الأوّلين وحدهما**: تحذيرٌ عن ملفٍ لا يظلّل كذبٌ بالزيادة يدرّب
+ * المستخدم على تجاهل التنبيهات. ولكلٍّ نصُّه لأن العلاج يختلف — الأول إعدادُ
+ * المستخدم يحذفه بنفسه، والثاني ملفٌّ **وصل مع المشروع** فناقلُه خارجي (.zip/USB).
+ * وهو هنا **إخبار**؛ الإنفاذ في `agent.js` عبر `PreToolUse` ويستهلك المجموعة نفسها.
  *
  * OBS-087 (ب): ومعه بصمة تكوين كل خادم MCP — من `.mcp.json` في المشروع، ومن
  * `~/.claude.json` لنطاقَي المستخدم والمحلي (وهو هدف اختطاف التوجيه إلى proxy) —
@@ -62,6 +69,9 @@ const MAX_ALLOW_TOOL_NAME = 48;
 const MAX_ALLOW_NAMED_IN_NOTICE = 6;
 const SAFE_ALLOW_DIGEST = /^[a-f0-9]{16}$/;
 const USER_SETTINGS_NAME = 'settings.json';
+// النطاق الثاني المُظلِّل: ملف المشروع **المُتجاهَل في Git** — فلا يصل بـ`git clone`
+// لكنه يصل مع نسخة `.zip` أو USB، وهو ناقل [OBS-136] نفسه.
+const LOCAL_SETTINGS_NAME = 'settings.local.json';
 
 function digest(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -293,16 +303,10 @@ function allowRuleToolName(raw) {
   return Array.from(head).slice(0, MAX_ALLOW_TOOL_NAME).join('');
 }
 
-/**
- * يعيد أسماء الأدوات المسموح بها في `~/.claude/settings.json` — مرتّبة بلا تكرار —
- * أو `null` إن تعذّر المسح. **و`null` ليست «لا قواعد»**: هي «غير معروف»، فتُبقي
- * الأساس المسجّل كما هو بدل أن يمحو عطبٌ عابر خطَّ الأساس فيُسكِت تنبيهاً لاحقاً
- * (الدرس نفسه المطبَّق على مسح MCP).
- */
-async function collectUserAllowRules(io, userSettingsFile) {
-  const parsed = await readJson(io, userSettingsFile, MAX_SETTINGS_BYTES);
-  if (parsed == null) return [];
-  if (typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+// استخراج أسماء الأدوات من كائن إعدادات مُحلَّل — **نسخة واحدة** يستهلكها المسار
+// غير المتزامن (الإخبار) والمتزامن (الإنفاذ) معاً، فلا يتباعد ما يُنبَّه عنه عمّا يُنفَّذ.
+function allowNamesFrom(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
   const permissions = parsed.permissions;
   if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return [];
   const allow = permissions.allow;
@@ -316,50 +320,84 @@ async function collectUserAllowRules(io, userSettingsFile) {
 }
 
 /**
- * قراءة **متزامنة** لأسماء الأدوات المسموح بها في إعداد المستخدم — للإنفاذ لا للإخبار.
+ * يعيد أسماء الأدوات المسموح بها في ملف إعدادات واحد — مرتّبة بلا تكرار —
+ * أو `null` إن تعذّر المسح. **و`null` ليست «لا قواعد»**: هي «غير معروف»، فتُبقي
+ * الأساس المسجّل كما هو بدل أن يمحو عطبٌ عابر خطَّ الأساس فيُسكِت تنبيهاً لاحقاً
+ * (الدرس نفسه المطبَّق على مسح MCP).
+ */
+async function collectUserAllowRules(io, userSettingsFile) {
+  return allowNamesFrom(await readJson(io, userSettingsFile, MAX_SETTINGS_BYTES));
+}
+
+/**
+ * قراءة **متزامنة** لأسماء الأدوات المسموح بها في **ملف إعدادات واحد** — للإنفاذ
+ * لا للإخبار. يستهلكها نطاقا التظليل معاً عبر `shadowingAllowToolNamesSync` أدناه.
  *
  * لماذا متزامنة: خطّاف `PreToolUse` قد يقع قبل أن تُحسم أي قراءة غير متزامنة، ومجموعةٌ
- * تصل متأخرةً تعني نافذة لا يحرسها شيء. والملف واحد صغير بسقفه المعلن، فالكلفة مهملة
- * مقابل ضمان أن المجموعة جاهزة قبل أول أداة.
+ * تصل متأخرةً تعني نافذة لا يحرسها شيء. وهما ملفان صغيران بسقفهما المعلن، فالكلفة
+ * مهملة مقابل ضمان أن المجموعة جاهزة قبل أول أداة.
  *
  * fail-open: أي فشل يعيد مجموعة فارغة — فلا يُعطَّل الدور بسبب إعداد لا يُقرأ.
+ * ويرفض `lstat` الرابطَ الرمزي والحجمَ فوق السقف قبل أي قراءة.
  */
-function userAllowToolNamesSync(file) {
-  const target = file || path.join(os.homedir(), '.claude', USER_SETTINGS_NAME);
+function allowToolNamesInFile(target) {
   try {
     const stat = fs.lstatSync(target);
     if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_SETTINGS_BYTES) return new Set();
     const raw = fs.readFileSync(target, 'utf8');
-    const parsed = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Set();
-    const permissions = parsed.permissions;
-    if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return new Set();
-    const allow = permissions.allow;
-    if (!Array.isArray(allow)) return new Set();
-    const names = new Set();
-    for (const rule of allow.slice(0, MAX_ALLOW_RULES)) {
-      const name = allowRuleToolName(rule);
-      if (name) names.add(name);
-    }
-    return names;
+    return new Set(allowNamesFrom(JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw)));
   } catch {
     return new Set();
   }
+}
+
+function userAllowToolNamesSync(file) {
+  return allowToolNamesInFile(file || path.join(os.homedir(), '.claude', USER_SETTINGS_NAME));
+}
+
+/**
+ * مجموعة الأدوات التي **قد تتخطّى مربع الإذن** لهذا المشروع — اتحادُ النطاقين
+ * المقيسَين مُظلِّلَين: إعدادُ المستخدم و`<cwd>/.claude/settings.local.json`.
+ *
+ * وملفُّ `<cwd>/.claude/settings.json` **مستثنى عمداً**: قِيس أنه يمرّ بالمربع، وإدخالُه
+ * هنا يُلزم بالسؤال حيث لا خطر — وسؤالٌ بلا سبب يدرّب المستخدم على النقر بلا قراءة.
+ *
+ * fail-open في القراءة (ملف تالف ⇒ مجموعة فارغة لذلك الملف) — كالسابق.
+ */
+function shadowingAllowToolNamesSync(cwd, options = {}) {
+  const names = userAllowToolNamesSync(options.userSettings);
+  const localFile = options.localSettings
+    || (typeof cwd === 'string' && cwd.trim()
+      ? path.join(cwd, '.claude', LOCAL_SETTINGS_NAME) : null);
+  if (localFile) for (const name of allowToolNamesInFile(localFile)) names.add(name);
+  return names;
 }
 
 function allowDigest(names) {
   return digest(Buffer.from(names.join('\u0000'), 'utf8')).slice(0, 16);
 }
 
-function allowNoticeText(names) {
+function allowList(names) {
   const shown = names.slice(0, MAX_ALLOW_NAMED_IN_NOTICE);
   const hidden = names.length - shown.length;
-  const list = shown.map((name) => '«' + name + '»').join('، ')
+  return shown.map((name) => '«' + name + '»').join('، ')
     + (hidden > 0 ? '، و' + hidden + ' غيرها' : '');
+}
+
+function allowNoticeText(names) {
   return scrubSecrets('⚠️ تنبيه أمني: إعدادات Claude لديك (~/.claude/settings.json) '
-    + 'تسمح تلقائياً بهذه الأدوات: ' + list + ' — فلن يعرض «سطر» مربع الإذن قبل تنفيذها '
-    + '(مقيس: قاعدة السماح تتخطّى المربع). احذفها من permissions.allow إن أردت استعادة السؤال؛ '
-    + 'لن يوقف «سطر» هذا الدور.');
+    + 'تسمح تلقائياً بهذه الأدوات: ' + allowList(names) + ' — كانت ستتخطّى مربع الإذن قبل تنفيذها '
+    + '(مقيس)، و«سطر» يوجّهها إليه رغم ذلك. احذفها من permissions.allow إن أردت '
+    + 'ألّا تعتمد على هذا التوجيه؛ لن يوقف «سطر» هذا الدور.');
+}
+
+// نصٌّ منفصل عمداً: الملف **وصل مع المشروع** لا من إعداد المستخدم، فالعلاج مختلف
+// (يُحذف من المشروع لا من إعدادك)، والنبرة أشدّ لأن ناقله خارجي.
+function localAllowNoticeText(names) {
+  return scrubSecrets('⚠️ تنبيه أمني: هذا المشروع يحمل ملف .claude/settings.local.json '
+    + 'يسمح تلقائياً بهذه الأدوات: ' + allowList(names) + ' — وهو ملفٌّ وصل مع المشروع '
+    + 'وكان سيتخطّى مربع الإذن قبل تنفيذها (مقيس)، و«سطر» يوجّهها إليه رغم ذلك. '
+    + 'راجع الملف واحذفه إن لم تكن أنت من كتبه؛ لن يوقف «سطر» هذا الدور.');
 }
 
 function cleanProjects(value) {
@@ -382,8 +420,11 @@ function cleanProjects(value) {
     // ويُسجَّل أساس MCP له صامتاً عند أول رصد. لا رفع لـSTORE_VERSION ولا هجرة.
     const mcp = cleanMcpMap(entry.mcp);
     if (mcp) cleaned.mcp = mcp;
-    // OBS-140: حقل اختياري آخر — مخزن سابق بلا `allow` يبقى صالحاً بلا هجرة.
+    // OBS-140: حقلان اختياريان — مخزن سابق بلا أيّهما يبقى صالحاً بلا هجرة.
+    // ⚠️ وإسقاطُ أحدهما هنا ليس «فقدَ بصمة» بل **تنبيهٌ يتكرّر كل دور**، لأن الأساس
+    // يعود فارغاً فيُقرأ كلُّ مسحٍ تغيّراً. فكلُّ حقل جديد يُضاف هنا مع إضافته هناك.
     if (SAFE_ALLOW_DIGEST.test(String(entry.allow || ''))) cleaned.allow = entry.allow;
+    if (SAFE_ALLOW_DIGEST.test(String(entry.allowLocal || ''))) cleaned.allowLocal = entry.allowLocal;
     projects[key] = cleaned;
   }
   return projects;
@@ -483,11 +524,31 @@ function createGuard(options = {}) {
       // يصمت أوّل مرة: هناك الخطر حدثٌ (تغيّر تكوين)، وهنا الخطر **حالةٌ قائمة**.
       const allowChanged = !!allowNames && allowNames.length > 0 && allowNow !== allowBefore;
 
+      // OBS-140 (النطاق المحلي): `<cwd>/.claude/settings.local.json` — مقيسٌ مُظلِّلاً
+      // مثل ملف المستخدم، لكن **بصمته تُخزَّن مستقلّة** لأن مصدره مختلف: تغيّرُ أحدهما
+      // لا يجوز أن يُسكِت تنبيه الآخر، ودمجُهما في بصمة واحدة كان سيفعل ذلك.
+      let localAllowNames = null;
+      try {
+        localAllowNames = await collectUserAllowRules(
+          io, path.join(cwd, '.claude', LOCAL_SETTINGS_NAME),
+        );
+      } catch {
+        localAllowNames = null;
+      }
+      const localAllowBefore = previous && SAFE_ALLOW_DIGEST.test(String(previous.allowLocal || ''))
+        ? previous.allowLocal : null;
+      const localAllowNow = localAllowNames ? allowDigest(localAllowNames) : null;
+      const localAllowStored = localAllowNow || localAllowBefore;
+      const localAllowChanged = !!localAllowNames && localAllowNames.length > 0
+        && localAllowNow !== localAllowBefore;
+
       // لا كتابة ولا تنبيه ما لم يتغيّر شيء فعلاً — وأوّل رصد لـMCP تغيّرٌ في المخزن
       // بلا تنبيه (لا يوجد أساس يُقارَن به).
       const previousSignature = previous
-        ? JSON.stringify([previous.fingerprint, previous.mcp || null, previous.allow || null]) : null;
-      const nextSignature = JSON.stringify([fingerprint, mcpStored || null, allowStored || null]);
+        ? JSON.stringify([previous.fingerprint, previous.mcp || null, previous.allow || null,
+          previous.allowLocal || null]) : null;
+      const nextSignature = JSON.stringify([fingerprint, mcpStored || null, allowStored || null,
+        localAllowStored || null]);
       if (previousSignature === nextSignature) return null;
 
       const next = { ...projects };
@@ -495,6 +556,7 @@ function createGuard(options = {}) {
       const entry = { fingerprint, updated_at: now().toISOString() };
       if (mcpStored) entry.mcp = mcpStored;
       if (allowStored) entry.allow = allowStored;
+      if (localAllowStored) entry.allowLocal = localAllowStored;
       next[key] = entry;
       while (Object.keys(next).length > MAX_PROJECTS) delete next[Object.keys(next)[0]];
       if (!await persist(io, file, next)) return null;
@@ -504,6 +566,7 @@ function createGuard(options = {}) {
       if (hooksChanged && findings.length) notices.push(noticeText(findings));
       if (mcpChangedIn(mcpDiff)) notices.push(mcpNoticeText(mcpDiff));
       if (allowChanged) notices.push(allowNoticeText(allowNames));
+      if (localAllowChanged) notices.push(localAllowNoticeText(localAllowNames));
       return notices.length ? notices.join(' ') : null;
     } catch {
       return null;
@@ -540,6 +603,8 @@ module.exports = {
   // OBS-140
   allowRuleToolName,
   userAllowToolNamesSync,
+  shadowingAllowToolNamesSync,
+  LOCAL_SETTINGS_NAME,
   MAX_ALLOW_RULES,
   MAX_ALLOW_TOOL_NAME,
   MAX_ALLOW_NAMED_IN_NOTICE,

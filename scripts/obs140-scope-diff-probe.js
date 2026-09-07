@@ -32,6 +32,15 @@
  * فإن ظهرت قاعدة المشروع في `sources` **وغابت أو بقيت** في `effective` عرفنا **أين**
  * تقع التصفية: في دمج الإعدادات، أم بعده في مُقيِّم الأذونات.
  *
+ * ## والنطاق الثالث: `local`
+ *
+ * ‏`settingSources` ثلاثة: `user` (‏`~/.claude/settings.json`) و`project`
+ * (‏`<cwd>/.claude/settings.json`) و**`local`** (‏`<cwd>/.claude/settings.local.json`).
+ * والأخير **مُتجاهَل في Git** — أي أنه ليس من «الطبقة المُلتزَمة في المستودع» التي
+ * يوثّق `filterEscalatingDefaultMode` إسقاطَها. فإن كان التمييز بالطبقة كما استُدلّ،
+ * فقد يُعامَل `local` معاملة `user` **فيظلّل**. وهذا ما يقيسه المشهد الثالث هنا:
+ * موضعُه في `provenance`، وسلوكُ المُصفّي معه.
+ *
  * التشغيل:  node scripts/obs140-scope-diff-probe.js
  */
 
@@ -124,6 +133,23 @@ if (childIdx !== -1) {
     };
   }
 
+  // ①ب نطاق `local`: `.claude/settings.local.json` داخل cwd — الملف المُتجاهَل في Git.
+  {
+    const cwd = path.join(root, 'proj-local');
+    fs.mkdirSync(cwd, { recursive: true });
+    plant(cwd, path.join('.claude', 'settings.local.json'), payload);
+    const r = await resolveSettings({ cwd, settingSources: ['user', 'project', 'local'] });
+    const localSource = (r.sources || []).find((s) => s.source === 'local');
+    out.scenarios.local = {
+      rawInLocalSource: localSource ? pick(localSource.settings) : null,
+      effective: pick(r.effective),
+      provenanceOfPermissions: (r.provenance && r.provenance.permissions
+        && r.provenance.permissions.source) || null,
+      afterEscalatingFilter: pick(filterEscalatingDefaultMode(r)),
+      sourceNames: (r.sources || []).map((s) => s.source),
+    };
+  }
+
   // ② نطاق المستخدم: **عملية ابنة** ببيت معزول.
   //
   // ⚠️ أوّل صياغة غيّرت `process.env.HOME` داخل العملية نفسها — و**لم تعمل**:
@@ -153,15 +179,21 @@ if (childIdx !== -1) {
   try { fs.rmSync(root, { recursive: true, force: true }); } catch (e) { /* أفضل جهد */ }
 
   const p = out.scenarios.project || {};
+  const l = out.scenarios.local || {};
   const u = out.scenarios.user || {};
   const has = (v, name) => Array.isArray(v) && v.includes(name);
   out.verdict = {
     // هل تصل قاعدة المشروع إلى `effective` أصلاً؟ الجواب يحدّد **موضع** التصفية.
     projectAllowReachesEffective: has(p.effective && p.effective.allow, 'Write'),
     projectDenyReachesEffective: has(p.effective && p.effective.deny, 'Bash'),
+    localAllowReachesEffective: has(l.effective && l.effective.allow, 'Write'),
     userAllowReachesEffective: has(u.effective && u.effective.allow, 'Write'),
     projectDefaultModeInEffective: (p.effective && p.effective.defaultMode) || null,
     projectDefaultModeAfterFilter: (p.afterEscalatingFilter && p.afterEscalatingFilter.defaultMode) || null,
+    // ⭐ المؤشّر الأدلّ على الطبقة: المُصفّي الموثّق يُسقط `defaultMode` التصعيدي من
+    // الطبقة المُلتزَمة وحدها. فبقاؤه لـ`local` يضعه في صفّ `user` لا `project`.
+    localDefaultModeAfterFilter: (l.afterEscalatingFilter && l.afterEscalatingFilter.defaultMode) || null,
+    localProvenance: l.provenanceOfPermissions || null,
     userDefaultModeAfterFilter: (u.afterEscalatingFilter && u.afterEscalatingFilter.defaultMode) || null,
     userIsolationWorked: u.isolationWorked === true,
   };
