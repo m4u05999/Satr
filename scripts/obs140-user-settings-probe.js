@@ -50,6 +50,11 @@ const SCENARIOS = {
   'user-allow-pattern': { permissions: { allow: ['Write(*)'] } },
   'user-none': { permissions: null },
   'user-deny': { permissions: { deny: ['Write'] } },
+  // ⭐ المشهد الحاسم للعلاج: القاعدة نفسها التي أثبتت التظليل، **ومعها** خطّاف
+  // `PreToolUse` يعيد `permissionDecision:'ask'`. السابقة في `agent.js` تثبت أن
+  // هذا يتخطّى مصنّف وضع `auto`؛ وهذا يقيس هل يتخطّى **قاعدة السماح** أيضاً —
+  // وهما خطوتان مختلفتان في خطّ الإذن، فلا يُقاس أحدهما بالآخر.
+  'user-allow-with-hook': { permissions: { allow: ['Write'] }, hook: true },
 };
 
 // ── بناء البيت المعزول ────────────────────────────────────────────────────────
@@ -77,7 +82,7 @@ function buildHome(permissions) {
 }
 
 // ── تشغيل مشهد واحد (يُستدعى داخل العملية الابنة) ─────────────────────────────
-async function runOne(permissions) {
+async function runOne(permissions, useHook) {
   const { query } = require('@anthropic-ai/claude-agent-sdk');
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'obs140-work-'));
   const calls = [];
@@ -89,6 +94,7 @@ async function runOne(permissions) {
   let writeAttempted = false;
   let anyToolAttempted = false;
   const attemptedTools = [];
+  const hookCalls = [];
   const writeTargets = [];
 
   let closeInput = null;
@@ -119,6 +125,27 @@ async function runOne(permissions) {
       permissionMode: 'default',
       // مطابقة الإنتاج حرفياً (‏agent.js:1036) — و`user` هو محلّ القياس هنا.
       settingSources: ['user', 'project', 'local'],
+      // الخطّاف يُسجَّل **فقط** في المشهد الذي يقيسه — كي يبقى الفرق بينه وبين
+      // `user-allow` متغيّراً واحداً لا اثنين.
+      ...(useHook ? {
+        hooks: {
+          PreToolUse: [{
+            hooks: [async (hookInput) => {
+              hookCalls.push(String((hookInput && hookInput.tool_name) || ''));
+              if (hookInput && hookInput.tool_name === 'Write') {
+                return {
+                  hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'ask',
+                    permissionDecisionReason: 'OBS-140 probe: forced to canUseTool',
+                  },
+                };
+              }
+              return { continue: true };
+            }],
+          }],
+        },
+      } : {}),
       canUseTool: async (toolName, input) => {
         calls.push({ toolName, inputKeys: Object.keys(input || {}).sort() });
         return { behavior: 'deny', message: 'OBS-140 probe: denied by canUseTool' };
@@ -175,6 +202,7 @@ async function runOne(permissions) {
     writeAttempted,
     anyToolAttempted,
     attemptedTools,
+    hookCalls,
     writeTargets,
     workdirEntries,
     markerExists,
@@ -197,7 +225,7 @@ if (scenarioFlag !== -1) {
   const name = argv[scenarioFlag + 1];
   const spec = SCENARIOS[name];
   if (!spec) { console.log(JSON.stringify({ ok: false, error: `مشهد مجهول: ${name}` })); process.exit(1); }
-  runOne(spec.permissions)
+  runOne(spec.permissions, spec.hook === true)
     .then((r) => { console.log(JSON.stringify({ ok: true, ...r })); process.exit(0); })
     .catch((e) => { console.log(JSON.stringify({ ok: false, error: String((e && e.message) || e) })); process.exit(1); });
   return;
