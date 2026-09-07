@@ -53,6 +53,14 @@ function serverConfig(extra) {
   return Object.assign({ command: 'npx', args: ['-y', 'some-mcp'], env: { API_KEY: SECRET } }, extra);
 }
 
+// ملف إعداد تالف يُنشأ عند الطلب — لفحوص fail-open في مسار الإنفاذ.
+function broken2() {
+  const p = path.join(ROOT, 'fake-home-broken2', '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, '{ ليس JSON', 'utf8');
+  return p;
+}
+
 (async () => {
   // ── 1) أوّل رصد صامت، والتغيّر ينبّه مرة واحدة ───────────────────────────
   {
@@ -389,7 +397,40 @@ function serverConfig(extra) {
     ok(!saved.includes('Write') && !saved.includes('npm run test'),
       'OBS-140: المخزن بلا أسماء أدوات ولا وسائط — بصمة فقط');
 
-    // (٨) فشل قراءة إعداد المستخدم لا يُسقط الحارس ولا يخترع تنبيهاً.
+    // ── الإنفاذ (OBS-140): المجموعة المتزامنة التي يقرؤها خطّاف PreToolUse ──
+    // (٩) تقرأ الأسماء بلا وسائطها، متزامنةً، من الملف المُحقَن.
+    const enforce = path.join(ROOT, 'fake-home-enforce', '.claude', 'settings.json');
+    writeJson(enforce, { permissions: { allow: ['Write', 'Bash(npm run test:*)'] } });
+    const names = hookguard.userAllowToolNamesSync(enforce);
+    ok(names instanceof Set && names.has('Write') && names.has('Bash') && names.size === 2,
+      'OBS-140: userAllowToolNamesSync يعيد أسماء الأدوات بلا وسائطها');
+
+    // (١٠) fail-open في كل مسارات الفشل — لا تُعطَّل الأدوار بسبب إعداد لا يُقرأ.
+    const gone = path.join(ROOT, 'fake-home-gone', '.claude', 'settings.json');
+    ok(hookguard.userAllowToolNamesSync(gone).size === 0,
+      'OBS-140: ملف غائب ⇒ مجموعة فارغة لا استثناء');
+    ok(hookguard.userAllowToolNamesSync(broken2()).size === 0,
+      'OBS-140: ملف تالف ⇒ مجموعة فارغة لا استثناء');
+    const noPerm = path.join(ROOT, 'fake-home-noperm', '.claude', 'settings.json');
+    writeJson(noPerm, { model: 'opus', tui: {} });
+    ok(hookguard.userAllowToolNamesSync(noPerm).size === 0,
+      'OBS-140: إعداد بلا مفتاح permissions ⇒ مجموعة فارغة (حالة المالك اليوم)');
+    const denyOnly = path.join(ROOT, 'fake-home-denyonly', '.claude', 'settings.json');
+    writeJson(denyOnly, { permissions: { deny: ['Write'] } });
+    ok(hookguard.userAllowToolNamesSync(denyOnly).size === 0,
+      'OBS-140: قاعدة deny وحدها لا تُدرِج اسماً في مجموعة الإنفاذ');
+
+    // (١١) عقد الوصل في agent.js — يُقرأ من المصدر لا من نسخة موازية.
+    const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'agent.js'), 'utf8');
+    ok(/const shadowedAllowTools = isolatedPolicy \|\| internalPolicy/.test(agentSrc)
+      && /hookguard\.userAllowToolNamesSync\(\)/.test(agentSrc),
+    'OBS-140: agent.js يبني المجموعة متزامنةً ويستثني السياقات المعزولة');
+    ok(/permissionMode !== 'bypassPermissions'\s*\n\s*&& shadowedAllowTools\.has\(input\.tool_name\)/.test(agentSrc),
+      'OBS-140: الإنفاذ يستثني bypassPermissions صراحةً — تجاوزه مقصود لا ثغرة');
+    ok(/permissionDecision: 'ask'[\s\S]{0,200}قاعدة سماح في إعدادات المستخدم/.test(agentSrc),
+      'OBS-140: القرار «ask» بسبب معلن يوجّه الأداة إلى مربع الإذن');
+
+    // (١٢) فشل قراءة إعداد المستخدم لا يُسقط الحارس ولا يخترع تنبيهاً.
     const broken = path.join(ROOT, 'fake-home-3', '.claude', 'settings.json');
     fs.mkdirSync(path.dirname(broken), { recursive: true });
     fs.writeFileSync(broken, '{ not json', 'utf8');

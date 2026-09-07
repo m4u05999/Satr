@@ -857,6 +857,13 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       if (event) emit(event);
     }).catch(() => {});
   }
+  // OBS-140: تُقرأ **متزامنةً وقبل بدء الدور** لا في مسار غير حاجب: خطّاف PreToolUse
+  // قد يقع قبل حسم أي قراءة لاحقة، ومجموعةٌ تصل متأخرةً تعني نافذةً لا يحرسها شيء.
+  // ملفٌّ واحد صغير بسقفه المعلن. والسياقات المعزولة تمرّر settingSources: [] فلا
+  // تُحمَّل إعدادات أصلاً — فالمجموعة فارغة عندها بلا قراءة.
+  const shadowedAllowTools = isolatedPolicy || internalPolicy
+    ? new Set()
+    : hookguard.userAllowToolNamesSync();
   const promptUserMessageId = randomUUID();
   let promptUserEventEmitted = false;
   let unsupportedElicitationNotified = false;
@@ -966,6 +973,23 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     if (input && input.tool_name && autoNeedsPrompt(input.tool_name, permissionMode)) {
       return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask',
         permissionDecisionReason: 'أداة غير قرائية في وضع auto — تتطلب إذن المستخدم عبر «سطر»' } };
+    }
+    // OBS-140: قاعدة `permissions.allow` في `~/.claude/settings.json` تجعل SDK **لا
+    // يستدعي canUseTool إطلاقاً** فتُنفَّذ الأداة بلا مربع الإذن العربي (مقيس بفخّ حيّ:
+    // صفر استدعاء والملف كُتب). وإرجاع 'ask' هنا يستعيد البوابة — مقيس بالمشهد
+    // `user-allow-with-hook` في `npm run probe:obs140-user`: بالقاعدة نفسها صار
+    // canUseTool يُستدعى ولم تقع الكتابة. آليةٌ واحدة مع فرع auto أعلاه، لا بوابة ثانية.
+    //
+    // ⚠️ **تجاوزٌ معلن**: `bypassPermissions` مستثنى — تجاوزه مقصود وموثّق، وإجباره
+    // على السؤال يكسر ميزةً قائمة لا ثغرة.
+    // ⚠️ **وتوسيعٌ معلن**: المطابقة بالاسم وحده، فقاعدة مقيَّدة مثل `Bash(npm run test:*)`
+    // تُلزم **كل** Bash بالسؤال لا المطابقَ منها. البديل — إعادة تنفيذ مطابِق قواعد
+    // Claude Code — نسخةٌ ثانية تتباعد بصمت عن الأصل؛ والسؤال الزائد يُستدرك بحذف
+    // القاعدة، أمّا التنفيذ الصامت فلا يُستدرك.
+    if (input && input.tool_name && permissionMode !== 'bypassPermissions'
+        && shadowedAllowTools.has(input.tool_name)) {
+      return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask',
+        permissionDecisionReason: 'قاعدة سماح في إعدادات المستخدم كانت ستتخطّى مربع الإذن — يوجّهها «سطر» إليه' } };
     }
     return { continue: true };
   }
