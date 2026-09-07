@@ -206,6 +206,10 @@
     "appId": "ai.satr.app",
     "productName": "Satr",
     "npmRebuild": false,
+    "electronLanguages": [
+      "ar",
+      "en-US"
+    ],
     "publish": [
       {
         "provider": "github",

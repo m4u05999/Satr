@@ -45,7 +45,8 @@
   <p class="hero-tagline" aria-label="البيت العربي لأدوات الذكاء الاصطناعي في سطر الأوامر"><span id="taglineText"></span></p>
   <p class="hero-sub">‏Claude Code وأخواتها تتحدث العربية أخيراً — محادثة سليمة الاتجاه، طرفية عربية، ومعاينة مدمجة. على جهازك، مجاناً، بلا حساب.</p>
   <div class="hero-ctas">
-    <a class="btn btn-gold" href="https://github.com/m4u05999/Satr/releases/latest" rel="noopener">نزّل لويندوز</a>
+    <!-- بطلُ الصفحة يوجّه إلى المتجر منذ اعتماد الحزمة: الطريق الوحيد بلا تحذير أمان. -->
+    <a class="btn btn-gold" href="https://apps.microsoft.com/detail/9N7F5RKQJ9WF" rel="noopener">ثبّت من متجر مايكروسوفت</a>
     <a class="btn btn-ghost" href="https://github.com/m4u05999/Satr" rel="noopener">الشفرة على GitHub ★</a>
   </div>
   <p class="scroll-hint">مرّر لترى المشكلة</p>
@@ -311,18 +312,24 @@
     <h2 class="section-title" data-reveal>جرّب «سطر» الآن</h2>
     <p class="section-lead" data-reveal>مثبّت ويندوز خفيف — يعمل مع اشتراك Claude القائم لديك.</p>
     <div data-reveal>
-      <a class="btn btn-gold" id="dlBtn" href="https://github.com/m4u05999/Satr/releases/latest" rel="noopener">تنزيل «سطر» لويندوز</a>
-      <p class="download-facts">ويندوز · مجاني · شفرته عامة</p>
+      <!-- المتجر أوّلاً منذ اعتماد الحزمة (2026-09-07): مايكروسوفت توقّع MSIX بنفسها،
+           فلا يمنع المتصفح التنزيل ولا يظهر تحذير SmartScreen — وهما حاجزا مسار GitHub. -->
+      <a class="btn btn-gold" id="storeBtn" href="https://apps.microsoft.com/detail/9N7F5RKQJ9WF" rel="noopener">ثبّت من متجر مايكروسوفت</a>
+      <a class="btn btn-ghost" id="dlBtn" href="https://github.com/m4u05999/Satr/releases/latest" rel="noopener">أو نزّل المثبّت مباشرةً</a>
+      <p class="download-facts">ويندوز · مجاني · شفرته عامة · <strong>بلا تحذير أمان من المتجر</strong></p>
       <!-- باب صوري (fake-door) يقيس الطلب بالسلوك لا بالرأي: روابط تبعية لا أزرار
            تنزيل — لا نسخة ماك أو لينكس تُنزَّل، والوجهة نموذج تسجيل صريح. -->
       <p class="platform-hints">
         <a class="platform-hint" href="#platform-interest"><strong>ماك</strong> — ليس بعد. سجّل اهتمامك ↓</a>
         <a class="platform-hint" href="#platform-interest"><strong>لينكس</strong> — ليس بعد. سجّل اهتمامك ↓</a>
       </p>
-      <!-- مخفي حتى قبول حزمة «سطر» في مستودع winget-pkgs (قرار مالك 2026-07-18):
-           لا تُعرض تعليمات لا تعمل بعد — أزل hidden عند القبول -->
-      <div class="winget" dir="ltr" hidden>
-        <code id="wingetCmd">winget install satr</code>
+      <!-- القاعدة نفسها من 2026-07-18 («لا تُعرض تعليمات لا تعمل بعد») — والذي تغيّر
+           أنّ هذا الأمر **صار يعمل**: مصدره `msstore` لا مستودع winget-pkgs المجتمعي،
+           ومُتحقَّق منه بـ`winget show --id 9N7F5RKQJ9WF --source msstore` فأعاد
+           «Found سطر — Satr». أمّا `winget install satr` (مستودع المجتمع، ‏PR
+           microsoft/winget-pkgs#429004) فما زال مفتوحاً ولا يُعرض حتى يُقبل. -->
+      <div class="winget" dir="ltr">
+        <code id="wingetCmd">winget install --id 9N7F5RKQJ9WF --source msstore</code>
         <button type="button" id="wingetCopy">نسخ</button>
       </div>
       <p class="dl-note">يتطلب ويندوز 10 1809+ و‏Claude Code مثبّتاً — والبوابة الأولى في التطبيق ترشدك خطوة بخطوة.</p>
