@@ -215,7 +215,9 @@ try {
   $script:stage = 'candidate.files'
   $installedExe = Join-Path $candidatePath 'Satr.exe'
   $report.exe_product_version = [Diagnostics.FileVersionInfo]::GetVersionInfo($installedExe).ProductVersion
-  Assert-Check ($report.exe_product_version -eq $ExpectedVersion) 'candidate.exe_product_version' "EXE ProductVersion mismatch expected=$ExpectedVersion actual=$($report.exe_product_version)"
+  # مورد الإصدار في EXE رباعي الأجزاء؛ رقم الحزمة الثلاثي يقابله جزء مراجعة صفري.
+  $expectedExeVersion = $ExpectedVersion + '.0'
+  Assert-Check ($report.exe_product_version -eq $expectedExeVersion) 'candidate.exe_product_version' "EXE ProductVersion mismatch expected=$expectedExeVersion actual=$($report.exe_product_version)"
   $localeDir = Join-Path $candidatePath 'locales'
   Assert-Check (Test-Path -LiteralPath $localeDir -PathType Container) 'candidate.locales_directory' 'Installed locales directory missing.'
   $localeEntries = @(Get-ChildItem -LiteralPath $localeDir -Force | Sort-Object Name)
