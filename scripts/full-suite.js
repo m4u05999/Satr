@@ -13,6 +13,7 @@ const SUITE = [
   'test:slash-menu',
   'test:chat-rtl',
   'test:empty-block',
+  'test:eventtrace',
   'test:update-ui',
   'test:settings-account',
   'test:task-ledger-ui',

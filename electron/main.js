@@ -11,6 +11,8 @@ const { createHash, randomUUID, randomBytes } = require('crypto');
 
 const sessions = require('./sessions');
 const sessionmeta = require('./sessionmeta');
+// OBS-142: عدّاد أحداث الدور — يجيب «أين يسقط الحدث؟». بلا نصّ وبلا قرص.
+const eventTrace = require('./eventtrace').create();
 const files = require('./files');
 const searchMod = require('./search'); // بحث محتوى المشروع (الدفعة 4.6)
 const gitdiff = require('./gitdiff'); // فروقات git للوحة التغييرات (الدفعة 4.7) — قراءة فقط
@@ -467,6 +469,11 @@ const CLAUDE_MIN_RECOMMENDED = [2, 1, 197];
 
 // لقطة القدرات للواجهة (قراءة فقط): تُظهر/تُخفي قدرات Enterprise. المجتمعية ⇒ {enterprise:false}
 ipcMain.handle('satr:features', () => features.snapshot());
+
+// OBS-142: أثر أحداث الدور — قراءة فقط بلا مدخلات. اللقطة تحمل **عدّادات وأطوالاً
+// وأسباب إسقاط**، ولا تحمل نصّاً ولا مسارات ولا معرّفات جلسات. تُقارَن `emitted`
+// و`sent` و`dropped` بما استقبلته الواجهة فيُعرف موضع أول سقوط.
+ipcMain.handle('satr:eventTrace', () => eventTrace.snapshot());
 
 // سجل Community المحلي: metadata محدودة للمشروع الحالي، بلا prompt/مدخلات/خرج أو مسارات مطلقة.
 ipcMain.handle('satr:activityList', (event, payload) => {
@@ -1968,7 +1975,14 @@ function shadowMeasureAssistant(obj, engine) {
 }
 
 function emitToWindow(obj, engineOverride) {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('satr:event', obj);
+  // OBS-142: نقطة القياس الثانية — القُمع الوحيد إلى `webContents.send`. وغيابُ
+  // النافذة يُسجَّل سبباً مستقلاً (`no_window`) لا يُبتلع صامتاً كما كان.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    eventTrace.sent(runSeq);
+    mainWindow.webContents.send('satr:event', obj);
+  } else {
+    eventTrace.dropped(runSeq, obj, 'no_window', runSeq);
+  }
   try {
     const hint = shadowMeasureAssistant(obj, engineOverride || lastEngine);
     // يُرسل مباشرةً لا عبر `emitToWindow` — وإلا أعاد دخول القياس على نفسه. وهو
@@ -2838,11 +2852,18 @@ async function handleSendRequest(event, payload, requestEpoch) {
       obj = sanitizeClaudePolishEvent(obj);
       if (!obj) return;
     }
+    // OBS-142: عدّ الحدث **قبل أي مرشّح** — نقطة القياس الأولى من الثلاث. بلا نصّ.
+    eventTrace.emitted(token, obj);
     const lateSdkBackgroundEvent = token !== runSeq && runEngine === 'sdk'
       && sdkRunForEmit && sdkBackgroundRuns.has(sdkRunForEmit)
       && (obj.type === 'sdk_task_notification' || obj.type === 'sdk_task_started'
         || (obj.type === 'task_update' && obj.source === 'claude_agent'));
-    if (token !== runSeq && !lateSdkBackgroundEvent) return;
+    // OBS-142: كان `return` **صامتاً** — فغيابُ الحدث لا يُفرَّق عن عدم إنتاجه، وهو
+    // نفسه سبب بقاء الملاحظة مفتوحة. الآن يُسجَّل السبب ورمزا الدور بلا أي نصّ.
+    if (token !== runSeq && !lateSdkBackgroundEvent) {
+      eventTrace.dropped(token, obj, 'stale_token', runSeq);
+      return;
+    }
     if (obj.type === 'result' && runEngine === 'sdk' && sdkRunForEmit
         && typeof sdkRunForEmit.hasSdkBackgroundTasks === 'function'
         && sdkRunForEmit.hasSdkBackgroundTasks()) {
