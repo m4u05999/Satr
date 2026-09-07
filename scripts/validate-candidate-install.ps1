@@ -37,7 +37,12 @@ $report = [ordered]@{
   candidate_arp = @()
   exe_product_version = $null
   locale_files = @()
-  startup = [ordered]@{ proof = 'none'; pid = $null; window_handle = $null; class_name = $null; title_matches_shell = $false; visible = $null; observed_ms = 0; stable_ms = 0; dom_checked = $false }
+  startup = [ordered]@{
+    proof = 'none'; pid = $null; window_handle = $null; class_name = $null
+    title_matches_shell = $false; visible = $null; observed_ms = 0; stable_ms = 0; dom_checked = $false
+    launch_mode = $null; stdout_file = $null; stderr_file = $null; script_session_id = $null; process_session_id = $null
+    windows_on_failure = @(); diagnostic_error = $null
+  }
   cleanup = [ordered]@{ stopped_pids = [Collections.Generic.List[int]]::new(); failure = $null }
   failure = $null
 }
@@ -188,6 +193,34 @@ public static class SatrCandidateOwnedShellWindow {
     if (!completed) throw new Win32Exception(error, "Owned shell window enumeration failed.");
     return found;
   }
+
+  // تشخيص الفشل فقط: كل نوافذ PID المملوك، بلا شروط القشرة وبلا إعادة العناوين الخام.
+  public static SatrCandidateShellWindow[] Snapshot(uint ownedProcessId) {
+    var windows = new System.Collections.Generic.List<SatrCandidateShellWindow>();
+    EnumWindowsCallback callback = delegate(IntPtr window, IntPtr parameter) {
+      uint processId;
+      if (GetWindowThreadProcessId(window, out processId) == 0 || processId != ownedProcessId) return true;
+      StringBuilder className = new StringBuilder(256);
+      StringBuilder title = new StringBuilder(512);
+      GetClassNameW(window, className, className.Capacity);
+      GetWindowTextW(window, title, title.Capacity);
+      if (!IsWindow(window) ||
+          GetWindowThreadProcessId(window, out processId) == 0 || processId != ownedProcessId) return true;
+      windows.Add(new SatrCandidateShellWindow {
+        Handle = window.ToInt64(),
+        ProcessId = processId,
+        ClassName = className.ToString(),
+        TitleMatchesShell = String.Equals(title.ToString(), "\u0633\u0637\u0631 \u2014 Satr", StringComparison.Ordinal),
+        Visible = IsWindowVisible(window)
+      });
+      return true;
+    };
+    bool completed = EnumWindows(callback, IntPtr.Zero);
+    int error = Marshal.GetLastWin32Error();
+    GC.KeepAlive(callback);
+    if (!completed) throw new Win32Exception(error, "Owned window diagnostic enumeration failed.");
+    return windows.ToArray();
+  }
 }
 "@
   Add-Type -TypeDefinition $nativeWindowSource -Language CSharp
@@ -305,9 +338,22 @@ try {
   Initialize-OwnedShellWindowProbe
   $profilePath = Join-Path $script:runnerRoot ('satr-candidate-profile-' + [Guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $profilePath | Out-Null
-  $launchArgs = @(('--user-data-dir="' + $profilePath + '"'), '--lang=ar')
-  $script:ownedApp = Start-Process -FilePath $installedExe -ArgumentList $launchArgs -WindowStyle Hidden -PassThru
+  $launchArgs = @(('--user-data-dir="' + $profilePath + '"'), '--lang=ar', '--enable-logging=stderr')
+  $report.startup.launch_mode = 'create_process_redirected'
+  $report.startup.stdout_file = 'startup-stdout.log'
+  $report.startup.stderr_file = 'startup-stderr.log'
+  $startupStdout = Join-Path $resolvedReportDir $report.startup.stdout_file
+  $startupStderr = Join-Path $resolvedReportDir $report.startup.stderr_file
+  # إعادة التوجيه تستعمل CreateProcess بدلاً من ShellExecute؛ تغيير تشخيصي معلن، لا إصلاح للإقلاع.
+  $script:ownedApp = Start-Process -FilePath $installedExe -ArgumentList $launchArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $startupStdout -RedirectStandardError $startupStderr
   $report.startup.pid = $script:ownedApp.Id
+  try {
+    $report.startup.script_session_id = [Diagnostics.Process]::GetCurrentProcess().SessionId
+    $report.startup.process_session_id = $script:ownedApp.SessionId
+  } catch {
+    $report.startup.diagnostic_error = $_.Exception.Message
+    Write-Host 'DIAGNOSTIC session_ids=unavailable'
+  }
   $startupTimer = [Diagnostics.Stopwatch]::StartNew()
   $windowFirstSeen = $null
   $stableWindowHandle = $null
@@ -350,6 +396,32 @@ try {
   $report.failure = [ordered]@{ stage = $script:stage; message = $_.Exception.Message }
   $asciiError = $_.Exception.Message -replace '[^\x20-\x7E]', '?'
   Write-Host "FAIL stage=$($script:stage) message=$asciiError"
+  if ($script:stage -eq 'candidate.startup') {
+    # تُلتقط النوافذ قبل التنظيف؛ الفشل الأصلي يبقى كما هو إن تعذّر جمع هذا الدليل.
+    try {
+      $report.startup.script_session_id = [Diagnostics.Process]::GetCurrentProcess().SessionId
+      if ($null -ne $script:ownedApp) {
+        $script:ownedApp.Refresh()
+        if (-not $script:ownedApp.HasExited) {
+          $report.startup.process_session_id = $script:ownedApp.SessionId
+          $report.startup.windows_on_failure = @(
+            [SatrCandidateOwnedShellWindow]::Snapshot([uint32]$script:ownedApp.Id) |
+              ForEach-Object {
+                [ordered]@{
+                  handle = $_.Handle; process_id = $_.ProcessId; class_name = $_.ClassName
+                  title_matches_shell = $_.TitleMatchesShell; visible = $_.Visible
+                }
+              }
+          )
+        }
+      }
+      Write-Host "DIAGNOSTIC owned_windows=$($report.startup.windows_on_failure.Count) script_session=$($report.startup.script_session_id) process_session=$($report.startup.process_session_id)"
+      Write-Host ('DIAGNOSTIC windows_json=' + (ConvertTo-Json -InputObject @($report.startup.windows_on_failure) -Depth 4 -Compress))
+    } catch {
+      $report.startup.diagnostic_error = $_.Exception.Message
+      Write-Host 'DIAGNOSTIC owned_windows=unavailable'
+    }
+  }
 } finally {
   try {
     Stop-OwnedProcess $script:ownedApp
@@ -359,6 +431,21 @@ try {
     $report.status = 'failed'
     $exitCode = 1
     Write-Host 'FAIL stage=cleanup message=Could not stop an owned installed process.'
+  }
+  if ($null -ne $report.failure -and $report.failure.stage -eq 'candidate.startup' -and $null -ne $report.startup.stderr_file) {
+    # بعد إيقاف العملية تُقرأ خاتمة سجل CI ليظهر الدليل في سجل الفحص نفسه.
+    try {
+      $startupStderrPath = Join-Path $resolvedReportDir $report.startup.stderr_file
+      Write-Host 'DIAGNOSTIC stderr_tail_begin'
+      if (Test-Path -LiteralPath $startupStderrPath -PathType Leaf) {
+        Get-Content -LiteralPath $startupStderrPath -Encoding UTF8 -Tail 40 | ForEach-Object { Write-Host $_ }
+      } else {
+        Write-Host 'DIAGNOSTIC stderr_file=unavailable'
+      }
+      Write-Host 'DIAGNOSTIC stderr_tail_end'
+    } catch {
+      Write-Host 'DIAGNOSTIC stderr_tail=unavailable'
+    }
   }
   if ($null -ne $script:ownedApp) { $script:ownedApp.Dispose() }
   $report.finished_at = [DateTime]::UtcNow.ToString('o')
