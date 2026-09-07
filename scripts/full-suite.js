@@ -134,6 +134,8 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
   { name: 'probe:obs140', reason: 'مسبار حيّ خارج الطقم — يزرع .claude/settings.json في مجلد مؤقت ويستهلك أربعة أدوار SDK حقيقية ليقيس هل تظلّل قواعد السماح مربعَ الإذن (OBS-140)؛ قياسٌ لا حارس' },
   { name: 'probe:obs140-user', reason: 'مسبار حيّ خارج الطقم — يبني HOME معزولاً ويربط الاعتماد برابط صلب ويستهلك أربعة أدوار SDK ليقيس شقّ إعدادات المستخدم من OBS-140؛ قياسٌ لا حارس' },
   { name: 'probe:obs140-enforce', reason: 'مسبار حيّ خارج الطقم — يستدعي agent.start() الإنتاجي ببيت معزول فيه قاعدة سماح ليثبت أن مربع الإذن يصل فعلاً (OBS-140، الإنفاذ)؛ يستهلك دورَي SDK' },
+  { name: 'probe:obs140-scope', reason: 'مسبار قياس خارج الطقم — يستدعي resolveSettings ليقارن ما يصل الإعدادات الفعّالة من نطاقي المشروع والمستخدم (OBS-140)؛ قطعي بلا أدوار لكنه قياسٌ لا حارس' },
+  { name: 'probe:obs140-trust', reason: 'مسبار حيّ خارج الطقم — يقيس هل ثقة مساحة العمل (hasTrustDialogAccepted) تفسّر افتراق النطاقين (OBS-140)؛ يستهلك أدوار SDK' },
   { name: 'test:conpty-resize-probe', reason: 'مسبار حيّ خارج الطقم — يفتح pty حقيقياً ويقيس إعادة رسم ConPTY عند تغيّر الصفوف (OBS-124)' },
   { name: 'test:gate-direction-probe', reason: 'مسبار حيّ خارج الطقم — يقيس رسو الاتجاه في البوابة عبر إصدارَي Electron للمقارنة (OBS-128)' },
   { name: 'test:layout-metrics-probe', reason: 'مسبار حيّ خارج الطقم — يقارن cssContentSize بـinnerWidth عبر إصدارَي Electron (OBS-129)' },
