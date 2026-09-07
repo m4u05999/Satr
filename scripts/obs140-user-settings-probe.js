@@ -104,6 +104,13 @@ const SCENARIOS = {
   // فإن افترقا فالفرق للطبقة قطعاً لا لبيئة القياس.
   'project-allow': { project: { allow: ['Write'] } },
 
+  // ── ومجلدٌ **أعلى** من cwd ────────────────────────────────────────────────
+  // ‏`resolveSettings` لا يحمّله إطلاقاً (‏`sources: ['user']` وحدها). لكنّ محرك
+  // الدمج ليس مُقيِّم الأذونات — وهي الفجوة عينها التي أخفت تظليل `local` أوّلاً.
+  // فيُقاس حيّاً: إن استُشير المربع فلا تظليل، ولا شيء يُحرَس هناك.
+  'parent-local-allow': { parentLocal: { allow: ['Write'] } },
+  'parent-project-allow': { parentProject: { allow: ['Write'] } },
+
   // ── البند الثاني الباقي: الصيغ المقيَّدة ─────────────────────────────────────
   // قِيست `Write` المجرّدة و`Write(*)` وحدهما. والسؤال هنا شقّان: هل تظلّل الصيغة
   // المقيَّدة أصلاً؟ وإن ظلّلت، هل تظلّل **المطابق منها وحده** أم كلَّ استدعاءات
@@ -181,7 +188,19 @@ function buildHome(permissions) {
 // الإعدادات، ونطاقا `project`/`local` يعيشان داخله. ويُنشأ **جديداً لكل محاولة**
 // فلا تتسرّب حالةُ محاولة فاشلة إلى تاليتها.
 function buildWorkdir(spec) {
-  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'obs140-work-'));
+  // مشاهد المجلد الأعلى تحتاج شجرة: `<root>/inner` هو cwd، والإعداد في `<root>/.claude`.
+  const needsParent = !!(spec.parentProject || spec.parentLocal);
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'obs140-work-'));
+  const workdir = needsParent ? path.join(base, 'inner') : base;
+  if (needsParent) {
+    fs.mkdirSync(workdir, { recursive: true });
+    const up = path.join(base, '.claude');
+    fs.mkdirSync(up, { recursive: true });
+    const p = resolvePayload(spec.parentProject, workdir);
+    const l = resolvePayload(spec.parentLocal, workdir);
+    if (p) fs.writeFileSync(path.join(up, 'settings.json'), JSON.stringify({ permissions: p }, null, 2));
+    if (l) fs.writeFileSync(path.join(up, 'settings.local.json'), JSON.stringify({ permissions: l }, null, 2));
+  }
   const claudeDir = path.join(workdir, '.claude');
   const plant = (rel, permissions) => {
     if (!permissions) return;
@@ -462,8 +481,10 @@ for (const [name, spec] of Object.entries(SCENARIOS)) {
   }
   if (skipped) { out.scenarios[name] = { skipped: true, reason: skipped }; continue; }
   out.scenarios[name] = {
-    scope: spec.local ? 'local' : spec.project ? 'project' : 'user',
-    permissions: resolvePayload(spec.home || spec.project || spec.local, '<workdir>'),
+    scope: spec.parentLocal ? 'parent-local' : spec.parentProject ? 'parent-project'
+      : spec.local ? 'local' : spec.project ? 'project' : 'user',
+    permissions: resolvePayload(spec.home || spec.project || spec.local
+      || spec.parentProject || spec.parentLocal, '<workdir>'),
     credential: built && built.credential,
     childExit: res && res.status,
     attemptsUsed: attempts,
