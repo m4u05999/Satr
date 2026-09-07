@@ -1,7 +1,7 @@
 ﻿# فحص التثبيت والترقية بملفّي NSIS على عدّاء GitHub نظيف؛ لا يُشغّل على جهاز المالك.
 # يبقى هذا الملف UTF-8 مع BOM كي يقرأ PowerShell 5.1 التعليقات العربية سليمة.
 # لا إلغاء تثبيت بين النسختين. إعادة التشغيل بعد العضّة تقبل النسخة السابقة وحدها.
-# إثبات الإقلاع نافذة عملية حيّة، وليس فحص DOM أو قبولاً بصرياً أو اختبار APPX.
+# إثبات الإقلاع نافذة القشرة المملوكة ولو كانت مخفية، وليس فحص DOM أو قبولاً بصرياً أو اختبار APPX.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$PreviousInstaller,
@@ -37,7 +37,7 @@ $report = [ordered]@{
   candidate_arp = @()
   exe_product_version = $null
   locale_files = @()
-  startup = [ordered]@{ proof = 'none'; pid = $null; window_handle = $null; observed_ms = 0; dom_checked = $false }
+  startup = [ordered]@{ proof = 'none'; pid = $null; window_handle = $null; class_name = $null; title_matches_shell = $false; visible = $null; observed_ms = 0; stable_ms = 0; dom_checked = $false }
   cleanup = [ordered]@{ stopped_pids = [Collections.Generic.List[int]]::new(); failure = $null }
   failure = $null
 }
@@ -114,6 +114,83 @@ function Assert-Arp([object[]]$Entries, [string]$Version, [string]$Phase) {
   Assert-Check ($location -ieq $script:expectedInstallPath) "$Phase.arp.install_path" "ARP install path mismatch: phase=$Phase"
   Assert-Check (Test-Path -LiteralPath (Join-Path $location 'Satr.exe') -PathType Leaf) "$Phase.exe.exists" "Installed Satr.exe missing: phase=$Phase"
   return $location
+}
+
+# MainWindowHandle يستبعد النافذة المخفية؛ نقرأ نوافذ PID المملوك دون تغيير ظهورها.
+# الفئة والعنوان الثابتان يميّزان القشرة من نوافذ Electron المساعدة، ولا نحفظ عناوين أخرى.
+function Initialize-OwnedShellWindowProbe {
+  if ('SatrCandidateOwnedShellWindow' -as [type]) { return }
+  $nativeWindowSource = @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public sealed class SatrCandidateShellWindow {
+  public long Handle { get; set; }
+  public uint ProcessId { get; set; }
+  public string ClassName { get; set; }
+  public bool TitleMatchesShell { get; set; }
+  public bool Visible { get; set; }
+}
+
+public static class SatrCandidateOwnedShellWindow {
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
+
+  [DllImport("user32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
+
+  [DllImport("user32.dll", SetLastError = true)]
+  private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+  private static extern int GetClassNameW(IntPtr window, StringBuilder value, int capacity);
+
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+  private static extern int GetWindowTextW(IntPtr window, StringBuilder value, int capacity);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool IsWindow(IntPtr window);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool IsWindowVisible(IntPtr window);
+
+  public static SatrCandidateShellWindow Find(uint ownedProcessId) {
+    SatrCandidateShellWindow found = null;
+    EnumWindowsCallback callback = delegate(IntPtr window, IntPtr parameter) {
+      if (found != null) return true;
+      uint processId;
+      if (GetWindowThreadProcessId(window, out processId) == 0 || processId != ownedProcessId) return true;
+      StringBuilder className = new StringBuilder(256);
+      if (GetClassNameW(window, className, className.Capacity) == 0 ||
+          !String.Equals(className.ToString(), "Chrome_WidgetWin_1", StringComparison.Ordinal)) return true;
+      StringBuilder title = new StringBuilder(512);
+      if (GetWindowTextW(window, title, title.Capacity) == 0 ||
+          !String.Equals(title.ToString(), "\u0633\u0637\u0631 \u2014 Satr", StringComparison.Ordinal)) return true;
+      if (!IsWindow(window) ||
+          GetWindowThreadProcessId(window, out processId) == 0 || processId != ownedProcessId) return true;
+      found = new SatrCandidateShellWindow {
+        Handle = window.ToInt64(),
+        ProcessId = processId,
+        ClassName = className.ToString(),
+        TitleMatchesShell = true,
+        Visible = IsWindowVisible(window)
+      };
+      return true;
+    };
+    bool completed = EnumWindows(callback, IntPtr.Zero);
+    int error = Marshal.GetLastWin32Error();
+    GC.KeepAlive(callback);
+    if (!completed) throw new Win32Exception(error, "Owned shell window enumeration failed.");
+    return found;
+  }
+}
+"@
+  Add-Type -TypeDefinition $nativeWindowSource -Language CSharp
 }
 
 function Stop-OwnedProcess([Diagnostics.Process]$Process) {
@@ -225,6 +302,7 @@ try {
   Assert-Check ($localeEntries.Count -eq 2 -and @($localeEntries | Where-Object { $_.PSIsContainer }).Count -eq 0 -and ($report.locale_files -join ',') -ceq 'ar.pak,en-US.pak') 'candidate.locales_exact' "Locale files mismatch actual=$($report.locale_files -join ',')"
 
   $script:stage = 'candidate.startup'
+  Initialize-OwnedShellWindowProbe
   $profilePath = Join-Path $script:runnerRoot ('satr-candidate-profile-' + [Guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $profilePath | Out-Null
   $launchArgs = @(('--user-data-dir="' + $profilePath + '"'), '--lang=ar')
@@ -232,25 +310,39 @@ try {
   $report.startup.pid = $script:ownedApp.Id
   $startupTimer = [Diagnostics.Stopwatch]::StartNew()
   $windowFirstSeen = $null
+  $stableWindowHandle = $null
   while ($startupTimer.ElapsedMilliseconds -lt 120000) {
     $script:ownedApp.Refresh()
     if ($script:ownedApp.HasExited) { throw "Installed app exited during startup: exit=$($script:ownedApp.ExitCode)" }
-    $windowHandle = $script:ownedApp.MainWindowHandle
-    if ($windowHandle -ne [IntPtr]::Zero) {
-      if ($null -eq $windowFirstSeen) { $windowFirstSeen = $startupTimer.ElapsedMilliseconds }
-      $report.startup.window_handle = $windowHandle.ToInt64()
-      if ($startupTimer.ElapsedMilliseconds - $windowFirstSeen -ge 5000) { break }
+    $shellWindow = [SatrCandidateOwnedShellWindow]::Find([uint32]$script:ownedApp.Id)
+    if ($null -ne $shellWindow) {
+      # لا تُجمع مدة نافذتين؛ تغيير HWND يبدأ فترة الثبات من جديد.
+      if ($stableWindowHandle -ne $shellWindow.Handle) {
+        $stableWindowHandle = $shellWindow.Handle
+        $windowFirstSeen = $startupTimer.ElapsedMilliseconds
+      }
+      $report.startup.window_handle = $shellWindow.Handle
+      $report.startup.class_name = $shellWindow.ClassName
+      $report.startup.title_matches_shell = $shellWindow.TitleMatchesShell
+      $report.startup.visible = $shellWindow.Visible
+      $report.startup.stable_ms = $startupTimer.ElapsedMilliseconds - $windowFirstSeen
+      if ($report.startup.stable_ms -ge 5000) { break }
     } else {
       $windowFirstSeen = $null
+      $stableWindowHandle = $null
       $report.startup.window_handle = $null
+      $report.startup.class_name = $null
+      $report.startup.title_matches_shell = $false
+      $report.startup.visible = $null
+      $report.startup.stable_ms = 0
     }
     Start-Sleep -Milliseconds 250
   }
   $startupTimer.Stop()
   $report.startup.observed_ms = $startupTimer.ElapsedMilliseconds
-  Assert-Check ($null -ne $windowFirstSeen -and $null -ne $report.startup.window_handle -and $startupTimer.ElapsedMilliseconds - $windowFirstSeen -ge 5000) 'candidate.startup_window' 'Installed app did not keep a main window for 5000 ms within 120000 ms.'
-  $report.startup.proof = 'process_main_window_alive_5000ms'
-  Write-Host "STARTUP pid=$($report.startup.pid) main_window=$($report.startup.window_handle) dom_checked=false"
+  Assert-Check ($null -ne $windowFirstSeen -and $null -ne $report.startup.window_handle -and $report.startup.title_matches_shell -and $report.startup.stable_ms -ge 5000) 'candidate.owned_shell_window' 'Installed app did not keep the same owned shell window for 5000 ms within 120000 ms.'
+  $report.startup.proof = 'owned_shell_window_alive_5000ms'
+  Write-Host "STARTUP pid=$($report.startup.pid) owned_shell_window=$($report.startup.window_handle) visible=$($report.startup.visible) stable_ms=$($report.startup.stable_ms) dom_checked=false"
   $report.status = 'passed'
   $exitCode = 0
 } catch {
