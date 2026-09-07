@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('satr', {
   openReleaseNotes: (version) => ipcRenderer.invoke("satr:openReleaseNotes", { version }), // «ما الجديد؟» — main يبني الرابط
   features: () => ipcRenderer.invoke('satr:features'),
   activityList: (cwd) => ipcRenderer.invoke('satr:activityList', { cwd }),
+  // OBS-142: أثر أحداث الدور — قراءة فقط بلا مدخلات، وبلا نصّ في الردّ.
+  eventTrace: () => ipcRenderer.invoke('satr:eventTrace'),
   activityClear: (cwd, confirmed) => ipcRenderer.invoke('satr:activityClear', { cwd, confirmed }),
   providers: () => ipcRenderer.invoke('satr:providers'),
   testspriteJobStatus: () => ipcRenderer.invoke('satr:testspriteJobStatus'),

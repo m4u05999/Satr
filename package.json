@@ -36,6 +36,7 @@
     "test:gitsafe": "node scripts/gitsafe-test.js",
     "test:chat-rtl": "electron scripts/chat-rtl-test.js",
     "test:empty-block": "electron scripts/empty-block-test.js",
+    "test:eventtrace": "node scripts/eventtrace-test.js",
     "test:update-ui": "electron scripts/update-ui-test.js",
     "test:settings-account": "electron scripts/settings-account-test.js",
     "test:task-ledger-ui": "electron scripts/task-ledger-ui-test.js",

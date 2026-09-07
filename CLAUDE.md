@@ -204,6 +204,14 @@ electron/features.js ← طبقة القدرات (feature-flags) + المُحم�
                        registerIpc (قنوات satr:ee: حصراً — §4.5) + subscribe (§4.7 مجرى
                        مراقبة أحداث: main.js يبثّ عبر notify() كل أحداث الدور + prompt +
                        permission_reply — للتدقيق والاستهلاك). notify رخيص بلا مشتركين
+electron/eventtrace.js ← عدّاد أحداث الدور (‏OBS-142): وحدة نقية بلا تبعيات (نمط
+                       diff.js) تجيب «أين يسقط الحدث؟» بأربع نقاط قياس — `emit` قبل
+                       أي مرشّح · حارس `runSeq` (وكان `return` صامتاً) · `emitToWindow`
+                       · و`onEvent` في `app.js`. لا يمرّ منها نصّ إطلاقاً: النوع
+                       والطور و**طول** النصّ واسم الأداة بلا وسيطتها وسبب الإسقاط
+                       ورمزا الدور. ذاكرة العملية فقط — لا قرص ولا شبكة — وتُقرأ
+                       بـ`satr:eventTrace` (قراءة فقط بلا مدخلات). حلقة 200 إسقاط
+                       والقصّ معلن في `dropsOverflow`. أداةُ قياسٍ لا علاج.
 electron/activity.js ← سجل Community محلي مختصر ومحدود (200 حدث): يخزن نوع النشاط والمحرك
                        واسم الأداة والمسار النسبي وقرار الإذن والنتيجة فقط، مفصولاً ببصمة
                        المشروع. لا prompt أو tool input/output أو cwd/session/permission ids؛

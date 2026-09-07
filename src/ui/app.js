@@ -1103,7 +1103,16 @@ import { createPreviewShield } from './lib/preview-shield.js';
   // إشعار اكتمال الدور: انتقل لمكوّن <satr-chat> (ت-12) — chatEl.notifyTurnDone(isError)
 
   // ---------- استقبال أحداث Claude من العملية الرئيسية ----------
+  // OBS-142: نقطة القياس الثالثة — عدّاد ما **وصل المُصيِّر فعلاً**، بلا نصّ.
+  // تُقارَن بـ`emitted`/`sent` من `window.satr.eventTrace()` فيُعرف موضع أول سقوط:
+  // ‏emitted > sent ⇒ الحجب في `main`؛ و‏sent > received ⇒ في نقل IPC؛ و‏received
+  // بلا رسم ⇒ في الواجهة. وهو الفارق الذي بقي مجهولاً لأن الإسقاط كان صامتاً.
+  const uiEventCounts = { total: 0, byType: Object.create(null) };
+  window.__satrUiEventCounts = uiEventCounts;
   window.satr.onEvent((ev) => {
+    uiEventCounts.total += 1;
+    const evType = ev && typeof ev.type === 'string' ? ev.type.slice(0, 64) : '?';
+    uiEventCounts.byType[evType] = (uiEventCounts.byType[evType] || 0) + 1;
     // طلبات الأذونات تُعالج دائماً ولو كانت الكتلة منتهية
     if (ev.type === 'permission_request') {
       permEl.request({
