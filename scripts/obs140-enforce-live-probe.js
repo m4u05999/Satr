@@ -45,9 +45,10 @@ function buildHome(permissions) {
 }
 
 // ── العملية الابنة: تشغّل agent.start() الإنتاجي ─────────────────────────────
-async function runChild() {
+async function runChild(workdirFromParent) {
   const agent = require(path.join(__dirname, '..', 'electron', 'agent.js'));
-  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'obs140-enf-work-'));
+  // مجلد العمل يأتي من الأمّ حين يزرع المشهد ملفاً داخله (النطاق المحلي)؛ وإلا يُنشأ هنا.
+  const workdir = workdirFromParent || fs.mkdtempSync(path.join(os.tmpdir(), 'obs140-enf-work-'));
   const events = [];
   const permissionTools = [];
   const attemptedTools = [];
@@ -109,7 +110,8 @@ async function runChild() {
 
 const argv = process.argv.slice(2);
 if (argv.includes('--child')) {
-  runChild()
+  const wdFlag = argv.indexOf('--workdir');
+  runChild(wdFlag === -1 ? null : argv[wdFlag + 1])
     .then((r) => { console.log('__RESULT__' + JSON.stringify({ ok: true, ...r })); process.exit(0); })
     .catch((e) => { console.log('__RESULT__' + JSON.stringify({ ok: false, error: String((e && e.message) || e) })); process.exit(1); });
   return;
@@ -120,11 +122,13 @@ const out = { ok: true, scenarios: {} };
 const before = fs.existsSync(path.join(REAL_HOME, '.claude', 'settings.json'))
   ? fs.statSync(path.join(REAL_HOME, '.claude', 'settings.json')).mtimeMs : null;
 
-for (const [name, permissions] of [
-  ['allow-write', { allow: ['Write'] }],   // القاعدة التي أثبت الفخّ أنها كانت تُظلّل
-  ['no-settings', null],                    // شاهد سالب: المربع يعمل كالمعتاد
+for (const [name, permissions, scope] of [
+  ['allow-write', { allow: ['Write'] }, 'user'],  // القاعدة التي أثبت الفخّ أنها كانت تُظلّل
+  // النطاق الثاني المقيس مُظلِّلاً — وناقلُه **خارجي**: ملفٌّ يصل مع المشروع نفسه.
+  ['local-allow-write', { allow: ['Write'] }, 'local'],
+  ['no-settings', null, 'user'],                  // شاهد سالب: المربع يعمل كالمعتاد
 ]) {
-  const built = buildHome(permissions);
+  const built = buildHome(scope === 'user' ? permissions : null);
   if (String(built.credential).startsWith('link_failed')) {
     out.scenarios[name] = { skipped: true, reason: built.credential };
     continue;
@@ -138,16 +142,25 @@ for (const [name, permissions] of [
   let attempts = 0;
   while (attempts < MAX_ATTEMPTS) {
     attempts += 1;
-    res = spawnSync(process.execPath, [__filename, '--child'], {
+    // مجلد عمل جديد لكل محاولة، وفيه ملفُّ النطاق المحلي إن كان المشهد يقيسه.
+    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'obs140-enf-work-'));
+    if (scope === 'local') {
+      fs.mkdirSync(path.join(workdir, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(workdir, '.claude', 'settings.local.json'),
+        JSON.stringify({ permissions }, null, 2), 'utf8');
+    }
+    res = spawnSync(process.execPath, [__filename, '--child', '--workdir', workdir], {
       encoding: 'utf8',
       env: { ...process.env, HOME: built.home, USERPROFILE: built.home, SATR_OBS140_REAL_HOME: REAL_HOME },
       timeout: TURN_TIMEOUT_MS + 60000,
     });
     const line = String(res.stdout || '').split('\n').find((l) => l.startsWith('__RESULT__'));
     try { parsed = JSON.parse(line.slice('__RESULT__'.length)); } catch (e) { parsed = null; }
+    try { fs.rmSync(workdir, { recursive: true, force: true }); } catch (e) { /* أفضل جهد */ }
     if (parsed && parsed.writeAttempted === true) break;
   }
   out.scenarios[name] = {
+    scope,
     permissions,
     childExit: res && res.status,
     attemptsUsed: attempts,
@@ -157,17 +170,22 @@ for (const [name, permissions] of [
 }
 
 const a = out.scenarios['allow-write'] || {};
+const l = out.scenarios['local-allow-write'] || {};
 const c = out.scenarios['no-settings'] || {};
+// الإنفاذ يعمل إن وصل المربع **رغم** قاعدة السماح، ولم تقع الكتابة.
+const enforcedIn = (cell) => cell.writeAttempted === true
+  && cell.permissionRequests > 0 && cell.markerExists === false;
 out.verdict = {
   isolationWorked: typeof a.homeSeenByChild === 'string' && a.homeSeenByChild !== REAL_HOME,
   controlSane: c.writeAttempted === true && c.permissionRequests > 0 && c.markerExists === false,
-  // الإنفاذ يعمل إن وصل المربع **رغم** قاعدة السماح، ولم تقع الكتابة.
-  enforced: a.writeAttempted === true && a.permissionRequests > 0 && a.markerExists === false,
+  enforcedUserScope: enforcedIn(a),
+  enforcedLocalScope: enforcedIn(l),
 };
-out.verdict.pass = out.verdict.isolationWorked && out.verdict.controlSane && out.verdict.enforced;
+out.verdict.pass = out.verdict.isolationWorked && out.verdict.controlSane
+  && out.verdict.enforcedUserScope && out.verdict.enforcedLocalScope;
 out.verdict.note = out.verdict.pass
-  ? 'الإنفاذ يعمل في مسار الإنتاج: وصل مربع الإذن رغم قاعدة السماح، ولم تقع الكتابة.'
-  : 'لا يُقرأ هذا نجاحاً — راجع الحقول: العزل، والشاهد السالب، ووصول المربع.';
+  ? 'الإنفاذ يعمل في مسار الإنتاج للنطاقين: وصل مربع الإذن رغم قاعدة السماح، ولم تقع الكتابة.'
+  : 'لا يُقرأ هذا نجاحاً — راجع الحقول: العزل، والشاهد السالب، ووصول المربع في النطاقين.';
 out.realHomeUntouched = before === (fs.existsSync(path.join(REAL_HOME, '.claude', 'settings.json'))
   ? fs.statSync(path.join(REAL_HOME, '.claude', 'settings.json')).mtimeMs : null);
 

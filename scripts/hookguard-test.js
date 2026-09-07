@@ -353,8 +353,11 @@ function broken2() {
       'OBS-140: التنبيه يسمّي الأدوات المسموح بها');
     ok(!first.includes('npm run test'),
       'OBS-140: وسيطة القاعدة لا تعبر التنبيه — الاسم وحده');
-    ok(first.includes('لن يعرض «سطر» مربع الإذن'),
-      'OBS-140: التنبيه يقول الأثر صراحةً لا يلمّح');
+    // النصّ يصف الأثر **بعد** الإنفاذ: القاعدة «كانت ستتخطّى» المربع و«سطر» يوجّهها
+    // إليه. الصياغة الأولى («فلن يعرض سطر مربع الإذن») صارت غير صحيحة يوم شُحن
+    // الإنفاذ — تنبيهٌ يعِد بما لم يعد يقع يُفقد الثقة بكل التنبيهات.
+    ok(first.includes('كانت ستتخطّى مربع الإذن') && first.includes('يوجّهها إليه'),
+      'OBS-140: التنبيه يقول الأثر صراحةً ويطابق سلوك الإنفاذ القائم');
 
     // (٣) لا يتكرّر ما دامت القواعد كما هي.
     ok(!(await make().inspectProject(dir) || '').includes('permissions.allow'),
@@ -423,11 +426,11 @@ function broken2() {
     // (١١) عقد الوصل في agent.js — يُقرأ من المصدر لا من نسخة موازية.
     const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'agent.js'), 'utf8');
     ok(/const shadowedAllowTools = isolatedPolicy \|\| internalPolicy/.test(agentSrc)
-      && /hookguard\.userAllowToolNamesSync\(\)/.test(agentSrc),
-    'OBS-140: agent.js يبني المجموعة متزامنةً ويستثني السياقات المعزولة');
+      && /hookguard\.shadowingAllowToolNamesSync\(cwd\)/.test(agentSrc),
+    'OBS-140: agent.js يبني المجموعة متزامنةً من النطاقين ويستثني السياقات المعزولة');
     ok(/permissionMode !== 'bypassPermissions'\s*\n\s*&& shadowedAllowTools\.has\(input\.tool_name\)/.test(agentSrc),
       'OBS-140: الإنفاذ يستثني bypassPermissions صراحةً — تجاوزه مقصود لا ثغرة');
-    ok(/permissionDecision: 'ask'[\s\S]{0,200}قاعدة سماح في إعدادات المستخدم/.test(agentSrc),
+    ok(/permissionDecision: 'ask'[\s\S]{0,200}قاعدة سماح في إعدادات Claude/.test(agentSrc),
       'OBS-140: القرار «ask» بسبب معلن يوجّه الأداة إلى مربع الإذن');
 
     // (١٢) فشل قراءة إعداد المستخدم لا يُسقط الحارس ولا يخترع تنبيهاً.
@@ -440,6 +443,83 @@ function broken2() {
     }).inspectProject(projectDir('obs140-broken'));
     ok(!(brokenNotice || '').includes('permissions.allow'),
       'OBS-140: إعداد مستخدم تالف يتدهور صامتاً (fail-open)');
+
+    // ── OBS-140 (النطاق المحلي): `<cwd>/.claude/settings.local.json` ────────────
+    // مقيسٌ مُظلِّلاً مثل ملف المستخدم (‏`probe:obs140-user`، مشهد `local-allow`:
+    // صفر استدعاء + العلامة على القرص + إقرار الأداة)، بينما `settings.json` في
+    // المجلد نفسه يمرّ بالمربع — والفرقُ اسمُ الملف وحده.
+    {
+      const localDir = projectDir('obs140-local');
+      const localStore = path.join(ROOT, 'obs140-store-local.json');
+      const cleanUser = path.join(ROOT, 'fake-home-local', '.claude', 'settings.json');
+      const makeLocal = () => hookguard.createGuard({
+        file: localStore, claudeJson, userSettings: cleanUser,
+        now: () => new Date('2026-09-07T00:00:00.000Z'),
+      });
+
+      // (١٣) بلا ملف محلي ⇒ لا تنبيه.
+      ok(!(await makeLocal().inspectProject(localDir) || '').includes('settings.local.json'),
+        'OBS-140: بلا settings.local.json لا تنبيه محلي');
+
+      // (١٤) قاعدة سماح محلية ⇒ تنبيه **بنصّه الخاص** يسمّي الملف والمشروع.
+      writeJson(path.join(localDir, '.claude', 'settings.local.json'), {
+        permissions: { allow: ['Write', 'Bash(rm -rf /)'] },
+      });
+      const localNotice = await makeLocal().inspectProject(localDir) || '';
+      ok(localNotice.includes('.claude/settings.local.json') && localNotice.includes('«Write»')
+        && localNotice.includes('«Bash»'),
+      'OBS-140: تنبيه محلي يسمّي الملف والأدوات');
+      ok(localNotice.includes('وصل مع المشروع'),
+        'OBS-140: نصّ التنبيه المحلي يميّز الناقل الخارجي عن إعداد المستخدم');
+      ok(!localNotice.includes('rm -rf'),
+        'OBS-140: وسيطة القاعدة المحلية لا تعبر التنبيه — الاسم وحده');
+
+      // (١٥) لا يتكرّر بلا تغيّر — والحقل يبقى في المخزن عبر القراءات. (أُسقط الحقل
+      // في `cleanProjects` أوّلاً فكان التنبيه يتكرّر كل دور: أساسٌ يعود فارغاً
+      // يجعل كلَّ مسحٍ «تغيّراً».)
+      ok(!(await makeLocal().inspectProject(localDir) || '').includes('settings.local.json'),
+        'OBS-140: تنبيه محلي لا يتكرّر بلا تغيّر (الحقل يصمد في المخزن)');
+
+      // (١٦) تغيّر القواعد المحلية ⇒ تنبيه جديد.
+      writeJson(path.join(localDir, '.claude', 'settings.local.json'), {
+        permissions: { allow: ['Write', 'Bash(rm -rf /)', 'Edit'] },
+      });
+      ok((await makeLocal().inspectProject(localDir) || '').includes('«Edit»'),
+        'OBS-140: تغيّر القواعد المحلية ينبّه ثانيةً');
+
+      // (١٧) المخزن يحمل بصمتين مستقلّتين — لا أسماء ولا وسائط.
+      const localSaved = JSON.stringify(readStore(localStore));
+      ok(!localSaved.includes('Write') && !localSaved.includes('rm -rf')
+        && localSaved.includes('allowLocal'),
+      'OBS-140: المخزن يحمل بصمة allowLocal مستقلّة بلا محتوى الإعداد');
+
+      // (١٨) مجموعة الإنفاذ تضمّ النطاقين — ولا تضمّ `settings.json` في المشروع.
+      const encDir = projectDir('obs140-enforce-scope');
+      writeJson(path.join(encDir, '.claude', 'settings.local.json'), {
+        permissions: { allow: ['Bash(npm test)'] },
+      });
+      writeJson(path.join(encDir, '.claude', 'settings.json'), {
+        permissions: { allow: ['WebFetch'] },
+      });
+      const userEnf = path.join(ROOT, 'fake-home-scope', '.claude', 'settings.json');
+      writeJson(userEnf, { permissions: { allow: ['Write'] } });
+      const union = hookguard.shadowingAllowToolNamesSync(encDir, { userSettings: userEnf });
+      ok(union.has('Write') && union.has('Bash'),
+        'OBS-140: مجموعة الإنفاذ تضمّ إعداد المستخدم و settings.local.json معاً');
+      ok(!union.has('WebFetch'),
+        'OBS-140: settings.json في المشروع **لا** يدخل الإنفاذ — مقيس أنه يمرّ بالمربع');
+
+      // (١٩) fail-open ومسار غياب cwd: لا استثناء ولا مجموعة مخترَعة.
+      const emptyUser2 = path.join(ROOT, 'fake-home-empty2', '.claude', 'settings.json');
+      ok(hookguard.shadowingAllowToolNamesSync(null, { userSettings: emptyUser2 }).size === 0,
+        'OBS-140: بلا cwd وبلا إعداد ⇒ مجموعة فارغة لا استثناء');
+      const badLocal = path.join(projectDir('obs140-bad-local'), '.claude', 'settings.local.json');
+      fs.mkdirSync(path.dirname(badLocal), { recursive: true });
+      fs.writeFileSync(badLocal, '{ not json', 'utf8');
+      ok(hookguard.shadowingAllowToolNamesSync(path.dirname(path.dirname(badLocal)),
+        { userSettings: emptyUser2 }).size === 0,
+      'OBS-140: ملف محلي تالف ⇒ مجموعة فارغة (fail-open)');
+    }
   }
 
   fs.rmSync(ROOT, { recursive: true, force: true });
