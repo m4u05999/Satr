@@ -84,10 +84,17 @@ function Get-SatrArp {
       $code = $key.PSChildName.Trim([char[]]'{}').ToLowerInvariant()
       if ($code -ne $productCode -and $displayName -notmatch '(?i)\bSatr\b') { continue }
       $versionProperty = $entry.PSObject.Properties['DisplayVersion']
-      $pathProperty = $entry.PSObject.Properties['InstallLocation']
+      # NSIS يكتب المسار في Software\{ProductCode} منفصلاً عن مدخل إزالة التثبيت.
+      $installKey = $root -replace 'Microsoft\\Windows\\CurrentVersion\\Uninstall$', $code
+      $pathProperty = $null
+      if (Test-Path -LiteralPath $installKey) {
+        $installInfo = Get-ItemProperty -LiteralPath $installKey -ErrorAction Stop
+        $pathProperty = $installInfo.PSObject.Properties['InstallLocation']
+      }
       [pscustomobject]@{
         ProductCode = $code
         RegistryPath = $key.Name
+        InstallRegistryPath = $installKey
         IsCurrentUser = $root.StartsWith('HKCU:', [StringComparison]::OrdinalIgnoreCase)
         DisplayVersion = if ($null -ne $versionProperty) { [string]$versionProperty.Value } else { '' }
         InstallLocation = if ($null -ne $pathProperty) { [string]$pathProperty.Value } else { '' }
