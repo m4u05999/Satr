@@ -221,6 +221,58 @@ async function testAgentController() {
   assert.deepEqual(plain(await lateMapping.stopSdkTask(TASK_ID)), { ok: true });
   assert.deepEqual(lateMappingCalls, [['move', TOOL_USE_ID], ['stop', TASK_ID]]);
 
+  // بلاغ مالك 2026-09-10: مهمة بدأها النموذج في الخلفية بنفسه (‏is_backgrounded — شارة
+  // OBS-094) كان إشعارها الختامي يُسقط هنا صامتاً (لا moveState) فتبقى بطاقتها «يعمل في
+  // الخلفية» — وكانت الشارة تقفل الجلسة في الواجهة. الآن يُمرَّر الإشعار المنقّى نفسه،
+  // بلا حجز input (لا نقل مستخدم) وبلا إيقاف (main لا يملكها).
+  const modelEvents = [];
+  let modelCloses = 0;
+  const modelBg = createSdkBackgroundController({
+    query: { async backgroundTasks() { return true; }, async stopTask() { throw new Error('must not stop'); } },
+    emit: (event) => modelEvents.push(event), closeInput: () => { modelCloses++; }, isolated: false,
+  });
+  modelBg.observe({
+    type: 'system', subtype: 'task_started', task_id: TASK_ID, tool_use_id: TOOL_USE_ID,
+    is_backgrounded: true, task_type: 'local_bash', description: 'npm test',
+  });
+  assert.equal(modelBg.hasSdkBackgroundTasks(), false, 'مهمة النموذج الخلفية ليست نقل مستخدم — لا حجز');
+  modelBg.markResult();
+  assert.equal(modelCloses, 1, 'Query لا تُحجز لمهمة لم ينقلها المستخدم');
+  assert.deepEqual(plain(await modelBg.stopSdkTask(TASK_ID)), {
+    ok: false, error: 'not_found', message: 'لم تُسجّل هذه المهمة ضمن مهام Claude الخلفية.',
+  }, 'إيقاف مهمة النموذج الخلفية يبقى مرفوضاً — الواجهة لا تعرض له زراً');
+  modelBg.observe(taskMessage());
+  assert.deepEqual(plain(modelEvents), [{
+    type: 'sdk_task_notification', taskId: TASK_ID, toolUseId: TOOL_USE_ID, status: 'completed', summary: 'اكتملت المهمة',
+  }], 'إشعار مهمة النموذج الخلفية يجب أن يصل البطاقة منقّى');
+  assert.ok(!JSON.stringify(modelEvents).includes(SECRET_SENTINEL), 'تسرّب output_file إلى إشعار مهمة النموذج');
+  modelBg.observe(taskMessage());
+  assert.equal(modelEvents.length, 1, 'الإشعار المكرر لمهمة محسومة لا يُبثّ ثانيةً');
+
+  // الأمامية (‏is_backgrounded=false) بلا شارة ⇒ لا إشعار لها (نتيجة أداتها تكفي بطاقتها)
+  const foregroundEvents = [];
+  const foreground = createSdkBackgroundController({
+    query: { async backgroundTasks() { return true; } },
+    emit: (event) => foregroundEvents.push(event), closeInput: () => {}, isolated: false,
+  });
+  foreground.observe({ type: 'system', subtype: 'task_started', task_id: TASK_ID, tool_use_id: TOOL_USE_ID, is_backgrounded: false });
+  foreground.observe(taskMessage());
+  assert.deepEqual(foregroundEvents, [], 'مهمة أمامية لا تولّد إشعار بطاقة خلفية');
+
+  // الانتقال اللاحق (‏task_updated.patch) يُعامل كالبداية، وانتهاء Query قبل الإشعار يحسم الشارة
+  const patchedEvents = [];
+  const patched = createSdkBackgroundController({
+    query: { async backgroundTasks() { return true; } },
+    emit: (event) => patchedEvents.push(event), closeInput: () => {}, isolated: false,
+  });
+  patched.observe({ type: 'system', subtype: 'task_started', task_id: TASK_ID, tool_use_id: TOOL_USE_ID, is_backgrounded: false });
+  patched.observe({ type: 'system', subtype: 'task_updated', task_id: TASK_ID, patch: { is_backgrounded: true, status: 'running' } });
+  patched.finish('failed');
+  assert.deepEqual(plain(patchedEvents), [{
+    type: 'sdk_task_notification', toolUseId: TOOL_USE_ID, taskId: TASK_ID, status: 'failed',
+    summary: 'انتهى تشغيل Claude قبل وصول إشعار المهمة الخلفية.',
+  }], 'شارة مهمة النموذج تُحسم عند انتهاء Query بلا Ledger إضافي');
+
   const direct = sdkTaskNotificationEvent(taskMessage(), TOOL_USE_ID);
   assert.deepEqual(Object.keys(direct).sort(), ['status', 'summary', 'taskId', 'toolUseId', 'type']);
   assert.equal(direct.summary, 'اكتملت المهمة');

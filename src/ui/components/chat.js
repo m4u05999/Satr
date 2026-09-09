@@ -128,6 +128,11 @@ class SatrChat extends HTMLElement {
       sdkToolsByTaskId.clear();
     }
 
+    // قفل الجلسة (الدفعة D) يخصّ **نقل المستخدم** وحده: بطاقة نقلها هو تملك زر إيقاف Query
+    // الخلفية فلا تُمسح. أما شارة «يعمل في الخلفية» التي يضعها النموذج بنفسه (‏badge —
+    // ‏OBS-094) فعرضٌ لا قفل: main لا يتتبّعها في moveStates ولا يعد بإشعار ختامي لها،
+    // فلو دخلت القفل لبقي «جلسة جديدة» وتبديل المحرك والمجلد محجوبة حتى إعادة التشغيل
+    // (بلاغ مالك 2026-09-10 — كل Bash(run_in_background) كان يعلّق الجلسة).
     function hasSdkBackgroundTasks() {
       return Array.from(sdkToolsByUseId.values()).some((entry) =>
         !entry.finished && (entry.moving || entry.backgrounded));
@@ -144,6 +149,7 @@ class SatrChat extends HTMLElement {
       entry.finished = true;
       entry.moving = false;
       entry.backgrounded = false;
+      entry.badge = false;
       removeSdkActions(entry);
       entry.el.classList.remove('sdk-moving', 'sdk-backgrounded');
       entry.el.classList.add('done');
@@ -158,7 +164,7 @@ class SatrChat extends HTMLElement {
       const entry = {
         toolUseId, el: element, stateEl: stateElement, detailEl: detailElement,
         timer: null, moveButton: null, stopButton: null, taskId: '',
-        moving: false, backgrounded: false, finished: false, toolResult: null,
+        moving: false, backgrounded: false, badge: false, finished: false, toolResult: null,
       };
       sdkToolsByUseId.set(toolUseId, entry);
       entry.timer = setTimeout(() => {
@@ -227,6 +233,22 @@ class SatrChat extends HTMLElement {
       return true;
     }
 
+    // شارة OBS-094: النموذج نفسه بدأ المهمة في الخلفية (‏is_backgrounded من task_started أو
+    // task_updated.patch). عرضٌ فقط — لا `backgrounded` (قفل الجلسة) ولا زر إيقاف، لأن main
+    // يرفض إيقاف مهمة لم ينقلها المستخدم (‏ownsSdkTask=false ⇒ not_found) فالزر كان يكذب.
+    // زر النقل يُزال: المهمة في الخلفية أصلاً. نتيجة أداة الإطلاق (نص بديل فوري) تُغلق
+    // البطاقة عبر toolDone مع إبقاء الشارة، والإشعار الختامي الذي يمرّره agent.js يحدّثها.
+    function markSdkBadgeBackground(toolUseId) {
+      const entry = sdkToolsByUseId.get(toolUseId);
+      if (!entry || entry.finished || entry.moving || entry.backgrounded) return false;
+      if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+      if (entry.moveButton) { entry.moveButton.remove(); entry.moveButton = null; }
+      entry.badge = true;
+      entry.el.classList.add('sdk-backgrounded');
+      entry.stateEl.textContent = 'يعمل في الخلفية';
+      return true;
+    }
+
     function failSdkBackground(toolUseId) {
       const entry = sdkToolsByUseId.get(toolUseId);
       if (!entry || entry.finished) return false;
@@ -257,6 +279,7 @@ class SatrChat extends HTMLElement {
       entry.finished = true;
       entry.moving = false;
       entry.backgrounded = false;
+      entry.badge = false;
       removeSdkActions(entry);
       entry.el.classList.remove('sdk-moving', 'sdk-backgrounded', 'error');
       entry.el.classList.add('done', 'sdk-background-finished');
@@ -1374,11 +1397,12 @@ class SatrChat extends HTMLElement {
         // spawn_depth مقصوص من القناة مقصوداً: كل بطاقة عندنا عمقها 1 بحكم البناء، فالعمق ضجيج.
         if (event.backgrounded === true) {
           const toolUseId = String(event.toolUseId || '');
-          const taskId = String(event.taskId || '');
           if (!SAFE_SDK_TOOL_USE_ID.test(toolUseId)) return false;
           const entry = sdkToolsByUseId.get(toolUseId);
           if (!entry || entry.finished) return false;
-          markSdkBackground(toolUseId, SAFE_SDK_TASK_ID.test(taskId) ? taskId : '');
+          // شارة عرض لا قفل: markSdkBackground محجوزة لنقل المستخدم (انظر hasSdkBackgroundTasks).
+          // بطاقة قيد النقل أو منقولة فعلاً تبقى على حالها (الشارة فيها تحصيل حاصل).
+          if (!markSdkBadgeBackground(toolUseId)) return false;
           revealActivity('وكيل فرعي يعمل في الخلفية');
           scrollDown();
           return true;
@@ -1432,7 +1456,14 @@ class SatrChat extends HTMLElement {
           if (sdkEntry.timer) { clearTimeout(sdkEntry.timer); sdkEntry.timer = null; }
           sdkEntry.toolResult = { isError: !!isError };
           if (sdkEntry.moving || sdkEntry.backgrounded) return;
-          finishSdkToolEntry(sdkEntry, !!isError);
+          if (sdkEntry.badge && !isError) {
+            // مهمة بدأها النموذج في الخلفية: نتيجة أداة الإطلاق نصّ بديل فوري (‏sdk.d.ts) —
+            // تُغلق البطاقة (لا قفل) وتبقى الشارة حتى يصل الإشعار الختامي فيحدّثها updateSdkTask.
+            // فشل الإطلاق نفسه يمرّ بالمسار العادي (✗ بلا شارة) لأن لا مهمة خلفية وراءه.
+            sdkEntry.finished = true;
+          } else {
+            finishSdkToolEntry(sdkEntry, !!isError);
+          }
         } else {
           el.classList.add('done');
           el.querySelector('.state').textContent = isError ? '✗' : '✓';

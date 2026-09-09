@@ -71,23 +71,40 @@ async function assertSubagentBackgroundBadge(win) {
     const block = chat.newAssistantBlock('اختبار شجرة الوكلاء');
     const toolUseId = 'toolu_' + 'A1b2C3d4E5f6G7h8J9k0Lm2N';
     block.addTool(toolUseId, 'Task', { subagent_type: 'general-purpose', description: 'فحص الخلفية' }, null, true);
-    // حدث حالة خلفية بلا ملخص (‏OBS-094) ⇐ شارة على رأس البطاقة + زر إيقاف مربوط بالمهمة
+    // حدث حالة خلفية بلا ملخص (‏OBS-094) ⇐ شارة على رأس البطاقة — عرضٌ لا قفل ولا زر إيقاف:
+    // main لا يملك هذه المهمة (لم ينقلها المستخدم) فزرّ إيقاف لها كان يردّ not_found.
     const handled = block.updateAgentProgress({
       type: 'sdk_agent_progress', taskId: 'ab12cd34e', toolUseId, backgrounded: true,
     });
     const card = block.el.querySelector('.agent-card');
+    const lockAfterBadge = chat.hasSdkBackgroundTasks();
     // حدث ملخص عادي بلا backgrounded ⇐ يبقى مسار التقدّم كما كان
     const progressHandled = block.updateAgentProgress({
       type: 'sdk_agent_progress', taskId: 'ab12cd34e', toolUseId, summary: 'يفحص المسارات',
     });
     const progressText = card.querySelector('.agent-progress-summary').textContent;
+    // نتيجة أداة الإطلاق (نص بديل فوري للمهمة الخلفية) تُغلق البطاقة وتُبقي الشارة
+    block.toolDone(toolUseId, false);
+    const stateAfterResult = card.querySelector('.state').textContent;
+    const badgeAfterResult = card.classList.contains('sdk-backgrounded');
+    const lockAfterResult = chat.hasSdkBackgroundTasks();
+    // الإشعار الختامي الذي يمرّره agent.js لمهام النموذج الخلفية يحسم الشارة
+    const updated = chat.updateSdkTask({
+      type: 'sdk_task_notification', taskId: 'ab12cd34e', toolUseId, status: 'completed', summary: 'اكتمل الفحص',
+    });
     return {
       handled,
-      badge: card.classList.contains('sdk-backgrounded'),
-      stateText: card.querySelector('.state').textContent,
+      badge: card.classList.contains('sdk-backgrounded') || badgeAfterResult,
+      stateText: stateAfterResult,
       stopButton: !!card.querySelector('.sdk-task-stop'),
+      moveButton: !!card.querySelector('.sdk-background-move'),
+      lockAfterBadge,
+      lockAfterResult,
       progressHandled,
       progressText,
+      updated,
+      stateAfterNotification: card.querySelector('.state').textContent,
+      lockAfterNotification: chat.hasSdkBackgroundTasks(),
       rawToolUseIdVisible: card.textContent.includes(toolUseId),
     };
   })()`, true);
@@ -96,14 +113,74 @@ async function assertSubagentBackgroundBadge(win) {
   assert.strictEqual(result.badge, true,
     'بطاقة الوكيل يجب أن تحمل شارة sdk-backgrounded عند is_backgrounded.');
   assert.strictEqual(result.stateText, 'يعمل في الخلفية',
-    'رأس البطاقة يجب أن يفسّر حالة الخلفية بالعربية.');
-  assert.strictEqual(result.stopButton, true,
-    'المهمة الخلفية المربوطة بمعرّف يجب أن تحصل على زر إيقاف.');
+    'رأس البطاقة يجب أن يفسّر حالة الخلفية بالعربية وتبقى الشارة بعد نتيجة الإطلاق.');
+  assert.strictEqual(result.stopButton, false,
+    'لا زر إيقاف لمهمة لم ينقلها المستخدم — main يرفض إيقافها فالزر يكذب.');
+  assert.strictEqual(result.moveButton, false,
+    'لا زر «انقله للخلفية» لمهمة في الخلفية أصلاً.');
+  // بلاغ مالك 2026-09-10: كانت الشارة تدخل قفل الجلسة فيُحجب «جلسة جديدة» وتبديل المحرك
+  // والمجلد حتى إعادة التشغيل — بعد كل Bash(run_in_background) يبدأه النموذج بنفسه.
+  assert.strictEqual(result.lockAfterBadge, false,
+    'شارة الخلفية التي يضعها النموذج يجب ألا تدخل قفل الجلسة (hasSdkBackgroundTasks).');
+  assert.strictEqual(result.lockAfterResult, false,
+    'قفل الجلسة يجب أن يبقى مفتوحاً بعد نتيجة أداة الإطلاق.');
   assert.strictEqual(result.progressHandled, true, 'مسار ملخص التقدّم يجب ألا يتدهور.');
   assert.strictEqual(result.progressText, 'يفحص المسارات',
     'ملخص التقدّم يُعرض في سطر التقدّم كما كان.');
+  assert.strictEqual(result.updated, true, 'الإشعار الختامي يجب أن يجد البطاقة عبر toolUseId.');
+  assert.strictEqual(result.stateAfterNotification, '✓ اكتملت المهمة الخلفية',
+    'الإشعار الختامي يحسم الشارة إلى اكتمال.');
+  assert.strictEqual(result.lockAfterNotification, false, 'القفل يبقى مفتوحاً بعد الحسم.');
   assert.strictEqual(result.rawToolUseIdVisible, false,
     'المعرّفات التقنية الخام يجب ألا تظهر نصاً في البطاقة.');
+}
+
+// النظير على رقاقة أداة عادية (‏Bash بـrun_in_background هو الحالة الأشيع): الشارة بلا قفل،
+// وفشل الإطلاق نفسه يمرّ بالمسار العادي (✗ بلا شارة)، ونقل المستخدم الصريح يبقى هو
+// الوحيد الذي يقفل الجلسة (عقد الدفعة D بلا تراجع).
+async function assertBackgroundBashChipAndUserMoveLock(win) {
+  const result = await win.webContents.executeJavaScript(`(() => {
+    const chat = document.querySelector('satr-chat');
+    const block = chat.newAssistantBlock('اختبار Bash الخلفي');
+    const bgId = 'toolu_' + 'B1b2C3d4E5f6G7h8J9k0Lm2N';
+    block.addTool(bgId, 'Bash', { command: 'npm test', run_in_background: true }, null, true);
+    block.updateAgentProgress({ type: 'sdk_agent_progress', taskId: 'bb12cd34e', toolUseId: bgId, backgrounded: true });
+    const chip = block.el.querySelector('.tool');
+    const chipBadge = chip.classList.contains('sdk-backgrounded');
+    const chipState = chip.querySelector('.state').textContent;
+    block.toolDone(bgId, false);
+    const lockAfterBash = chat.hasSdkBackgroundTasks();
+    // إطلاق فاشل: الشارة تسقط والرقاقة ✗
+    const failedId = 'toolu_' + 'C1b2C3d4E5f6G7h8J9k0Lm2N';
+    block.addTool(failedId, 'Bash', { command: 'broken', run_in_background: true }, null, true);
+    block.updateAgentProgress({ type: 'sdk_agent_progress', taskId: 'cc12cd34e', toolUseId: failedId, backgrounded: true });
+    block.toolDone(failedId, true);
+    const failedChip = block.el.querySelectorAll('.tool')[1];
+    // نقل المستخدم الصريح (الدفعة D) يقفل الجلسة كما كان
+    const movedId = 'toolu_' + 'D1b2C3d4E5f6G7h8J9k0Lm2N';
+    block.addTool(movedId, 'Bash', { command: 'npm run build' }, null, true);
+    const moved = chat.markSdkBackground(movedId, 'dd12cd34e');
+    const lockAfterUserMove = chat.hasSdkBackgroundTasks();
+    const movedChip = block.el.querySelectorAll('.tool')[2];
+    const movedStop = !!movedChip.querySelector('.sdk-task-stop'); // قبل الحسم: الإشعار يزيل الأزرار
+    chat.updateSdkTask({ type: 'sdk_task_notification', taskId: 'dd12cd34e', toolUseId: movedId, status: 'stopped' });
+    return {
+      chipBadge, chipState, lockAfterBash,
+      failedState: failedChip.querySelector('.state').textContent,
+      failedBadge: failedChip.classList.contains('sdk-backgrounded'),
+      moved, lockAfterUserMove, movedStop,
+      lockAfterStop: chat.hasSdkBackgroundTasks(),
+    };
+  })()`, true);
+  assert.strictEqual(result.chipBadge, true, 'رقاقة Bash الخلفي تحمل الشارة.');
+  assert.strictEqual(result.chipState, 'يعمل في الخلفية', 'رقاقة Bash الخلفي تفسّر حالتها بالعربية.');
+  assert.strictEqual(result.lockAfterBash, false, 'Bash خلفي بدأه النموذج لا يقفل الجلسة.');
+  assert.strictEqual(result.failedState, '✗', 'فشل الإطلاق يظهر ✗.');
+  assert.strictEqual(result.failedBadge, false, 'فشل الإطلاق يُسقط الشارة.');
+  assert.strictEqual(result.moved, true, 'نقل المستخدم الصريح يُقبل.');
+  assert.strictEqual(result.lockAfterUserMove, true, 'نقل المستخدم وحده يقفل الجلسة (الدفعة D بلا تراجع).');
+  assert.strictEqual(result.movedStop, true, 'بطاقة النقل الصريح تملك زر الإيقاف.');
+  assert.strictEqual(result.lockAfterStop, false, 'الإشعار الختامي يفكّ قفل النقل الصريح.');
 }
 
 async function assertOpsEventCard(win) {
@@ -205,8 +282,9 @@ async function main() {
       '\nviolations: ' + JSON.stringify(result.violations || []));
     await assertStoppedToolResult(win);
     await assertSubagentBackgroundBadge(win);
+    await assertBackgroundBashChipAndUserMoveLock(win);
     await assertOpsEventCard(win);
-    console.log('chat-rtl: نجح — الحسم الإحصائي للفقرات والقوائم وفقاعة المستخدم؛ الكود LTR؛ عنوان الإيقاف ثابت بعد نتيجة أداة متأخرة؛ شارة الخلفية على بطاقة الوكيل بزر إيقاف ولا معرّفات خام؛ بطاقات ops معرّبة بلا تكرار ولا نص lifecycle خام؛ صفر CSP.');
+    console.log('chat-rtl: نجح — الحسم الإحصائي للفقرات والقوائم وفقاعة المستخدم؛ الكود LTR؛ عنوان الإيقاف ثابت بعد نتيجة أداة متأخرة؛ شارة الخلفية عرضٌ بلا قفل جلسة ولا زر إيقاف كاذب ولا معرّفات خام، ونقل المستخدم وحده يقفل؛ بطاقات ops معرّبة بلا تكرار ولا نص lifecycle خام؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

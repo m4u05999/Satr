@@ -167,7 +167,14 @@ async function testIpcAndUiAllowlists() {
     agentSource().indexOf('function sdkAgentProgressEvent'),
     agentSource().indexOf('function sdkCompactSummaryEvent'));
   assert.doesNotMatch(progressSlice, /spawn_depth|parent_agent_id/);
-  assert.match(chat, /event\.backgrounded === true[\s\S]*?markSdkBackground/);
+  // بلاغ مالك 2026-09-10: كانت الشارة تستدعي markSdkBackground (قفل الدفعة D) فتُقفل الجلسة
+  // إلى الأبد لأن main لا يعد بإشعار ختامي لمهمة لم ينقلها المستخدم. الشارة عرضٌ محض.
+  const badgeBranch = chat.slice(chat.indexOf('event.backgrounded === true'), chat.indexOf("revealActivity('وكيل فرعي يعمل في الخلفية')"));
+  assert.match(badgeBranch, /markSdkBadgeBackground\(toolUseId\)/);
+  assert.doesNotMatch(badgeBranch, /markSdkBackground\(|bindSdkTask\(|attachSdkStopButton\(/);
+  const badgeFn = chat.slice(chat.indexOf('function markSdkBadgeBackground('), chat.indexOf('function failSdkBackground('));
+  assert.match(badgeFn, /entry\.badge = true;/);
+  assert.doesNotMatch(badgeFn, /entry\.backgrounded = true|entry\.moving = true|attachSdkStopButton|bindSdkTask/);
 
   assert.match(app, /ev\.type === 'prompt_suggestion'[\s\S]*?showPromptSuggestion\(ev\.suggestion\)/);
   assert.match(app, /ev\.type === 'sdk_agent_progress'[\s\S]*?updateAgentProgress/);
