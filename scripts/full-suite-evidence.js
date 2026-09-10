@@ -13,6 +13,91 @@ const SUMMARY_STATUSES = Object.freeze(['passed', 'failed', 'interrupted', 'runn
 const TAIL_LINE_COUNT = 200;
 const INTERRUPT_EXIT_CODE = 130;
 
+// الوضع الصامت: كم سطراً من خرج المجموعة الساقطة يُطبع على الكونسول (السجل الكامل في الملف).
+const QUIET_TAIL_LINES = 40;
+
+/**
+ * مرشّح الكونسول للوضع الصامت (`--quiet`) — **السجل الكامل يبقى في الملف حرفياً**،
+ * والكونسول لا يرى إلا ما يحتاجه القارئ (بشراً كان أم وكيلاً) ليحكم:
+ *   - كل ما قبل أول رأس مجموعة (إعلان البدء والمستبعَدين).
+ *   - رأس كل مجموعة `[i/N] npm run …` أو `[i/N] ⏭ …`.
+ *   - أسطر المشغّل نفسه `full-suite:` (المهلة، الإعادة، الخاتمة).
+ *   - كل شيء من جدول «أبطأ ثماني مجموعات» إلى النهاية (الخاتمة مقتضبة أصلاً).
+ *   - وبعد انتهاء البث: آخر QUIET_TAIL_LINES سطراً من كل مجموعة ذُكرت في كتلة الفشل.
+ * السبب مقيس (2026-09-10، لينكس تحت xvfb، 104 مجموعات): الوضع المفصّل 1,933 سطراً/160 ك.ب على
+ * الكونسول مقابل 292 سطراً صامتاً — وكل سطر يدخل سياق الوكيل يُعاد إرساله في كل دور تالٍ،
+ * فالوضع المفصّل يُنفق رصيداً على ضجيج لا حكم فيه (وعلى ويندوز تعمل مجموعات أكثر فالفرق أكبر).
+ */
+function createQuietPrinter(write, tailLimit = QUIET_TAIL_LINES) {
+  const HEADER = /^\[(\d+)\/(\d+)\] (?:npm run |⏭ )(\S+)/;
+  const SUMMARY_START = /^full-suite: أبطأ ثماني مجموعات/;
+  const FAILURE_ROW = /^- (\S+): /;
+  const carry = { stdout: '', stderr: '' };
+  const tails = new Map();
+  let current = null;
+  let inSummary = false;
+  let inFailures = false;
+  const failed = [];
+
+  const remember = (line) => {
+    if (!current) return;
+    const bucket = tails.get(current);
+    if (bucket.length >= tailLimit) bucket.shift();
+    bucket.push(line);
+  };
+
+  const onLine = (line) => {
+    if (inSummary) {
+      write(line + '\n');
+      if (/^full-suite: فشلت المجموعات التالية:/.test(line)) inFailures = true;
+      else if (inFailures) {
+        const row = line.match(FAILURE_ROW);
+        if (row && tails.has(row[1])) failed.push(row[1]); else inFailures = false;
+      }
+      return;
+    }
+    const head = line.match(HEADER);
+    if (head) {
+      current = head[3];
+      if (!tails.has(current)) tails.set(current, []);
+      write('\n' + line + '\n');
+      return;
+    }
+    if (SUMMARY_START.test(line)) {
+      inSummary = true;
+      write('\n' + line + '\n');
+      return;
+    }
+    if (!current || /^full-suite: /.test(line)) {
+      write(line + '\n');
+      if (current) remember(line);
+      return;
+    }
+    remember(line);
+  };
+
+  return {
+    feed(chunk, source) {
+      const key = source === 'stderr' ? 'stderr' : 'stdout';
+      const combined = carry[key] + chunk;
+      const parts = combined.split('\n');
+      carry[key] = parts.pop();
+      for (const part of parts) onLine(part.endsWith('\r') ? part.slice(0, -1) : part);
+    },
+    finish() {
+      for (const key of ['stdout', 'stderr']) {
+        if (carry[key] !== '') { onLine(carry[key]); carry[key] = ''; }
+      }
+      for (const name of failed) {
+        const lines = tails.get(name) || [];
+        write(`\n── آخر ${lines.length} سطراً من «${name}» (السجل الكامل في ملف الأدلة) ──\n`);
+        for (const line of lines) write(line + '\n');
+      }
+      return { failed: failed.slice(), suites: tails.size };
+    },
+  };
+}
+
 /**
  * تحويل تاريخ UTC إلى سلسلة صالحة لاسم مجلد على Windows.
  * لا تستخدم `:` ولا مسافات.
@@ -150,6 +235,10 @@ async function run(options = {}) {
   const startedAt = options.now ? new Date(options.now) : new Date();
   const artifactRoot = options.artifactRoot || DEFAULT_ARTIFACT_ROOT;
   const folderName = timestampToFolderName(startedAt);
+  // الوضع الصامت: الكونسول مرشَّح والملف كامل. الافتراضي مفصّل كما كان (CI يقرأ الكونسول).
+  const quiet = !!options.quiet;
+  const consoleWrite = options.consoleWrite || ((text) => process.stdout.write(text));
+  const quietPrinter = quiet ? createQuietPrinter(consoleWrite) : null;
 
   let artifactDir = null;
   let logFile = null;
@@ -193,6 +282,7 @@ async function run(options = {}) {
 
     const headerLines = [
       `command: npm run test:full`,
+      `console_mode: ${quiet ? 'quiet' : 'verbose'}`,
       `started_at: ${startedAt.toISOString()}`,
       `artifact_directory: ${relativeFromRoot(artifactDir)}`,
       '',
@@ -256,7 +346,8 @@ async function run(options = {}) {
       env,
       shell: false,
     }, async (chunk, source) => {
-      process.stdout.write(chunk);
+      if (quietPrinter) quietPrinter.feed(chunk, source);
+      else consoleWrite(chunk);
       enqueueLogWrite(chunk);
       consumeLines(chunk, source);
     });
@@ -264,6 +355,7 @@ async function run(options = {}) {
 
     flushLineCarry('stdout');
     flushLineCarry('stderr');
+    if (quietPrinter) quietPrinter.finish();
 
     enqueueLogWrite('\n--- END test:full OUTPUT ---\n');
     await flushLog();
@@ -317,6 +409,7 @@ async function run(options = {}) {
       log_file: relativeFromRoot(logFile),
       summary_file: relativeFromRoot(summaryFile),
       reported_suite_total: status === 'passed' ? reportedTotal : null,
+      console_mode: quiet ? 'quiet' : 'verbose',
     };
 
     await writeAtomicSummary(summaryFile, summary);
@@ -463,8 +556,26 @@ function createDefaultRunner({ spawnImpl = spawn, processTarget = process } = {}
   };
 }
 
+/** `--quiet` من سطر الأوامر أو `SATR_SUITE_QUIET=1` من البيئة — أي وسيط آخر يُرفض صراحةً. */
+function parseCliOptions(argv = process.argv.slice(2), env = process.env) {
+  const options = { quiet: env.SATR_SUITE_QUIET === '1' };
+  for (const arg of argv) {
+    if (arg === '--quiet') options.quiet = true;
+    else throw new Error(`وسيط غير معروف: ${arg} (المسموح: --quiet)`);
+  }
+  return options;
+}
+
 async function main() {
-  const result = await run();
+  let options;
+  try {
+    options = parseCliOptions();
+  } catch (error) {
+    console.error(`full-suite-evidence: ${error.message}`);
+    process.exitCode = 2;
+    return;
+  }
+  const result = await run(options);
   process.exitCode = result.exitCode;
 }
 
@@ -480,6 +591,9 @@ module.exports = {
   createExclusiveArtifactDir,
   run,
   createDefaultRunner,
+  createQuietPrinter,
+  parseCliOptions,
+  QUIET_TAIL_LINES,
   SUMMARY_STATUSES,
   DEFAULT_ARTIFACT_ROOT,
   INTERRUPT_EXIT_CODE,
