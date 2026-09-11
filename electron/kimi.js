@@ -1478,6 +1478,8 @@ function create(deps) {
       // نداءات الأدوات من التاريخ المعاد بثه تُدرج كرسائل مساعد بكتلة tool_use موحّدة
       // (الاسم عبر التسميات العربية، والمدخل منقّى كما في البث الحي). النتائج الكاملة
       // غير مطلوبة — يكفي الاسم والحالة النهائية لاستعادة السياق بصرياً.
+      // النداءات المتتالية بلا نص بينها تُدمج في سجلّ واحد (OBS-153): بطاقة بإجراءين
+      // لا بطاقتين بإجراء، والواجهة تعرض كل كتل tool_use في الرسالة الواحدة.
       if (update.sessionUpdate === 'tool_call') {
         const id = String(update.toolCallId || '');
         if (!id || toolCalls.has(id)) return;
@@ -1486,7 +1488,9 @@ function create(deps) {
           input: safeToolInput(update.rawInput), status: update.status || 'pending',
         };
         toolCalls.set(id, block);
-        messages.push({ role: 'assistant', toolUse: block });
+        const lastItem = messages[messages.length - 1];
+        if (lastItem && lastItem.toolUses) lastItem.toolUses.push(block);
+        else messages.push({ role: 'assistant', toolUses: [block] });
         return;
       }
       if (update.sessionUpdate === 'tool_call_update') {
@@ -1499,7 +1503,7 @@ function create(deps) {
       if (!role || !update.content || update.content.type !== 'text') return;
       const messageId = update.messageId || role + '_' + messages.length;
       const last = messages[messages.length - 1];
-      if (last && !last.toolUse && last.role === role && last.messageId === messageId) last.text += update.content.text || '';
+      if (last && !last.toolUses && last.role === role && last.messageId === messageId) last.text += update.content.text || '';
       else messages.push({ role, messageId, text: update.content.text || '' });
     };
     try {
@@ -1508,9 +1512,9 @@ function create(deps) {
         await rpc.request('session/load', { sessionId: id, cwd: session.cwd, mcpServers: [] }, 30000);
       }, onNotification);
     } catch { return { error: 'not_found' }; }
-    for (const item of messages) if (!item.toolUse && item.role === 'user') item.text = stripInjectedEnvelopes(item.text);
-    const clean = messages.filter((item) => item.toolUse || (item.text && item.text.trim()))
-      .map((item) => item.toolUse ? { role: item.role, content: [item.toolUse] } : { role: item.role, text: item.text });
+    for (const item of messages) if (!item.toolUses && item.role === 'user') item.text = stripInjectedEnvelopes(item.text);
+    const clean = messages.filter((item) => item.toolUses || (item.text && item.text.trim()))
+      .map((item) => item.toolUses ? { role: item.role, content: item.toolUses } : { role: item.role, text: item.text });
     return { cwd: session.cwd, total: clean.length, messages: clean.slice(-MAX_MESSAGES) };
   }
 
