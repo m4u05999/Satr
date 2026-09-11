@@ -94,6 +94,8 @@ const SUITE = [
   'test:activity',
   'test:definition-of-done',
   'test:full-evidence',
+  'test:full-quiet',
+  'test:filter-hook',
   'test:full-timeout',
   'test:readme-version',
   'test:opsroom-all-live',
