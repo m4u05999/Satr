@@ -946,7 +946,9 @@
   /* منطقة العرض: عرض (‎.term-view) لكل تبويب، النشط وحده ظاهر. داخل كل عرض عارضان
      لنفس محرك xterm.js (docs/PHASE8-DESIGN.md): tv-grid شبكة قياسية، tv-bidi إسقاط RTL.
      الإخفاء في BiDi بـ visibility (لوحة المفاتيح لسطر الإدخال)، وصنف الوضع على #termPanel */
-  #termHost { flex: 1; min-height: 0; direction: ltr; position: relative; }
+  /* عناصر قياس xterm تقع عند left:-9999em؛ قصّها داخل الطرفية يمنع تمدد جذر RTL
+     وانزياح التطبيق كله عند تغيير العرض أو إعادة التركيز. */
+  #termHost { flex: 1; min-height: 0; direction: ltr; position: relative; overflow: hidden; }
   .term-view { position: absolute; inset: 0; }
   .term-view:not(.active) { display: none; }
   .tv-grid, .tv-bidi { position: absolute; inset: 0; }

@@ -183,7 +183,11 @@ async function testIpcAndUiAllowlists() {
   const suggestionClick = composer.slice(composer.indexOf("promptSuggestion.addEventListener('click'"), composer.indexOf('// ما يلي منقول'));
   assert.doesNotMatch(suggestionClick, /emitSend\(|composer-send|window\.satr\.send/);
   assert.match(composer, /input\.addEventListener\('input'[\s\S]*?clearPromptSuggestion\(\)/);
-  assert.match(app, /const e = \$\('engine'\)\.value;\s*clearPromptSuggestion\(\)/);
+  // حراسة نطاق تبديل المحرك؛ لا نفرض تلاصق الإلغاء مع قراءة المنتقي.
+  const engineChangeStart = app.indexOf("$('engine').addEventListener('change', async () => {");
+  const engineChangeEnd = app.indexOf("$('model').addEventListener('change'", engineChangeStart);
+  assert.ok(engineChangeStart >= 0 && engineChangeEnd > engineChangeStart);
+  assert.match(app.slice(engineChangeStart, engineChangeEnd), /clearPromptSuggestion\(\)/);
   assert.match(app, /function newSession[\s\S]*?clearPromptSuggestion\(\)/);
   assert.match(app, /session-resume[\s\S]*?clearPromptSuggestion\(\)/);
   assert.match(html, /id="promptSuggestion"[^>]*hidden/);

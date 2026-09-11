@@ -504,6 +504,7 @@ function testUiAndSeparationContracts() {
 (async () => {
   await testAgentController();
   await testMainIpc();
+  await require('./mobile-task-owner-test').testMobileTaskOwnership();
   testUiAndSeparationContracts();
   console.log('sdk-background-test: ok — التحكم وIPC والحدث والواجهة والعزل وفصل السجلات');
 })().catch((error) => {

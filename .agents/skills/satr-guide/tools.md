@@ -49,12 +49,16 @@
 - **`wait_for_background_task`** — انتظر خروج مهمة خلفية معمّرة وأعد رمز خروجها وذيل سجلها لحظة انتهائها. استعمله بدل حلقة انتظار ثم list_background_tasks؛ عند المهلة يعود status=running فتستطيع تمديد الانتظار بنداء واحد.
 - **`list_background_tasks`** — اسرد مهام طرفيات «سطر» المعمّرة ولقطة العمليات الخلفية القديمة لتجنب تشغيل خادم ثانٍ. يعرض كذلك آخر المهام التي خرجت ورموز خروجها.
 - **`stop_background_task`** — أوقف مهمة خلفية معمّرة أو عملية خلفية قديمة. يطلب الإذن في كل مرة.
+- **`list_project_connections`** — List this project’s service connections, allowed resources and tested engine access. No credentials.
+- **`use_project_connection`** — Use an allowed project resource. GitHub: inspect/list_issues/read_file/create_issue; Netlify: inspect/list_deploys/trigger_build; Supabase: inspect/list_tables. Mutations always ask the user. No tokens or arbitrary URLs.
 
 ## أدوات حلقة الوكيل للمحوّلات (Kimi/DeepSeek/Gemini/Qwen/MiniMax…)
 
 محرك Claude يملك مقابلاتها الأصلية (Read/Grep/Edit/Bash…) مع run_in_terminal
 للتنفيذ في الطرفية المرئية؛ الكتابة والتنفيذ خلف مربع الإذن دائماً.
 
+- **`list_project_connections`** — List this project’s service connections, allowed resources and tested engine access. No credentials.
+- **`use_project_connection`** — Use an allowed project resource. GitHub: inspect/list_issues/read_file/create_issue; Netlify: inspect/list_deploys/trigger_build; Supabase: inspect/list_tables. Mutations always ask the user. No tokens or arbitrary URLs.
 - **`read_file`** — Read a text file from the user's project. Use it to inspect code before answering. Path must be relative to the project root (e.g. src/index.html).
 - **`list_files`** — List the files of the user's project as relative paths, one per line. Use it to discover the project structure before reading files.
 - **`search_code`** — Search all project files for text (grep-like). Returns matching lines as path:line: excerpt, best-matching files first. Matching is lenient: case-insensitive, Arabic diacritics and letter variants ignored, and substrings match inside identifiers (searching 'save viewer' finds saveFromViewer). Use it to locate where something is defined or handled instead of reading whole files.

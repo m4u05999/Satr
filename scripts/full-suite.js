@@ -21,6 +21,9 @@ const SUITE = [
   'test:daily-loop-ui',
   'test:sessionmeta',
   'test:sessions-cwd',
+  'test:conversations',
+  'test:conversation-ui',
+  'test:conversation-main',
   'test:codexsessions',
   'test:tasks',
   'test:observations',
@@ -46,6 +49,9 @@ const SUITE = [
   'test:qr',
   'test:tools-edit',
   'test:codexmcp',
+  'test:connections',
+  'test:connection-services',
+  'test:connections-ui',
   'test:genmedia',
   'test:codex-contract',
   'test:send-liveness',
@@ -69,6 +75,7 @@ const SUITE = [
   'test:handoff-bar-live',
   'test:preview-recording',
   'test:promocapture',
+  'test:live-test',
   'test:promocapture-batch1',
   'test:promocapture-live',
   'test:promo-studio',
@@ -110,6 +117,11 @@ const SUITE = [
   'test:preview-lease',
   'test:readability',
   'test:preview-shield',
+  'test:topbar-surfaces',
+  'test:preview-controls-ui',
+  'test:preview-controls-backend',
+  'test:model-boot',
+  'test:model-boot-ui',
   'test:sessions-panel',
   'test:question-dialog',
   'test:gallery',
@@ -193,16 +205,16 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
  * القاعدة عند التعديل: قِس ثم اضرب، ولا تُدخل رقماً بلا سطر قياس يسنده.
  */
 /**
- * إعادة محاولة معلَنة لعثرات بيئية مقيسة (‏OBS-036) — النمط منقول من
+ * إعادة محاولة معلَنة لتعثرات متقطعة مقيسة (‏OBS-036) — النمط منقول من
  * `opsroom-suite.js` (‏OBS-025) حرفياً: تُعاد **مرة واحدة** لكل تشغيل وبإعلان
- * صاخب، والتراجع الحقيقي يفشل مرتين فيسقط.
+ * صاخب، والفشل في المحاولتين يُسقط البوابة دون أن يحسم سببه.
  *
  * الدليل: في بوابة 2.16.1 سقط `test:promocapture-live` وحيداً من 72 مجموعة
  * بحمولة `stop:{size:0, head:[]}` رغم نجاح المسار كله (`stopped.ok:true`،
- * `start.tracks:1`، `frameRate:30`) — أي لم تصل إطارات، ونجح فوراً منفرداً
- * (`bytes=14958`). وقرينة `test:promo-studio` الناجحة في الطقم نفسه
- * (‏`558497 bytes`) تثبت أن الترميز سليم وأن العطب في التقاط النافذة وحده تحت
- * الحمل. القائمة **مغلقة**: لا اسم يدخلها بلا سابقة مقيسة مسجّلة برقم ملاحظة
+ * `start.tracks:1`، `frameRate:30`) ونجح منفرداً (`bytes=14958`).
+ * هذه قرائن تعثر متقطع؛ Blob فارغ لا يثبت غياب الإطارات، ونجاح تسجيل آخر لا
+ * ينفي عطل الترميز هنا. أضيفت عدادات مصدر/مسجل في 2026-09-09؛ انظر أدلة الطقم.
+ * القائمة مغلقة: لا اسم يدخلها بلا سابقة مقيسة مسجّلة برقم ملاحظة
  * في `RETRYABLE_OBS` — ويُفحص هذا العقد ساكناً وسلوكياً في `test:suite-coverage`.
  *
  * ⚠️ **و`test:termjobs` (‏OBS-139) أول مدخل من صنف الانهيار لا التعثّر**: يسقط بـ
@@ -214,12 +226,12 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
  * فذلك تراجعٌ حقيقي لا عثرة، والبوابة تسقط كما ينبغي.
  */
 const RETRYABLE = new Set([
-  'test:promocapture-live', // OBS-036 — بوابة 2.16.1: صفر إطار تحت الحمل، ونجح منفرداً فوراً
+  'test:promocapture-live', // OBS-036 — بوابة 2.16.1: ملف فارغ داخل الطقم، ونجح منفرداً فوراً
   'test:preview-member-live', // OBS-101 — تجاوز 240ث تحت الحمل ومرّ في 4.7ث منفرداً (×51)
   'test:mobile', // OBS-111 — نجح وفشل متزامناً على الالتزام نفسه، ثم نجحت إعادة الفاشل بلا تغيير
   'test:termjobs', // OBS-139 — انهيار 0xC0000005 بلا سطر خرج، ونجح 3/3 منفرداً وبإعادة CI
 ]);
-// تبرير كل اسم — رقم الملاحظة التي سجّلت العثرة البيئية المقيسة. لا اسم بلا سابقة.
+// تبرير كل اسم — رقم الملاحظة التي سجّلت التعثر المقيس. لا اسم بلا سابقة.
 const RETRYABLE_OBS = Object.freeze({
   'test:promocapture-live': 'OBS-036',
   'test:preview-member-live': 'OBS-101',
@@ -540,13 +552,13 @@ function main() {
         lastFailure = { name, status: result.status, signal: result.signal || '' };
       } else {
         passed = true;
-        // العثرة البيئية لا تُخفى: أي نجاح جاء بعد إعادة يُسجَّل ويُذكر في الخاتمة.
+        // الإعادة لا تُخفى: أي نجاح جاء بعد إعادة يُسجَّل ويُذكر في الخاتمة.
         if (attempt > 0) retried.push(name);
         break;
       }
       if (attempt < budget) {
         console.error(`\nfull-suite: ⚠ تعثّر «${name}» (المحاولة ${attempt + 1}/${budget + 1}) — يُعاد مرة واحدة بحكم ${RETRYABLE_OBS[name]}.`);
-        console.error('   إن فشل ثانيةً فهو تراجع حقيقي لا عثرة بيئية.');
+        console.error('   إن فشل ثانيةً تسقط البوابة؛ تحديد السبب يحتاج إلى دليل مستقل.');
       }
     }
     const elapsed = Date.now() - startedAt;
@@ -568,7 +580,7 @@ function main() {
   const ran = SUITE.length - skipped.length;
   // الإعلان الصاخب لا يكتمل بخاتمة صامتة: أي مجموعة أُعيدت تُذكر صراحةً —
   // «كله أخضر» مع إعادة مخفيّة حارس أخضر كاذب (الغرض نفسه من قيد القائمة المغلقة).
-  const retriedNote = retried.length ? ` (أُعيد بعد تعثّر بيئي: ${retried.join('، ')})` : '';
+  const retriedNote = retried.length ? ` (أُعيد بعد تعثّر: ${retried.join('، ')})` : '';
   if (failures.length) {
     console.error('\nfull-suite: فشلت المجموعات التالية:');
     for (const failure of failures) console.error(`- ${failure.name}: ${failure.signal || failure.status}`);

@@ -73,6 +73,8 @@ contextBridge.exposeInMainWorld('satr', {
   gitAction: (cwd, op, rel, message) => ipcRenderer.invoke('satr:gitAction', { cwd, op, rel, message }), // أفعال git (stage/unstage/discard/commit)
   exportChat: (engine, sessionId, cwd) => ipcRenderer.invoke('satr:exportChat', { engine, sessionId, cwd }), // تصدير المحادثة (الدفعة 4.8)
   lastChat: (engine) => ipcRenderer.invoke('satr:lastChat', { engine }),     // ذاكرة المحوّلات (1.3)
+  conversationCurrent: (cwd) => ipcRenderer.invoke('satr:conversationCurrent', { cwd }),
+  conversationForget: (cwd) => ipcRenderer.invoke('satr:conversationForget', { cwd }),
   forgetChat: (engine) => ipcRenderer.invoke('satr:forgetChat', { engine }),
   listChats: () => ipcRenderer.invoke('satr:listChats'),                     // تصفح محادثات المحوّلات (الدفعة 4)
   readChat: (provider, id) => ipcRenderer.invoke('satr:readChat', { provider, id }),
@@ -149,6 +151,13 @@ contextBridge.exposeInMainWorld('satr', {
   eeUsage: () => ipcRenderer.invoke('satr:ee:usage'),
   eeAudit: () => ipcRenderer.invoke('satr:ee:audit'),
   listSkills: (cwd) => ipcRenderer.invoke('satr:listSkills', cwd),
+  // أسرار التوصيلات لا تعاد للواجهة؛ الإدخال السري يمر إلى مخزن main المشفر فقط.
+  connectionList: (cwd, engine) => ipcRenderer.invoke('satr:connectionList', { cwd, engine }),
+  connectionAuthenticate: (cwd, service, token) => ipcRenderer.invoke('satr:connectionAuthenticate', { cwd, service, token }),
+  connectionResources: (cwd, service) => ipcRenderer.invoke('satr:connectionResources', { cwd, service }),
+  connectionSelect: (cwd, service, resource, permissions) => ipcRenderer.invoke('satr:connectionSelect', { cwd, service, resource, permissions }),
+  connectionTest: (cwd, service) => ipcRenderer.invoke('satr:connectionTest', { cwd, service }),
+  connectionDisconnect: (cwd, service) => ipcRenderer.invoke('satr:connectionDisconnect', { cwd, service }),
   mcpStatus: (cwd, engine) => ipcRenderer.invoke('satr:mcpStatus', { cwd, engine }),
   mcpAction: (cwd, name, action, engine) => ipcRenderer.invoke('satr:mcpAction', { cwd, name, action, engine }),
   // C3: تسجيل دخول موصّل Codex — الرابط لا يعبر هنا؛ الفتح بمعرّف الطلب فقط
@@ -202,7 +211,8 @@ contextBridge.exposeInMainWorld('satr', {
   previewAction: (action) => ipcRenderer.invoke('satr:previewAction', { action }),
   // device اختياري ('mobile'|'tablet' حين تكون محاكاة الأجهزة مفعّلة) — الاستدعاءات
   // بأربعة معاملات تبقى صالحة، ويُستعمل حصراً لتفسير تضييق browser_set_viewport.
-  previewBounds: (x, y, width, height, device) => ipcRenderer.invoke('satr:previewBounds', { x, y, width, height, device }),
+  // resetViewport قصد صريح من زر الجهاز؛ القياس العادي لا يرسله.
+  previewBounds: (x, y, width, height, device, resetViewport = false) => ipcRenderer.invoke('satr:previewBounds', { x, y, width, height, device, resetViewport }),
   previewPick: () => ipcRenderer.invoke('satr:previewPick'),             // م-2: التحديد بالتأشير
   previewPickCancel: () => ipcRenderer.invoke('satr:previewPickCancel'),
   previewFrame: () => ipcRenderer.invoke('satr:previewFrame'),           // م-5: إطار للتسجيل
@@ -222,7 +232,9 @@ contextBridge.exposeInMainWorld('satr', {
   promoProjectSave: (path, storyboard) => ipcRenderer.invoke('satr:promoProjectSave', { path, storyboard }),
   promoProjectLoad: (path) => ipcRenderer.invoke('satr:promoProjectLoad', { path }),
   promoCaptureStop: () => ipcRenderer.invoke('satr:promoCaptureStop'),
-  promoCaptureReady: (sessionId, ok, error) => ipcRenderer.invoke('satr:promoCaptureReady', { sessionId, ok, error }),
+  promoCaptureReady: (sessionId, ok, error, capture) => ipcRenderer.invoke('satr:promoCaptureReady', {
+    sessionId, ok, error, capture,
+  }),
   promoCaptureCommit: (sessionId, durationMs, filename) => ipcRenderer.invoke('satr:promoCaptureCommit', {
     sessionId, durationMs, filename,
   }),

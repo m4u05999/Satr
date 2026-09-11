@@ -41,8 +41,13 @@ import { createPreviewShield } from './lib/preview-shield.js';
   const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
   const SAFE_CHECKPOINT_ID = /^cp-[A-Za-z0-9-]{3,80}$/;
   let sessionId = null, busy = false, currentBlock = null;
+  // هوية الدردشة مستقلة عن جلسة المحرك؛ المصدر القديم مرجع للقرص لا نص من DOM.
+  let conversationId = null, continuitySource = null, conversationEpoch = 0;
+  let conversationRestoreBusy = false;
+  let conversationForgetPending = Promise.resolve();
   let sessionControlBusy = false;
   let sessionResumeBusy = false;
+  let applyingResumedCwd = false;
   let kimiDeclaredCommands = []; // أوامر Kimi المعلنة عبر ACP في الجلسة الجارية (system/available_commands)
   let sessionCwd = null;     // المجلد الذي وُلدت فيه الجلسة الحالية (جلسات Claude Code مرتبطة بمجلدها)
   let lastSentPrompt = '';   // آخر طلب أُرسل — يُستعاد للمحرّر عند فشل استئناف جلسة ميتة
@@ -56,6 +61,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (saved !== null) el.value = saved;
     el.addEventListener('change', () => localStorage.setItem('satr_' + id, el.value));
   });
+  let lastConversationCwd = $('cwd').value.trim();
   // مفتاح thinking الخاص بـ Kimi Code: يُعلنه ACP أحياناً (Kimi 0.27.0 يعلن 'on' فقط).
   let thinkingValue = localStorage.getItem('satr_thinking') || '';
   const THINKING_CYCLE = ['on', ''];
@@ -285,6 +291,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     else addNotice('✗ تعذّر إكمال تسجيل الدخول' + (done && done.error ? ' — ' + done.error : ''));
     btn.disabled = false; btn.textContent = previous;
     refreshCodexAccountView();
+    if (done && done.ok && done.success) refreshEngineModels('codex');
   });
   let gateBannerTimer = null;
   function hideGateBannerAfter(banner, delay) {
@@ -338,6 +345,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     gateReadyEngines = readyList;
     gatePreferred = typeof d.preferred === 'string' ? d.preferred : readyList[0];
     applyGateEngineSwitch();
+    refreshEngineModels(); // يبدأ الجلب بعد حسم الجاهزية، ولو بقي المحرك المختار نفسه.
     // لا نستجوب حساب Claude ونماذجه إن لم يكن جاهزاً — استدعاء لثنائي غائب يبطئ الإقلاع.
     if (!readyList.includes('sdk')) {
       b.className = 'ok';
@@ -355,7 +363,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
       b.className = 'ok'; b.textContent = '✓ Claude Code جاهز — ' + (d.version || '');
       hideGateBannerAfter(b, 4000);
     }
-    refreshClaudeModels();
+    refreshEngineModels('sdk');
     fetchClaudeAccount().then((account) => {
       if (!account || !account.email) return;
       b.style.display = '';
@@ -437,7 +445,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
   const CODEX_MODELS_RETRY_MS = 4000;
   let codexModelsRetries = 0;
   let codexModelsNotified = false;
+  let codexModelsRetryTimer = null;
   async function refreshCodexModels() {
+    if (codexModelsRetryTimer !== null) {
+      clearTimeout(codexModelsRetryTimer);
+      codexModelsRetryTimer = null;
+    }
     let fetched = false;
     try {
       const list = await window.satr.codexModels();
@@ -448,6 +461,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
           description: model.description || '',
           efforts: Array.isArray(model.efforts) ? model.efforts : [],
           defaultEffort: model.defaultEffort || '',
+          isDefault: model.isDefault === true,
         }));
         fetched = true;
         codexModelsRetries = 0;
@@ -457,12 +471,15 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if ($('engine').value === 'codex') rebuildModels();
 
     // قائمةٌ سابقة ناجحة تعني أن الاحتياط حديثٌ فعلاً — لا نعيد المحاولة ولا نُزعج.
-    if (fetched || codexDynamicModels.length) return;
+    if (fetched || codexDynamicModels.length || $('engine').value !== 'codex') return;
     if (codexModelsRetries < CODEX_MODELS_RETRIES) {
       codexModelsRetries += 1;
       // نُعيد الوعد (‏`setTimeout` يتجاهله) كي يبقى تسلسل الإعادة قابلاً للانتظار حتمياً
       // في الحارس، بدل انتظار دورات microtask تخمينية.
-      setTimeout(() => ($('engine').value === 'codex' ? refreshCodexModels() : null), CODEX_MODELS_RETRY_MS);
+      codexModelsRetryTimer = setTimeout(() => {
+        codexModelsRetryTimer = null;
+        return $('engine').value === 'codex' ? refreshEngineModels('codex', { retry: true }) : null;
+      }, CODEX_MODELS_RETRY_MS);
     } else if (!codexModelsNotified) {
       // الصمت هو العطل: بعد استنفاد المحاولات يعرف المستخدم أن ما يراه ناقص، ويعرف
       // كيف يعيد المحاولة بلا إعادة تشغيل (تبديل المحرك يستدعي الجلب ثانيةً).
@@ -482,12 +499,149 @@ import { createPreviewShield } from './lib/preview-shield.js';
     } catch (e) { /* يبقى الاحتياط الثابت */ }
     if ($('engine').value === 'kimi-code') rebuildModels();
   }
+  // نقطة واحدة لجلب القوائم في الإقلاع والتبديل والاستئناف: لا يبدأ المحرك قبل البوابة،
+  // والطلب الجاري مشترك، فلا تتغلب استجابة قديمة على اختيار أحدث أو تطلق عمليات مكررة.
+  const engineModelsRequests = new Map();
+  function refreshEngineModels(engine = $('engine').value, { retry = false } = {}) {
+    if (gated || !GATED_ENGINES.includes(engine)) return Promise.resolve();
+    if (engineModelsRequests.has(engine)) return engineModelsRequests.get(engine);
+    if (engine === 'codex' && !retry) {
+      codexModelsRetries = 0;
+      codexModelsNotified = false;
+    }
+    const refresh = engine === 'sdk' ? refreshClaudeModels
+      : engine === 'codex' ? refreshCodexModels : refreshKimiModels;
+    const request = Promise.resolve().then(refresh).finally(() => {
+      if (engineModelsRequests.get(engine) === request) engineModelsRequests.delete(engine);
+    });
+    engineModelsRequests.set(engine, request);
+    return request;
+  }
   // محوّل «أعمى» (1.3): غير المحركات الأصيلة وليس من عائلة claude — له ذاكرة سطر على القرص.
   // المحركات التي تعلن capabilities.native تملك جلساتها وأذوناتها الحية.
   function isBlindEngine(e) {
     if (e === 'sdk' || e === 'codex') return false;
     const p = providersCache.find((x) => x.name === e);
     return p ? p.family !== 'claude' && !(p.capabilities && p.capabilities.native) : (e !== 'cli');
+  }
+  // ---------- استمرارية الدردشة بين Claude وCodex ----------
+  function supportsConversation(engine) { return engine === 'sdk' || engine === 'codex'; }
+  function conversationContextIsCurrent(epoch, cwd, engine) {
+    return epoch === conversationEpoch && $('cwd').value.trim() === cwd && $('engine').value === engine;
+  }
+  function detachConversation() {
+    conversationEpoch += 1;
+    conversationId = null;
+    continuitySource = null;
+    conversationRestoreBusy = false;
+  }
+  function rememberContinuitySource(engine) {
+    if (!conversationId && !continuitySource && sessionId && supportsConversation(engine)) {
+      continuitySource = { engine, sessionId, cwd: sessionCwd || $('cwd').value.trim() };
+    }
+  }
+  function showConversationHistory(messages) {
+    for (const message of Array.isArray(messages) ? messages : []) {
+      if (!message || typeof message.text !== 'string') continue;
+      if (message.role === 'user') chatEl.addUserMsg(message.text);
+      else if (message.role === 'assistant') chatEl.addHistoryAssistant({ text: message.text },
+        message.engine === 'codex' ? 'Codex' : 'Claude Code');
+    }
+  }
+  function acceptConversationEvent(event) {
+    if (!supportsConversation(event.engine)
+      || !conversationContextIsCurrent(event.client_epoch, event.cwd, event.engine)
+      || typeof event.conversation_id !== 'string' || !SAFE_SESSION.test(event.conversation_id)
+      || (conversationId && conversationId !== event.conversation_id)) return false;
+    if (!conversationId && event.restored === true && Array.isArray(event.messages)) {
+      // main يرسل التاريخ قبل تشغيل المحرك وبلا الطلب الجاري؛ لا نقرأ السياق من DOM.
+      chatEl.clearThread();
+      resetSessionChanges();
+      showConversationHistory(event.messages);
+      if (busy && currentBlock) {
+        chatEl.addUserMsg(lastUserTurn.prompt, lastUserTurn.images, {
+          awaitingSdkIdentity: event.engine === 'sdk',
+        });
+        currentBlock = chatEl.newAssistantBlock(engineLabel());
+      }
+    }
+    conversationId = event.conversation_id;
+    continuitySource = null;
+    sessionId = typeof event.session_id === 'string' && SAFE_SESSION.test(event.session_id) ? event.session_id : null;
+    sessionCwd = event.cwd;
+    $('sessionInfo').textContent = sessionId ? 'جلسة: ' + shortSessionLabel(sessionId) : 'محادثة مستمرة';
+    if (event.notice) chatEl.addNoticeBefore(String(event.notice), currentBlock && currentBlock.el);
+    return true;
+  }
+  function restoreReadConversation(record) {
+    if (!record || !supportsConversation(record.engine) || typeof record.id !== 'string'
+      || !SAFE_SESSION.test(record.id) || typeof record.cwd !== 'string'
+      || ![...$('engine').options].some((option) => option.value === record.engine)) return false;
+    detachConversation();
+    $('engine').value = record.engine;
+    localStorage.setItem('satr_engine', record.engine);
+    lastEngine = record.engine;
+    rebuildModels();
+    applyEngineCommands(record.engine);
+    refreshEngineModels(record.engine);
+    currentBlock = null;
+    if (composerEl.clearImages) composerEl.clearImages();
+    chatEl.clearThread();
+    resetSessionChanges();
+    applyResumedCwd(record.cwd);
+    conversationId = record.id;
+    sessionId = typeof record.sessionId === 'string' && SAFE_SESSION.test(record.sessionId) ? record.sessionId : null;
+    sessionCwd = $('cwd').value.trim();
+    lastConversationCwd = sessionCwd;
+    showConversationHistory(record.messages);
+    $('sessionInfo').textContent = sessionId ? 'جلسة: ' + shortSessionLabel(sessionId) + ' (مستأنفة)' : 'محادثة مستمرة';
+    if (sessionId) { loadTaskLedger(record.engine, sessionId); loadCheckpoint(record.engine, sessionId); }
+    addNotice('📂 استُعيدت المحادثة المشتركة المحفوظة — أرسل رسالتك للمتابعة.');
+    chatEl.scrollToEnd(true);
+    input.focus();
+    return true;
+  }
+  async function restoreCurrentConversation() {
+    const engine = $('engine').value, cwd = $('cwd').value.trim(), epoch = conversationEpoch;
+    if (!supportsConversation(engine) || !cwd || conversationId || sessionId
+      || busy || sessionResumeBusy || !window.satr.conversationCurrent) return false;
+    conversationRestoreBusy = true;
+    try {
+      const result = await window.satr.conversationCurrent(cwd);
+      if (!conversationContextIsCurrent(epoch, cwd, engine) || busy || sessionId || conversationId) return false;
+      if (!result || result.ok !== true) {
+        addNotice('تعذرت استعادة المحادثة المحفوظة لهذا المشروع.');
+        return false;
+      }
+      const record = result.conversation;
+      if (!record || !supportsConversation(record.engine) || typeof record.id !== 'string'
+        || !SAFE_SESSION.test(record.id) || typeof record.cwd !== 'string'
+        || record.cwd.replace(/\\/g, '/').toLowerCase() !== cwd.replace(/\\/g, '/').toLowerCase()) return false;
+      if (![...$('engine').options].some((option) => option.value === record.engine)) return false;
+      $('engine').value = record.engine;
+      localStorage.setItem('satr_engine', record.engine);
+      lastEngine = record.engine;
+      rebuildModels();
+      applyEngineCommands(record.engine);
+      refreshEngineModels(record.engine);
+      conversationId = record.id;
+      sessionId = typeof record.sessionId === 'string' && SAFE_SESSION.test(record.sessionId) ? record.sessionId : null;
+      sessionCwd = cwd;
+      currentBlock = null;
+      chatEl.clearThread();
+      resetSessionChanges();
+      showConversationHistory(record.messages);
+      $('sessionInfo').textContent = sessionId ? 'جلسة: ' + shortSessionLabel(sessionId) + ' (مستأنفة)' : 'محادثة مستمرة';
+      if (sessionId) { loadTaskLedger(record.engine, sessionId); loadCheckpoint(record.engine, sessionId); }
+      addNotice('📂 استُعيدت المحادثة المحفوظة لهذا المشروع — يمكنك المتابعة أو تغيير المحرك بين Claude وCodex.');
+      chatEl.scrollToEnd(true);
+      return true;
+    } catch {
+      if (conversationContextIsCurrent(epoch, cwd, engine) && !busy && !sessionId && !conversationId) {
+        addNotice('تعذرت استعادة المحادثة المحفوظة لهذا المشروع.');
+      }
+      return false;
+    } finally { if (epoch === conversationEpoch) conversationRestoreBusy = false; }
   }
   // مجموعة مخزن الجلسات: يُصفَّر sessionId عند تغيّرها لأن المُعرّف لا يصلح عبر المخازن.
   // sdk وcli يتشاركان ~/.claude (نفس المجموعة)؛ codex مستقل (~/.codex)؛ وكل محوّل أعمى
@@ -500,10 +654,11 @@ import { createPreviewShield } from './lib/preview-shield.js';
   // لا في localStorage (ثبت بالاختبار أنه قد لا يُكتب للقرص فيضيع المؤشر)
   async function restoreAdapterSession() {
     const e = $('engine').value;
-    if (!isBlindEngine(e)) return;
+    if (!isBlindEngine(e) || conversationId) return;
+    const epoch = conversationEpoch, cwd = $('cwd').value.trim();
     let sid = null;
     try { const r = await window.satr.lastChat(e); sid = (r && r.sid) || null; } catch (err) {}
-    if (sid && !sessionId) {
+    if (sid && !sessionId && !conversationId && !busy && conversationContextIsCurrent(epoch, cwd, e)) {
       sessionId = sid;
       $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(sid) + ' (مستأنفة)';
       loadTaskLedger(e, sid);
@@ -585,6 +740,10 @@ import { createPreviewShield } from './lib/preview-shield.js';
       mSel.appendChild(o);
       mSel.value = saved;
     }
+    if (!saved) {
+      const declaredDefault = modelsForEngine(engine).find((model) => model.isDefault === true);
+      if (declaredDefault) mSel.value = declaredDefault.value;
+    }
     rebuildEfforts();
     syncAwareness();
   }
@@ -605,47 +764,57 @@ import { createPreviewShield } from './lib/preview-shield.js';
     rebuildModels();
     applyEngineCommands($('engine').value); // أوامر «/» للمحرك المستعاد (المرحلة 4)
     if ($('engine').value === 'codex') checkCodexReady(); // إرشاد إن كان Codex المستعاد غير جاهز
-    if ($('engine').value === 'sdk' && !gated) refreshClaudeModels();
-    if ($('engine').value === 'codex') refreshCodexModels();
-    if ($('engine').value === 'kimi-code') { checkKimiReady(); refreshKimiModels(); }
-    restoreAdapterSession(); // 1.3: استئناف محادثة المحوّل بعد إعادة التشغيل
+    if ($('engine').value === 'kimi-code') checkKimiReady();
+    refreshEngineModels();
     lastEngine = $('engine').value;
+    if (!await restoreCurrentConversation()) await restoreAdapterSession();
     applyGateEngineSwitch(); // القائمة بُنيت الآن — طبّق تصحيح المحرك إن كان الفحص سبقها
   }
   let lastEngine = null; // لتمييز مغادرة محوّل أعمى عند التبديل
   $('engine').addEventListener('change', async () => {
-    if (sessionControlBusy || sessionResumeBusy || hasSdkBackgroundSessionLock()) {
+    if (busy || sessionControlBusy || sessionResumeBusy || hasSdkBackgroundSessionLock()) {
       const previous = lastEngine || 'sdk';
       $('engine').value = previous;
       localStorage.setItem('satr_engine', previous);
-      addNotice(hasSdkBackgroundSessionLock()
+      addNotice(busy ? 'انتظر انتهاء الطلب الجاري أو أوقفه قبل تبديل المحرك؛ ستبقى المحادثة محفوظة.'
+        : hasSdkBackgroundSessionLock()
         ? 'أوقف مهمة Claude الخلفية أو انتظر اكتمالها قبل تبديل المحرك.'
         : 'انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل تبديل المحرك.');
       return;
     }
     const e = $('engine').value;
+    const previousEngine = lastEngine || e;
+    if (e === previousEngine) return;
+    conversationEpoch += 1;
+    conversationRestoreBusy = false;
+    rememberContinuitySource(previousEngine);
     clearPromptSuggestion();
     localStorage.setItem('satr_engine', e);
     rebuildModels();
     applyEngineCommands(e); // إخفاء أوامر Claude-الخاصة مع Codex (المرحلة 4)
     if (e === 'codex') checkCodexReady(); // إرشاد إن لم يكن Codex جاهزاً
-    if (e === 'sdk' && !gated) refreshClaudeModels();
-    if (e === 'codex') refreshCodexModels();
-    if (e === 'kimi-code') { checkKimiReady(); refreshKimiModels(); }
-    // تصفير الجلسة عند تغيّر مخزن الجلسات: المُعرّف لا يصلح عبر المخازن (مُعرّف Claude في
-    // Codex ⇒ thread/resume يفشل ويبدأ خيطاً جديداً؛ ومُعرّف Codex في Claude ⇒ «No
-    // conversation found»). sdk↔cli يتشاركان ~/.claude فلا يُصفَّران. المحوّل الأعمى
-    // يستأنف آخر جلسته من القرص؛ Codex وsdk يبدآن نظيفَين (يُستأنفان من /جلسات — قرار مطابقة).
-    if (sessionGroup(e) !== sessionGroup(lastEngine)) {
+    if (e === 'kimi-code') checkKimiReady();
+    refreshEngineModels(e);
+    lastEngine = e; // قبل أي انتظار كي لا تعيد استعادة متأخرة المحرك السابق.
+    if (supportsConversation(previousEngine) && supportsConversation(e)) {
+      // main يختار جلسة المحرك التي تغطي آخر مراجعة، أو ينقل السجل إلى جلسة جديدة.
+      sessionId = continuitySource && continuitySource.engine === e ? continuitySource.sessionId : null;
+      currentBlock = null;
+      chatEl.clearTaskLedger();
+      chatEl.clearCheckpoint();
+      $('sessionInfo').textContent = conversationId || continuitySource ? 'محادثة مستمرة' : 'لا جلسة';
+      if (conversationId || continuitySource) addNotice('↔ بقيت المحادثة نفسها؛ سيُنقل سياقها المحفوظ إلى المحرك المختار عند الإرسال.');
+    } else if (sessionGroup(e) !== sessionGroup(previousEngine) || conversationId || continuitySource) {
+      const hadConversation = !!(conversationId || continuitySource);
+      detachConversation();
       sessionId = null;
-      if (isBlindEngine(e)) await restoreAdapterSession(); // لا أثر لغير الأعمى (يعود مبكراً)
-      $('sessionInfo').textContent = sessionId
-        ? ('جلسة: ' + shortSessionLabel(sessionId) + ' (مستأنفة)')
-        : 'لا جلسة';
-      if (!sessionId) chatEl.clearTaskLedger();
-      if (!sessionId) chatEl.clearCheckpoint();
+      currentBlock = null;
+      chatEl.clearThread();
+      resetSessionChanges();
+      $('sessionInfo').textContent = 'لا جلسة';
+      if (hadConversation) addNotice('هذا المحرك خارج استمرارية Claude وCodex؛ بدأت محادثة منفصلة، وبقي السجل السابق محفوظاً.');
+      if (isBlindEngine(e)) await restoreAdapterSession();
     }
-    lastEngine = e;
   });
   $('model').addEventListener('change', () => {
     localStorage.setItem('satr_model_' + $('engine').value, $('model').value);
@@ -714,6 +883,26 @@ import { createPreviewShield } from './lib/preview-shield.js';
   const promoStudioEl = document.querySelector('satr-promo-studio');
   const mobileEl = document.querySelector('satr-mobile-panel');
   function addNotice(text) { chatEl.addNotice(text); }
+  $('cwd').addEventListener('change', () => {
+    const cwd = $('cwd').value.trim();
+    if (applyingResumedCwd) { lastConversationCwd = cwd; return; }
+    if (cwd === lastConversationCwd) return;
+    if (busy || sessionControlBusy || sessionResumeBusy || hasSdkBackgroundSessionLock()) {
+      $('cwd').value = sessionCwd || lastConversationCwd;
+      localStorage.setItem('satr_cwd', $('cwd').value);
+      addNotice('انتظر انتهاء الطلب الجاري ومهامه قبل تغيير مجلد المشروع.');
+      return;
+    }
+    lastConversationCwd = cwd;
+    detachConversation();
+    sessionId = null;
+    sessionCwd = cwd;
+    currentBlock = null;
+    chatEl.reset();
+    resetSessionChanges();
+    $('sessionInfo').textContent = 'لا جلسة';
+    addNotice('📁 تغيّر مجلد المشروع — بدأت محادثة مستقلة لهذا المجلد.');
+  });
 
   // ---------- تنبيه «لا شبكة استرجاع» عند أول كتابة (‏OBS-034) ----------
   // لقطات التراجع ذاكرية تموت بإغلاق «سطر»، وcheckpoint يفقد `restorable` بعدها،
@@ -876,6 +1065,10 @@ import { createPreviewShield } from './lib/preview-shield.js';
     // ترتسم من خلال حوار «ما الجديد» لأنه يُفتح بـ`hidden=false` بلا `setDialog`.
     // المفتاح `modal` مستقل عن `dialog` كي لا يُفرج إغلاقُ أحدهما عن حجب الآخر.
     const shield = createPreviewShield({
+      previewRect: () => {
+        const box = previewEl.shadowRoot && previewEl.shadowRoot.getElementById('pvBox');
+        return previewEl.hasAttribute('open') && box ? box.getBoundingClientRect() : null;
+      },
       onHold: (hold) => {
         const preview = previewSurface();
         if (preview && preview.holdForModal) preview.holdForModal(hold);
@@ -883,6 +1076,10 @@ import { createPreviewShield } from './lib/preview-shield.js';
       },
     });
     shield.start();
+    customElements.whenDefined('satr-preview-panel').then(() => {
+      const preview = previewSurface();
+      if (preview && preview.holdForModal) preview.holdForModal(shield.check());
+    });
 
     return { register, openPanel, closePanel, closeActivePanel, setDialog, confirm, snapshot, shield };
   })();
@@ -1060,10 +1257,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
   function deadSessionRecovery(text) {
     if (!/No conversation found with session ID/i.test(String(text || ''))) return false;
     sessionId = null;
-    sessionCwd = null;
-    $('sessionInfo').textContent = 'لا جلسة';
+    if (!conversationId) sessionCwd = null;
+    $('sessionInfo').textContent = conversationId ? 'محادثة مستمرة' : 'لا جلسة';
     if (lastSentPrompt && !input.value.trim()) input.value = lastSentPrompt;
-    addNotice('⚠ الجلسة السابقة لم تعد محفوظة لدى Claude Code — بدأت جلسة جديدة وأعدت طلبك إلى المحرّر: اضغط إرسال');
+    addNotice(conversationId
+      ? 'تعذر استئناف جلسة Claude؛ سياق المحادثة محفوظ. أعد الإرسال لمحاولة الاستئناف من السجل.'
+      : '⚠ الجلسة السابقة لم تعد محفوظة لدى Claude Code — بدأت جلسة جديدة وأعدت طلبك إلى المحرّر: اضغط إرسال');
     return true;
   }
 
@@ -1113,6 +1312,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     uiEventCounts.total += 1;
     const evType = ev && typeof ev.type === 'string' ? ev.type.slice(0, 64) : '?';
     uiEventCounts.byType[evType] = (uiEventCounts.byType[evType] || 0) + 1;
+    if (ev.type === 'conversation') { acceptConversationEvent(ev); return; }
     // طلبات الأذونات تُعالج دائماً ولو كانت الكتلة منتهية
     if (ev.type === 'permission_request') {
       permEl.request({
@@ -1451,7 +1651,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
         $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(sessionId);
       }
       if (ev.is_error && ev.result) {
-        if (deadSessionRecovery(ev.result)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
+        if (deadSessionRecovery(ev.result)) block.error(conversationId ? 'تعذّر استئناف جلسة المحرك؛ سياق المحادثة محفوظ، أعد الإرسال.' : 'تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
         else if (isClaudeAuthError(ev.result)) block.error(claudeAuthErrorMessage());
         else block.error(String(ev.result));
       }
@@ -1464,7 +1664,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
       // Query قد يبقى حياً لإشعار مهمة SDK، لكن دور المستخدم انتهى ويجب تحرير المؤلف الآن.
       if (completedEngine === 'sdk') releaseRunControls();
     } else if (ev.type === 'spawn_error') {
-      if (deadSessionRecovery(ev.text)) block.error('تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
+      if (deadSessionRecovery(ev.text)) block.error(conversationId ? 'تعذّر استئناف جلسة المحرك؛ سياق المحادثة محفوظ، أعد الإرسال.' : 'تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
       else if (isClaudeAuthError(ev.text)) block.error(claudeAuthErrorMessage());
       else {
         const eng = $('engine').value;
@@ -1624,6 +1824,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
   // ---------- الإرسال ----------
   async function send() {
     if (gated) return; // المحادثة محجوبة حتى تجتاز بوابة أول التشغيل
+    if (conversationRestoreBusy) { addNotice('انتظر استعادة المحادثة المحفوظة قبل الإرسال.'); return; }
     if (sessionControlBusy || sessionResumeBusy) {
       addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل إرسال طلب جديد.');
       return;
@@ -1631,6 +1832,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (busy && steerEligible()) { await steerTurn(); return; } // C1: وجّه بدل الإيقاف
     if (busy) {
       if (currentBlock && !currentBlock.done) { currentBlock.stopped(); currentBlock.showRetry(); }
+      conversationEpoch += 1; // يلغي التحضير المحلي إن أُوقف الطلب قبل وصوله إلى main.
       await window.satr.stop();
       endRun();
       return;
@@ -1648,12 +1850,18 @@ import { createPreviewShield } from './lib/preview-shield.js';
     // وقاية: جلسات Claude Code مرتبطة بمجلدها — تغيير مجلد المشروع مع جلسة حيّة
     // يجعل --resume يفشل بـ «No conversation found» (لقطة قبول). مجلد جديد ⇐ جلسة جديدة.
     const cwdNow = $('cwd').value.trim();
-    if (sessionId && sessionCwd && cwdNow !== sessionCwd) {
+    if ((sessionId || conversationId || continuitySource) && sessionCwd && cwdNow !== sessionCwd) {
+      detachConversation();
       sessionId = null;
+      chatEl.clearThread();
+      resetSessionChanges();
       $('sessionInfo').textContent = 'لا جلسة';
       addNotice('📁 تغيّر مجلد المشروع — بدأت جلسة جديدة (جلسات Claude Code مرتبطة بمجلدها)');
     }
     sessionCwd = cwdNow;
+    lastConversationCwd = cwdNow;
+    rememberContinuitySource(engine);
+    const sendEpoch = ++conversationEpoch;
     lastSentPrompt = prompt;
     lastUserTurn = { prompt, images: images.map((image) => image.dataUrl) };
     input.value = '';
@@ -1670,23 +1878,31 @@ import { createPreviewShield } from './lib/preview-shield.js';
     sendBtn.classList.add('stop');
     currentBlock = chatEl.newAssistantBlock(engineLabel());
 
-    const skillsSel = await computeSkillsPayload();
-
-    const r = await window.satr.send({
+    // لقطة قبل أول await: تغيير النموذج يؤثر في الطلب التالي وحده.
+    const payload = {
       prompt,
-      cwd: $('cwd').value.trim(),
+      cwd: cwdNow,
       sessionId,
+      conversationId: supportsConversation(engine) ? conversationId : null,
+      continuitySource: supportsConversation(engine) ? continuitySource : null,
+      clientEpoch: sendEpoch,
       model: $('model').value,
       fallbackModel: engine === 'sdk' ? $('fallbackModel').value : '',
       permissionMode: $('perm').value,
       engine,
-      skills: skillsSel,
       effort: engineSupportsEffort(engine) ? $('effort').value : '',
       thinking: engine === 'kimi-code' ? thinkingValue : '',
       extraDirs: topbarEl.getExtraDirs ? topbarEl.getExtraDirs() : [],
       images: images.map((i) => ({ media_type: i.media_type, data: i.data })),
       browserControl: browserControlOn, // تفويض صريح لأدوات المتصفح في المحركات الأصلية الداعمة
-    });
+    };
+    const skillsSel = await computeSkillsPayload();
+    await conversationForgetPending;
+    if (!conversationContextIsCurrent(sendEpoch, cwdNow, engine) || !busy) return;
+    let r;
+    try { r = await window.satr.send({ ...payload, skills: skillsSel }); }
+    catch { r = { error: 'تعذّر إرسال الطلب إلى المحرك؛ أعد المحاولة.' }; }
+    if (!conversationContextIsCurrent(sendEpoch, cwdNow, engine)) return;
     if (r && r.error) {
       currentBlock.error(r.message || r.error);
       currentBlock.showRetry();
@@ -1726,18 +1942,25 @@ import { createPreviewShield } from './lib/preview-shield.js';
     sendBtn.textContent = 'إيقاف';
     sendBtn.classList.add('stop');
     currentBlock = chatEl.newAssistantBlock(engineLabel());
-    const skillsSel = await computeSkillsPayload();
-    const r = await window.satr.send({
+    runningEngine = activeEngine;
+    const sendEpoch = ++conversationEpoch;
+    const payload = {
       prompt: '/compact',
       cwd,
       sessionId,
       model: $('model').value,
       permissionMode: $('perm').value,
       engine: activeEngine,
-      skills: skillsSel,
+      conversationId: supportsConversation(activeEngine) ? conversationId : null,
+      continuitySource: supportsConversation(activeEngine) ? continuitySource : null,
+      clientEpoch: sendEpoch,
       effort: engineSupportsEffort(activeEngine) ? $('effort').value : '',
       images: [],
-    });
+    };
+    const skillsSel = await computeSkillsPayload();
+    if (!conversationContextIsCurrent(sendEpoch, cwd, activeEngine) || !busy) return;
+    const r = await window.satr.send({ ...payload, skills: skillsSel });
+    if (!conversationContextIsCurrent(sendEpoch, cwd, activeEngine)) return;
     if (r && r.error) { currentBlock.error(r.message || r.error); endRun(); }
   }
 
@@ -1779,7 +2002,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     { cmd: '/بحث',     en: '/research', desc: 'تشغيل 1–3 باحثين للقراءة فقط وإعادة خلاصة ومصادر', sdkOnly: true, run: () => openResearch() },
     { cmd: '/مهارات',  en: '/skills', desc: 'عرض المهارات المكتشفة واختيار المُفعَّل منها', sdkOnly: true, run: () => openSkills() },
     { cmd: '/وكلاء',   en: '/agents', desc: 'عرض الوكلاء الفرعيين المكتشفين (المشروع والمستخدم)', sdkOnly: true, run: () => openAgents() },
-    { cmd: '/موصلات',  en: '/mcp',     desc: 'حالة موصّلات MCP وإعادة الاتصال والتفعيل', engines: ['sdk', 'codex'], run: () => openMcp() },
+    { cmd: '/موصلات',  en: '/mcp',     desc: 'توصيلات المشروع والحساب والموارد وحالة MCP', run: () => openMcp() },
     { cmd: '/سياق',    en: '/context', desc: 'عرض امتلاء نافذة السياق وتوزيع الرموز',    engines: ['sdk', 'kimi-code', 'codex'], run: () => openContext() },
     { cmd: '/ضغط',     en: '/compact', desc: 'ضغط المحادثة (تلخيصها) لتوفير السياق',     engines: ['sdk', 'kimi-code', 'codex'], run: () => compactConversation() },
     { cmd: '/فيبل',    en: '/fable',  desc: 'التبديل إلى نموذج Fable 5',            sdkOnly: true, run: () => setModel('claude-fable-5', 'Fable 5') },
@@ -1913,8 +2136,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
 
   function newSession(options) {
     const fromResume = options && options.fromResume === true;
-    if (sessionControlBusy || (sessionResumeBusy && !fromResume)) {
-      addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل بدء جلسة جديدة.');
+    if (busy || sessionControlBusy || (sessionResumeBusy && !fromResume)) {
+      addNotice('انتظر انتهاء الطلب الجاري أو عملية الجلسة قبل بدء محادثة جديدة.');
       return false;
     }
     // الدفعة D: لا نمسح البطاقة الوحيدة التي تملك زر إيقاف Query الخلفية.
@@ -1925,6 +2148,16 @@ import { createPreviewShield } from './lib/preview-shield.js';
     // 1.3: «جلسة جديدة» على محوّل أعمى تنسى مؤشر الاستئناف على القرص (سجلّه يبقى للتنظيف)
     const engNow = $('engine').value;
     clearPromptSuggestion();
+    detachConversation();
+    sessionCwd = $('cwd').value.trim();
+    lastConversationCwd = sessionCwd;
+    if (!fromResume && window.satr.conversationForget) {
+      conversationForgetPending = window.satr.conversationForget(sessionCwd).then((result) => {
+        if (!result || result.ok !== true) throw new Error('forget_failed');
+      }).catch(() => {
+        addNotice('تعذّر حفظ اختيار محادثة جديدة؛ قد يعود السجل السابق عند إعادة التشغيل.');
+      });
+    }
     if (isBlindEngine(engNow)) { try { window.satr.forgetChat(engNow); } catch (e) {} }
     sessionId = null; currentBlock = null; lastUserTurn = { prompt: '', images: [] };
     if (composerEl.clearImages) composerEl.clearImages();
@@ -1959,6 +2192,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
     const s = e.detail;
     clearPromptSuggestion();
     sessionResumeBusy = true;
+    conversationEpoch += 1;
+    conversationRestoreBusy = false;
     try {
       if (s.kind === 'chat') await resumeChat(s);
       else if (s.kind === 'codex') await resumeCodexSession(s);
@@ -1989,9 +2224,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
       addNotice('✗ المزوّد ' + c.provider + ' غير متاح في هذا البناء');
       return;
     }
+    detachConversation();
     sel.value = c.provider;
     localStorage.setItem('satr_engine', c.provider);
     rebuildModels();
+    applyEngineCommands(c.provider);
+    refreshEngineModels(c.provider);
     lastEngine = c.provider;
     // تصفير العرض (نظير newSession دون نسيان مؤشر الاستئناف على القرص)
     currentBlock = null;
@@ -2039,13 +2277,20 @@ import { createPreviewShield } from './lib/preview-shield.js';
     const setCwd = (value) => {
       $('cwd').value = value;
       localStorage.setItem('satr_cwd', value);
-      $('cwd').dispatchEvent(new Event('change', { bubbles: true }));
+      applyingResumedCwd = true;
+      try { $('cwd').dispatchEvent(new Event('change', { bubbles: true })); }
+      finally { applyingResumedCwd = false; }
     };
     setCwd(nextCwd);
     // ويندوز لا يميّز حالة الأحرف في المسارات — لا نزعج المستخدم بفرق شكلي
     if (!prev || prev.toLowerCase() === String(nextCwd).toLowerCase()) return;
     chatEl.addActionNotice('📁 تبدّل مجلد المشروع إلى مجلد هذه الجلسة: ' + nextCwd
       + '  (كان: ' + prev + ')', '↩ أعِد مجلدي', () => {
+      if (busy || sessionControlBusy || sessionResumeBusy || hasSdkBackgroundSessionLock()) {
+        addNotice('انتظر انتهاء الطلب الجاري أو عملية الجلسة قبل إعادة المجلد.');
+        return;
+      }
+      detachConversation();
       setCwd(prev);
       sessionCwd = prev;
       sessionId = null;
@@ -2058,7 +2303,14 @@ import { createPreviewShield } from './lib/preview-shield.js';
     const data = await window.satr.readSession(s.project, s.id);
     sessionsEl.close();
     if (!data || data.error) { addNotice('✗ تعذّر فتح الجلسة'); return; }
+    if (restoreReadConversation(data.conversation)) return;
     if (!newSession({ fromResume: true })) return;
+    $('engine').value = 'sdk';
+    localStorage.setItem('satr_engine', 'sdk');
+    lastEngine = 'sdk';
+    rebuildModels();
+    applyEngineCommands('sdk');
+    refreshEngineModels('sdk');
     sessionId = s.id; // الرسالة القادمة ستُرسل بـ --resume على هذه الجلسة
     $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(s.id);
     applyResumedCwd(data.cwd);
@@ -2090,12 +2342,15 @@ import { createPreviewShield } from './lib/preview-shield.js';
     const data = await window.satr.readCodexSession(s.id);
     sessionsEl.close();
     if (!data || data.error) { addNotice('✗ تعذّر فتح جلسة Codex'); return; }
+    if (restoreReadConversation(data.conversation)) return;
     const sel = $('engine');
     if (![...sel.options].some((o) => o.value === 'codex')) { addNotice('✗ محرك Codex غير متاح'); return; }
+    detachConversation();
     sel.value = 'codex';
     localStorage.setItem('satr_engine', 'codex');
     rebuildModels();
     applyEngineCommands('codex');
+    refreshEngineModels('codex');
     lastEngine = 'codex';
     // تصفير العرض ثم عرض التاريخ
     currentBlock = null;
@@ -2129,10 +2384,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (![...sel.options].some((option) => option.value === 'kimi-code')) {
       addNotice('✗ محرك Kimi Code الأصيل غير متاح'); return;
     }
+    detachConversation();
     sel.value = 'kimi-code';
     localStorage.setItem('satr_engine', 'kimi-code');
     rebuildModels();
     applyEngineCommands('kimi-code');
+    refreshEngineModels('kimi-code');
     lastEngine = 'kimi-code';
     currentBlock = null;
     if (composerEl.clearImages) composerEl.clearImages();
@@ -2436,6 +2693,15 @@ import { createPreviewShield } from './lib/preview-shield.js';
       () => contextEl.open($('cwd').value.trim(), sessionId, busy, $('engine').value));
   }
   mcpEl.addEventListener('panel-refresh', openMcp);
+  mcpEl.addEventListener('connection-preview', (event) => {
+    const url = event.detail && event.detail.url;
+    if (typeof url === 'string' && previewEl.openWith) previewEl.openWith(url);
+  });
+  // تغيير المجلد أو المحرك يبطل نتائج اللوحة القديمة قبل إعادة جلب مالكها الجديد.
+  for (const id of ['cwd', 'engine']) $(id).addEventListener('change', () => {
+    if (mcpEl.hasAttribute('open')) mcpEl.open($('cwd').value.trim(), $('engine').value);
+    else mcpEl.close();
+  });
   contextEl.addEventListener('panel-refresh', openContext);
   contextEl.addEventListener('context-usage', (event) => {
     const usage = event.detail || {};
@@ -2547,6 +2813,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
         addNotice('🌿 أُنشئ الفرع، لكن تغيّر سياق الواجهة قبل فتحه. يمكنك فتحه من /جلسات.');
         return;
       }
+      detachConversation();
       sessionId = result.sessionId;
       sessionCwd = epoch.cwd;
       currentBlock = null;
