@@ -49,6 +49,13 @@
     --ease: cubic-bezier(.2, .8, .3, 1);
     --dur: .18s;
     --side-surfaces-wide: 120rem; /* يطابق MULTI_SURFACE_MEDIA في app.js */
+    /* عمود النثر في الإجابة (جولة القرائية 2026-09-10): كان السطر ~105 محارف على فقاعة
+       834px فيتعب القارئ ويتوه بين الأسطر. الوحدة ch هي عرض الصفر في الخط (≈0.6em في
+       IBM Plex Sans Arabic) والحرف العربي أضيق منه بكثير (≈0.4em مقيساً بعرض الحبر)،
+       فالقيمة لا تُقرأ محارفَ: 45ch ≈ 419px ≈ 68 محرفاً ≈ 11 كلمة للسطر — وهو «≈68» الذي
+       قصدته الخطة ومعيارها «لا يتجاوز ~70»، مقيس في test:chat-md (‏50ch أعطت 75.8). الرقم
+       الوحيد الذي يُضبط عند القبول البشري. الجداول وكتل الكود بالعرض الكامل؛ النثر وحده يُقصر. */
+    --prose-measure: 45ch;
     --shadow-pop: 0 10px 30px rgba(0, 0, 0, .45);
     --shadow-panel: -10px 0 34px rgba(0, 0, 0, .5);
     --shadow-dock: 6px 0 18px rgba(0, 0, 0, .18);
@@ -361,8 +368,29 @@
   /* العناوين وخلايا الجداول: أساس RTL ثابت (لا plaintext) — عنوان أو خلية تبدأ
      برمز/كلمة إنجليزية كانت تنقلب LTR وتلتصق يساراً بينما جاراتها يميناً فيتشتت
      الجدول (لقطة مالك المشروع). الإنجليزية تنضمّ داخل الأساس RTL كمقاطع مدمجة */
-  .md h1, .md h2, .md h3, .md th, .md td { direction: rtl; unicode-bidi: isolate; }
-  .md h1, .md h2, .md h3 { color: var(--gold); font-size: 1.08em; margin-top: .4em; }
+  .md h1, .md h2, .md h3, .md h4, .md th, .md td { direction: rtl; unicode-bidi: isolate; }
+  /* سلّم العناوين (جولة القرائية 2026-09-10 — عصف ثلاثي متفق): كانت المستويات الثلاثة
+     بحجم واحد 1.08em ولون واحد فتبدو فقرات غامقة، والهامش فوق العنوان (.4em) أصغر من
+     الذي تحته (.6em) فيلتصق العنوان بما قبله لا بما بعده. النسبة ~1.25 بين المستويات،
+     والمستوى الثالث بوزن 500 بلون المتن (لا لون ثانٍ بقرار الجولة)، والرابع فما فوق
+     يُرسم h4 من renderMD. الهامش أعلى العنوان أكبر من أسفله كي يرتبط بما يليه. */
+  .md h1, .md h2, .md h3, .md h4 { margin-top: 1.5em; margin-bottom: .35em; line-height: 1.35; }
+  .md h1 { color: var(--gold); font-size: 1.5em; font-weight: 700; }
+  .md h2 { color: var(--gold); font-size: 1.28em; font-weight: 700; }
+  .md h3 { color: var(--text); font-size: 1.1em; font-weight: 500; }
+  .md h4 { color: var(--text); font-size: 1em; font-weight: 700; }
+  .md > h1:first-child, .md > h2:first-child, .md > h3:first-child, .md > h4:first-child { margin-top: 0; }
+  /* الاقتباس (يعرضه renderMD منذ الجولة نفسها): هادئ بحدّ جانبي بلا لون جديد */
+  .md blockquote { margin: 0 0 .6em; padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--border); color: var(--text-dim); direction: rtl; unicode-bidi: isolate; }
+  .md blockquote > p { margin-bottom: .3em; }
+  /* الروابط نصٌّ ظاهر بعنوان LTR باهت — لا فتح تلقائي ولا لون رابط (قرار الجولة) */
+  .md .md-link-url { color: var(--text-dim); font-family: var(--mono); font-size: .85em; direction: ltr; unicode-bidi: isolate; }
+  /* قوائم المهام: علامة نصية بدل نقطة القائمة */
+  .md li.md-task { list-style: none; margin-inline-start: -1.1em; }
+  .md li.md-task > bdi::before { content: '☐ '; color: var(--text-dim); }
+  .md li.md-task.done > bdi::before { content: '☑ '; color: var(--green); }
+  /* القوائم المتداخلة: مستوى ثانٍ بمسافة بادئة أصغر وبلا هامش سفلي يفصلها عن أبيها */
+  .md li > ul, .md li > ol { margin: .15em 0 .1em; padding-inline-start: 1.2em; }
   /* القائمة وعلاماتها (الأرقام/النقاط) تتبع RTL صراحةً: لو حُلّ اتجاه .md إلى LTR
      (رسالة تبدأ بإنجليزي/مسار) ترث القائمة LTR فتقفز العلامات لليسار. ملاحظة:
      لا نضع plaintext على <li> لأنه ينقل صندوق العلامة لجهة اتجاه محتوى العنصر؛
@@ -430,7 +458,7 @@
     max-height: 240px; overflow-y: auto; padding-inline-end: var(--space-2);
     color: var(--text-dim); font-size: 13.5px; line-height: 1.75;
   }
-  .commentary-md h1, .commentary-md h2, .commentary-md h3 { color: var(--text-dim); }
+  .commentary-md h1, .commentary-md h2, .commentary-md h3, .commentary-md h4 { color: var(--text-dim); }
   .commentary-md pre, .commentary-md code { background: var(--surface-2); }
 
   .tools { display: flex; flex-direction: column; gap: var(--space-1); }
@@ -488,6 +516,10 @@
     box-shadow: inset 0 0 0 1px var(--border-dim);
   }
   .answer-wrap .md { font-size: 15.5px; line-height: 1.85; }
+  /* عمود النثر (--prose-measure): الفقرات والقوائم والاقتباس داخل الإجابة وحدها؛
+     الجداول وكتل الكود والعناوين بالعرض الكامل. RTL ⇒ يبدأ من اليمين ويترك الفراغ يساراً. */
+  .answer-wrap .md p, .answer-wrap .md ul, .answer-wrap .md ol, .answer-wrap .md blockquote { max-width: var(--prose-measure); }
+  .answer-wrap .md pre, .answer-wrap .md table { max-width: 100%; }
   .history-answer { animation: none; }
 
   .meta { align-self: flex-end; font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); direction: ltr; text-align: right; }
