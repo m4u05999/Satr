@@ -30,6 +30,7 @@ const browserpolicy = require('./browserpolicy');
 const promocapture = require('./promocapture');
 const promostudio = require('./promostudio');
 const agentTools = require('./tools');
+const connectionTools = require('./connection-tools');
 
 let eventSink = null;
 
@@ -904,6 +905,7 @@ function buildTools(deps) {
       },
     },
   ];
+  tools.push(...connectionTools.mcpTools(deps.cwd, deps.connectionContext || {}));
   // امتداد داخلي محدود لمحرك أصيل آخر (Kimi ACP): الأدوات الإضافية تُبنى داخل main
   // ولا تقبل تعريفات من renderer أو من المشروع. الأسماء المكررة/غير الصالحة تُهمل.
   const seen = new Set(tools.map((tool) => tool.name));

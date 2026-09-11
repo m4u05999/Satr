@@ -1,10 +1,12 @@
-// <satr-mcp-panel> — لوحة «/موصلات»: حالة خوادم MCP وإجراءاتها (تفكيك ت-3).
+// <satr-mcp-panel> — توصيلات المشروع مع قسم مستقل لخوادم MCP الخاصة بالمحرك.
 // العقد: open(cwd) يفتح ويجلب عبر satr:mcpStatus، close() يغلق. أحداث للخارج:
 // «panel-refresh» من زر تحديث (القشرة تعيد الفتح بـ cwd طازج) و«notice» بنص عربي
 // (القشرة تعرضه في خيط المحادثة عبر addNotice). الإجراءات (تفعيل/تعطيل/إعادة اتصال)
 // داخلية عبر satr:mcpAction ثم إعادة عرض تكشف الحالة الفعلية. نقل حرفي (ت-3).
 import { sheet } from '../lib/sheet.js';
 import { panelSheet } from '../lib/panel.css.js';
+import { ConnectionView, connectionSheet } from './connection-view.js';
+import { textDir } from '../lib/text-dir.js';
 
 const ownSheet = sheet(`
   /* صفوف الموصّلات — منقولة كما هي من base.css */
@@ -20,7 +22,7 @@ const ownSheet = sheet(`
   .mcp-badge.failed    { color: var(--red); border-color: var(--red-border); }
   .mcp-badge.disabled  { color: var(--text-dim); }
   .mcp-meta { font-size: 11.5px; color: var(--text-dim); margin-top: var(--space-1); direction: ltr; text-align: right; font-family: var(--mono); }
-  .mcp-hint { font-size: 12px; color: var(--text-dim); margin-top: var(--space-1h); unicode-bidi: plaintext; line-height: 1.6; }
+  .mcp-hint { font-size: 12px; color: var(--text-dim); margin-top: var(--space-1h); unicode-bidi: isolate; line-height: 1.6; }
   .mcp-actions { display: flex; gap: var(--space-1h); margin-top: var(--space-2); flex-wrap: wrap; }
   .mcp-actions button { font-size: 12px; padding: 3px var(--space-3); }
   .mcp-actions button:disabled { opacity: .55; cursor: default; border-color: var(--border); }
@@ -43,17 +45,21 @@ class SatrMcpPanel extends HTMLElement {
   constructor() {
     super();
     const r = this.attachShadow({ mode: 'open' });
-    r.adoptedStyleSheets = [panelSheet, ownSheet];
+    r.adoptedStyleSheets = [panelSheet, ownSheet, connectionSheet];
     r.innerHTML =
       '<div class="panel-head">' +
-        '<span>الموصّلات (MCP)</span>' +
+        '<span>توصيلات المشروع</span>' +
         '<span class="panel-head-actions">' +
           '<button class="refresh" title="تحديث">تحديث</button>' +
           '<button class="close" title="إغلاق">✕</button>' +
         '</span>' +
       '</div>' +
-      '<div class="panel-list"></div>';
-    this._list = r.querySelector('.panel-list');
+      '<div class="panel-list"><div class="project-connections"></div>' +
+      '<details class="connection-legacy"><summary dir="rtl">خوادم MCP الخاصة بالمحرك</summary><div class="mcp-list"></div></details></div>';
+    this._list = r.querySelector('.mcp-list');
+    this._connections = new ConnectionView(r.querySelector('.project-connections'), (url) =>
+      this.dispatchEvent(new CustomEvent('connection-preview', { detail: { url } })));
+    this._request = 0;
     this._cwd = '';
     r.querySelector('.close').addEventListener('click', () => this.close());
     // التحديث للقشرة: تعيد الفتح بـ cwd لحظة النقر (قد يتغيّر واللوحة مفتوحة)
@@ -61,7 +67,7 @@ class SatrMcpPanel extends HTMLElement {
       this.dispatchEvent(new CustomEvent('panel-refresh')));
   }
 
-  close() { this.removeAttribute('open'); }
+  close() { this._request++; this._connections.close(); this.removeAttribute('open'); }
 
   _notice(text) { this.dispatchEvent(new CustomEvent('notice', { detail: text })); }
 
@@ -69,8 +75,16 @@ class SatrMcpPanel extends HTMLElement {
     this._cwd = cwd || '';
     this._engine = engine || 'sdk'; // C3: Codex له خوادمه وإجراءاته الخاصة
     this.setAttribute('open', '');
+    const request = ++this._request;
+    this._connections.open(this._cwd, this._engine);
+    if (!['sdk', 'codex'].includes(this._engine)) {
+      this._list.innerHTML = '<p class="hint" dir="rtl">جرد خوادم المحرك غير متاح هنا. توصيلات المشروع مستقلة عنه.</p>';
+      return;
+    }
     this._list.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
-    const r = await window.satr.mcpStatus(this._cwd, this._engine);
+    let r;
+    try { r = await window.satr.mcpStatus(this._cwd, this._engine); } catch { r = { ok: false }; }
+    if (request !== this._request) return;
     if (!r || !r.ok) {
       this._list.innerHTML = '';
       const h = document.createElement('div'); h.className = 'hint';
@@ -115,6 +129,7 @@ class SatrMcpPanel extends HTMLElement {
     if (s.status === 'failed' && s.error) {
       const hint = document.createElement('div'); hint.className = 'mcp-hint';
       hint.textContent = 'الخطأ: ' + s.error;
+      hint.dir = textDir(hint.textContent) || 'rtl';
       box.appendChild(hint);
     }
     const isCodex = this._engine === 'codex';
@@ -124,6 +139,7 @@ class SatrMcpPanel extends HTMLElement {
         ? 'يحتاج تسجيل دخول — اضغط «سجّل الدخول» ليفتح «سطر» صفحة المصادقة في متصفح النظام بعد تأكيدك.'
         : 'يحتاج تسجيل دخول — صادق عليه من Claude Code (الأمر /mcp) ثم اضغط «تحديث». '
           + 'زر «إعادة الاتصال» هنا أفضل جهد ولا يفتح نافذة الدخول.';
+      hint.dir = textDir(hint.textContent) || 'rtl';
       box.appendChild(hint);
     }
 

@@ -106,6 +106,12 @@
     researchLatest: async () => ({ ok: true, run: null }),
     researchStart: async () => ({ ok: false, error: 'disabled_in_harness' }),
     researchStop: async () => ({ ok: true }),
+    connectionList: async () => ({ ok: true, services: [] }),
+    connectionAuthenticate: async () => ({ ok: false, error: 'disabled_in_harness' }),
+    connectionResources: async () => ({ ok: true, resources: [], truncated: false }),
+    connectionSelect: async () => ({ ok: false, error: 'disabled_in_harness' }),
+    connectionTest: async () => ({ ok: false, error: 'disabled_in_harness' }),
+    connectionDisconnect: async () => ({ ok: false, error: 'disabled_in_harness' }),
     mcpStatus: async () => ({ ok: true, servers: [] }),
     mcpAction: async () => ({ ok: false, error: 'disabled_in_harness' }),
     contextUsage: async function contextUsage() {
