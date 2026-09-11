@@ -65,6 +65,7 @@ const SUITE = [
   'test:surface',
   'test:browserorigin',
   'test:browserpolicy',
+  'test:desktopguard',
   'test:browser-platform-live',
   'test:execguard',
   'test:termjobs',
