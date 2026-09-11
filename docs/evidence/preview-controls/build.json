@@ -1,0 +1,33 @@
+{
+  "time": "2026-09-09T23:18:29.820Z",
+  "path": "dist/preview-controls-build/win-unpacked",
+  "scope": "Byte comparison of the four listed files only; no claim about other packaged files or runtime behavior.",
+  "verifiedFiles": 4,
+  "exeSha256": "6226d3f58e4790a9462781e92c87f20d1701e8d9965bec5d9cddfecbfd257b29",
+  "files": [
+    {
+      "file": "electron/main.js",
+      "sha256": "458f3e1f12231bf170d8735a02fda24a2a8cfe728dcd0b0860ceea84309874e7",
+      "packagedSha256": "458f3e1f12231bf170d8735a02fda24a2a8cfe728dcd0b0860ceea84309874e7",
+      "equal": true
+    },
+    {
+      "file": "electron/preload.js",
+      "sha256": "12934f3298fbe74073f6aecc7ec1cdff49db6d7d37c7f4a26459e313dbe4d201",
+      "packagedSha256": "12934f3298fbe74073f6aecc7ec1cdff49db6d7d37c7f4a26459e313dbe4d201",
+      "equal": true
+    },
+    {
+      "file": "electron/preview.js",
+      "sha256": "c0dd446c26414b5ce167aafff6b009d7d7a9f3af7b0a5f930b7f971f30eccabd",
+      "packagedSha256": "c0dd446c26414b5ce167aafff6b009d7d7a9f3af7b0a5f930b7f971f30eccabd",
+      "equal": true
+    },
+    {
+      "file": "src/ui/components/preview-panel.js",
+      "sha256": "53e17ec708654d8fdecda37ac1eab476a165cc22e4899148bd8cbad4c6f6cdaa",
+      "packagedSha256": "53e17ec708654d8fdecda37ac1eab476a165cc22e4899148bd8cbad4c6f6cdaa",
+      "equal": true
+    }
+  ]
+}

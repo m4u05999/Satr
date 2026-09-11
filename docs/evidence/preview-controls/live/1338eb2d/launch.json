@@ -1,0 +1,11 @@
+{
+  "started": "2026-09-09T22:53:07.896Z",
+  "page": "http://127.0.0.1:60209",
+  "hashes": {
+    "electron/main.js": "458f3e1f12231bf170d8735a02fda24a2a8cfe728dcd0b0860ceea84309874e7",
+    "electron/preload.js": "12934f3298fbe74073f6aecc7ec1cdff49db6d7d37c7f4a26459e313dbe4d201",
+    "electron/preview.js": "2b57d3ee5a7e3ad2e3967a0edc54872944473cc292d578d58f9199971b3460b7",
+    "src/ui/components/preview-panel.js": "2e81a9cd7df15eddd05cb67b71e8f137caa3a4ef38fdd047d3b5e1ce77f5c9aa",
+    "src/ui/lib/preview-shield.js": "b415e8506a5dc4b361ac8ed7ded16afc056cae3d93f1f47d9c18e6e3f1c3cc88"
+  }
+}

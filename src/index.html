@@ -12,7 +12,7 @@
 
 <!-- بوابة أول التشغيل: تحجب المحادثة حتى يتوفّر Claude Code (مانع إطلاق — المرحلة 6) -->
 <!-- بوابة أول التشغيل: مكوّن Web Component (تفكيك ت-8) — ذاتي الفحص، يبث gate-ready عند الجهوز -->
-<satr-gate></satr-gate>
+<satr-gate data-preview-overlay></satr-gate>
 
 <!-- الشريط العلوي + ⚙: مكوّن light DOM (تفكيك ت-11) — الترميز هنا (القشرة تربط عناصره
      عند الإقلاع)، والمكوّن يملك: مفاتيح المزوّدين/اختيار المجلد/المجلدات الإضافية/منبثق ⚙/Enterprise -->
@@ -38,7 +38,7 @@
     <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
     <div class="settings-wrap">
       <button id="settingsBtn" title="الإعدادات">⚙</button>
-      <div id="settingsPop" hidden>
+      <div id="settingsPop" data-preview-overlay hidden>
         <!-- رأس اللوحة: اتساق مع بقية اللوحات (كانت الوحيدة بلا عنوان ولا زر إغلاق) -->
         <div class="settings-head">
           <span>الإعدادات</span>
@@ -156,7 +156,7 @@
   <button id="mobileToggle" type="button" title="إدارة التحكم من الجوال" hidden>📱 الجوال</button>
   <div class="top-pop-wrap">
     <button id="sessionChangesToggle" type="button" title="تغييرات هذه الجلسة">Δ ملخّص الجلسة <span id="sessionChangesCount" hidden>0</span></button>
-    <div id="sessionChangesPop" class="top-pop" hidden>
+    <div id="sessionChangesPop" data-preview-overlay class="top-pop" hidden>
       <div class="top-pop-head">تغييرات هذه الجلسة</div>
       <div id="sessionChangesList" class="session-changes-list"></div>
     </div>
@@ -165,7 +165,7 @@
   <button id="themeToggle" title="تبديل الوضع الفاتح/الداكن">🌙</button>
   <div class="top-pop-wrap">
     <button id="shortcutsToggle" type="button" title="اختصارات لوحة المفاتيح">؟ اختصارات</button>
-    <div id="shortcutsPop" class="top-pop shortcuts-pop" hidden>
+    <div id="shortcutsPop" data-preview-overlay class="top-pop shortcuts-pop" hidden>
       <div class="top-pop-head">اختصارات سريعة</div>
       <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+N</kbd><span>جلسة جديدة</span></div>
       <div class="shortcut-row"><kbd dir="ltr">Ctrl+Alt+S</kbd><span>إيقاف الدور الجاري</span></div>
@@ -231,8 +231,8 @@
     <span id="promptSuggestionText" dir="auto"></span>
   </button>
   <div class="composer">
-    <div id="slashMenu" role="listbox"></div>
-    <div id="fileMenu" role="listbox"></div>
+    <div id="slashMenu" data-preview-overlay role="listbox"></div>
+    <div id="fileMenu" data-preview-overlay role="listbox"></div>
     <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1" spellcheck="true"></textarea>
     <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح: امنح المحرك الأصلي صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح فقط)">🖱️ متصفح</button>
     <button id="send">إرسال</button>
@@ -296,7 +296,7 @@
 <satr-terminal-panel></satr-terminal-panel>
 
 <!-- إشعار التحديث التلقائي (المرحلة 17): يظهر أسفل النافذة، لا يقاطع العمل -->
-<div id="updateToast" hidden>
+<div id="updateToast" data-preview-overlay="overlap" hidden>
   <span class="upd-ico" aria-hidden="true">⬇</span>
   <span id="updateText"></span>
   <button id="updateNotes" type="button" hidden>ما الجديد؟</button>

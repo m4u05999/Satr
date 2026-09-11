@@ -1,0 +1,44 @@
+{
+  "sequence": 2753,
+  "time": "2026-09-09T23:06:14.662Z",
+  "windowId": 1,
+  "bounds": {
+    "x": 370,
+    "y": 120,
+    "width": 1000,
+    "height": 820
+  },
+  "focused": true,
+  "views": [
+    {
+      "id": 4,
+      "bounds": {
+        "x": 0,
+        "y": 326,
+        "width": 279,
+        "height": 455
+      },
+      "visible": null,
+      "url": "http://127.0.0.1:61252/two",
+      "loading": false,
+      "devtools": false,
+      "debuggerAttached": false,
+      "page": {
+        "width": 279,
+        "height": 455,
+        "dpr": 1,
+        "visibility": "visible",
+        "focus": true,
+        "visualWidth": 279,
+        "online": true,
+        "url": "http://127.0.0.1:61252/two",
+        "ready": "complete",
+        "probe": {
+          "page": "two",
+          "boot": 8,
+          "frames": 120
+        }
+      }
+    }
+  ]
+}

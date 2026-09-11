@@ -1,0 +1,8 @@
+{
+    "source":  "D:\\sater\\satr-2\\src\\ui\\components\\preview-panel.js",
+    "sha256":  "A24DADAC594E74D68BDFABD1E156AF1CB3B18DF4EA8B6DD8DC0E7592FC08A130",
+    "command":  "node_modules\\.bin\\electron.cmd scripts/preview-controls-ui-test.js",
+    "exitCode":  0,
+    "sourceChanged":  false,
+    "summary":  "preview-controls-ui: OK 50 checks; zero console/CSP"
+}

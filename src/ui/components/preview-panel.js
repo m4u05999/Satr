@@ -10,7 +10,7 @@
 // العقد للخارج: openWith(url) — تستدعيها القشرة عند اقتراح localhost المرصود.
 import { sheet } from '../lib/sheet.js';
 import { controlsSheet } from '../lib/panel.css.js';
-import { pickRecMime } from '../lib/media-recorder.js';
+import { pickRecMime, prepareAppRecording } from '../lib/media-recorder.js';
 
 const previewSheet = sheet(`
   :host { display: none; }
@@ -21,7 +21,7 @@ const previewSheet = sheet(`
   }
   :host([drawer-held]) { display: none; }
   .pv-head {
-    display: flex; align-items: center; gap: var(--space-1h); padding: var(--space-2) var(--space-2h);
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1h); padding: var(--space-2) var(--space-2h);
     background: var(--surface); border-bottom: 1px solid var(--border);
     position: relative;
   }
@@ -32,7 +32,7 @@ const previewSheet = sheet(`
   .pv-head button:hover { border-color: var(--gold); }
   .pv-head button:disabled { opacity: .45; cursor: default; border-color: var(--border); }
   #pvUrl {
-    flex: 1; min-width: 0; direction: ltr; text-align: left; font-family: var(--mono);
+    flex: 1 1 12rem; min-width: 0; direction: ltr; text-align: left; font-family: var(--mono);
     font-size: 12px; background: var(--bg); border: 1px solid var(--border);
     color: var(--text); border-radius: var(--radius-md); padding: var(--space-1h) var(--space-2h); outline: none;
   }
@@ -394,7 +394,7 @@ const MARKUP = `
     </div>
     <div class="pv-hint" id="pvHeldNote" hidden>
       <span class="big">👁️</span>
-      <span>المعاينة مخفية مؤقتاً أثناء الحوار — تعود فور ردّك.</span>
+      <span>المعاينة مخفية مؤقتاً لعرض اللوحة — تعود بعد إغلاقها.</span>
     </div>
   </div>
   <div id="pvErr"><span id="pvErrText"></span><button id="pvRestartServer" type="button" hidden>🔁 شغّل خادم المشروع</button></div>
@@ -454,6 +454,8 @@ class SatrPreviewPanel extends HTMLElement {
     resizer.setAttribute('aria-label', 'تغيير عرض المعاينة؛ السهم الأيمن يوسّع والأيسر يضيّق');
     resizer.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight Home End');
 
+    let previewGeneration = 0;
+    let navigationRequest = 0;
     let started = false; // هل حُمّل عنوان في العرض الأصلي؟
 
     // م-1-ج: تحديث تلقائي بعد تعديلات الوكيل (افتراضياً مُفعّل — طلب المالك «تتحدث مباشرة»).
@@ -506,6 +508,7 @@ class SatrPreviewPanel extends HTMLElement {
     // المقبض) يغيّر المستطيل، وResizeObserver يلتقطه كله. إحداثيات CSS px = DIP.
     let boundsRaf = 0;
     let boundsWatch = 0;  // حلقة حارس المحاذاة الذاتي (rAF)
+    let viewportResetPending = false; // قصد الجهاز يبقى حتى توجد مساحة قابلة للإرسال.
     let lastBoundsKey = ''; // آخر مستطيل أُرسل — لا نرسل IPC إلا عند تغيّر فعلي
     const holdReasons = new Set(); // حجب مستقل للحوار وdrawer كي لا يفك أحدهما حجب الآخر
     let held = false;
@@ -536,9 +539,12 @@ class SatrPreviewPanel extends HTMLElement {
       const b = measureBounds();
       if (!b) return;
       const key = b.x + ',' + b.y + ',' + b.w + ',' + b.h + ',' + (b.mode || '');
-      if (key === lastBoundsKey) return;
+      if (key === lastBoundsKey && !viewportResetPending) return;
+      const resetViewport = viewportResetPending;
+      viewportResetPending = false;
       lastBoundsKey = key;
-      window.satr.previewBounds(b.x, b.y, b.w, b.h, b.mode);
+      // قصد المستخدم والمستطيل يصلان معاً؛ القياس العادي لا يلغي مقاس الوكيل.
+      window.satr.previewBounds(b.x, b.y, b.w, b.h, b.mode, resetViewport);
     };
     // حارس المحاذاة الذاتي: العرض الأصلي (WebContentsView) يطفو فوق pvBox، وResizeObserver
     // يرصد تغيّر **الحجم** فقط. لكن اللوحة قد تنزاح **أفقياً بلا تغيّر حجم** (فتح/إغلاق سطح
@@ -571,6 +577,7 @@ class SatrPreviewPanel extends HTMLElement {
     };
     paintDevice();
     deviceBtn.addEventListener('click', () => {
+      viewportResetPending = true;
       deviceIdx = (deviceIdx + 1) % DEVICES.length;
       try { localStorage.setItem('satr_preview_device', String(deviceIdx)); } catch (e) {}
       paintDevice();
@@ -641,7 +648,7 @@ class SatrPreviewPanel extends HTMLElement {
     const devtoolsBtn = $('pvDevtools');
     devtoolsBtn.addEventListener('click', () => {
       if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم افتح أدوات المطوّر.'); return; }
-      window.satr.previewAction('devtools');
+      runPreviewAction('devtools');
     });
 
     // ---------- محاكاة الشبكة + مسح التخزين (البند د) ----------
@@ -655,25 +662,37 @@ class SatrPreviewPanel extends HTMLElement {
       { key: 'net_offline', icon: '✈️', label: 'غير متصل' },
     ];
     let netIdx = 0;
-    netBtn.addEventListener('click', async () => {
-      if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم غيّر سرعة الشبكة.'); return; }
-      netIdx = (netIdx + 1) % NET_MODES.length;
+    let netRequest = 0;
+    const paintNetwork = () => {
       const m = NET_MODES[netIdx];
-      const r = await window.satr.previewAction(m.key);
-      if (r && r.error === 'throttle_unavailable') {
-        netIdx = 0; // فشل — أعِد للوضع العادي بصرياً
-        showErr('تعذّرت محاكاة الشبكة (أغلِق DevTools أولاً — تستعمل نفس القناة).');
-      }
       netBtn.textContent = m.icon;
       netBtn.classList.toggle('on', netIdx !== 0);
-      netBtn.title = 'محاكاة سرعة الشبكة: ' + NET_MODES[netIdx].label + ' — انقر للتبديل';
+      netBtn.title = 'محاكاة سرعة الشبكة: ' + m.label + ' — انقر للتبديل';
+    };
+    paintNetwork();
+    netBtn.addEventListener('click', async () => {
+      if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم غيّر سرعة الشبكة.'); return; }
+      if (netBtn.disabled) return;
+      const request = ++netRequest, generation = previewGeneration;
+      const next = (netIdx + 1) % NET_MODES.length;
+      netBtn.disabled = true;
+      try {
+        const r = await runPreviewAction(NET_MODES[next].key);
+        if (request !== netRequest || generation !== previewGeneration) return;
+        if (r && r.ok) { netIdx = next; paintNetwork(); }
+        else if (r && r.error === 'throttle_unavailable') {
+          showErr('تعذّرت محاكاة الشبكة. أغلِق أدوات المطوّر ثم أعد المحاولة.');
+        }
+      } finally {
+        if (request === netRequest) netBtn.disabled = false;
+      }
     });
 
     const clearStoreBtn = $('pvClearStore');
     clearStoreBtn.addEventListener('click', () => {
       if (!started) { showErr('افتح المعاينة على مشروعك أولاً ثم امسح التخزين.'); return; }
       if (!confirm('مسح كوكيز الصفحة وlocalStorage والـ cache ثم إعادة تحميلها؟')) return;
-      window.satr.previewAction('clear_storage');
+      runPreviewAction('clear_storage');
     });
     // تُستهلك في onPreview أدناه (نفس القناة satr:preview)
     this._pcConsole = (ev) => {
@@ -727,6 +746,7 @@ class SatrPreviewPanel extends HTMLElement {
       if (this.refreshServerStatus) this.refreshServerStatus();
     };
     const closePanel = () => {
+      navigationRequest++;
       this.removeAttribute('open');
       if (toggleBtn) toggleBtn.classList.remove('active');
       started = false;
@@ -741,6 +761,7 @@ class SatrPreviewPanel extends HTMLElement {
       micOn = false; stopMic();
       micBtn.classList.remove('on'); micBtn.setAttribute('aria-pressed', 'false');
       consentOk = false; consentBar.classList.remove('show');
+      resetPreviewState();
       window.satr.previewClose(); // يدمّر العرض الأصلي (الكوكيز تبقى في partition الدائمة)
     };
     if (toggleBtn) toggleBtn.addEventListener('click', () => {
@@ -769,16 +790,23 @@ class SatrPreviewPanel extends HTMLElement {
       const fromAgent = source === 'agent';
       const openTarget = () => fromAgent ? window.satr.previewOpenAgent(u) : window.satr.previewOpen(u);
       const navigateTarget = () => fromAgent ? window.satr.previewNavigateAgent(u) : window.satr.previewNavigate(u);
-      const wasStarted = started;
-      let r = wasStarted ? await navigateTarget() : await openTarget();
+      const wasStarted = started, request = ++navigationRequest;
+      let r;
+      try { r = wasStarted ? await navigateTarget() : await openTarget(); }
+      catch (e) { if (request === navigationRequest) showErr('تعذّر فتح المعاينة. أعد المحاولة.'); return; }
+      if (request !== navigationRequest || !this.hasAttribute('open')) return;
       // صفحات callback قد تنفّذ window.close فتدمّر WebContents وحدها، بينما تبقى اللوحة
       // مفتوحة وstarted قديمة. closed هنا إيصال فقد العرض: أنشئ واحداً جديداً مرة واحدة.
       if (wasStarted && r && r.error === 'closed') {
         started = false;
-        r = await openTarget();
+        try { r = await openTarget(); }
+        catch (e) { if (request === navigationRequest) showErr('تعذّر إعادة فتح المعاينة.'); return; }
+        if (request !== navigationRequest || !this.hasAttribute('open')) return;
       }
       if (r && r.ok) {
         started = true;
+        lastBoundsKey = '';
+        heldNote.hidden = !held;
         hint.style.display = 'none';
         urlIn.value = u;
         // م-1-د: تذكّر لكل مجلد مشروع + مفتاح عام (توافق/احتياط بلا cwd)
@@ -788,11 +816,46 @@ class SatrPreviewPanel extends HTMLElement {
       } else showErr('تعذّر فتح العنوان' + (r && r.error ? ' (' + r.error + ')' : ''));
     };
     urlIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(urlIn.value); });
-    backBtn.addEventListener('click', () => window.satr.previewAction('back'));
-    fwdBtn.addEventListener('click', () => window.satr.previewAction('forward'));
+    backBtn.addEventListener('click', () => runPreviewAction('back'));
+    fwdBtn.addEventListener('click', () => runPreviewAction('forward'));
     reloadBtn.addEventListener('click', () => {
-      if (started) window.satr.previewAction('reload'); else go(urlIn.value);
+      if (started) runPreviewAction('reload'); else go(urlIn.value);
     });
+
+    // فقد الصفحة لا يترك الأزرار مرتبطة بعرض ميت؛ إعادة التحميل تنشئ العرض من العنوان.
+    function resetPreviewState(notice = false) {
+      previewGeneration++;
+      navigationRequest++; // رد فتح قديم لا يعيد حالة عرض أُغلق.
+      started = false;
+      lastBoundsKey = '';
+      hint.style.display = '';
+      heldNote.hidden = true;
+      reloadBtn.classList.remove('loading');
+      backBtn.disabled = true;
+      fwdBtn.disabled = true;
+      devtoolsBtn.classList.remove('on');
+      netRequest++;
+      netBtn.disabled = false;
+      netIdx = 0;
+      paintNetwork();
+      endPickMode();
+      closePickBar();
+      if (notice && thisPanelOpen()) showErr('أُغلقت صفحة المعاينة. اضغط إعادة التحميل لفتحها مجدداً.');
+    }
+    const thisPanelOpen = () => this.hasAttribute('open');
+    async function runPreviewAction(action) {
+      const generation = previewGeneration;
+      try {
+        const result = await window.satr.previewAction(action);
+        if (generation !== previewGeneration) return { error: 'superseded' };
+        if (result && result.error === 'closed') resetPreviewState(true);
+        else if (result && result.error && result.error !== 'throttle_unavailable') showErr('تعذّر تنفيذ أمر المتصفح. أعد المحاولة.');
+        return result;
+      } catch (e) {
+        if (generation === previewGeneration) showErr('تعذّر تنفيذ أمر المتصفح. أعد المحاولة.');
+        return { error: 'action_failed' };
+      }
+    }
 
     function showErr(text, showRestart) {
       errText.textContent = '⚠ ' + text;
@@ -846,8 +909,10 @@ class SatrPreviewPanel extends HTMLElement {
       const command = restartRecord.command;
       if (!confirm('سيشغّل «سطر» أمر الخادم المحفوظ لهذا المشروع:\n\n' + command + '\n\nهل تريد المتابعة؟')) return;
       restartServerBtn.disabled = true;
-      const result = await window.satr.devServerRestart(restartRecord.cwd);
-      restartServerBtn.disabled = false;
+      let result;
+      try { result = await window.satr.devServerRestart(restartRecord.cwd); }
+      catch (e) { result = { error: 'restart_failed' }; }
+      finally { restartServerBtn.disabled = false; }
       if (!result || !result.ok) {
         showErr(result && result.error === 'already_running'
           ? 'الخادم يبدو قيد الإقلاع — جرّب ⟳'
@@ -947,7 +1012,12 @@ class SatrPreviewPanel extends HTMLElement {
     // ---------- أحداث العرض الأصلي ----------
     window.satr.onPreview((ev) => {
       if (!ev) return;
-      if (ev.type === 'nav') {
+      if (ev.type === 'closed') {
+        resetPreviewState(true);
+      } else if (ev.type === 'network') {
+        const index = NET_MODES.findIndex(mode => mode.key === ev.preset);
+        if (index >= 0) { netIdx = index; paintNetwork(); }
+      } else if (ev.type === 'nav') {
         // لا نكتب فوق ما يكتبه المستخدم الآن
         if (root.activeElement !== urlIn && ev.url) urlIn.value = ev.url;
         backBtn.disabled = !ev.canGoBack;
@@ -998,8 +1068,17 @@ class SatrPreviewPanel extends HTMLElement {
     let picking = false;
     let picked = null; // العنصر الملتقط {selector, tag, html, text}
 
-    const endPickMode = () => { picking = false; pickBtn.classList.remove('on'); };
-    const closePickBar = () => { pickBar.classList.remove('show'); picked = null; pbInput.value = ''; pbInfo.textContent = ''; };
+    let pickRequest = 0;
+    let pickSubmitRequest = 0, pickSubmitting = false;
+    const setPickSubmitting = (value) => {
+      pickSubmitting = value;
+      ['pbSend', 'pbExplain', 'pbFix', 'pbImprove'].forEach((id) => { $(id).disabled = value; });
+    };
+    const endPickMode = () => { pickRequest++; picking = false; pickBtn.classList.remove('on'); };
+    const closePickBar = () => {
+      pickSubmitRequest++; setPickSubmitting(false);
+      pickBar.classList.remove('show'); picked = null; pbInput.value = ''; pbInfo.textContent = '';
+    };
 
     // البند ج: يبني شرائح الأنماط/box-model في بطاقة الفحص (شرائح صغيرة LTR + عيّنات لون)
     const renderPickInfo = (p) => {
@@ -1031,8 +1110,14 @@ class SatrPreviewPanel extends HTMLElement {
       if (picking) { window.satr.previewPickCancel(); endPickMode(); return; } // نقرة ثانية = إلغاء
       closePickBar();
       picking = true; pickBtn.classList.add('on');
-      const r = await window.satr.previewPick();
+      const request = ++pickRequest, generation = previewGeneration;
+      let r;
+      try { r = await window.satr.previewPick(); }
+      catch (e) { r = { error: 'pick_failed' }; }
+      if (request !== pickRequest || generation !== previewGeneration) return;
       endPickMode();
+      if (r && r.error === 'closed') { resetPreviewState(true); return; }
+      if (r && r.error === 'pick_failed') { showErr('تعذّر تحديد العنصر. أعد المحاولة.'); return; }
       if (!r || !r.ok || !r.pick) return; // أُلغي أو فشل — بلا ضجيج
       picked = r.pick;
       pbTag.textContent = '<' + picked.tag + '>' + ((picked.styles && picked.styles.id) ? picked.styles.id : '');
@@ -1046,27 +1131,35 @@ class SatrPreviewPanel extends HTMLElement {
 
     const submitPick = async () => {
       const instruction = pbInput.value.trim();
-      if (!instruction || !picked) return;
-      let imageDataUrl = '';
-      let dataUrl = '';
-      let model = null;
+      if (!instruction || !picked || pickSubmitting) return;
+      // العنصر والعنوان يخصّان هذه النقرة؛ الإلغاء أو تحديد جديد يبطلان رد الصورة المتأخر.
+      const selection = picked, url = urlIn.value, request = ++pickSubmitRequest, generation = previewGeneration;
+      setPickSubmitting(true);
       try {
-        const shot = picked.selector ? await window.satr.previewElementShot(picked.selector) : null;
-        if (shot && shot.ok && shot.base64) {
-          imageDataUrl = 'data:image/png;base64,' + shot.base64;
-          // نسخة العرض للمصغّرة، ونسخة مضغوطة للنموذج (عقد 🎯 بعد OBS-016)
-          if (shot.modelBase64 && shot.modelMimeType) {
-            dataUrl = imageDataUrl;
-            model = { media_type: shot.modelMimeType, data: shot.modelBase64 };
+        let imageDataUrl = '';
+        let dataUrl = '';
+        let model = null;
+        try {
+          const shot = selection.selector ? await window.satr.previewElementShot(selection.selector) : null;
+          if (shot && shot.ok && shot.base64) {
+            imageDataUrl = 'data:image/png;base64,' + shot.base64;
+            // نسخة العرض للمصغّرة، ونسخة مضغوطة للنموذج (عقد التحديد بعد OBS-016).
+            if (shot.modelBase64 && shot.modelMimeType) {
+              dataUrl = imageDataUrl;
+              model = { media_type: shot.modelMimeType, data: shot.modelBase64 };
+            }
           }
-        }
-      } catch (e) {}
-      // يُرسل للقشرة سياق العنصر + الطلب — القشرة تركّبه وترسله كدور محادثة عادي
-      this.dispatchEvent(new CustomEvent('preview-edit', {
-        bubbles: true,
-        detail: { instruction, url: urlIn.value, tag: picked.tag, selector: picked.selector, html: picked.html, text: picked.text, box: picked.box, styles: picked.styles, imageDataUrl, dataUrl, model },
-      }));
-      closePickBar();
+        } catch (e) {}
+        if (request !== pickSubmitRequest || generation !== previewGeneration || picked !== selection) return;
+        // يُرسل للقشرة سياق العنصر والطلب؛ فشل الصورة وحدها يسمح باستكمال السياق النصّي.
+        this.dispatchEvent(new CustomEvent('preview-edit', {
+          bubbles: true,
+          detail: { instruction, url, tag: selection.tag, selector: selection.selector, html: selection.html, text: selection.text, box: selection.box, styles: selection.styles, imageDataUrl, dataUrl, model },
+        }));
+        closePickBar();
+      } finally {
+        if (request === pickSubmitRequest) setPickSubmitting(false);
+      }
     };
     const quick = {
       pbExplain: 'اشرح وظيفة هذا العنصر وكيف يرتبط ببقية الواجهة، واذكر مصدره في المشروع.',
@@ -1311,9 +1404,13 @@ class SatrPreviewPanel extends HTMLElement {
 
     const beginNativeCapture = async (event) => {
       if (!event || recording || !event.source_id || !event.session_id) return;
-      openPanel(false);
-      if (event.url) urlIn.value = event.url;
-      if (event.aspect) recAspect.value = event.aspect;
+      const appWindowCapture = event.target_kind === 'app-window';
+      // تسجيل المختبر يحفظ المشهد الحالي؛ لا يفتح المعاينة ولا يغيّر عنوانها.
+      if (!appWindowCapture) {
+        openPanel(false);
+        if (event.url) urlIn.value = event.url;
+        if (event.aspect) recAspect.value = event.aspect;
+      }
       let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -1332,10 +1429,14 @@ class SatrPreviewPanel extends HTMLElement {
         const systemTracks = stream.getAudioTracks();
         const micTrack = micOn && micStream ? micStream.getAudioTracks()[0] : null;
         const liveMic = micTrack && micTrack.readyState === 'live' ? micTrack : null;
-        const audioTracks = liveMic ? [liveMic] : (systemTracks.length ? [systemTracks[0]] : []);
+        const audioTracks = appWindowCapture ? [] : liveMic ? [liveMic] : (systemTracks.length ? [systemTracks[0]] : []);
         const wantsAudio = audioTracks.length > 0;
         if (wantsAudio && !consentOk) throw new Error('consent_missing');
-        const format = pickRecFormat(wantsAudio);
+        const appRecording = appWindowCapture ? await prepareAppRecording(videoTrack, {
+          width: Math.round(window.innerWidth * window.devicePixelRatio),
+          height: Math.round(window.innerHeight * window.devicePixelRatio),
+        }) : null;
+        const format = appRecording ? appRecording.format : pickRecFormat(wantsAudio);
         // العطل الذي كان يفشل صامتاً: حاوية بلا ترميز صوت ⇒ المسار يُسلَّم ولا يُكتب.
         // نرفض البدء بدل إخراج ملف صامت يظنّ المستخدم أنه يحمل شرحه.
         if (wantsAudio && !format.audio) {
@@ -1346,7 +1447,8 @@ class SatrPreviewPanel extends HTMLElement {
             + 'يحمل شرحك. أطفئ «صوتي» و«صوت النظام» لتسجيل الصورة وحدها.');
           return;
         }
-        const options = { videoBitsPerSecond: event.width >= 1920 || event.height >= 1920 ? 16000000 : 10000000 };
+        const options = appRecording ? appRecording.options
+          : { videoBitsPerSecond: event.width >= 1920 || event.height >= 1920 ? 16000000 : 10000000 };
         if (format.mime) options.mimeType = format.mime;
         const recorder = new MediaRecorder(new MediaStream([videoTrack, ...audioTracks]), options);
         recChunks = [];
@@ -1385,7 +1487,7 @@ class SatrPreviewPanel extends HTMLElement {
         // شبكة أمان ثانية: الترميز صار يعلن الصوت، لكن ميكروفوناً مكتوماً أو جهازاً
         // خاطئاً ينتج تسجيلة صامتة أيضاً. المؤشّر يعمل أثناء التسجيل، فإن بقيت الذروة
         // عند أرضية الصمت بعد ثوانٍ نقولها فوراً بدل أن يكتشفها بعد دقيقة كاملة.
-        if (liveMic && micAnalyser) {
+        if (!appWindowCapture && liveMic && micAnalyser) {
           micPeak = 0;
           silenceWatch = setTimeout(() => {
             silenceWatch = 0;
@@ -1395,7 +1497,8 @@ class SatrPreviewPanel extends HTMLElement {
             }
           }, MIC_SILENCE_MS);
         }
-        await window.satr.promoCaptureReady(event.session_id, true, '');
+        const ready = await window.satr.promoCaptureReady(event.session_id, true, '', appRecording?.capture);
+        if (appWindowCapture && !ready?.ok) throw new Error('capture_ready_rejected');
       } catch (error) {
         // fail-closed: تسجيل بصوت بلا موافقة صريحة لهذه التسجيلة لا يبدأ إطلاقاً.
         const noConsent = error && error.message === 'consent_missing';
@@ -1470,7 +1573,7 @@ class SatrPreviewPanel extends HTMLElement {
       if (autoReload && started && this.hasAttribute('open')) {
         if (errorWatch) clearTimeout(errorWatch);
         errorWave = [];
-        window.satr.previewAction('reload');
+        runPreviewAction('reload');
         errorWatch = setTimeout(() => {
           const wave = errorWave.slice(0, 30);
           errorWave = []; errorWatch = null;
@@ -1492,9 +1595,9 @@ class SatrPreviewPanel extends HTMLElement {
       // المنسّق. يستحق السطر المفسِّر نفسه — فالمستخدم يرى السواد ذاته ويلزمه التفسير
       // ذاته، سواء أُعلن الحوار للمنسّق أم اكتُشف من DOM.
       heldNote.hidden = !(started && (holdReasons.has('dialog') || holdReasons.has('modal')));
-      if (!started) return;
-      if (held) { window.satr.previewBounds(0, 0, 0, 0); lastBoundsKey = '0,0,0,0'; } // العرض بحجم صفر ⇒ مخفي، المربع يظهر
-      else reportBounds(); // استعادة الموضع الفعلي بعد الرد (lastBoundsKey='0,0,0,0' يضمن إعادة الإرسال)
+      // احفظ الحجب قبل إنشاء العرض أيضاً: إعادة فتحه تستعيد آخر حدود أصلية.
+      if (held) { window.satr.previewBounds(0, 0, 0, 0); lastBoundsKey = '0,0,0,0'; }
+      else if (started) reportBounds(); // استعادة الموضع الفعلي بعد إغلاق السطح
     };
     this.holdForDialog = (hold) => setHeld('dialog', hold);
     // ‏OBS-059 — مفتاح مستقل عمداً: لو تشارك الدرعُ والمنسّق مفتاحاً واحداً لأفرج

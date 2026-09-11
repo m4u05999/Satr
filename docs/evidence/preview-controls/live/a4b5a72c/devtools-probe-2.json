@@ -1,0 +1,80 @@
+{
+  "offline": {
+    "online": false,
+    "fetch": false,
+    "error": "TypeError"
+  },
+  "afterDevtoolsProbe": {
+    "online": false,
+    "fetch": false,
+    "error": "TypeError"
+  },
+  "native": {
+    "sequence": 1313,
+    "time": "2026-09-09T23:03:36.742Z",
+    "windowId": 1,
+    "bounds": {
+      "x": 370,
+      "y": 120,
+      "width": 1440,
+      "height": 820
+    },
+    "focused": false,
+    "views": [
+      {
+        "id": 2,
+        "bounds": {
+          "x": 171,
+          "y": 189,
+          "width": 768,
+          "height": 592
+        },
+        "visible": null,
+        "url": "http://127.0.0.1:61252/two",
+        "loading": false,
+        "devtools": true,
+        "debuggerAttached": true,
+        "page": {
+          "width": 768,
+          "height": 592,
+          "dpr": 1,
+          "visibility": "visible",
+          "focus": false,
+          "visualWidth": 768,
+          "online": false,
+          "url": "http://127.0.0.1:61252/two",
+          "ready": "complete",
+          "probe": {
+            "page": "two",
+            "boot": 5,
+            "frames": 120
+          }
+        }
+      }
+    ]
+  },
+  "ui": {
+    "open": true,
+    "box": {
+      "x": 0,
+      "y": 188.59375,
+      "width": 1109.71875,
+      "height": 592.40625,
+      "top": 188.59375,
+      "right": 1109.71875,
+      "bottom": 781,
+      "left": 0
+    },
+    "device": "2",
+    "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+    "network": "محاكاة سرعة الشبكة: غير متصل — انقر للتبديل",
+    "networkIcon": "✈️",
+    "more": true,
+    "console": false,
+    "error": false,
+    "errorText": "",
+    "scrollX": 0,
+    "docWidth": 1424,
+    "width": 1424
+  }
+}

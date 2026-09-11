@@ -1,0 +1,2585 @@
+{
+  "id": "live_281dd6a3a609a574722711b0",
+  "budgetMs": 180000,
+  "results": [
+    {
+      "label": "command-window",
+      "time": "2026-09-09T23:10:56.092Z",
+      "native": {
+        "sequence": 53,
+        "time": "2026-09-09T23:10:55.954Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1180,
+          "height": 800
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": false,
+        "visibleOnAllWorkspaces": false,
+        "views": []
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "initial-rendered",
+      "time": "2026-09-09T23:10:57.440Z",
+      "native": {
+        "sequence": 56,
+        "time": "2026-09-09T23:10:57.377Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 141,
+              "width": 626,
+              "height": 640
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/one",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 626,
+              "height": 640,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 626,
+              "online": true,
+              "url": "http://127.0.0.1:61572/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 5,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995457308,
+                    "width": 626,
+                    "height": 640,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 140.59375,
+          "width": 625.546875,
+          "height": 640.40625,
+          "top": 140.59375,
+          "right": 625.546875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "before-failure-1",
+      "time": "2026-09-09T23:10:57.517Z",
+      "native": {
+        "sequence": 57,
+        "time": "2026-09-09T23:10:57.489Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 360,
+              "y": 107,
+              "width": 390,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/one",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 390,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 390,
+              "online": true,
+              "url": "http://127.0.0.1:61572/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 11,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995457308,
+                    "width": 626,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457474,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 1,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "before-failure-2",
+      "time": "2026-09-09T23:10:57.658Z",
+      "native": {
+        "sequence": 58,
+        "time": "2026-09-09T23:10:57.595Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/one",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61572/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 18,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995457308,
+                    "width": 626,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457474,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457540,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 2,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "before-failure-3",
+      "time": "2026-09-09T23:10:57.736Z",
+      "native": {
+        "sequence": 59,
+        "time": "2026-09-09T23:10:57.707Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/one",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 24,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995457308,
+                    "width": 626,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457474,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457540,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457690,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "before-failure-4",
+      "time": "2026-09-09T23:10:57.877Z",
+      "native": {
+        "sequence": 60,
+        "time": "2026-09-09T23:10:57.815Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 360,
+              "y": 107,
+              "width": 390,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/one",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 390,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 390,
+              "online": true,
+              "url": "http://127.0.0.1:61572/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 31,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995457308,
+                    "width": 626,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457474,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457540,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457690,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457757,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 1,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "before-failure-5",
+      "time": "2026-09-09T23:10:57.957Z",
+      "native": {
+        "sequence": 61,
+        "time": "2026-09-09T23:10:57.926Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/one",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61572/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 38,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995457308,
+                    "width": 626,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457474,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457540,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457690,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457757,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457907,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 2,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "before-failure-6",
+      "time": "2026-09-09T23:10:58.098Z",
+      "native": {
+        "sequence": 62,
+        "time": "2026-09-09T23:10:58.033Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/one",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 44,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995457308,
+                    "width": 626,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457474,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457540,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457690,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457757,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457907,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457991,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "failed-navigation",
+      "time": "2026-09-09T23:10:58.184Z",
+      "native": {
+        "sequence": 62,
+        "time": "2026-09-09T23:10:58.033Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/one",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 44,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995457308,
+                    "width": 626,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457474,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457540,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457690,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457757,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457907,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995457991,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 639.8125,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 746.40625,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": true
+      }
+    },
+    {
+      "label": "recovered-dom",
+      "time": "2026-09-09T23:10:58.346Z",
+      "native": {
+        "sequence": 64,
+        "time": "2026-09-09T23:10:58.298Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 1,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "after-failure-1",
+      "time": "2026-09-09T23:10:58.424Z",
+      "native": {
+        "sequence": 65,
+        "time": "2026-09-09T23:10:58.363Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 360,
+              "y": 107,
+              "width": 390,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 390,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 390,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 6,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 1,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "after-failure-2",
+      "time": "2026-09-09T23:10:58.503Z",
+      "native": {
+        "sequence": 66,
+        "time": "2026-09-09T23:10:58.473Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 12,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 2,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "after-failure-3",
+      "time": "2026-09-09T23:10:58.661Z",
+      "native": {
+        "sequence": 67,
+        "time": "2026-09-09T23:10:58.583Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 19,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "after-failure-4",
+      "time": "2026-09-09T23:10:58.738Z",
+      "native": {
+        "sequence": 68,
+        "time": "2026-09-09T23:10:58.691Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 360,
+              "y": 107,
+              "width": 390,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 390,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 390,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 25,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 1,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "after-failure-5",
+      "time": "2026-09-09T23:10:58.815Z",
+      "native": {
+        "sequence": 69,
+        "time": "2026-09-09T23:10:58.800Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 32,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458692,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458758,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 2,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "after-failure-6",
+      "time": "2026-09-09T23:10:58.958Z",
+      "native": {
+        "sequence": 70,
+        "time": "2026-09-09T23:10:58.910Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 39,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458692,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458758,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458842,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "network-بطيء",
+      "time": "2026-09-09T23:10:58.986Z",
+      "native": {
+        "sequence": 70,
+        "time": "2026-09-09T23:10:58.910Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 39,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458692,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458758,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458842,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: بطيء (~Slow 3G) — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "network-سريع",
+      "time": "2026-09-09T23:10:58.990Z",
+      "native": {
+        "sequence": 70,
+        "time": "2026-09-09T23:10:58.910Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 39,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458692,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458758,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458842,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: سريع (~Fast 3G) — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "network-غير متصل",
+      "time": "2026-09-09T23:10:58.995Z",
+      "native": {
+        "sequence": 70,
+        "time": "2026-09-09T23:10:58.910Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 39,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458692,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458758,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458842,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: غير متصل — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "command-network-probe",
+      "time": "2026-09-09T23:10:59.067Z",
+      "native": {
+        "sequence": 71,
+        "time": "2026-09-09T23:10:59.043Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 189,
+              "width": 1110,
+              "height": 592
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": true,
+            "page": {
+              "width": 1110,
+              "height": 592,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": false,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 47,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458692,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458758,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458842,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458992,
+                    "width": 1110,
+                    "height": 592,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: غير متصل — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "command-detach-debugger",
+      "time": "2026-09-09T23:10:59.153Z",
+      "native": {
+        "sequence": 72,
+        "time": "2026-09-09T23:10:59.139Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 189,
+              "width": 1110,
+              "height": 592
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 592,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 52,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458692,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458758,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458842,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458992,
+                    "width": 1110,
+                    "height": 592,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "command-network-probe",
+      "time": "2026-09-09T23:10:59.283Z",
+      "native": {
+        "sequence": 73,
+        "time": "2026-09-09T23:10:59.249Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 189,
+              "width": 1110,
+              "height": 592
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 592,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 59,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458692,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458758,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458842,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458992,
+                    "width": 1110,
+                    "height": 592,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      }
+    },
+    {
+      "label": "explicit-detach",
+      "offline": {
+        "online": false,
+        "fetch": false,
+        "error": "TypeError"
+      },
+      "detached": {
+        "before": true,
+        "after": false
+      },
+      "online": {
+        "online": true,
+        "fetch": true,
+        "status": 200
+      },
+      "native": {
+        "sequence": 73,
+        "time": "2026-09-09T23:10:59.249Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "visible": true,
+        "minimized": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": false,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 189,
+              "width": 1110,
+              "height": 592
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61572/two",
+            "destroyed": false,
+            "throttling": false,
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 592,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61572/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 59,
+                "events": [
+                  {
+                    "kind": "initial",
+                    "time": 1788995458266,
+                    "width": 1110,
+                    "height": 640,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458289,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458375,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458458,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458525,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458692,
+                    "width": 390,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458758,
+                    "width": 768,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458842,
+                    "width": 1110,
+                    "height": 674,
+                    "visibility": "visible"
+                  },
+                  {
+                    "kind": "resize",
+                    "time": 1788995458992,
+                    "width": 1110,
+                    "height": 592,
+                    "visibility": "visible"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "device": 0,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "held": false,
+        "documentVisibility": "visible",
+        "width": 1424,
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "error": false
+      },
+      "time": "2026-09-09T23:10:59.285Z"
+    }
+  ],
+  "failures": [],
+  "time": "2026-09-09T23:10:59.286Z"
+}

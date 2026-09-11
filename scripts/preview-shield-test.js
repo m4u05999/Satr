@@ -59,7 +59,7 @@ async function main() {
   await app.whenReady();
   const win = new BrowserWindow({
     show: false, width: 900, height: 700,
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   const violations = [];
   win.webContents.on('console-message', (_e, _level, message) => {
@@ -103,12 +103,38 @@ async function main() {
     ok(Array.isArray(result.transitions) && result.transitions.every((v) => typeof v === 'boolean'),
       'والانتقالات منطقية خالصة');
 
+    for (const [field, expected, message] of [
+      ['hiddenOverlay', false, 'المنبثق المعلم والمخفي لا يحجب'],
+      ['openOverlay', true, 'المنبثق المعلم يحجب دون aria-modal'],
+      ['dialogOutlivesOverlay', true, 'إغلاق المنبثق لا يكشف حواراً مفتوحاً'],
+      ['overlayOutlivesDialog', true, 'إغلاق الحوار لا يكشف منبثقاً مفتوحاً'],
+      ['removedOverlay', false, 'حذف المنبثق يفك الحجب'],
+      ['closedClassMenu', false, 'قائمة class مغلقة لا تحجب'],
+      ['openClassMenu', true, 'فتح قائمة class يحجب'],
+      ['hiddenAncestorClass', false, 'إخفاء الأب عبر class يفك الحجب'],
+      ['restoredAncestorClass', true, 'إعادة الأب تعيد الحجب'],
+      ['closedClassMenuAgain', false, 'إغلاق class يفك الحجب'],
+      ['ignoredClassChurn', true, 'بث الدردشة وتغيير class بعيداً عن الأسطح لا يمسحان المستند'],
+      ['outsideToast', false, 'تنبيه خارج المعاينة لا يحجبها'],
+      ['movedPreviewUnderToast', true, 'تحرك المعاينة تحت التنبيه يحجب دون تغيير DOM'],
+      ['touchingEdges', false, 'تلامس الحافتين وحده لا يعد تقاطعاً'],
+      ['transitionOverlap', true, 'انتهاء انتقال التخطيط يعيد قياس التقاطع'],
+      ['missingPreview', false, 'غياب مستطيل المعاينة لا يحجب'],
+      ['beforeUpgrade', true, 'المضيف قبل ترقية المكوّن ظاهر'],
+      ['afterUpgrade', false, 'ترقية المضيف تخفيه بأنماط Shadow وتفك الحجب'],
+      ['beforeAncestorUpgrade', true, 'السطح تحت سلف لم يترق بعد ظاهر'],
+      ['afterAncestorUpgrade', false, 'ترقية السلف تخفي السطح وتفك الحجب'],
+      ['stopped', false, 'stop يوقف المراقبة'],
+      ['restarted', true, 'start يعيد قراءة سطح كان ظاهراً قبل التشغيل'],
+      ['finalHeld', false, 'إزالة السطح الأخير تعيد المعاينة'],
+    ]) ok(result[field] === expected, message + ' (' + field + '=' + result[field] + ')');
+
     ok(violations.length === 0, 'صفر انتهاك CSP (' + violations.length + ')');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }
   console.log('preview-shield: نجح — ' + checks
-    + ' فحصاً (الحوار المخفيّ بأبيه، وhidden=false، وshowModal، والتراكب، والوصل؛ صفر CSP).');
+    + ' فحصاً (الحوارات والمنبثقات، class والأسلاف، ضجيج البث، التقاطع، والوصل؛ صفر CSP).');
 }
 
 main().then(() => app.exit(0)).catch((error) => {

@@ -1,0 +1,10 @@
+{
+    "recordedAt":  "2026-09-09T23:18:48.3889006Z",
+    "type":  "actual production source after pick submission fix",
+    "sourcePath":  "src/ui/components/preview-panel.js",
+    "sourceSHA256":  "53e17ec708654d8fdecda37ac1eab476a165cc22e4899148bd8cbad4c6f6cdaa",
+    "guardSHA256":  "135c5c433e805b95b48f5c0447fde0e23ec2445d71d67a1fceabfa07863805fb",
+    "command":  "node_modules\\.bin\\electron.cmd scripts/preview-controls-ui-test.js",
+    "exitCode":  0,
+    "log":  "pick-submit-after.log"
+}

@@ -1,0 +1,528 @@
+{
+  "checks": 70,
+  "mode": "production renderer, controlled preload boundary",
+  "paidTurns": 0,
+  "evidence": [
+    {
+      "scenario": "device-intent",
+      "state": {
+        "open": true,
+        "bounds": [
+          [
+            0,
+            216,
+            299,
+            734,
+            null,
+            true
+          ]
+        ],
+        "calls": [
+          {
+            "name": "bounds",
+            "args": [
+              0,
+              216,
+              299,
+              734,
+              null,
+              true
+            ]
+          }
+        ],
+        "box": {
+          "x": 0,
+          "y": 215.984375,
+          "width": 299,
+          "height": 734.015625
+        },
+        "device": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": {
+          "title": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+          "text": "🚦",
+          "disabled": false,
+          "active": false
+        },
+        "backDisabled": true,
+        "forwardDisabled": true,
+        "loading": false,
+        "devtools": false,
+        "picking": false,
+        "pickBar": false,
+        "pickText": "",
+        "pickInput": "",
+        "pickSendDisabled": false,
+        "pickEdits": [],
+        "pickSubmissionErrors": [],
+        "consoleOpen": false,
+        "consoleText": "لا رسائل بعد — ستظهر رسائل console وأخطاء الصفحة هنا حيّاً.",
+        "toolsOpen": false,
+        "moreExpanded": "false",
+        "auto": true,
+        "restartDisabled": false,
+        "error": ""
+      }
+    },
+    {
+      "scenario": "closed-before-open-reply",
+      "state": {
+        "open": true,
+        "bounds": [
+          [
+            0,
+            216,
+            299,
+            734,
+            null,
+            false
+          ]
+        ],
+        "calls": [
+          {
+            "name": "open",
+            "args": [
+              "http://localhost:4173/deferred"
+            ]
+          },
+          {
+            "name": "bounds",
+            "args": [
+              0,
+              216,
+              299,
+              734,
+              null,
+              false
+            ]
+          }
+        ],
+        "box": {
+          "x": 0,
+          "y": 215.984375,
+          "width": 299,
+          "height": 734.015625
+        },
+        "device": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": {
+          "title": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+          "text": "🚦",
+          "disabled": false,
+          "active": false
+        },
+        "backDisabled": true,
+        "forwardDisabled": true,
+        "loading": false,
+        "devtools": false,
+        "picking": false,
+        "pickBar": false,
+        "pickText": "",
+        "pickInput": "",
+        "pickSendDisabled": false,
+        "pickEdits": [],
+        "pickSubmissionErrors": [],
+        "consoleOpen": false,
+        "consoleText": "لا رسائل بعد — ستظهر رسائل console وأخطاء الصفحة هنا حيّاً.",
+        "toolsOpen": false,
+        "moreExpanded": "false",
+        "auto": true,
+        "restartDisabled": false,
+        "error": "⚠ أُغلقت صفحة المعاينة. اضغط إعادة التحميل لفتحها مجدداً."
+      }
+    },
+    {
+      "scenario": "closed-before-navigate-reply",
+      "state": {
+        "open": true,
+        "bounds": [
+          [
+            0,
+            216,
+            299,
+            734,
+            null,
+            false
+          ]
+        ],
+        "calls": [
+          {
+            "name": "open",
+            "args": [
+              "http://localhost:4173/deferred"
+            ]
+          },
+          {
+            "name": "bounds",
+            "args": [
+              0,
+              216,
+              299,
+              734,
+              null,
+              false
+            ]
+          }
+        ],
+        "box": {
+          "x": 0,
+          "y": 215.984375,
+          "width": 299,
+          "height": 734.015625
+        },
+        "device": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": {
+          "title": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+          "text": "🚦",
+          "disabled": false,
+          "active": false
+        },
+        "backDisabled": true,
+        "forwardDisabled": true,
+        "loading": false,
+        "devtools": false,
+        "picking": false,
+        "pickBar": false,
+        "pickText": "",
+        "pickInput": "",
+        "pickSendDisabled": false,
+        "pickEdits": [],
+        "pickSubmissionErrors": [],
+        "consoleOpen": false,
+        "consoleText": "لا رسائل بعد — ستظهر رسائل console وأخطاء الصفحة هنا حيّاً.",
+        "toolsOpen": false,
+        "moreExpanded": "false",
+        "auto": true,
+        "restartDisabled": false,
+        "error": "⚠ أُغلقت صفحة المعاينة. اضغط إعادة التحميل لفتحها مجدداً."
+      }
+    },
+    {
+      "scenario": "pick-submit-cancel",
+      "state": {
+        "open": true,
+        "bounds": [
+          [
+            0,
+            216,
+            299,
+            699,
+            null,
+            false
+          ]
+        ],
+        "calls": [
+          {
+            "name": "elementShot",
+            "args": [
+              "#old-cancel"
+            ]
+          },
+          {
+            "name": "bounds",
+            "args": [
+              0,
+              216,
+              299,
+              699,
+              null,
+              false
+            ]
+          }
+        ],
+        "box": {
+          "x": 0,
+          "y": 215.984375,
+          "width": 299,
+          "height": 699.421875
+        },
+        "device": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": {
+          "title": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+          "text": "🚦",
+          "disabled": false,
+          "active": false
+        },
+        "backDisabled": false,
+        "forwardDisabled": false,
+        "loading": false,
+        "devtools": false,
+        "picking": false,
+        "pickBar": false,
+        "pickText": "العنصر السابق",
+        "pickInput": "",
+        "pickSendDisabled": false,
+        "pickEdits": [],
+        "pickSubmissionErrors": [],
+        "consoleOpen": false,
+        "consoleText": "لا رسائل بعد — ستظهر رسائل console وأخطاء الصفحة هنا حيّاً.",
+        "toolsOpen": false,
+        "moreExpanded": "false",
+        "auto": true,
+        "restartDisabled": false,
+        "error": "⚠ تعذّر تحديد العنصر. أعد المحاولة."
+      }
+    },
+    {
+      "scenario": "pick-submit-close",
+      "state": {
+        "open": false,
+        "bounds": [],
+        "calls": [
+          {
+            "name": "elementShot",
+            "args": [
+              "#old-close"
+            ]
+          },
+          {
+            "name": "close",
+            "args": []
+          }
+        ],
+        "box": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "device": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": {
+          "title": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+          "text": "🚦",
+          "disabled": false,
+          "active": false
+        },
+        "backDisabled": true,
+        "forwardDisabled": true,
+        "loading": false,
+        "devtools": false,
+        "picking": false,
+        "pickBar": false,
+        "pickText": "العنصر السابق",
+        "pickInput": "",
+        "pickSendDisabled": false,
+        "pickEdits": [],
+        "pickSubmissionErrors": [],
+        "consoleOpen": false,
+        "consoleText": "لا رسائل بعد — ستظهر رسائل console وأخطاء الصفحة هنا حيّاً.",
+        "toolsOpen": false,
+        "moreExpanded": "false",
+        "auto": true,
+        "restartDisabled": false,
+        "error": "⚠ تعذّر تحديد العنصر. أعد المحاولة."
+      }
+    },
+    {
+      "scenario": "pick-submit-native-close",
+      "state": {
+        "open": true,
+        "bounds": [],
+        "calls": [
+          {
+            "name": "elementShot",
+            "args": [
+              "#old-native-close"
+            ]
+          }
+        ],
+        "box": {
+          "x": 0,
+          "y": 215.984375,
+          "width": 299,
+          "height": 677.828125
+        },
+        "device": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": {
+          "title": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+          "text": "🚦",
+          "disabled": false,
+          "active": false
+        },
+        "backDisabled": true,
+        "forwardDisabled": true,
+        "loading": false,
+        "devtools": false,
+        "picking": false,
+        "pickBar": false,
+        "pickText": "العنصر السابق",
+        "pickInput": "",
+        "pickSendDisabled": false,
+        "pickEdits": [],
+        "pickSubmissionErrors": [],
+        "consoleOpen": false,
+        "consoleText": "لا رسائل بعد — ستظهر رسائل console وأخطاء الصفحة هنا حيّاً.",
+        "toolsOpen": false,
+        "moreExpanded": "false",
+        "auto": true,
+        "restartDisabled": false,
+        "error": "⚠ أُغلقت صفحة المعاينة. اضغط إعادة التحميل لفتحها مجدداً."
+      }
+    },
+    {
+      "scenario": "pick-submit-new-pick",
+      "state": {
+        "open": true,
+        "bounds": [
+          [
+            0,
+            216,
+            299,
+            734,
+            null,
+            false
+          ],
+          [
+            0,
+            216,
+            299,
+            623,
+            null,
+            false
+          ]
+        ],
+        "calls": [
+          {
+            "name": "elementShot",
+            "args": [
+              "#old-new-pick"
+            ]
+          },
+          {
+            "name": "pick",
+            "args": []
+          },
+          {
+            "name": "bounds",
+            "args": [
+              0,
+              216,
+              299,
+              734,
+              null,
+              false
+            ]
+          },
+          {
+            "name": "bounds",
+            "args": [
+              0,
+              216,
+              299,
+              623,
+              null,
+              false
+            ]
+          }
+        ],
+        "box": {
+          "x": 0,
+          "y": 215.984375,
+          "width": 299,
+          "height": 623.421875
+        },
+        "device": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": {
+          "title": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+          "text": "🚦",
+          "disabled": false,
+          "active": false
+        },
+        "backDisabled": true,
+        "forwardDisabled": true,
+        "loading": false,
+        "devtools": false,
+        "picking": false,
+        "pickBar": true,
+        "pickText": "العنصر الجديد",
+        "pickInput": "",
+        "pickSendDisabled": false,
+        "pickEdits": [],
+        "pickSubmissionErrors": [],
+        "consoleOpen": false,
+        "consoleText": "لا رسائل بعد — ستظهر رسائل console وأخطاء الصفحة هنا حيّاً.",
+        "toolsOpen": false,
+        "moreExpanded": "false",
+        "auto": true,
+        "restartDisabled": false,
+        "error": "⚠ أُغلقت صفحة المعاينة. اضغط إعادة التحميل لفتحها مجدداً."
+      }
+    },
+    {
+      "scenario": "network-close",
+      "state": {
+        "open": true,
+        "bounds": [
+          [
+            0,
+            332,
+            299,
+            618,
+            null,
+            false
+          ]
+        ],
+        "calls": [
+          {
+            "name": "open",
+            "args": [
+              "http://localhost:4173/edited-while-waiting"
+            ]
+          },
+          {
+            "name": "bounds",
+            "args": [
+              0,
+              332,
+              299,
+              618,
+              null,
+              false
+            ]
+          }
+        ],
+        "box": {
+          "x": 0,
+          "y": 331.984375,
+          "width": 299,
+          "height": 618.015625
+        },
+        "device": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": {
+          "title": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+          "text": "🚦",
+          "disabled": false,
+          "active": false
+        },
+        "backDisabled": true,
+        "forwardDisabled": true,
+        "loading": false,
+        "devtools": false,
+        "picking": false,
+        "pickBar": false,
+        "pickText": "العنصر المعتمد",
+        "pickInput": "",
+        "pickSendDisabled": false,
+        "pickEdits": [
+          {
+            "instruction": "اشرح العنصر المعتمد",
+            "url": "http://localhost:4173/deferred",
+            "tag": "button",
+            "selector": "#send-current",
+            "html": "<button>العنصر المعتمد</button>",
+            "text": "العنصر المعتمد",
+            "imageDataUrl": "",
+            "dataUrl": "",
+            "model": null
+          }
+        ],
+        "pickSubmissionErrors": [],
+        "consoleOpen": false,
+        "consoleText": "لا رسائل بعد — ستظهر رسائل console وأخطاء الصفحة هنا حيّاً.",
+        "toolsOpen": true,
+        "moreExpanded": "true",
+        "auto": true,
+        "restartDisabled": false,
+        "error": "⚠ أُغلقت صفحة المعاينة. اضغط إعادة التحميل لفتحها مجدداً."
+      }
+    }
+  ]
+}

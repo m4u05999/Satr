@@ -1,0 +1,8 @@
+{
+    "source":  "D:\\sater\\satr-2\\src\\ui\\components\\preview-panel.js",
+    "sha256":  "2E81A9CD7DF15EDDD05CB67B71E8F137CAA3A4EF38FDD047D3B5E1CE77F5C9AA",
+    "command":  "node_modules\\.bin\\electron.cmd scripts/preview-controls-ui-test.js",
+    "exitCode":  1,
+    "sourceChanged":  false,
+    "failure":  "AssertionError [ERR_ASSERTION]: late open success after native close must not resurrect started state"
+}

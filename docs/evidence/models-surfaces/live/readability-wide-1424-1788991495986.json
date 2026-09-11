@@ -1,0 +1,115 @@
+{
+  "timestamp": "2026-09-09T22:04:55.986Z",
+  "runId": "live_f4bfa10c70930ecffff2fd3c",
+  "label": "wide",
+  "mode": "source",
+  "measurementCompleted": true,
+  "execution": {
+    "kind": "production-readability-script-via-main-window-cdp",
+    "scriptSource": "electron/preview.js:READABILITY_FN",
+    "scriptSha256": "cd2974dc7544b5b80700be1da66e3db2ceed9a7f5da5897249b8666840c2bf6d",
+    "scriptBytes": 12152,
+    "world": "main renderer via Runtime.evaluate",
+    "officialToolCalled": false
+  },
+  "before": {
+    "viewport": {
+      "width": 1424,
+      "height": 781,
+      "dpr": 1
+    },
+    "settings": {
+      "exists": true,
+      "visible": true,
+      "hidden": false,
+      "rect": {
+        "left": 16,
+        "top": 54.296875,
+        "right": 414.484375,
+        "bottom": 769,
+        "width": 398.484375,
+        "height": 714.703125
+      },
+      "scrollTop": 0,
+      "clientHeight": 713,
+      "scrollHeight": 885,
+      "clientWidth": 386,
+      "scrollWidth": 386,
+      "semanticBlocks": 4,
+      "viewportClipped": false
+    },
+    "theme": "dark",
+    "documentVisibility": "visible",
+    "documentFocused": false,
+    "fontStatus": "loaded"
+  },
+  "after": {
+    "viewport": {
+      "width": 1424,
+      "height": 781,
+      "dpr": 1
+    },
+    "settings": {
+      "exists": true,
+      "visible": true,
+      "hidden": false,
+      "rect": {
+        "left": 16,
+        "top": 54.296875,
+        "right": 414.484375,
+        "bottom": 769,
+        "width": 398.484375,
+        "height": 714.703125
+      },
+      "scrollTop": 0,
+      "clientHeight": 713,
+      "scrollHeight": 885,
+      "clientWidth": 386,
+      "scrollWidth": 386,
+      "semanticBlocks": 4,
+      "viewportClipped": false
+    },
+    "theme": "dark",
+    "documentVisibility": "visible",
+    "documentFocused": false,
+    "fontStatus": "loaded"
+  },
+  "stableViewport": true,
+  "readability": {
+    "url": "file:///D:/sater/satr-2/src/index.html",
+    "lang": "ar",
+    "doc_dir": "rtl",
+    "viewport": {
+      "width": 1424,
+      "height": 781,
+      "dpr": 1
+    },
+    "scanned": 4,
+    "truncated": false,
+    "counts": {
+      "direction": 0,
+      "contrast": 0,
+      "overflow": 0,
+      "font": 0
+    },
+    "total_findings": 0,
+    "findings": [],
+    "page_overflow": null,
+    "font_stacks": [
+      "\"IBM Plex Sans Arabic\", \"Segoe UI\", Tahoma, system-ui, sans-serif"
+    ],
+    "unseen": {
+      "shadow_roots": 22,
+      "iframes": 0,
+      "direction": 0
+    }
+  },
+  "limits": [
+    "شُغّل نفس مسبار browser_readability عبر CDP في النافذة الرئيسية؛ لم تُستدع الأداة على لوحة المعاينة.",
+    "الأداة الأصلية تشغّل المسبار في عالم معزول، وهذا المشغّل يستخدم عالم renderer الرئيسي عبر connectMain.",
+    "التقرير يقيس light DOM للنافذة كلها مع فتح الإعدادات؛ العدادات لا تخص الإعدادات وحدها.",
+    "Shadow DOM وiframe خارج القياس، وكذلك النصوص المجردة في div/span/button والعناصر القصيرة التي لا يغطيها المسبار.",
+    "نجاح جمع التقرير لا يعني صفراً من المخالفات أو قبولاً بصرياً؛ counts وunseen وtruncated هي الدليل.",
+    "المشغّل لم ينقر أو يغير الحجم أو اتجاه النص؛ يُجهز العرض الآخر خارج هذا المشغّل ثم تؤخذ قراءة جديدة."
+  ]
+}

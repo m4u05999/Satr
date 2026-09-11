@@ -1,0 +1,16 @@
+{
+  "kind": "installed-codex-model-list",
+  "elapsedMs": 322,
+  "count": 6,
+  "paidTurns": 0,
+  "models": [
+    "gpt-6-astra",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.3-codex-spark"
+  ],
+  "default": "gpt-6-astra",
+  "source": "stdout of native Codex listModels query during this task"
+}

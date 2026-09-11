@@ -1,0 +1,12 @@
+{
+  "command": "npm run test:rtl-preview",
+  "exitCode": 1,
+  "locale": "ar",
+  "results": [
+    {"requested":{"x":0,"width":300},"measured":null,"ok":false},
+    {"requested":{"x":380,"width":260},"measured":null,"ok":false},
+    {"requested":{"x":560,"width":320},"measured":null,"ok":false}
+  ],
+  "failure": "rtl-preview-fix-test: فشل — لم تُرصد العلامة داخل نافذة الاختبار في 3 حالة (locale=ar).",
+  "limit": "No desktop marker was captured. This is a failed visual check, not evidence of incorrect RTL coordinates or successful layout."
+}

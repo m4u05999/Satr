@@ -1,0 +1,34 @@
+{
+  "before": {
+    "kind": "before",
+    "time": 1788994581356,
+    "width": 300,
+    "height": 400,
+    "visibility": "visible",
+    "focus": true,
+    "visualWidth": 300
+  },
+  "after": {
+    "time": 1788994581713,
+    "width": 390,
+    "height": 674,
+    "visibility": "visible",
+    "focus": true,
+    "visualWidth": 390,
+    "timing": {
+      "frames": 22,
+      "events": [
+        {
+          "kind": "resize",
+          "time": 1788994581636,
+          "width": 390,
+          "height": 674,
+          "visibility": "visible",
+          "focus": true,
+          "visualWidth": 390
+        }
+      ],
+      "start": 1788994581356
+    }
+  }
+}

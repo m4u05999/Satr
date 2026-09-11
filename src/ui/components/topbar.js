@@ -114,9 +114,27 @@ class SatrTopbar extends HTMLElement {
 
   // لوحة الإعدادات المنبثقة (⚙): تُفتح وتُغلق بالزر، وتُغلق بالنقر خارجها أو بـ Escape
   const settingsPop = $('settingsPop'), settingsBtn = $('settingsBtn');
+  // ارتفاع الشريط يتغير عند التفاف الأزرار؛ حدود النافذة أدق من طرح ارتفاع ثابت.
+  function fitTopPop(element) {
+    if (element.hidden) return;
+    element.style.translate = '';
+    // قياس الإزاحة لا يشمل حركة ظهور البطاقة؛ كي لا تصغر الحدود أثناء animation.
+    const parent = element.offsetParent;
+    const origin = parent ? parent.getBoundingClientRect() : { left: 0, top: 0 };
+    const left = origin.left + (parent ? parent.clientLeft - parent.scrollLeft : 0) + element.offsetLeft;
+    const top = origin.top + (parent ? parent.clientTop - parent.scrollTop : 0) + element.offsetTop;
+    const rect = { left, top, right: left + element.offsetWidth };
+    const margin = 12;
+    const shift = rect.left < margin ? margin - rect.left
+      : rect.right > innerWidth - margin ? innerWidth - margin - rect.right : 0;
+    if (shift) element.style.translate = shift + 'px 0';
+    element.style.maxHeight = 'max(0px, calc(100vh - ' + Math.max(0, rect.top + margin) + 'px))';
+    element.style.overflowY = 'auto';
+  }
   function setSettingsOpen(open) {
     const wasHidden = settingsPop.hidden;
     settingsPop.hidden = !open;
+    if (open) fitTopPop(settingsPop);
     settingsBtn.classList.toggle('active', open);
     // OBS-099: إشعار صريح عند الفتح — القشرة تستمع للحدث بدل استنتاج الحالة داخل
     // microtask (سباق ترتيب المستمعين بين app.js وtopbar.js كان يجمّد قسمَي الحساب).
@@ -133,12 +151,18 @@ class SatrTopbar extends HTMLElement {
   const changesPop = $('sessionChangesPop'), changesBtn = $('sessionChangesToggle');
   const shortcutsPop = $('shortcutsPop'), shortcutsBtn = $('shortcutsToggle');
   let sessionChanges = [];
+  const fitTopPops = () => [settingsPop, changesPop, shortcutsPop].forEach(fitTopPop);
+  window.addEventListener('resize', fitTopPops);
+  const topbarResize = new ResizeObserver(fitTopPops);
+  topbarResize.observe(host.querySelector('header'));
+  topbarResize.observe(topTools);
   function closeTopPops() { changesPop.hidden = true; shortcutsPop.hidden = true; }
   function toggleTopPop(target) {
     const willOpen = target.hidden;
     setSettingsOpen(false);
     closeTopPops();
     target.hidden = !willOpen;
+    if (willOpen) fitTopPop(target);
   }
   changesBtn.addEventListener('click', (event) => { event.stopPropagation(); toggleTopPop(changesPop); });
   shortcutsBtn.addEventListener('click', (event) => { event.stopPropagation(); toggleTopPop(shortcutsPop); });
