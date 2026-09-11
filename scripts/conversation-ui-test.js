@@ -50,6 +50,7 @@ function harness() {
     addUserMsg(text) { history.push({ role: 'user', text }); },
     addHistoryAssistant(message, engine) { history.push({ role: 'assistant', text: message.text, engine }); },
     addNoticeBefore(text) { notices.push(text); },
+    addActionNotice(text) { notices.push(text); },
     newAssistantBlock() { return { el: {}, done: false, errors: [], error(text) { this.errors.push(text); }, showRetry: noop, stopped: noop }; },
     clearTaskLedger: noop, clearCheckpoint: noop, scrollToEnd: noop,
   };
@@ -62,6 +63,9 @@ function harness() {
     busy: false, gated: false, sessionControlBusy: false, sessionResumeBusy: false, applyingResumedCwd: false,
     currentBlock: null, runningEngine: '', previewDirty: false, lastSentPrompt: '',
     lastUserTurn: { prompt: '', images: [] }, thinkingValue: '', browserControlOn: false,
+    // سطح ويندوز (الخطوة ٥): send() وnewSession() المستخرجتان تشيران إلى علم سطح المكتب ولوحته،
+    // كما تشيران إلى browserControlOn أعلاه — بلا تعريفهما هنا يسقط الاستخراج بـReferenceError
+    desktopControlOn: false, desktopAvailable: false, desktopEl: null,
     providersCache: [{ name: 'groq', family: 'openai' }, { name: 'kimi-code', capabilities: { native: true } }],
     chatEl, input: element('input'), sendBtn: element('send'),
     composerEl: { afterSend: noop, clearImages: noop, getImages: () => [] },
@@ -74,6 +78,7 @@ function harness() {
     refreshEngineModels: noop,
     refreshClaudeModels: noop, refreshCodexModels: noop, refreshKimiModels: noop,
     setBrowserControl: noop, engineLabel: () => element('engine').value,
+    setDesktopControl: noop, paintDesktopControl: noop, openDesktopPanel: noop,
     engineSupportsVision: () => true, engineSupportsEffort: () => true,
     computeSkillsPayload: () => 'all', steerEligible: () => false, steerTurn: noop,
     endRun() { state.busy = false; state.runningEngine = ''; },
