@@ -102,6 +102,7 @@
     "test:kimi": "node scripts/kimi-test.js",
     "test:kimi-keepalive": "node scripts/kimi-keepalive-test.js",
     "test:browserguard": "node scripts/browserguard-test.js",
+    "test:surface": "node scripts/surface-test.js",
     "test:browserorigin": "node scripts/browserorigin-test.js",
     "test:browserpolicy": "node scripts/browserpolicy-test.js",
     "test:browser-platform-live": "electron scripts/browser-platform-live-test.js",

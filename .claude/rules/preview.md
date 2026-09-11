@@ -2,6 +2,7 @@
 paths:
   - "electron/preview.js"
   - "electron/previewrecording.js"
+  - "electron/surface.js"
   - "electron/browserguard.js"
   - "electron/browserorigin.js"
   - "electron/browserpolicy.js"

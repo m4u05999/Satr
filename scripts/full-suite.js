@@ -62,6 +62,7 @@ const SUITE = [
   'test:kimi',
   'test:kimi-keepalive',
   'test:browserguard',
+  'test:surface',
   'test:browserorigin',
   'test:browserpolicy',
   'test:browser-platform-live',

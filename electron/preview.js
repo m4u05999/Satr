@@ -16,6 +16,9 @@ const crypto = require('crypto');
 const { WebContentsView, session, app, nativeImage } = require('electron');
 const memory = require('./memory');
 const browserorigin = require('./browserorigin'); // تصنيف أدوات المتصفح — نقي بلا تبعيات
+// المرجع/الجيل/البصمة/العقد — نقي. مسار مطلق من __dirname عمداً: preview-controls-backend-test
+// يشغّل هذا الملف في vm بـrequire يحلّ المعرّفات النسبية من scripts/ لا من electron/.
+const { createSurface, fingerprintLabel } = require(path.join(__dirname, 'surface'));
 
 let view = null;      // WebContentsView الحيّة (تُنشأ عند الفتح وتُدمَّر عند الإغلاق)
 let hostWin = null;   // النافذة المضيفة
@@ -39,15 +42,11 @@ let captureDocumentGeneration = 1;
 let captureNextDocumentId = 0;
 let captureDocumentIds = new Map();
 
-let snapshotSequence = 0;
-let activeSnapshotGeneration = 0;
-let activeSnapshotOwnerId = null;
-let activeSnapshotNextIndex = 0;
-let activeSnapshotTextBytes = 0;
-const SNAPSHOT_REF_RE = /^s([1-9][0-9]*):e([1-9][0-9]*)$/;
-const LEGACY_SNAPSHOT_REF_RE = /^e[1-9][0-9]*$/;
-let activeSnapshotFingerprints = new Map(); // ref → بصمة لحظة اللقطة (داخلية — لا تعبر للنموذج)
-const MAX_TRACKED_FINGERPRINTS = 400;
+// حالة اللقطة (الجيل والمالك والبصمات وعقد الإدخال) في نسخة سطح واحدة ببادئة s —
+// استُخرجت إلى electron/surface.js بلا تغيير سلوك كي يشاركها سطح ويندوز بحالة مستقلة.
+// المرجع `s<gen>:e<n>`، والصيغة القديمة `e<n>` ⇒ stale_ref.
+const surface = createSurface({ prefix: 's', maxTrackedFingerprints: 400 });
+const SNAPSHOT_REF_RE = surface.refPattern;
 
 // جامع الإدخال البشري يعيش في العالم المعزول نفسه الذي نجح في م2. لا ينسخ إلا
 // الإحداثيات وref المبهم؛ حتى حقول DOM المتاحة لا تدخل الصف إطلاقاً.
@@ -140,29 +139,21 @@ function setCaptureEventSink(sink) {
 // أفعال الوكيل عبر executeJavaScript لا تمر بمسار input-event أصلاً (أثبته المسبار
 // الحاجز) فلا تلوّث الكاشف؛ أما pressKey فيمر فيستهلك العقد بنفسه — مقصود: عقد
 // input-event بلا provenance، والالتباس يفشل مغلقاً.
+// أنواع الإدخال الملتزم خاصة بـElectron فتبقى هنا؛ العدّاد نفسه في surface.
 const COMMITTED_INPUT_TYPES = new Set(['mouseDown', 'rawKeyDown', 'keyDown']);
-let userInputCounter = 0;
-let leaseUserRevision = 0;
 
 function nextSnapshotGeneration(wc) {
-  snapshotSequence = snapshotSequence >= Number.MAX_SAFE_INTEGER ? 1 : snapshotSequence + 1;
-  activeSnapshotGeneration = snapshotSequence;
-  activeSnapshotOwnerId = wc && Number.isInteger(wc.id) ? wc.id : null;
-  activeSnapshotNextIndex = 0;
-  activeSnapshotTextBytes = 0;
-  activeSnapshotFingerprints = new Map();
-  leaseUserRevision = userInputCounter; // اللقطة تجدّد العقد
-  return activeSnapshotGeneration;
+  return surface.nextGeneration(wc && wc.id); // اللقطة تجدّد العقد
 }
 
 function invalidateSnapshotRefs(wc) {
-  if (!wc || activeSnapshotOwnerId === wc.id) {
-    activeSnapshotGeneration = 0;
-    activeSnapshotOwnerId = null;
-    activeSnapshotNextIndex = 0;
-    activeSnapshotTextBytes = 0;
-    activeSnapshotFingerprints = new Map();
-  }
+  if (wc) surface.invalidate(wc.id);
+  else surface.invalidate();
+}
+
+// مالك الهدف كسولاً: currentWC() لا تُستدعى إلا حين يلزم الحلّ فعلاً (كما قبل الاستخراج)
+function ownerOf(wc) {
+  return () => { const target = wc || currentWC(); return target ? target.id : null; };
 }
 
 // الفحص الأول من فحصَي العقد: تستدعيه الأغلفة **قبل بوابة الإذن** كي لا يُفتح مربع بلا
@@ -178,7 +169,7 @@ function invalidateSnapshotRefs(wc) {
 // يبقى بلا اسم لأنه لا يقع إلا داخل فعل أصلاً.
 function leaseError(name) {
   if (name !== undefined && browserorigin.classifyBrowserTool(name) !== 'act') return null;
-  return userInputCounter === leaseUserRevision ? null : 'input_changed';
+  return surface.leaseError();
 }
 
 // أسباب تنازع التحكم الثلاثة: تُبثّ للواجهة **بلا أي محتوى صفحة** (السبب فقط).
@@ -194,38 +185,11 @@ function leaseGate() {
 // البصمة المتوقعة لهدف الفعل: تُعرف فقط لـ ref من اللقطة النشطة على العرض نفسه.
 // مُحدِّد CSS بلا لقطة ⇒ '' ⇒ الحارس يتخطى المقارنة (سلوك ما قبل الدفعة).
 function expectedFingerprint(locator, wc) {
-  const ref = typeof locator === 'string' ? locator.trim() : '';
-  if (!SNAPSHOT_REF_RE.test(ref)) return '';
-  const target = wc || currentWC();
-  if (!target || target.id !== activeSnapshotOwnerId || !activeSnapshotGeneration) return '';
-  return activeSnapshotFingerprints.get(ref) || '';
-}
-
-// فاصل حقول البصمة — يُكتب هروباً لا محرف تحكم حرفياً في المصدر (درس loopfailure.js).
-const FINGERPRINT_SEP = '\u001f';
-
-// وسم مقروء للبصمة (بلا فاصلها الداخلي) — يظهر في رسالة «كان … وصار …» وحدها.
-function fingerprintLabel(value) {
-  return String(value || '').split(FINGERPRINT_SEP).map((part) => part.trim()).filter(Boolean).join(' ').slice(0, 160);
-}
-
-function rememberFingerprints(entries) {
-  if (!entries || typeof entries !== 'object') return;
-  for (const [ref, value] of Object.entries(entries)) {
-    if (!SNAPSHOT_REF_RE.test(ref) || typeof value !== 'string') continue;
-    if (!activeSnapshotFingerprints.has(ref) && activeSnapshotFingerprints.size >= MAX_TRACKED_FINGERPRINTS) continue;
-    activeSnapshotFingerprints.set(ref, value);
-  }
+  return surface.expectedFingerprint(locator, ownerOf(wc));
 }
 
 function locatorError(value, wc) {
-  const locator = typeof value === 'string' ? value.trim() : '';
-  if (LEGACY_SNAPSHOT_REF_RE.test(locator)) return 'stale_ref';
-  const match = SNAPSHOT_REF_RE.exec(locator);
-  if (!match) return null;
-  const target = wc || currentWC();
-  return target && target.id === activeSnapshotOwnerId && Number(match[1]) === activeSnapshotGeneration
-    ? null : 'stale_ref';
+  return surface.locatorError(value, ownerOf(wc));
 }
 
 function browserInputError(name, input, wc) {
@@ -483,7 +447,7 @@ function wireEvents(wc) {
   // عدّاد عقد اللقطة: الإدخال الملتزم من المستخدم داخل العرض المعزول. المستمع مرة واحدة
   // لكل webContents (‏wiredWebContents يحرس التكرار)، والعدّاد عام لأن المعاينة عرض واحد نشط.
   wc.on('input-event', (_event, inputEvent) => {
-    if (isCurrent() && inputEvent && COMMITTED_INPUT_TYPES.has(inputEvent.type)) userInputCounter += 1;
+    if (isCurrent() && inputEvent && COMMITTED_INPUT_TYPES.has(inputEvent.type)) surface.noteCommittedInput();
   });
   wc.on('page-title-updated', (e, title) => emitCurrent({ type: 'title', title: String(title || '').slice(0, 200) }));
   wc.on('did-start-loading', () => emitCurrent({ type: 'loading', loading: true }));
@@ -1209,11 +1173,11 @@ async function snapshot() {
   const generation = nextSnapshotGeneration(wc);
   try {
     const data = await runIsolated(wc, '(' + SNAPSHOT_FN + ')(' + generation + ')'); // OBS-018
-    if (activeSnapshotGeneration === generation && activeSnapshotOwnerId === wc.id) {
-      activeSnapshotNextIndex = Math.max(0, Number(data && data.count) || 0);
-      activeSnapshotTextBytes = Buffer.byteLength(((data && data.elements) || []).join('\n'), 'utf8');
-      rememberFingerprints(data && data.fps);
-    }
+    surface.recordSnapshot(wc.id, generation, {
+      nextIndex: Math.max(0, Number(data && data.count) || 0),
+      textBytes: Buffer.byteLength(((data && data.elements) || []).join('\n'), 'utf8'),
+      fingerprints: data && data.fps,
+    });
     // البصمات داخلية بحتة: نبني اللقطة المعادة بقائمة حقول مغلقة فلا تعبر إلى النموذج.
     return { ok: true, snap: {
       title: data && data.title, url: data && data.url, generation,
@@ -1221,7 +1185,7 @@ async function snapshot() {
       truncated: !!(data && data.truncated),
     } };
   } catch (e) {
-    if (activeSnapshotGeneration === generation) invalidateSnapshotRefs(wc);
+    if (surface.generation === generation) invalidateSnapshotRefs(wc);
     return { error: 'snapshot_failed' };
   }
 }
@@ -1499,8 +1463,8 @@ const PROBE_WAIT = `(function(ms){var p=window.__satrActionProbe;if(!p)return Pr
 const PROBE_END = `(function(){var p=window.__satrActionProbe;if(!p)return {count:0,url:location.href,delta:[]};try{p.ob.disconnect();removeEventListener('hashchange',p.nav);removeEventListener('popstate',p.nav);}catch(e){}if(p.timer)clearTimeout(p.timer);var payload=p.payload();if(p.resolve){var done=p.resolve;p.resolve=null;done(payload);}window.__satrActionProbe=null;return payload;})()`;
 
 function actionProbeExpression(wc) {
-  const active = wc && wc.id === activeSnapshotOwnerId && activeSnapshotGeneration > 0;
-  const input = { generation: active ? activeSnapshotGeneration : 0, nextIndex: active ? activeSnapshotNextIndex : 0 };
+  const active = wc && wc.id === surface.ownerId && surface.generation > 0;
+  const input = { generation: active ? surface.generation : 0, nextIndex: active ? surface.nextIndex : 0 };
   return '(' + PROBE_BEGIN_FN + ')(' + JSON.stringify(input) + ')';
 }
 
@@ -1510,7 +1474,7 @@ function boundActionDelta(lines, alreadyTruncated) {
     const rank = (line) => line.startsWith('+ ') ? 0 : line.startsWith('~ ') ? 1 : 2;
     return rank(left) - rank(right);
   });
-  const byteLimit = Math.min(1600, Math.floor(activeSnapshotTextBytes * 0.25));
+  const byteLimit = Math.min(1600, Math.floor(surface.textBytes * 0.25));
   const delta = [];
   let used = 0;
   let truncated = !!alreadyTruncated;
@@ -1644,9 +1608,7 @@ async function observedResult(wc, beforeUrl, actionResult) {
   const domChanged = !!actionResult.changed || Number(probe.count) > 0;
   let delta = [];
   let deltaTruncated = false;
-  if (!navigated && wc.id === activeSnapshotOwnerId && Number(probe.generation) === activeSnapshotGeneration) {
-    activeSnapshotNextIndex = Math.max(activeSnapshotNextIndex, Number(probe.nextIndex) || 0);
-    rememberFingerprints(probe.fps);
+  if (!navigated && surface.recordAction(wc.id, probe.generation, { nextIndex: probe.nextIndex, fingerprints: probe.fps })) {
     const bounded = boundActionDelta(probe.delta, probe.deltaTruncated);
     delta = bounded.delta;
     deltaTruncated = bounded.truncated;
@@ -2629,7 +2591,7 @@ module.exports = {
     encodeScreenshot,
     fingerprintLabel, AGENT_WORLD_ID, COMMITTED_INPUT_TYPES, CAPTURE_BEACON_COLORS,
     CAPTURE_HUMAN_INSTALL, CAPTURE_HUMAN_DRAIN,
-    snapshotFingerprints: () => new Map(activeSnapshotFingerprints),
-    leaseState: () => ({ userInputCounter, leaseUserRevision }),
+    snapshotFingerprints: () => surface.fingerprints(),
+    leaseState: () => surface.leaseState(),
   },
 };

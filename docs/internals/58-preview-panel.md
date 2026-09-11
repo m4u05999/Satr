@@ -393,6 +393,24 @@
   `test:preview-lease` (‏Electron حي، 11 عضّة مستعادة) داخل `test:full`، مع
   توسعة `test:codexmcp` (‏147) و`test:browser-member-live` (شارة التنازع).
   خام الدفعة كله (عصف/نقد/عقد مجمَّد/تقارير) في `D:\sater\prompts-browser-bs\`.
+- **استخراج `surface.js` — الخطوة ٢ من سطح ويندوز (2026-09-11)**: منطق المرجع والجيل
+  والبصمة وعقد الإدخال و`stale_ref` نُقل من `preview.js` إلى `electron/surface.js` **بلا
+  تغيير سلوك** (الصف ٢ في `docs/COMPUTER-USE-DESKTOP.md`). الوحدة **مصنع نقي بلا `require`**
+  (‏`createSurface({ prefix, maxTrackedFingerprints })`) لأن السطحين يحتاجان حالتين مستقلتين:
+  لقطة نافذة ويندوز لا تُبطل refs المتصفح ولا تجدّد عقده. `preview.js` يملك نسخة واحدة ببادئة
+  `s` (‏`refPattern` هو `SNAPSHOT_REF_RE` القديم حرفياً)، وسطح ويندوز سيأخذ `w` بالنمط نفسه؛
+  ومرجع سطحٍ لا يُحلّ مرجعاً في الآخر (يمرّ كأي نص غير مرجعي اليوم، ولا تُقبل له بصمة).
+  **ما نُقل**: الجيل والمالك والفهرس التالي وبايتات اللقطة والبصمات وسقفها، وعدّاد الإدخال
+  و`leaseUserRevision`، و`locatorError`/`expectedFingerprint`/`rememberFingerprints`/
+  `fingerprintLabel` وفاصلها. **ما بقي في `preview.js` ولماذا**: `COMMITTED_INPUT_TYPES`
+  (أنواع أحداث Electron)، و`leaseError(name)` بفحص `classifyBrowserTool` (أسماء أدوات
+  المتصفح)، و`conflictError`/بثّ `control_conflict`، و`browserInputError`، وسكربتات الحقن
+  (‏`SNAPSHOT_FN`/`fingerprint(el)`)، والرسائل العربية في `codexmcp.js`. التصديرات و`_internals`
+  بأسمائها ودلالتها كما هي. **دقيقتان مقصودتان**: المالك يُمرَّر دالةً كسولة كي لا تُستدعى
+  `currentWC()` (ومعها مزوّد الهدف الخارجي) إلا حيث كانت تُستدعى؛ والاستيراد بمسار مطلق من
+  `__dirname` لأن `preview-controls-backend-test` يشغّل `preview.js` في `vm` بـ`require` يحلّ
+  النسبي من `scripts/`. الحارس `test:surface` (قطعي بلا Electron، داخل `test:full`) يثبت
+  الدلالات على المصنع مباشرةً واستقلال نسختَي `s`/`w`؛ و`test:preview-lease` بقي حارس السلوك الحي.
 - **متانة العرض والتنزيل**: partition المعاينة يعترض `will-download`، ينقّي الاسم ويختار
   مساراً فريداً داخل Downloads ثم يبث المسار الفعلي أو الفشل؛ لا حفظ صامت. خطاف
   `certificate-error` يقبل شهادة ذاتية لـ`https://localhost`/`127.0.0.1` حصراً ويرفض
