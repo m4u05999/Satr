@@ -12,6 +12,9 @@ paths:
   - "src/ui/components/skills-panel.js"
   - "src/ui/components/memory-panel.js"
   - "src/ui/components/context-panel.js"
+  - "electron/connections.js"
+  - "electron/connection-*.js"
+  - "src/ui/components/connection-view.js"
 ---
 
 # satr-agent — اقرأ قبل أن تلمس
@@ -26,3 +29,4 @@ paths:
 - `docs/internals/21-skills-panel.md` — لوحة المهارات (Skills)
 - `docs/internals/24-project-memory.md` — ذاكرة المشروع المحلية الصريحة (الأولوية 4)
 - `docs/internals/25-repo-map.md` — خريطة المستودع المقتصدة للمزوّدات العمياء (الأولوية 5 — الدفعة الأولى)
+- `docs/internals/67-project-connections.md` — توصيلات المشروع المجانية (OBS-145 — دفعة الرمز الشخصي، 2026-09-08)

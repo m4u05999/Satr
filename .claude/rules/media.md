@@ -23,3 +23,4 @@ paths:
 - `docs/internals/63-generations-gallery-panel.md` — لوحة معرض التوليدات 🖼 (الجولة 8 من «ولّد من سطر» — kimi-code)
 - `docs/internals/64-generation-cards-chat.md` — بطاقة التوليد في المحادثة وبطاقة الصوت (الجولة 9 §2/§4 — kimi-code)
 - `docs/internals/65-media-players-gallery.md` — مشغّلا الوسائط في المعرض (الجولة 10 §3 — kimi-code)
+- `docs/internals/58-preview-panel.md` — تسجيل فيديو التصفح (م-5) وتسجيل نافذة الاختبار الأصلية (2026-09-09)
