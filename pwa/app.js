@@ -57,6 +57,8 @@
   let stateReceivedAt = 0;
   let stateLeaseTimer = null;
   let lastStateRequestAt = 0;
+  let pendingStop = null;
+  const STOP_CONFIRM_TIMEOUT_MS = 20000;
 
   /** وضع الوسيط يُشتقّ من حمولة QR: وجود `relay` يعني أن الطرفين عميلان. */
   function usingRelay() {
@@ -165,6 +167,8 @@
 
   /** يمسح الجلسة المحفوظة ويعود لشاشة الاقتران (إبطال من سطح المكتب أو إعادة تشغيله). */
   async function forgetSession(reason) {
+    if (pendingStop) clearTimeout(pendingStop.timer);
+    pendingStop = null;
     state.session = null;
     state.stopped = true;
     state.polling = false;
@@ -755,7 +759,7 @@
     if (!supported) return;
     const status = $('pushStatus');
     if (state.pushEnabled) {
-      status.textContent = 'الإشعارات مفعّلة على هذا الجهاز.';
+      status.textContent = 'اشتراك المتصفح جاهز؛ وصول الإشعارات غير مؤكّد.';
       $('pushEnableBtn').classList.add('hidden');
     } else {
       status.textContent = '';
@@ -832,7 +836,7 @@
     if (await sendUplink(payload, 'اشتراك الإشعارات')) {
       state.pushEnabled = true;
       renderPushPanel();
-      setStatus('تم تفعيل إشعارات هذا الجهاز.');
+      setStatus('أُرسل اشتراك الإشعارات — لم يتأكد حفظه على الحاسوب.');
       try { await dbPut(sessionRecord(state.sendReserved)); } catch (_e) { /* أفضل جهد */ }
     }
   }
@@ -944,25 +948,27 @@
    * مسار واحد للقرار والإيقاف: نسخُه كان يعني عقداً بقارئين يتباعدان بصمت.
    * @returns {Promise<boolean>} نجاح الإرسال
    */
-  async function sendUplink(payload, label) {
+  async function sendUplink(payload, label, reportError = setStatus) {
     // الحجز قبل التعمية: بلا سقف ثابت على القرص قد يعيد استئنافٌ لاحق nonce مستعملاً
     try {
       await reserveSendCounters();
     } catch (_e) {
-      setStatus('تعذّر تثبيت عدّاد الأمان — لم يُرسل ' + label + '. أعد المحاولة.');
+      reportError('تعذّر تثبيت عدّاد الأمان — لم يُرسل ' + label + '. أعد المحاولة.');
       return false;
     }
-    const frame = await C.seal(state.session, C.utf8ToBytes(JSON.stringify(payload)));
+    let posted = false;
     try {
+      const frame = await C.seal(state.session, C.utf8ToBytes(JSON.stringify(payload)));
       // عقد القناة (§5.1): جسم `/reply` هو **الإطار المعمّى خاماً** لا JSON، والمسار
       // يوجب `?device=`. عطل مثبت حياً — كان الردّ يُرفض بـbad_device/bad_frame.
       const replyUrl = usingRelay()
         ? `${state.relayUrl}/m/${state.boxes.toDesktop}`
         : `${state.serverUrl}/reply?device=${encodeURIComponent(state.deviceId)}`;
+      posted = true;
       await postFrame(replyUrl, frame);
       return true;
     } catch (err) {
-      setStatus('فشل إرسال ' + label + ': ' + err.message);
+      reportError('فشل إرسال ' + label + ': ' + err.message, posted);
       return false;
     }
   }
@@ -1065,7 +1071,6 @@
   async function pollLoop() {
     while (!state.stopped && state.session) {
       state.polling = true;
-      setStatus('متصل — في انتظار طلب…');
       const controller = new AbortController();
       state.pollAbort = controller;
       try {
@@ -1103,6 +1108,11 @@
               if (envelope && envelope.envelope_id) {
                 state.currentEnvelope = envelope;
                 renderCard(envelope);
+                // أثناء الإيقاف نستمر باستقبال النتيجة ولو أعيدت بطاقة الدور نفسه.
+                if (pendingStop && pendingStop.run === envelope.run) {
+                  await new Promise((resolve) => setTimeout(resolve, 200));
+                  break;
+                }
                 // لا نسحب طلباً آخر حتى يُحسم هذا
                 state.polling = false;
                 setStatus('طلب إذن معلّق');
@@ -1110,6 +1120,9 @@
               }
               break;
             }
+            case 'command_result':
+              handleCommandResult(frame);
+              break;
             case 'paired':
               // إقرار اقتران أو تكرار؛ لا فعل
               break;
@@ -1122,7 +1135,10 @@
                 // بدونه كان الإيقاف يتطلّب وصول طلب إذن أولاً، بينما §1 يعد بأن
                 // «أوقف» فعلٌ مستقل: الدور يعمل ⇒ يجب أن يكون إيقافه ممكناً.
                 // رمز قديم أو استباقي يرفضه سطح المكتب بـ409 (§7.7.5) فالفشل مغلق.
+                const runChanged = state.currentRun !== (st.run || '');
                 state.currentRun = st.run || '';
+                // تأكيد إيقاف دور سابق لا يصف الدور الجديد، ونبضات الدور نفسه تحفظ تأكيده.
+                if (runChanged) setStatus('متصل — في انتظار طلب…');
                 renderStatePanel();
                 startLeaseTimer();
               }
@@ -1147,6 +1163,7 @@
 
   function startPolling() {
     if (state.polling || state.stopped) return;
+    if (!pendingStop) setStatus('متصل — في انتظار طلب…');
     requestStateResync();
     pollLoop();
   }
@@ -1161,29 +1178,77 @@
     const now = Date.now();
     if (now - lastStateRequestAt < STATE_REQUEST_MIN_INTERVAL) return;
     lastStateRequestAt = now;
-    await sendUplink({ type: 'state_request' }, 'طلب الحالة');
+    await sendUplink({ type: 'state_request' }, 'طلب الحالة', (message) => {
+      if (!pendingStop) setStatus(message);
+    });
   }
 
-  /**
-   * يوقف الدور الجاري على سطح المكتب فعلاً (§7.7.5).
-   *
-   * كان هذا الزرّ يوقف الاستقصاء محلياً ويكتب «متوقف يدوياً» **بلا أن يرسل بايتاً**
-   * — أي يعلن للمستخدم أنه أوقف وكيلاً ما زال يكتب في ملفاته. وهذا أسوأ من غياب
-   * الزرّ. الآن يرسل أمراً مستقلاً (‏`type:'stop'`) بقيد `run` المعتم.
-   *
-   * ولا نعلن التوقف إلا بعد قبول سطح المكتب للأمر — «طُلب الإيقاف» ≠ «توقف».
-   */
+  /** نتيجة أمر مغلقة الحقول، لا تُستنتج من رد HTTP أو من لقطة حالة قديمة. */
+  function commandResultFromFrame(frame) {
+    if (!frame || typeof frame !== 'object' || Array.isArray(frame)) return null;
+    const keys = ['v', 'type', 'command_id', 'run', 'status'];
+    if (Object.keys(frame).length !== keys.length || keys.some((key) => !Object.prototype.hasOwnProperty.call(frame, key))) return null;
+    if (frame.v !== 1 || frame.type !== 'command_result') return null;
+    if (typeof frame.command_id !== 'string' || typeof frame.run !== 'string'
+        || !/^[a-f0-9]{16}$/.test(frame.command_id) || !/^[a-f0-9]{16}$/.test(frame.run)) return null;
+    if (!['stopped', 'stale_run', 'unknown'].includes(frame.status)) return null;
+    return frame;
+  }
+
+  function handleCommandResult(frame) {
+    const result = commandResultFromFrame(frame);
+    const request = pendingStop;
+    if (!result || !request || result.command_id !== request.command_id || result.run !== request.run) return;
+    clearTimeout(request.timer);
+    pendingStop = null;
+    if (state.currentRun !== request.run || (latestState && latestState.run !== request.run)) return;
+    if (result.status === 'stopped') {
+      if (!state.currentEnvelope || state.currentEnvelope.run === request.run) hideCard();
+      setStatus('أكّد الحاسوب انتهاء الدور الجاري.');
+    } else if (result.status === 'stale_run') {
+      setStatus('لم يُنفّذ أمر الإيقاف: تغيّر الدور على الحاسوب.');
+    } else {
+      setStatus('وصل أمر الإيقاف، لكن لم يتأكد انتهاء الدور على الحاسوب.');
+    }
+  }
+
+  /** إيداع الأمر يبدأ الانتظار؛ النجاح يأتي فقط من نتيجة الحاسوب المطابقة. */
   async function stopAgent() {
     const run = state.currentRun;
     if (!state.session || !run) {
       setStatus('لا يوجد دور معروف لإيقافه — انتظر وصول طلب من سطح المكتب.');
       return;
     }
+    if (pendingStop) clearTimeout(pendingStop.timer);
+    const bytes = crypto.getRandomValues(new Uint8Array(8));
+    const commandId = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    const request = { command_id: commandId, run, timer: null };
+    pendingStop = request;
+    request.timer = setTimeout(() => {
+      if (pendingStop !== request) return;
+      pendingStop = null;
+      if (state.currentRun === run) setStatus('لم يصل تأكيد الإيقاف — حالة الدور غير مؤكدة.');
+    }, STOP_CONFIRM_TIMEOUT_MS);
     setStatus('يُطلب الإيقاف…');
-    if (!(await sendUplink({ type: 'stop', run: run }, 'أمر الإيقاف'))) return;
-    // القناة تردّ 409 عند رمز دور قديم؛ postFrame يرمي عندها فيظهر الفشل أعلاه.
-    hideCard();
-    setStatus('أُرسل أمر الإيقاف — أوقف سطح المكتب الدور.');
+    if (!state.polling) startPolling();
+    let deliveryUncertain = false;
+    const sent = await sendUplink({ type: 'stop', run: run, command_id: commandId }, 'أمر الإيقاف', (message, posted) => {
+      deliveryUncertain = posted === true;
+      if (pendingStop === request && state.currentRun === run) setStatus(message);
+    });
+    // قد يصل الإقرار أو يبدأ B قبل حسم HTTP؛ لا تطمس نتيجته برسالة إرسال متأخرة.
+    if (pendingStop !== request) return;
+    if (!sent) {
+      // ضياع رد HTTP لا يثبت ضياع الأمر؛ قد يصل إقرار الحاسوب عبر الاستقصاء.
+      if (deliveryUncertain) {
+        if (state.currentRun === run) setStatus('تعذّر تأكيد وصول أمر الإيقاف — بانتظار رد الحاسوب.');
+        return;
+      }
+      clearTimeout(request.timer);
+      pendingStop = null;
+      return;
+    }
+    if (state.currentRun === run) setStatus('أُرسل أمر الإيقاف — بانتظار تأكيد الحاسوب.');
   }
 
   async function registerServiceWorker() {

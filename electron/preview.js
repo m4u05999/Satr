@@ -8,7 +8,7 @@
 //   - طلبات أذونات الويب (كاميرا/ميكروفون/إشعارات/موقع…) مرفوضة كلها
 // الواجهة ترسم «إطار» اللوحة (رأس + مساحة فارغة) وتبلّغ مستطيلها عبر satr:previewBounds —
 // العرض الأصلي يطفو فوق تلك المساحة (إحداثيات DIP تطابق CSS px عند zoom=1).
-// أحداث للواجهة عبر قناة مستقلة satr:preview: nav/title/loading/failed.
+// أحداث للواجهة عبر قناة مستقلة satr:preview: nav/title/loading/failed/closed/network.
 
 const fs = require('fs');
 const path = require('path');
@@ -350,6 +350,8 @@ function wireNetwork() {
       // وقد يتبعه GET ناجح. نبقيه لبقية الأنواع كي لا نخفي cache-only fetch حقيقية.
       if (!details || details.error === 'net::ERR_ABORTED'
           || (details.error === 'net::ERR_CACHE_MISS' && details.resourceType === 'font')) return;
+      const wc = currentWC();
+      if (!wc || (details.webContentsId > 0 && details.webContentsId !== wc.id)) return;
       const entry = {
         url: String(details.url || '').slice(0, 500),
         error: String(details.error || ''),
@@ -364,6 +366,8 @@ function wireNetwork() {
     wr.onCompleted((details) => {
       if (handoffActive || sensitiveOperation) return;
       if (!details) return;
+      const wc = currentWC();
+      if (!wc || (details.webContentsId > 0 && details.webContentsId !== wc.id)) return;
       const u = String(details.url || '');
       if (u.startsWith('data:') || u.startsWith('blob:')) return;
       const entry = {
@@ -446,12 +450,23 @@ function wireCertificates() {
 function wireEvents(wc) {
   if (!wc || wiredWebContents.has(wc)) return;
   wiredWebContents.add(wc);
-  const nav = () => emit({
-    type: 'nav',
-    url: wc.getURL(),
-    canGoBack: wc.navigationHistory ? wc.navigationHistory.canGoBack() : wc.canGoBack(),
-    canGoForward: wc.navigationHistory ? wc.navigationHistory.canGoForward() : wc.canGoForward(),
+  const isCurrent = () => currentWC() === wc;
+  const emitCurrent = (event) => { if (isCurrent()) emit(event); };
+  wc.on('destroyed', () => retireView(wc));
+  wc.on('render-process-gone', () => {
+    if (!view || view.webContents !== wc) return;
+    retireView(wc);
+    try { if (!wc.isDestroyed()) wc.close(); } catch {}
   });
+  const nav = () => {
+    if (!isCurrent()) return;
+    emit({
+      type: 'nav',
+      url: wc.getURL(),
+      canGoBack: wc.navigationHistory ? wc.navigationHistory.canGoBack() : wc.canGoBack(),
+      canGoForward: wc.navigationHistory ? wc.navigationHistory.canGoForward() : wc.canGoForward(),
+    });
+  };
   wc.on('did-navigate', () => {
     nav();
     if (captureEventSink && currentWC() === wc) {
@@ -468,15 +483,15 @@ function wireEvents(wc) {
   // عدّاد عقد اللقطة: الإدخال الملتزم من المستخدم داخل العرض المعزول. المستمع مرة واحدة
   // لكل webContents (‏wiredWebContents يحرس التكرار)، والعدّاد عام لأن المعاينة عرض واحد نشط.
   wc.on('input-event', (_event, inputEvent) => {
-    if (inputEvent && COMMITTED_INPUT_TYPES.has(inputEvent.type)) userInputCounter += 1;
+    if (isCurrent() && inputEvent && COMMITTED_INPUT_TYPES.has(inputEvent.type)) userInputCounter += 1;
   });
-  wc.on('page-title-updated', (e, title) => emit({ type: 'title', title: String(title || '').slice(0, 200) }));
-  wc.on('did-start-loading', () => emit({ type: 'loading', loading: true }));
-  wc.on('did-stop-loading', () => emit({ type: 'loading', loading: false }));
+  wc.on('page-title-updated', (e, title) => emitCurrent({ type: 'title', title: String(title || '').slice(0, 200) }));
+  wc.on('did-start-loading', () => emitCurrent({ type: 'loading', loading: true }));
+  wc.on('did-stop-loading', () => emitCurrent({ type: 'loading', loading: false }));
   // التقاط رسائل console الصفحة (تشمل الأخطاء غير الملتقطة): للوكيل عبر browser_console
   // (buffer) **وبثّ حيّ للواجهة** (لوحة console للمستخدم — الخيار 2).
   wc.on('console-message', (e, level, message, line, sourceId) => {
-    if (handoffActive || sensitiveOperation) return;
+    if (!isCurrent() || handoffActive || sensitiveOperation) return;
     const entry = {
       level: Number(level) || 0,
       message: String(message || '').slice(0, 2000),
@@ -490,20 +505,21 @@ function wireEvents(wc) {
   });
   // تصفير السجلّ عند تنقّل الإطار الرئيسي لصفحة جديدة (لا للتنقّل داخل الصفحة) — يعكس الحالية
   wc.on('did-start-navigation', (e, url, isInPlace, isMainFrame) => {
+    if (!isCurrent()) return;
     if (isMainFrame) invalidateSnapshotRefs(wc);
     if (isMainFrame && !isInPlace) { resetLogs(); emit({ type: 'console_clear' }); }
   });
   // فشل التحميل الرئيسي فقط (-3 = أُجهض بتنقل جديد — ليس خطأ)
   wc.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
-    if (isMainFrame && code !== -3) emit({ type: 'failed', code, desc: String(desc || ''), url: String(url || '') });
+    if (isCurrent() && isMainFrame && code !== -3) emit({ type: 'failed', code, desc: String(desc || ''), url: String(url || '') });
   });
   // حالة DevTools (البند أ): نبثّها كي يعكس زرّ اللوحة الفتح/الإغلاق حتى لو أغلقها
   // المستخدم من نافذة DevTools مباشرة (نافذة منفصلة mode:'detach' — لا طبقة فوق pvBox).
-  wc.on('devtools-opened', () => emit({ type: 'devtools', open: true }));
-  wc.on('devtools-closed', () => emit({ type: 'devtools', open: false }));
+  wc.on('devtools-opened', () => emitCurrent({ type: 'devtools', open: true }));
+  wc.on('devtools-closed', () => emitCurrent({ type: 'devtools', open: false }));
   // نافذة منبثقة (target=_blank…): لا نوافذ — رابط http/https يُفتح في نفس العرض
   wc.setWindowOpenHandler(({ url }) => {
-    if (isHttpUrl(url)) { try { wc.loadURL(url); } catch (e) {} }
+    if (isCurrent() && isHttpUrl(url)) { try { wc.loadURL(url); } catch (e) {} }
     return { action: 'deny' };
   });
   // حارس التنقل: http/https حصراً (يمنع file:// وjavascript: وغيرهما)
@@ -626,60 +642,96 @@ function action(name) {
     // مسح تخزين الصفحة (البند د): كوكيز + cache + localStorage/IndexedDB لـ partition
     // المعاينة، ثم إعادة تحميل كي تبدأ الصفحة بحالة نظيفة (اختبار أول زيارة/تسجيل خروج).
     else if (name === 'clear_storage') {
-      try {
-        session.fromPartition(PARTITION).clearStorageData({
-          storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'serviceworkers', 'cachestorage', 'shadercache'],
-        }).then(() => { try { wc.reload(); } catch (e) {} }).catch(() => {});
-      } catch (e) {}
+      return (async () => {
+        try {
+          await session.fromPartition(PARTITION).clearStorageData({
+            storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'serviceworkers', 'cachestorage', 'shadercache'],
+          });
+          if (currentWC() !== wc) return { error: 'closed' };
+          wc.reload();
+          return { ok: true };
+        } catch { return { error: 'action_failed' }; }
+      })();
     }
     // محاكاة الشبكة (البند د): تعيد نتيجة setNetwork (قد تفشل إن كانت DevTools مفتوحة)
     else if (name === 'net_online' || name === 'net_offline' || name === 'net_slow' || name === 'net_fast') {
       return setNetwork(name);
     }
-  } catch (e) {}
+  } catch (e) { return { error: 'action_failed' }; }
   return { ok: true };
 }
 
 // ---------- محاكاة شبكة بطيئة (البند د) ----------
 // عبر CDP Network.emulateNetworkConditions (يُبقي debugger مرفقاً ما دامت المحاكاة فعّالة).
-// **حدّ موثّق**: DevTools تحتجز عميل debugger الوحيد — إن كانت مفتوحة تعذّرت المحاكاة من
-// هنا (استعمل تبويب Network في DevTools نفسها حينها). net_online يُوقف المحاكاة ويفصل.
+// قد تتعذّر أوامر CDP؛ النتيجة تُحسم بإقرارها، لا بافتراض أن فتح DevTools يفصل debugger.
+// القياس على Electron 33 أثبت تعايشهما. حدث detach يرصد الفصل الفعلي؛ net_online يعيد
+// الشبكة الطبيعية ثم يفصل اتصال المحاكاة المملوك فقط.
 const NET_PRESETS = {
   net_offline: { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 },
   net_slow: { offline: false, latency: 400, downloadThroughput: 50 * 1024, uploadThroughput: 50 * 1024 },   // ~Slow 3G
   net_fast: { offline: false, latency: 150, downloadThroughput: 180 * 1024, uploadThroughput: 84 * 1024 },  // ~Fast 3G
 };
-let netThrottled = false; // هل debugger مرفق للمحاكاة الآن؟
+// الحالة والطابور ملك WebContents نفسها؛ انتهاء عرض قديم لا يغيّر محاكاة بديله.
+const networkStates = new WeakMap();
+function networkState(wc) {
+  let state = networkStates.get(wc);
+  if (state) return state;
+  state = { queue: Promise.resolve(), preset: 'net_online', owned: false, revision: 0 };
+  networkStates.set(wc, state);
+  wc.debugger.on('detach', () => {
+    const changed = state.preset !== 'net_online';
+    state.revision += 1;
+    state.owned = false;
+    state.preset = 'net_online';
+    if (changed && currentWC() === wc) emit({ type: 'network', preset: 'net_online' });
+  });
+  return state;
+}
 function setNetwork(preset) {
   const wc = currentWC();
-  if (!wc) return { error: 'closed' };
-  const dbg = wc.debugger;
-  try {
-    if (preset === 'net_online') {
-      // إيقاف المحاكاة: أعِد الظروف الطبيعية ثم افصل debugger
-      if (netThrottled) {
-        try { dbg.sendCommand('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }); } catch (e) {}
-        try { dbg.detach(); } catch (e) {}
-        netThrottled = false;
+  if (!wc) return Promise.resolve({ error: 'closed' });
+  if (preset !== 'net_online' && !NET_PRESETS[preset]) return Promise.resolve({ error: 'bad_preset' });
+  const state = networkState(wc);
+  const run = async () => {
+    if (currentWC() !== wc) return { error: 'closed' };
+    const dbg = wc.debugger;
+    const revision = state.revision;
+    const stale = () => currentWC() !== wc || state.revision !== revision;
+    try {
+      if (preset === 'net_online' && state.preset === 'net_online') {
+        if (state.owned) { try { dbg.detach(); } catch {} }
+        emit({ type: 'network', preset });
+        return { ok: true, preset };
       }
-      return { ok: true, preset: 'net_online' };
+      if (!dbg.isAttached()) { dbg.attach('1.3'); state.owned = true; }
+      await dbg.sendCommand('Network.enable');
+      if (stale()) return { error: currentWC() === wc ? 'throttle_unavailable' : 'closed' };
+      const conditions = preset === 'net_online'
+        ? { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 } : NET_PRESETS[preset];
+      await dbg.sendCommand('Network.emulateNetworkConditions', conditions);
+      if (stale()) return { error: currentWC() === wc ? 'throttle_unavailable' : 'closed' };
+      state.preset = preset;
+      // لا نفصل اتصالاً استعرناه من أداة أخرى. الفصل هنا يأتي بعد تأكيد عودة الشبكة.
+      if (preset === 'net_online' && state.owned) {
+        try { dbg.detach(); } catch {}
+      }
+      emit({ type: 'network', preset });
+      return { ok: true, preset };
+    } catch {
+      // فشل أول تفعيل لا يترك اتصالنا محجوزاً؛ المحاكاة السابقة والاتصال المستعار يبقيان.
+      if (state.preset === 'net_online' && state.owned) { try { dbg.detach(); } catch {} }
+      // فشل CDP لا يبدّل الحالة المؤكدة ولا يُعرض نجاحاً. لا نسرب تفاصيل upstream.
+      return { error: currentWC() === wc ? 'throttle_unavailable' : 'closed' };
     }
-    const cond = NET_PRESETS[preset];
-    if (!cond) return { error: 'bad_preset' };
-    if (!dbg.isAttached || !dbg.isAttached()) { dbg.attach('1.3'); }
-    dbg.sendCommand('Network.enable').catch(() => {});
-    dbg.sendCommand('Network.emulateNetworkConditions', cond).catch(() => {});
-    netThrottled = true;
-    return { ok: true, preset };
-  } catch (e) {
-    // DevTools مفتوحة غالباً (عميل debugger محجوز) — سقوط رشيق
-    return { error: 'throttle_unavailable' };
-  }
+  };
+  const result = state.queue.then(run, run);
+  state.queue = result.catch(() => {});
+  return result;
 }
 
-// الواجهة تبلّغ مستطيل مساحة العرض داخل النافذة (تقيسه بـ getBoundingClientRect)
+// الواجهة تبلّغ مستطيل مساحة العرض؛ الصفر يبقى حجباً حتى بوجود مقاس طلبه الوكيل.
 function effectiveBounds(bounds) {
-  if (!viewportOverride || !bounds) return bounds;
+  if (!viewportOverride || !bounds || bounds.width === 0 || bounds.height === 0) return bounds;
   const width = Math.max(1, Math.min(bounds.width, viewportOverride.width));
   const height = viewportOverride.height
     ? Math.max(1, Math.min(bounds.height, viewportOverride.height)) : bounds.height;
@@ -721,7 +773,9 @@ function applyBounds(b) {
   if (view && view.webContents && !view.webContents.isDestroyed()) view.setBounds(nativeBounds(effectiveBounds(b)));
 }
 
-function setBounds(b, deviceMode) {
+function setBounds(b, deviceMode, resetViewport = false) {
+  // اختيار المستخدم للجهاز قرار صريح؛ القياس الدوري والحجب لا يمسحان مقاس أداة الوكيل.
+  if (resetViewport === true) viewportOverride = null;
   lastBounds = b;
   // OBS-028 + تغذية راجعة 2026-08-24: وضع محاكاة الأجهزة يضيّق المستطيل المبلَّغ فيتجاوز
   // طلب browser_set_viewport **بصمت**. اللوحة تبلّغ الوضع النشط ليصير التجاوز مُعلَناً.
@@ -2528,6 +2582,18 @@ function emitAgentActivity(tool) {
 }
 
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
+// نفصل هوية العرض قبل إغلاقه: destroyed وأي حدث متأخر لا يخصّان العرض الذي سيأتي بعده.
+function retireView(wc) {
+  if (!view || view.webContents !== wc) return false;
+  const retired = view;
+  view = null;
+  viewportOverride = null;
+  networkStates.delete(wc);
+  try { if (hostWin && !hostWin.isDestroyed()) hostWin.contentView.removeChildView(retired); } catch {}
+  if (!externalWC()) emit({ type: 'closed' });
+  return true;
+}
+
 function close() {
   clearSensitiveState();
   // OBS-021: إغلاق المستخدم للوحة فعل قاطع — يفكّ أيضاً علم التسليم البشري إن كان
@@ -2536,12 +2602,11 @@ function close() {
   // بدون هذا يبقى العرض الجديد بعد إعادة الفتح مرفوض الأدوات كلها «تسليم جارٍ».
   endHandoff();
   invalidateSnapshotRefs();
-  if (!view) return { ok: true };
-  try { if (hostWin && !hostWin.isDestroyed()) hostWin.contentView.removeChildView(view); } catch (e) {}
-  try { if (view.webContents && !view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {}
-  view = null;
   viewportOverride = null;
-  netThrottled = false; // عرض جديد يبدأ بلا محاكاة شبكة (debugger مات مع الإغلاق)
+  if (!view) return { ok: true };
+  const wc = view.webContents;
+  retireView(wc);
+  try { if (wc && !wc.isDestroyed()) wc.close(); } catch (e) {}
   return { ok: true };
 }
 

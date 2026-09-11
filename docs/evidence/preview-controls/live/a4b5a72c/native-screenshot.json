@@ -1,0 +1,15 @@
+{
+  "before": {
+    "width": 279,
+    "height": 455,
+    "visibility": "visible",
+    "ready": "complete",
+    "probe": {
+      "page": "two",
+      "boot": 8,
+      "frames": 120
+    }
+  },
+  "source": "actual-preview-page-CDP",
+  "image": "native-page-final.png"
+}

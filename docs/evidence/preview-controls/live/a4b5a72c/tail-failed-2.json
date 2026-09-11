@@ -1,0 +1,1905 @@
+{
+  "pass": false,
+  "attempt": 2,
+  "stage": "devtools-open-detaches-debugger",
+  "error": "timeout: devtools-open-detaches-debugger",
+  "time": "2026-09-09T23:02:22.603Z",
+  "native": {
+    "sequence": 635,
+    "time": "2026-09-09T23:02:22.492Z",
+    "windowId": 1,
+    "bounds": {
+      "x": 370,
+      "y": 120,
+      "width": 1440,
+      "height": 820
+    },
+    "focused": false,
+    "views": [
+      {
+        "id": 2,
+        "bounds": {
+          "x": 171,
+          "y": 189,
+          "width": 768,
+          "height": 592
+        },
+        "visible": null,
+        "url": "http://127.0.0.1:61252/two",
+        "loading": false,
+        "devtools": true,
+        "debuggerAttached": true,
+        "page": {
+          "width": 768,
+          "height": 592,
+          "dpr": 1,
+          "visibility": "visible",
+          "focus": false,
+          "visualWidth": 768,
+          "online": false,
+          "url": "http://127.0.0.1:61252/two",
+          "ready": "complete",
+          "probe": {
+            "page": "two",
+            "boot": 5,
+            "frames": 120
+          }
+        }
+      }
+    ]
+  },
+  "ui": {
+    "open": true,
+    "box": {
+      "x": 0,
+      "y": 188.59375,
+      "width": 1109.71875,
+      "height": 592.40625,
+      "top": 188.59375,
+      "right": 1109.71875,
+      "bottom": 781,
+      "left": 0
+    },
+    "device": "2",
+    "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+    "network": "محاكاة سرعة الشبكة: غير متصل — انقر للتبديل",
+    "networkIcon": "✈️",
+    "more": true,
+    "console": false,
+    "error": false,
+    "errorText": "",
+    "scrollX": 0,
+    "docWidth": 1424,
+    "width": 1424
+  },
+  "results": [
+    {
+      "label": "initial-local-page",
+      "time": "2026-09-09T23:01:20.661Z",
+      "native": {
+        "sequence": 80,
+        "time": "2026-09-09T23:01:20.636Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 141,
+              "width": 626,
+              "height": 640
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 626,
+              "height": 640,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 626,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 2
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 140.59375,
+          "width": 625.546875,
+          "height": 640.40625,
+          "top": 140.59375,
+          "right": 625.546875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "0",
+        "deviceTitle": "محاكاة الأجهزة: كامل — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "local-page-rendered",
+      "time": "2026-09-09T23:01:20.666Z",
+      "native": {
+        "sequence": 80,
+        "time": "2026-09-09T23:01:20.636Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 141,
+              "width": 626,
+              "height": 640
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 626,
+              "height": 640,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 626,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 2
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 140.59375,
+          "width": 625.546875,
+          "height": 640.40625,
+          "top": 140.59375,
+          "right": 625.546875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "0",
+        "deviceTitle": "محاكاة الأجهزة: كامل — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "initial-full-width",
+      "time": "2026-09-09T23:01:20.772Z",
+      "native": {
+        "sequence": 81,
+        "time": "2026-09-09T23:01:20.737Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 8
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "0",
+        "deviceTitle": "محاكاة الأجهزة: كامل — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "set-viewport-response",
+      "response": {
+        "ok": true,
+        "requested": {
+          "width": 300,
+          "height": 400
+        },
+        "actual": {
+          "width": 300,
+          "height": 400,
+          "dpr": 1
+        }
+      },
+      "time": "2026-09-09T23:01:21.052Z"
+    },
+    {
+      "label": "agent-override-300",
+      "time": "2026-09-09T23:01:21.055Z",
+      "native": {
+        "sequence": 82,
+        "time": "2026-09-09T23:01:20.958Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 405,
+              "y": 107,
+              "width": 300,
+              "height": 400
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 300,
+              "height": 400,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 300,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 21
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "0",
+        "deviceTitle": "محاكاة الأجهزة: كامل — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "device-clears-override-mobile",
+      "time": "2026-09-09T23:01:21.148Z",
+      "native": {
+        "sequence": 83,
+        "time": "2026-09-09T23:01:21.072Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 360,
+              "y": 107,
+              "width": 390,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 390,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 390,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 28
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "1",
+        "deviceTitle": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "tablet-768",
+      "time": "2026-09-09T23:01:21.242Z",
+      "native": {
+        "sequence": 84,
+        "time": "2026-09-09T23:01:21.178Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 34
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "back-to-full",
+      "time": "2026-09-09T23:01:21.339Z",
+      "native": {
+        "sequence": 85,
+        "time": "2026-09-09T23:01:21.288Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 41
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "0",
+        "deviceTitle": "محاكاة الأجهزة: كامل — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "rapid-device-clicks-consistent",
+      "time": "2026-09-09T23:01:21.710Z",
+      "native": {
+        "sequence": 87,
+        "time": "2026-09-09T23:01:21.615Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 107,
+              "width": 1110,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 1110,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 1110,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 60
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "0",
+        "deviceTitle": "محاكاة الأجهزة: كامل — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "narrow-panel-current-device",
+      "time": "2026-09-09T23:01:21.806Z",
+      "native": {
+        "sequence": 88,
+        "time": "2026-09-09T23:01:21.725Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 176,
+              "width": 279,
+              "height": 605
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 605,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 67
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 175.59375,
+          "width": 279,
+          "height": 605.40625,
+          "top": 175.59375,
+          "right": 279,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "0",
+        "deviceTitle": "محاكاة الأجهزة: كامل — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "narrow-panel-next-device",
+      "time": "2026-09-09T23:01:21.811Z",
+      "native": {
+        "sequence": 88,
+        "time": "2026-09-09T23:01:21.725Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 176,
+              "width": 279,
+              "height": 605
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 605,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 67
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 175.59375,
+          "width": 279,
+          "height": 605.40625,
+          "top": 175.59375,
+          "right": 279,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "1",
+        "deviceTitle": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "expanded-panel-restores-device",
+      "time": "2026-09-09T23:01:21.914Z",
+      "native": {
+        "sequence": 89,
+        "time": "2026-09-09T23:01:21.835Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 360,
+              "y": 107,
+              "width": 390,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 390,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 390,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 74
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "1",
+        "deviceTitle": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "override-held-zero",
+      "time": "2026-09-09T23:01:22.509Z",
+      "native": {
+        "sequence": 92,
+        "time": "2026-09-09T23:01:22.311Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 300,
+              "height": 400,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": false,
+              "visualWidth": 300,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 99
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "1",
+        "deviceTitle": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "override-changed-while-held-zero",
+      "time": "2026-09-09T23:01:22.785Z",
+      "native": {
+        "sequence": 95,
+        "time": "2026-09-09T23:01:22.721Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 300,
+              "height": 400,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": false,
+              "visualWidth": 300,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "1",
+        "deviceTitle": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "override-restored-after-hold",
+      "time": "2026-09-09T23:01:22.879Z",
+      "native": {
+        "sequence": 96,
+        "time": "2026-09-09T23:01:22.833Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 415,
+              "y": 107,
+              "width": 280,
+              "height": 360
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 280,
+              "height": 360,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": false,
+              "visualWidth": 280,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "1",
+        "deviceTitle": "محاكاة الأجهزة: موبايل (390‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "device-clears-second-override",
+      "time": "2026-09-09T23:01:22.976Z",
+      "native": {
+        "sequence": 97,
+        "time": "2026-09-09T23:01:22.941Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": false,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 1,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "navigate-second-page",
+      "time": "2026-09-09T23:01:23.068Z",
+      "native": {
+        "sequence": 98,
+        "time": "2026-09-09T23:01:23.043Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 2,
+                "frames": 3
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "back-button",
+      "time": "2026-09-09T23:01:23.177Z",
+      "native": {
+        "sequence": 99,
+        "time": "2026-09-09T23:01:23.144Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/one",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/one",
+              "ready": "complete",
+              "probe": {
+                "page": "one",
+                "boot": 3,
+                "frames": 3
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "forward-button",
+      "time": "2026-09-09T23:01:23.273Z",
+      "native": {
+        "sequence": 100,
+        "time": "2026-09-09T23:01:23.246Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 4,
+                "frames": 3
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "reload-button",
+      "time": "2026-09-09T23:01:23.458Z",
+      "native": {
+        "sequence": 101,
+        "time": "2026-09-09T23:01:23.361Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 674
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 674,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 5,
+                "frames": 5
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "console-open",
+      "time": "2026-09-09T23:01:23.496Z",
+      "native": {
+        "sequence": 102,
+        "time": "2026-09-09T23:01:23.474Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 504
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 504,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 5,
+                "frames": 12
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 504.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 611,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": true,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "console-close",
+      "time": "2026-09-09T23:01:23.513Z",
+      "native": {
+        "sequence": 102,
+        "time": "2026-09-09T23:01:23.474Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 504
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 504,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 5,
+                "frames": 12
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 106.59375,
+          "width": 1109.71875,
+          "height": 674.40625,
+          "top": 106.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": false,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "more-open",
+      "time": "2026-09-09T23:01:23.555Z",
+      "native": {
+        "sequence": 102,
+        "time": "2026-09-09T23:01:23.474Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 107,
+              "width": 768,
+              "height": 504
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 768,
+              "height": 504,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 5,
+                "frames": 12
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: عادي — انقر للتبديل",
+        "networkIcon": "🚦",
+        "more": true,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "network-slow",
+      "time": "2026-09-09T23:01:23.825Z",
+      "native": {
+        "sequence": 103,
+        "time": "2026-09-09T23:01:23.802Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 189,
+              "width": 768,
+              "height": 592
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": true,
+            "page": {
+              "width": 768,
+              "height": 592,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 5,
+                "frames": 25
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: بطيء (~Slow 3G) — انقر للتبديل",
+        "networkIcon": "🐢",
+        "more": true,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "network-fast",
+      "time": "2026-09-09T23:01:23.848Z",
+      "native": {
+        "sequence": 104,
+        "time": "2026-09-09T23:01:23.829Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 189,
+              "width": 768,
+              "height": 592
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": true,
+            "page": {
+              "width": 768,
+              "height": 592,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 5,
+                "frames": 29
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: سريع (~Fast 3G) — انقر للتبديل",
+        "networkIcon": "🐇",
+        "more": true,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "network-offline",
+      "time": "2026-09-09T23:01:23.860Z",
+      "native": {
+        "sequence": 104,
+        "time": "2026-09-09T23:01:23.829Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 171,
+              "y": 189,
+              "width": 768,
+              "height": 592
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": true,
+            "page": {
+              "width": 768,
+              "height": 592,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 768,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 5,
+                "frames": 29
+              }
+            }
+          }
+        ]
+      },
+      "ui": {
+        "open": true,
+        "box": {
+          "x": 0,
+          "y": 188.59375,
+          "width": 1109.71875,
+          "height": 592.40625,
+          "top": 188.59375,
+          "right": 1109.71875,
+          "bottom": 781,
+          "left": 0
+        },
+        "device": "2",
+        "deviceTitle": "محاكاة الأجهزة: لوحي (768‏px) — انقر للتبديل",
+        "network": "محاكاة سرعة الشبكة: غير متصل — انقر للتبديل",
+        "networkIcon": "✈️",
+        "more": true,
+        "console": false,
+        "error": false,
+        "errorText": "",
+        "scrollX": 0,
+        "docWidth": 1424,
+        "width": 1424
+      }
+    },
+    {
+      "label": "offline-real-fetch",
+      "probe": {
+        "online": false,
+        "fetch": false,
+        "error": "TypeError"
+      },
+      "time": "2026-09-09T23:02:14.440Z"
+    }
+  ],
+  "limits": [
+    "استُكملت من offline بعد تصحيح تصادم اسم error في مسبار fetch؛ لم تُعَد حالات المقاس الناجحة."
+  ]
+}

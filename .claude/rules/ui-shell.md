@@ -35,6 +35,7 @@ paths:
 `docs/internals/`. **قبل تعديلها اقرأ ما يخصّ تغييرك من القائمة، ووثّق دفعتك الجديدة في الملف المعني:**
 
 - `docs/internals/01-data-flow.md` — تدفق البيانات
+- `docs/internals/07-session-continuity.md` — استمرارية المحادثة والجلسة (حدث `conversation` في القشرة)
 - `docs/internals/20-sessions-browser.md` — متصفح الجلسات (المرحلة 1)
 - `docs/internals/49-slash-menu-sync.md` — مزامنة أوامر CLI في قائمة «/» (المرحلة 14.1)
 - `docs/internals/50-first-run-gate-icon.md` — بوابة أول التشغيل + الأيقونة (المرحلة 6 — تلميع المنتج)
@@ -49,3 +50,4 @@ paths:
 - `docs/internals/61-daily-loop-polish.md` — دفعة تلميع الحلقة اليومية (2026-07-19)
 - `docs/internals/62-web-components.md` — مكوّنات الواجهة (تفكيك Web Components — اكتمل ت-0…ت-13)
 - `docs/internals/66-reply-readability.md` — قرائية ردود الوكيل: سلّم العناوين وعارض Markdown وعمود النثر (2026-09-11)
+- `docs/internals/68-models-boot-and-preview-controls.md` — إقلاع النماذج (`refreshEngineModels`) وأسقف اللوحات (2026-09-10)

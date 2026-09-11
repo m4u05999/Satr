@@ -515,6 +515,8 @@ function loadCodexModelsRefresh(fetcher) {
     rebuildModels: () => { rebuilds += 1; },
     addNotice: (text) => notices.push(text),
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: () => {},
+    refreshEngineModels: () => sandbox.exported.refresh(),
   };
   vm.runInNewContext(`
     let codexDynamicModels = [];

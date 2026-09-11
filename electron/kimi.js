@@ -16,6 +16,7 @@ const { spawn, execSync } = require('child_process');
 const browserorigin = require('./browserorigin');
 const browserpolicy = require('./browserpolicy');
 const codexmcp = require('./codexmcp');
+const connectionTools = require('./connection-tools');
 const { computeDiff } = require('./diff');
 const envbrief = require('./envbrief');
 const execguard = require('./execguard');
@@ -542,6 +543,7 @@ function createRpc(proc, handlers) {
 
 function noOpHandle() {
   return {
+    done: Promise.resolve(),
     resolvePermission() { return false; },
     resolveHandoff() { return false; },
     async stop() {},
@@ -603,6 +605,8 @@ function create(deps) {
     let finished = false;
     let stopping = false;
     let emittedDone = false;
+    const connectionGate = connectionTools.createPermissionGate({ emit,
+      isActive: () => !finished && !stopping && !emittedDone && browserControl !== false });
     let usage = null;
     let replayingSession = false;
     const compactCommand = /^\/compact(?:\s|$)/i.test(String(input.prompt || '').trim());
@@ -635,6 +639,15 @@ function create(deps) {
         preview,
         cwd,
         extraTools: buildSatrMcpTools(cwd, shared.skillContextRef, emitShared),
+        // ثبّت هوية الدور عند النداء؛ لا ترث قراءة معلقة صلاحية الدور المستأجر التالي.
+        connectionContext: () => {
+          const turn = shared.turn;
+          return { engine: ENGINE_ID,
+            isActive: () => !!turn && shared.turn === turn && turn.connectionsActive(),
+            requestPermission: (input, callCtx) => turn
+              ? turn.requestConnectionPermission(input, callCtx) : Promise.resolve(false),
+          };
+        },
         openPreview: (url) => emitShared({ type: 'preview_open', url }),
         closePreview: () => emitShared({ type: 'preview_close' }),
         onActivity: (method, tool) => {
@@ -671,6 +684,21 @@ function create(deps) {
         return noOpHandle();
       }
     }
+
+    // OBS-147: نهاية الدور المؤكدة تختلف عن انتهاء مهلة طلب الإلغاء.
+    let resolveDone, rejectDone, resolveProcessDone;
+    const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+    done.catch(() => {});
+    const processDone = new Promise((resolve) => { resolveProcessDone = resolve; });
+    let processExited = false;
+    let promptFinished = false;
+    let channelCleanup = null;
+    const onTurnProcessExit = (code) => {
+      processExited = true;
+      resolveProcessDone();
+      destroyChannel(code).then(resolveDone, rejectDone);
+    };
+    proc.once('exit', onTurnProcessExit);
 
     function emitAssistantMessages() {
       // التفكير الحي يُعرض في قسم «سجل التفكير» منفصل عن الإجابة، ولا يُدرَج في تصدير Markdown.
@@ -978,6 +1006,7 @@ function create(deps) {
     }
 
     function cancelPending() {
+      connectionGate.stop();
       for (const item of pendingPermissions.values()) {
         try { rpc.respond(item.serverId, { outcome: { outcome: 'cancelled' } }); } catch { /* إغلاق */ }
       }
@@ -999,25 +1028,36 @@ function create(deps) {
     async function releaseTurn(code) {
       cancelPending();
       preview.clearSensitiveState();
-      shared.turn = null;
+      if (shared.turn === turnHandle) shared.turn = null;
       if (channelRef.sessionId) keepalive.touchSession(channelRef.sessionId);
       if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
+      if (promptFinished) {
+        proc.removeListener('exit', onTurnProcessExit);
+        resolveDone();
+      }
     }
 
     // تدمير كامل للقناة (أخطاء التهيئة/العملية أو سقوط رشيق بلا تسجيل) = السلوك القديم.
-    async function destroyChannel(code) {
-      cancelPending();
-      preview.clearSensitiveState();
-      shared.turn = null;
-      if (channelRef.sessionId) keepalive.remove(channelRef.sessionId);
-      rpc.close();
-      try { proc.stdin.end(); } catch { /* مغلق */ }
-      setTimeout(() => { try { proc.kill(); } catch { /* منتهٍ */ } }, 500);
-      if (mcpHost) { const host = mcpHost; mcpHost = null; await host.stop().catch(() => {}); }
-      if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
+    function destroyChannel(code) {
+      if (channelCleanup) return channelCleanup;
+      channelCleanup = Promise.resolve().then(async () => {
+        cancelPending();
+        preview.clearSensitiveState();
+        if (shared.turn === turnHandle) shared.turn = null;
+        if (channelRef.sessionId) keepalive.remove(channelRef.sessionId);
+        rpc.close();
+        try { proc.stdin.end(); } catch { /* مغلق */ }
+        if (!processExited) setTimeout(() => { try { proc.kill(); } catch { /* منتهٍ */ } }, 500);
+        if (mcpHost) { const host = mcpHost; mcpHost = null; await host.stop(); }
+        if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
+        await processDone;
+      });
+      channelCleanup.then(resolveDone, rejectDone);
+      return channelCleanup;
     }
 
     function finishTurn(result) {
+      promptFinished = true;
       if (finished) return;
       finished = true;
       const compactMetadata = compactCommand
@@ -1048,6 +1088,8 @@ function create(deps) {
       onNotification: handleSessionNotification,
       requestMcpPermission,
       requestMcpHandoff,
+      connectionsActive: () => !finished && !stopping && !emittedDone && browserControl !== false,
+      requestConnectionPermission: connectionGate.requestPermission,
       // يستدعيه سجل keep-alive عند قتل جلسة عليها دور نشط: يلغي الدور وينهيه في الواجهة.
       async abortTurn() {
         if (finished) return;
@@ -1063,6 +1105,7 @@ function create(deps) {
       onProcError(error) {
         if (!finished) emit({ type: 'spawn_error', text: 'تعذّر تشغيل Kimi Code: ' + scrubError(error && error.message) });
         finished = true;
+        if (!proc.pid) { processExited = true; resolveProcessDone(); }
         destroyChannel(1);
       },
       onProcExit(code) {
@@ -1275,7 +1318,9 @@ function create(deps) {
     })();
 
     return {
+      done,
       resolvePermission(id, allow, always) {
+        if (connectionGate.resolvePermission(id, allow)) return true;
         const mcp = pendingMcpPermissions.get(id);
         if (mcp) {
           pendingMcpPermissions.delete(id);
@@ -1374,6 +1419,21 @@ function create(deps) {
     });
   }
 
+  // عنوان جلسة Kimi من session/list يشتقّه Kimi من أول رسالة **بصيغتها المجمّعة** —
+  // فيحمل أغلفة مواردنا المحقونة (قياس على جلسة المالك 2c2989ed — OBS-153). يحذف
+  // الأغلفة والوسوم المحقونة ومبتورها ويسقط إلى العنوان الافتراضي إن فرغ.
+  function cleanSessionTitle(raw) {
+    const t = String(raw || '')
+      .replace(/<resource uri="satr:\/\/[^"]*">[\s\S]*?<\/resource>/g, '')
+      .replace(/<resource uri="satr:\/\/[^"]*"[\s\S]*$/g, '')
+      .replace(/<satr_project_memory>[\s\S]*?<\/satr_project_memory>/g, '')
+      .replace(/<satr_lang>[\s\S]*?<\/satr_lang>/g, '')
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return (t || 'جلسة Kimi Code').slice(0, 90);
+  }
+
   async function listSessions() {
     try {
       const sessions = await rawSessionList();
@@ -1381,11 +1441,27 @@ function create(deps) {
         .map((item) => ({
           id: item.sessionId,
           cwd: item.cwd,
-          title: String(item.title || 'جلسة Kimi Code').replace(/\s+/g, ' ').slice(0, 90),
+          title: cleanSessionTitle(item.title),
           mtime: Number.isFinite(Date.parse(item.updatedAt || '')) ? Date.parse(item.updatedAt) : 0,
         }))
         .sort((left, right) => right.mtime - left.mtime);
     } catch { return []; }
+  }
+
+  // نص المستخدم في تاريخ Kimi المعاد بثّه يصل بصيغته المجمَّعة كما رآه النموذج:
+  // بأغلفة مواردنا المحقونة (satr://environment/skills/memory/background-tasks)
+  // والمرساة اللغوية الذيلية وتذكيرات الوكيل المحقونة (system-reminder — مثل تذكير
+  // التاريخ الذي يضيفه Kimi نفسه لأدوار المستخدم). تُحذف كلها عند القراءة كي لا
+  // تظهر فقاعاتٍ عملاقة عند استعادة الجلسة (بلاغ المالك 2026-09-10)، ويبقى نص
+  // المستخدم الحقيقي وحده. التنقية بعد دمج القطع لا عليها — الغلاف قد ينشطر بين
+  // chunk وآخر.
+  function stripInjectedEnvelopes(text) {
+    return String(text || '')
+      .replace(/<resource uri="satr:\/\/[^"]*">[\s\S]*?<\/resource>/g, '')
+      .replace(/<satr_lang>[\s\S]*?<\/satr_lang>/g, '')
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   async function readSession(id) {
@@ -1402,6 +1478,8 @@ function create(deps) {
       // نداءات الأدوات من التاريخ المعاد بثه تُدرج كرسائل مساعد بكتلة tool_use موحّدة
       // (الاسم عبر التسميات العربية، والمدخل منقّى كما في البث الحي). النتائج الكاملة
       // غير مطلوبة — يكفي الاسم والحالة النهائية لاستعادة السياق بصرياً.
+      // النداءات المتتالية بلا نص بينها تُدمج في سجلّ واحد (OBS-153): بطاقة بإجراءين
+      // لا بطاقتين بإجراء، والواجهة تعرض كل كتل tool_use في الرسالة الواحدة.
       if (update.sessionUpdate === 'tool_call') {
         const id = String(update.toolCallId || '');
         if (!id || toolCalls.has(id)) return;
@@ -1410,7 +1488,9 @@ function create(deps) {
           input: safeToolInput(update.rawInput), status: update.status || 'pending',
         };
         toolCalls.set(id, block);
-        messages.push({ role: 'assistant', toolUse: block });
+        const lastItem = messages[messages.length - 1];
+        if (lastItem && lastItem.toolUses) lastItem.toolUses.push(block);
+        else messages.push({ role: 'assistant', toolUses: [block] });
         return;
       }
       if (update.sessionUpdate === 'tool_call_update') {
@@ -1423,7 +1503,7 @@ function create(deps) {
       if (!role || !update.content || update.content.type !== 'text') return;
       const messageId = update.messageId || role + '_' + messages.length;
       const last = messages[messages.length - 1];
-      if (last && !last.toolUse && last.role === role && last.messageId === messageId) last.text += update.content.text || '';
+      if (last && !last.toolUses && last.role === role && last.messageId === messageId) last.text += update.content.text || '';
       else messages.push({ role, messageId, text: update.content.text || '' });
     };
     try {
@@ -1432,8 +1512,9 @@ function create(deps) {
         await rpc.request('session/load', { sessionId: id, cwd: session.cwd, mcpServers: [] }, 30000);
       }, onNotification);
     } catch { return { error: 'not_found' }; }
-    const clean = messages.filter((item) => item.toolUse || (item.text && item.text.trim()))
-      .map((item) => item.toolUse ? { role: item.role, content: [item.toolUse] } : { role: item.role, text: item.text });
+    for (const item of messages) if (!item.toolUses && item.role === 'user') item.text = stripInjectedEnvelopes(item.text);
+    const clean = messages.filter((item) => item.toolUses || (item.text && item.text.trim()))
+      .map((item) => item.toolUses ? { role: item.role, content: item.toolUses } : { role: item.role, text: item.text });
     return { cwd: session.cwd, total: clean.length, messages: clean.slice(-MAX_MESSAGES) };
   }
 

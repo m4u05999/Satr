@@ -1,0 +1,461 @@
+{
+  "events": [
+    {
+      "label": "before-refocus",
+      "native": {
+        "sequence": 2101,
+        "time": "2026-09-09T23:05:03.210Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 326,
+              "width": 279,
+              "height": 455
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 455,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 7,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "label": "wide-refocus-renders",
+      "ok": true,
+      "elapsed": 0,
+      "first": {
+        "sequence": 2102,
+        "time": "2026-09-09T23:05:03.352Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 292,
+              "width": 279,
+              "height": 489
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 455,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 7,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      },
+      "last": {
+        "sequence": 2102,
+        "time": "2026-09-09T23:05:03.352Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 292,
+              "width": 279,
+              "height": 489
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 455,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 7,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "label": "device-after-refocus",
+      "ok": true,
+      "elapsed": 0,
+      "first": {
+        "sequence": 2102,
+        "time": "2026-09-09T23:05:03.352Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 292,
+              "width": 279,
+              "height": 489
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 455,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 7,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      },
+      "last": {
+        "sequence": 2102,
+        "time": "2026-09-09T23:05:03.352Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1440,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 292,
+              "width": 279,
+              "height": 489
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 455,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 7,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "label": "narrow-second-attempt",
+      "ok": true,
+      "elapsed": 2,
+      "first": {
+        "sequence": 2103,
+        "time": "2026-09-09T23:05:03.450Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 292,
+              "width": 279,
+              "height": 489
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 489,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 7,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      },
+      "last": {
+        "sequence": 2103,
+        "time": "2026-09-09T23:05:03.450Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 292,
+              "width": 279,
+              "height": 489
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 489,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 7,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "label": "close-destroys",
+      "ok": true,
+      "elapsed": 106,
+      "first": {
+        "sequence": 2103,
+        "time": "2026-09-09T23:05:03.450Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 2,
+            "bounds": {
+              "x": 0,
+              "y": 292,
+              "width": 279,
+              "height": 489
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 489,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 7,
+                "frames": 120
+              }
+            }
+          }
+        ]
+      },
+      "last": {
+        "sequence": 2104,
+        "time": "2026-09-09T23:05:03.542Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "focused": true,
+        "views": []
+      }
+    },
+    {
+      "label": "reopen-saved-page",
+      "ok": true,
+      "elapsed": 220,
+      "first": {
+        "sequence": 2104,
+        "time": "2026-09-09T23:05:03.542Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "focused": true,
+        "views": []
+      },
+      "last": {
+        "sequence": 2106,
+        "time": "2026-09-09T23:05:03.762Z",
+        "windowId": 1,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "focused": true,
+        "views": [
+          {
+            "id": 4,
+            "bounds": {
+              "x": 0,
+              "y": 326,
+              "width": 279,
+              "height": 455
+            },
+            "visible": null,
+            "url": "http://127.0.0.1:61252/two",
+            "loading": false,
+            "devtools": false,
+            "debuggerAttached": false,
+            "page": {
+              "width": 279,
+              "height": 455,
+              "dpr": 1,
+              "visibility": "visible",
+              "focus": true,
+              "visualWidth": 279,
+              "online": true,
+              "url": "http://127.0.0.1:61252/two",
+              "ready": "complete",
+              "probe": {
+                "page": "two",
+                "boot": 8,
+                "frames": 3
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "label": "screenshot",
+      "result": {
+        "ok": true,
+        "file": "controls-final-diagnostic.png"
+      }
+    }
+  ]
+}

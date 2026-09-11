@@ -1,0 +1,12 @@
+{
+    "command":  "powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\\sater\\run-full-suite.ps1 -Log D:\\sater\\satr-2\\dist\\conversation-continuity-full-suite.log",
+    "exitCode":  0,
+    "groupsPassed":  107,
+    "groupsTotal":  107,
+    "log":  "D:\\sater\\satr-2\\dist\\conversation-continuity-full-suite.log",
+    "logEncoding":  "UTF-16LE",
+    "logSha256":  "b6beec777c9dc1d6b34cea2fb40bd81fa81a1c38020607c60c8601f73d7d3d7e",
+    "completionMarker":  "D:\\sater\\satr-2\\dist\\conversation-continuity-full-suite.log.done",
+    "endedLocal":  "2026-09-10T00:28:17+03:00",
+    "runtimeCodeChangedAfterBuild":  false
+}

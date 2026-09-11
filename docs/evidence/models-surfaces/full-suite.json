@@ -1,0 +1,25 @@
+{
+    "time":  "2026-09-09T22:35:21.9051069Z",
+    "log":  "dist/models-surfaces-full-suite-final.log",
+    "encoding":  "UTF-16LE; Arabic console text is mojibake, ASCII fields preserved",
+    "sha256":  "d6f9a7997683701b6f246892f857fa9a0cabb22c72d5cfe9ccfa335c5c73a108",
+    "exitCode":  0,
+    "groups":  110,
+    "passed":  110,
+    "retried":  [
+
+                ],
+    "started":  "2026-09-10 01:25:30",
+    "ended":  "2026-09-10 01:34:08",
+    "timezone":  "Asia/Riyadh",
+    "firstRun":  {
+                     "log":  "dist/models-surfaces-full-suite.log",
+                     "exitCode":  1,
+                     "failed":  [
+                                    "test:update-ui",
+                                    "test:handoff-bar-live",
+                                    "test:opsroom-all-live",
+                                    "test:topbar-surfaces"
+                                ]
+                 }
+}

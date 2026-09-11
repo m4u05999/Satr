@@ -1,0 +1,8 @@
+/* الغلاف فقط؛ البطاقات وعناصر التحكم تستعمل أوراق الإنتاج نفسها. */
+html, body { height: auto; min-height: 100%; }
+body { display: block; overflow: auto; padding: var(--space-4); }
+.connection-scene { width: min(420px, 100%); margin-inline: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.scene-head { padding: var(--space-4); border-bottom: 1px solid var(--border); }
+.scene-head h1 { color: var(--text); font-size: 18px; line-height: 1.8; }
+.scene-head p, .scene-notice { color: var(--text-dim); font-size: 13px; line-height: 1.8; }
+.scene-notice:not(:empty) { padding: var(--space-4); }

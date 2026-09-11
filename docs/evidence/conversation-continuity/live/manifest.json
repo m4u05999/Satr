@@ -1,0 +1,38 @@
+{
+  "id": "live_12d1897a29e0ddaf684e09ed",
+  "verificationOf": "live_e0857543ff3f5d743e3f0b5d",
+  "mode": "source",
+  "sourcesChecked": 9,
+  "continuousRunPassed": true,
+  "restartPassed": true,
+  "closed": true,
+  "exitCode": 0,
+  "files": [
+    {
+      "name": "acceptance.json",
+      "sha256": "c3ec9fa5ac88602a028a236693a5228d6e947e7f550ad22bc7377ae819deedbe",
+      "bytes": 6826
+    },
+    {
+      "name": "fixed-1.json",
+      "sha256": "e914f816f9017c31fc60439186a985a4945d5472d233fa74ee47ad6b4aaded85",
+      "bytes": 276835
+    },
+    {
+      "name": "restart-1.json",
+      "sha256": "50774f50cb5ed8fe3f4f063ff7c7c7a2e943a28ab390e9688afb0376b85d64af",
+      "bytes": 14927
+    },
+    {
+      "name": "verification.json",
+      "sha256": "8fcb74c3d25863eab75d8cc8be5c8f2b9f3d154413f8747f263ec52e52f21110",
+      "bytes": 2314
+    }
+  ],
+  "diagnosticEvidenceRetained": "D:\\sater\\satr-2\\dist\\live-tests\\live_e0857543ff3f5d743e3f0b5d\\conversation",
+  "engineBoundaryRetained": "D:\\sater\\satr-2\\dist\\live-tests\\live_12d1897a29e0ddaf684e09ed\\conversation\\boundary.jsonl",
+  "credentialsCopied": false,
+  "paidCalls": 0,
+  "humanAcceptance": false,
+  "screenshotUnavailable": true
+}

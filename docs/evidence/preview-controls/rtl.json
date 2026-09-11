@@ -1,0 +1,12 @@
+{
+  "method": "The unchanged rtl-preview-fix-test.js and production preview.js, loaded through rtl-visible-runner.cjs. Only the test BrowserWindow is kept alwaysOnTop and focused.",
+  "ordinaryRuns": [
+    {"command":"npm run test:rtl-preview","locale":"ar","exitCode":1,"measured":[null,null,null]},
+    {"command":".\\node_modules\\.bin\\electron.cmd scripts/rtl-preview-fix-test.js","locale":"en-US","exitCode":1,"measured":[null,null,null]}
+  ],
+  "visibleRuns": [
+    {"command":".\\node_modules\\.bin\\electron.cmd docs/evidence/preview-controls/rtl-visible-runner.cjs --ar","locale":"ar","exitCode":0,"requested":[{"x":0,"width":300},{"x":380,"width":260},{"x":560,"width":320}],"measured":[{"x":0,"width":300},{"x":380,"width":260},{"x":560,"width":320}]},
+    {"command":".\\node_modules\\.bin\\electron.cmd docs/evidence/preview-controls/rtl-visible-runner.cjs","locale":"en-US","exitCode":0,"requested":[{"x":0,"width":300},{"x":380,"width":260},{"x":560,"width":320}],"measured":[{"x":0,"width":300},{"x":380,"width":260},{"x":560,"width":320}]}
+  ],
+  "scope": "Native preview coordinates captured from the desktop, six positions. Not a claim that a hidden or occluded window renders immediately, nor a human acceptance result. No production visibility setting changed."
+}

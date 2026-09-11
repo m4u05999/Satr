@@ -12,9 +12,9 @@
 | 02 | [`02-claude-fork-rewind.md`](02-claude-fork-rewind.md) | تفريع واسترجاع Claude الأصلي (دفعة A — 2026-07-24) | 10.9 ك.ب |
 | 03 | [`03-claude-models-account.md`](03-claude-models-account.md) | نماذج وحساب Claude الديناميكيان (دفعة B — 2026-07-25) | 10.7 ك.ب |
 | 04 | [`04-claude-connectors.md`](04-claude-connectors.md) | إدخال موصّلات Claude (دفعة C — 2026-07-26) | 7.2 ك.ب |
-| 05 | [`05-claude-sdk-background-tasks.md`](05-claude-sdk-background-tasks.md) | مهام Claude SDK الخلفية (دفعة D — 2026-07-26) | 13.3 ك.ب |
+| 05 | [`05-claude-sdk-background-tasks.md`](05-claude-sdk-background-tasks.md) | مهام Claude SDK الخلفية (دفعة D — 2026-07-26) — وبنود الجوال OBS-147/148 | 18.9 ك.ب |
 | 06 | [`06-claude-sdk-polish.md`](06-claude-sdk-polish.md) | تلميع محرك Claude Agent SDK (دفعة E — 2026-07-27) | 12.9 ك.ب |
-| 07 | [`07-session-continuity.md`](07-session-continuity.md) | استمرارية الجلسة | 0.2 ك.ب |
+| 07 | [`07-session-continuity.md`](07-session-continuity.md) | استمرارية المحادثة والجلسة (2026-09-10) | 4.5 ك.ب |
 | 08 | [`08-adapters-providers.md`](08-adapters-providers.md) | طبقة المحوّلات والمزوّدين (Adapters/Providers — المرحلة 5) | 12.3 ك.ب |
 | 09 | [`09-codex-steer.md`](09-codex-steer.md) | التوجيه أثناء الدور لمحرك Codex (turn/steer — الدفعة C1، 2026-07-26) | 6.1 ك.ب |
 | 10 | [`10-codex-compact-context.md`](10-codex-compact-context.md) | تكافؤ /ضغط و/سياق لمحرك Codex (الدفعة C2، 2026-07-26) | 6.8 ك.ب |
@@ -28,7 +28,7 @@
 | 18 | [`18-features-community-enterprise.md`](18-features-community-enterprise.md) | طبقة القدرات ونموذج Community + Enterprise (features.js — المرحلة 5ج) | 1.3 ك.ب |
 | 19 | [`19-phase5-ipcs.md`](19-phase5-ipcs.md) | IPCs المرحلة 5 (قراءة/كتابة، مُنقّاة في main.js) | 0.9 ك.ب |
 | 20 | [`20-sessions-browser.md`](20-sessions-browser.md) | متصفح الجلسات (المرحلة 1) | 5.2 ك.ب |
-| 21 | [`21-skills-panel.md`](21-skills-panel.md) | لوحة المهارات (Skills) | 14.3 ك.ب |
+| 21 | [`21-skills-panel.md`](21-skills-panel.md) | لوحة المهارات (Skills) | 16.7 ك.ب |
 | 22 | [`22-task-ledger.md`](22-task-ledger.md) | سجل المهام الدائم (Task Ledger — الأولوية 2) | 2.6 ك.ب |
 | 23 | [`23-verify-loop-checkpoint.md`](23-verify-loop-checkpoint.md) | حلقة التحقق وcheckpoint الدور (الأولوية 3) | 5.4 ك.ب |
 | 24 | [`24-project-memory.md`](24-project-memory.md) | ذاكرة المشروع المحلية الصريحة (الأولوية 4) | 2.3 ك.ب |
@@ -65,7 +65,7 @@
 | 55 | [`55-at-files-image-paste.md`](55-at-files-image-paste.md) | منصّة @ للملفات + لصق الصور (المرحلة 4) | 1.0 ك.ب |
 | 56 | [`56-arabic-diff-viewer.md`](56-arabic-diff-viewer.md) | عارض الفرق (Diff) العربي (المرحلة 3) | 2.0 ك.ب |
 | 57 | [`57-arabic-terminal.md`](57-arabic-terminal.md) | الطرفية العربية المدمجة (المرحلة 8 — مكتملة: 8.1–8.4) | 9.5 ك.ب |
-| 58 | [`58-preview-panel.md`](58-preview-panel.md) | لوحة المعاينة المدمجة 🌐 (م-1 — الدفعة 5 «سطر يرى الويب») | 56.5 ك.ب |
+| 58 | [`58-preview-panel.md`](58-preview-panel.md) | لوحة المعاينة المدمجة 🌐 (م-1 — الدفعة 5 «سطر يرى الويب») | 62.7 ك.ب |
 | 59 | [`59-design-system.md`](59-design-system.md) | نظام التصميم (الدفعة 4.1) | 12.3 ك.ب |
 | 60 | [`60-quick-ux-batch.md`](60-quick-ux-batch.md) | دفعة UX السريعة (بعد 4.1 — من مراجعة UX بموافقة المالك) | 1.6 ك.ب |
 | 61 | [`61-daily-loop-polish.md`](61-daily-loop-polish.md) | دفعة تلميع الحلقة اليومية (2026-07-19) | 1.8 ك.ب |
@@ -74,3 +74,5 @@
 | 64 | [`64-generation-cards-chat.md`](64-generation-cards-chat.md) | بطاقة التوليد في المحادثة وبطاقة الصوت (الجولة 9 §2/§4 — kimi-code) | 3.4 ك.ب |
 | 65 | [`65-media-players-gallery.md`](65-media-players-gallery.md) | مشغّلا الوسائط في المعرض (الجولة 10 §3 — kimi-code) | 2.9 ك.ب |
 | 66 | [`66-reply-readability.md`](66-reply-readability.md) | قرائية ردود الوكيل — سلّم العناوين وعارض Markdown وتوجيه شكل الرد (2026-09-11) | 8.4 ك.ب |
+| 67 | [`67-project-connections.md`](67-project-connections.md) | توصيلات المشروع المجانية (OBS-145 — دفعة الرمز الشخصي، 2026-09-08) | 4.2 ك.ب |
+| 68 | [`68-models-boot-and-preview-controls.md`](68-models-boot-and-preview-controls.md) | إقلاع النماذج وأسقف اللوحات · أزرار المعاينة وقصد المستخدم (2026-09-10) | 2.4 ك.ب |

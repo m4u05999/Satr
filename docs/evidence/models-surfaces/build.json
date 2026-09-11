@@ -1,0 +1,43 @@
+{
+  "time": "2026-09-09T22:06:20.347Z",
+  "path": "dist/models-surfaces-build/win-unpacked",
+  "exeSha256": "6bf02f5ec666b6bd5c21fb7ca6bbedfe1a92c0ec3d7dd86ae69732f159930e74",
+  "files": [
+    {
+      "file": "src/index.html",
+      "sha256": "e3697a6fb92fe6b52f7a657191c393a840577e7cd38fcecebd792e20785e51fa",
+      "packagedSha256": "e3697a6fb92fe6b52f7a657191c393a840577e7cd38fcecebd792e20785e51fa",
+      "equal": true
+    },
+    {
+      "file": "src/styles/base.css",
+      "sha256": "676d0fb13d572b62412cb8477feb3f702928d851e95ec0c8c4968f6a27f1deff",
+      "packagedSha256": "676d0fb13d572b62412cb8477feb3f702928d851e95ec0c8c4968f6a27f1deff",
+      "equal": true
+    },
+    {
+      "file": "src/ui/app.js",
+      "sha256": "68d965cb40b66d08fec120011d9f015298cff714d15f835d09246a4e531afe95",
+      "packagedSha256": "68d965cb40b66d08fec120011d9f015298cff714d15f835d09246a4e531afe95",
+      "equal": true
+    },
+    {
+      "file": "src/ui/components/topbar.js",
+      "sha256": "7a26e5fb881238bbf5004fa33208591a98158728fc7761598c8f7463ffe65c79",
+      "packagedSha256": "7a26e5fb881238bbf5004fa33208591a98158728fc7761598c8f7463ffe65c79",
+      "equal": true
+    },
+    {
+      "file": "src/ui/components/preview-panel.js",
+      "sha256": "0cb4a12e59c4ac56f93918f3ab5cf95669d909c3dbe8242e596890745e3a9826",
+      "packagedSha256": "0cb4a12e59c4ac56f93918f3ab5cf95669d909c3dbe8242e596890745e3a9826",
+      "equal": true
+    },
+    {
+      "file": "src/ui/lib/preview-shield.js",
+      "sha256": "b415e8506a5dc4b361ac8ed7ded16afc056cae3d93f1f47d9c18e6e3f1c3cc88",
+      "packagedSha256": "b415e8506a5dc4b361ac8ed7ded16afc056cae3d93f1f47d9c18e6e3f1c3cc88",
+      "equal": true
+    }
+  ]
+}

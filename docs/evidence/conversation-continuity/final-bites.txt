@@ -1,0 +1,192 @@
+استمرارية سطر — أدلة العضّات النهائية الإضافية
+خط الأساس: node scripts/conversations-test.js — نجح 22/22، exit_code=0.
+عدم تراجع قارئ العرض: node scripts/codexsessions-test.js — نجح 18/18.
+الأعطال كلها في نسخ مؤقتة معزولة، ولا تغيير لملفات الإنتاج أثناء العضّات.
+حدود التغطية: قارئ Codex يحرس النصوص؛ الصور metadata فقط، structuredContent غير النصي والأنواع/الحالات المجهولة نقص صريح. تنقية الخرج الحي تعرف JSON صورة/data:image وحقول data/blob الطويلة حتى إن قُطعت، وليست كاشفاً عاماً لكل ترميز.
+القفل الميت يستعاد بعد ESRCH والتحقق من pid/nonce والملف/المحتوى نفسه. القفل الفارغ أو الفاسد أو PID الحي لا يُحذف.
+
+أمر الزرع كما نُفّذ (PowerShell):
+$biteRoot = 'C:\Users\Unknown\AppData\Local\Temp\satr-continuity-final-bites-2e3e160db62841999e7fc26dbb116aab'
+if (Test-Path -LiteralPath $biteRoot) { throw 'Fixture already exists' }
+$cases = @(
+  @{ Name = 'reader'; File = 'codexsessions.js'; Original = 'images.push(imageMetadata(part));'; Mutant = 'images.push(imageMetadata(part)); texts.push(JSON.stringify(part));' },
+  @{ Name = 'images'; File = 'conversations.js'; Original = "const cleaned = role === 'tool_result' ? toolResultText(raw) : { text: raw, issues: [] };"; Mutant = 'const cleaned = { text: raw, issues: [] };' },
+  @{ Name = 'lock'; File = 'conversations.js'; Original = "if (!dead) throw new Error('store_busy');"; Mutant = "if (true) throw new Error('store_busy');" }
+)
+foreach ($case in $cases) {
+  $caseRoot = Join-Path $biteRoot $case.Name
+  [System.IO.Directory]::CreateDirectory($caseRoot) | Out-Null
+  $target = Join-Path $caseRoot $case.File
+  Copy-Item -LiteralPath (Join-Path 'D:\sater\satr-2\electron' $case.File) -Destination $target
+  Copy-Item -LiteralPath 'D:\sater\satr-2\electron\memory.js' -Destination (Join-Path $caseRoot 'memory.js')
+  Copy-Item -LiteralPath 'D:\sater\satr-2\electron\codexrpc.js' -Destination (Join-Path $caseRoot 'codexrpc.js')
+  $code = [System.IO.File]::ReadAllText($target)
+  $beforeOriginal = [regex]::Matches($code, [regex]::Escape($case.Original)).Count
+  $beforeMutant = [regex]::Matches($code, [regex]::Escape($case.Mutant)).Count
+  if ($beforeOriginal -ne 1 -or $beforeMutant -ne 0) { throw 'Unexpected mutation baseline' }
+  [System.IO.File]::WriteAllText($target, $code.Replace($case.Original, $case.Mutant), [System.Text.UTF8Encoding]::new($false))
+  $verified = [System.IO.File]::ReadAllText($target)
+  Write-Output ($case.Name + ' BEFORE original=' + $beforeOriginal + ' mutant=' + $beforeMutant)
+  Write-Output ($case.Name + ' AFTER original=' + [regex]::Matches($verified, [regex]::Escape($case.Original)).Count + ' mutant=' + [regex]::Matches($verified, [regex]::Escape($case.Mutant)).Count)
+}
+إخراج العدّ:
+reader BEFORE original=1 mutant=0
+reader AFTER original=1 mutant=1
+images BEFORE original=1 mutant=0
+images AFTER original=0 mutant=1
+lock BEFORE original=1 mutant=0
+lock AFTER original=0 mutant=1
+
+إعادة زرع القارئ: المحاولة الأولى أبقت النمط الأصلي داخل المتحوّر، فأعيدت بصيغة تُثبت اختفاءه فعلاً:
+$target = 'C:\Users\Unknown\AppData\Local\Temp\satr-continuity-final-bites-2e3e160db62841999e7fc26dbb116aab\reader\codexsessions.js'
+Copy-Item -LiteralPath 'D:\sater\satr-2\electron\codexsessions.js' -Destination $target -Force
+$original = 'images.push(imageMetadata(part));'
+$mutant = 'texts.push(JSON.stringify(part)); images.push({ ...imageMetadata(part) });'
+$code = [System.IO.File]::ReadAllText($target)
+Write-Output ('reader BEFORE original=' + [regex]::Matches($code, [regex]::Escape($original)).Count + ' mutant=' + [regex]::Matches($code, [regex]::Escape($mutant)).Count)
+[System.IO.File]::WriteAllText($target, $code.Replace($original, $mutant), [System.Text.UTF8Encoding]::new($false))
+$verified = [System.IO.File]::ReadAllText($target)
+Write-Output ('reader AFTER original=' + [regex]::Matches($verified, [regex]::Escape($original)).Count + ' mutant=' + [regex]::Matches($verified, [regex]::Escape($mutant)).Count)
+إخراج العدّ المصحح:
+reader BEFORE original=1 mutant=0
+reader AFTER original=0 mutant=1
+
+أمر الحارس:
+node scripts/conversations-test.js --codex-reader-module=C:\Users\Unknown\AppData\Local\Temp\satr-continuity-final-bites-2e3e160db62841999e7fc26dbb116aab\reader\codexsessions.js
+الإخراج الحرفي (exit_code=1):
+PASS يحفظ نص المستخدم الأصلي فور الإرسال مع هوية مستقرة
+PASS يسجل النهائي مرة واحدة ويتجاهل صدى المستخدم ومدخلات الأدوات
+PASS ينقل أقدم قيد والتصحيح والإلغاء بترتيب المصدر مع استبعاد الطلب الحالي
+PASS العودة للمحرك السابق تنقل الزيادة مرة واحدة فقط
+PASS لا يخلط جلسات أو مشاريع أو معرفات ولا يسمح بربط جلسة مرتين
+PASS تطبيع realpath وويندوز يصل إلى المشروع نفسه، وforget يحذف المؤشر فقط
+PASS تجاوز حزمة النقل يفشل صراحةً ولا يمنع الاستئناف الأصلي
+PASS الأسرار الظاهرة تُحجب على القرص ويُعلن نقص نقلها
+PASS الصور وصفية فقط ويظهر أنها لم تنتقل
+PASS البذور الموثوقة تدعم استئناف القديم وتعلن التاريخ المفقود
+PASS الإيقاف يحفظ البث الجزئي ويمنع تقدم مؤشر الإكمال
+PASS استبدال جلسة مفقودة يحتاج حزمة كاملة ويُحظر بعد بدء التنفيذ
+PASS يحفظ توجيه المستخدم إن سبق result إقرار قبوله ولا يدعي اكتماله
+PASS النص الضخم والبث الضخم يعلنان الفقد ولا يمران كحزمة كاملة
+PASS الملف الفاسد والربط الرمزي للمخزن يفشلان مغلقين بلا كتابة خارج الجذر
+PASS قارئ Claude يفصل نتائج الأدوات عن المستخدم ويحفظ المصدر كاملاً
+AssertionError [ERR_ASSERTION]: بيانات صورة MCP يجب ألا تدخل نتيجة قارئ النقل
+    at D:\sater\satr-2\scripts\conversations-test.js:356:5
+    at test (D:\sater\satr-2\scripts\conversations-test.js:25:27)
+    at main (D:\sater\satr-2\scripts\conversations-test.js:336:3)
+    at Object.<anonymous> (D:\sater\satr-2\scripts\conversations-test.js:481:1)
+    at Module._compile (node:internal/modules/cjs/loader:1934:14)
+    at Object..js (node:internal/modules/cjs/loader:2074:10)
+    at Module.load (node:internal/modules/cjs/loader:1656:32)
+    at Module._load (node:internal/modules/cjs/loader:1448:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+أمر الحارس:
+node scripts/conversations-test.js --module=C:\Users\Unknown\AppData\Local\Temp\satr-continuity-final-bites-2e3e160db62841999e7fc26dbb116aab\images\conversations.js
+الإخراج الحرفي (exit_code=1):
+PASS يحفظ نص المستخدم الأصلي فور الإرسال مع هوية مستقرة
+PASS يسجل النهائي مرة واحدة ويتجاهل صدى المستخدم ومدخلات الأدوات
+PASS ينقل أقدم قيد والتصحيح والإلغاء بترتيب المصدر مع استبعاد الطلب الحالي
+PASS العودة للمحرك السابق تنقل الزيادة مرة واحدة فقط
+PASS لا يخلط جلسات أو مشاريع أو معرفات ولا يسمح بربط جلسة مرتين
+PASS تطبيع realpath وويندوز يصل إلى المشروع نفسه، وforget يحذف المؤشر فقط
+PASS تجاوز حزمة النقل يفشل صراحةً ولا يمنع الاستئناف الأصلي
+PASS الأسرار الظاهرة تُحجب على القرص ويُعلن نقص نقلها
+PASS الصور وصفية فقط ويظهر أنها لم تنتقل
+PASS البذور الموثوقة تدعم استئناف القديم وتعلن التاريخ المفقود
+PASS الإيقاف يحفظ البث الجزئي ويمنع تقدم مؤشر الإكمال
+PASS استبدال جلسة مفقودة يحتاج حزمة كاملة ويُحظر بعد بدء التنفيذ
+PASS يحفظ توجيه المستخدم إن سبق result إقرار قبوله ولا يدعي اكتماله
+PASS النص الضخم والبث الضخم يعلنان الفقد ولا يمران كحزمة كاملة
+PASS الملف الفاسد والربط الرمزي للمخزن يفشلان مغلقين بلا كتابة خارج الجذر
+PASS قارئ Claude يفصل نتائج الأدوات عن المستخدم ويحفظ المصدر كاملاً
+PASS قارئ Codex يحتفظ بنص MCP وصور وصفية فقط ولا يغير قارئ العرض
+PASS قارئ Codex يعلن الحقن والمحتوى المجهول والبيانات المنظمة المتروكة
+PASS قارئ Codex يعلن الأداة أو الدور غير المكتمل ولا يحولهما إلى نجاح
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+
+  assert(toolResults.every((message) => message.issues.includes('tool_images_omitted')))
+
+    at D:\sater\satr-2\scripts\conversations-test.js:413:5
+    at test (D:\sater\satr-2\scripts\conversations-test.js:25:27)
+    at main (D:\sater\satr-2\scripts\conversations-test.js:397:3)
+    at Object.<anonymous> (D:\sater\satr-2\scripts\conversations-test.js:481:1)
+    at Module._compile (node:internal/modules/cjs/loader:1934:14)
+    at Object..js (node:internal/modules/cjs/loader:2074:10)
+    at Module.load (node:internal/modules/cjs/loader:1656:32)
+    at Module._load (node:internal/modules/cjs/loader:1448:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+أمر الحارس:
+node scripts/conversations-test.js --module=C:\Users\Unknown\AppData\Local\Temp\satr-continuity-final-bites-2e3e160db62841999e7fc26dbb116aab\lock\conversations.js
+الإخراج الحرفي (exit_code=1):
+PASS يحفظ نص المستخدم الأصلي فور الإرسال مع هوية مستقرة
+PASS يسجل النهائي مرة واحدة ويتجاهل صدى المستخدم ومدخلات الأدوات
+PASS ينقل أقدم قيد والتصحيح والإلغاء بترتيب المصدر مع استبعاد الطلب الحالي
+PASS العودة للمحرك السابق تنقل الزيادة مرة واحدة فقط
+PASS لا يخلط جلسات أو مشاريع أو معرفات ولا يسمح بربط جلسة مرتين
+PASS تطبيع realpath وويندوز يصل إلى المشروع نفسه، وforget يحذف المؤشر فقط
+PASS تجاوز حزمة النقل يفشل صراحةً ولا يمنع الاستئناف الأصلي
+PASS الأسرار الظاهرة تُحجب على القرص ويُعلن نقص نقلها
+PASS الصور وصفية فقط ويظهر أنها لم تنتقل
+PASS البذور الموثوقة تدعم استئناف القديم وتعلن التاريخ المفقود
+PASS الإيقاف يحفظ البث الجزئي ويمنع تقدم مؤشر الإكمال
+PASS استبدال جلسة مفقودة يحتاج حزمة كاملة ويُحظر بعد بدء التنفيذ
+PASS يحفظ توجيه المستخدم إن سبق result إقرار قبوله ولا يدعي اكتماله
+PASS النص الضخم والبث الضخم يعلنان الفقد ولا يمران كحزمة كاملة
+PASS الملف الفاسد والربط الرمزي للمخزن يفشلان مغلقين بلا كتابة خارج الجذر
+PASS قارئ Claude يفصل نتائج الأدوات عن المستخدم ويحفظ المصدر كاملاً
+PASS قارئ Codex يحتفظ بنص MCP وصور وصفية فقط ولا يغير قارئ العرض
+PASS قارئ Codex يعلن الحقن والمحتوى المجهول والبيانات المنظمة المتروكة
+PASS قارئ Codex يعلن الأداة أو الدور غير المكتمل ولا يحولهما إلى نجاح
+PASS نتائج Codex الحية لا تحفظ صور JSON الكاملة أو المقطوعة أو data URL
+AssertionError [ERR_ASSERTION]: {"ok":false,"error":"store_busy"}
+
+false !== true
+
+    at ok (D:\sater\satr-2\scripts\conversations-test.js:26:30)
+    at D:\sater\satr-2\scripts\conversations-test.js:442:23
+    at test (D:\sater\satr-2\scripts\conversations-test.js:25:27)
+    at main (D:\sater\satr-2\scripts\conversations-test.js:424:3)
+    at Object.<anonymous> (D:\sater\satr-2\scripts\conversations-test.js:481:1)
+    at Module._compile (node:internal/modules/cjs/loader:1934:14)
+    at Object..js (node:internal/modules/cjs/loader:2074:10)
+    at Module.load (node:internal/modules/cjs/loader:1656:32)
+    at Module._load (node:internal/modules/cjs/loader:1448:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+أمر الاستعادة كما نُفّذ:
+$biteRoot = 'C:\Users\Unknown\AppData\Local\Temp\satr-continuity-final-bites-2e3e160db62841999e7fc26dbb116aab'
+foreach ($entry in @(@{ Name = 'reader'; File = 'codexsessions.js' }, @{ Name = 'images'; File = 'conversations.js' }, @{ Name = 'lock'; File = 'conversations.js' })) {
+  $source = Join-Path 'D:\sater\satr-2\electron' $entry.File
+  $target = Join-Path (Join-Path $biteRoot $entry.Name) $entry.File
+  Copy-Item -LiteralPath $source -Destination $target -Force
+  Write-Output ($entry.Name + ' RESTORED matches production=' + ((Get-FileHash -LiteralPath $source).Hash -eq (Get-FileHash -LiteralPath $target).Hash))
+}
+إخراج الاستعادة:
+reader RESTORED matches production=True
+images RESTORED matches production=True
+lock RESTORED matches production=True

@@ -48,6 +48,7 @@ const os = require('node:os');
 const path = require('node:path');
 const mobilepending = require('./mobilepending');
 const mobilestate = require('./mobilestate');
+const mobilecommands = require('./mobilecommands');
 
 // — ثوابت العقد —
 const POLL_TIMEOUT_MS = 45 * 1000; // §5.1: long-poll ≤ 45ث ثم 204
@@ -67,13 +68,13 @@ const MAX_PUSH_ENDPOINT = 512;
 // القرارات المسموحة من الجوال — قائمة مغلقة، بلا «دائماً» وبلا bypass
 const DECISIONS = new Set(['allow', 'allow_turn', 'deny']);
 // رمز الدور المعتم المرافق لأمر الإيقاف (§7.7.5) — الإيقاف خارج DECISIONS عمداً
-const RUN_TOKEN_RE = /^[a-f0-9]{16}$/;
+const { RUN_TOKEN_RE } = mobilecommands;
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const UNSAFE_URL_TEXT_RE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 const SAFE_DEVICE_HEX = /^[a-f0-9]{16,128}$/;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const STATIC_EXTENSIONS = new Set(['.html', '.js', '.css', '.json', '.webmanifest', '.svg', '.png', '.ico']);
+const STATIC_EXTENSIONS = new Set(['.html', '.js', '.css', '.json', '.webmanifest', '.svg', '.png', '.ico', '.woff2']);
 const STATIC_TYPES = Object.freeze({
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -83,6 +84,7 @@ const STATIC_TYPES = Object.freeze({
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
 });
 
 /** معرّف جهاز منقّى بنفس عقد mobilepair (hex ≥16 أو UUID)، مصغّر الحالة. */
@@ -287,6 +289,7 @@ async function start(deps, opts) {
     maxPending: MAX_PENDING,
   });
   const waiters = new Map(); // deviceId -> Set<{res, timer}>
+  const commandResults = new Map(); // نتائج محدودة مربوطة بجلسة الجهاز صاحبة الأمر
   const sentStateSeq = new Map(); // deviceId -> آخر seq سُلّم لهذا الجهاز
   const stateRequests = new Map(); // deviceId -> وقت آخر طلب حالة أُجيب
   const pushSubscriptions = new Map(); // deviceId -> وقت آخر اشتراك مقبول
@@ -483,7 +486,13 @@ async function start(deps, opts) {
         sendEmpty(waiter.res, 204);
         continue;
       }
-      // الأولوية للإذن دائماً؛ الحالة لا تزاحم سؤالاً ينتظر قرار المستخدم.
+      // نتيجة الأمر تسبق الإذن كي لا يحجب سؤال معلق تأكيد الإيقاف.
+      if (nextCommandResult(deviceId, entry)) {
+        removeWaiter(deviceId, waiter);
+        sendPendingCommandResult(waiter.res, deviceId, entry);
+        continue;
+      }
+      // الإذن يسبق الحالة؛ لا تزاحمه نبضة قراءة.
       if (record) {
         removeWaiter(deviceId, waiter);
         sendFrame(waiter.res, deviceId, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
@@ -494,6 +503,37 @@ async function start(deps, opts) {
         sendLatestState(waiter.res, deviceId, entry);
       }
     }
+  }
+
+  /** لا تُسلّم نتيجة اقتران قديم إلى جلسة جديدة تحمل معرّف الجهاز نفسه. */
+  function nextCommandResult(deviceId, entry) {
+    const queue = (commandResults.get(deviceId) || []).filter((item) =>
+      item.entry === entry && now() - item.createdAt < mobilecommands.RESULT_TTL_MS);
+    if (!queue.length) { commandResults.delete(deviceId); return null; }
+    commandResults.set(deviceId, queue);
+    return queue[0];
+  }
+
+  function sendPendingCommandResult(res, deviceId, entry) {
+    const item = nextCommandResult(deviceId, entry);
+    if (!item) return false;
+    if (sendFrame(res, deviceId, entry, item.result)) {
+      const queue = commandResults.get(deviceId);
+      queue.shift();
+      if (!queue.length) commandResults.delete(deviceId);
+    }
+    return true; // حاول الرد حتى لو فشل حجز عدّاد التعمية.
+  }
+
+  function queueCommandResult(deviceId, entry, result) {
+    if (stopped || activeEntry(deviceId) !== entry) return false;
+    nextCommandResult(deviceId, entry);
+    const queue = commandResults.get(deviceId) || [];
+    queue.push({ entry, result, createdAt: now() });
+    while (queue.length > mobilecommands.MAX_RESULTS_PER_DEVICE) queue.shift();
+    commandResults.set(deviceId, queue);
+    wakeWaiters();
+    return true;
   }
 
   /** يستبدل خانة الحالة كلياً ثم يوقظ المنتظرين؛ لا طابور للقطات القديمة. */
@@ -653,6 +693,7 @@ async function start(deps, opts) {
     if (!entry) { sendJson(res, 403, { ok: false, error: 'not_linked' }); return; }
     touch(deviceId);
 
+    if (sendPendingCommandResult(res, deviceId, entry)) return;
     const record = pending.oldest();
     if (record) {
       sendFrame(res, deviceId, entry, { v: 1, type: 'permission_request', envelope: record.envelope });
@@ -708,11 +749,11 @@ async function start(deps, opts) {
       if (payload.type === 'stop') {
         const run = typeof payload.run === 'string' ? payload.run : '';
         if (!RUN_TOKEN_RE.test(run)) { sendJson(res, 400, { ok: false, error: 'bad_run' }); return; }
-        let stopped = false;
-        if (typeof deps.onStop === 'function') {
-          try { stopped = deps.onStop(run) === true; } catch { stopped = false; }
-        }
-        if (!stopped) { sendJson(res, 409, { ok: false, error: 'stale_run' }); return; }
+        const command = mobilecommands.parseStopRequest(payload);
+        if (!command) { sendJson(res, 400, { ok: false, error: 'bad_payload' }); return; }
+        const accepted = mobilecommands.dispatchStop(command, deps.onStop,
+          (result) => queueCommandResult(deviceId, entry, result));
+        if (!accepted) { sendJson(res, 409, { ok: false, error: 'stale_run' }); return; }
         touch(deviceId);
         sendJson(res, 200, { ok: true });
         return;
@@ -861,6 +902,7 @@ async function start(deps, opts) {
     for (const deviceId of [...waiters.keys()]) dropWaiters(deviceId);
     sessions.clear();
     sentStateSeq.clear();
+    commandResults.clear();
     stateRequests.clear();
     pushSubscriptions.clear();
     latestState = null;

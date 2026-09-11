@@ -213,4 +213,109 @@ async function readFullSession(id) {
 
 // `buildMessages` مُصدَّرة للحارس وحده (‏دالة نقية فوق نصّ jsonl خام): تثبّت أن
 // «مجلد المشروع» هو أول cwd لا آخره — انظر تعليقها أعلاه.
-module.exports = { listSessions, readSession, readFullSession, buildMessages };
+
+// قارئ النقل يقرأ المصدر كله، ويفصل نتائج الأدوات عن أقوال المستخدم بلا قصّ للذيل.
+function buildContinuityMessages(raw) {
+  const messages = [];
+  const issues = new Set();
+  const seen = new Set();
+  let cwd = '';
+  let imagesComplete = true;
+  const imageMetadata = (block) => ({
+    mime: /^image\/(?:png|jpeg|gif|webp)$/.test(block?.source?.media_type || block?.mimeType || '')
+      ? (block.source?.media_type || block.mimeType) : 'image/unknown',
+    available: false,
+  });
+  for (const line of String(raw || '').split('\n')) {
+    if (!line.trim()) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch (_) { issues.add('invalid_jsonl'); continue; }
+    if (!entry || typeof entry !== 'object') { issues.add('invalid_jsonl'); continue; }
+    if (!cwd && typeof entry.cwd === 'string' && entry.cwd) cwd = entry.cwd;
+    if (entry.isSidechain || entry.isMeta || !['user', 'assistant'].includes(entry.type)) continue;
+    if (entry.isCompactSummary) { issues.add('summary_only'); continue; }
+    const key = typeof entry.uuid === 'string' && SAFE_UUID.test(entry.uuid) ? entry.type + ':' + entry.uuid : '';
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    const content = entry.message?.content;
+    const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
+    if (!Array.isArray(blocks)) { issues.add('unknown_content'); continue; }
+    let texts = [];
+    let images = [];
+    const flush = () => {
+      if (texts.length || images.length) {
+        messages.push({ role: entry.type, text: texts.join('\n'), ...(images.length ? { images } : {}) });
+        texts = [];
+        images = [];
+      }
+    };
+    for (const block of blocks) {
+      if (block?.type === 'text' && typeof block.text === 'string') {
+        if (block.text.includes('<satr_conversation_history>')) issues.add('injected_history');
+        texts.push(block.text);
+      } else if (block?.type === 'image') {
+        imagesComplete = false;
+        images.push(imageMetadata(block));
+      } else if (block?.type === 'tool_result' && entry.type === 'user') {
+        flush();
+        const resultBlocks = typeof block.content === 'string' ? [{ type: 'text', text: block.content }] : block.content;
+        const resultTexts = [];
+        const resultImages = [];
+        if (Array.isArray(resultBlocks)) for (const result of resultBlocks) {
+          if (result?.type === 'text' && typeof result.text === 'string') resultTexts.push(result.text);
+          else if (result?.type === 'image') { imagesComplete = false; resultImages.push(imageMetadata(result)); }
+          else issues.add('unknown_content');
+        }
+        else if (block.content != null) issues.add('unknown_content');
+        messages.push({
+          role: 'tool_result', text: resultTexts.join('\n'),
+          toolId: typeof block.tool_use_id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(block.tool_use_id) ? block.tool_use_id : '',
+          isError: !!block.is_error, ...(resultImages.length ? { images: resultImages } : {}),
+        });
+      } else if (entry.type === 'assistant' && ['tool_use', 'thinking', 'redacted_thinking'].includes(block?.type)) {
+        // مدخلات الأدوات والتفكير ليست نص محادثة مستخدم ولا تُستورد إلى قناة النقل.
+      } else issues.add('unknown_content');
+    }
+    flush();
+  }
+  return { cwd, messages, coverage: {
+    complete: issues.size === 0, scope: 'text', imagesComplete,
+    issues: [...issues, ...(imagesComplete ? [] : ['images_metadata_only'])],
+  } };
+}
+
+async function readContinuitySession(id, options = {}) {
+  if (typeof id !== 'string' || !SAFE_UUID.test(id)) return { error: 'bad_args' };
+  const root = path.resolve(options.root || PROJECTS_ROOT);
+  let realRoot;
+  let dirs;
+  try {
+    realRoot = await fsp.realpath(root);
+    dirs = await fsp.readdir(root, { withFileTypes: true });
+  } catch (_) { return { error: 'not_found' }; }
+  const normalize = (value) => process.platform === 'win32' ? value.toLowerCase() : value;
+  let found = null;
+  for (const dir of dirs) {
+    if (!dir.isDirectory() || !safeName(dir.name)) continue;
+    const file = path.join(root, dir.name, id + '.jsonl');
+    let stat;
+    let realFile;
+    try {
+      stat = await fsp.lstat(file);
+      realFile = await fsp.realpath(file);
+    } catch (_) { continue; }
+    if (stat.isSymbolicLink() || !stat.isFile() || !normalize(realFile).startsWith(normalize(realRoot) + path.sep)) {
+      return { error: 'unsafe_source_path' };
+    }
+    // الحد على الملف كله معلن، فلا يُعاد ذيل ناقص وكأنه المصدر الكامل.
+    if (stat.size > 64 * 1024 * 1024) return { error: 'source_too_large' };
+    if (found) return { error: 'ambiguous_session' };
+    let raw;
+    try { raw = await fsp.readFile(file, 'utf8'); } catch (_) { return { error: 'source_unavailable' }; }
+    if (Buffer.byteLength(raw, 'utf8') > 64 * 1024 * 1024) return { error: 'source_too_large' };
+    found = buildContinuityMessages(raw);
+  }
+  return found || { error: 'not_found' };
+}
+
+module.exports = { listSessions, readSession, readFullSession, buildMessages, readContinuitySession, buildContinuityMessages };

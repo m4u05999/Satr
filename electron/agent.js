@@ -35,6 +35,7 @@ const testsprite = require('./testsprite');
 const testspritejobs = require('./testspritejobs');
 const envbrief = require('./envbrief');
 const adapterTools = require('./tools');
+const connectionTools = require('./connection-tools');
 const hookguard = require('./hookguard'); // OBS-087: تنبيه كسول لإعدادات SessionStart/setup غير المرئية
 
 const IS_WIN = process.platform === 'win32';
@@ -879,7 +880,7 @@ async function prepareTestSpriteJob(prompt, cwd, siteRound) {
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
  */
-async function start({ prompt, images, sessionId, model, fallbackModel, permissionMode, skills, effort, extraDirs, browserControl, trustedBrowserOrigins, browserBudget }, cwd, emit, internalPolicy) {
+async function start({ prompt, images, sessionId, model, fallbackModel, permissionMode, skills, effort, extraDirs, browserControl, trustedBrowserOrigins, browserBudget, continuityContext }, cwd, emit, internalPolicy) {
   const policyMode = internalPolicy && internalPolicy.mode;
   const isolatedPolicy = policyMode === 'text-only' || policyMode === 'read-only-planner';
   // الفحص قراءة قرص محدودة لمسارات ثابتة ويعمل بلا await كي لا يؤخر إقلاع الدور.
@@ -917,6 +918,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const genmediaOverride = internalPolicy && internalPolicy.genmedia;
   const { query } = await loadSdk();
 
+  let connectionsActive = !internalPolicy;
+  const connectionGate = connectionTools.createPermissionGate({ emit, isActive: () => connectionsActive });
   const pending = new Map(); // id → { resolve, toolName, input } لطلبات الأذونات المعلقة
   const turnAllowed = new Set(); // موافقات مؤقتة لهذا الدور فقط؛ تُصفّر عند result/stop
   const pendingQuestions = new Map(); // id → { resolve, input } لأسئلة AskUserQuestion المعلّقة
@@ -952,12 +955,14 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   // محتوى رسالة المستخدم: نص بسيط، أو مصفوفة كتل (نص + صور) عند وجود صور.
   // ترتيب الكتل: النص أولاً ثم الصور — والـ SDK يقبل source.type='base64'.
   function buildContent() {
-    if (!images || !images.length) {
+    const conversationContext = !internalPolicy && typeof continuityContext === 'string' ? continuityContext : '';
+    if ((!images || !images.length) && !conversationContext) {
       return anchorText ? effectivePrompt + '\n\n' + anchorText : effectivePrompt;
     }
     const blocks = [];
+    if (conversationContext) blocks.push({ type: 'text', text: conversationContext });
     if (effectivePrompt) blocks.push({ type: 'text', text: effectivePrompt });
-    for (const im of images) {
+    for (const im of images || []) {
       blocks.push({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } });
     }
     // المرساة آخر الكتل — ذيلية حتى مع الصور
@@ -1102,6 +1107,12 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     settingSources: isolatedPolicy ? [] : ['user', 'project', 'local'],
     stderr: (data) => emit({ type: 'stderr', text: String(data) }),
     canUseTool: async (toolName, input, { signal, toolUseID, agentID }) => {
+      // نواة التوصيلات تسأل بعد فحص المورد، فلا سؤال مزدوج ولا إعفاء بسبب bypass.
+      if (connectionTools.NAMES.some((name) => toolName === 'mcp__satr-connections__' + name)) {
+        return connectionsActive
+          ? { behavior: 'allow', updatedInput: input }
+          : { behavior: 'deny', message: 'التوصيلات غير متاحة في هذا السياق.' };
+      }
       // الموجة 4 (مراجعة كودكس): في auto، الأداة غير القرائية تُسأل **دائماً** — لا تعفيها
       // «موافقة دائمة» مُنحت في وضع سابق (وإلا التفّت على حماية auto). browserControl يبقى
       // استثناءً صريحاً أدناه (تفويض متصفح فعّله المستخدم بزرّ، لا موافقة عابرة قديمة).
@@ -2180,6 +2191,24 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     });
   }
 
+  if (!internalPolicy && sdk.createSdkMcpServer && sdk.tool && z) {
+    const invokeConnection = (name) => async (args, callCtx) => {
+      const result = await connectionTools.run(name, cwd, args, {
+        engine: 'sdk', isActive: () => connectionsActive, requestPermission: connectionGate.requestPermission,
+      }, callCtx);
+      return { content: [{ type: 'text', text: result.content }], isError: !result.ok };
+    };
+    const tools = [
+      sdk.tool('list_project_connections', connectionTools.DEFINITIONS[0].description,
+        connectionTools.sdkShape(z, 'list_project_connections'), invokeConnection('list_project_connections')),
+      sdk.tool('use_project_connection', connectionTools.DEFINITIONS[1].description,
+        connectionTools.sdkShape(z, 'use_project_connection'), invokeConnection('use_project_connection')),
+    ];
+    options.mcpServers = Object.assign({}, options.mcpServers, {
+      'satr-connections': sdk.createSdkMcpServer({ name: 'satr-connections', version: '1.0.0', tools }),
+    });
+  }
+
   // أداة اقتراح الذاكرة مستقلة عن كتلة المتصفح: تبث مرشّحة منقّاة ولا تكتب للقرص.
   if (sdk.createSdkMcpServer && sdk.tool && z) {
     const memoryTool = sdk.tool(
@@ -2322,6 +2351,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           if (!internalPolicy) emit(msg);
           promptSuggestionGate.markSuggestion();
         } else if (msg.type === 'result') {
+          connectionsActive = false;
+          connectionGate.stop();
           emit(msg);
           turnAllowed.clear();
           promptSuggestionGate.markResult();
@@ -2334,6 +2365,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       emit({ type: 'spawn_error', text: String((e && e.message) || e) });
       emit({ type: 'proc_done', code: 1 });
     } finally {
+      connectionsActive = false;
+      connectionGate.stop();
       sdkBackgroundController.finish('failed');
       closeInput();
       turnAllowed.clear();
@@ -2360,6 +2393,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     // يحسم بعد انتهاء استهلاك Query والتنظيف، لا عند وصول proc_done فقط.
     done,
     forceClose() {
+      connectionsActive = false;
+      connectionGate.stop();
       sdkBackgroundController.finish('failed');
       closeInput();
       try { q.close(); } catch { /* إغلاق احترازي بعد مهلة main */ }
@@ -2379,6 +2414,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     },
     // رد الواجهة على طلب إذن
     resolvePermission(id, allow, always, turn) {
+      if (connectionGate.resolvePermission(id, allow)) return true;
       const p = pending.get(id);
       if (!p) return false;
       pending.delete(id);
@@ -2439,6 +2475,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     },
     // إيقاف حقيقي: مقاطعة النموذج + إنهاء الإدخال + رفض الأذونات والأسئلة المعلقة
     async stop() {
+      connectionsActive = false;
+      connectionGate.stop();
       sdkBackgroundController.finish('stopped');
       turnAllowed.clear();
       preview.clearSensitiveState();

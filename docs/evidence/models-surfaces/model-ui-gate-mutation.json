@@ -1,0 +1,17 @@
+{
+    "source":  "D:\\sater\\satr-2\\src\\ui\\app.js",
+    "mutant":  "D:\\sater\\satr-2\\dist\\models-surfaces-evidence\\model-ui-gate-mutant.js",
+    "originalPattern":  "    refreshEngineModels(); // يبدأ الجلب بعد حسم الجاهزية، ولو بقي المحرك المختار نفسه.",
+    "mutantPattern":  "    void 0; // MUTANT gate readiness omitted in Chromium",
+    "plantCommand":  "[IO.File]::WriteAllText($taskMutantPath, $taskSource.Replace($taskOriginal, $taskMutant), $taskEncoding)",
+    "originalBefore":  1,
+    "originalAfter":  0,
+    "mutantBefore":  0,
+    "mutantAfter":  1,
+    "guardCommand":  ".\\node_modules\\.bin\\electron.cmd scripts/model-boot-ui-test.js --source dist/models-surfaces-evidence/model-ui-gate-mutant.js",
+    "exitCode":  1,
+    "failure":  "Error: مهلة واجهة النماذج: الكتالوج المؤجل",
+    "restoreCommand":  "Copy-Item -LiteralPath $taskSourcePath -Destination $taskMutantPath -Force",
+    "restoredHash":  "68D965CB40B66D08FEC120011D9F015298CFF714D15F835D09246A4E531AFE95",
+    "originalHash":  "68D965CB40B66D08FEC120011D9F015298CFF714D15F835D09246A4E531AFE95"
+}

@@ -880,7 +880,7 @@ async function run() {
       'عرض الإذن يطلق waiting_permission بعد إدراج الظرف');
     assert(/resolvePermissionThroughCurrentHandles[\s\S]{0,500}?phase: 'working'/.test(wiringSource),
       'حسم إذن الجوال يعيد الحالة إلى working');
-    assert(/obj\.type === 'task_update'[\s\S]{0,400}?publishMobileTaskState\(ledger\)/.test(wiringSource),
+    assert(/obj\.type === 'task_update'[\s\S]{0,400}?publishMobileTaskState\(obj, token\)/.test(wiringSource),
       'task_update يطلق لقطة فعلاً');
     assert(/obj\.type === 'file_edit'[\s\S]{0,160}?publishMobileFileEdit\(obj\)/.test(wiringSource),
       'file_edit يطلق لقطة فعلاً');
@@ -888,8 +888,8 @@ async function run() {
       'verification_result يطلق لقطة فعلاً');
     assert(/obj\.type === 'result' \|\| obj\.type === 'proc_done'[\s\S]{0,180}?finishMobileRunState\(obj\)/.test(wiringSource),
       'نهاية الدور تطلق done/error فعلاً');
-    assert(/function handleMobileStop[\s\S]{0,400}?phase: 'stopped'/.test(wiringSource),
-      'قبول الإيقاف يطلق stopped فعلاً');
+    assert(wiringSource.includes("if (status === 'stopped') publishMobileState({ phase: 'stopped' });"),
+      'تأكيد الإيقاف يطلق stopped — توقيته محروس بسلوك الإنتاج في mobile-stop-confirmation');
     assert(/setInterval\([\s\S]{0,180}?hasLiveMobileSession\(\)[\s\S]{0,100}?publishMobileState\(\)/.test(wiringSource)
       && /mobileStateHeartbeat\.unref/.test(wiringSource), 'النبضة 20ث مربوطة بجلسة حيّة ومؤقّتها unref');
     const relaySource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'mobilerelay.js'), 'utf8');

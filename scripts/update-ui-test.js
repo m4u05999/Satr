@@ -18,8 +18,8 @@ function delay(ms) {
 }
 
 function extractToast(source) {
-  const startTag = '<div id="updateToast" hidden>';
-  const start = source.indexOf(startTag);
+  // نحدد العنصر بهويته، ثم نقارن ترميزه كاملاً؛ إضافة سمة لا تخفيه عن الحارس.
+  const start = source.search(/<div\b[^>]*\bid="updateToast"(?=\s|>)[^>]*>/);
   const end = source.indexOf('</div>', start);
   assert(start !== -1 && end !== -1, 'تعذّر إيجاد ترميز #updateToast.');
   return source.slice(start, end + '</div>'.length).replace(/>\s+</g, '><').trim();

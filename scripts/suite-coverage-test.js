@@ -214,14 +214,14 @@ function runRetryBehavioral() {
   check(a.output.includes('⚠ تعثّر «test:promocapture-live» (المحاولة 1/2)'),
     'الإعلان الصاخب يُطبع فور التعثّر باسم المجموعة ورقم المحاولة');
   check(a.output.includes('OBS-036'), 'الإعلان يذكر رقم الملاحظة المُبرِّرة');
-  check(a.output.includes('أُعيد بعد تعثّر بيئي: test:promocapture-live'),
+  check(a.output.includes('أُعيد بعد تعثّر: test:promocapture-live'),
     'الخاتمة تذكر المُعاد صراحةً — «كله أخضر» بلا ذكر حارس أخضر كاذب');
 
   const b = runOnce(['test:promocapture-live'], { 'test:promocapture-live': [1, 1] });
   check(b.exitCode === 1, `فشل مرتين: الطقم يسقط فعلاً (الخرج ${b.exitCode})`);
   check(b.calls.length === 2, `سقف إعادة واحدة لا تُتجاوز — محاولتان فقط (${b.calls.length})`);
   check(b.output.includes('فشلت المجموعات التالية'), 'مسار السقوط يطبق قائمة الفاشلات');
-  check(!b.output.includes('أُعيد بعد تعثّر بيئي'), 'مسار السقوط لا يزعم نجاحاً بإعادة');
+  check(!b.output.includes('أُعيد بعد تعثّر'), 'مسار السقوط لا يزعم نجاحاً بإعادة');
 
   const c = runOnce(['test:readme-version'], { 'test:readme-version': [1, 1] });
   check(c.exitCode === 1, `فشل اسم غير مقيّس: الطقم يسقط (الخرج ${c.exitCode})`);
@@ -245,7 +245,7 @@ try {
 // وسطر السقوط من سيناريو «فشل مرتين».
 if (liveProof) {
   const loudLine = liveProof.output.split('\n').find((line) => line.includes('⚠ تعثّر'));
-  const finalLine = liveProof.output.split('\n').find((line) => line.includes('أُعيد بعد تعثّر بيئي'));
+  const finalLine = liveProof.output.split('\n').find((line) => line.includes('أُعيد بعد تعثّر'));
   console.log('suite-coverage-test: دليل حيّ — الإعلان الصاخب: ' + (loudLine || '(غائب!)'));
   console.log('suite-coverage-test: دليل حيّ — سطر الخاتمة: ' + (finalLine || '(غائب!)'));
   const failLine = (liveProof.failTwiceOutput || '').split('\n').find((line) => line.includes('فشلت المجموعات التالية'));

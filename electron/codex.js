@@ -26,6 +26,7 @@ const { spawn, execSync } = require('child_process');
 const { computeDiff } = require('./diff');
 const skillCatalog = require('./skills');
 const preview = require('./preview');   // وحدة المعاينة المشتركة (رؤية الويب لـ Codex — الخيار 1)
+const connectionTools = require('./connection-tools');
 const codexmcp = require('./codexmcp');  // خادم MCP‏ streamable-HTTP داخل العملية
 const keys = require('./keys');
 const memory = require('./memory'); // ذاكرة مشروع شخصية — حقن قرائي مقصوص (تكافؤ agent.js)
@@ -849,12 +850,12 @@ function decodeBase64(s) { try { return Buffer.from(s, 'base64').toString('utf8'
 /**
  * يبدأ دوراً واحداً ويعيد مقبضاً فيه stop و resolvePermission (نفس عقد agent.start).
  */
-async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, browserControl, trustedBrowserOrigins, browserBudget }, cwd, emit) {
+async function start({ prompt, images, sessionId, model, permissionMode, skills, effort, browserControl, trustedBrowserOrigins, browserBudget, continuityContext, continuityRestart }, cwd, emit) {
   const bin = resolveCodexBin();
   if (!bin) {
     emit({ type: 'spawn_error', text: 'لم يُعثر على Codex CLI. ثبّته: npm.cmd install -g @openai/codex' });
     emit({ type: 'proc_done', code: 1 });
-    return { resolvePermission() { return false; }, async stop() {} };
+    return { done: Promise.resolve(), resolvePermission() { return false; }, async stop() {} };
   }
 
   // رؤية الويب لـ Codex (الخيار 1): نستضيف خادم MCP‏ streamable-HTTP **داخل العملية**
@@ -864,7 +865,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // codex اتصل، طلب tools/list، وأبلغ satr_preview=ready. أي فشل هنا لا يكسر الدور —
   // Codex يعمل بلا رؤية ويب (تدهور رشيق). open_preview يبثّ preview_open للواجهة لتفتح اللوحة.
   let mcpHost = null;
+  let connectionsActive = browserControl !== false;
+  const connectionGate = connectionTools.createPermissionGate({ emit, isActive: () => connectionsActive });
   let effectivePrompt = prompt;
+  let conversationContext = typeof continuityContext === 'string' ? continuityContext : '';
   const actionBudget = browserBudget && typeof browserBudget.check === 'function'
     ? browserBudget : browserpolicy.createActionBudget();
   // طلب المستخدم الصريح لمتصفح خارجي في رسالة هذا الدور يعطّل حاجب browserguard (قرار مالك)
@@ -873,6 +877,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     mcpHost = await codexmcp.start({
       preview,
       cwd,
+      connectionContext: { engine: 'codex', isActive: () => connectionsActive,
+        requestPermission: connectionGate.requestPermission },
       openPreview: (url) => emit({ type: 'preview_open', url }),
       closePreview: () => emit({ type: 'preview_close' }),
       // أفعال المتصفح (نقر/كتابة/اختيار/مفتاح) تمرّ بمربع الإذن العربي نفسه — Codex لا
@@ -1007,6 +1013,11 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   // عبر errorOrDestroy لا رمياً، فلا يمسكها try/catch حول write ⇒ uncaughtException يوقف
   // التطبيق بحوار Electron أحمر. مستمع واحد يبتلعها (ومعها EPIPE عند موت العملية).
   proc.stdin.on('error', () => {});
+  // OBS-147: proc_done للواجهة يسبق خروج app-server؛ done دليل الخروج والتنظيف.
+  let resolveDone, rejectDone;
+  const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+  done.catch(() => {}); // قد لا يطلب المستهلك انتظار الإكمال.
+  let connectionsCleanup = Promise.resolve();
   const startedAt = Date.now();
   const skillContext = skillCatalog.resolveSelection(cwd, skills);
 
@@ -1686,7 +1697,18 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     cleanup(0);
   }
 
+  function cleanupConnections() {
+    connectionsActive = false;
+    connectionGate.stop();
+    if (mcpHost) {
+      const host = mcpHost; mcpHost = null;
+      connectionsCleanup = Promise.resolve().then(() => host.stop());
+      connectionsCleanup.catch(() => {});
+    }
+  }
+
   function cleanup(code) {
+    cleanupConnections();
     // رفض أي إذن معلّق ثم إنهاء العملية بلطف. نغلق stdin (إشارة إنهاء لـ app-server)
     // ونمهله لحظة ليُفرّغ ملف الجلسة إلى القرص قبل القتل — وإلا قد يُبتر فيفشل
     // استئنافها لاحقاً (درس مثبّت: القتل الفوري بعد result يقطع تفريغ الجلسة).
@@ -1709,7 +1731,6 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     preview.clearSensitiveState();
     try { proc.stdin.end(); } catch {}
     setTimeout(() => { try { proc.kill(); } catch {} }, 500);
-    if (mcpHost) { try { mcpHost.stop(); } catch {} mcpHost = null; } // أوقِف خادم رؤية الويب MCP
     if (testspriteRequested) {
       testsprite.scrubConfig(cwd);
       setTimeout(() => testsprite.scrubConfig(cwd), 750);
@@ -1747,12 +1768,16 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     emit({ type: 'spawn_error', text: 'تعذّر تشغيل Codex: ' + String((e && e.message) || e) });
     rejectPending('codex_spawn_failed');
     cleanup(1);
+    // فشل spawn بلا PID لا يُتبعه exit؛ لم توجد عملية يجري انتظارها.
+    if (!proc.pid) connectionsCleanup.then(resolveDone, rejectDone);
   });
   proc.on('exit', (code) => {
+    cleanupConnections(); // خروج العملية يبطل التوصيلات ولو لم يمر الدور عبر cleanup.
     rejectPending('codex_rpc_closed');
     if (testspriteRequested) testsprite.scrubConfig(cwd);
     if (!finished && !stopping) emit({ type: 'spawn_error', text: 'أُنهيت عملية Codex (كود ' + code + ')' });
-    if (!emittedDone) { emittedDone = true; emit({ type: 'proc_done', code: code || 0 }); }
+    cleanup(code); // يشمل رفض الأذونات والتسليم عند خروج مفاجئ أيضاً.
+    connectionsCleanup.then(resolveDone, rejectDone);
   });
 
   // ---------- تسلسل الإقلاع: initialize → thread/start أو resume → turn/start ----------
@@ -1774,6 +1799,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
           const r = await request('thread/resume', { threadId: sessionId, cwd, approvalPolicy, sandbox, developerInstructions: devInstructions, persistExtendedHistory: false }, BOOT_REQUEST_TIMEOUT_MS);
           threadId = (r && r.thread && r.thread.id) || sessionId;
         } catch (e) {
+          // لا يبدأ البديل بلا التاريخ الذي كانت تملكه الجلسة المتعذرة.
+          if (typeof continuityRestart === 'function') conversationContext = continuityRestart();
           // فشل الاستئناف (جلسة محذوفة/تالفة) ⇒ نبدأ خيطاً جديداً بدل تعليق الدور
           emit({ type: 'stderr', text: 'تعذّر استئناف جلسة Codex — بدء جلسة جديدة' });
           const r = await request('thread/start', startParams, BOOT_REQUEST_TIMEOUT_MS);
@@ -1818,6 +1845,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
       // مهام خلفية خرجت بلا دور نشط — كتلة سياق تُحقن مرة واحدة بنفس بوابة الذاكرة
       const backgroundPrompt = browserControl === false ? '' : termjobs.pendingNoticeText(cwd);
       if (backgroundPrompt) inputItems.push({ type: 'text', text: backgroundPrompt, text_elements: [] });
+      if (conversationContext) inputItems.push({ type: 'text', text: conversationContext, text_elements: [] });
       if (effectivePrompt) inputItems.push({ type: 'text', text: effectivePrompt, text_elements: [] });
       if (Array.isArray(images)) {
         for (const im of images) {
@@ -1857,8 +1885,10 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
   })();
 
   return {
+    done,
     // رد الواجهة على طلب إذن → قرار Codex بمفردات v2 (accept/acceptForSession/decline)
     resolvePermission(id, allow, always) {
+      if (connectionGate.resolvePermission(id, allow)) return true;
       // فعل متصفح MCP معلّق (لا serverId — نحلّ Promise الأداة مباشرةً)
       const mcp = mcpPerms.get(id);
       if (mcp) {
@@ -1928,6 +1958,8 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
     // إيقاف: مقاطعة الدور + رفض الأذونات المعلّقة + إنهاء العملية
     async stop() {
       stopping = true;
+      connectionsActive = false;
+      connectionGate.stop();
       preview.clearSensitiveState();
       for (const [permId, info] of perms) {
         try { if (info.decide) info.decide(false, false); else respond(info.serverId, { decision: 'cancel' }); } catch {}

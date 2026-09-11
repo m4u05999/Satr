@@ -10,6 +10,8 @@ const os = require('os');
 const { createHash, randomUUID, randomBytes } = require('crypto');
 
 const sessions = require('./sessions');
+const conversations = require('./conversations');
+const conversationBridge = require('./conversation-bridge');
 const sessionmeta = require('./sessionmeta');
 // OBS-142: عدّاد أحداث الدور — يجيب «أين يسقط الحدث؟». بلا نصّ وبلا قرص.
 const eventTrace = require('./eventtrace').create();
@@ -1100,7 +1102,10 @@ const mobilePushLastAt = new Map(); // deviceId → آخر دفعة بدأت؛ �
 const mobileStateBoot = randomBytes(4).toString('hex'); // ثابت مرة لكل عملية سطح مكتب
 let mobileStateSeq = 0;
 let mobileRunToken = '';
+let mobileStopRequest = null; // طلب إيقاف الدور ونتيجته المؤكدة، بلا معرّفات أجهزة
+const MOBILE_STOP_CONFIRM_TIMEOUT_MS = 15000;
 let mobileEditedFiles = new Set();
+let mobileTaskSnapshot = null; // مهام الدور الحالي وحده، مستقلة عن دفتر الجلسة المشترك
 let mobileStateRaw = {
   phase: 'idle', project: '', task: '',
   tasks: { total: 0, pending: 0, in_progress: 0, completed: 0, blocked: 0 },
@@ -1270,6 +1275,7 @@ function handleMobileStateRequest() {
 
 function beginMobileRunState(cwd) {
   mobileEditedFiles = new Set();
+  mobileTaskSnapshot = null;
   publishMobileState({
     phase: 'working',
     project: path.basename(cwd),
@@ -1281,8 +1287,13 @@ function beginMobileRunState(cwd) {
   });
 }
 
-function publishMobileTaskState(ledger) {
-  const rows = ledger && Array.isArray(ledger.tasks) ? ledger.tasks : [];
+function publishMobileTaskState(update, owner) {
+  // OBS-148: الهوية من باعث التشغيل؛ الجلسة والمسار قد يتطابقان بين دورين.
+  if (owner !== runSeq) return;
+  const snapshot = tasks.reduceSnapshot(update, mobileTaskSnapshot);
+  if (!snapshot) return;
+  mobileTaskSnapshot = snapshot;
+  const rows = snapshot.tasks;
   const counts = { total: rows.length, pending: 0, in_progress: 0, completed: 0, blocked: 0 };
   for (const item of rows) {
     if (item && Object.prototype.hasOwnProperty.call(counts, item.status)) counts[item.status] += 1;
@@ -1319,8 +1330,9 @@ function mobileResultCost(result) {
 }
 
 function finishMobileRunState(result) {
-  // قبول الإيقاف نهائي لهذه اللقطة؛ أحداث إنهاء متأخرة لا تعيده إلى done/error.
-  if (mobileStateRaw.phase === 'stopped') return;
+  // تأكيد الإيقاف نهائي لهذه اللقطة؛ وأثناء انتظاره لا تستبق أحداث النهاية وعد done.
+  if (mobileStateRaw.phase === 'stopped'
+      || mobileStopRequest && mobileStopRequest.pending && mobileStopRequest.owner === runSeq) return;
   const failed = !!(result && (result.is_error === true || result.subtype === 'error'
     || Number(result.exit_code ?? result.code ?? 0) !== 0));
   const update = { phase: failed ? 'error' : 'done' };
@@ -1548,17 +1560,48 @@ function currentMobileRunToken() {
 }
 
 /** يُستدعى من القناة عند وصول أمر إيقاف مُتحقَّق الشكل. */
-function handleMobileStop(run) {
+function handleMobileStop(run, report) {
   if (typeof run !== 'string' || run !== mobileRunToken || !mobileRunToken) {
     mobileDebug('stop_stale');
     return false;
   }
-  mobileDebug('stop_accepted');
-  publishMobileState({ phase: 'stopped' });
-  // نفس مسار `satr:stop` حرفياً: المحرّكات تفكّ أي إذن معلّق بالرفض عند الإيقاف،
-  // فيأتي حسم المعلّقات ذرياً بلا مسار ثانٍ يتباعد عنه.
-  cancelPendingSendRequest();
-  stopAll(false).catch(() => { /* الإيقاف أفضل جهد — لا يُسقط القناة */ });
+  const owner = runSeq;
+  let request = mobileStopRequest;
+  if (!request || request.run !== run || request.owner !== owner) {
+    const handle = currentRun || currentCliRun;
+    const starting = sdkStartingPromise;
+    let resolveResult;
+    request = { run, owner, pending: true, result: new Promise((resolve) => { resolveResult = resolve; }) };
+    mobileStopRequest = request;
+    let timer;
+    const settle = (status) => {
+      if (!request.pending) return;
+      request.pending = false;
+      clearTimeout(timer);
+      // إقرار A لا يعيد كتابة لقطة B ولو انتهى تنظيف A بعد بدء الدور الجديد.
+      if (owner !== runSeq || run !== mobileRunToken) status = 'stale_run';
+      if (status === 'stopped') publishMobileState({ phase: 'stopped' });
+      resolveResult(status);
+    };
+    timer = setTimeout(() => settle('unknown'), MOBILE_STOP_CONFIRM_TIMEOUT_MS);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+    // done يثبت انتهاء صاحب التشغيل؛ stopAll وproc_done قد يسبقان التنظيف.
+    Promise.resolve(handle || starting).then((active) => {
+      if (!active || !active.done || typeof active.done.then !== 'function') {
+        settle('unknown');
+        return;
+      }
+      Promise.resolve(active.done).then(() => settle('stopped'), () => settle('unknown'));
+    }, () => settle('unknown'));
+    mobileDebug('stop_accepted');
+    cancelPendingSendRequest();
+    // نحافظ على مسار الإيقاف نفسه، بما فيه بقاء مهام SDK الخلفية مستقلة.
+    try { Promise.resolve(stopAll(false)).catch(() => settle('unknown')); }
+    catch { settle('unknown'); }
+  }
+  if (typeof report === 'function') request.result.then((status) => {
+    try { report(status); } catch { /* انقطاع النقل لا يعيد تشغيل الدور */ }
+  });
   return true;
 }
 
@@ -1855,10 +1898,16 @@ function sanitizeClaudePolishEvent(event) {
 }
 
 // إيقاف أي تشغيل جارٍ أياً كان محركه (محوّل غير SDK أو تشغيل SDK)
+let activeConversationRunId = null;
 function stopAll(includeSdkBackground = true) {
+  if (activeConversationRunId) {
+    const saved = conversations.stop(activeConversationRunId);
+    if (saved.ok) activeConversationRunId = null;
+    else emitToWindow({ type: 'stderr', text: 'تعذر حفظ آخر حالة للمحادثة عند الإيقاف؛ سيُعاد الحفظ قبل بدء طلب آخر.' });
+  }
   withdrawMobilePermissions();
   preview.clearSensitiveState();
-  promocapture.stopAll().catch(() => {});
+  promocapture.stopAll({ scope: 'run' }).catch(() => {});
   const stops = [];
   const existingSdkStop = sdkStoppingPromise;
   if (existingSdkStop) stops.push(existingSdkStop);
@@ -2826,12 +2875,62 @@ async function handleSendRequest(event, payload, requestEpoch) {
     }
   } catch (e) { /* المعاينة غير مفتوحة — لا شيء يُفكّ */ }
 
+  if (activeConversationRunId) {
+    return { error: 'continuity_stop_failed', message: 'تعذر حفظ إيقاف الدور السابق. عالج مشكلة التخزين ثم أعد الإرسال.' };
+  }
   const token = ++runSeq;
   // رمز دور معتم جديد لكل تشغيل: يُبطل كل أمر إيقاف قديم قد يكون في الطريق (§7.7.5)
   mobileRunToken = randomBytes(8).toString('hex');
   const runEngine = (payload.engine === 'codex' || payload.engine === kimi.ENGINE_ID || adapters.get(payload.engine))
     ? payload.engine : 'sdk';
   let activeSessionId = payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null;
+  let continuity = null;
+  const continuityEnabled = (runEngine === 'sdk' || runEngine === 'codex')
+    && Object.prototype.hasOwnProperty.call(payload, 'conversationId')
+    && prompt !== '/compact';
+  if (continuityEnabled) {
+    if (!Number.isSafeInteger(payload.clientEpoch) || payload.clientEpoch < 0) return { error: 'bad_client_epoch' };
+    if (payload.conversationId !== null && (typeof payload.conversationId !== 'string' || !conversations.SAFE_ID.test(payload.conversationId))) return { error: 'bad_conversation_id' };
+    try {
+      continuity = await conversationBridge.prepare({
+        cwd, conversationId: payload.conversationId, continuitySource: payload.continuitySource,
+        engine: runEngine, sessionId: activeSessionId, prompt: typeof payload.prompt === 'string' ? payload.prompt : '', images,
+      });
+    } catch (_) { continuity = { ok: false, error: 'source_unavailable' }; }
+    if (!continuity.ok) return { error: continuity.error, message: conversationBridge.messageFor(continuity.error) };
+    if (requestEpoch !== sendRequestEpoch || token !== runSeq) {
+      conversations.stop(continuity.runId);
+      return { error: 'stopped', message: 'أوقف المستخدم الطلب قبل بدء تشغيله.' };
+    }
+    activeConversationRunId = continuity.runId;
+    activeSessionId = continuity.sessionId || null;
+  }
+  let conversationNoticePublished = false;
+  const publishConversation = (restored = false) => {
+    if (!continuity) return;
+    emitToWindow({
+      type: 'conversation', conversation_id: continuity.id, session_id: activeSessionId,
+      engine: runEngine, cwd, client_epoch: payload.clientEpoch,
+      revision: continuity.conversation.revision,
+      ...(restored ? { restored: true, messages: continuity.snapshot.messages } : {}),
+      ...(continuity.transfer.needed && !conversationNoticePublished ? { notice: continuity.transfer.coverage.complete
+        ? 'جُهّز سياق المحادثة لإرساله إلى المحرك المختار.'
+        : 'جُهّز النص للنقل؛ الصور أو مقتطفات الأدوات المذكورة في السياق غير كاملة.' } : {}),
+    }, runEngine);
+  };
+  publishConversation(continuity?.restored === true);
+  conversationNoticePublished = true;
+  let continuityFailed = false;
+  const failContinuity = (error) => {
+    if (!continuity || continuityFailed) return;
+    continuityFailed = true;
+    const stopped = conversations.stop(continuity.runId);
+    if (stopped.ok && activeConversationRunId === continuity.runId) activeConversationRunId = null;
+    emitToWindow({ type: 'stderr', text: conversationBridge.messageFor(error) }, runEngine);
+    // قد يصل init قبل أن يُعاد المقبض من start؛ يُراجع الفشل أيضاً بعد إقلاعه.
+    if (currentRun) Promise.resolve(currentRun.stop()).catch(() => {});
+  };
+  const continuityRestart = continuity ? () => conversationBridge.restart(continuity.runId) : undefined;
   const browserBudget = browserBudgetFor(runEngine, activeSessionId);
   const priorVerification = activeSessionId ? checkpoints.consumeVerification(runEngine, activeSessionId) : '';
   const enginePrompt = priorVerification
@@ -2884,21 +2983,32 @@ async function handleSendRequest(event, payload, requestEpoch) {
       if (!SAFE_UUID.test(String(obj.uuid || '')) || !SAFE_UUID.test(String(obj.session_id || ''))) return;
       obj = { ...obj, uuid: String(obj.uuid), session_id: String(obj.session_id) };
     }
+    if (continuity && !lateSdkBackgroundEvent) {
+      if (continuityFailed) return;
+      const saved = conversations.acceptEvent(continuity.runId, obj);
+      if (!saved.ok) { failContinuity(saved.error); return; }
+      if (obj.type === 'result' || obj.type === 'proc_done' || obj.type === 'spawn_error') {
+        if (activeConversationRunId === continuity.runId) activeConversationRunId = null;
+      }
+    }
     if (obj.type === 'system' && SAFE_SESSION.test(obj.session_id || '')) {
       activeSessionId = obj.session_id;
       if (runEngine === kimi.ENGINE_ID) noteKimiSessionCwd(obj.session_id, cwd);
       browserBudgets.set(runEngine + ':session:' + activeSessionId, browserBudget);
       checkpoints.bindSession(runId, activeSessionId);
+      if (obj.subtype === 'init') publishConversation();
     }
     if (obj.type === 'task_update') {
       const eventSessionId = SAFE_SESSION.test(obj.session_id || '') ? obj.session_id : activeSessionId;
       if (!eventSessionId) {
-        publishMobileTaskState(obj);
+        publishMobileTaskState(obj, token);
         return;
       }
       const ledger = tasks.apply({ ...obj, engine: runEngine, session_id: eventSessionId });
       if (ledger) {
-        publishMobileTaskState(ledger);
+        // SDK وحده يسمح بأحداث خلفية من دور سابق في دفتر الجلسة نفسه.
+        const mobileUpdate = runEngine === 'sdk' ? obj : { ...ledger, mode: 'replace' };
+        publishMobileTaskState(mobileUpdate, token);
         emitToWindow(ledger, lateSdkBackgroundEvent ? runEngine : undefined);
       }
       return;
@@ -2949,7 +3059,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
       withdrawMobilePermissions(token);
       const checkpoint = checkpoints.finish(runId);
       if (checkpoint) emitToWindow(checkpoint);
-      promocapture.stopAll().catch(() => {});
+      promocapture.stopAll({ scope: 'run' }).catch(() => {});
     }
     if (obj.type === 'permission_request') {
       offerMobilePermission(obj, { token, cwd, engine: runEngine, sessionId: activeSessionId });
@@ -2974,7 +3084,9 @@ async function handleSendRequest(event, payload, requestEpoch) {
       currentRun = await codex.start({
         prompt: enginePrompt,
         images, // مُنقّاة بـ sanitizeImages (نفس محرك SDK) — نماذج Codex تقبل الصور
-        sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
+        continuityContext: continuity?.context || '',
+        continuityRestart,
+        sessionId: activeSessionId,
         model: payload.model && SAFE_MODEL.test(payload.model) ? payload.model : null,
         permissionMode: nonSdkPerm(payload.permissionMode), // auto→default (Codex لا يفهمه)
         skills: sanitizeSkills(payload.skills),
@@ -2986,10 +3098,12 @@ async function handleSendRequest(event, payload, requestEpoch) {
         trustedBrowserOrigins,
         browserBudget,
       }, cwd, emit);
+      if (continuityFailed) { await currentRun.stop(); return { error: 'continuity_failed' }; }
       return { started: true, engine: 'codex' };
     } catch (e) {
       currentRun = null;
       finishMobileRunState({ is_error: true });
+      if (continuity) conversations.acceptEvent(continuity.runId, { type: 'spawn_error' });
       return { error: 'codex_failed', message: 'تعذّر تشغيل محرك Codex: ' + String((e && e.message) || e) };
     }
   }
@@ -3066,7 +3180,8 @@ async function handleSendRequest(event, payload, requestEpoch) {
     const starting = agent.start({
       prompt: enginePrompt,
       images,
-      sessionId: payload.sessionId && SAFE_SESSION.test(payload.sessionId) ? payload.sessionId : null,
+      continuityContext: continuity?.context || '',
+      sessionId: activeSessionId,
       model: primaryModel,
       fallbackModel,
       permissionMode: PERMISSION_MODES.has(payload.permissionMode) ? payload.permissionMode : 'default',
@@ -3096,6 +3211,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
         markSdkRunInFlight(false);
         currentRun = null;
         finishMobileRunState({ is_error: true });
+        if (continuity) conversations.acceptEvent(continuity.runId, { type: 'spawn_error' });
         return { error: 'sdk_failed', message: 'تأخر إقلاع محرك Claude ولم يبدأ الدور خلال المهلة — أعد المحاولة.' };
       }
       throw raceErr;
@@ -3104,6 +3220,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
     }
     currentRun = sdkRun;
     sdkRunForEmit = sdkRun;
+    if (continuityFailed) { await stopSdkRun(sdkRun); return { error: 'continuity_failed' }; }
     if (sdkRun && sdkRun.done && typeof sdkRun.done.finally === 'function') {
       sdkRun.done.finally(() => {
         forgetSdkBackgroundRun(sdkRun);
@@ -3118,6 +3235,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
     markSdkRunInFlight(false);
     currentRun = null;
     finishMobileRunState({ is_error: true });
+    if (continuity) conversations.acceptEvent(continuity.runId, { type: 'spawn_error' });
     return { error: 'sdk_failed', message: 'تعذّر تشغيل محرك SDK: ' + String((e && e.message) || e) };
   }
 }
@@ -3301,7 +3419,7 @@ ipcMain.handle('satr:previewBounds', (event, p) => {
   if (!ok) return { error: 'bad_bounds' };
   // وضع محاكاة الأجهزة: قائمة سماح مغلقة، وأي قيمة أخرى تسقط إلى null (لا تفشل الطلب)
   const device = p.device === 'mobile' || p.device === 'tablet' ? p.device : null;
-  return preview.setBounds({ x: p.x, y: p.y, width: p.width, height: p.height }, device);
+  return preview.setBounds({ x: p.x, y: p.y, width: p.width, height: p.height }, device, p.resetViewport === true);
 });
 ipcMain.handle('satr:previewPick', () => preview.startPick());       // م-2: التحديد بالتأشير
 ipcMain.handle('satr:previewPickCancel', () => preview.cancelPick());
@@ -3359,7 +3477,12 @@ ipcMain.handle('satr:promoCaptureReady', (event, payload) => {
   const p = payload && typeof payload === 'object' ? payload : {};
   if (!promocapture.SAFE_PROMO_SESSION.test(p.sessionId || '') || typeof p.ok !== 'boolean'
       || p.error != null && typeof p.error !== 'string') return { ok: false, error: 'bad_input' };
-  return promocapture.rendererReady(p.sessionId, p.ok, p.error || '');
+  if (p.capture !== undefined && (!p.capture || typeof p.capture !== 'object' || Array.isArray(p.capture)
+      || !Number.isInteger(p.capture.width) || p.capture.width < 1 || p.capture.width > 10000
+      || !Number.isInteger(p.capture.height) || p.capture.height < 1 || p.capture.height > 10000)) {
+    return { ok: false, error: 'bad_input' };
+  }
+  return promocapture.rendererReady(p.sessionId, p.ok, p.error || '', p.capture);
 });
 
 ipcMain.handle('satr:promoCaptureCommit', (event, payload) => {
@@ -3521,7 +3644,15 @@ ipcMain.handle('satr:steer', async (event, p) => {
   if (!text) return { ok: false, error: 'empty' };
   if (lastEngine !== 'codex') return { ok: false, error: 'unsupported' };
   if (!currentRun || typeof currentRun.steer !== 'function') return { ok: false, error: 'no_active_turn' };
+  const conversationRunId = activeConversationRunId;
   const r = await currentRun.steer(text);
+  if (r && r.ok && conversationRunId) {
+    const saved = conversations.recordUser(conversationRunId, text);
+    if (!saved.ok) {
+      emitToWindow({ type: 'stderr', text: 'وصل التوجيه للمحرك، لكن تعذر حفظه في سجل المحادثة. أُوقف الدور لحماية الاستمرارية.' });
+      await stopAll(false);
+    }
+  }
   return r && r.ok === true ? { ok: true } : { ok: false, error: (r && r.error) || 'rejected' };
 });
 
@@ -3655,7 +3786,12 @@ ipcMain.handle('satr:checkUpdates', () => updater.checkNow());
 // ---------- متصفح الجلسات (قراءة فقط — التحقق من المدخلات داخل sessions.js) ----------
 
 ipcMain.handle('satr:listSessions', () => sessions.listSessions());
-ipcMain.handle('satr:readSession', (event, p) => sessions.readSession(p && p.project, p && p.id));
+ipcMain.handle('satr:readSession', async (event, p) => {
+  const result = await sessions.readSession(p && p.project, p && p.id);
+  return result && !result.error ? { ...result, conversation: conversationBridge.forSession(result.cwd, 'sdk', p.id) } : result;
+});
+ipcMain.handle('satr:conversationCurrent', (event, p) => conversationBridge.current(p && p.cwd));
+ipcMain.handle('satr:conversationForget', (event, p) => conversations.forget(p && p.cwd));
 ipcMain.handle('satr:sessionMetaList', () => ({ ok: true, entries: sessionmeta.list() }));
 ipcMain.handle('satr:sessionMetaSet', (event, p) => {
   if (!p || typeof p.sessionId !== 'string' || !SAFE_SESSION.test(p.sessionId)) {
@@ -3676,7 +3812,10 @@ ipcMain.handle('satr:sessionMetaSet', (event, p) => {
 
 // جلسات Codex (تلميع المرحلة 4 — قراءة فقط، التحقق من المعرّف داخل codexsessions.js)
 ipcMain.handle('satr:listCodexSessions', () => codexSessions.listCodexSessions());
-ipcMain.handle('satr:readCodexSession', (event, p) => codexSessions.readCodexSession(p && p.id));
+ipcMain.handle('satr:readCodexSession', async (event, p) => {
+  const result = await codexSessions.readCodexSession(p && p.id);
+  return result && !result.error ? { ...result, conversation: conversationBridge.forSession(result.cwd, 'codex', p.id) } : result;
+});
 ipcMain.handle('satr:nameCodexSession', (event, p) => codexSessions.setCodexSessionName(p && p.id, p && p.name));
 ipcMain.handle('satr:archiveCodexSession', (event, p) => codexSessions.archiveCodexSession(p && p.id));
 ipcMain.handle('satr:deleteCodexSession', (event, p) => codexSessions.deleteCodexSession(p && p.id));
@@ -4769,6 +4908,9 @@ ipcMain.handle('satr:listSkills', (event, cwd) => {
   const dir = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : os.homedir();
   return skills.listSkills(dir);
 });
+
+// توصيلات المشروع: العقد يتحقق من المسار والمدخلات؛ غلاف ipcMain أعلاه يحرس المرسل.
+require('./connection-ipc').register(ipcMain);
 
 // ---------- حالة موصّلات MCP للوحة /موصلات (عبر دوال تحكّم SDK) ----------
 // عرض الحالة قراءة فقط؛ الإجراءات (reconnect/enable/disable) أفضل جهد ولا تقود OAuth.

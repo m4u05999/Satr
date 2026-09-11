@@ -1,0 +1,379 @@
+{
+  "pass": true,
+  "checks": 12,
+  "time": "2026-09-09T22:04:51.958Z",
+  "results": [
+    {
+      "label": "initial-browser",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 175,
+              "width": 432,
+              "height": 606
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "browser-and-terminal",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 175,
+              "width": 432,
+              "height": 372
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "settingsPop-open",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "settingsPop-escape",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 175,
+              "width": 432,
+              "height": 372
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "shortcutsPop-open",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "shortcutsPop-escape",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 221,
+              "width": 432,
+              "height": 326
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "sessionChangesPop-open",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "sessionChangesPop-escape",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 221,
+              "width": 432,
+              "height": 326
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "another-dialog-remains",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "all-overlays-closed",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 221,
+              "width": 432,
+              "height": 326
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "reopen-preview-under-settings",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    },
+    {
+      "label": "reopened-preview-restored",
+      "native": {
+        "windowId": 1,
+        "focused": true,
+        "bounds": {
+          "x": 370,
+          "y": 120,
+          "width": 1000,
+          "height": 820
+        },
+        "views": [
+          {
+            "bounds": {
+              "x": 0,
+              "y": 221,
+              "width": 432,
+              "height": 326
+            },
+            "url": "http://127.0.0.1:57693/",
+            "visible": null
+          }
+        ]
+      },
+      "layout": {
+        "scrollX": 0,
+        "width": 984,
+        "scrollWidth": 984,
+        "left": 0
+      }
+    }
+  ]
+}

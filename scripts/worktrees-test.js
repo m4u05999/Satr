@@ -20,13 +20,69 @@ function git(cwd, args) {
   });
 }
 
-function waitFor(check, timeoutMs) {
+// التشخيص داخل الحارس فقط: نقيس استدعاءات مدير الإنتاج بلا تغيير مهلها أو نتائجها.
+const managerTraces = new WeakMap();
+const phaseMaxMs = { create: 0, diff: 0, patch: 0, remove: 0 };
+const terminalStates = new Set(['completed', 'failed', 'timed_out', 'stopped', 'cleanup_failed']);
+
+function measuredManager(options) {
+  const manager = worktrees.createManager(options);
+  const trace = {};
+  managerTraces.set(manager, trace);
+  for (const phase of Object.keys(phaseMaxMs)) {
+    const original = manager[phase].bind(manager);
+    manager[phase] = async (...args) => {
+      const call = { started_at: Date.now(), pending: true, elapsed_ms: 0, error: '' };
+      trace[phase] = call;
+      try {
+        const result = await original(...args);
+        call.error = result && result.error || '';
+        return result;
+      } catch (error) {
+        call.error = String(error && error.message || error);
+        throw error;
+      } finally {
+        call.pending = false;
+        call.elapsed_ms = Date.now() - call.started_at;
+        phaseMaxMs[phase] = Math.max(phaseMaxMs[phase], call.elapsed_ms);
+      }
+    };
+  }
+  return manager;
+}
+
+function phaseSnapshot(manager) {
+  const trace = managerTraces.get(manager) || {};
+  return Object.fromEntries(Object.keys(phaseMaxMs).map((phase) => {
+    const call = trace[phase];
+    return [phase, call ? {
+      pending: call.pending,
+      elapsed_ms: call.pending ? Date.now() - call.started_at : call.elapsed_ms,
+      error: call.error,
+    } : null];
+  }));
+}
+
+function waitForState(executor, manager, cwd, expected, scenario) {
+  const timeoutMs = 3000;
   const started = Date.now();
   return new Promise((resolve, reject) => {
+    const fail = (reason, run) => {
+      const detail = {
+        scenario, expected, actual: run && run.state || 'missing',
+        failure_code: run && run.failure_code || '', error: run && run.error || '',
+        elapsed_ms: Date.now() - started, timeout_ms: timeoutMs, phases: phaseSnapshot(manager),
+      };
+      // يُطبع الدليل قبل finally؛ أخطاء تنظيف الاختبار اللاحقة ليست سبب الانتظار الأول.
+      console.error('[worktrees-wait] ' + JSON.stringify(detail));
+      reject(new Error(reason + ': scenario=' + scenario + ' expected=' + expected
+        + ' actual=' + detail.actual + ' failure_code=' + (detail.failure_code || 'none')));
+    };
     const poll = () => {
-      const value = check();
-      if (value) { resolve(value); return; }
-      if (Date.now() - started > timeoutMs) { reject(new Error('wait timeout')); return; }
+      const run = executor.latest(cwd);
+      if (run && run.state === expected) { resolve(run); return; }
+      if (run && terminalStates.has(run.state)) { fail('unexpected terminal state', run); return; }
+      if (Date.now() - started > timeoutMs) { fail('wait timeout', run); return; }
       setTimeout(poll, 10);
     };
     poll();
@@ -144,7 +200,7 @@ async function main() {
   const project = await makeRepo(temp);
   const managers = [];
   try {
-    const manager = worktrees.createManager({ root: path.join(temp, 'store-lifecycle') });
+    const manager = measuredManager({ root: path.join(temp, 'store-lifecycle') });
     managers.push(manager);
     await fsp.mkdir(path.join(temp, 'not-a-repo'));
     assert.strictEqual((await manager.create(path.join(temp, 'not-a-repo'))).error, 'no_repo');
@@ -167,15 +223,12 @@ async function main() {
     assert.strictEqual(manager.merge, undefined);
 
     const stats = { inputs: [], permissions: [], stops: 0 };
-    const executionManager = worktrees.createManager({ root: path.join(temp, 'store-execution') });
+    const executionManager = measuredManager({ root: path.join(temp, 'store-execution') });
     managers.push(executionManager);
     const executor = executorModule.create({ worktrees: executionManager, runner: editingRunner(stats), timeoutMs: 1000 });
     const started = await executor.start({ task: 'حدّث القيمة وأضف ملفاً' }, project, () => {});
     assert.strictEqual(started.ok, true);
-    const completed = await waitFor(() => {
-      const run = executor.latest(project);
-      return run && run.state === 'completed' ? run : null;
-    }, 3000);
+    const completed = await waitForState(executor, executionManager, project, 'completed', 'initial-edit');
     assert.strictEqual(completed.merged, false);
     assert.strictEqual(completed.merge_supported, false);
     assert.strictEqual(completed.engine, 'fixture-a');
@@ -197,7 +250,7 @@ async function main() {
     assert.strictEqual(executionManager.get(completed.worktree.id), null);
 
     const secondStats = { inputs: [], permissions: [], stops: 0 };
-    const secondManager = worktrees.createManager({ root: path.join(temp, 'store-execution-second') });
+    const secondManager = measuredManager({ root: path.join(temp, 'store-execution-second') });
     managers.push(secondManager);
     const secondExecutor = executorModule.create({
       worktrees: secondManager,
@@ -206,10 +259,7 @@ async function main() {
     });
     const secondStarted = await secondExecutor.start({ task: 'نفّذ السياسة نفسها بمحرك آخر' }, project, () => {});
     assert.strictEqual(secondStarted.ok, true);
-    const secondCompleted = await waitFor(() => {
-      const run = secondExecutor.latest(project);
-      return run && run.state === 'completed' ? run : null;
-    }, 3000);
+    const secondCompleted = await waitForState(secondExecutor, secondManager, project, 'completed', 'second-engine');
     assert.strictEqual(secondCompleted.engine, 'fixture-b');
     assert.deepStrictEqual(
       secondCompleted.changes.files.map((file) => file.rel).sort(),
@@ -244,20 +294,17 @@ async function main() {
     );
 
     const timeoutStats = { inputs: [], stops: 0 };
-    const timeoutManager = worktrees.createManager({ root: path.join(temp, 'store-timeout') });
+    const timeoutManager = measuredManager({ root: path.join(temp, 'store-timeout') });
     managers.push(timeoutManager);
     const timed = executorModule.create({ worktrees: timeoutManager, runner: hangingRunner(timeoutStats), timeoutMs: 30 });
     await timed.start({ task: 'مهمة معلقة' }, project, () => {});
-    const timedDone = await waitFor(() => {
-      const run = timed.latest(project);
-      return run && run.state === 'timed_out' ? run : null;
-    }, 3000);
+    const timedDone = await waitForState(timed, timeoutManager, project, 'timed_out', 'runner-timeout');
     assert.strictEqual(timeoutStats.stops, 1);
     assert.strictEqual(timedDone.failure_code, 'timeout');
     assert.strictEqual(timeoutManager.get(timedDone.worktree.id), null);
 
     const stopStats = { inputs: [], stops: 0 };
-    const stopManager = worktrees.createManager({ root: path.join(temp, 'store-stop') });
+    const stopManager = measuredManager({ root: path.join(temp, 'store-stop') });
     managers.push(stopManager);
     const stopped = executorModule.create({ worktrees: stopManager, runner: hangingRunner(stopStats), timeoutMs: 1000 });
     const running = await stopped.start({ task: 'مهمة ستتوقف' }, project, () => {});
@@ -275,7 +322,7 @@ async function main() {
     assert.strictEqual(stopManager.get(stoppedResult.run.worktree.id), null);
 
     const outsideStats = { inputs: [], permissions: [], stops: 0 };
-    const outsideManager = worktrees.createManager({ root: path.join(temp, 'store-outside') });
+    const outsideManager = measuredManager({ root: path.join(temp, 'store-outside') });
     managers.push(outsideManager);
     const outside = executorModule.create({
       worktrees: outsideManager,
@@ -283,10 +330,7 @@ async function main() {
       timeoutMs: 1000,
     });
     await outside.start({ task: 'حاول مساراً خارجياً' }, project, () => {});
-    const outsideDone = await waitFor(() => {
-      const run = outside.latest(project);
-      return run && run.state === 'failed' ? run : null;
-    }, 3000);
+    const outsideDone = await waitForState(outside, outsideManager, project, 'failed', 'outside-path');
     assert(outsideDone.error.includes('سياسة الأدوات'));
     assert.strictEqual(outsideDone.failure_code, 'policy_violation');
     assert.strictEqual(outsideStats.stops, 1);
@@ -297,45 +341,45 @@ async function main() {
     let malSeq = 0;
     const runScript = async (label, blocks) => {
       const stats = { inputs: [], permissions: [], stops: 0 };
-      const mgr = worktrees.createManager({ root: path.join(temp, 'store-mal-' + (malSeq++)) });
+      const mgr = measuredManager({ root: path.join(temp, 'store-mal-' + (malSeq++)) });
       managers.push(mgr);
       const ex = executorModule.create({ worktrees: mgr, runner: scriptedRunner(stats, blocks), timeoutMs: 1000 });
       await ex.start({ task: label }, project, () => {});
-      return { ex, stats };
+      return { ex, stats, manager: mgr, label };
     };
-    const waitState = (ex, state) => waitFor(() => { const r = ex.latest(project); return r && r.state === state ? r : null; }, 3000);
+    const waitState = (run, state) => waitForState(run.ex, run.manager, project, state, run.label);
 
     // (أ) علامة معطوبة صريحة ×3 ثم أداة صالحة ⇒ العامل يكمل، والمصدر الأصلي محفوظ (عزل)
     const mA = await runScript('علامة معطوبة ثم صالحة', [
       { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { write: 'src/app.js' },
     ]);
-    assert(await waitState(mA.ex, 'completed'), 'المدخل المعطوب الصريح ضمن الميزانية يجب ألا يوقف العامل');
+    assert(await waitState(mA, 'completed'), 'المدخل المعطوب الصريح ضمن الميزانية يجب ألا يوقف العامل');
     assert.strictEqual(await fsp.readFile(path.join(project, 'src', 'app.js'), 'utf8'), 'export const value = 1;\n');
 
     // (ب) الحد الدقيق: الرابعة المتتالية تفشل مغلقاً (منع loop)
     const mB = await runScript('معطوب متكرر', [
       { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED },
     ]);
-    assert.strictEqual((await waitState(mB.ex, 'failed')).failure_code, 'policy_violation', 'الرابعة المتتالية يجب أن تفشل مغلقاً');
+    assert.strictEqual((await waitState(mB, 'failed')).failure_code, 'policy_violation', 'الرابعة المتتالية يجب أن تفشل مغلقاً');
 
     // (ج) مدخل بلا علامة صريحة (schema مجهولة/بلا مسار) يبقى fail-closed لا malformed
     const mC = await runScript('بلا علامة', [{ name: 'Read', input: {} }]);
-    assert.strictEqual((await waitState(mC.ex, 'failed')).failure_code, 'policy_violation', 'المدخل بلا علامة صريحة يبقى fail-closed');
+    assert.strictEqual((await waitState(mC, 'failed')).failure_code, 'policy_violation', 'المدخل بلا علامة صريحة يبقى fail-closed');
 
     // (د) أداة محظورة بعلامة معطوبة تبقى forbidden (fail-closed)
     const mD = await runScript('محظور بعلامة', [{ name: 'Bash', input: UNPARSED }]);
-    assert.strictEqual((await waitState(mD.ex, 'failed')).failure_code, 'policy_violation', 'المحظور بعلامة يبقى fail-closed');
+    assert.strictEqual((await waitState(mD, 'failed')).failure_code, 'policy_violation', 'المحظور بعلامة يبقى fail-closed');
 
     // (هـ) العدّاد متتالي: أداة صالحة تصفّره فلا يتراكم المعطوب المتباعد
     const mE = await runScript('معطوب متباعد بصالح', [
       { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { write: 'src/app.js' },
       { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { name: 'Read', input: UNPARSED }, { write: 'src/app.js' },
     ]);
-    assert(await waitState(mE.ex, 'completed'), 'أداة صالحة تصفّر عدّاد المعطوب المتتالي');
+    assert(await waitState(mE, 'completed'), 'أداة صالحة تصفّر عدّاد المعطوب المتتالي');
 
     // (و) permission_request بعلامة معطوبة يُرفض بلا استهلاك ميزانية كتابة
     const mF = await runScript('إذن بعلامة معطوبة', [{ permission: true, name: 'Edit', input: UNPARSED, id: 'perm-mal' }]);
-    const mFDone = await waitState(mF.ex, 'completed');
+    const mFDone = await waitState(mF, 'completed');
     const permReply = mF.stats.permissions.find((p) => p.id === 'perm-mal');
     assert(permReply && permReply.allow === false, 'الإذن المعطوب يُرفض');
     assert.strictEqual(mFDone.permissions.write_used, 0, 'الإذن المعطوب لا يستهلك ميزانية كتابة');
@@ -346,14 +390,15 @@ async function main() {
       { readFail: 'src/app.js' },
       { name: 'Read', input: UNPARSED },
     ]);
-    assert.strictEqual((await waitState(mG.ex, 'failed')).failure_code, 'policy_violation', 'أداة فاشلة التنفيذ يجب ألا تصفّر عدّاد المعطوب');
+    assert.strictEqual((await waitState(mG, 'failed')).failure_code, 'policy_violation', 'أداة فاشلة التنفيذ يجب ألا تصفّر عدّاد المعطوب');
 
     // (ح) وسم مقترن بحقل file_path قابل للتنفيذ ⇒ ليس وسماً نقياً ⇒ fail-closed (مسار خارجي)
     const mH = await runScript('وسم مع مسار خارجي', [
       { name: 'Read', input: { __unparsedToolInput: { raw: 'x', len: 1 }, file_path: path.join(temp, 'outside.txt') } },
     ]);
-    assert.strictEqual((await waitState(mH.ex, 'failed')).failure_code, 'policy_violation', 'الوسم المقترن بمسار قابل للتنفيذ يبقى fail-closed');
+    assert.strictEqual((await waitState(mH, 'failed')).failure_code, 'policy_violation', 'الوسم المقترن بمسار قابل للتنفيذ يبقى fail-closed');
 
+    console.log('[worktrees-phases] max_ms=' + JSON.stringify(phaseMaxMs));
     console.log('✓ detached worktree lifecycle and bounded diff');
     console.log('✓ executor writes only inside the isolated worktree');
     console.log('✓ two explicitly labelled runners share the same isolation policy');

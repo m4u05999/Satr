@@ -1,0 +1,14 @@
+[
+    {
+        "target":  "D:\\sater\\satr-2\\dist\\preview-controls-pick-submit\\before.js",
+        "sha256":  "a24dadac594e74d68bdfabd1e156af1cb3b18df4ea8b6dd8dc0e7592fc08a130",
+        "command":  "Remove-Item -LiteralPath \u0027D:\\sater\\satr-2\\dist\\preview-controls-pick-submit\\before.js\u0027",
+        "removed":  true
+    },
+    {
+        "target":  "D:\\sater\\satr-2\\dist\\preview-controls-pick-submit\\after.mjs",
+        "sha256":  "53e17ec708654d8fdecda37ac1eab476a165cc22e4899148bd8cbad4c6f6cdaa",
+        "command":  "Remove-Item -LiteralPath \u0027D:\\sater\\satr-2\\dist\\preview-controls-pick-submit\\after.mjs\u0027",
+        "removed":  true
+    }
+]

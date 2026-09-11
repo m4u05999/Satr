@@ -1,0 +1,109 @@
+{
+  "kind": "isolated-production-source-mutations",
+  "productionFilesMutated": false,
+  "directory": "dist/conversation-bites-1788988525458",
+  "sourceSha256": {
+    "src/ui/app.js": "9e3ce493f86104fe212fd8e64cc082411ad4c1c0a5c3f7e9f0fdb24fb3ca74dc",
+    "electron/main.js": "39ea0902a812497e2ad67ca989846490f2382035ce4a0563cf5c7466320e8a3c"
+  },
+  "plantCommand": "$OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n@'\nfrom pathlib import Path\nimport hashlib\ntarget=Path('dist/conversation-bites-1788988525458')\ntarget.mkdir(parents=True, exist_ok=True)\ncases=[\n ('src/ui/app.js','app-ui.js','if (supportsConversation(previousEngine) && supportsConversation(e)) {','if ((conversationId = null, supportsConversation(previousEngine) && supportsConversation(e))) {',1),\n ('electron/main.js','main.js',\"continuityContext: continuity?.context || '',\",\"continuityContext: '',\",2),\n ('src/ui/app.js','app-cwd.js','setCwd(prev);\\n      sessionCwd = prev;','setCwd(prev);\\n      setCwd(nextCwd);\\n      sessionCwd = prev;',1),\n]\nfor original,name,a,b,count in cases:\n s=Path(original).read_text(encoding='utf-8')\n print(name+' before original='+str(s.count(a))+' mutant='+str(s.count(b)))\n assert s.count(a)==count and s.count(b)==0\n changed=s.replace(a,b)\n (target/name).write_bytes(changed.encode('utf-8'))\n saved=(target/name).read_text(encoding='utf-8')\n print(name+' after original='+str(saved.count(a))+' mutant='+str(saved.count(b)))\n assert saved.count(a)==0 and saved.count(b)==count\n (target/(name+'.baseline')).write_bytes(s.encode('utf-8'))\n print('source '+original+' sha256='+hashlib.sha256(Path(original).read_bytes()).hexdigest())\nprint('isolated mutation directory: '+str(target))\n'@ | python -",
+  "counts": [
+    {
+      "file": "app-ui.js",
+      "originalBefore": 1,
+      "originalAfter": 0,
+      "mutantBefore": 0,
+      "mutantAfter": 1,
+      "restoredOriginal": 1,
+      "restoredMutant": 0
+    },
+    {
+      "file": "main.js",
+      "originalBefore": 2,
+      "originalAfter": 0,
+      "mutantBefore": 0,
+      "mutantAfter": 2,
+      "restoredOriginal": 2,
+      "restoredMutant": 0
+    },
+    {
+      "file": "app-cwd.js",
+      "originalBefore": 1,
+      "originalAfter": 0,
+      "mutantBefore": 0,
+      "mutantAfter": 1,
+      "restoredOriginal": 1,
+      "restoredMutant": 0
+    }
+  ],
+  "testCommands": [
+    "node scripts/conversation-ui-test.js --source dist/conversation-bites-1788988525458/app-ui.js",
+    "node scripts/conversation-main-test.js --source dist/conversation-bites-1788988525458/main.js",
+    "node scripts/sessions-cwd-test.js --source dist/conversation-bites-1788988525458/app-cwd.js"
+  ],
+  "failureOutput": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "chunk_id": "9f0a67",
+        "wall_time_seconds": 0.4112161,
+        "exit_code": 1,
+        "original_token_count": 136,
+        "output": "PASS تغيير النموذج يبقي المحادثة والجلسة\nAssertionError [ERR_ASSERTION]: فُقدت هوية المحادثة عند تبديل المحرك\n\nnull !== 'chat-a'\n\n    at D:\\sater\\satr-2\\scripts\\conversation-ui-test.js:112:12\n    at async test (D:\\sater\\satr-2\\scripts\\conversation-ui-test.js:103:39)\n    at async main (D:\\sater\\satr-2\\scripts\\conversation-ui-test.js:109:3) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: null,\n  expected: 'chat-a',\n  operator: 'strictEqual',\n  diff: 'simple'\n}\n"
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "chunk_id": "aa2345",
+        "wall_time_seconds": 0.4847761,
+        "exit_code": 1,
+        "original_token_count": 111,
+        "output": "AssertionError [ERR_ASSERTION]: لم يصل سجل المحادثة إلى المحرك الثاني\n    at D:\\sater\\satr-2\\scripts\\conversation-main-test.js:103:14\n    at async test (D:\\sater\\satr-2\\scripts\\conversation-main-test.js:93:5)\n    at async main (D:\\sater\\satr-2\\scripts\\conversation-main-test.js:96:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: '==',\n  diff: 'simple'\n}\n"
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "chunk_id": "295551",
+        "wall_time_seconds": 0.4205331,
+        "exit_code": 1,
+        "original_token_count": 792,
+        "output": "\n— انزياح cwd داخل الجلسة —\n  ✓ يعيد **أول** cwd — مجلد المشروع الذي بدأت فيه الجلسة\n  ✓ ولا يعيد آخر cwd — مجلد الصدفة العابر\n  ✓ والرسائل لم تتأثر بالتغيير\n\n— حالات حدّية —\n  ✓ جلسة بلا انزياح تعيد مجلدها كما هو\n  ✓ سطر متصدّر بلا cwd لا يمنع التقاط الأول الحقيقي\n  ✓ نصّ فارغ يعيد cwd فارغاً بلا انهيار\n  ✓ cwd فارغ لا يُحتسب أولاً\n\n— اتفاق الطرفين (العطل كان في اختلافهما) —\n  ✓ listSessions يأخذ أول cwd (‏حارس `!cwd &&`)\n  ✓ buildMessages يأخذ أول cwd كذلك — لا إسناد غير محروس\n  ✓ ولا إسناد `cwd = e.cwd` بلا حارس في الملف كلّه\n  ✓ التعليق التفسيري باقٍ فلا يُعاد «آخر cwd» اجتهاداً\n\n— المعقل الثاني: الاستئناف لا يبدّل مجلدك صامتاً —\n  ✓ مسارات الاستئناف الثلاثة تمرّ بدالة واحدة\n  ✓ ولا كتابة مباشرة لـsatr_cwd في مسار استئناف\n  ✓ الدالة موجودة وغير فارغة\n  ✓ تُعلم المستخدم بزرّ فعل لا بإشعار صامت\n  ✓ تعرض المجلدين معاً — الجديد والسابق\n  ✓ لا تُزعج بفرق حالة الأحرف (‏ويندوز لا يميّزها)\n  ✓ ولا تُعلم حين لا مجلد سابق (‏أول تشغيل)\n  ✓ التراجع يستعيد المجلد **ويصفّر الجلسة** صراحةً\n  ✓ ولا مربع تأكيد حاجب (‏قرار معلن: أخبِر ولا تسأل)\n  ✓ دالة الإنتاج تطبّق المجلد وتعرض طرفي الانتقال\n  ✓ التراجع محجوب أثناء الدور ولا يغيّر المجلد أو الجلسة\n  ✗ زر الإنتاج يعيد المجلد ويلغي معرّف الجلسة\nD:\\sater\\satr-2\\scripts\\sessions-cwd-test.js:33\r\n  throw new assert.AssertionError({ message: label + (detail ? ' — ' + detail : '') });\r\n  ^\r\n\r\nAssertionError [ERR_ASSERTION]: زر الإنتاج يعيد المجلد ويلغي معرّف الجلسة\r\n    at new AssertionError (node:internal/assert/assertion_error:380:5)\r\n    at ok (D:\\sater\\satr-2\\scripts\\sessions-cwd-test.js:33:9)\r\n    at Object.<anonymous> (D:\\sater\\satr-2\\scripts\\sessions-cwd-test.js:152:3)\r\n    at Module._compile (node:internal/modules/cjs/loader:1934:14)\r\n    at Object..js (node:internal/modules/cjs/loader:2074:10)\r\n    at Module.load (node:internal/modules/cjs/loader:1656:32)\r\n    at Module._load (node:internal/modules/cjs/loader:1448:12)\r\n    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)\r\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)\r\n    at node:internal/main/run_main_module:33:47 {\r\n  generatedMessage: false,\r\n  code: 'ERR_ASSERTION',\r\n  actual: undefined,\r\n  expected: undefined,\r\n  operator: undefined,\r\n  diff: 'simple'\r\n}\r\n\r\nNode.js v26.5.0\r\n"
+      }
+    }
+  ],
+  "restoreCommand": "$OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n@'\nfrom pathlib import Path\nimport hashlib\ntarget=Path('dist/conversation-bites-1788988525458')\ncases=[\n ('app-ui.js','if (supportsConversation(previousEngine) && supportsConversation(e)) {','if ((conversationId = null, supportsConversation(previousEngine) && supportsConversation(e))) {',1),\n ('main.js',\"continuityContext: continuity?.context || '',\",\"continuityContext: '',\",2),\n ('app-cwd.js','setCwd(prev);\\n      sessionCwd = prev;','setCwd(prev);\\n      setCwd(nextCwd);\\n      sessionCwd = prev;',1),\n]\nfor name,a,b,count in cases:\n p=target/name\n s=p.read_text(encoding='utf-8')\n assert s.count(a)==0 and s.count(b)==count\n baseline=(target/(name+'.baseline')).read_bytes()\n p.write_bytes(baseline)\n restored=p.read_text(encoding='utf-8')\n print(name+' restored original='+str(restored.count(a))+' mutant='+str(restored.count(b)))\n assert restored.count(a)==count and restored.count(b)==0\n assert hashlib.sha256(p.read_bytes()).hexdigest()==hashlib.sha256(baseline).hexdigest()\nprint('restored isolated copies; production files were never mutated')\n'@ | python -",
+  "restoredOutput": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "chunk_id": "8379d4",
+        "wall_time_seconds": 0.4539709,
+        "exit_code": 0,
+        "original_token_count": 414,
+        "output": "PASS تغيير النموذج يبقي المحادثة والجلسة\nPASS الانتقال بين المحركين يبقي الهوية ويفصل جلسة المحرك\nPASS مصدر جلسة قديمة يبقى عبر تبديلات متكررة قبل الإرسال\nPASS المحرك والمجلد وجديدة محجوبة أثناء الدور بلا إيقاف خفي\nPASS جديدة تفصل الهوية وتنسى المؤشر وحده\nPASS تغيير المشروع أو محرك غير مشمول يفصل المحادثة\nPASS الاستعادة تعرض canonical وتختار المحرك المحفوظ\nPASS استعادة متأخرة لا تعيد محادثة بعد جديدة\nPASS استعادة محول متأخرة لا تلوث المحرك الجديد\nPASS الإرسال يلتقط النموذج والجلسة قبل انتظار المهارات\nPASS إيقاف التحضير يلغي الإرسال المتأخر\nPASS أحداث هوية قديمة أو لمشروع آخر لا تُقبل\nPASS تاريخ جلسة مستوردة لا يكرر الطلب الجاري\nPASS قراءة جلسة مرتبطة تفضل سجل المحادثة الكامل\nPASS الضغط يبقي هوية المحادثة والجلسة\nPASS فشل IPC لا يترك المؤلف مشغولاً\nPASS فقدان جلسة المحرك يبقي المحادثة ومجلدها ويشرح الاستعادة\nPASS استئناف جلسة يحجب تغيير المجلد إلا لتحديثه الداخلي\nPASS فشل الاستعادة يُعلن بلا تسريب ولا إشعار من سياق قديم\nconversation-ui: 19/19 passed\n"
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "chunk_id": "ce4e0c",
+        "wall_time_seconds": 0.8788958,
+        "exit_code": 0,
+        "original_token_count": 202,
+        "output": "PASS المسار الفعلي ينقل sdk ثم codex ثم sdk ويحفظ الطلب مرة واحدة\nPASS تغيير النموذج يستأنف sessionId نفسه بلا نقل مكرر\nPASS الأحداث المتأخرة لا تكتب في السجل ولا تصل إلى المصير\nPASS مجلد غير صالح ومصدر من مشروع آخر يُرفضان قبل native.start\nPASS فشل prepare لا يبدأ محركاً أو محادثة فارغة\nPASS مرجع جلسة قديمة يستورد القرص ويعيد تاريخاً بلا الطلب الجاري\nPASS تعافي Codex يعيد السياق الكامل عبر callback الإنتاجية\nPASS إلغاء طلب أثناء قراءة المصدر يمنع بدءه بعد حسم القراءة\nconversation-main: 8/8 passed\n"
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "chunk_id": "f21ce2",
+        "wall_time_seconds": 0.4255363,
+        "exit_code": 0,
+        "original_token_count": 585,
+        "output": "\n— انزياح cwd داخل الجلسة —\n  ✓ يعيد **أول** cwd — مجلد المشروع الذي بدأت فيه الجلسة\n  ✓ ولا يعيد آخر cwd — مجلد الصدفة العابر\n  ✓ والرسائل لم تتأثر بالتغيير\n\n— حالات حدّية —\n  ✓ جلسة بلا انزياح تعيد مجلدها كما هو\n  ✓ سطر متصدّر بلا cwd لا يمنع التقاط الأول الحقيقي\n  ✓ نصّ فارغ يعيد cwd فارغاً بلا انهيار\n  ✓ cwd فارغ لا يُحتسب أولاً\n\n— اتفاق الطرفين (العطل كان في اختلافهما) —\n  ✓ listSessions يأخذ أول cwd (‏حارس `!cwd &&`)\n  ✓ buildMessages يأخذ أول cwd كذلك — لا إسناد غير محروس\n  ✓ ولا إسناد `cwd = e.cwd` بلا حارس في الملف كلّه\n  ✓ التعليق التفسيري باقٍ فلا يُعاد «آخر cwd» اجتهاداً\n\n— المعقل الثاني: الاستئناف لا يبدّل مجلدك صامتاً —\n  ✓ مسارات الاستئناف الثلاثة تمرّ بدالة واحدة\n  ✓ ولا كتابة مباشرة لـsatr_cwd في مسار استئناف\n  ✓ الدالة موجودة وغير فارغة\n  ✓ تُعلم المستخدم بزرّ فعل لا بإشعار صامت\n  ✓ تعرض المجلدين معاً — الجديد والسابق\n  ✓ لا تُزعج بفرق حالة الأحرف (‏ويندوز لا يميّزها)\n  ✓ ولا تُعلم حين لا مجلد سابق (‏أول تشغيل)\n  ✓ التراجع يستعيد المجلد **ويصفّر الجلسة** صراحةً\n  ✓ ولا مربع تأكيد حاجب (‏قرار معلن: أخبِر ولا تسأل)\n  ✓ دالة الإنتاج تطبّق المجلد وتعرض طرفي الانتقال\n  ✓ التراجع محجوب أثناء الدور ولا يغيّر المجلد أو الجلسة\n  ✓ زر الإنتاج يعيد المجلد ويلغي معرّف الجلسة\n  ✓ دالة الإنتاج لا تنبّه لاختلاف حالة الأحرف وحده\n\nsessions-cwd: نجح — 24 فحصاً (مجلد المشروع هو أول cwd، والطرفان متفقان، والاستئناف يُعلم ويتيح التراجع).\n"
+      }
+    }
+  ]
+}

@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const keys = require('../keys');
 const chats = require('../chats');
 const tools = require('../tools');
+const connectionTools = require('../connection-tools');
 const skillCatalog = require('../skills');
 const memory = require('../memory');
 const termjobs = require('../termjobs'); // مهام الخلفية المعمّرة — كتلة «انتهت بلا دور نشط»
@@ -209,6 +210,9 @@ function start(input, cwd, emit) {
   const pendingPerms = new Map();
   let currentRequest = null;
   let aborted = false;
+  let connectionsActive = true;
+  const connectionGate = connectionTools.createPermissionGate({ emit,
+    isActive: () => connectionsActive && !aborted });
   let contextEstimate = null;
   let turnPrompt = '';
   let turnItemIndex = -1;
@@ -382,6 +386,8 @@ function start(input, cwd, emit) {
   }
 
   function fail(message) {
+    connectionsActive = false;
+    connectionGate.stop();
     emit({ type: 'spawn_error', text: 'فشل طلب OpenAI: ' + message });
     emit({ type: 'result', session_id: sessionId, is_error: true, duration_ms: Date.now() - startedAt, result: message });
     emit({ type: 'proc_done', code: 1 });
@@ -448,10 +454,12 @@ function start(input, cwd, emit) {
             const allowed = await askPermission(call.call_id, call.name, args, tier);
             if (aborted) return;
             toolResult = allowed
-              ? await tools.run(call.name, cwd, args, { emit, id: call.call_id, skillContext, engine: PROVIDER, mediaCostState })
+              ? await tools.run(call.name, cwd, args, { emit, id: call.call_id, skillContext, engine: PROVIDER, mediaCostState,
+              isActive: () => connectionsActive && !aborted, requestPermission: connectionGate.requestPermission })
               : { ok: false, content: 'رفض المستخدم هذا الإجراء — لا تعاود المحاولة نفسها؛ اشرح ما كنت ستفعله أو اقترح بديلاً' };
           } else {
-            toolResult = await tools.run(call.name, cwd, args, { emit, id: call.call_id, skillContext, engine: PROVIDER, mediaCostState });
+            toolResult = await tools.run(call.name, cwd, args, { emit, id: call.call_id, skillContext, engine: PROVIDER, mediaCostState,
+              isActive: () => connectionsActive && !aborted, requestPermission: connectionGate.requestPermission });
           }
           emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: call.call_id, is_error: !toolResult.ok }] } });
           items.push({ type: 'function_call_output', call_id: call.call_id, output: toolResult.content });
@@ -489,6 +497,8 @@ function start(input, cwd, emit) {
         provider: PROVIDER,
         structured_output: structuredOutput,
       });
+      connectionsActive = false;
+      connectionGate.stop();
       emit({ type: 'proc_done', code: 0 });
       return;
     }
@@ -497,12 +507,15 @@ function start(input, cwd, emit) {
   return {
     stop() {
       aborted = true;
+      connectionsActive = false;
+      connectionGate.stop();
       for (const [, pending] of pendingPerms) { try { pending.resolve(false); } catch {} }
       pendingPerms.clear();
       try { if (currentRequest) currentRequest.destroy(); } catch {}
       return Promise.resolve();
     },
     resolvePermission(id, allow, always) {
+      if (connectionGate.resolvePermission(id, allow)) return true;
       const pending = pendingPerms.get(id);
       if (!pending) return false;
       pendingPerms.delete(id);

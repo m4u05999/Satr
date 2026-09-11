@@ -120,7 +120,12 @@ function atomicWriteRegistry(file, items, fileSystem = fs) {
 function cleanStoredSegment(item, downloadsPath) {
   if (!item || typeof item !== 'object' || !SAFE_SEGMENT_NAME.test(item.filename || '')
       || !isInsideDownloads(downloadsPath, item.path)) return null;
-  const aspect = sanitizeAspect(item.aspect);
+  const appWindow = item.target_kind === 'app-window'
+    && /^live_[a-f0-9]{24}$/.test(item.test_run || '')
+    && /^[a-z][a-z0-9-]{0,63}$/.test(item.scenario || '')
+    && Number.isInteger(item.width) && item.width > 0 && item.width <= 10000
+    && Number.isInteger(item.height) && item.height > 0 && item.height <= 10000;
+  const aspect = appWindow && item.aspect === 'native' ? 'native' : sanitizeAspect(item.aspect);
   if (!aspect || !Number.isInteger(item.duration_ms) || item.duration_ms < 0
       || item.duration_ms > 24 * 60 * 60 * 1000) return null;
   const segmentId = SAFE_PROMO_SESSION.test(item.segment_id || '')
@@ -133,6 +138,8 @@ function cleanStoredSegment(item, downloadsPath) {
     timing_quality: item.timing_quality === 'verified' ? 'verified' : 'unverified',
     events_file: typeof item.events_file === 'string' && path.isAbsolute(item.events_file)
       ? path.resolve(item.events_file) : '',
+    ...(appWindow ? { target_kind: 'app-window', test_run: item.test_run, scenario: item.scenario,
+      width: item.width, height: item.height } : {}),
   };
 }
 
@@ -349,6 +356,8 @@ function permissionDetailsAreAudioOnly(details) {
 function create(initialDeps) {
   let deps = { ...(initialDeps || {}) };
   let captureWindow = null;
+  let ownsCaptureWindow = true;
+  let displayHandlerInstalled = false;
   let captureSource = null;
   let promoSessionId = '';
   let active = null;
@@ -388,6 +397,8 @@ function create(initialDeps) {
   }
 
   function clearDisplayHandler() {
+    if (!displayHandlerInstalled) return;
+    displayHandlerInstalled = false;
     try {
       if (deps.displaySession && typeof deps.displaySession.setDisplayMediaRequestHandler === 'function') {
         deps.displaySession.setDisplayMediaRequestHandler(null);
@@ -422,14 +433,16 @@ function create(initialDeps) {
 
   function closeCaptureWindow() {
     const win = captureWindow;
+    const owned = ownsCaptureWindow;
+    if (win && typeof win.removeListener === 'function') win.removeListener('closed', handleWindowClosed);
     captureWindow = null;
     captureSource = null;
     clearDisplayHandler();
     microphoneGrantUntil = 0;
-    if (typeof deps.onTarget === 'function') {
+    if (owned && win && typeof deps.onTarget === 'function') {
       try { deps.onTarget(null); } catch {}
     }
-    if (win && typeof win.isDestroyed === 'function' && !win.isDestroyed()) {
+    if (owned && win && typeof win.isDestroyed === 'function' && !win.isDestroyed()) {
       try { win.destroy(); } catch {}
     }
   }
@@ -451,11 +464,12 @@ function create(initialDeps) {
   }
 
   function handleWindowClosed() {
+    if (captureWindow) captureWindow.removeListener('closed', handleWindowClosed);
     captureWindow = null;
     captureSource = null;
     clearDisplayHandler();
     microphoneGrantUntil = 0;
-    if (typeof deps.onTarget === 'function') {
+    if (ownsCaptureWindow && typeof deps.onTarget === 'function') {
       try { deps.onTarget(null); } catch {}
     }
     if (active) {
@@ -480,6 +494,7 @@ function create(initialDeps) {
     const displaySession = deps.displaySession;
     const owner = deps.ownerWebContents;
     if (!displaySession || typeof displaySession.setDisplayMediaRequestHandler !== 'function' || !owner) return;
+    displayHandlerInstalled = true;
     displaySession.setDisplayMediaRequestHandler((request, callback) => {
       const sameOwner = frameOwnerId(request) === owner.id;
       const valid = sameOwner && active && captureSource && captureSource.id === sourceId
@@ -492,6 +507,8 @@ function create(initialDeps) {
   }
 
   async function showBeacon(kind) {
+    // تسجيل التطبيق لا يضيف غطاءً إلى المشهد؛ توقيته يبقى غير متحقق بالمنارة.
+    if (!ownsCaptureWindow) return { ok: false };
     const wc = captureWindow && !captureWindow.isDestroyed() ? captureWindow.webContents : null;
     if (!wc) return { ok: false };
     let marker = deps.showBeacon;
@@ -503,6 +520,8 @@ function create(initialDeps) {
   }
 
   function connectEventSink() {
+    // أدوات المعاينة تظل موجّهة إلى صفحة المشروع، ولا تقود قشرة سطر المسجّلة.
+    if (!ownsCaptureWindow) return;
     let setter = deps.setEventSink;
     if (typeof setter !== 'function') {
       try { setter = require('./preview').setCaptureEventSink; } catch {}
@@ -519,6 +538,7 @@ function create(initialDeps) {
       return { ok: false, error: 'unavailable' };
     }
     const size = ASPECTS[aspect];
+    ownsCaptureWindow = true;
     if (!captureWindow || captureWindow.isDestroyed()) {
       const title = 'Satr Promo Capture ' + crypto.randomBytes(8).toString('hex');
       captureWindow = new BrowserWindow({
@@ -557,6 +577,11 @@ function create(initialDeps) {
       closeCaptureWindow();
       return { ok: false, error: 'load_failed' };
     }
+    return selectCaptureSource(size);
+  }
+
+  async function selectCaptureSource(size) {
+    const desktopCapturer = deps.desktopCapturer;
     const mediaSourceId = captureWindow.getMediaSourceId();
     const sourceKey = mediaSourceWindowKey(mediaSourceId);
     const attempts = Number.isInteger(deps.sourceAttempts) ? Math.max(1, Math.min(30, deps.sourceAttempts)) : 5;
@@ -582,27 +607,52 @@ function create(initialDeps) {
       closeCaptureWindow();
       return { ok: false, error: 'source_not_found' };
     }
-    installDisplayHandler(sourceEnumerated ? captureSource : captureWindow.webContents.mainFrame, captureSource.id);
+    if (ownsCaptureWindow) installDisplayHandler(sourceEnumerated ? captureSource : captureWindow.webContents.mainFrame, captureSource.id);
     return { ok: true, source: captureSource, sourceEnumerated, size };
   }
 
   async function start(options) {
+    return beginCapture(options, null);
+  }
+
+  // قدرة main فقط: النافذة المستقبلة نفسها، دون قبول HWND أو sourceId عبر IPC.
+  async function startAppWindow(window, options) {
     const input = options && typeof options === 'object' ? options : {};
-    const aspect = sanitizeAspect(input.aspect || '16:9');
+    if (input.confirmed !== true) return { ok: false, error: 'confirmation_required' };
+    if (!deps.BrowserWindow || typeof deps.BrowserWindow.fromWebContents !== 'function'
+        || deps.BrowserWindow.fromWebContents(deps.ownerWebContents) !== window
+        || !window || window.isDestroyed() || !window.isVisible()) return { ok: false, error: 'bad_window' };
+    if (input.audio || input.microphone || !/^live_[a-f0-9]{24}$/.test(input.testRun || '')
+        || !/^[a-z][a-z0-9-]{0,63}$/.test(input.scenario || '')) return { ok: false, error: 'bad_input' };
+    return beginCapture(input, window);
+  }
+
+  async function beginCapture(options, appWindow) {
+    const input = options && typeof options === 'object' ? options : {};
+    const aspect = appWindow ? 'native' : sanitizeAspect(input.aspect || '16:9');
     if (!aspect) return { ok: false, error: 'bad_aspect' };
     if (active) return { ok: false, error: 'busy' };
     const validator = deps.isHttpUrl;
     const requested = cleanUrl(input.url, validator);
     const fallback = typeof deps.defaultUrl === 'function' ? cleanUrl(deps.defaultUrl(), validator) : '';
-    const url = requested || fallback;
+    const url = appWindow ? 'satr:app-window' : requested || fallback;
     if (!url) return { ok: false, error: 'bad_url' };
     if (!promoSessionId) promoSessionId = 'promo_' + crypto.randomBytes(12).toString('hex');
     const segmentId = 'promo_' + crypto.randomBytes(12).toString('hex');
     active = {
       sessionId: promoSessionId, segmentId, aspect, url, startedAt: 0, durationMs: 0, filename: '',
       systemAudio: input.audio === 'loopback', microphone: input.microphone === true, sink: null,
+      ...(appWindow ? { target_kind: 'app-window', test_run: input.testRun, scenario: input.scenario } : {}),
     };
-    const prepared = await ensureCaptureWindow(aspect, url);
+    let prepared;
+    if (appWindow) {
+      closeCaptureWindow();
+      ownsCaptureWindow = false;
+      captureWindow = appWindow;
+      captureWindow.on('closed', handleWindowClosed);
+      const { width, height } = appWindow.getBounds();
+      prepared = await selectCaptureSource({ width, height });
+    } else prepared = await ensureCaptureWindow(aspect, url);
     if (!prepared.ok) { active = null; return prepared; }
     active.sink = createEventSink({
       segmentId,
@@ -620,8 +670,12 @@ function create(initialDeps) {
       }, READY_TIMEOUT_MS);
       readyPending = { resolve, timer };
     });
+    // الأبعاد المطلوبة تسبق الإرسال كي لا تطمس قياساً يعيده renderer متزامناً.
+    active.width = prepared.size.width;
+    active.height = prepared.size.height;
     emit({
       type: 'capture_start', session_id: promoSessionId, segment_id: segmentId, aspect, url,
+      target_kind: appWindow ? 'app-window' : 'web',
       source_id: prepared.source.id, source_enumerated: prepared.sourceEnumerated,
       width: prepared.size.width, height: prepared.size.height, fps: 30,
       audio: active.systemAudio ? 'loopback' : false,
@@ -641,11 +695,21 @@ function create(initialDeps) {
     return { ok: true, session_id: promoSessionId };
   }
 
-  async function rendererReady(sessionId, ok, error) {
+  async function rendererReady(sessionId, ok, error, capture) {
     if (!active || active.sessionId !== sessionId || typeof ok !== 'boolean') return { ok: false, error: 'bad_session' };
     if (!ok) {
       settleReady({ ok: false, error: String(error || 'renderer_failed').slice(0, 80) });
       return { ok: true };
+    }
+    if (active.target_kind === 'app-window') {
+      // حدود النافذة منطقية؛ السجل يحفظ بكسلات مسار الفيديو المقاسة بعد ضبط الالتقاط.
+      if (!capture || typeof capture !== 'object' || Array.isArray(capture)
+          || !Number.isInteger(capture.width) || capture.width < 1 || capture.width > 10000
+          || !Number.isInteger(capture.height) || capture.height < 1 || capture.height > 10000) {
+        return { ok: false, error: 'bad_input' };
+      }
+      active.width = capture.width;
+      active.height = capture.height;
     }
     const captureMs = monotonicNow();
     const marker = await showBeacon('start');
@@ -667,6 +731,7 @@ function create(initialDeps) {
       stopPending = null;
       active = null;
       connectEventSink();
+      if (!ownsCaptureWindow) closeCaptureWindow();
       resolver({ ok: false, error: 'download_timeout' });
     }, STOP_TIMEOUT_MS);
     stopPending = { resolve: resolver, timer, promise };
@@ -749,6 +814,10 @@ function create(initialDeps) {
           created_at: Date.now(),
           timing_quality: finalized.timing_quality,
           events_file: finalized.path,
+          ...(active.target_kind === 'app-window' ? {
+            target_kind: active.target_kind, test_run: active.test_run, scenario: active.scenario,
+            width: active.width, height: active.height,
+          } : {}),
         };
         segments.push(item);
         persistSegments(); // أفضل جهد: فشل القرص لا يحوّل نجاح التسجيل إلى فشل.
@@ -764,6 +833,7 @@ function create(initialDeps) {
     }
     active = null;
     connectEventSink();
+    if (!ownsCaptureWindow) closeCaptureWindow();
     emit({ type: 'capture_idle', session_id: promoSessionId });
     return true;
   }
@@ -789,6 +859,8 @@ function create(initialDeps) {
   }
 
   async function stopAll(options) {
+    // تسجيل المختبر يخص التجربة التي قد تضم عدة أدوار، ويقف عند طلبه أو إغلاق التطبيق.
+    if (active && active.target_kind === 'app-window' && options && options.scope === 'run') return { ok: true };
     const discard = !!(options && options.discard);
     const ownerDestroyed = deps.ownerWebContents && typeof deps.ownerWebContents.isDestroyed === 'function'
       && deps.ownerWebContents.isDestroyed();
@@ -808,11 +880,11 @@ function create(initialDeps) {
   }
 
   function currentWebContents() {
-    return captureWindow && !captureWindow.isDestroyed() ? captureWindow.webContents : null;
+    return ownsCaptureWindow && captureWindow && !captureWindow.isDestroyed() ? captureWindow.webContents : null;
   }
 
   return {
-    configure, start, stop, stopAll, rendererReady, rendererCommit, rendererAbort, downloadResult,
+    configure, start, startAppWindow, stop, stopAll, rendererReady, rendererCommit, rendererAbort, downloadResult,
     rendererBeacon, armMicrophone, captureEvent, listSegments, currentWebContents,
   };
 }
@@ -829,6 +901,7 @@ module.exports = {
   createEventSink, permissionDetailsAreAudioOnly, create,
   configure: (...args) => singleton.configure(...args),
   start: (...args) => singleton.start(...args),
+  startAppWindow: (...args) => singleton.startAppWindow(...args),
   stop: (...args) => singleton.stop(...args),
   stopAll: (...args) => singleton.stopAll(...args),
   rendererReady: (...args) => singleton.rendererReady(...args),

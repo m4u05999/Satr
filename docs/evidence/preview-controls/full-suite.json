@@ -1,0 +1,483 @@
+{
+  "recordedAt": "2026-09-09T23:27:34.412Z",
+  "log": "dist/preview-controls-full-suite.log",
+  "logEncoding": "UTF-16LE; Arabic console text was already mojibake; ASCII markers and counts are used.",
+  "logSHA256": "fbe87420e440fac9aa12d1227f7475f3fd0734f44ba9a7287a7fde09492170ee",
+  "exitCode": 0,
+  "started": "2026-09-10 02:17:58",
+  "ended": "2026-09-10 02:26:46",
+  "timezone": "Asia/Riyadh",
+  "durationSeconds": 528,
+  "succeededGroups": 112,
+  "skippedGroups": 0,
+  "retried": [],
+  "groups": [
+    {
+      "index": 1,
+      "name": "test:skills"
+    },
+    {
+      "index": 2,
+      "name": "test:slash-menu"
+    },
+    {
+      "index": 3,
+      "name": "test:chat-rtl"
+    },
+    {
+      "index": 4,
+      "name": "test:empty-block"
+    },
+    {
+      "index": 5,
+      "name": "test:eventtrace"
+    },
+    {
+      "index": 6,
+      "name": "test:update-ui"
+    },
+    {
+      "index": 7,
+      "name": "test:settings-account"
+    },
+    {
+      "index": 8,
+      "name": "test:task-ledger-ui"
+    },
+    {
+      "index": 9,
+      "name": "test:daily-loop-ui"
+    },
+    {
+      "index": 10,
+      "name": "test:sessionmeta"
+    },
+    {
+      "index": 11,
+      "name": "test:sessions-cwd"
+    },
+    {
+      "index": 12,
+      "name": "test:conversations"
+    },
+    {
+      "index": 13,
+      "name": "test:conversation-ui"
+    },
+    {
+      "index": 14,
+      "name": "test:conversation-main"
+    },
+    {
+      "index": 15,
+      "name": "test:codexsessions"
+    },
+    {
+      "index": 16,
+      "name": "test:tasks"
+    },
+    {
+      "index": 17,
+      "name": "test:observations"
+    },
+    {
+      "index": 18,
+      "name": "test:suite-coverage"
+    },
+    {
+      "index": 19,
+      "name": "test:radar-graveyard"
+    },
+    {
+      "index": 20,
+      "name": "test:hookguard"
+    },
+    {
+      "index": 21,
+      "name": "test:probe-runner"
+    },
+    {
+      "index": 22,
+      "name": "test:langmetric"
+    },
+    {
+      "index": 23,
+      "name": "test:langshadow"
+    },
+    {
+      "index": 24,
+      "name": "test:langoverride"
+    },
+    {
+      "index": 25,
+      "name": "test:farsi-content"
+    },
+    {
+      "index": 26,
+      "name": "test:memory"
+    },
+    {
+      "index": 27,
+      "name": "test:design-guard"
+    },
+    {
+      "index": 28,
+      "name": "test:gitdiff"
+    },
+    {
+      "index": 29,
+      "name": "test:gitsafe"
+    },
+    {
+      "index": 30,
+      "name": "test:keys"
+    },
+    {
+      "index": 31,
+      "name": "test:topbar-dev-badge"
+    },
+    {
+      "index": 32,
+      "name": "test:repomap"
+    },
+    {
+      "index": 33,
+      "name": "test:context"
+    },
+    {
+      "index": 34,
+      "name": "test:orchestrator"
+    },
+    {
+      "index": 35,
+      "name": "test:opsroom-all"
+    },
+    {
+      "index": 36,
+      "name": "test:mobile"
+    },
+    {
+      "index": 37,
+      "name": "test:qr"
+    },
+    {
+      "index": 38,
+      "name": "test:tools-edit"
+    },
+    {
+      "index": 39,
+      "name": "test:codexmcp"
+    },
+    {
+      "index": 40,
+      "name": "test:connections"
+    },
+    {
+      "index": 41,
+      "name": "test:connection-services"
+    },
+    {
+      "index": 42,
+      "name": "test:connections-ui"
+    },
+    {
+      "index": 43,
+      "name": "test:genmedia"
+    },
+    {
+      "index": 44,
+      "name": "test:codex-contract"
+    },
+    {
+      "index": 45,
+      "name": "test:send-liveness"
+    },
+    {
+      "index": 46,
+      "name": "test:codex-steer"
+    },
+    {
+      "index": 47,
+      "name": "test:codex-compact"
+    },
+    {
+      "index": 48,
+      "name": "test:codex-mcp-panel"
+    },
+    {
+      "index": 49,
+      "name": "test:codex-account"
+    },
+    {
+      "index": 50,
+      "name": "test:kimi"
+    },
+    {
+      "index": 51,
+      "name": "test:kimi-keepalive"
+    },
+    {
+      "index": 52,
+      "name": "test:browserguard"
+    },
+    {
+      "index": 53,
+      "name": "test:browserorigin"
+    },
+    {
+      "index": 54,
+      "name": "test:browserpolicy"
+    },
+    {
+      "index": 55,
+      "name": "test:browser-platform-live"
+    },
+    {
+      "index": 56,
+      "name": "test:execguard"
+    },
+    {
+      "index": 57,
+      "name": "test:termjobs"
+    },
+    {
+      "index": 58,
+      "name": "test:term-longline"
+    },
+    {
+      "index": 59,
+      "name": "test:termjobs-done"
+    },
+    {
+      "index": 60,
+      "name": "test:secretscrub"
+    },
+    {
+      "index": 61,
+      "name": "test:envbrief"
+    },
+    {
+      "index": 62,
+      "name": "test:satr-guide"
+    },
+    {
+      "index": 63,
+      "name": "test:handoff-bar-live"
+    },
+    {
+      "index": 64,
+      "name": "test:preview-recording"
+    },
+    {
+      "index": 65,
+      "name": "test:promocapture"
+    },
+    {
+      "index": 66,
+      "name": "test:live-test"
+    },
+    {
+      "index": 67,
+      "name": "test:promocapture-batch1"
+    },
+    {
+      "index": 68,
+      "name": "test:promocapture-live"
+    },
+    {
+      "index": 69,
+      "name": "test:promo-studio"
+    },
+    {
+      "index": 70,
+      "name": "test:promostudio-batch1"
+    },
+    {
+      "index": 71,
+      "name": "test:claude-auth"
+    },
+    {
+      "index": 72,
+      "name": "test:probe-version"
+    },
+    {
+      "index": 73,
+      "name": "test:readiness"
+    },
+    {
+      "index": 74,
+      "name": "test:enginesupdate"
+    },
+    {
+      "index": 75,
+      "name": "test:gate-live"
+    },
+    {
+      "index": 76,
+      "name": "test:fork-rewind"
+    },
+    {
+      "index": 77,
+      "name": "test:claude-models"
+    },
+    {
+      "index": 78,
+      "name": "test:elicitation"
+    },
+    {
+      "index": 79,
+      "name": "test:sdk-background"
+    },
+    {
+      "index": 80,
+      "name": "test:sdk-polish"
+    },
+    {
+      "index": 81,
+      "name": "test:testsprite-ready"
+    },
+    {
+      "index": 82,
+      "name": "test:testspritejobs"
+    },
+    {
+      "index": 83,
+      "name": "test:testsprite-job-live"
+    },
+    {
+      "index": 84,
+      "name": "test:viewer-security"
+    },
+    {
+      "index": 85,
+      "name": "test:askquestion"
+    },
+    {
+      "index": 86,
+      "name": "test:autogate"
+    },
+    {
+      "index": 87,
+      "name": "test:adapters"
+    },
+    {
+      "index": 88,
+      "name": "test:enterprise"
+    },
+    {
+      "index": 89,
+      "name": "test:usage-summary"
+    },
+    {
+      "index": 90,
+      "name": "test:activity"
+    },
+    {
+      "index": 91,
+      "name": "test:definition-of-done"
+    },
+    {
+      "index": 92,
+      "name": "test:full-evidence"
+    },
+    {
+      "index": 93,
+      "name": "test:full-timeout"
+    },
+    {
+      "index": 94,
+      "name": "test:readme-version"
+    },
+    {
+      "index": 95,
+      "name": "test:opsroom-all-live"
+    },
+    {
+      "index": 96,
+      "name": "test:terminal-tabs"
+    },
+    {
+      "index": 97,
+      "name": "test:bidi-parity"
+    },
+    {
+      "index": 98,
+      "name": "test:background-ui-live"
+    },
+    {
+      "index": 99,
+      "name": "test:browser-member-live"
+    },
+    {
+      "index": 100,
+      "name": "test:preview-member-live"
+    },
+    {
+      "index": 101,
+      "name": "test:preview-lease"
+    },
+    {
+      "index": 102,
+      "name": "test:readability"
+    },
+    {
+      "index": 103,
+      "name": "test:preview-shield"
+    },
+    {
+      "index": 104,
+      "name": "test:topbar-surfaces"
+    },
+    {
+      "index": 105,
+      "name": "test:preview-controls-ui"
+    },
+    {
+      "index": 106,
+      "name": "test:preview-controls-backend"
+    },
+    {
+      "index": 107,
+      "name": "test:model-boot"
+    },
+    {
+      "index": 108,
+      "name": "test:model-boot-ui"
+    },
+    {
+      "index": 109,
+      "name": "test:sessions-panel"
+    },
+    {
+      "index": 110,
+      "name": "test:question-dialog"
+    },
+    {
+      "index": 111,
+      "name": "test:gallery"
+    },
+    {
+      "index": 112,
+      "name": "eval:agent"
+    }
+  ],
+  "summary": "full-suite: ┘å╪¼╪¡╪¬ ╪º┘ä┘à╪¼┘à┘ê╪╣╪º╪¬ ┘â┘ä┘ç╪º ΓÇö 112/112.",
+  "sourceFiles": [
+    {
+      "file": "electron/main.js",
+      "sha256": "458f3e1f12231bf170d8735a02fda24a2a8cfe728dcd0b0860ceea84309874e7"
+    },
+    {
+      "file": "electron/preload.js",
+      "sha256": "12934f3298fbe74073f6aecc7ec1cdff49db6d7d37c7f4a26459e313dbe4d201"
+    },
+    {
+      "file": "electron/preview.js",
+      "sha256": "c0dd446c26414b5ce167aafff6b009d7d7a9f3af7b0a5f930b7f971f30eccabd"
+    },
+    {
+      "file": "src/ui/components/preview-panel.js",
+      "sha256": "53e17ec708654d8fdecda37ac1eab476a165cc22e4899148bd8cbad4c6f6cdaa"
+    }
+  ]
+}

@@ -300,7 +300,11 @@ function permissionTier(name) {
 function needsPermission(name) { return permissionTier(name) !== null; }
 
 // تعريفات الأدوات المعلنة للنموذج (بروتوكول OpenAI Chat Completions)
+const connectionTools = require('./connection-tools');
 const DEFS = [
+  ...connectionTools.DEFINITIONS.map((definition) => ({ type: 'function', function: {
+    name: definition.name, description: definition.description, parameters: definition.inputSchema,
+  } })),
   {
     type: 'function',
     function: {
@@ -926,6 +930,7 @@ function saveFromViewer(cwd, rel, content, expectedVersion) {
  * ⚠️ أدوات الكتابة يجب ألا تُستدعى إلا بعد موافقة المستخدم (needsPermission في المحوّل).
  */
 async function run(name, cwd, args, ctx) {
+  if (connectionTools.NAMES.includes(name)) return connectionTools.run(name, cwd, args, ctx);
   try {
     if (name === 'read_file') {
       const rel = args && typeof args.path === 'string' ? args.path.trim() : '';

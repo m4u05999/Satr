@@ -1,0 +1,510 @@
+{
+  "mode": "Chromium production UI, administrative preload fixtures",
+  "paidTurns": 0,
+  "scenarios": [
+    {
+      "order": "providers-first",
+      "saved": false,
+      "reload": false,
+      "before": {
+        "engine": "codex",
+        "model": "",
+        "models": [
+          {
+            "value": "",
+            "label": "الافتراضي"
+          }
+        ],
+        "gateHidden": false,
+        "modelCalls": 0,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "pending": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6 Sol (الأقوى)"
+          },
+          {
+            "value": "gpt-5.6-terra",
+            "label": "GPT-5.6 Terra (متوازن)"
+          },
+          {
+            "value": "gpt-5.6-luna",
+            "label": "GPT-5.6 Luna (الأسرع)"
+          },
+          {
+            "value": "gpt-5.5",
+            "label": "GPT-5.5"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "after": {
+        "engine": "codex",
+        "model": "gpt-6-astra",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6-Sol"
+          },
+          {
+            "value": "gpt-6-astra",
+            "label": "GPT-6-Astra"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      }
+    },
+    {
+      "order": "providers-first",
+      "saved": false,
+      "reload": true,
+      "before": {
+        "engine": "codex",
+        "model": "",
+        "models": [
+          {
+            "value": "",
+            "label": "الافتراضي"
+          }
+        ],
+        "gateHidden": false,
+        "modelCalls": 0,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "pending": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6 Sol (الأقوى)"
+          },
+          {
+            "value": "gpt-5.6-terra",
+            "label": "GPT-5.6 Terra (متوازن)"
+          },
+          {
+            "value": "gpt-5.6-luna",
+            "label": "GPT-5.6 Luna (الأسرع)"
+          },
+          {
+            "value": "gpt-5.5",
+            "label": "GPT-5.5"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "after": {
+        "engine": "codex",
+        "model": "gpt-6-astra",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6-Sol"
+          },
+          {
+            "value": "gpt-6-astra",
+            "label": "GPT-6-Astra"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      }
+    },
+    {
+      "order": "providers-first",
+      "saved": true,
+      "reload": false,
+      "before": {
+        "engine": "codex",
+        "model": "",
+        "models": [
+          {
+            "value": "",
+            "label": "الافتراضي"
+          }
+        ],
+        "gateHidden": false,
+        "modelCalls": 0,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "pending": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6 Sol (الأقوى)"
+          },
+          {
+            "value": "gpt-5.6-terra",
+            "label": "GPT-5.6 Terra (متوازن)"
+          },
+          {
+            "value": "gpt-5.6-luna",
+            "label": "GPT-5.6 Luna (الأسرع)"
+          },
+          {
+            "value": "gpt-5.5",
+            "label": "GPT-5.5"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "after": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6-Sol"
+          },
+          {
+            "value": "gpt-6-astra",
+            "label": "GPT-6-Astra"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": "gpt-5.6-sol"
+      }
+    },
+    {
+      "order": "providers-first",
+      "saved": true,
+      "reload": true,
+      "before": {
+        "engine": "codex",
+        "model": "",
+        "models": [
+          {
+            "value": "",
+            "label": "الافتراضي"
+          }
+        ],
+        "gateHidden": false,
+        "modelCalls": 0,
+        "savedEngine": "codex",
+        "savedModel": "gpt-5.6-sol"
+      },
+      "pending": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6 Sol (الأقوى)"
+          },
+          {
+            "value": "gpt-5.6-terra",
+            "label": "GPT-5.6 Terra (متوازن)"
+          },
+          {
+            "value": "gpt-5.6-luna",
+            "label": "GPT-5.6 Luna (الأسرع)"
+          },
+          {
+            "value": "gpt-5.5",
+            "label": "GPT-5.5"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": "gpt-5.6-sol"
+      },
+      "after": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6-Sol"
+          },
+          {
+            "value": "gpt-6-astra",
+            "label": "GPT-6-Astra"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": "gpt-5.6-sol"
+      }
+    },
+    {
+      "order": "gate-first",
+      "saved": false,
+      "reload": false,
+      "before": {
+        "engine": "codex",
+        "model": "",
+        "models": [
+          {
+            "value": "",
+            "label": "الافتراضي"
+          }
+        ],
+        "gateHidden": false,
+        "modelCalls": 0,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "pending": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6 Sol (الأقوى)"
+          },
+          {
+            "value": "gpt-5.6-terra",
+            "label": "GPT-5.6 Terra (متوازن)"
+          },
+          {
+            "value": "gpt-5.6-luna",
+            "label": "GPT-5.6 Luna (الأسرع)"
+          },
+          {
+            "value": "gpt-5.5",
+            "label": "GPT-5.5"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "after": {
+        "engine": "codex",
+        "model": "gpt-6-astra",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6-Sol"
+          },
+          {
+            "value": "gpt-6-astra",
+            "label": "GPT-6-Astra"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      }
+    },
+    {
+      "order": "gate-first",
+      "saved": false,
+      "reload": true,
+      "before": {
+        "engine": "codex",
+        "model": "",
+        "models": [
+          {
+            "value": "",
+            "label": "الافتراضي"
+          }
+        ],
+        "gateHidden": false,
+        "modelCalls": 0,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "pending": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6 Sol (الأقوى)"
+          },
+          {
+            "value": "gpt-5.6-terra",
+            "label": "GPT-5.6 Terra (متوازن)"
+          },
+          {
+            "value": "gpt-5.6-luna",
+            "label": "GPT-5.6 Luna (الأسرع)"
+          },
+          {
+            "value": "gpt-5.5",
+            "label": "GPT-5.5"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "after": {
+        "engine": "codex",
+        "model": "gpt-6-astra",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6-Sol"
+          },
+          {
+            "value": "gpt-6-astra",
+            "label": "GPT-6-Astra"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      }
+    },
+    {
+      "order": "gate-first",
+      "saved": true,
+      "reload": false,
+      "before": {
+        "engine": "codex",
+        "model": "",
+        "models": [
+          {
+            "value": "",
+            "label": "الافتراضي"
+          }
+        ],
+        "gateHidden": false,
+        "modelCalls": 0,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "pending": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6 Sol (الأقوى)"
+          },
+          {
+            "value": "gpt-5.6-terra",
+            "label": "GPT-5.6 Terra (متوازن)"
+          },
+          {
+            "value": "gpt-5.6-luna",
+            "label": "GPT-5.6 Luna (الأسرع)"
+          },
+          {
+            "value": "gpt-5.5",
+            "label": "GPT-5.5"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": null
+      },
+      "after": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6-Sol"
+          },
+          {
+            "value": "gpt-6-astra",
+            "label": "GPT-6-Astra"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": "gpt-5.6-sol"
+      }
+    },
+    {
+      "order": "gate-first",
+      "saved": true,
+      "reload": true,
+      "before": {
+        "engine": "codex",
+        "model": "",
+        "models": [
+          {
+            "value": "",
+            "label": "الافتراضي"
+          }
+        ],
+        "gateHidden": false,
+        "modelCalls": 0,
+        "savedEngine": "codex",
+        "savedModel": "gpt-5.6-sol"
+      },
+      "pending": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6 Sol (الأقوى)"
+          },
+          {
+            "value": "gpt-5.6-terra",
+            "label": "GPT-5.6 Terra (متوازن)"
+          },
+          {
+            "value": "gpt-5.6-luna",
+            "label": "GPT-5.6 Luna (الأسرع)"
+          },
+          {
+            "value": "gpt-5.5",
+            "label": "GPT-5.5"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": "gpt-5.6-sol"
+      },
+      "after": {
+        "engine": "codex",
+        "model": "gpt-5.6-sol",
+        "models": [
+          {
+            "value": "gpt-5.6-sol",
+            "label": "GPT-5.6-Sol"
+          },
+          {
+            "value": "gpt-6-astra",
+            "label": "GPT-6-Astra"
+          }
+        ],
+        "gateHidden": true,
+        "modelCalls": 1,
+        "savedEngine": "codex",
+        "savedModel": "gpt-5.6-sol"
+      }
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+    "recordedAt":  "2026-09-09T23:18:35.5695038Z",
+    "type":  "actual production source before fix; controlled deferred screenshot boundary",
+    "sourcePath":  "dist/preview-controls-pick-submit/before.js",
+    "sourceSHA256":  "a24dadac594e74d68bdfabd1e156af1cb3b18df4ea8b6dd8dc0e7592fc08a130",
+    "guardSHA256":  "135c5c433e805b95b48f5c0447fde0e23ec2445d71d67a1fceabfa07863805fb",
+    "reconstructedSourceMatchesActualBeforeSHA256":  true,
+    "results":  [
+                    {
+                        "case":  "cancel",
+                        "command":  "node_modules\\.bin\\electron.cmd scripts/preview-controls-ui-test.js --preview dist/preview-controls-pick-submit/before.js --pick-submit-case cancel",
+                        "exitCode":  1,
+                        "log":  "pick-submit-before-cancel.log",
+                        "failure":  "AssertionError [ERR_ASSERTION]: cancel: late shot after invalidation must not dereference a cleared pick"
+                    },
+                    {
+                        "case":  "close",
+                        "command":  "node_modules\\.bin\\electron.cmd scripts/preview-controls-ui-test.js --preview dist/preview-controls-pick-submit/before.js --pick-submit-case close",
+                        "exitCode":  1,
+                        "log":  "pick-submit-before-close.log",
+                        "failure":  "AssertionError [ERR_ASSERTION]: close: late shot after invalidation must not dereference a cleared pick"
+                    },
+                    {
+                        "case":  "native-close",
+                        "command":  "node_modules\\.bin\\electron.cmd scripts/preview-controls-ui-test.js --preview dist/preview-controls-pick-submit/before.js --pick-submit-case native-close",
+                        "exitCode":  1,
+                        "log":  "pick-submit-before-native-close.log",
+                        "failure":  "AssertionError [ERR_ASSERTION]: native-close: late shot after invalidation must not dereference a cleared pick"
+                    },
+                    {
+                        "case":  "new-pick",
+                        "command":  "node_modules\\.bin\\electron.cmd scripts/preview-controls-ui-test.js --preview dist/preview-controls-pick-submit/before.js --pick-submit-case new-pick",
+                        "exitCode":  1,
+                        "log":  "pick-submit-before-new-pick.log",
+                        "failure":  "AssertionError [ERR_ASSERTION]: new-pick: late shot must not submit a cancelled or replaced pick"
+                    }
+                ]
+}

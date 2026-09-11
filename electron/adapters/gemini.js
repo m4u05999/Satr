@@ -23,6 +23,7 @@ const crypto = require('crypto');
 const keys = require('../keys');
 const chats = require('../chats'); // ذاكرة على القرص (1.3): استئناف بعد إعادة التشغيل
 const tools = require('../tools'); // أدوات الوكيل (2.1–2.3)
+const connectionTools = require('../connection-tools');
 const skillCatalog = require('../skills'); // فهرس المهارات المحمولة والتحميل التدريجي
 const memory = require('../memory'); // ذاكرة مشروع شخصية مُقَرّة ضمن ميزانية
 const termjobs = require('../termjobs'); // مهام الخلفية المعمّرة — كتلة «انتهت بلا دور نشط»
@@ -170,6 +171,9 @@ function start(input, cwd, emit) {
   const apiPath = `/${API_VERSION}/models/${encodeURIComponent(useModel)}:streamGenerateContent?alt=sse`;
   const startedAt = Date.now();
   let aborted = false;
+  let connectionsActive = true;
+  const connectionGate = connectionTools.createPermissionGate({ emit,
+    isActive: () => connectionsActive && !aborted });
   let currentReq = null;
   let toolsOk = true; // يُعطَّل إن رفض المزوّد الأدوات (تدهور رشيق لدردشة)
   let callSeq = 0;    // Gemini لا يصدر معرّفات نداءات — نولّدها لبطاقات الواجهة
@@ -285,6 +289,8 @@ function start(input, cwd, emit) {
   }
 
   const fail = (msg) => {
+    connectionsActive = false;
+    connectionGate.stop();
     emit({ type: 'spawn_error', text: 'فشل طلب Gemini: ' + msg });
     emit({ type: 'result', session_id: sid, is_error: true, duration_ms: Date.now() - startedAt, result: msg });
     emit({ type: 'proc_done', code: 1 });
@@ -348,10 +354,12 @@ function start(input, cwd, emit) {
             const allowed = await askPermission(c.id, c.name, c.args, tier);
             if (aborted) return;
             out = allowed
-              ? await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext, engine: PROVIDER, mediaCostState })
+              ? await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext, engine: PROVIDER, mediaCostState,
+              isActive: () => connectionsActive && !aborted, requestPermission: connectionGate.requestPermission })
               : { ok: false, content: 'رفض المستخدم هذا الإجراء — لا تعاود المحاولة نفسها؛ اشرح ما كنت ستفعله أو اقترح بديلاً' };
           } else {
-            out = await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext, engine: PROVIDER, mediaCostState });
+            out = await tools.run(c.name, cwd, c.args, { emit, id: c.id, skillContext, engine: PROVIDER, mediaCostState,
+              isActive: () => connectionsActive && !aborted, requestPermission: connectionGate.requestPermission });
           }
           emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: c.id, is_error: !out.ok }] } });
           responseParts.push({ functionResponse: { name: c.name, response: { result: out.content } } });
@@ -379,6 +387,8 @@ function start(input, cwd, emit) {
         context_estimate: contextEstimate,
         provider: PROVIDER,
       });
+      connectionsActive = false;
+      connectionGate.stop();
       emit({ type: 'proc_done', code: 0 });
       return;
     }
@@ -387,12 +397,15 @@ function start(input, cwd, emit) {
   return {
     stop() {
       aborted = true;
+      connectionsActive = false;
+      connectionGate.stop();
       for (const [, p] of pendingPerms) { try { p.resolve(false); } catch (e) {} }
       pendingPerms.clear();
       try { if (currentReq) currentReq.destroy(); } catch (e) {}
       return Promise.resolve();
     },
     resolvePermission(id, allow, always) {
+      if (connectionGate.resolvePermission(id, allow)) return true;
       const p = pendingPerms.get(id);
       if (!p) return false;
       pendingPerms.delete(id);

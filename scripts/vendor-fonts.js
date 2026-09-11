@@ -60,3 +60,10 @@ fs.writeFileSync(path.join(outDir, 'fonts.css'), header + blocks.join('\n\n') + 
 
 for (const f of copied) console.log('vendor-fonts: fonts/' + f);
 console.log('vendor-fonts: fonts.css ← @fontsource/ibm-plex-sans-arabic@' + version);
+
+// قشرة الهاتف مستقلة في خادم LAN؛ تبقى نسختها مطابقة للخط المضمّن نفسه.
+const mobileDir = path.join(__dirname, '..', 'pwa');
+fs.mkdirSync(path.join(mobileDir, 'fonts'), { recursive: true });
+fs.copyFileSync(path.join(outDir, 'fonts.css'), path.join(mobileDir, 'fonts.css'));
+for (const file of copied) fs.copyFileSync(path.join(fontsDir, file), path.join(mobileDir, 'fonts', file));
+fs.copyFileSync(path.join(pkgDir, 'LICENSE'), path.join(mobileDir, 'fonts', 'OFL.txt'));

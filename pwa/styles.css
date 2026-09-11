@@ -7,7 +7,7 @@
   --border-strong: #62605b;
   --text: #eeeeec;
   --text-dim: #b5b3ad;
-  --text-faint: #7c7b74;
+  --text-faint: #99978f;
   --gold: #D9A441;
   --gold-strong: #E5B655;
   --gold-soft: rgba(217, 164, 65, 0.12);
@@ -56,7 +56,7 @@ body {
 
 h1, h2, h3 {
   margin: 0;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .brand {
@@ -216,7 +216,7 @@ textarea:focus {
 .decision-card .tool {
   color: var(--gold);
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .decision-card .summary {

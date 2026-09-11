@@ -30,6 +30,7 @@
 const crypto = require('node:crypto');
 const mobilepending = require('./mobilepending');
 const mobilestate = require('./mobilestate');
+const mobilecommands = require('./mobilecommands');
 
 // — ثوابت العقد (§7.3/§7.4) —
 const BOX_HEX_LEN = 32;
@@ -48,7 +49,6 @@ const SAFE_DEVICE_HEX = /^[a-f0-9]{16,128}$/;
 const SAFE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SAFE_BOX = /^[a-f0-9]{32}$/;
 // رمز الدور المعتم المرافق لأمر الإيقاف (§7.7.5)
-const RUN_TOKEN_RE = /^[a-f0-9]{16}$/;
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const UNSAFE_URL_TEXT_RE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
@@ -312,7 +312,7 @@ function start(deps, opts) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
     // الإيقاف **نوع رسالة مستقل** لا قرار رابع: `resolveDecision` مربوطة بظرف
     // معلّق (`byId.get`) والإيقاف لا ظرف له — إقحامه فيها كان يستلزم ظرفاً وهمياً.
-    if (payload.type === 'stop') return requestStop(payload.run);
+    if (payload.type === 'stop') return requestStop(deviceId, entry, payload);
     if (payload.type === 'state_request') return requestState(deviceId, payload);
     if (payload.type === 'push_subscribe') return requestPushSubscription(deviceId, payload);
     const envelopeId = typeof payload.envelope_id === 'string' ? payload.envelope_id : '';
@@ -353,10 +353,21 @@ function start(deps, opts) {
   }
 
   /** يمرّر أمر إيقاف مُتحقَّقاً من شكله؛ مطابقة رمز الدور تجري في `main.js`. */
-  function requestStop(run) {
-    if (typeof d.onStop !== 'function') return false;
-    if (typeof run !== 'string' || !RUN_TOKEN_RE.test(run)) return false;
-    try { return d.onStop(run) === true; } catch { return false; }
+  function requestStop(deviceId, entry, payload) {
+    return mobilecommands.dispatchStop(payload, d.onStop,
+      (result) => { sendCommandResult(deviceId, entry, result).catch(() => {}); });
+  }
+
+  /** نتيجة معمّاة للجهاز الطالب وحده؛ استبدال الاقتران يبطل الرد المتأخر. */
+  async function sendCommandResult(deviceId, entry, result) {
+    if (stopped || activeSession(deviceId) !== entry) return false;
+    if (!ensureSendCounter(deviceId, entry.session)) return false;
+    let frame;
+    try { frame = d.crypto.seal(entry.session, Buffer.from(JSON.stringify(result), 'utf8')); }
+    catch { return false; }
+    if (frame.length > MAX_FRAME_BYTES) return false;
+    try { await d.transport.post(boxUrl(entry.boxes.toMobile), frame); return true; }
+    catch { return false; }
   }
 
   /**

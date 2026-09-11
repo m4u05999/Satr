@@ -98,6 +98,7 @@ async function main() {
       window.satr.previewNavigateAgent = async (url) => { navigateCalls.push(url); return { error: 'closed' }; };
       window.satr.previewBounds = (...args) => { boundsCalls.push(args); return Promise.resolve({ ok: true }); };
       panel.holdForDialog(true);
+      const beforeOpen = boundsCalls.slice();
       panel.openWith('https://hold-probe.example/path', { agent: true });
       await new Promise((resolve) => setTimeout(resolve, 120));
       const during = boundsCalls.slice();
@@ -105,19 +106,26 @@ async function main() {
       panel.holdForDialog(false);
       panel.remeasure();
       await new Promise((resolve) => setTimeout(resolve, 120));
+      const released = boundsCalls.slice(during.length);
       panel.openWith('https://hold-probe.example/reopen', { agent: true });
       await new Promise((resolve) => setTimeout(resolve, 120));
-      return { open_during_hold: openDuringHold, open_calls: openCalls.length, bounds_during_hold: during.length,
-        bounds_after_release: boundsCalls.length - during.length, navigate_calls: navigateCalls.length };
+      return { open_during_hold: openDuringHold, open_calls: openCalls.length,
+        bounds_before_open: beforeOpen, bounds_during_hold: during,
+        bounds_after_release: released, navigate_calls: navigateCalls.length };
     })()`, true);
     win.hide();
     console.log('OBS078_FILTER_C=' + JSON.stringify(holdProbe));
     assert.strictEqual(holdProbe.open_during_hold, 1,
       'holdForDialog منع طلب إنشاء العرض بدلاً من حجب مستطيله فقط.');
-    assert.strictEqual(holdProbe.bounds_during_hold, 0,
+    // المستطيل الصفري يحجب العرض: الإرسال نفسه ليس تسرباً، بل المساحة غير الصفرية.
+    // يلزم الحجب قبل الإنشاء أيضاً لأن main يحتفظ بحدود آخر عرض أغلقه المستخدم.
+    assert(holdProbe.bounds_before_open.length > 0,
+      'holdForDialog لم يحفظ حدوداً صفرية قبل إنشاء العرض.');
+    const zeroBounds = (args) => args.slice(0, 4).length === 4 && args.slice(0, 4).every((value) => value === 0);
+    assert(holdProbe.bounds_before_open.every(zeroBounds) && holdProbe.bounds_during_hold.every(zeroBounds),
       'holdForDialog سرّب مستطيل العرض أثناء الحوار.');
-    assert(holdProbe.bounds_after_release > 0,
-      'رفع holdForDialog لم يُعد إبلاغ مستطيل العرض.');
+    assert(holdProbe.bounds_after_release.some((args) => args[0] === 20 && args[1] === 30 && args[2] === 420 && args[3] === 360),
+      'رفع holdForDialog لم يُعد إبلاغ مستطيل العرض الفعلي.');
     assert.strictEqual(holdProbe.navigate_calls, 1,
       'فحص OBS-078 لم يمرّ بحالة started القديمة قبل إعادة الفتح.');
     assert.strictEqual(holdProbe.open_calls, 2,

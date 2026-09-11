@@ -33,6 +33,7 @@ const crypto = require('crypto');
 const keys = require('../keys');
 const chats = require('../chats'); // ذاكرة على القرص (1.3): استئناف بعد إعادة التشغيل
 const tools = require('../tools'); // أدوات الوكيل (2.1): read_file / list_files
+const connectionTools = require('../connection-tools');
 const skillCatalog = require('../skills'); // metadata فقط أولاً؛ المحتوى عبر load_skill عند الطلب
 const memory = require('../memory'); // ذاكرة مشروع شخصية مُقَرّة ضمن ميزانية
 const termjobs = require('../termjobs'); // مهام الخلفية المعمّرة — كتلة «انتهت بلا دور نشط»
@@ -284,6 +285,9 @@ function make(config) {
 
     const startedAt = Date.now();
     let aborted = false;
+    let connectionsActive = true;
+    const connectionGate = connectionTools.createPermissionGate({ emit,
+      isActive: () => connectionsActive && !aborted });
     let currentReq = null;
     // نوم تراجع 429 قابل للقطع: `stop()` يمسح المؤقّت ويحسم الوعد فوراً، فلا يبقى
     // دورٌ معلّقاً في نوم بعد الإيقاف (ولا مؤقّت يتيم يبقي حلقة الأحداث حيّة).
@@ -438,6 +442,8 @@ function make(config) {
     }
 
     const fail = (msg) => {
+      connectionsActive = false;
+      connectionGate.stop();
       emit({ type: 'spawn_error', text: 'فشل طلب ' + label + ': ' + msg });
       emit({ type: 'result', session_id: sid, is_error: true, duration_ms: Date.now() - startedAt, result: msg });
       emit({ type: 'proc_done', code: 1 });
@@ -531,10 +537,12 @@ function make(config) {
               const allowed = await askPermission(c.id, c.name, parsed, tier);
               if (aborted) return;
               out = allowed
-                ? await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext, engine: providerId || 'adapter', mediaCostState })
+                ? await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext, engine: providerId || 'adapter', mediaCostState,
+                isActive: () => connectionsActive && !aborted, requestPermission: connectionGate.requestPermission })
                 : { ok: false, content: 'رفض المستخدم هذا الإجراء — لا تعاود المحاولة نفسها؛ اشرح ما كنت ستفعله أو اقترح بديلاً' };
             } else {
-              out = await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext, engine: providerId || 'adapter', mediaCostState });
+              out = await tools.run(c.name, cwd, parsed, { emit, id: c.id, skillContext, engine: providerId || 'adapter', mediaCostState,
+                isActive: () => connectionsActive && !aborted, requestPermission: connectionGate.requestPermission });
             }
             emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: c.id, is_error: !out.ok }] } });
             messages.push({ role: 'tool', tool_call_id: c.id, content: out.content });
@@ -564,6 +572,8 @@ function make(config) {
           context_estimate: contextEstimate,
           provider: providerId || undefined,
         });
+        connectionsActive = false;
+        connectionGate.stop();
         emit({ type: 'proc_done', code: 0 });
         return;
       }
@@ -572,6 +582,8 @@ function make(config) {
     return {
       stop() {
         aborted = true;
+        connectionsActive = false;
+        connectionGate.stop();
         // قطع نوم تراجع 429 فوراً — لا انتظار معلّق بعد الإيقاف
         if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null; }
         if (wakeSleep) { const wake = wakeSleep; wakeSleep = null; wake(); }
@@ -583,6 +595,7 @@ function make(config) {
       },
       // رد الواجهة على مربع الإذن (main.js يوجّهه إلى المقبض الجاري)
       resolvePermission(id, allow, always) {
+        if (connectionGate.resolvePermission(id, allow)) return true;
         const p = pendingPerms.get(id);
         if (!p) return false;
         pendingPerms.delete(id);
