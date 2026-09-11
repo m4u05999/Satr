@@ -119,6 +119,13 @@ async function main() {
   check('تفويض المتصفح لا يعفيها', autogate.decideAutoApproval('mcp__satr-desktop__desktop_type', {
     permissionMode: 'default', alwaysAllowed: new Set(), browserControl: true, readOnly: false, browserTool: false,
   }) === 'prompt');
+  // المراجعة الأمنية: «دائماً» تعيش عمر التطبيق فتعبر إلى نوافذ تُختار لاحقاً — ممنوعة للأفعال، مفروضة في resolvePermission
+  const acting = ['desktop_click', 'desktop_type', 'desktop_press_key', 'desktop_scroll'].map((n) => 'mcp__satr-desktop__' + n);
+  const reading = ['desktop_targets', 'desktop_snapshot', 'desktop_wait_for', 'desktop_screenshot'].map((n) => 'mcp__satr-desktop__' + n);
+  check('لا «موافقة دائمة» للأفعال الأربعة', acting.every((n) => agent.NEVER_ALWAYS_TOOLS.has(n)));
+  check('القراءات الأربع كسائر الأدوات', reading.every((n) => !agent.NEVER_ALWAYS_TOOLS.has(n)));
+  check('موافقة الدور متاحة للثماني', [...acting, ...reading].every((n) => !agent.NEVER_TURN_TOOLS.has(n)));
+  check('المنع مفروض في resolvePermission لا في الواجهة وحدها', agentSrc.includes('!p.neverAlways && !NEVER_ALWAYS_TOOLS.has(p.toolName)) alwaysAllowed.add(p.toolName)'));
   check('مربع الإذن يأخذ تفاصيل النافذة والعنصر من desktop.permissionDetail',
     agentSrc.includes('DESKTOP_TOOL_RE.test(String(toolName || \'\')) ? desktop.permissionDetail(toolName, input)'));
 

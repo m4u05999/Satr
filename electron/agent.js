@@ -68,7 +68,13 @@ const STOP_BACKGROUND_TOOL = 'mcp__satr-terminal__stop_background_task';
 const PROMO_START_TOOL = 'mcp__satr-terminal__promo_record_start';
 const PROMO_STOP_TOOL = 'mcp__satr-terminal__promo_record_stop';
 const GENERATE_MEDIA_TOOL = 'mcp__satr-terminal__generate_media';
-const NEVER_ALWAYS_TOOLS = new Set([VERIFY_EXEC_TOOL, STOP_BACKGROUND_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL, GENERATE_MEDIA_TOOL]);
+// سطح ويندوز (المراجعة الأمنية للخطوة ٤): «موافقة دائمة» تعيش عمر التطبيق لا الجلسة، فمنحها لفعل في نافذة
+// كان سيعبر إلى كل نافذة يختارها المستخدم بعدها — والحارس ١ في المواصفة: الاختيار لا يُوسَّع بموافقة دائمة.
+// الأفعال الأربعة وحدها؛ القراءات (targets/snapshot/wait_for/screenshot) كسائر الأدوات، وموافقة الدور متاحة للجميع.
+const DESKTOP_ACT_TOOLS = Object.freeze(['desktop_click', 'desktop_type', 'desktop_press_key', 'desktop_scroll']
+  .map((name) => 'mcp__satr-desktop__' + name));
+const NEVER_ALWAYS_TOOLS = new Set([VERIFY_EXEC_TOOL, STOP_BACKGROUND_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL, GENERATE_MEDIA_TOOL,
+  ...DESKTOP_ACT_TOOLS]);
 const NEVER_TURN_TOOLS = new Set([
   'Bash', 'mcp__satr-terminal__run_in_terminal', 'mcp__satr-terminal__run_in_background',
   STOP_BACKGROUND_TOOL, VERIFY_EXEC_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL, GENERATE_MEDIA_TOOL,
@@ -2939,4 +2945,7 @@ module.exports = {
   pinDesktopDecision,
   desktopTools,
   DESKTOP_TOOL_RE,
+  DESKTOP_ACT_TOOLS,
+  NEVER_ALWAYS_TOOLS,
+  NEVER_TURN_TOOLS,
 };

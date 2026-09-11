@@ -365,7 +365,7 @@ internal static class Program
         var keys = StringParam(p, "keys") ?? throw new HelperError("bad_key", "keys مفقود");
         var chord = ParseKeys(keys);
         Focus(s);
-        SendChord(chord);
+        SendChord(chord, s.Hwnd);
         return new JsonObject { ["ok"] = true, ["keys"] = chord.Canonical };
     }
 
@@ -733,7 +733,7 @@ internal static class Program
         }
     }
 
-    private static unsafe void SendChord(KeyChord chord)
+    private static unsafe void SendChord(KeyChord chord, nint hwnd)
     {
         var keys = new List<(ushort Vk, bool Extended)>();
         if (chord.Ctrl) keys.Add((VkControl, false));
@@ -744,6 +744,10 @@ internal static class Program
         var n = 0;
         foreach (var k in keys) inputs[n++] = KeyInput(k.Vk, k.Extended, up: false);
         for (var i = keys.Count - 1; i >= 0; i--) inputs[n++] = KeyInput(keys[i].Vk, keys[i].Extended, up: true);
+        // إعادة فحص المقدّمة ملاصقة للإرسال (المراجعة الأمنية): تضيّق فسحة خطف التركيز بعد Focus إلى
+        // نداءين متتاليين — ولا تغلقها كلياً لأن SendInput نفسه غير ذرّي مع الفحص (حدّ مُصرَّح به)
+        if (Native.GetForegroundWindow() != hwnd)
+            throw new HelperError("focus_failed", "خُطف التركيز من النافذة المختارة قبل الإرسال: لم تُرسل المفاتيح");
         uint sent;
         fixed (Input* first = inputs) sent = Native.SendInput((uint)inputs.Length, first, sizeof(Input));
         if (sent == inputs.Length) return;

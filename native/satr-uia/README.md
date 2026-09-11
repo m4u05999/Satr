@@ -68,7 +68,8 @@ NuGet فيه أصلاً — الـinterop مولَّد من `[GeneratedComInterf
   `PageUp` `PageDown` والأسهم، وحرف أو رقم مفرد، مع `Ctrl`/`Shift`/`Alt`. لا مفتاح ويندوز ولا `F1–F12`
   (⇒ `bad_key`)، وتركيبات مغادرة النافذة (`Alt+Tab` · `Alt+Escape` · `Alt+Space` · `Ctrl+Escape` ·
   `Ctrl+Alt+Delete`) ⇒ `not_allowed`. الإرسال بـ`SendInput` بعد التحقق أن النافذة المختارة أمامية
-  (UIA `SetFocus` ثم `SetForegroundWindow` ثم ربط طابور الإدخال مؤقتاً)، وإلا `focus_failed` بلا إرسال.
+  (UIA `SetFocus` ثم `SetForegroundWindow` ثم ربط طابور الإدخال مؤقتاً)، وإلا `focus_failed` بلا إرسال؛ ويُعاد
+  الفحص ملاصقاً لـ`SendInput` (الفسحة تضيق ولا تُغلق: الإرسال نفسه غير ذرّي مع الفحص).
 - **الالتقاط**: `PrintWindow` (‏`PW_RENDERFULLCONTENT`) ⇒ PNG ‏RGB بلا شفافية بمشفّر داخلي (zlib من .NET)؛
   الضلع الأطول فوق 1568 يُصغَّر بمعامل صحيح.
 - **رموز الخطأ**: `bad_request` · `unknown_method` · `not_found` (هدف مجهول) · `closed` (النافذة أُغلقت) ·
