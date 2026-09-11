@@ -1,0 +1,18 @@
+<!--
+  مسبار UIA للخطوة صفر في docs/COMPUTER-USE-DESKTOP.md — ليس المعين الإنتاجي satr-uia.
+  UseWPF لإتاحة System.Windows.Automation (عميل UIA المُدار) بلا أي حزمة NuGet.
+  لا NativeAOT هنا عمداً: يحتاج رابط MSVC، والعميل المُدار غير متوافق معه — ذاك سؤال الخطوة ١.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>UiaProbe</AssemblyName>
+    <RootNamespace>UiaProbe</RootNamespace>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+</Project>
