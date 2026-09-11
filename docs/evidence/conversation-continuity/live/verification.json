@@ -1,0 +1,60 @@
+{
+  "status": "passed",
+  "id": "live_12d1897a29e0ddaf684e09ed",
+  "verificationOf": "live_e0857543ff3f5d743e3f0b5d",
+  "originalDeadline": "2026-09-09T21:32:03.854Z",
+  "continuousRun": {
+    "file": "D:\\sater\\satr-2\\dist\\live-tests\\live_12d1897a29e0ddaf684e09ed\\conversation\\fixed-1.json",
+    "checks": 37,
+    "startedAt": "2026-09-09T21:22:28.794Z",
+    "finishedAt": "2026-09-09T21:23:10.357Z"
+  },
+  "restart": {
+    "file": "D:\\sater\\satr-2\\dist\\live-tests\\live_12d1897a29e0ddaf684e09ed\\conversation\\restart-1.json",
+    "startedAt": "2026-09-09T21:23:46.531Z",
+    "finishedAt": "2026-09-09T21:23:52.352Z",
+    "newPid": 11568
+  },
+  "priorDiagnosticEvidence": "D:\\sater\\satr-2\\dist\\live-tests\\live_e0857543ff3f5d743e3f0b5d\\conversation",
+  "sourceIntegrity": {
+    "files": 9,
+    "matched": true
+  },
+  "engineBoundary": {
+    "file": "D:\\sater\\satr-2\\dist\\live-tests\\live_12d1897a29e0ddaf684e09ed\\conversation\\boundary.jsonl",
+    "turns": 36,
+    "sha256": "d9aa3b0755554f9ffa543bbf0cc19ec8dde9dd68c0f43a07b4f29b97c4e172da"
+  },
+  "effects": {
+    "file": "D:\\sater\\satr-2\\dist\\live-tests\\live_12d1897a29e0ddaf684e09ed\\workspace\\project-a\\conversation-effect.txt",
+    "lines": 1
+  },
+  "availableScreenshots": [],
+  "screenshotLimitations": [
+    "screenshot_timeout",
+    "screenshot_timeout"
+  ],
+  "limitations": [
+    "ليست تجربة حساب أو نموذج مدفوع ولا اختبار فهم لغوي.",
+    "ليست حزمة packaged.",
+    "لا تثبت اللقطة سلامة العربية في أسطح لم تقاس.",
+    "الكتابة للأداة تنفيذ محاكاة داخل المحرك؛ لا تثبت سياسة إذن أداة حقيقية."
+  ],
+  "paidModelCalls": 0,
+  "mode": "source",
+  "window": {
+    "state": "closed",
+    "pid": 11568,
+    "backgroundTask": "term_6",
+    "exitCode": 0,
+    "completion": "D:\\sater\\satr-2\\dist\\live-tests\\live_12d1897a29e0ddaf684e09ed\\evidence\\completion.json",
+    "pidReused": {
+      "observedName": "node.exe",
+      "observedCreationLocal": "2026-09-10T00:26:06+03:00",
+      "originalName": "electron.exe",
+      "newProcessUntouched": true
+    }
+  },
+  "finalScreenshotUnavailable": true,
+  "finalScreenshotReason": "CDP capture timed out; no visual acceptance claimed"
+}

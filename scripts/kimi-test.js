@@ -756,6 +756,9 @@ async function testSessionBrowser() {
     });
   }
   allSessions[5].sessionId = 'kimi_history_1';
+  // عنوان مشتق من الرسالة المجمّعة (كما يفعل Kimi فعلاً — قياس على جلسة المالك
+  // 2c2989ed): يحمل أغلفة الموارد المحقونة ويجب أن يُعرض منقّى (OBS-153).
+  allSessions[5].title = 'أين وصلنا ؟ <resource uri="satr://environment">سياق محقون</resource> <satr_lang>مرساة</satr_lang>';
   const engine = kimi.create({
     resolveKimiBin: () => 'C:\\fake\\kimi.exe',
     spawn: () => {
@@ -771,10 +774,20 @@ async function testSessionBrowser() {
           } });
         }
         else if (message.method === 'session/load') {
-          // إعادة بث تاريخية: نصوص متداخلة مع نداءي أداة (مكتمل وفاشل)
+          // إعادة بث تاريخية: نصوص متداخلة مع نداءي أداة (مكتمل وفاشل).
+          // رسالة المستخدم تصل بصيغتها المجمَّعة كما خزّنها Kimi: بأغلفة مواردنا
+          // المحقونة والمرساة الذيلية حول النص الحقيقي — وينشطر غلاف الذاكرة بين
+          // chunk وآخر ليثبت أن التنقية بعد الدمج لا قبله.
           child.send({ jsonrpc: '2.0', method: 'session/update', params: {
             sessionId: 'kimi_history_1', update: {
-              sessionUpdate: 'user_message_chunk', messageId: 'u1', content: { type: 'text', text: 'الطلب' },
+              sessionUpdate: 'user_message_chunk', messageId: 'u1', content: { type: 'text',
+                text: '<resource uri="satr://environment">سياق بيئة محقون</resource>\nالطلب\n<resource uri="satr://me' },
+            },
+          } });
+          child.send({ jsonrpc: '2.0', method: 'session/update', params: {
+            sessionId: 'kimi_history_1', update: {
+              sessionUpdate: 'user_message_chunk', messageId: 'u1', content: { type: 'text',
+                text: 'mory"><satr_project_memory>ذاكرة لا تُعرض</satr_project_memory></resource>\n<satr_lang>مرساة ذيلية</satr_lang>\n<system-reminder>Today date reminder من الوكيل نفسه</system-reminder>' },
             },
           } });
           child.send({ jsonrpc: '2.0', method: 'session/update', params: {
@@ -823,24 +836,34 @@ async function testSessionBrowser() {
   assert.deepStrictEqual(listRequests.map((params) => params.cursor || ''), ['', 'p2']); // تصفح بالمؤشر
   assert.strictEqual(listed[0].id, 'kimi_sess_0199'); // الأحدث ضمن أول 200 ملتقطة (قصّ آمن)
   for (let i = 1; i < listed.length; i++) assert.ok(listed[i - 1].mtime >= listed[i].mtime);
+  const histListed = listed.find((item) => item.id === 'kimi_history_1');
+  assert.strictEqual(histListed.title, 'أين وصلنا ؟'); // الأغلفة والمرساة تُحذف من العنوان
+  assert.ok(!listed.some((item) => /<resource|<satr_lang/.test(item.title)),
+    'لا عنوان في اللوحة يحمل حقناً خاماً');
 
   const read = await engine.readSession('kimi_history_1');
-  assert.strictEqual(read.total, 5);
+  assert.strictEqual(read.total, 4);
   assert.deepStrictEqual(read.messages.map((item) => item.role),
-    ['user', 'assistant', 'assistant', 'assistant', 'assistant']); // الترتيب كما ورد
+    ['user', 'assistant', 'assistant', 'assistant']); // نداءات متتالية تُدمج بسجلّ واحد (OBS-153)
   assert.strictEqual(read.messages[0].text, 'الطلب');
   assert.strictEqual(read.messages[1].text, 'الرد الأول');
-  const bash = read.messages[2].content[0];
+  const worklog = read.messages[2].content;
+  assert.strictEqual(worklog.length, 2); // إجراءان في بطاقة واحدة لا بطاقتين بإجراء
+  const bash = worklog[0];
   assert.strictEqual(bash.type, 'tool_use');
   assert.strictEqual(bash.id, 'hist_bash_1');
   assert.strictEqual(bash.name, 'تنفيذ أمر'); // التسمية العربية من KIMI_TOOL_LABELS
   assert.strictEqual(bash.status, 'completed'); // الحالة النهائية من tool_call_update
-  const edit = read.messages[3].content[0];
+  const edit = worklog[1];
   assert.strictEqual(edit.type, 'tool_use');
   assert.strictEqual(edit.name, 'تعديل ملف');
   assert.strictEqual(edit.status, 'failed');
   assert.strictEqual(edit.input.api_key, '[secret]'); // المدخل منقّى كما في البث الحي
-  assert.strictEqual(read.messages[4].text, 'الرد الأخير');
+  assert.strictEqual(read.messages[3].text, 'الرد الأخير');
+  assert.ok(!read.messages.some((item) => item.text && item.text.includes('satr://')),
+    'أغلفة الموارد المحقونة لا تصل عرض الاستعادة');
+  assert.ok(!read.messages.some((item) => item.text && item.text.includes('system-reminder')),
+    'تذكيرات الوكيل المحقونة (system-reminder) لا تصل عرض الاستعادة');
   assert.ok(spawned.length >= 3, 'السرد والقراءة يستخدمان ACP رسمياً');
 }
 

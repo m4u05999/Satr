@@ -102,7 +102,9 @@ console.log('\n— اتفاق الطرفين (العطل كان في اختلا�
 
 console.log('\n— المعقل الثاني: الاستئناف لا يبدّل مجلدك صامتاً —');
 {
-  const app = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'app.js'), 'utf8');
+  const sourceFlag = process.argv.indexOf('--source');
+  const sourceFile = sourceFlag >= 0 ? process.argv[sourceFlag + 1] : path.join(ROOT, 'src', 'ui', 'app.js');
+  const app = fs.readFileSync(sourceFile, 'utf8').replace(/\r\n/g, '\n');
 
   ok('مسارات الاستئناف الثلاثة تمرّ بدالة واحدة',
     (app.match(/applyResumedCwd\(data\.cwd\)/g) || []).length === 3,
@@ -125,6 +127,35 @@ console.log('\n— المعقل الثاني: الاستئناف لا يبدّل
     'التراجع ناقص — جلسة مرتبطة بمجلد آخر ستفشل عند الإرسال');
   ok('ولا مربع تأكيد حاجب (‏قرار معلن: أخبِر ولا تسأل)',
     !/confirm\(/.test(fn));
+  // نشغّل الدالة المستخرجة كذلك، كي يبقى حارس التراجع سلوكياً لا وصفاً للصياغة.
+  const cwdInput = { value: 'D:\\owner', dispatchEvent() {} };
+  const sessionInfo = { textContent: '' }, notices = [], writes = [];
+  const sandbox = {
+    $: (id) => id === 'cwd' ? cwdInput : sessionInfo,
+    localStorage: { setItem(key, value) { writes.push([key, value]); } },
+    Event: class { constructor(type) { this.type = type; } },
+    chatEl: { addActionNotice(text, label, action) { notices.push({ text, label, action }); } },
+    addNotice() {}, sessionId: 'original-session', sessionCwd: 'D:\\owner',
+    busy: false, sessionControlBusy: false, sessionResumeBusy: false, applyingResumedCwd: false,
+    hasSdkBackgroundSessionLock: () => false, detachConversation() {},
+  };
+  const applyCwd = require('node:vm').runInNewContext('(' + fn + ')', sandbox);
+  applyCwd('D:\\resumed');
+  ok('دالة الإنتاج تطبّق المجلد وتعرض طرفي الانتقال', cwdInput.value === 'D:\\resumed'
+    && notices.length === 1 && notices[0].text.includes('D:\\owner') && notices[0].text.includes('D:\\resumed'));
+  sandbox.busy = true;
+  notices[0].action();
+  ok('التراجع محجوب أثناء الدور ولا يغيّر المجلد أو الجلسة', cwdInput.value === 'D:\\resumed'
+    && sandbox.sessionId === 'original-session');
+  sandbox.busy = false;
+  notices[0].action();
+  ok('زر الإنتاج يعيد المجلد ويلغي معرّف الجلسة', cwdInput.value === 'D:\\owner'
+    && sandbox.sessionCwd === 'D:\\owner' && sandbox.sessionId === null
+    && writes.at(-1)[1] === 'D:\\owner');
+  const count = notices.length;
+  applyCwd('d:\\OWNER');
+  ok('دالة الإنتاج لا تنبّه لاختلاف حالة الأحرف وحده', notices.length === count);
+
 }
 
 console.log('\nsessions-cwd: نجح — ' + checks

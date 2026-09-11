@@ -18,7 +18,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { sessionMessage } = require('../electron/codexsessions');
+const { sessionMessage, cleanThreadTitle, userDisplayText } = require('../electron/codexsessions');
 
 let checks = 0;
 const failures = [];
@@ -66,6 +66,72 @@ for (const tag of ['<recommended_plugins>', '<satr_project_memory>', '<skill>'])
 
 check('السياق يُتخطّى بعد تشذيب الفراغ البادئ', () => {
   assert.strictEqual(sessionMessage(modern('user', '\n  <satr_project_memory>\nذاكرة')), null);
+});
+
+// ── الحقن عنصراً ملتصقاً بنصّ المستخدم (قياس 2026-09-10 على rollout حقيقي) ────
+// المرساة الذيلية والذاكرة تصلان عناصر `input_text` إضافية في رسالة المستخدم
+// نفسها لا رسائل منفصلة — فتجمعهما contentText مع النصّ الحقيقي وتظهران خاماً
+// في فقاعة الاستعادة (بلاغ المالك: رد/طلب Codex بعد الإغلاق يختلف عنه حياً).
+check('حديثة ملتصقة: مرساة `<satr_lang>` عنصراً ثانياً تُحذف ويبقى نصّ المستخدم', () => {
+  const line = modern('user', 'نصّ المستخدم الحقيقي',
+    '<satr_lang> تذكير: سردُ عملك بالعربية </satr_lang>');
+  assert.deepStrictEqual(sessionMessage(line), { role: 'user', text: 'نصّ المستخدم الحقيقي' });
+});
+
+check('حديثة ملتصقة: كتلة `<satr_project_memory>` عنصراً ثانياً تُحذف ولا تُسقط الرسالة', () => {
+  const line = modern('user', 'سؤال حقيقي', '<satr_project_memory>\nذاكرة\n</satr_project_memory>');
+  assert.deepStrictEqual(sessionMessage(line), { role: 'user', text: 'سؤال حقيقي' });
+});
+
+check('حديثة ملتصقة: رسالة كل عناصرها سياق محقون تُسقط كاملة', () => {
+  const line = modern('user', '<satr_project_memory>ذاكرة</satr_project_memory>',
+    '<satr_lang>مرساة</satr_lang>');
+  assert.strictEqual(sessionMessage(line), null);
+});
+
+// ── عنوان الخيط من thread/list (بلاغ المالك 2026-09-10: عناوين تبدأ بـ<satr_project_memory>) ──
+// Codex يشتق name/preview من أول إدخال مستخدم — الذي قد يكون كتلتنا المحقونة.
+check('عنوان الخيط: ذاكرة محقونة كاملةً تسقط إلى العنوان الافتراضي', () => {
+  assert.strictEqual(cleanThreadTitle('<satr_project_memory> ذاكرة مشروع شخصية اعتمدها </satr_project_memory>'),
+    'جلسة Codex');
+});
+
+check('عنوان الخيط: كتلة محقونة مبتورة (بلا وسم إغلاق) تُقطع ولا تبقى', () => {
+  assert.strictEqual(cleanThreadTitle('<satr_project_memory> ذاكرة مشروع شخصية اعتمدها المستخدم'),
+    'جلسة Codex');
+});
+
+check('عنوان الخيط: المرساة الذيلية تُحذف ويبقى نصّ العنوان الحقيقي', () => {
+  assert.strictEqual(cleanThreadTitle('مراجعة خطة الفريق <satr_lang> تذكير </satr_lang>'),
+    'مراجعة خطة الفريق');
+});
+
+check('عنوان الخيط: العنوان النظيف يمرّ كما هو', () => {
+  assert.strictEqual(cleanThreadTitle('جلسة مراجعة الرادار'), 'جلسة مراجعة الرادار');
+});
+
+// ── نصّ عرض رسالة المستخدم من thread/read (بلاغ المالك 2026-09-10) ─────────────
+check('عرض thread/read: الحقن بأشكاله الثلاثة يُحذف ويبقى نصّ المستخدم', () => {
+  const content = [
+    { type: 'skill', name: 'satr-radar', path: 'x' },
+    { type: 'text', text: '<satr_project_memory>\nذاكرة\n</satr_project_memory>' },
+    { type: 'text', text: '# AGENTS.md instructions for D:\\proj\n\n<INSTRUCTIONS>…' },
+    { type: 'text', text: 'ما التالي؟' },
+    { type: 'text', text: '<satr_lang> مرساة </satr_lang>' },
+  ];
+  assert.strictEqual(userDisplayText(content), 'ما التالي؟');
+});
+
+check('عرض thread/read: رسالة كلها حقناً تعيد نصاً فارغاً فتُتخطّى', () => {
+  const content = [
+    { type: 'skill', name: 'satr-guide', path: 'x' },
+    { type: 'text', text: '<satr_project_memory>…</satr_project_memory>' },
+  ];
+  assert.strictEqual(userDisplayText(content), '');
+});
+
+check('عرض thread/read: نصّ مستخدم يبدأ بشرطة مائلة (أمر كتبه فعلاً) يبقى', () => {
+  assert.strictEqual(userDisplayText([{ type: 'text', text: '/مساعدة' }]), '/مساعدة');
 });
 
 check('رد المساعد لا يُرشَّح بالوسم (الترشيح لرسائل المستخدم وحدها)', () => {

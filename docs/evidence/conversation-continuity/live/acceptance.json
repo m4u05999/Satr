@@ -1,0 +1,64 @@
+{
+  "time": "2026-09-09T21:22:05.153Z",
+  "mode": "source",
+  "boundary": "claude-stream-json-and-codex-app-server-fixture",
+  "timeoutMs": 1800000,
+  "maxAttemptsPerFailure": 2,
+  "paidModelCalls": 0,
+  "baseline": {
+    "head": "f230c98d862e4435eb166c310f1265e810e80d4b",
+    "dirty": "M .agents/skills/satr-accept/SKILL.md\n M .agents/skills/satr-guide/features.md\n M .agents/skills/satr-guide/tools.md\n M AGENTS.md\n M CLAUDE.md\n M NOTICE\n M docs/MOBILE-CONTROL-PLAN.md\n M docs/OBSERVATIONS.md\n M docs/PRO-PLAN.md\n M electron/adapters/gemini.js\n M electron/adapters/openai-compatible.js\n M electron/adapters/openai-responses.js\n M electron/agent.js\n M electron/codex.js\n M electron/codexmcp.js\n M electron/codexsessions.js\n M electron/envbrief.js\n M electron/kimi.js\n M electron/main.js\n M electron/mobilelink.js\n M electron/mobilerelay.js\n M electron/preload.js\n M electron/promocapture.js\n M electron/sessions.js\n M electron/tasks.js\n M electron/testspriteharness-client.js\n M electron/tools.js\n M package.json\n M pwa/app.js\n M pwa/index.html\n M pwa/styles.css\n M pwa/sw.js\n M scripts/codexmcp-test.js\n M scripts/full-suite.js\n M scripts/mobile-integration-test.js\n M scripts/mobilerelay-test.js\n M scripts/promocapture-live-test.js\n M scripts/pwa-dom-live-test.js\n M scripts/sdk-background-test.js\n M scripts/sdk-polish-test.js\n M scripts/sessions-cwd-test.js\n M scripts/suite-coverage-test.js\n M scripts/vendor-fonts.js\n M scripts/worktrees-test.js\n M src/ui/app.js\n M src/ui/components/mcp-panel.js\n M src/ui/components/preview-panel.js\n M src/ui/lib/media-recorder.js\n?? .agents/skills/satr-live-test/\n?? docs/CONNECTIONS-PLAN.md\n?? docs/CONNECTIONS-RECOVERY-EVIDENCE.md\n?? docs/CONNECTIONS-TEST-EVIDENCE.md\n?? docs/FINAL-BATCH-OWNER-CHECKLIST.md\n?? docs/FINAL-BATCH-TEST-EVIDENCE.md\n?? docs/LIVE-TEST-RECORDING-EVIDENCE.md\n?? docs/MOBILE-LIVE-20260909-EVIDENCE.md\n?? docs/OBS-147-DOM-EVIDENCE.md\n?? docs/OBS-147-ENGINE-EVIDENCE.md\n?? docs/OBS-147-TEST-EVIDENCE.md\n?? docs/OBS-147-TRANSPORT-EVIDENCE.md\n?? docs/OBS-148-TEST-EVIDENCE.md\n?? docs/PWA-READABILITY-EVIDENCE.md\n?? docs/PWA-SW-EVIDENCE.md\n?? docs/RECORDING-QUALITY-EVIDENCE.md\n?? docs/SUITE-TIMEOUT-EVIDENCE.md\n?? docs/acceptance-connections.md\n?? docs/acceptance-final-batch.md\n?? electron/connection-ipc.js\n?? electron/connection-services.js\n?? electron/connection-tools.js\n?? electron/connections.js\n?? electron/conversation-bridge.js\n?? electron/conversations.js\n?? electron/mobilecommands.js\n?? pwa/fonts.css\n?? pwa/fonts/\n?? scripts/app-recording-quality-test.js\n?? scripts/connection-services-test.js\n?? scripts/connections-engine-probe.js\n?? scripts/connections-recovery-test.js\n?? scripts/connections-test.js\n?? scripts/connections-ui-scene.js\n?? scripts/connections-ui-test.js\n?? scripts/conversation-live-test.js\n?? scripts/conversation-main-test.js\n?? scripts/conversation-ui-test.js\n?? scripts/conversations-test.js\n?? scripts/engine-stop-done-test.js\n?? scripts/fixtures/connections-ui.css\n?? scripts/fixtures/connections-ui.html\n?? scripts/fixtures/connections-ui.js\n?? scripts/fixtures/conversation-engine-stub.js\n?? scripts/lib/live-test-client.js\n?? scripts/lib/live-test-run.js\n?? scripts/live-test-client-test.js\n?? scripts/live-test-launch.js\n?? scripts/live-test-run-test.js\n?? scripts/live-test-smoke.js\n?? scripts/live-test.js\n?? scripts/mobile-stop-confirmation-test.js\n?? scripts/mobile-task-owner-test.js\n?? scripts/mobilecommands-test.js\n?? scripts/promo-app-window-test.js\n?? scripts/pwa-readability-test.js\n?? scripts/pwa-sw-test.js\n?? src/ui/components/connection-view.js"
+  },
+  "criteria": [
+    {
+      "id": "engine-roundtrip",
+      "pass": "تصل الحقائق القديمة والتصحيح والإلغاء إلى المحرك التالي عبر مدخلات البروتوكول وتبقى رسائلها في DOM.",
+      "fail": "تفقد حقيقة أو يعود قيد ملغى أو تختفي الرسائل عند التبديل."
+    },
+    {
+      "id": "model-change",
+      "pass": "نموذج آخر داخل المحرك يستأنف nativeId نفسه مع السياق.",
+      "fail": "ينشأ nativeId جديد أو تسقط الحقيقة."
+    },
+    {
+      "id": "reload",
+      "pass": "تعاد الرسائل من تخزين الإنتاج ويصل الدور التالي بسياقها.",
+      "fail": "تختفي الرسائل أو يصل الدور التالي بلا السياق."
+    },
+    {
+      "id": "chat-project-isolation",
+      "pass": "دردشتان ومشروعان لا يرثان حقائق بعضهما؛ تختار لوحة الجلسات الأولى وتستعيد تصحيحها.",
+      "fail": "يتسرب قيد أو تستأنف دردشة أو مشروع غير المحدد."
+    },
+    {
+      "id": "no-tool-replay",
+      "pass": "ملف الأثر يحتوي سطرا واحدا بعد كل التنقلات.",
+      "fail": "يضاف أثر ثان بسبب تاريخ الأدوات."
+    },
+    {
+      "id": "restart",
+      "pass": "بعد close/launch جديدين يستعيد الدور التالي سياق المحادثة الأخيرة.",
+      "fail": "فقد التاريخ أو بدء محادثة فارغة."
+    }
+  ],
+  "limitations": [
+    "ليست تجربة حساب أو نموذج مدفوع ولا اختبار فهم لغوي.",
+    "ليست حزمة packaged.",
+    "لا تثبت اللقطة سلامة العربية في أسطح لم تقاس.",
+    "الكتابة للأداة تنفيذ محاكاة داخل المحرك؛ لا تثبت سياسة إذن أداة حقيقية."
+  ],
+  "verificationOf": "live_e0857543ff3f5d743e3f0b5d",
+  "originalDeadline": "2026-09-09T21:32:03.854Z",
+  "priorEvidence": "D:\\sater\\satr-2\\dist\\live-tests\\live_e0857543ff3f5d743e3f0b5d\\conversation",
+  "sources": {
+    "electron/conversations.js": "ad541b7cb707202b866458e6ecaf21363c681ee63d42ea553a28fae4f740f5a2",
+    "electron/conversation-bridge.js": "52f9802b3249336ab9f378d354501084d0e91007e96bf4ad25b426b824ebecfd",
+    "electron/main.js": "39ea0902a812497e2ad67ca989846490f2382035ce4a0563cf5c7466320e8a3c",
+    "electron/preload.js": "079bc507c2cec45354e988d0c4c0c7f28f0a9070dbe2a90e26f00fa139e3faba",
+    "electron/agent.js": "f6eec15116f25d4871c24101480ec1619de7a4ecdf205f3afb08a9f056bc5c8d",
+    "electron/codex.js": "477f4cba74a81b4687911b95b7e98fdae8cfa0bdef3dca67128e652daed06707",
+    "src/ui/app.js": "9e3ce493f86104fe212fd8e64cc082411ad4c1c0a5c3f7e9f0fdb24fb3ca74dc",
+    "scripts/conversation-live-test.js": "b140d4c8725e872ec98c3255d35b47c4cfbd4fc086ad6c1d1f155c8d6f40a158",
+    "scripts/fixtures/conversation-engine-stub.js": "eb42c22716c39f6d6e6abb96202b795cebf31ed66cd36a523f485ababf18add7"
+  }
+}

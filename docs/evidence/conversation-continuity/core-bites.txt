@@ -1,0 +1,109 @@
+حارس الاستمرارية — أدلة العضّات المعزولة
+خط الأساس النهائي: node scripts/conversations-test.js — نجح 17/17، exit_code=0.
+النسخ المتحوّرة مؤقتة؛ لم يُزرع أي عطل في ملفات الإنتاج.
+
+أمر الزرع كما نُفّذ (PowerShell):
+$biteRoot = 'C:\Users\Unknown\AppData\Local\Temp\satr-conversations-bite-743697b4240743a9b942a75931625b37'
+Copy-Item -LiteralPath 'D:\sater\satr-2\electron\conversations.js' -Destination (Join-Path $biteRoot 'conversations.js') -Force
+Copy-Item -LiteralPath 'D:\sater\satr-2\electron\sessions.js' -Destination (Join-Path $biteRoot 'sessions.js') -Force
+$cases = @(
+  @{ File = 'conversations.js'; Original = 'message.seq > fromRevision &&'; Mutant = 'message.seq > Math.max(fromRevision, 1) &&' },
+  @{ File = 'sessions.js'; Original = "role: 'tool_result', text: resultTexts.join('\n'),"; Mutant = "role: 'user', text: resultTexts.join('\n')," }
+)
+foreach ($case in $cases) {
+  $target = Join-Path $biteRoot $case.File
+  $code = [System.IO.File]::ReadAllText($target)
+  $beforeOriginal = [regex]::Matches($code, [regex]::Escape($case.Original)).Count
+  $beforeMutant = [regex]::Matches($code, [regex]::Escape($case.Mutant)).Count
+  if ($beforeOriginal -ne 1 -or $beforeMutant -ne 0) { throw 'Unexpected mutation baseline' }
+  [System.IO.File]::WriteAllText($target, $code.Replace($case.Original, $case.Mutant), [System.Text.UTF8Encoding]::new($false))
+  $verified = [System.IO.File]::ReadAllText($target)
+  Write-Output ($case.File + ' BEFORE original=' + $beforeOriginal + ' mutant=' + $beforeMutant)
+  Write-Output ($case.File + ' AFTER original=' + [regex]::Matches($verified, [regex]::Escape($case.Original)).Count + ' mutant=' + [regex]::Matches($verified, [regex]::Escape($case.Mutant)).Count)
+}
+
+العدّ من القراءة الفعلية قبل وبعد الزرع:
+conversations.js BEFORE original=1 mutant=0
+conversations.js AFTER original=0 mutant=1
+sessions.js BEFORE original=1 mutant=0
+sessions.js AFTER original=0 mutant=1
+
+أمر الحارس:
+node scripts/conversations-test.js --module=C:\Users\Unknown\AppData\Local\Temp\satr-conversations-bite-743697b4240743a9b942a75931625b37\conversations.js
+إخراج الحارس كما طُبع (exit_code=1):
+PASS يحفظ نص المستخدم الأصلي فور الإرسال مع هوية مستقرة
+PASS يسجل النهائي مرة واحدة ويتجاهل صدى المستخدم ومدخلات الأدوات
+AssertionError [ERR_ASSERTION]: أقدم قيد للمستخدم يجب أن يصل إلى المحرك البديل
+    at D:\sater\satr-2\scripts\conversations-test.js:89:5
+    at test (D:\sater\satr-2\scripts\conversations-test.js:23:27)
+    at main (D:\sater\satr-2\scripts\conversations-test.js:86:3)
+    at Object.<anonymous> (D:\sater\satr-2\scripts\conversations-test.js:360:1)
+    at Module._compile (node:internal/modules/cjs/loader:1934:14)
+    at Object..js (node:internal/modules/cjs/loader:2074:10)
+    at Module.load (node:internal/modules/cjs/loader:1656:32)
+    at Module._load (node:internal/modules/cjs/loader:1448:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+أمر الحارس:
+node scripts/conversations-test.js --reader-module=C:\Users\Unknown\AppData\Local\Temp\satr-conversations-bite-743697b4240743a9b942a75931625b37\sessions.js
+إخراج الحارس كما طُبع (exit_code=1):
+PASS يحفظ نص المستخدم الأصلي فور الإرسال مع هوية مستقرة
+PASS يسجل النهائي مرة واحدة ويتجاهل صدى المستخدم ومدخلات الأدوات
+PASS ينقل أقدم قيد والتصحيح والإلغاء بترتيب المصدر مع استبعاد الطلب الحالي
+PASS العودة للمحرك السابق تنقل الزيادة مرة واحدة فقط
+PASS لا يخلط جلسات أو مشاريع أو معرفات ولا يسمح بربط جلسة مرتين
+PASS تطبيع realpath وويندوز يصل إلى المشروع نفسه، وforget يحذف المؤشر فقط
+PASS تجاوز حزمة النقل يفشل صراحةً ولا يمنع الاستئناف الأصلي
+PASS الأسرار الظاهرة تُحجب على القرص ويُعلن نقص نقلها
+PASS الصور وصفية فقط ويظهر أنها لم تنتقل
+PASS البذور الموثوقة تدعم استئناف القديم وتعلن التاريخ المفقود
+PASS الإيقاف يحفظ البث الجزئي ويمنع تقدم مؤشر الإكمال
+PASS استبدال جلسة مفقودة يحتاج حزمة كاملة ويُحظر بعد بدء التنفيذ
+PASS يحفظ توجيه المستخدم إن سبق result إقرار قبوله ولا يدعي اكتماله
+PASS النص الضخم والبث الضخم يعلنان الفقد ولا يمران كحزمة كاملة
+PASS الملف الفاسد والربط الرمزي للمخزن يفشلان مغلقين بلا كتابة خارج الجذر
+AssertionError [ERR_ASSERTION]: نتيجة الأداة القديمة يجب أن تبقى منفصلة عن كلام المستخدم
++ actual - expected
+
++ 'user'
+- 'tool_result'
+
+    at D:\sater\satr-2\scripts\conversations-test.js:319:12
+    at test (D:\sater\satr-2\scripts\conversations-test.js:23:27)
+    at main (D:\sater\satr-2\scripts\conversations-test.js:307:3)
+    at Object.<anonymous> (D:\sater\satr-2\scripts\conversations-test.js:360:1)
+    at Module._compile (node:internal/modules/cjs/loader:1934:14)
+    at Object..js (node:internal/modules/cjs/loader:2074:10)
+    at Module.load (node:internal/modules/cjs/loader:1656:32)
+    at Module._load (node:internal/modules/cjs/loader:1448:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'user',
+  expected: 'tool_result',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+
+أمر الاستعادة كما نُفّذ:
+$biteRoot = 'C:\Users\Unknown\AppData\Local\Temp\satr-conversations-bite-743697b4240743a9b942a75931625b37'
+Copy-Item -LiteralPath 'D:\sater\satr-2\electron\conversations.js' -Destination (Join-Path $biteRoot 'conversations.js') -Force
+Copy-Item -LiteralPath 'D:\sater\satr-2\electron\sessions.js' -Destination (Join-Path $biteRoot 'sessions.js') -Force
+foreach ($file in @('conversations.js', 'sessions.js')) {
+  $sourceHash = (Get-FileHash -LiteralPath (Join-Path 'D:\sater\satr-2\electron' $file)).Hash
+  $restoredHash = (Get-FileHash -LiteralPath (Join-Path $biteRoot $file)).Hash
+  Write-Output ($file + ' RESTORED matches production=' + ($sourceHash -eq $restoredHash))
+}
+الإخراج:
+conversations.js RESTORED matches production=True
+sessions.js RESTORED matches production=True
