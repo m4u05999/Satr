@@ -185,34 +185,41 @@ function deriveState(tasks, previousState) {
   return tasks.length && tasks.every((task) => task.status === 'completed') ? 'completed' : 'active';
 }
 
-function apply(update, options) {
+// اختزال نقي مشترك: دفتر الجلسة الدائم ولقطة الدور للجوال لهما مصدر واحد للدمج.
+function reduceSnapshot(update, previous) {
   if (!update || update.schema_version !== SCHEMA_VERSION) return null;
-  const engine = cleanText(update.engine, 32);
-  const sessionId = cleanText(update.session_id, 128);
-  const file = fileFor(engine, sessionId, options);
-  if (!file) return null;
   const incoming = sanitizeTasks(update.tasks);
   if (!incoming.length && update.mode !== 'replace') return null;
-  const previous = readFile(file);
   const mode = MODES.has(update.mode) ? update.mode : 'merge';
   const source = cleanText(update.source, 64) || 'engine';
 
   // خطة Kimi التلقائية (source: kimi_plan) لا تستبدل سجلاً صريحاً أنشأه
   // المستخدم أو أداة update_task_ledger (أي مصدر غير kimi_plan).
   if (mode === 'replace' && source === 'kimi_plan' && previous && previous.source !== 'kimi_plan') {
-    return publicLedger(previous);
+    return previous;
   }
 
   const nextTasks = mode === 'replace' ? incoming : mergeTasks(previous ? previous.tasks : [], incoming);
+  return { tasks: nextTasks, state: deriveState(nextTasks, previous && previous.state), source };
+}
+
+function apply(update, options) {
+  if (!update || update.schema_version !== SCHEMA_VERSION) return null;
+  const engine = cleanText(update.engine, 32);
+  const sessionId = cleanText(update.session_id, 128);
+  const file = fileFor(engine, sessionId, options);
+  if (!file) return null;
+  const previous = readFile(file);
+  const snapshot = reduceSnapshot(update, previous);
+  if (!snapshot) return null;
+  if (snapshot === previous) return publicLedger(previous);
   const ledger = {
     schema_version: SCHEMA_VERSION,
     engine,
     session_id: sessionId,
     revision: (previous ? previous.revision : 0) + 1,
-    state: deriveState(nextTasks, previous && previous.state),
-    source,
+    ...snapshot,
     updated_at: Date.now(),
-    tasks: nextTasks,
   };
   writeBestEffort(ledger, options);
   return publicLedger(ledger);
@@ -260,6 +267,7 @@ function addEvidence(engine, sessionId, selector, evidence, options) {
 
 module.exports = {
   SCHEMA_VERSION,
+  reduceSnapshot,
   apply,
   load,
   action,

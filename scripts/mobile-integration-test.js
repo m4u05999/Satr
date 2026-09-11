@@ -193,7 +193,7 @@ function assertStateWiring() {
   // نقاط البثّ التسع من §7.7.6/ز — غياب أيٍّ منها يعمي الهاتف عن انتقال حقيقي
   for (const [needle, label] of [
     ["phase: 'waiting_permission'", 'عرض الإذن'],
-    ["phase: 'stopped'", 'قبول الإيقاف'],
+    ["phase: 'stopped'", 'تأكيد الإيقاف'],
     ["phase: 'working'", 'بدء الدور'],
   ]) {
     assert(source.includes(needle), 'main.js يبثّ لقطة عند ' + label);
@@ -245,7 +245,7 @@ function assertStopWiring() {
   assert(/mobileRunToken = randomBytes\(/.test(source), 'main.js يولّد رمز دور معتم لكل دور');
   assert(/run:\s*mobileRunToken/.test(source), 'main.js يمرّر رمز الدور إلى الظرف');
   // الإيقاف يمر بمسار satr:stop نفسه لا بمسار ثانٍ يتباعد عنه
-  assert(/function handleMobileStop[\s\S]{0,900}stopAll\(false\)/.test(source),
+  assert(/stopAll\(false\)/.test(sourceFunction(source, 'handleMobileStop', {}).toString()),
     'الإيقاف من الجوال يستدعي stopAll نفسه');
 }
 
@@ -410,6 +410,9 @@ function sampleRequest(id, decision) {
 }
 
 async function run() {
+  await require('./mobile-stop-confirmation-test').testMobileStopConfirmation();
+  await require('./mobilecommands-test').testMobileCommands();
+  await require('./engine-stop-done-test').testEngineStopDone();
   fs.mkdirSync(tempRoot, { recursive: true });
   const identity = mobilecrypto.generateKeyPair();
   const storeFile = path.join(tempRoot, 'devices.json');

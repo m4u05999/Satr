@@ -70,6 +70,7 @@ xterm.js 6.x — MIT License
 --------------------------------------------------------------------------------
 IBM Plex Sans Arabic — SIL Open Font License 1.1
   src/vendor/fonts/*.woff2 · src/vendor/fonts.css
+  pwa/fonts/*.woff2 · pwa/fonts.css · pwa/fonts/OFL.txt
 
   Copyright (c) 2017 IBM Corp. — https://github.com/IBM/plex
   Released under the SIL Open Font License, Version 1.1. النصّ الكامل:
