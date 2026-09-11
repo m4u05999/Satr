@@ -27,3 +27,4 @@ paths:
 - `docs/internals/39-claude-code-parity-commands.md` — أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد)
 - `docs/internals/40-subagents.md` — الوكلاء الفرعيون (Subagents — المرحلة 14.2)
 - `docs/internals/46-envbrief.md` — وعي بيئة «سطر» الموحّد — envbrief
+- `docs/internals/66-reply-readability.md` — كتلة «شكل الرد» في envbrief لكل الأسطح (الطبقة ٣ من قرائية الردود)

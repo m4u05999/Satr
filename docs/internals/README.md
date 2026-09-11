@@ -73,3 +73,4 @@
 | 63 | [`63-generations-gallery-panel.md`](63-generations-gallery-panel.md) | لوحة معرض التوليدات 🖼 (الجولة 8 من «ولّد من سطر» — kimi-code) | 2.6 ك.ب |
 | 64 | [`64-generation-cards-chat.md`](64-generation-cards-chat.md) | بطاقة التوليد في المحادثة وبطاقة الصوت (الجولة 9 §2/§4 — kimi-code) | 3.4 ك.ب |
 | 65 | [`65-media-players-gallery.md`](65-media-players-gallery.md) | مشغّلا الوسائط في المعرض (الجولة 10 §3 — kimi-code) | 2.9 ك.ب |
+| 66 | [`66-reply-readability.md`](66-reply-readability.md) | قرائية ردود الوكيل — سلّم العناوين وعارض Markdown وتوجيه شكل الرد (2026-09-11) | 8.4 ك.ب |
