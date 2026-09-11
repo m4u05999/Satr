@@ -386,6 +386,11 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
   const toolUseByTaskId = new Map();
   const taskTitleById = new Map();
   const moveStates = new Map(); // tool_use_id → { status, taskId, notification, promise }
+  // مهام بدأها النموذج في الخلفية بنفسه (‏is_backgrounded — شارة OBS-094 في الواجهة): ليست
+  // نقل مستخدم فلا moveStates ولا حجز input ولا إيقاف، لكن بطاقتها تحمل «يعمل في الخلفية»
+  // وكان إشعارها الختامي يُسقط هنا صامتاً (‏rawPrivateLifecycle يحجب الخام) فتبقى الشارة
+  // إلى الأبد. يُمرَّر لها الإشعار المنقّى نفسه (‏sdkTaskNotificationEvent) لا أكثر.
+  const modelBackgroundedTasks = new Set(); // task_id
   let active = true;
   let resultSeen = false;
   let observedSessionId = '';
@@ -422,6 +427,17 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
     finishInputIfIdle();
   }
 
+  // الإشعار الختامي لمهمة بدأها النموذج في الخلفية: التنقية نفسها، بلا إغلاق input (لا حجز
+  // لها أصلاً) وبلا Ledger إضافي (‏emitClaudeTasks يتولاه). بلا tool_use_id لا بطاقة فلا حدث.
+  function finalizeModelTask(toolUseId, taskId, message) {
+    modelBackgroundedTasks.delete(taskId);
+    if (!SAFE_SDK_TOOL_USE_ID.test(toolUseId)) return;
+    const event = sdkTaskNotificationEvent(message, toolUseId);
+    if (event && typeof emit === 'function') emit(event);
+    taskIdByToolUse.delete(toolUseId);
+    toolUseByTaskId.delete(taskId);
+  }
+
   function observe(message) {
     if (!message || typeof message !== 'object') return;
     const sessionId = String(message.session_id || '');
@@ -431,11 +447,21 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
     const cleanedTitle = safeSdkTaskText(message.description, 300);
     if (SAFE_SDK_TASK_ID.test(taskId) && cleanedTitle) taskTitleById.set(taskId, cleanedTitle);
     rememberTask(toolUseId, taskId);
+    if (message.type === 'system' && SAFE_SDK_TASK_ID.test(taskId)) {
+      // الشرط نفسه الذي يولّد شارة الواجهة في sdkAgentProgressEvent — تناظرٌ مقصود.
+      const backgroundedByModel = message.subtype === 'task_started' ? message.is_backgrounded === true
+        : message.subtype === 'task_updated' ? !!(message.patch && message.patch.is_backgrounded === true)
+        : false;
+      if (backgroundedByModel) modelBackgroundedTasks.add(taskId);
+    }
     if (message.type !== 'system' || message.subtype !== 'task_notification') return;
     const resolvedToolUseId = SAFE_SDK_TOOL_USE_ID.test(toolUseId)
       ? toolUseId : toolUseByTaskId.get(taskId) || '';
     const state = moveStates.get(resolvedToolUseId);
-    if (!state) return;
+    if (!state) {
+      if (modelBackgroundedTasks.has(taskId)) finalizeModelTask(resolvedToolUseId, taskId, message);
+      return;
+    }
     // قد يسبق إشعار قصير جداً حسم Promise التحكم؛ نخزنه حتى نعرف أن النقل نجح فعلاً.
     if (state.status === 'moving') {
       state.notification = message;
@@ -535,8 +561,16 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
           });
         }
       }
+      // مهام النموذج الخلفية التي لم يصل إشعارها: القناة تُغلق معها فلا تبقى شارتها
+      // «يعمل في الخلفية» إلى الأبد. البطاقة وحدها — Ledger هذه المهام يملكه emitClaudeTasks.
+      for (const taskId of modelBackgroundedTasks) {
+        const toolUseId = toolUseByTaskId.get(taskId) || '';
+        if (!SAFE_SDK_TOOL_USE_ID.test(toolUseId) || moveStates.has(toolUseId)) continue;
+        emit({ type: 'sdk_task_notification', toolUseId, taskId, status: finalStatus, summary });
+      }
     }
     moveStates.clear();
+    modelBackgroundedTasks.clear();
     taskIdByToolUse.clear();
     toolUseByTaskId.clear();
     taskTitleById.clear();
