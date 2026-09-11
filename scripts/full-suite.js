@@ -66,11 +66,13 @@ const SUITE = [
   'test:browserorigin',
   'test:browserpolicy',
   'test:desktopguard',
+  'test:desktop',
   'test:browser-platform-live',
   'test:execguard',
   'test:termjobs',
   'test:term-longline',
   'test:uia-helper',
+  'test:desktop-live',
   'test:termjobs-done',
   'test:secretscrub',
   'test:envbrief',
@@ -268,6 +270,7 @@ const SKIP_ON_POSIX = Object.freeze([
   { name: 'test:promo-studio', reason: 'الجزء الحي يصيّر صوتاً وفيديو ويحتاج ALSA/GPU حقيقيين — يسقط بـ live_timeout:rendering على عدّاء بلا صوت' },
   { name: 'eval:agent', reason: 'التقييم يعلن 12 مهمة وينفّذ 11 على POSIX فيُعدّ ناقصاً — يحتاج فحصاً مستقلاً لمهمته المشروطة بويندوز' },
   { name: 'test:uia-helper', reason: 'المعين native/satr-uia عميل UI Automation لويندوز وحده ويقيس نافذة «المفكرة» — يُبنى ويُختبر في uia-helper.yml على windows-latest' },
+  { name: 'test:desktop-live', reason: 'قبول سطح ويندوز على «المفكرة» الحقيقية بالمعين نفسه (افتح، اكتب، احفظ، stale_ref) — ويندوز وحده' },
 ]);
 function skipReasonFor(name, platform = process.platform) {
   if (platform === 'win32') return null;

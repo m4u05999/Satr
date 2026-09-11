@@ -106,6 +106,7 @@
     "test:browserorigin": "node scripts/browserorigin-test.js",
     "test:browserpolicy": "node scripts/browserpolicy-test.js",
     "test:desktopguard": "node scripts/desktopguard-test.js",
+    "test:desktop": "node scripts/desktop-test.js",
     "test:browser-platform-live": "electron scripts/browser-platform-live-test.js",
     "test:execguard": "node scripts/execguard-test.js",
     "test:termjobs": "node scripts/termjobs-test.js",
@@ -166,6 +167,7 @@
     "test:filter-hook": "node scripts/filter-test-output-hook-test.js",
     "test:claude-md-size": "node scripts/claude-md-size-test.js",
     "test:uia-helper": "node scripts/uia-helper-test.js",
+    "test:desktop-live": "node scripts/desktop-live-test.js",
     "test:model-routing": "node scripts/model-routing-test.js",
     "test:full-timeout": "node scripts/full-suite-timeout-test.js",
     "test:full:evidence": "node scripts/full-suite-evidence.js",
@@ -266,6 +268,15 @@
       ".agents/skills/satr-accept/**/*",
       ".agents/skills/satr-design-ar/**/*",
       ".agents/skills/satr-youtube/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "native/satr-uia/out-aot",
+        "to": "satr-uia",
+        "filter": [
+          "satr-uia.exe"
+        ]
+      }
     ],
     "win": {
       "icon": "build/icon.ico",

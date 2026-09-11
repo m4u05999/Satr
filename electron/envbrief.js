@@ -21,6 +21,15 @@ const KIMI_EXTRA_TOOL_NAMES = Object.freeze([
   'verification_config', 'verify_project', 'update_task_ledger',
   'propose_memory', 'load_skill', 'read_skill_resource',
 ]);
+// أدوات سطح ويندوز (docs/COMPUTER-USE-DESKTOP.md §٧) — مستقلة عن SDK_TOOL_NAMES عمداً: تُلحق بالجرد
+// فقط حين يُسجَّل خادم satr-desktop عند بدء الجلسة (قاعدة §٦)، فلا يعرف النموذج أداةً لم تُسجَّل.
+const DESKTOP_TOOL_NAMES = Object.freeze([
+  'desktop_targets', 'desktop_snapshot', 'desktop_click', 'desktop_type',
+  'desktop_press_key', 'desktop_scroll', 'desktop_wait_for', 'desktop_screenshot',
+]);
+const DESKTOP_POLICY_LINE = 'سطح ويندوز: النافذة يختارها المستخدم وحده ولا ترى غيرها. خذ desktop_snapshot أولاً ثم تصرّف '
+  + 'بالمراجع وحدها (مثل w3:e5) — لا إحداثيات ولا تقييم كود، وdesktop_screenshot آخر الملاذ للحكم على الشكل لا '
+  + 'لاختيار موضع نقر. إن لم يظهر العنصر في الشجرة فقل إنك لا تستطيع.';
 
 function codexToolNames() {
   const codexmcp = require('./codexmcp');
@@ -32,8 +41,11 @@ function adapterToolNames() {
   return tools.defs().map((def) => def.function.name);
 }
 
-function toolNames(engine) {
-  if (engine === 'sdk') return Array.from(SDK_TOOL_NAMES);
+function toolNames(engine, options) {
+  if (engine === 'sdk') {
+    const names = Array.from(SDK_TOOL_NAMES);
+    return options && options.desktop === true ? names.concat(DESKTOP_TOOL_NAMES) : names;
+  }
   if (engine === 'codex') return codexToolNames();
   if (engine === 'kimi-code') return codexToolNames().concat(KIMI_EXTRA_TOOL_NAMES);
   return adapterToolNames();
@@ -124,7 +136,9 @@ const REPLY_SHAPE_BLOCK = [
 
 function build(engine, model, options) {
   const normalized = engine === 'sdk' || engine === 'codex' || engine === 'kimi-code' ? engine : 'adapter';
-  const names = toolNames(normalized);
+  // سطح ويندوز لمحرك SDK وحده وبقرار التسجيل نفسه (agent.js) — الجرد والسياسة يتبعان الخادم لا العلم
+  const desktop = normalized === 'sdk' && Boolean(options && options.desktop === true);
+  const names = toolNames(normalized, { desktop });
   const compact = Boolean(options && options.compact);
   const sections = [
     'أنت تعمل داخل تطبيق «سطر» (Satr)، واجهة سطح مكتب عربية تشغّل الوكيل وتعرض أدواته وأذوناته للمستخدم بشفافية.',
@@ -137,6 +151,7 @@ function build(engine, model, options) {
     browserPolicy(normalized !== 'adapter'),
     'إذا سأل المستخدم عن «سطر» نفسه أو ميزاته أو طريقة استخدامه، حمّل مهارة satr-guide واتبع دليلها قبل الإجابة.',
   ];
+  if (desktop) sections.push(DESKTOP_POLICY_LINE);
   // المحرّكات الأصيلة الثلاثة وحدها تملك وكلاء فرعيين فعلاً (Task/spawn_agent/Agent)،
   // فلا يُثقَل موجز المحوّلات بسطر عن قدرة لا يملكونها. **حدّ مُصرَّح به**: محوّل
   // claude-cli الاحتياطي يُطبَّع 'adapter' فلا يصله السطر رغم امتلاكه Task — مسار
@@ -155,4 +170,4 @@ function build(engine, model, options) {
   return compact ? sections.join('\n') : sections.join('\n\n');
 }
 
-module.exports = { SDK_TOOL_NAMES, REPLY_SHAPE_BLOCK, toolNames, build };
+module.exports = { SDK_TOOL_NAMES, DESKTOP_TOOL_NAMES, DESKTOP_POLICY_LINE, REPLY_SHAPE_BLOCK, toolNames, build };

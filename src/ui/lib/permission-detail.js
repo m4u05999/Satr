@@ -28,7 +28,9 @@ export function formatPermissionDetail(tool, input) {
     return 'سيُطلب منك إدخال القيمة بنفسك في الحقل: ' + String(data.field_ref || data.selector || '(غير محدد)') +
       (data.reason ? '\nالسبب: ' + clipped(data.reason, MAX_TYPED_TEXT_LENGTH).value : '');
   }
-  if (bare !== 'browser_type') return '';
+  // سطح ويندوز (الخطوة ٤): العملية الرئيسية ترسل تفاصيل النافذة والعنصر في detail؛ هذا احتياطها
+  if (bare === 'desktop_press_key') return 'المفاتيح: ' + clipped(data.keys || '', 32).value;
+  if (bare !== 'browser_type' && bare !== 'desktop_type') return '';
 
   const target = clipped(data.ref || data.selector || '', MAX_TARGET_LENGTH);
   const typed = clipped(data.text || '', MAX_TYPED_TEXT_LENGTH);

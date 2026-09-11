@@ -1,23 +1,28 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * سطر — اختبار المعين الأصلي `native/satr-uia` (الصف ١ في docs/COMPUTER-USE-DESKTOP.md).
+ * سطر — اختبار المعين الأصلي `native/satr-uia` (الصفّان ١ و٤ في docs/COMPUTER-USE-DESKTOP.md).
  *
  * يقيس على «المفكرة» فعلاً لا على محاكاة: يطلق المعين بانضباط codex.js (مهلة إقلاع، مهلة
  * لكل طلب، إغلاق stdin ثم إنهاء، ورفض أي ردّ لا يطابق الشكل) ويفحص:
- *   initialize (الزمن + packageFullName) · targets/list يجد المفكرة · tree/snapshot ≥3 عناصر
- *   مسمّاة بصيغة `[w2:e14] role "name"` · maxNodes يقصّ ويعلن · setValue يغيّر النص (قراءة ثانية
- *   من العنصر) · invoke على زر يغيّر النافذة · مرجع فاسد/قديم ⇒ stale_ref بلا فعل · حقل
- *   السرّ غائب عن اللقطة (نافذة WinForms فيها TextBox بكلمة مرور) · ردّ غير مطابق يُرفض ·
- *   shutdown وإغلاق stdin ينهيان العملية بلا أيتام · وإن كان الثنائي AOT: الحجم < 8 م.ب
- *   والإقلاع < 800 م.ث.
+ *   initialize (الزمن + packageFullName) · targets/list يجد المفكرة بـclassName ورقم ثابت عبر السرد ·
+ *   لا لقطة ولا فعل قبل session/select، والاختيار يرفض مستطيلاً أو عمليةً لا تطابق النافذة ·
+ *   tree/snapshot ≥3 عناصر مسمّاة بصيغة `[w2:e14] role "name"` · maxNodes يقصّ ويعلن · setValue يغيّر
+ *   النص (قراءة ثانية من العنصر) · element/state · input/key أثره مقروء من المحرّر ثم من الملف على
+ *   القرص بعد Ctrl+S، والمفاتيح الممنوعة مرفوضة بلا إرسال · input/scroll بـScrollPattern ·
+ *   capture/window يعيد PNG صالحاً للنافذة المختارة وحدها · مرجع فاسد/قديم ⇒ stale_ref بلا فعل ·
+ *   الاحتواء بالمستطيل داخل المعين بعد تكبير النافذة ⇒ not_allowed بلا فعل · البصمة ⇒ target_changed
+ *   (زرّ WinForms يغيّر اسمه عند نقره) · حقل السرّ غائب عن اللقطة · قتل النافذة ⇒ closed، وإعادة فتحها
+ *   تعطيها رقماً جديداً · ردّ غير مطابق يُرفض · shutdown وإغلاق stdin ينهيان العملية بلا أيتام ·
+ *   وإن كان الثنائي AOT: الحجم < 8 م.ب والإقلاع < 800 م.ث.
  *
  * الثنائي: `SATR_UIA_EXE` ⇐ `native/satr-uia/out/satr-uia.exe` ⇐ يُبنى بـ`dotnet build` إن غاب.
  * `SATR_UIA_EXPECT_AOT=1` (في CI) يجعل غياب AOT سقوطاً لا تخطّياً لفحصَي الحجم والإقلاع.
  * `SATR_UIA_METRICS_FILE` يكتب الأرقام JSON لخطوة CI التي تطبعها.
  *
  * ⚠️ حدّ مُصرَّح به: ويندوز وحده (UI Automation)؛ على POSIX يتخطّى بإعلان، ومُدرَج في
- * SKIP_ON_POSIX بـfull-suite.js. ويحتاج سطح مكتب تفاعلياً تُفتح فيه نافذة.
+ * SKIP_ON_POSIX بـfull-suite.js. ويحتاج سطح مكتب تفاعلياً تُفتح فيه نافذة وتُجلب إلى الأمام —
+ * الاختبار يسرق التركيز لحظة input/key.
  */
 
 const assert = require('assert');
@@ -31,33 +36,23 @@ const PROJECT = path.join(ROOT, 'native', 'satr-uia');
 const DEFAULT_EXE = path.join(PROJECT, 'out', 'satr-uia.exe');
 const BOOT_TIMEOUT_MS = 15000;
 const REQUEST_TIMEOUT_MS = 8000;
+const CAPTURE_TIMEOUT_MS = 15000;
 const SHUTDOWN_TIMEOUT_MS = 3000;
 const MAX_AOT_BYTES = 8 * 1024 * 1024;
 const MAX_BOOT_MS = 800;
+const MAX_CAPTURE_SIDE = 1568;
 const MIN_NAMED = 3;
 const SNAPSHOT_LINE = /^\[w[1-9][0-9]*:e[1-9][0-9]*\] [a-z]+ ".*"$/s;
 const REF_RE = /^w[1-9][0-9]*:e[1-9][0-9]*$/;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 let checks = 0;
 function ok(condition, message) { assert.ok(condition, message); checks += 1; }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * شكل الردّ الملزم: `{id, result|error, ms}` — واحد بالضبط من result/error، وms عدد،
- * والخطأ `{code, message}` نصّين. ما سواه يُرفض ولا يُسلَّم للمستدعي على أنه جواب.
- */
-function validateResponse(msg) {
-  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return 'ليس كائناً';
-  if (!Number.isInteger(msg.id)) return 'id ليس عدداً صحيحاً';
-  if (typeof msg.ms !== 'number' || !(msg.ms >= 0)) return 'ms مفقود أو ليس عدداً';
-  const hasResult = Object.prototype.hasOwnProperty.call(msg, 'result');
-  const hasError = Object.prototype.hasOwnProperty.call(msg, 'error');
-  if (hasResult === hasError) return 'يلزم result أو error وحده';
-  if (hasError && (!msg.error || typeof msg.error.code !== 'string' || typeof msg.error.message !== 'string')) {
-    return 'error بلا code/message نصّيين';
-  }
-  return null;
-}
+// شكل الردّ الملزم `{id, result|error, ms}` — نسخة واحدة يستهلكها electron/desktop.js في الإنتاج
+// وهذا الاختبار معاً؛ نسختان كانتا ستتباعدان بصمت فيرفض أحدهما ما يقبله الآخر.
+const { validateResponse } = require('../electron/desktop');
 
 /** عميل أسطر JSON على stdio — نمط request في codex.js مع رفض الشكل غير المطابق. */
 function startHelper(command, args = []) {
@@ -124,6 +119,8 @@ function killPid(pid) {
 }
 
 function formatLine(n) { return `[${n.ref}] ${n.role} "${n.name}"`; }
+const errorCode = (r) => (r && r.error ? r.error.code : 'ok');
+const shown = (r) => JSON.stringify(r && (r.error || r.result));
 
 function resolveExe() {
   if (process.env.SATR_UIA_EXE) {
@@ -167,10 +164,15 @@ rl.on('line', (line) => {
   console.log('  ✓ رفض الردّ غير المطابق: ' + h.rejected.join(' · '));
 }
 
+async function listTargets(h) {
+  const tl = await h.request('targets/list');
+  ok(!tl.error, 'targets/list أعاد خطأ: ' + JSON.stringify(tl.error));
+  return tl;
+}
+
 async function waitForTarget(h, match, label) {
   for (let i = 0; i < 40; i++) {
-    const tl = await h.request('targets/list');
-    ok(!tl.error, 'targets/list أعاد خطأ: ' + JSON.stringify(tl.error));
+    const tl = await listTargets(h);
     const hit = tl.result.find(match);
     if (hit) return { target: hit, list: tl };
     await sleep(250);
@@ -178,11 +180,34 @@ async function waitForTarget(h, match, label) {
   throw new Error('لم تظهر نافذة ' + label + ' في targets/list خلال 10ث');
 }
 
+// النافذة المفتوحة للتوّ قد تستقرّ موضعاً بعد ظهورها: الاختيار يطابق المستطيل حرفياً، فيُنتظر ثباته
+async function settledTarget(h, targetId) {
+  let last = null;
+  for (let i = 0; i < 20; i++) {
+    const tl = await listTargets(h);
+    const t = tl.result.find((x) => x.targetId === targetId);
+    ok(t, 'الهدف ' + targetId + ' غاب عن السرد قبل الاختيار');
+    if (last && JSON.stringify(last.rect) === JSON.stringify(t.rect) && t.rect) return t;
+    last = t;
+    await sleep(150);
+  }
+  return last;
+}
+
+async function select(h, t) {
+  const r = await h.request('session/select', { targetId: t.targetId, pid: t.pid, rect: t.rect });
+  ok(!r.error && r.result.ok === true && r.result.targetId === t.targetId,
+    'session/select على ' + t.targetId + ' أعاد: ' + shown(r));
+  return r;
+}
+
 async function snapshot(h, targetId, maxNodes = 400) {
   const snap = await h.request('tree/snapshot', { targetId, maxDepth: 12, maxNodes });
   ok(!snap.error, 'tree/snapshot أعاد خطأ: ' + JSON.stringify(snap.error));
   return snap;
 }
+
+const editorOf = (nodes) => nodes.find((n) => n.role === 'edit' || n.role === 'document');
 
 async function main() {
   if (process.platform !== 'win32') {
@@ -230,14 +255,40 @@ async function main() {
       console.log('  · بناء JIT (‏dotnet build، مشغّل + dll): فحصا الحجم والإقلاع يخصّان ناتج النشر ويعملان في CI');
     }
 
-    // ── المفكرة ──
+    // ── المفكرة: السرد، className، وثبات الرقم ──
     const notepad = cp.spawn('notepad.exe', [docPath], { stdio: 'ignore', windowsHide: false });
     spawned.push(notepad.pid);
-    const { target: np, list } = await waitForTarget(h,
+    const { target: found, list } = await waitForTarget(h,
       (t) => /^notepad$/i.test(t.processName) && (t.pid === notepad.pid || String(t.title).includes(docName)), 'المفكرة');
-    if (np.pid !== notepad.pid) spawned.push(np.pid);
+    if (found.pid !== notepad.pid) spawned.push(found.pid);
     ok(list.result.every((t) => /^w[1-9][0-9]*$/.test(t.targetId) && Number.isInteger(t.pid)), 'كل هدف targetId بصيغة w<n> وpid عدد');
-    console.log(`  ✓ targets/list: ${list.result.length} نافذة، المفكرة ${np.targetId} «${np.title}» (${list.ms} م.ث)`);
+    ok(list.result.every((t) => typeof t.className === 'string'), 'كل هدف يحمل className نصّاً');
+    ok(found.className === 'Notepad', 'صنف نافذة المفكرة Notepad (الواقع: ' + JSON.stringify(found.className) + ')');
+    const np = await settledTarget(h, found.targetId);
+    ok(np.targetId === found.targetId, 'سرد ثانٍ أعاد ترقيم المفكرة: ' + found.targetId + ' ⇒ ' + np.targetId);
+    console.log(`  ✓ targets/list: ${list.result.length} نافذة، المفكرة ${np.targetId} «${np.title}» صنف ${np.className}، والرقم ثابت عبر السرد`);
+
+    // ── الجلسة: لا لقطة ولا فعل قبل session/select، والاختيار يطابق النافذة حرفياً ──
+    ok(errorCode(await h.request('tree/snapshot', { targetId: np.targetId })) === 'not_allowed', 'لقطة قبل session/select يجب أن تُرفض not_allowed');
+    ok(errorCode(await h.request('element/invoke', { ref: np.targetId + ':e1' })) === 'not_allowed', 'فعل قبل session/select يجب أن يُرفض not_allowed');
+    ok(errorCode(await h.request('input/key', { keys: 'Enter' })) === 'not_allowed', 'مفاتيح قبل session/select تُرفض not_allowed');
+    ok(errorCode(await h.request('capture/window', { targetId: np.targetId })) === 'not_allowed', 'التقاط قبل session/select يُرفض not_allowed');
+    const wider = Object.assign({}, np.rect, { w: np.rect.w + 200 });
+    ok(errorCode(await h.request('session/select', { targetId: np.targetId, pid: np.pid, rect: wider })) === 'not_allowed',
+      'مستطيل أوسع من النافذة الحيّة يُرفض not_allowed');
+    ok(errorCode(await h.request('session/select', { targetId: np.targetId, pid: np.pid + 1, rect: np.rect })) === 'not_allowed',
+      'عملية لا تطابق النافذة تُرفض not_allowed');
+    ok(errorCode(await h.request('session/select', { targetId: 'w999999', pid: np.pid, rect: np.rect })) === 'not_found',
+      'هدف مجهول ⇒ not_found');
+    ok(errorCode(await h.request('session/select', { targetId: np.targetId, pid: np.pid })) === 'bad_request', 'اختيار بلا rect ⇒ bad_request');
+    await select(h, np);
+    const other = list.result.find((t) => t.targetId !== np.targetId);
+    if (other) {
+      ok(errorCode(await h.request('tree/snapshot', { targetId: other.targetId })) === 'not_allowed', 'لقطة نافذة غير مختارة ⇒ not_allowed');
+      ok(errorCode(await h.request('element/invoke', { ref: other.targetId + ':e1' })) === 'not_allowed', 'مرجع نافذة غير مختارة ⇒ not_allowed');
+      ok(errorCode(await h.request('capture/window', { targetId: other.targetId })) === 'not_allowed', 'التقاط نافذة غير مختارة ⇒ not_allowed');
+    }
+    console.log('  ✓ session/select: الرفض قبل الاختيار (أربعة توابع) · مستطيل أوسع · عملية أخرى · هدف مجهول · نافذة غير مختارة');
 
     let snap = await snapshot(h, np.targetId);
     let nodes = snap.result.nodes;
@@ -254,7 +305,7 @@ async function main() {
     metrics.snapshotMs = snap.ms;
     metrics.named = named.length;
 
-    const editor = nodes.find((n) => n.role === 'edit' || n.role === 'document');
+    const editor = editorOf(nodes);
     ok(editor, 'لا محرّر (edit/document) في شجرة المفكرة');
     const last = nodes[nodes.length - 1];
 
@@ -269,18 +320,17 @@ async function main() {
 
     // ── stale_ref بلا فعل: مرجع من لقطة سابقة ومراجع فاسدة ──
     const staleSet = await h.request('element/setValue', { ref: editor.ref, text: 'MUST_NOT_LAND' });
-    ok(staleSet.error && staleSet.error.code === 'stale_ref',
-      'مرجع من لقطة سابقة يجب أن يعيد stale_ref (الواقع: ' + JSON.stringify(staleSet.error || staleSet.result) + ')');
+    ok(errorCode(staleSet) === 'stale_ref', 'مرجع من لقطة سابقة يجب أن يعيد stale_ref (الواقع: ' + shown(staleSet) + ')');
     for (const bad of ['w0:e1', 'w1:e0', 'w01:e1', 'x', 'w1:e1 ', np.targetId + ':e999999', '', 42]) {
       const r = await h.request('element/invoke', { ref: bad });
-      ok(r.error && r.error.code === 'stale_ref', `المرجع ${JSON.stringify(bad)} يجب أن يعيد stale_ref (الواقع: ${JSON.stringify(r.error || r.result)})`);
+      ok(errorCode(r) === 'stale_ref', `المرجع ${JSON.stringify(bad)} يجب أن يعيد stale_ref (الواقع: ${shown(r)})`);
     }
     console.log('  ✓ stale_ref: مرجع قديم وثمانية مراجع فاسدة');
 
     // ── setValue: يغيّر النص فعلاً، والقيمة السابقة تثبت أن الفعل المرفوض لم يقع ──
     snap = await snapshot(h, np.targetId);
     nodes = snap.result.nodes;
-    const ed = nodes.find((n) => n.role === editor.role && n.name === editor.name) || nodes.find((n) => n.role === 'edit' || n.role === 'document');
+    let ed = nodes.find((n) => n.role === editor.role && n.name === editor.name) || editorOf(nodes);
     const newText = 'سطر satr-uia ' + process.pid;
     const set = await h.request('element/setValue', { ref: ed.ref, text: newText });
     ok(!set.error, 'element/setValue على المحرّر أعاد خطأ: ' + JSON.stringify(set.error));
@@ -289,12 +339,75 @@ async function main() {
     ok(set.result.value === newText, 'القراءة الثانية من العنصر لا تطابق النص المكتوب (الواقع: ' + JSON.stringify(set.result.value) + ')');
     console.log(`  ✓ setValue: «${set.result.previous}» ⇒ «${set.result.value}» (${set.ms} م.ث)`);
     const setMissing = await h.request('element/setValue', { ref: ed.ref });
-    ok(setMissing.error && setMissing.error.code === 'bad_request', 'setValue بلا text ⇒ bad_request');
+    ok(errorCode(setMissing) === 'bad_request', 'setValue بلا text ⇒ bad_request');
+    const notInvokable = await h.request('element/invoke', { ref: ed.ref });
+    ok(errorCode(notInvokable) === 'unsupported_pattern',
+      'invoke على محرّر بلا InvokePattern ⇒ unsupported_pattern (الواقع: ' + shown(notInvokable) + ')');
+
+    // ── element/state: قراءة بلا مشي — المرجع يبقى صالحاً بعدها ──
+    const state = await h.request('element/state', { ref: ed.ref });
+    ok(!state.error && state.result.role === ed.role && state.result.enabled === true && state.result.inside === true,
+      'element/state للمحرّر: ' + shown(state));
+    console.log(`  ✓ element/state: ${state.result.role} enabled=${state.result.enabled} inside=${state.result.inside}`);
+
+    // ── input/key: الأثر يُقرأ من المحرّر نفسه، ثم Ctrl+S يكتب الملف على القرص ──
+    const keyT0 = Date.now();
+    const toEnd = await h.request('input/key', { keys: 'ctrl+end' });
+    ok(!toEnd.error && toEnd.result.keys === 'Ctrl+End', 'input/key Ctrl+End أعاد: ' + shown(toEnd));
+    metrics.keyMs = Date.now() - keyT0;
+    const back = await h.request('input/key', { keys: 'Backspace' });
+    ok(!back.error, 'input/key Backspace أعاد: ' + shown(back));
+    await sleep(300);
+    const saveText = 'SAVED_BY_KEYS_' + process.pid;
+    const probe = await h.request('element/setValue', { ref: ed.ref, text: saveText });
+    ok(!probe.error && probe.result.previous === newText.slice(0, -1),
+      'Backspace بعد Ctrl+End كان يجب أن يحذف آخر محرف (الواقع: ' + shown(probe) + ')');
+    const save = await h.request('input/key', { keys: 'Ctrl+S' });
+    ok(!save.error, 'input/key Ctrl+S أعاد: ' + shown(save));
+    let onDisk = '';
+    for (let i = 0; i < 40 && onDisk !== saveText; i++) {
+      await sleep(150);
+      onDisk = fs.readFileSync(docPath, 'utf8').replace(/^\uFEFF/, '');
+    }
+    ok(onDisk === saveText, 'Ctrl+S لم يكتب الملف على القرص (الواقع: ' + JSON.stringify(onDisk.slice(0, 80)) + ')');
+    console.log(`  ✓ input/key: Ctrl+End ثم Backspace حذف «${newText.slice(-1)}» · Ctrl+S كتب «${onDisk}» على القرص (${metrics.keyMs} م.ث للأول)`);
+    for (const [keys, code] of [
+      ['Alt+Tab', 'not_allowed'], ['Alt+Escape', 'not_allowed'], ['Ctrl+Escape', 'not_allowed'],
+      ['Ctrl+Shift+Escape', 'not_allowed'], ['Alt+Space', 'not_allowed'], ['Ctrl+Alt+Delete', 'not_allowed'],
+      ['Win+R', 'bad_key'], ['F1', 'bad_key'], ['Foo', 'bad_key'], ['', 'bad_key'], ['Ctrl+Ctrl+S', 'bad_key'], ['Ctrl', 'bad_key'],
+    ]) {
+      const r = await h.request('input/key', { keys });
+      ok(errorCode(r) === code, `المفاتيح ${JSON.stringify(keys)} يجب أن تُرفض ${code} (الواقع: ${shown(r)})`);
+    }
+    console.log('  ✓ input/key: ستّ تركيبات تغادر النافذة ⇒ not_allowed وستّة أسماء خارج القائمة ⇒ bad_key');
+
+    // ── input/scroll: نصّ من 300 سطر يجعل المحرّر قابلاً للتمرير ──
+    const many = Array.from({ length: 300 }, (_, i) => 'line ' + (i + 1)).join('\r\n');
+    ok(!(await h.request('element/setValue', { ref: ed.ref, text: many })).error, 'setValue للنص الطويل');
+    const scrolled = await h.request('input/scroll', { ref: ed.ref, dy: 5 });
+    ok(!scrolled.error, 'input/scroll أعاد: ' + shown(scrolled));
+    metrics.scrollVia = scrolled.result.via;
+    ok(scrolled.result.via === 'pattern' && scrolled.result.after > scrolled.result.before,
+      'التمرير بـScrollPattern يجب أن يزيد النسبة (الواقع: ' + shown(scrolled) + ')');
+    ok(errorCode(await h.request('input/scroll', { ref: ed.ref, dy: 0 })) === 'bad_request', 'dy=0 ⇒ bad_request');
+    ok(errorCode(await h.request('input/scroll', { ref: ed.ref, dy: 51 })) === 'bad_request', 'dy=51 ⇒ bad_request');
+    console.log(`  ✓ input/scroll: via=${scrolled.result.via} ${scrolled.result.before}% ⇒ ${scrolled.result.after}%`);
+
+    // ── capture/window: PNG صالح للنافذة المختارة وحدها ──
+    const cap = await h.request('capture/window', { targetId: np.targetId }, CAPTURE_TIMEOUT_MS);
+    ok(!cap.error, 'capture/window أعاد: ' + JSON.stringify(cap.error));
+    const png = Buffer.from(cap.result.png, 'base64');
+    ok(png.subarray(0, 8).equals(PNG_SIGNATURE), 'الالتقاط ليس PNG (التوقيع)');
+    ok(png.readUInt32BE(16) === cap.result.width && png.readUInt32BE(20) === cap.result.height, 'أبعاد IHDR لا تطابق الردّ');
+    ok(cap.result.width > 0 && Math.max(cap.result.width, cap.result.height) <= MAX_CAPTURE_SIDE, 'الضلع الأطول فوق ' + MAX_CAPTURE_SIDE);
+    ok(png.readUInt8(25) === 2, 'PNG يجب أن يكون RGB بلا شفافية (نوع اللون 2)');
+    metrics.captureMs = cap.ms;
+    metrics.captureBytes = png.length;
+    console.log(`  ✓ capture/window: ${cap.result.width}×${cap.result.height} من ${cap.result.sourceWidth}×${cap.result.sourceHeight} · ${png.length} بايت PNG (${cap.ms} م.ث)`);
 
     // ── invoke: زر في شريط العنوان (الأوسط = تكبير/استعادة) يغيّر مستطيل النافذة ──
-    const notInvokable = await h.request('element/invoke', { ref: ed.ref });
-    ok(notInvokable.error && notInvokable.error.code === 'unsupported_pattern',
-      'invoke على محرّر بلا InvokePattern ⇒ unsupported_pattern (الواقع: ' + JSON.stringify(notInvokable.error || notInvokable.result) + ')');
+    snap = await snapshot(h, np.targetId);
+    nodes = snap.result.nodes;
     const titleBarIndex = nodes.findIndex((n) => n.role === 'titlebar');
     ok(titleBarIndex >= 0, 'لا titlebar في شجرة المفكرة');
     const tbDepth = nodes[titleBarIndex].depth;
@@ -315,24 +428,75 @@ async function main() {
     ok(rectAfter !== rectBefore, `invoke لم يغيّر مستطيل النافذة (${rectBefore})`);
     console.log(`  ✓ invoke ${formatLine(toggle)}: ${rectBefore} ⇒ ${rectAfter}`);
 
-    // ── الحارس ٣: حقل السرّ لا يدخل اللقطة أصلاً ──
+    // ── الحارس ٢ داخل المعين: بعد التكبير صار المحرّر خارج مستطيل الجلسة (مستطيل ما قبله) ──
+    await sleep(300);
+    const grown = editorOf((await snapshot(h, np.targetId)).result.nodes);
+    const outside = await h.request('element/setValue', { ref: grown.ref, text: 'MUST_NOT_LAND_OUTSIDE' });
+    ok(errorCode(outside) === 'not_allowed', 'فعل على عنصر خارج مستطيل الجلسة يجب أن يُرفض not_allowed (الواقع: ' + shown(outside) + ')');
+    const outsideScroll = await h.request('input/scroll', { ref: grown.ref, dy: 1 });
+    ok(errorCode(outsideScroll) === 'not_allowed', 'تمرير خارج مستطيل الجلسة ⇒ not_allowed (الواقع: ' + shown(outsideScroll) + ')');
+    // الدليل أن الرفض لم يكتب: اختيار جديد بمستطيل التكبير (الرقم نفسه — ثابت) ثم قراءة القيمة
+    const grownTarget = await settledTarget(h, np.targetId);
+    ok(grownTarget.targetId === np.targetId && JSON.stringify(grownTarget.rect) !== rectBefore,
+      'السرد بعد التكبير يعيد الرقم نفسه بمستطيل جديد');
+    await select(h, grownTarget);
+    const edAfter = editorOf((await snapshot(h, np.targetId)).result.nodes);
+    const readBack = await h.request('element/setValue', { ref: edAfter.ref, text: 'after-select' });
+    ok(!readBack.error && readBack.result.previous !== 'MUST_NOT_LAND_OUTSIDE' && readBack.result.previous.startsWith('line 1'),
+      'الفعل المرفوض خارج المستطيل كتب في المحرّر (القيمة: ' + JSON.stringify(String(readBack.result && readBack.result.previous).slice(0, 40)) + ')');
+    console.log('  ✓ الاحتواء في المعين: setValue وscroll خارج مستطيل الجلسة ⇒ not_allowed بلا كتابة');
+
+    // ── closed: قتل النافذة المختارة، ثم إعادة فتحها تعطيها رقماً جديداً ──
+    const oldId = np.targetId;
+    killPid(np.pid);
+    let closedCode = '';
+    for (let i = 0; i < 20 && closedCode !== 'closed'; i++) {
+      await sleep(150);
+      closedCode = errorCode(await h.request('element/setValue', { ref: edAfter.ref, text: 'x' }));
+    }
+    ok(closedCode === 'closed', 'فعل بعد إغلاق النافذة المختارة يجب أن يعيد closed (الواقع: ' + closedCode + ')');
+    ok(errorCode(await h.request('tree/snapshot', { targetId: oldId })) === 'closed', 'لقطة نافذة مغلقة ⇒ closed');
+    const reopened = cp.spawn('notepad.exe', [docPath], { stdio: 'ignore', windowsHide: false });
+    spawned.push(reopened.pid);
+    const { target: np2 } = await waitForTarget(h, (t) => /^notepad$/i.test(t.processName) && t.pid === reopened.pid, 'المفكرة المعاد فتحها');
+    ok(np2.targetId !== oldId, 'النافذة المعاد فتحها أخذت رقم المغلقة ' + oldId + ' — الرقم يُعاد استعماله');
+    console.log(`  ✓ closed بعد القتل، والمعاد فتحها ${np2.targetId} لا ${oldId}`);
+
+    // ── حقل السرّ غائب، والبصمة: زرّ يغيّر اسمه عند نقره ⇒ target_changed ──
     const formTitle = 'satr-uia-pw-' + process.pid;
     const ps = [
       'Add-Type -AssemblyName System.Windows.Forms;',
       '$f = New-Object Windows.Forms.Form; $f.Text = \'' + formTitle + '\';',
       '$u = New-Object Windows.Forms.TextBox; $u.Text = \'visible-user\'; $u.Top = 10;',
       '$p = New-Object Windows.Forms.TextBox; $p.UseSystemPasswordChar = $true; $p.Text = \'hunter2-secret\'; $p.Top = 40;',
-      '$f.Controls.Add($u); $f.Controls.Add($p); [Windows.Forms.Application]::Run($f)',
+      '$b = New-Object Windows.Forms.Button; $b.Text = \'press-me\'; $b.Top = 70; $b.Add_Click({ $this.Text = \'pressed\' });',
+      '$f.Controls.Add($u); $f.Controls.Add($p); $f.Controls.Add($b); [Windows.Forms.Application]::Run($f)',
     ].join(' ');
     const form = cp.spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore' });
     spawned.push(form.pid);
-    const { target: ft } = await waitForTarget(h, (t) => t.title === formTitle, 'نموذج كلمة المرور');
+    const { target: formFound } = await waitForTarget(h, (t) => t.title === formTitle, 'نموذج كلمة المرور');
+    const ft = await settledTarget(h, formFound.targetId);
+    await select(h, ft);
     const pw = await snapshot(h, ft.targetId);
     const edits = pw.result.nodes.filter((n) => n.role === 'edit');
     ok(edits.length === 1, `النموذج فيه حقلان والمتوقّع حقل واحد في اللقطة (الواقع: ${edits.length}) — حقل السرّ دخل اللقطة`);
     ok(pw.result.nodes.every((n) => n.isPassword === false), 'عقدة isPassword=true في اللقطة');
     ok(!JSON.stringify(pw.result).includes('hunter2'), 'نص كلمة المرور ظهر في اللقطة');
     console.log(`  ✓ حقل السرّ غائب: ${pw.result.nodes.length} عقدة، حقل تحرير واحد من اثنين`);
+    const button = pw.result.nodes.find((n) => n.role === 'button' && n.name === 'press-me');
+    ok(button, 'زرّ press-me غائب عن لقطة النموذج');
+    const firstPress = await h.request('element/invoke', { ref: button.ref });
+    ok(!firstPress.error, 'النقرة الأولى على الزرّ أعادت: ' + shown(firstPress));
+    let changed = null;
+    for (let i = 0; i < 20; i++) {
+      await sleep(150);
+      changed = await h.request('element/invoke', { ref: button.ref });
+      if (errorCode(changed) === 'target_changed') break;
+    }
+    ok(errorCode(changed) === 'target_changed', 'الزرّ غيّر اسمه فالنقرة الثانية بالمرجع نفسه يجب أن تعيد target_changed (الواقع: ' + shown(changed) + ')');
+    ok(changed.error.was === 'button "press-me"' && changed.error.now === 'button "pressed"',
+      'target_changed يحمل was/now الوصفيين (الواقع: ' + shown(changed) + ')');
+    console.log(`  ✓ target_changed: كان ${changed.error.was} وصار ${changed.error.now} — بلا نقرة ثانية`);
 
     // ── shutdown: ردّ ثم خروج بلا أيتام ──
     const pid = h.child.pid;

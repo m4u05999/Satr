@@ -22,6 +22,7 @@ const bgprocs = require('./bgprocs');
 const term = require('./term');
 const termjobs = require('./termjobs');
 const preview = require('./preview'); // م-3: أدوات قراءة المعاينة للوكيل (موديول مشترك)
+const desktop = require('./desktop'); // سطح ويندوز (الخطوة ٤): المعين والمراجع والحرّاس — docs/COMPUTER-USE-DESKTOP.md
 const promocapture = require('./promocapture'); // تسجيل نافذة المنتج الأصلية بـ30fps
 const promostudio = require('./promostudio'); // اقتراح storyboard محلي بلا تصيير تلقائي
 const skillCatalog = require('./skills'); // .agents قياسي + .claude توافق؛ تحميل تدريجي
@@ -67,7 +68,13 @@ const STOP_BACKGROUND_TOOL = 'mcp__satr-terminal__stop_background_task';
 const PROMO_START_TOOL = 'mcp__satr-terminal__promo_record_start';
 const PROMO_STOP_TOOL = 'mcp__satr-terminal__promo_record_stop';
 const GENERATE_MEDIA_TOOL = 'mcp__satr-terminal__generate_media';
-const NEVER_ALWAYS_TOOLS = new Set([VERIFY_EXEC_TOOL, STOP_BACKGROUND_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL, GENERATE_MEDIA_TOOL]);
+// سطح ويندوز (المراجعة الأمنية للخطوة ٤): «موافقة دائمة» تعيش عمر التطبيق لا الجلسة، فمنحها لفعل في نافذة
+// كان سيعبر إلى كل نافذة يختارها المستخدم بعدها — والحارس ١ في المواصفة: الاختيار لا يُوسَّع بموافقة دائمة.
+// الأفعال الأربعة وحدها؛ القراءات (targets/snapshot/wait_for/screenshot) كسائر الأدوات، وموافقة الدور متاحة للجميع.
+const DESKTOP_ACT_TOOLS = Object.freeze(['desktop_click', 'desktop_type', 'desktop_press_key', 'desktop_scroll']
+  .map((name) => 'mcp__satr-desktop__' + name));
+const NEVER_ALWAYS_TOOLS = new Set([VERIFY_EXEC_TOOL, STOP_BACKGROUND_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL, GENERATE_MEDIA_TOOL,
+  ...DESKTOP_ACT_TOOLS]);
 const NEVER_TURN_TOOLS = new Set([
   'Bash', 'mcp__satr-terminal__run_in_terminal', 'mcp__satr-terminal__run_in_background',
   STOP_BACKGROUND_TOOL, VERIFY_EXEC_TOOL, PROMO_START_TOOL, PROMO_STOP_TOOL, GENERATE_MEDIA_TOOL,
@@ -247,6 +254,113 @@ const STALE_REF_MESSAGE = 'المرجع من لقطة قديمة — خذ browse
 const QUESTION_UNANSWERED_MESSAGE = 'لم يجب المستخدم عن السؤال (أغلق البطاقة أو ألغاها). '
   + 'لا تفترض إجابة ولا تختر نيابةً عنه ولا تكمل على أساس تخمين. اطرح السؤال نصّاً في '
   + 'ردّك — موضّحاً الفروق العملية بين الخيارات — ثم توقّف وانتظر ردّه.';
+
+// ---------- سطح ويندوز (الخطوة ٤ — docs/COMPUTER-USE-DESKTOP.md §٦–§٩) ----------
+// ممنوع بالتصميم: لا desktop_evaluate · لا نقر بالإحداثيات · لا نموذج رؤية · لا تعداد نوافذ بلا اختيار المستخدم.
+// الأدوات الثماني تمرّ على canUseTool ومربع الإذن العربي وPreToolUse كأي أداة، ولا يدخل أيٌّ منها
+// BROWSER_AUTO_TOOLS ولا AUTO_SAFE_TOOLS (قرار محافظ معلن؛ التخفيف لاحقاً بقياس).
+const DESKTOP_TOOL_RE = /^mcp__satr-desktop__desktop_[a-z_]+$/;
+// قاعدة §٦: قرار تسجيل satr-desktop يُثبَّت لكل جلسة عند أول دور، وتبديل العلم أثناءها يُتجاهل —
+// وإلا تغيّرت كتلة الأدوات في منتصف الجلسة فانكسر كاش البادئة. السقف كسقوف خرائط الجلسات الأخرى.
+const desktopDecisions = new Map();
+const MAX_DESKTOP_DECISIONS = 200;
+
+function desktopRegistration({ desktopControl, sessionId, internalPolicy, available }) {
+  if (internalPolicy) return { enabled: false, notice: '', pinned: false };
+  if (sessionId && desktopDecisions.has(sessionId)) return { enabled: desktopDecisions.get(sessionId), notice: '', pinned: true };
+  return {
+    enabled: desktop.shouldRegister(desktopControl, available),
+    // طلب المستخدم الصريح بلا معين ⇒ إشعار عربي واحد، ولا خادم ولا أدوات
+    notice: desktopControl === true && available !== true ? desktop.unavailableMessage() : '',
+    pinned: false,
+  };
+}
+
+function pinDesktopDecision(sessionId, enabled) {
+  if (!sessionId || desktopDecisions.has(sessionId)) return;
+  desktopDecisions.set(sessionId, enabled === true);
+  while (desktopDecisions.size > MAX_DESKTOP_DECISIONS) desktopDecisions.delete(desktopDecisions.keys().next().value);
+}
+
+// الأدوات الثماني بأسماء §٧ ووسائطها حرفياً؛ كلها تفوّض إلى electron/desktop.js (الرسائل العربية منه)
+function desktopTools(sdk, z, surface) {
+  const text = (value, isError) => ({ content: [{ type: 'text', text: String(value) }], ...(isError ? { isError: true } : {}) });
+  const failed = (r) => text((r && r.message) || 'تعذّر الفعل على سطح المكتب.', true);
+  const refField = () => z.string().describe('مرجع العنصر من desktop_snapshot (مثل w3:e5) — لا مُحدِّدات ولا إحداثيات');
+  return [
+    sdk.tool(
+      'desktop_targets',
+      'اعرض النافذة التي اختارها المستخدم لهذه الجلسة — وحدها، لا قائمة نوافذ (النافذة يختارها المستخدم لا الوكيل). '
+        + 'ابدأ بها لتعرف target ثم خذ desktop_snapshot.',
+      {},
+      async () => { const r = await surface.targets(); return r.ok ? text(r.text) : failed(r); }
+    ),
+    sdk.tool(
+      'desktop_snapshot',
+      'خذ لقطة بنيوية لشجرة UI Automation في النافذة المختارة: كل عنصر بصيغة [ref] role "name" مثل [w3:e5]. '
+        + 'هذه طريقتك الافتراضية لمعرفة ما يُنقر أو يُكتب فيه، وأرخص بمراتب من صورة؛ كل لقطة جديدة تُبطل refs الأقدم. قراءة فقط.',
+      { target: z.string().describe('معرّف النافذة المختارة كما أعادته desktop_targets (مثل w14)') },
+      async (args) => { const r = await surface.snapshot(args && args.target); return r.ok ? text(r.text) : failed(r); }
+    ),
+    sdk.tool(
+      'desktop_click',
+      'انقر عنصراً في النافذة المختارة بمرجعه من desktop_snapshot عبر UI Automation (InvokePattern) — لا إحداثيات. '
+        + 'إن أعادت النتيجة refs جديدة في «تغيّر الشجرة المختصر» فتابع بها، وإلا خذ لقطة جديدة.',
+      { ref: refField() },
+      async (args) => { const r = await surface.click(args && args.ref); return r.ok ? text(r.text) : failed(r); }
+    ),
+    sdk.tool(
+      'desktop_type',
+      'اكتب نصاً في حقل بالنافذة المختارة بمرجعه من desktop_snapshot — يستبدل قيمة الحقل كلها (ValuePattern) '
+        + 'ويقرأها من العنصر ثانيةً للتحقق. للحفظ أو الإرسال استعمل desktop_press_key بعدها.',
+      { ref: refField(), text: z.string().describe('النص الذي تصير إليه قيمة الحقل') },
+      async (args) => { const r = await surface.type(args && args.ref, args && args.text); return r.ok ? text(r.text) : failed(r); }
+    ),
+    sdk.tool(
+      'desktop_press_key',
+      'اضغط مفتاحاً أو اختصاراً في النافذة المختارة بعد جلبها إلى الأمام: Enter/Tab/Escape/Space/Backspace/Delete/'
+        + 'Home/End/PageUp/PageDown/ArrowUp/ArrowDown/ArrowLeft/ArrowRight، أو حرف/رقم مع Ctrl/Shift/Alt (مثل Ctrl+S). '
+        + 'لا مفتاح ويندوز ولا F1–F12 ولا تركيبات تغادر النافذة (Alt+Tab…).',
+      { keys: z.string().describe('المفتاح أو الاختصار مثل Enter أو Ctrl+S') },
+      async (args) => { const r = await surface.pressKey(args && args.keys); return r.ok ? text(r.text) : failed(r); }
+    ),
+    sdk.tool(
+      'desktop_scroll',
+      'مرّر عنصراً قابلاً للتمرير (أو أقرب سلف له داخل النافذة) بمرجعه من desktop_snapshot. dy عدد خطوات: '
+        + 'موجب إلى الأسفل وسالب إلى الأعلى. خذ لقطة جديدة بعده لرؤية ما ظهر.',
+      { ref: refField(), dy: z.number().int().min(-50).max(50).describe('خطوات التمرير (±50، بلا صفر)') },
+      async (args) => { const r = await surface.scroll(args && args.ref, args && args.dy); return r.ok ? text(r.text) : failed(r); }
+    ),
+    sdk.tool(
+      'desktop_wait_for',
+      'انتظر بمهلة: أن يصير عنصر (ref) مفعَّلاً داخل النافذة المختارة، أو أن يظهر نصّ (text) في شجرتها. '
+        + 'انتظار النص يعيد لقطة جديدة تُبطل refs الأقدم. مرّر ref أو text.',
+      {
+        ref: refField().optional(),
+        text: z.string().max(200).optional().describe('نصّ يُنتظر ظهوره في أسماء عناصر النافذة'),
+        timeout: z.number().int().min(500).max(30000).optional().describe('المهلة بالمللي ثانية (افتراضي 8000، أقصى 30000)'),
+      },
+      async (args) => {
+        const a = args || {};
+        const r = await surface.waitFor({ ref: a.ref, text: a.text, timeout: a.timeout });
+        return r.ok ? text(r.text, !r.found) : failed(r);
+      }
+    ),
+    sdk.tool(
+      'desktop_screenshot',
+      'آخر الملاذ: صورة PNG للنافذة المختارة وحدها للحكم على شكلها حين لا تكفي الشجرة. desktop_snapshot هي '
+        + 'الافتراضي — الأفعال بالمراجع لا بمواضع الصورة، والصورة أغلى بمراتب.',
+      { target: z.string().describe('معرّف النافذة المختارة كما أعادته desktop_targets') },
+      async (args) => {
+        const r = await surface.screenshot(args && args.target);
+        if (!r.ok) return failed(r);
+        const content = [{ type: 'image', data: r.base64, mimeType: r.mimeType || 'image/png' }];
+        if (r.note) content.push({ type: 'text', text: r.note });
+        return { content };
+      }
+    ),
+  ];
+}
 
 // تطبيع أدوات Todo/Task ورسائل Agent الفعلية في SDK إلى عقد task_update الموحّد.
 // لا نتدخل في تنفيذ الأدوات؛ نرصد رسائلها الموثّقة فقط ونترك التخزين لـ main.js.
@@ -880,7 +994,7 @@ async function prepareTestSpriteJob(prompt, cwd, siteRound) {
  * يبدأ دوراً واحداً (رسالة → رد) ويعيد مقبضاً فيه stop و resolvePermission.
  * emit(obj)‎ يرسل الأحداث للواجهة بنفس عقد satr:event.
  */
-async function start({ prompt, images, sessionId, model, fallbackModel, permissionMode, skills, effort, extraDirs, browserControl, trustedBrowserOrigins, browserBudget, continuityContext }, cwd, emit, internalPolicy) {
+async function start({ prompt, images, sessionId, model, fallbackModel, permissionMode, skills, effort, extraDirs, browserControl, desktopControl, trustedBrowserOrigins, browserBudget, continuityContext }, cwd, emit, internalPolicy) {
   const policyMode = internalPolicy && internalPolicy.mode;
   const isolatedPolicy = policyMode === 'text-only' || policyMode === 'read-only-planner';
   // الفحص قراءة قرص محدودة لمسارات ثابتة ويعمل بلا await كي لا يؤخر إقلاع الدور.
@@ -1281,8 +1395,10 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       const requester = typeof agentID === 'string'
         ? agentID.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 80) : '';
       const turnEligible = !NEVER_TURN_TOOLS.has(toolName);
+      // سطح ويندوز: المربع يعرض النافذة والعنصر والنص (desktop.permissionDetail) — بلا مسار ولا مقبض
+      const desktopDetail = DESKTOP_TOOL_RE.test(String(toolName || '')) ? desktop.permissionDetail(toolName, input) : '';
       emit({ type: 'permission_request', id, tool: toolName, input, requester, turnEligible,
-        alwaysEligible: !NEVER_ALWAYS_TOOLS.has(toolName) });
+        alwaysEligible: !NEVER_ALWAYS_TOOLS.has(toolName), ...(desktopDetail ? { detail: desktopDetail } : {}) });
       return new Promise((resolve) => {
         pending.set(id, { resolve, toolName, input, turnEligible, budgetAction: !!browserClass });
         if (signal) {
@@ -1335,10 +1451,14 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   // تعريف الوكيل ببيئة «سطر» (م-1-ب — الدفعة 5): بدونه لا يعلم النموذج بالمعاينة
   // المدمجة فيفتح متصفحاً خارجياً بـ Start-Process (لقطة مالك من قبول م-1).
   // إلحاق على برومبت claude_code الأصلي لا استبدال له (preset + append).
+  // سطح ويندوز: قرار التسجيل يُحسم مرة للجلسة (§٦) ويتبعه الموجز والخادم معاً — لا يُبدَّل أثناءها
+  const desktopPlan = desktopRegistration({ desktopControl, sessionId, internalPolicy, available: desktop.isAvailable() });
+  if (desktopPlan.notice) emit({ type: 'stderr', text: desktopPlan.notice });
+  if (sessionId && !internalPolicy) pinDesktopDecision(sessionId, desktopPlan.enabled);
   options.systemPrompt = {
     type: 'preset',
     preset: 'claude_code',
-    append: envbrief.build('sdk', model)
+    append: envbrief.build('sdk', model, { desktop: desktopPlan.enabled })
       + (portableSkillPrompt ? '\n\n' + portableSkillPrompt : ''),
   };
   if (policyMode === 'text-only') {
@@ -2249,6 +2369,13 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     });
   }
 
+  // سطح ويندوز (الخطوة ٤): خادم مستقل بجانب القائمة لا داخل satr-terminal، بقرار الجلسة المثبَّت أعلاه وحده
+  if (desktopPlan.enabled && sdk.createSdkMcpServer && sdk.tool && z) {
+    options.mcpServers = Object.assign({}, options.mcpServers, {
+      'satr-desktop': sdk.createSdkMcpServer({ name: 'satr-desktop', version: '1.0.0', tools: desktopTools(sdk, z, desktop) }),
+    });
+  }
+
   // TestSprite تكامل خارجي اختياري: يُحقن فقط في دردشة المستخدم عندما يكون مفتاحه
   // مضبوطاً في خزنة «سطر». السر يصل إلى الخادم الرسمي عبر env، لا ملف مشروع أو وسيطة spawn.
   const testspriteApiKey = keys.get(testsprite.KEY_NAME);
@@ -2311,6 +2438,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           || (Array.isArray(msg.user_message_uuids) && msg.user_message_uuids.includes(promptUserMessageId))
         );
         const observedSessionId = SAFE_UUID.test(String(msg && msg.session_id || '')) ? msg.session_id : '';
+        // الجلسة الجديدة تُعرف برقمها هنا: يُثبَّت لها قرار سطح ويندوز الذي بدأت به (§٦)
+        if (!internalPolicy && observedSessionId) pinDesktopDecision(observedSessionId, desktopPlan.enabled);
         if (!internalPolicy && !promptUserEventEmitted && observedSessionId) {
           rememberUserMessage(observedSessionId, promptUserMessageId);
           if (!matchingPromptUser) {
@@ -2812,4 +2941,11 @@ module.exports = {
   buildQuestionAnswer,
   createSessionControls,
   prepareTestSpriteJob,
+  desktopRegistration,
+  pinDesktopDecision,
+  desktopTools,
+  DESKTOP_TOOL_RE,
+  DESKTOP_ACT_TOOLS,
+  NEVER_ALWAYS_TOOLS,
+  NEVER_TURN_TOOLS,
 };

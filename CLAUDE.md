@@ -77,7 +77,7 @@ BiDi فيظهر العربي مقطّعاً ومعكوساً؛ «سطر» يشغ
    فليسا اعتماديتَي تشغيل npm بل **مُضمّنان (vendored)** في `src/vendor/` (المصدر
    devDependency، والنسخ عبر `scripts/vendor-xterm.js` و`scripts/vendor-fonts.js`،
    والناتج مُلتزَم) — فقاعدة الواجهة تبقى قائمة بمعناها.
-   **تبعية وقت بناء لا تشغيل (سطح ويندوز):** `native/satr-uia` معين C# منشور NativeAOT ملفاً واحداً في CI لأن جافاسكربت لا يبلغ واجهة COM لـUI Automation؛ لا يمسّ `package.json` ولا يشترط .NET عند المستخدم — التفصيل في `native/satr-uia/README.md`.
+   **تبعية وقت بناء لا تشغيل (سطح ويندوز):** `native/satr-uia` معين C# منشور NativeAOT ملفاً واحداً في CI لأن جافاسكربت لا يبلغ واجهة COM لـUI Automation؛ لا يمسّ `package.json` ولا يشترط .NET عند المستخدم — التفصيل في `docs/internals/69-computer-use-desktop.md`.
    لا استثناءات أخرى دون قرار يُوثَّق هنا (القاعدة) وفي `docs/internals/` (التفصيل).
 6. **لا تكسر العقد بين الطبقات**: أي تغيير في صيغة أحداث IPC يتطلب تحديث الطرفين معاً
    وتحديث ملف النظام الفرعي المعني في `docs/internals/` (وهذا الملف إن مسّ النواة).
