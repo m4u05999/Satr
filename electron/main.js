@@ -283,6 +283,7 @@ const termjobs = require('./termjobs');
 const devservers = require('./devservers');
 const updater = require('./updater');
 const preview = require('./preview'); // لوحة المعاينة المدمجة (م-1 — الدفعة 5)
+const desktop = require('./desktop'); // سطح ويندوز (الخطوة ٤): المعين والجلسة المختارة — docs/COMPUTER-USE-DESKTOP.md
 const browserorigin = require('./browserorigin');
 const browserpolicy = require('./browserpolicy');
 
@@ -747,6 +748,14 @@ function sanitizeGenerationDoneEvent(cwd, value) {
 codexmcp.setEventSink((event, cwd) => {
   const sanitized = sanitizeGenerationDoneEvent(cwd, event);
   if (sanitized) emitToWindow(sanitized);
+});
+
+// سجل أفعال سطح ويندوز (الحارس ٥): desktop.js يبثّ desktop_activity {text} بسطر describeAction العربي
+// وحده — الواجهة تعرضه في الخطوة ٥. نصّ ثابت الشكل لا يحمل عنوان النافذة ولا النص المكتوب.
+desktop.setEventSink((event) => {
+  if (event && event.type === 'desktop_activity' && typeof event.text === 'string') {
+    emitToWindow({ type: 'desktop_activity', text: event.text.slice(0, 300) });
+  }
 });
 
 function knownKeyNames() {
@@ -3189,6 +3198,8 @@ async function handleSendRequest(event, payload, requestEpoch) {
       effort: EFFORT_LEVELS.has(payload.effort) ? payload.effort : null,
       extraDirs: sanitizeExtraDirs(payload.extraDirs),
       browserControl: payload.browserControl === true, // وضع تحكّم المتصفح للمحرّك الأصلي الداعم
+      // سطح ويندوز لمحرك SDK وحده (الخطوة ٤): boolean صارم؛ agent.js يثبّت القرار لكل جلسة (§٦)
+      desktopControl: payload.desktopControl === true,
       trustedBrowserOrigins,
       browserBudget,
     }, cwd, emit);
@@ -3756,6 +3767,51 @@ ipcMain.handle('satr:secretDone', (event, p) => {
   if (!p || typeof p.id !== 'string' || !SAFE_SECRET_REQUEST_ID.test(p.id) || typeof p.done !== 'boolean') return { ok: false };
   return preview.resolveSecretRequest(p.id, p.done);
 });
+
+// ---------- سطح ويندوز: منتقي النافذة (الخطوة ٤ من docs/COMPUTER-USE-DESKTOP.md) ----------
+// ثلاث قنوات محددة، والواجهة في الخطوة ٥. القائمة للمستخدم لا للنموذج (الحارس ١)، والاختيار بمعرّف
+// ورقم عملية منقّيين هنا (القاعدة ٢)، والردود بقائمة سماح مغلقة: لا مسار مطلق ولا مقبض نافذة ولا صنف.
+const SAFE_DESKTOP_TARGET_ID = /^w[1-9][0-9]{0,8}$/;
+const DESKTOP_PUBLIC_ERRORS = new Set(['closed', 'stale_ref', 'not_found', 'bad_selector', 'handoff', 'not_allowed', 'bad_input']);
+const MAX_DESKTOP_TARGETS = 100;
+
+function publicDesktopTarget(t) {
+  if (!t || typeof t !== 'object' || typeof t.targetId !== 'string' || !SAFE_DESKTOP_TARGET_ID.test(t.targetId)
+    || !Number.isSafeInteger(t.pid) || t.pid <= 0) return null;
+  const r = t.rect;
+  return {
+    targetId: t.targetId,
+    pid: t.pid,
+    processName: typeof t.processName === 'string' ? t.processName.slice(0, 64) : '',
+    title: typeof t.title === 'string' ? t.title.slice(0, 160) : '',
+    rect: r && [r.x, r.y, r.w, r.h].every(Number.isInteger) ? { x: r.x, y: r.y, w: r.w, h: r.h } : null,
+  };
+}
+
+function publicDesktopResult(result, pick) {
+  if (result && result.ok === true) return Object.assign({ ok: true }, pick ? pick(result) : {});
+  return {
+    ok: false,
+    error: result && DESKTOP_PUBLIC_ERRORS.has(result.error) ? result.error : 'not_found',
+    message: result && typeof result.message === 'string' ? result.message.slice(0, 400) : '',
+  };
+}
+
+ipcMain.handle('satr:desktopTargets', async () => publicDesktopResult(await desktop.listTargets(), (r) => ({
+  targets: (Array.isArray(r.targets) ? r.targets : []).map(publicDesktopTarget).filter(Boolean).slice(0, MAX_DESKTOP_TARGETS),
+})));
+
+ipcMain.handle('satr:desktopSelect', async (event, p) => {
+  // المفتاحان وحدهما: أي حقل إضافي (مستطيل أو مسار أو مقبض من الواجهة) يُرفض لا يُتجاهل
+  const keys = p && typeof p === 'object' && !Array.isArray(p) ? Object.keys(p).sort().join(',') : '';
+  if (keys !== 'pid,targetId' || typeof p.targetId !== 'string' || !SAFE_DESKTOP_TARGET_ID.test(p.targetId)
+    || !Number.isSafeInteger(p.pid) || p.pid <= 0) return { ok: false, error: 'bad_input', message: '' };
+  return publicDesktopResult(await desktop.selectTarget({ targetId: p.targetId, pid: p.pid }), (r) => ({
+    target: publicDesktopTarget(r.target),
+  }));
+});
+
+ipcMain.handle('satr:desktopClear', async () => publicDesktopResult(await desktop.clearTarget()));
 
 // ---------- التراجع عن تعديل ملف (المرحلة 3) ----------
 // المعرّف هو tool_use_id الذي أصدره المحرك؛ نتحقق من شكله قبل تمريره.
@@ -5032,6 +5088,7 @@ async function cleanupBeforeQuit() {
     orchestrator.stopAll(), opsBrainstorm.stopAll(), opsPlanner.stopAll(), executor.stopAll(),
     executionTeam.stopAll(), loopRunner.stopAll(), reviewer.stopAll(), integration.stopAll(), promocapture.stopAll(),
     testspritejobs.cleanupBeforeQuit(),
+    desktop.shutdown(), // معين سطح ويندوز: إغلاق stdin ثم إنهاء — لا عملية يتيمة بعد سطر
   ]);
   if (integration.latestPreview()) await integration.stopAll();
   bgprocs.killAll();

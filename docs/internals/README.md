@@ -76,3 +76,4 @@
 | 66 | [`66-reply-readability.md`](66-reply-readability.md) | قرائية ردود الوكيل — سلّم العناوين وعارض Markdown وتوجيه شكل الرد (2026-09-11) | 8.4 ك.ب |
 | 67 | [`67-project-connections.md`](67-project-connections.md) | توصيلات المشروع المجانية (OBS-145 — دفعة الرمز الشخصي، 2026-09-08) | 4.2 ك.ب |
 | 68 | [`68-models-boot-and-preview-controls.md`](68-models-boot-and-preview-controls.md) | إقلاع النماذج وأسقف اللوحات · أزرار المعاينة وقصد المستخدم (2026-09-10) | 2.4 ك.ب |
+| 69 | [`69-computer-use-desktop.md`](69-computer-use-desktop.md) | استعمال الحاسوب — سطح ويندوز: المعين والمراجع والحرّاس والأدوات الثماني (الخطوات ٠–٤، 2026-09-11) | 12.2 ك.ب |

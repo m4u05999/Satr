@@ -29,7 +29,31 @@ function sameNames(actual, declared, engine) {
   assert(brief.includes('فضّل API/CLI') && brief.includes('gh') && brief.includes('netlify'), 'الموجز يفضّل الواجهة البرمجية لكل المحركات');
 }
 
-sameNames(sdkActual, envbrief.toolNames('sdk'), 'sdk');
+// سطح ويندوز (الخطوة ٤): أدواته الثماني معرَّفة في agent.js لكنها في جرد مستقل (DESKTOP_TOOL_NAMES)
+// لا يُلحق إلا حين يُسجَّل خادم satr-desktop — فالجرد الأساسي SDK_TOOL_NAMES لا يتغيّر.
+const desktopActual = sdkActual.filter((name) => name.startsWith('desktop_'));
+const sdkCoreActual = sdkActual.filter((name) => !name.startsWith('desktop_'));
+sameNames(sdkCoreActual, envbrief.toolNames('sdk'), 'sdk');
+assert.deepStrictEqual([...desktopActual].sort(), [...envbrief.DESKTOP_TOOL_NAMES].sort(), 'انحرف جرد أدوات سطح ويندوز عن تعريفاتها في agent.js');
+assert.strictEqual(envbrief.DESKTOP_TOOL_NAMES.length, 8, 'الأدوات الثماني بأسماء §٧ لا أكثر ولا أقل');
+assert(!envbrief.SDK_TOOL_NAMES.some((name) => name.startsWith('desktop_')), 'أدوات سطح ويندوز تسرّبت إلى الجرد الأساسي');
+assert.deepStrictEqual(envbrief.toolNames('sdk', { desktop: true }), [...envbrief.SDK_TOOL_NAMES, ...envbrief.DESKTOP_TOOL_NAMES],
+  'الجرد مع الخادم = الأساسي ثم أدوات سطح ويندوز');
+{
+  const withDesktop = envbrief.build('sdk', 'test-model', { desktop: true });
+  const withoutDesktop = envbrief.build('sdk', 'test-model');
+  for (const name of envbrief.DESKTOP_TOOL_NAMES) {
+    assert(withDesktop.includes(name), 'موجز SDK مع خادم سطح المكتب لا يذكر ' + name);
+    assert(!withoutDesktop.includes(name), 'موجز SDK بلا خادم سطح المكتب يذكر ' + name + ' — أداة لم تُسجَّل');
+  }
+  assert(withDesktop.includes(envbrief.DESKTOP_POLICY_LINE), 'موجز SDK مع الخادم بلا سطر سياسة سطح ويندوز');
+  assert(!withoutDesktop.includes('سطح ويندوز:'), 'سطر سياسة سطح ويندوز تسرّب إلى موجز بلا خادم');
+  assert(envbrief.DESKTOP_POLICY_LINE.includes('desktop_snapshot أولاً') && envbrief.DESKTOP_POLICY_LINE.includes('بالمراجع وحدها'),
+    'سطر السياسة لا يوجّه إلى desktop_snapshot أولاً والمراجع وحدها');
+  for (const engine of ['codex', 'kimi-code', 'adapter']) {
+    assert(!envbrief.build(engine, 'test-model', { desktop: true }).includes('desktop_snapshot'), 'سطح ويندوز لمحرك SDK وحده — تسرّب إلى ' + engine);
+  }
+}
 sameNames(codexActual, envbrief.toolNames('codex'), 'codex');
 sameNames(kimiActual, envbrief.toolNames('kimi-code'), 'kimi-code');
 sameNames(adapterActual, envbrief.toolNames('adapter'), 'adapter');

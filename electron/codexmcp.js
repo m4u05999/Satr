@@ -84,6 +84,11 @@ function whyClosed(err, extra, details) {
   if (err === 'handoff') return HANDOFF_BLOCKED;
   if (err === 'closed') return 'المعاينة غير مفتوحة — استخدم open_preview أولاً.';
   if (err === 'stale_ref') return 'المرجع من لقطة قديمة — خذ browser_snapshot جديدة واستعمل ref منها.';
+  // سطح ويندوز (docs/COMPUTER-USE-DESKTOP.md §٧): الرمز الوحيد الذي أضافه — خارج النطاق المأذون
+  if (err === 'not_allowed') {
+    const why = details && typeof details.why === 'string' && details.why ? ' (' + details.why + ')' : '';
+    return 'الفعل خارج النطاق المأذون' + why + ' — لم يُنفَّذ. اعمل داخل النافذة التي اختارها المستخدم وبمرجع من آخر لقطة، ولا تكرّر المحاولة نفسها.';
+  }
   return (extra || 'تعذّرت العملية') + ' (' + (err || 'خطأ') + ').';
 }
 // رسالة تعليق أدوات المعاينة أثناء التسليم البشري (browser_handoff — fail-closed)

@@ -1,4 +1,4 @@
-// واجهات COM لـUI Automation — المجموعة الدنيا التي تحتاجها التوابع الخمسة، لا أكثر.
+// واجهات COM لـUI Automation — المجموعة الدنيا التي تحتاجها توابع المعين، لا أكثر.
 //
 // ⚠️ المصدر الحرفي لترتيب كل جدول دوال (vtable):
 //   Windows SDK 10.0.26100.0 — um\UIAutomationClient.idl (ومنه UIAutomationClient.h).
@@ -56,7 +56,7 @@ internal partial interface IUIAutomation
 [Guid("d22108aa-8ac5-49a5-837b-37bbb3d7591e")]
 internal partial interface IUIAutomationElement
 {
-    void SetFocus();                                                             // 1
+    void SetFocus();                                                             // 1 ✔
     void GetRuntimeId(out nint runtimeId);                                       // 2
     void FindFirst(int scope, nint condition, out nint found);                   // 3
     void FindAll(int scope, IUIAutomationCondition condition, out IUIAutomationElementArray found); // 4 ✔
@@ -83,13 +83,13 @@ internal partial interface IUIAutomationElement
     void get_CurrentIsKeyboardFocusable(out int retVal);                         // 25 ✔
     void get_CurrentIsEnabled(out int retVal);                                   // 26 ✔
     void get_CurrentAutomationId(out nint retVal);                               // 27
-    void get_CurrentClassName(out nint retVal);                                  // 28
+    void get_CurrentClassName([MarshalAs(UnmanagedType.BStr)] out string? retVal); // 28 ✔
     void get_CurrentHelpText(out nint retVal);                                   // 29
     void get_CurrentCulture(out int retVal);                                     // 30
     void get_CurrentIsControlElement(out int retVal);                            // 31
     void get_CurrentIsContentElement(out int retVal);                            // 32
     void get_CurrentIsPassword(out int retVal);                                  // 33 ✔
-    void get_CurrentNativeWindowHandle(out nint retVal);                         // 34
+    void get_CurrentNativeWindowHandle(out nint retVal);                         // 34 ✔ (UIA_HWND بحجم مؤشر)
     void get_CurrentItemType(out nint retVal);                                   // 35
     void get_CurrentIsOffscreen(out int retVal);                                 // 36
     void get_CurrentOrientation(out int retVal);                                 // 37
@@ -113,7 +113,7 @@ internal partial interface IUIAutomationElementArray
 [Guid("4042c624-389c-4afc-a630-9df854a541fc")]
 internal partial interface IUIAutomationTreeWalker
 {
-    void GetParentElement(nint element, out nint parent);                        // 1
+    void GetParentElement(IUIAutomationElement element, out IUIAutomationElement? parent);     // 1 ✔
     void GetFirstChildElement(IUIAutomationElement element, out IUIAutomationElement? first);  // 2 ✔
     void GetLastChildElement(nint element, out nint last);                       // 3
     void GetNextSiblingElement(IUIAutomationElement element, out IUIAutomationElement? next);  // 4 ✔
@@ -144,6 +144,75 @@ internal partial interface IUIAutomationValuePattern
     void get_CurrentIsReadOnly(out int retVal);                                  // 3 ✔
 }
 
+// IUIAutomationScrollPattern : IUnknown — uuid(88f4d42a-e881-459d-a77c-73bbbb7e02dc) — 14 تابعاً، نستعمل حتى الموضع 8
+// (الترتيب من UIAutomationClient.idl السطر 1011 في SDK ‏10.0.26100.0؛ ScrollAmount من UIAutomationCore.idl)
+[GeneratedComInterface]
+[Guid("88f4d42a-e881-459d-a77c-73bbbb7e02dc")]
+internal partial interface IUIAutomationScrollPattern
+{
+    void Scroll(int horizontalAmount, int verticalAmount);                       // 1 ✔
+    void SetScrollPercent(double horizontalPercent, double verticalPercent);     // 2
+    void get_CurrentHorizontalScrollPercent(out double retVal);                  // 3
+    void get_CurrentVerticalScrollPercent(out double retVal);                    // 4 ✔
+    void get_CurrentHorizontalViewSize(out double retVal);                       // 5
+    void get_CurrentVerticalViewSize(out double retVal);                         // 6
+    void get_CurrentHorizontallyScrollable(out int retVal);                      // 7
+    void get_CurrentVerticallyScrollable(out int retVal);                        // 8 ✔
+}
+
+// INPUT من winuser.h — الاتحاد بحجم أكبر أعضائه (MOUSEINPUT) كي يطابق sizeof(INPUT) = 40 على x64
+[StructLayout(LayoutKind.Sequential)]
+internal struct KeyboardInput
+{
+    public ushort Vk;
+    public ushort Scan;
+    public uint Flags;
+    public uint Time;
+    public nint ExtraInfo;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct MouseInputPad
+{
+    public int Dx;
+    public int Dy;
+    public uint MouseData;
+    public uint Flags;
+    public uint Time;
+    public nint ExtraInfo;
+}
+
+[StructLayout(LayoutKind.Explicit)]
+internal struct InputUnion
+{
+    [FieldOffset(0)] public MouseInputPad Mouse;
+    [FieldOffset(0)] public KeyboardInput Keyboard;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct Input
+{
+    public uint Type;
+    public InputUnion U;
+}
+
+// BITMAPINFOHEADER من wingdi.h — 40 بايتاً؛ BI_RGB بـ32 بت لا يقرأ جدول ألوان بعده
+[StructLayout(LayoutKind.Sequential)]
+internal struct BitmapInfoHeader
+{
+    public uint Size;
+    public int Width;
+    public int Height;
+    public ushort Planes;
+    public ushort BitCount;
+    public uint Compression;
+    public uint SizeImage;
+    public int XPelsPerMeter;
+    public int YPelsPerMeter;
+    public uint ClrUsed;
+    public uint ClrImportant;
+}
+
 internal static partial class Native
 {
     // coclass CUIAutomation من UIAutomationClient.idl
@@ -153,6 +222,21 @@ internal static partial class Native
     public const int TreeScopeChildren = 0x2;
     public const int InvokePatternId = 10000;
     public const int ValuePatternId = 10002;
+    public const int ScrollPatternId = 10004;
+
+    // enum ScrollAmount من UIAutomationCore.idl
+    public const int ScrollSmallDecrement = 1;
+    public const int ScrollNoAmount = 2;
+    public const int ScrollSmallIncrement = 4;
+
+    // winuser.h
+    public const uint InputKeyboard = 1;
+    public const uint KeyEventExtendedKey = 0x0001;
+    public const uint KeyEventKeyUp = 0x0002;
+    public const uint MapVkToVsc = 0;
+    public const uint WmMouseWheel = 0x020A;
+    public const int WheelDelta = 120;
+    public const uint PwRenderFullContent = 0x2;
 
     public const int UiaElementNotEnabled = unchecked((int)0x80040200);
     public const int UiaElementNotAvailable = unchecked((int)0x80040201);
@@ -173,4 +257,80 @@ internal static partial class Native
 
     [LibraryImport("kernel32.dll")]
     public static unsafe partial int GetCurrentPackageFullName(ref int length, char* packageFullName);
+
+    [LibraryImport("kernel32.dll")]
+    public static partial uint GetCurrentThreadId();
+
+    // ── النافذة المختارة: حياتها وهويتها وتركيزها ──
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsWindow(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsIconic(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    public static partial uint GetWindowThreadProcessId(nint hwnd, out uint processId);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint GetForegroundWindow();
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetForegroundWindow(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool BringWindowToTop(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool AttachThreadInput(uint attach, uint attachTo, [MarshalAs(UnmanagedType.Bool)] bool doAttach);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetWindowRect(nint hwnd, out UiaRect rect);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint GetAncestor(nint hwnd, uint flags);
+
+    // ── الإدخال: مفاتيح وعجلة، بلا إحداثيات من الوكيل ──
+    [LibraryImport("user32.dll")]
+    public static unsafe partial uint SendInput(uint count, Input* inputs, int size);
+
+    [LibraryImport("user32.dll")]
+    public static partial uint MapVirtualKeyW(uint code, uint mapType);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool PostMessageW(nint hwnd, uint msg, nint wParam, nint lParam);
+
+    // ── التقاط النافذة المختارة وحدها ──
+    [LibraryImport("user32.dll")]
+    public static partial nint GetDC(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    public static partial int ReleaseDC(nint hwnd, nint hdc);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool PrintWindow(nint hwnd, nint hdc, uint flags);
+
+    [LibraryImport("gdi32.dll")]
+    public static partial nint CreateCompatibleDC(nint hdc);
+
+    [LibraryImport("gdi32.dll")]
+    public static unsafe partial nint CreateDIBSection(nint hdc, BitmapInfoHeader* info, uint usage, void** bits, nint section, uint offset);
+
+    [LibraryImport("gdi32.dll")]
+    public static partial nint SelectObject(nint hdc, nint obj);
+
+    [LibraryImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool DeleteObject(nint obj);
+
+    [LibraryImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool DeleteDC(nint hdc);
 }

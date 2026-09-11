@@ -183,6 +183,10 @@ contextBridge.exposeInMainWorld('satr', {
   steer: (text) => ipcRenderer.invoke('satr:steer', { text }), // C1: توجيه الدور الجاري (Codex — turn/steer)
   handoffDone: (id, done) => ipcRenderer.invoke('satr:handoffDone', { id, done }), // التسليم البشري browser_handoff (استلمت/إلغاء)
   secretDone: (id, done) => ipcRenderer.invoke('satr:secretDone', { id, done }), // إدخال سر داخل حقل المعاينة بلا إعادة قيمته
+  // سطح ويندوز (الخطوة ٤): منتقي النافذة للمستخدم وحده — القائمة قراءة، والاختيار بمعرّف ورقم عملية
+  desktopTargets: () => ipcRenderer.invoke('satr:desktopTargets'),
+  desktopSelect: (targetId, pid) => ipcRenderer.invoke('satr:desktopSelect', { targetId, pid }),
+  desktopClear: () => ipcRenderer.invoke('satr:desktopClear'),
   undoEdit: (id) => ipcRenderer.invoke('satr:undoEdit', id),
   listBgProcs: () => ipcRenderer.invoke('satr:listBgProcs'),
   killBgProc: (id) => ipcRenderer.invoke('satr:killBgProc', id),
