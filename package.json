@@ -105,6 +105,7 @@
     "test:surface": "node scripts/surface-test.js",
     "test:browserorigin": "node scripts/browserorigin-test.js",
     "test:browserpolicy": "node scripts/browserpolicy-test.js",
+    "test:desktopguard": "node scripts/desktopguard-test.js",
     "test:browser-platform-live": "electron scripts/browser-platform-live-test.js",
     "test:execguard": "node scripts/execguard-test.js",
     "test:termjobs": "node scripts/termjobs-test.js",
