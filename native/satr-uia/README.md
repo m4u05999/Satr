@@ -88,13 +88,13 @@ NuGet فيه أصلاً — الـinterop مولَّد من `[GeneratedComInterf
 
 `electron/desktop.js` (الخطوة ٤) — عملية واحدة لكل جلسة، بمهلة إقلاع ومهلة لكل طلب، وإعادة إقلاع
 مرة عند الانهيار. المسار: `SATR_UIA_EXE` ثم `resources/satr-uia/satr-uia.exe` (مُحزَّم عبر
-`build.extraResources` حين يوجد ناتج CI في `out/`) ثم `out/satr-uia.exe` (تطوير). حجب الأصناف بالاسم
+`build.extraResources` حين يوجد ناتج CI في `out-aot/`) ثم `out-aot/satr-uia.exe` ثم `out/satr-uia.exe` (تطوير، JIT). حجب الأصناف بالاسم
 (الحارس ٤) وحصر السرد بالنافذة المختارة (الحارس ١) في `electron/desktopguard.js` لا هنا.
 
 ## ما لم يُنفَّذ بعد
 
 - المعين لا يُبنى في بوابة الإصدار `release.yml`: ناتجه يُرفع من `uia-helper.yml` artifact، ونسخه إلى
-  `out/` قبل `npm run dist` خطوة يدوية حتى تُضمّ إلى مسار الإصدار بقرار مستقل.
+  `out-aot/` قبل `npm run dist` خطوة يدوية حتى تُضمّ إلى مسار الإصدار بقرار مستقل (‏`OBS-161`).
 - منتقي النافذة في الواجهة وسجلّ الأفعال المرئي — الخطوة ٥.
 
 ## الاختبار
