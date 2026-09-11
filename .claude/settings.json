@@ -1,4 +1,14 @@
 {
+  "model": "opusplan",
+  "effortLevel": "medium",
+  "modelSettings": {
+    "claude-fable-5-1": {
+      "effort": "xhigh"
+    }
+  },
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku"
+  },
   "hooks": {
     "PreToolUse": [
       {

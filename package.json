@@ -153,6 +153,7 @@
     "test:full-quiet": "node scripts/full-suite-quiet-test.js",
     "test:filter-hook": "node scripts/filter-test-output-hook-test.js",
     "test:claude-md-size": "node scripts/claude-md-size-test.js",
+    "test:model-routing": "node scripts/model-routing-test.js",
     "test:full-timeout": "node scripts/full-suite-timeout-test.js",
     "test:full:evidence": "node scripts/full-suite-evidence.js",
     "test:full:external": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-full-suite.ps1",

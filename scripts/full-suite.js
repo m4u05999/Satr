@@ -97,6 +97,7 @@ const SUITE = [
   'test:full-quiet',
   'test:filter-hook',
   'test:claude-md-size',
+  'test:model-routing',
   'test:full-timeout',
   'test:readme-version',
   'test:opsroom-all-live',
