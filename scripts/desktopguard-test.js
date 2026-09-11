@@ -132,9 +132,12 @@ check('دور خارج [a-z] يصير unknown', sanitizeSnapshot(session, [node(
 check('لقطة ليست مصفوفة ⇒ []', refsOf(sanitizeSnapshot(session, { nodes: tree })), []);
 
 console.log('[4] الحارس ٤ — أصناف محجوبة بالاسم، مرفوضة حتى لو اختارها المستخدم');
-for (const name of ['consent', 'consent.exe', 'CONSENT.EXE', 'CredentialUIBroker', 'LockApp', 'LogonUI.exe']) {
+for (const name of ['consent', 'consent.exe', 'CONSENT.EXE', 'CredentialUIBroker', 'LockApp', 'LogonUI.exe', 'Satr', 'satr.exe', 'electron']) {
   check('عملية محجوبة: ' + name, isBlockedTarget({ processName: name, title: 'x' }).blocked, true);
 }
+// نسخة سطر ثانية (رقم عملية آخر) محجوبة بالاسم لا بـpid النسخة نفسها — وإلا نقر وكيلُ نسخةٍ «سماح» في الأخرى
+check('نسخة سطر أخرى لا تُختار حتى لو اختارها المستخدم', threw(() => createSession({ targetId: 'w20', pid: 77777, processName: 'Satr', title: 'سطر — Satr', rect: { x: 0, y: 0, w: 1200, h: 900 } })), true);
+check('نسخة تطوير (electron) لا تُختار', threw(() => createSession({ targetId: 'w21', pid: 77778, processName: 'electron', title: 'سطر', rect: { x: 0, y: 0, w: 1200, h: 900 } })), true);
 check('نافذة UAC مرفوضة (isBlockedTarget)', isBlockedTarget(UAC).blocked, true);
 check('نافذة UAC لا تُختار حتى لو اختارها المستخدم', threw(() => createSession(UAC)), true);
 check('المحجوبة بالعنوان: Credential Dialog Xaml Host', isBlockedTarget({ processName: 'SomeHost', title: 'Credential Dialog Xaml Host' }).blocked, true);
@@ -144,7 +147,7 @@ check('عملية مجهولة الاسم تُحجب', isBlockedTarget({ process
 check('المفكرة غير محجوبة', isBlockedTarget(NOTEPAD).blocked, false);
 check('نافذة مختارة يتحوّل عنوانها إلى المحجوب تختفي', idsOf(filterTargets(session, [Object.assign({}, NOTEPAD, { title: 'Credential Dialog Xaml Host' })])), []);
 check('القائمتان مجمَّدتان', Object.isFrozen(BLOCKED_PROCESSES) && Object.isFrozen(BLOCKED_TITLES), true);
-check('القائمة تحمل الأربع', BLOCKED_PROCESSES.join(','), 'consent.exe,CredentialUIBroker.exe,LockApp.exe,LogonUI.exe');
+check('القائمة تحمل الستّ', BLOCKED_PROCESSES.join(','), 'consent.exe,CredentialUIBroker.exe,LockApp.exe,LogonUI.exe,Satr.exe,electron.exe');
 
 console.log('[5] describeAction — سطر سجل عربي واحد بلا نص من النافذة غير اسم العنصر');
 check('النقر', describeAction(click('w2:e4'), node('w2:e4', null), NOTEPAD), 'نُقر على [حفظ] في نافذة المفكرة');
