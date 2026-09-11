@@ -3813,6 +3813,10 @@ ipcMain.handle('satr:desktopSelect', async (event, p) => {
 
 ipcMain.handle('satr:desktopClear', async () => publicDesktopResult(await desktop.clearTarget()));
 
+// توافر المعين وحده بلا إقلاعه (الخطوة ٥): الواجهة تكشف زرّ 🪟 به، فنسخة بلا satr-uia (إصدار قبل دفعة
+// الربط OBS-161) لا تعرض ميزة لا تعمل. لا مدخل من الواجهة ولا مسار في الرد.
+ipcMain.handle('satr:desktopStatus', () => ({ available: desktop.isAvailable() === true }));
+
 // ---------- التراجع عن تعديل ملف (المرحلة 3) ----------
 // المعرّف هو tool_use_id الذي أصدره المحرك؛ نتحقق من شكله قبل تمريره.
 // المسار نفسه مخزَّن في لقطة agent.js (ليس مدخلاً من الواجهة) فلا حقن مسارات.

@@ -130,6 +130,7 @@ const SUITE = [
   'test:sessions-panel',
   'test:question-dialog',
   'test:gallery',
+  'test:desktop-panel',
   'eval:agent',
 ];
 

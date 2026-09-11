@@ -315,6 +315,7 @@ module.exports = {
   BLOCKED_PROCESSES,
   BLOCKED_TITLES,
   ACTIONS,
+  PROCESS_LABELS,
   createSession,
   closeSession,
   isBlockedTarget,

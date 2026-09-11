@@ -882,6 +882,14 @@ import { createPreviewShield } from './lib/preview-shield.js';
   const previewEl = document.querySelector('satr-preview-panel');
   const promoStudioEl = document.querySelector('satr-promo-studio');
   const mobileEl = document.querySelector('satr-mobile-panel');
+  // سطح ويندوز (الخطوة ٥): اللوحة تملك الاختيار والسجل، والقشرة تملك العلم (نمط browserControl).
+  // الإعلان هنا مبكراً لا عند قسمه: مجرى الأحداث يقرأ الحالة وقد يسبق وصولُ حدثٍ تنفيذَ القسم.
+  const desktopEl = document.querySelector('satr-desktop-panel');
+  let desktopControlOn = false;
+  let desktopAvailable = false; // يكشفه desktopStatus من main (وجود معين satr-uia) — مخفي حتى يثبت
+  try { desktopControlOn = localStorage.getItem('satr_desktop_control') === '1'; } catch (e) {}
+  // بادئة نصّ desktop.UNAVAILABLE_MESSAGE (يحرس test:desktop-panel وصول النص الحقيقي إشعاراً)
+  const DESKTOP_UNAVAILABLE_PREFIX = 'تحكّم سطح المكتب غير متاح';
   function addNotice(text) { chatEl.addNotice(text); }
   $('cwd').addEventListener('change', () => {
     const cwd = $('cwd').value.trim();
@@ -1088,7 +1096,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     ['sessions', 'satr-sessions-panel'], ['files', 'satr-files-panel'], ['git', 'satr-git-panel'],
     ['skills', 'satr-skills-panel'], ['agents', 'satr-agents-panel'], ['mcp', 'satr-mcp-panel'],
     ['context', 'satr-context-panel'], ['memory', 'satr-memory-panel'], ['research', 'satr-research-panel'],
-    ['gallery', 'satr-gallery-panel'], ['mobile', 'satr-mobile-panel'],
+    ['gallery', 'satr-gallery-panel'], ['mobile', 'satr-mobile-panel'], ['desktop', 'satr-desktop-panel'],
     ['ops-room', 'satr-ops-room'],
   ]) surfaceCoordinator.register(name, document.querySelector(selector), 'panel');
   surfaceCoordinator.register('ops-dialog', opsDialogEl, 'dialog');
@@ -1552,6 +1560,24 @@ import { createPreviewShield } from './lib/preview-shield.js';
         ev, sessionCwd || $('cwd').value.trim(), () => openGalleryPanel());
       return;
     }
+    // سجلّ أفعال سطح ويندوز (الحارس ٥ — «لا فعل واحد بلا سطر مرئي»): حدث منسّق من main (نمط
+    // generation_done) خارج قاطع الكتلة المنتهية ⇒ سطر دائم في لوحة 🪟 **و**سطر في بطاقة أداة السطح
+    // الجارية في المحادثة إن كان دور جارٍ، كي لا تعتمد رؤيته على فتح اللوحة. textContent وحده.
+    if (ev.type === 'desktop_activity') {
+      const entry = desktopEl && desktopEl.appendActivity ? desktopEl.appendActivity(ev) : null;
+      const text = entry ? entry.text : (typeof ev.text === 'string' ? ev.text.slice(0, 300) : '');
+      const running = currentBlock;
+      if (text && running && !running.done && running.addDesktopActivity) {
+        running.addDesktopActivity(text, entry ? entry.stamp : '');
+      }
+      return;
+    }
+    // agent.js يبثّ نصّ «المعين غير موجود» على stderr حين يُطلب التحكم بلا معين، والواجهة لا تعرض
+    // stderr عموماً (فيه خرج CLI الخام) — فهذا النص وحده يصل إشعاراً ولا يُبتلع.
+    if (ev.type === 'stderr' && typeof ev.text === 'string' && ev.text.startsWith(DESKTOP_UNAVAILABLE_PREFIX)) {
+      addNotice('🪟 ' + ev.text.slice(0, 400));
+      return;
+    }
     if (ev.type === 'execution_review_update') {
       opsRoomEl.handleEvent(ev);
       return;
@@ -1619,6 +1645,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     } else if (ev.type === 'system' && ev.session_id) {
       sessionId = ev.session_id;
       $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(sessionId);
+      paintDesktopControl(); // الجلسة ثبّتت قرار سطح ويندوز ⇒ «يسري مع الجلسة القادمة» في اللوحة
       // 1.3: مؤشر الاستئناف يكتبه المحوّل نفسه على القرص (chats.save) — لا حفظ هنا
     } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
       // parent_tool_use_id (المرحلة 14.2): رسائل الوكيل الفرعي تتوجه لبطاقة وكيلها
@@ -1784,6 +1811,34 @@ import { createPreviewShield } from './lib/preview-shield.js';
     btn.addEventListener('click', () => setBrowserControl(!browserControlOn, true));
   })();
 
+  // ---------- تحكّم سطح ويندوز (الخطوة ٥ من docs/COMPUTER-USE-DESKTOP.md) ----------
+  // نمط browserControl حرفياً ومحور مستقل عنه: المفتاح في لوحة 🪟 (لا في المؤلّف)، يُحفظ محلياً،
+  // يُرسل في حمولة send، ويُطفأ مع الجلسة الجديدة. قرار تسجيل satr-desktop يُثبَّت للجلسة عند أول
+  // دور (§٦ — desktopRegistration في agent.js) فتبديله أثناء جلسة قائمة يسري مع القادمة، واللوحة تقوله.
+  function desktopControlState() { return { on: desktopControlOn, sessionActive: !!sessionId }; }
+  function paintDesktopControl() {
+    const btn = $('desktopToggle');
+    if (btn) btn.textContent = desktopControlOn ? '🪟 سطح ويندوز ●' : '🪟 سطح ويندوز';
+    if (desktopEl && desktopEl.setControlState) desktopEl.setControlState(desktopControlState());
+  }
+  function setDesktopControl(on, notify) {
+    const was = desktopControlOn;
+    desktopControlOn = !!on;
+    try { localStorage.setItem('satr_desktop_control', desktopControlOn ? '1' : '0'); } catch (e) {}
+    paintDesktopControl();
+    if (!notify || was === desktopControlOn) return;
+    if (desktopControlOn) {
+      addNotice(sessionId
+        ? '🪟 فُعّل تحكّم سطح المكتب — يسري مع الجلسة القادمة (الجلسة الحالية ثبّتت قرارها عند أول رسالة).'
+        : '🪟 فُعّل تحكّم سطح المكتب — يُسجَّل مع رسالتك التالية. اختر نافذة من اللوحة قبل الإرسال، وكل فعل يُسأل عنه.');
+    } else {
+      addNotice(sessionId
+        ? '🪟 أُطفئ تحكّم سطح المكتب — يسري مع الجلسة القادمة. لإيقاف أفعال الوكيل الآن ألغِ اختيار النافذة.'
+        : '🪟 أُطفئ تحكّم سطح المكتب.');
+    }
+  }
+  paintDesktopControl();
+
   // ---------- C1: التوجيه أثناء الدور (Codex — turn/steer) ----------
   // محرك Codex وحده يقبل حقن نص في دور جارٍ (مثبّت بالمسبار). أثناء انشغاله لا يُقفل
   // المؤلّف: كتابة نص تحوّل زرّ الإرسال إلى «↪ وجّه»، والحقل الفارغ يبقيه «إيقاف»
@@ -1846,6 +1901,13 @@ import { createPreviewShield } from './lib/preview-shield.js';
       images = [];
     }
     if (!prompt && !images.length) return;
+    // الحارس ١: تحكّم سطح المكتب مفعّل لمحرك SDK بلا نافذة مختارة ⇒ لا يُرسل الدور (والإرسال كان
+    // سيثبّت قرار الجلسة). إشعار بزرّ يفتح اللوحة، والنص يبقى في المحرّر كما كتبه المستخدم.
+    if (desktopControlOn && desktopAvailable && engine === 'sdk' && !(desktopEl && desktopEl.selected)) {
+      chatEl.addActionNotice('🪟 تحكّم سطح المكتب مفعّل ولم تُختر نافذة — اختر نافذة أولاً. لم يُرسل الطلب.',
+        'افتح لوحة سطح ويندوز', () => openDesktopPanel());
+      return;
+    }
     clearPromptSuggestion();
     // وقاية: جلسات Claude Code مرتبطة بمجلدها — تغيير مجلد المشروع مع جلسة حيّة
     // يجعل --resume يفشل بـ «No conversation found» (لقطة قبول). مجلد جديد ⇐ جلسة جديدة.
@@ -1895,6 +1957,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
       extraDirs: topbarEl.getExtraDirs ? topbarEl.getExtraDirs() : [],
       images: images.map((i) => ({ media_type: i.media_type, data: i.data })),
       browserControl: browserControlOn, // تفويض صريح لأدوات المتصفح في المحركات الأصلية الداعمة
+      desktopControl: desktopControlOn, // سطح ويندوز: محور مستقل — main يقرؤه في مسار SDK وحده (§٦)
     };
     const skillsSel = await computeSkillsPayload();
     await conversationForgetPending;
@@ -2167,6 +2230,15 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (previewEl.resetTaskTrace) previewEl.resetTaskTrace();
     // إطفاء تلقائي لوضع تحكّم المتصفح: لا نحمل صلاحية قيادة تلقائية لمهمة جديدة صامتاً
     if (browserControlOn) { setBrowserControl(false, false); addNotice('🖱️ أُوقف وضع تحكّم المتصفح تلقائياً مع الجلسة الجديدة.'); }
+    // سطح ويندوز: العلم يُطفأ كنظيره، والاختيار «لجلسة واحدة» (الحارس ١) فيُسحب معها — وإلا ورثت
+    // الجلسة الجديدة نافذةَ سابقتها بلا اختيار صريح
+    if (desktopControlOn) { setDesktopControl(false, false); addNotice('🪟 أُوقف تحكّم سطح المكتب تلقائياً مع الجلسة الجديدة.'); }
+    if (desktopEl && desktopEl.selected && desktopEl.clearSelection) {
+      desktopEl.clearSelection({ silent: true }).then((ok) => {
+        if (ok) addNotice('🪟 سُحب اختيار النافذة مع الجلسة الجديدة — الاختيار لجلسة واحدة.');
+      });
+    }
+    paintDesktopControl();
     return true;
   }
   $('newSession').addEventListener('click', newSession);
@@ -2516,6 +2588,35 @@ import { createPreviewShield } from './lib/preview-shield.js';
   $('mobileToggle').setAttribute('aria-pressed', 'false');
   $('mobileToggle').addEventListener('click', () => {
     if (mobileEl.hasAttribute('open')) closeMobilePanel(); else openMobilePanel();
+  });
+
+  // ---------- لوحة 🪟 سطح ويندوز: منتقي النافذة وسجلّ الأفعال (الخطوة ٥) ----------
+  // الزر مخفي في الترميز وتكشفه العملية الرئيسية وحدها حين يوجد معين satr-uia (desktop.isAvailable) —
+  // فنسخة بلا معين (إصدار قبل دفعة الربط OBS-161) لا تعرض ميزة لا تعمل. فشل الجلب يُبقيه مخفياً.
+  function openDesktopPanel() {
+    $('desktopToggle').classList.add('active');
+    $('desktopToggle').setAttribute('aria-pressed', 'true');
+    surfaceCoordinator.openPanel('desktop', $('desktopToggle'), () => desktopEl.open(desktopControlState()));
+  }
+  function closeDesktopPanel() { desktopEl.close(); }
+  desktopEl.addEventListener('panel-close', () => {
+    $('desktopToggle').classList.remove('active');
+    $('desktopToggle').setAttribute('aria-pressed', 'false');
+  });
+  desktopEl.addEventListener('notice', (event) => addNotice(event.detail));
+  desktopEl.addEventListener('desktop-control', (event) => setDesktopControl(!!(event.detail && event.detail.on), true));
+  (async () => {
+    try {
+      const status = await window.satr.desktopStatus();
+      if (status && status.available === true) {
+        desktopAvailable = true;
+        $('desktopToggle').hidden = false;
+        paintDesktopControl();
+      }
+    } catch (_e) { /* يبقى مخفياً */ }
+  })();
+  $('desktopToggle').addEventListener('click', () => {
+    if (desktopEl.hasAttribute('open')) closeDesktopPanel(); else openDesktopPanel();
   });
 
   // ---------- تصدير المحادثة Markdown (الدفعة 4.8 «مشاركة») ----------
