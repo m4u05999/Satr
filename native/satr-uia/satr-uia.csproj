@@ -1,0 +1,30 @@
+<!--
+  المعين الأصلي لسطح ويندوز — الصف ١ من «ترتيب البناء» في docs/COMPUTER-USE-DESKTOP.md.
+  عميل UIA فوق UIAutomationCore بـCOM interop مولَّد (GeneratedComInterface) فيُنشر NativeAOT
+  ملفاً واحداً بلا اشتراط .NET عند المستخدم. لا WPF ولا WinForms ولا أي حزمة NuGet.
+  الحلقة المحلية: dotnet build (‏JIT). النشر: dotnet publish -c Release -r win-x64 (يحتاج رابط MSVC — في CI).
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>satr-uia</AssemblyName>
+    <RootNamespace>SatrUia</RootNamespace>
+    <!-- الكود المولَّد لـCOM وLibraryImport يستعمل مؤشرات -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- تحذيرات التقليم وAOT أخطاء: تحذير يمرّ في build المحلي (‏JIT) ينكسر صامتاً في ثنائي AOT -->
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2057;IL2067;IL2070;IL2072;IL2075;IL2087;IL2091;IL3050;IL3051</WarningsAsErrors>
+
+    <!-- النشر: ملف واحد أصلي مقلَّم للحجم -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <StripSymbols>true</StripSymbols>
+    <OptimizationPreference>Size</OptimizationPreference>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <EventSourceSupport>false</EventSourceSupport>
+    <DebuggerSupport>false</DebuggerSupport>
+    <StackTraceSupport>false</StackTraceSupport>
+  </PropertyGroup>
+</Project>

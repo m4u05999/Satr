@@ -68,6 +68,7 @@ const SUITE = [
   'test:execguard',
   'test:termjobs',
   'test:term-longline',
+  'test:uia-helper',
   'test:termjobs-done',
   'test:secretscrub',
   'test:envbrief',
@@ -264,6 +265,7 @@ const SKIP_ON_POSIX = Object.freeze([
   { name: 'test:codex-contract', reason: 'فحص العبور يستخدم "..\\outside.txt" — الشرطة المائلة العكسية حرف اسم صالح على POSIX، فالافتراض ويندوزي في الاختبار' },
   { name: 'test:promo-studio', reason: 'الجزء الحي يصيّر صوتاً وفيديو ويحتاج ALSA/GPU حقيقيين — يسقط بـ live_timeout:rendering على عدّاء بلا صوت' },
   { name: 'eval:agent', reason: 'التقييم يعلن 12 مهمة وينفّذ 11 على POSIX فيُعدّ ناقصاً — يحتاج فحصاً مستقلاً لمهمته المشروطة بويندوز' },
+  { name: 'test:uia-helper', reason: 'المعين native/satr-uia عميل UI Automation لويندوز وحده ويقيس نافذة «المفكرة» — يُبنى ويُختبر في uia-helper.yml على windows-latest' },
 ]);
 function skipReasonFor(name, platform = process.platform) {
   if (platform === 'win32') return null;

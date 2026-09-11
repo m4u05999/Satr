@@ -1,0 +1,105 @@
+name: معين UIA (native/satr-uia)
+
+# الصف ١ في docs/COMPUTER-USE-DESKTOP.md: المعين يُبنى NativeAOT هنا لا على جهاز التطوير (لا رابط
+# MSVC هناك). مسار مستقل عمداً ولا يمسّ release.yml: أسماء وظائف ذاك الملف معرّفات الفحوص المطلوبة
+# في حماية الفرع، وتغييرها يفكّ البوابة صامتاً (‏OBS-117).
+on:
+  push:
+    paths:
+      - 'native/satr-uia/**'
+      - 'scripts/uia-helper-test.js'
+      - '.github/workflows/uia-helper.yml'
+  pull_request:
+    paths:
+      - 'native/satr-uia/**'
+      - 'scripts/uia-helper-test.js'
+      - '.github/workflows/uia-helper.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  uia-helper:
+    name: بناء المعين AOT واختباره على المفكرة
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: جلب المستودع
+        uses: actions/checkout@v6
+
+      - name: إعداد .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: إعداد Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      # الطريق المعتمد. continue-on-error كي يُقاس البديل ويُطبع رقمه إن سقطت AOT على COM —
+      # والسقوط نفسه يُصبغ أحمر في الخطوة الأخيرة، لا يُبتلع.
+      - name: النشر NativeAOT
+        id: aot
+        continue-on-error: true
+        shell: pwsh
+        run: dotnet publish native/satr-uia -c Release -r win-x64 -o native/satr-uia/out-aot -nologo
+
+      # البديل المعلن في §١١ — يُبنى دائماً للمقارنة، فالتقرير يحمل رقمَي الطريقين معاً.
+      - name: النشر البديل (ملف واحد مقلَّم، للمقارنة)
+        id: singlefile
+        continue-on-error: true
+        shell: pwsh
+        run: dotnet publish native/satr-uia -c Release -r win-x64 -o native/satr-uia/out-singlefile -nologo -p:PublishAot=false -p:PublishSingleFile=true -p:SelfContained=true -p:PublishTrimmed=true
+
+      - name: الأحجام بالأرقام
+        shell: pwsh
+        run: |
+          foreach ($d in @('out-aot', 'out-singlefile')) {
+            $exe = "native/satr-uia/$d/satr-uia.exe"
+            if (Test-Path $exe) {
+              $bytes = (Get-Item $exe).Length
+              $files = @(Get-ChildItem "native/satr-uia/$d" -File | Where-Object { $_.Extension -ne '.pdb' }).Count
+              Write-Host "::notice title=حجم $d::$bytes بايت ($([math]::Round($bytes / 1MB, 2)) م.ب) · ملفات بلا pdb: $files"
+            } else {
+              Write-Host "::warning title=حجم $d::لم يُنتج $exe"
+            }
+          }
+
+      # الاختبار ضد ناتج AOT إن وُجد، وإلا ضد البديل (فيسقط فحص الحجم إن تجاوز 8 م.ب — كما ينبغي).
+      - name: الاختبار على المفكرة
+        shell: pwsh
+        env:
+          SATR_UIA_METRICS_FILE: ${{ runner.temp }}/uia-metrics.json
+        run: |
+          if ('${{ steps.aot.outcome }}' -eq 'success') {
+            $env:SATR_UIA_EXE = "$PWD/native/satr-uia/out-aot/satr-uia.exe"
+          } else {
+            $env:SATR_UIA_EXE = "$PWD/native/satr-uia/out-singlefile/satr-uia.exe"
+          }
+          $env:SATR_UIA_EXPECT_AOT = '1'
+          Write-Host "الثنائي المختبَر: $env:SATR_UIA_EXE"
+          npm run test:uia-helper
+          if ($LASTEXITCODE -ne 0) { throw "test:uia-helper سقط (رمز $LASTEXITCODE)" }
+          $m = Get-Content $env:SATR_UIA_METRICS_FILE -Raw | ConvertFrom-Json
+          Write-Host "::notice title=زمن initialize::$($m.bootMs) م.ث (الحدّ 800)"
+          Write-Host "::notice title=حجم الثنائي المختبَر::$($m.sizeBytes) بايت (الحدّ 8388608)"
+
+      - name: رفع الناتج
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: satr-uia-win-x64
+          path: |
+            native/satr-uia/out-aot/satr-uia.exe
+            native/satr-uia/out-singlefile/satr-uia.exe
+          if-no-files-found: warn
+
+      - name: شرط القبول — NativeAOT نجح
+        if: steps.aot.outcome != 'success'
+        shell: pwsh
+        run: throw 'سقط نشر NativeAOT — القبول يشترطه؛ رقم البديل مطبوع أعلاه للقرار (المواصفة §١١)'
