@@ -64,9 +64,26 @@ async function main() {
           const candidates=['video/mp4;codecs=avc1.42E01E','video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm'];
           const mime=candidates.find((item)=>MediaRecorder.isTypeSupported(item))||'';
           window.__promoLive={stream,chunks:[],mime,rec:new MediaRecorder(stream,mime?{mimeType:mime}:{})};
-          window.__promoLive.rec.ondataavailable=(chunk)=>{if(chunk.data&&chunk.data.size)window.__promoLive.chunks.push(chunk.data);};
-          window.__promoLive.rec.start(100);
+          const state=window.__promoLive;
+          const diag=state.diagnostics={dataEvents:0,recorderError:null,frameProbe:'unsupported',frames:null};
+          state.rec.ondataavailable=(chunk)=>{diag.dataEvents++;if(chunk.data&&chunk.data.size)state.chunks.push(chunk.data);};
+          state.rec.onerror=(event)=>{diag.recorderError=event.error&&event.error.name||'unknown';};
           const track=stream.getVideoTracks()[0];
+          // عدّ تشخيصي اختياري على clone؛ المسار الأصلي يبقى للمسجّل وحده.
+          if(typeof MediaStreamTrackProcessor==='function'){
+            try{
+              state.frameTrack=track.clone();
+              state.frameReader=new MediaStreamTrackProcessor({track:state.frameTrack}).readable.getReader();
+              diag.frameProbe='active';diag.frames=0;
+              (async()=>{
+                for(;;){const frame=await state.frameReader.read();if(frame.done)break;diag.frames++;frame.value.close();}
+              })().catch((error)=>{diag.frameProbe='error:'+error.name;});
+            }catch(error){
+              diag.frameProbe='error:'+error.name;
+              if(state.frameTrack)state.frameTrack.stop();
+            }
+          }
+          state.rec.start(100);
           return {tracks:stream.getVideoTracks().length,settings:track.getSettings(),mime};
         })()`, true).then((result) => {
           recorded.start = result;
@@ -78,8 +95,12 @@ async function main() {
           state.rec.onstop=async()=>{
             const blob=new Blob(state.chunks,{type:state.mime||'video/webm'});
             const bytes=new Uint8Array(await blob.arrayBuffer());
+            const track=state.stream.getVideoTracks()[0];
+            const diagnostics={...state.diagnostics,trackState:track.readyState,trackMuted:track.muted,recorderState:state.rec.state};
+            if(state.frameReader)state.frameReader.cancel().catch(()=>{});
+            if(state.frameTrack)state.frameTrack.stop();
             state.stream.getTracks().forEach((track)=>track.stop());
-            resolve({size:blob.size,type:blob.type,head:Array.from(bytes.slice(0,16))});
+            resolve({size:blob.size,type:blob.type,head:Array.from(bytes.slice(0,16)),diagnostics});
           };
           state.rec.stop();
         })`, true).then((result) => {
@@ -87,6 +108,7 @@ async function main() {
           const ext = /mp4/.test(result.type) ? 'mp4' : 'webm';
           const filename = promo.segmentFilename(event.session_id, new Date(), ext);
           controller.rendererCommit(event.session_id, 1000, filename);
+          // إشعار حفظ محقون لإكمال عقد main؛ stopped.ok لا يثبت تنزيل ملف إنتاجي.
           controller.downloadResult({ type: 'promo_recording_saved', filename, path: path.join(downloads, filename) });
         });
       }
@@ -101,15 +123,21 @@ async function main() {
       + ' sources=' + JSON.stringify(sources.map((source) => ({ id: source.id, name: source.name }))));
   }
   await new Promise((resolve) => setTimeout(resolve, 1200));
+  const captureWindow = captureContents && BrowserWindow.fromWebContents(captureContents);
+  if (recorded && captureWindow && !captureWindow.isDestroyed()) recorded.window = {
+    visible: captureWindow.isVisible(), minimized: captureWindow.isMinimized(), focused: captureWindow.isFocused(),
+    bounds: captureWindow.getBounds(),
+  };
   const stopped = await controller.stop();
   if (!stopped.ok || !recorded || !recorded.start || recorded.start.tracks !== 1 || !recorded.stop) {
     throw new Error('فشل stream/MediaRecorder: ' + JSON.stringify({ stopped, recorded }));
   }
-  // فشل صريح مميّز لعثرة OBS-036: المسار كله نجح لكن الترميز أنتج صفر بايت —
-  // أي لم تصل إطارات، وهذا عطب التقاط النافذة تحت الحمل لا عطب الترميز.
+  // Blob فارغ وحده لا يحسم هل تعطّل المصدر أم الترميز. العدّ اختياري ولا يغيّر معيار النجاح.
   if (recorded.stop.size === 0 || !recorded.stop.head.length) {
-    throw new Error('لم تصل إطارات إلى MediaRecorder رغم نجاح المسار — عثرة بيئية في التقاط (نافذة الالتقاط لم تُرسَم، انظر OBS-036): '
-      + JSON.stringify({ stopped, tracks: recorded.start.tracks, frameRate: recorded.start.settings.frameRate, size: recorded.stop.size, head: recorded.stop.head }));
+    throw new Error('خرج MediaRecorder فارغ؛ سبب الالتقاط أو الترميز غير محسوم (OBS-036)، وإقرار الحفظ محقون: '
+      + JSON.stringify({ injectedStopAcknowledged: stopped.ok, tracks: recorded.start.tracks,
+        frameRate: recorded.start.settings.frameRate, sourceEnumerated: recorded.sourceEnumerated,
+        size: recorded.stop.size, head: recorded.stop.head, diagnostics: recorded.stop.diagnostics, window: recorded.window }));
   }
   if (recorded.stop.size < 1024) {
     throw new Error('حجم تسجيل مشبوه (<1024 بايت): ' + JSON.stringify({ stopped, size: recorded.stop.size, head: recorded.stop.head }));
@@ -123,7 +151,8 @@ async function main() {
   await new Promise((resolve) => server.close(resolve));
   console.log('promocapture-live: ERR_FAILED=false · stream=ok · fps=' + (recorded.start.settings.frameRate || 'native')
     + ' · getSources=' + (recorded.sourceEnumerated ? 'matched' : 'self-id-fallback')
-    + ' · mime=' + recorded.stop.type + ' · bytes=' + recorded.stop.size + ' · close=ok');
+    + ' · mime=' + recorded.stop.type + ' · bytes=' + recorded.stop.size
+    + ' · diagnostics=' + JSON.stringify(recorded.stop.diagnostics) + ' · close=ok');
 }
 
 main().then(() => app.exit(0)).catch((error) => {
