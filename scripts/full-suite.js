@@ -12,6 +12,7 @@ const SUITE = [
   'test:skills',
   'test:slash-menu',
   'test:chat-rtl',
+  'test:chat-md',
   'test:empty-block',
   'test:eventtrace',
   'test:update-ui',
@@ -167,6 +168,8 @@ const EXCLUDED_FROM_SUITE = Object.freeze([
   { name: 'test:promocapture-events-live', reason: 'اختبار Electron حيّ لأحداث الالتقاط يكتب نتيجته في dist/ — يُشغَّل يدوياً عند مسّ promocapture' },
   { name: 'test:promo-preview', reason: 'اختبار Electron حيّ لمعاينة استوديو البرومو تحت CSP — يُشغَّل يدوياً عند مسّ المعاينة' },
   { name: 'test:promo-audio-live', reason: 'اختبار Electron حيّ لطبقة الصوت بمذبذب حقيقي وffprobe اختياري — يُشغَّل يدوياً عند مسّ صوت البرومو' },
+  // ── أدوات قياس تقرأ بيانات المستخدم الحقيقية: نتيجتها تختلف من جهاز لآخر ──
+  { name: 'audit:reply-shape', reason: 'أداة قياس قراءة فقط تمسح سجلات جلسات المستخدم الحقيقية (‏~/.claude و~/.codex و~/.satr/chats) فتختلف نتيجتها بين جهاز وآخر — خط أساس قرائية الردود يُعاد يدوياً بعد أسبوع (docs/READABILITY-PLAN.md)؛ قياسٌ لا حارس، وحارس العارض القطعي test:chat-md داخل الطقم' },
 ]);
 
 /**
