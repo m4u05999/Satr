@@ -48,3 +48,4 @@ paths:
 - `docs/internals/60-quick-ux-batch.md` — دفعة UX السريعة (بعد 4.1 — من مراجعة UX بموافقة المالك)
 - `docs/internals/61-daily-loop-polish.md` — دفعة تلميع الحلقة اليومية (2026-07-19)
 - `docs/internals/62-web-components.md` — مكوّنات الواجهة (تفكيك Web Components — اكتمل ت-0…ت-13)
+- `docs/internals/66-reply-readability.md` — قرائية ردود الوكيل: سلّم العناوين وعارض Markdown وعمود النثر (2026-09-11)
