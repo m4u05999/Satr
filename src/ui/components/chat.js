@@ -297,11 +297,26 @@ class SatrChat extends HTMLElement {
   function esc(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
+  // الرابط نصٌّ ظاهر يليه العنوان LTR باهتاً — لا <a> ولا فتح تلقائي (قرار جولة
+  // القرائية 2026-09-10: كان `[نص](رابط)` يظهر حرفياً — 19 تسرّباً في آخر 50 رد Codex)
+  const LINK_RE = /!?\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"\n]*")?\)/g;
+  // تنظيف علامتين شائعتين لم يكن العارض يعرفهما فتظهران حرفياً (بند «تنظيف أي علامة
+  // غير مدعومة» من قرار الجولة): الشطب `~~نص~~`، و`<br>` الذي يكتبه النموذج لسطر جديد
+  // داخل خلية جدول فيصل بعد esc نصاً `&lt;br&gt;`. وسمان ثابتان بلا سمات فلا حقن.
+  const DEL_RE = /~~([^~\n]+)~~/g;
+  const BR_RE = /&lt;br\s*\/?&gt;/gi;
   function inlineMD(s) {
-    return esc(s)
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, '$1<em>$2</em>');
+    // مقاطع الكود تُعزل أولاً كي لا تتأول علاماتها روابط أو غامقاً
+    return esc(s).split(/(`[^`\n]+`)/).map((part, index) => {
+      if (index % 2 === 1) return '<code>' + part.slice(1, -1) + '</code>';
+      return part
+        .replace(LINK_RE, (m, text, url) => '<span class="md-link">' + text
+          + ' <bdi class="md-link-url" dir="ltr">(' + url + ')</bdi></span>')
+        .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, '$1<em>$2</em>')
+        .replace(DEL_RE, '<del>$1</del>')
+        .replace(BR_RE, '<br>');
+    }).join('');
   }
   // فاصل أفقي: --- أو *** أو ___ (لا يتعارض مع القوائم: علامتها يليها فراغ)
   const HR_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
@@ -318,9 +333,56 @@ class SatrChat extends HTMLElement {
     if (t.endsWith('|')) t = t.slice(0, -1);
     return t.split('|').map((c) => c.trim());
   }
+  // عنصر قائمة: علامة (نقطة/رقم) + مسافة بادئة تحدّد المستوى (مستويان فقط — الأعمق
+  // يُطوى إلى الثاني كي لا يتحوّل الرد إلى شجرة لا تُقرأ). القوائم المتداخلة كانت
+  // تتسطّح إلى مستوى واحد (قياس جولة القرائية 2026-09-10).
+  const LIST_ITEM_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+  const TASK_RE = /^\[([ xX])\]\s+(.*)$/;
+  const BLOCKQUOTE_RE = /^\s*>/;
+  // بدايات الكتل التي تُنهي فقرة جارية (تشمل كل ما يعرضه renderMD كي لا يبتلعه النثر)
+  const BLOCK_START_RE = /^(```|#{1,6}\s|\s*>|\s*[-*+]\s+|\s*\d+[.)]\s+)/;
+  function listLevel(indent) {
+    return indent.replace(/\t/g, '  ').length >= 2 ? 1 : 0;
+  }
+  // <bdi> يعزل نص العنصر عن صندوق العلامة، وdir الإحصائي الصريح يحسم اتجاهه
+  // (bdi وحده يحسم بأول حرف قوي فيكسر العنصر العربي البادئ برمز لاتيني).
+  // قوائم المهام `- [ ]`/`- [x]` تُعرض بعلامة نصية عبر الصنف بدل نقطة القائمة.
+  function listItemHTML(text, childrenHTML) {
+    const task = text.match(TASK_RE);
+    const raw = task ? task[2] : text;
+    const cls = task ? ' class="md-task' + (task[1] === ' ' ? '' : ' done') + '"' : '';
+    return '<li' + cls + '><bdi' + dirAttr(raw) + '>' + inlineMD(raw) + '</bdi>' + childrenHTML + '</li>';
+  }
+  function renderList(items) {
+    let html = '';
+    let openTag = null;
+    let k = 0;
+    while (k < items.length) {
+      const item = items[k];
+      const tag = item.ordered ? 'ol' : 'ul';
+      if (openTag !== tag) {
+        if (openTag) html += '</' + openTag + '>';
+        html += '<' + tag + '>';
+        openTag = tag;
+      }
+      let j = k + 1;
+      const kids = [];
+      while (j < items.length && items[j].level === 1) { kids.push(items[j]); j++; }
+      let kidsHTML = '';
+      if (kids.length) {
+        const kidTag = kids[0].ordered ? 'ol' : 'ul';
+        kidsHTML = '<' + kidTag + '>' + kids.map((kid) => listItemHTML(kid.text, '')).join('') + '</' + kidTag + '>';
+      }
+      html += listItemHTML(item.text, kidsHTML);
+      k = j;
+    }
+    return html + (openTag ? '</' + openTag + '>' : '');
+  }
   // اتجاه النص الإحصائي انتقل إلى `../lib/text-dir.js` (‏2026-08-13): المسح أثبت أن
   // العلاج طُبِّق هنا وحده بينما 22 مكوّناً آخر بقيت على `plaintext`، ونسخُ المنطق
   // لكل مكوّن يعني تباعده بصمت — نمط الأعطال الذي يكرّره هذا المشروع كثيراً.
+  // جولة القرائية (2026-09-10): عناوين حتى المستوى السادس (الرابع فما فوق يُرسم h4)،
+  // اقتباس، قوائم متداخلة ومهام، وروابط نصاً — كانت كلها تظهر حرفياً أو تتسطّح.
   function renderMD(text) {
     const out = [];
     const lines = text.split('\n');
@@ -333,9 +395,10 @@ class SatrChat extends HTMLElement {
         while (i < lines.length && !lines[i].startsWith('```')) { buf.push(lines[i]); i++; }
         i++;
         out.push('<pre><code>' + esc(buf.join('\n')) + '</code></pre>');
-      } else if (/^#{1,3}\s/.test(line)) {                // عناوين
-        const lvl = line.match(/^#+/)[0].length;
-        out.push('<h' + lvl + '>' + inlineMD(line.replace(/^#+\s*/, '')) + '</h' + lvl + '>');
+      } else if (/^#{1,6}\s/.test(line)) {                // عناوين — الرابع فما فوق h4
+        const lvl = Math.min(line.match(/^#+/)[0].length, 4);
+        const title = line.replace(/^#+\s*/, '').replace(/\s+#+\s*$/, '');
+        out.push('<h' + lvl + '>' + inlineMD(title) + '</h' + lvl + '>');
         i++;
       } else if (HR_RE.test(line)) {                      // فاصل أفقي
         out.push('<hr>');
@@ -353,28 +416,25 @@ class SatrChat extends HTMLElement {
           i++;
         }
         out.push(html + '</tbody></table>');
-      } else if (/^\s*[-*]\s+/.test(line)) {              // قائمة نقطية
+      } else if (BLOCKQUOTE_RE.test(line)) {              // اقتباس — محتواه ماركداون كامل
+        const buf = [];
+        while (i < lines.length && BLOCKQUOTE_RE.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+        out.push('<blockquote>' + renderMD(buf.join('\n')) + '</blockquote>');
+      } else if (LIST_ITEM_RE.test(line)) {               // قائمة نقطية/مرقمة بمستويين
         const items = [];
-        // <bdi> يعزل نص العنصر عن صندوق العلامة، وdir الإحصائي الصريح يحسم اتجاهه
-        // (bdi وحده يحسم بأول حرف قوي فيكسر العنصر العربي البادئ برمز لاتيني)
-        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-          const raw = lines[i].replace(/^\s*[-*]\s+/, '');
-          items.push('<li><bdi' + dirAttr(raw) + '>' + inlineMD(raw) + '</bdi></li>'); i++;
+        while (i < lines.length && LIST_ITEM_RE.test(lines[i])) {
+          const m = lines[i].match(LIST_ITEM_RE);
+          items.push({ level: listLevel(m[1]), ordered: /^\d/.test(m[2]), text: m[3] });
+          i++;
         }
-        out.push('<ul>' + items.join('') + '</ul>');
-      } else if (/^\s*\d+[.)]\s+/.test(line)) {           // قائمة مرقمة
-        const items = [];
-        while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
-          const raw = lines[i].replace(/^\s*\d+[.)]\s+/, '');
-          items.push('<li><bdi' + dirAttr(raw) + '>' + inlineMD(raw) + '</bdi></li>'); i++;
-        }
-        out.push('<ol>' + items.join('') + '</ol>');
+        if (items[0].level === 1) items[0].level = 0; // عنصر مسنون بلا أب: يُعامل جذراً
+        out.push(renderList(items));
       } else if (line.trim() === '') {
         i++;
       } else {                                            // فقرة
         const buf = [], raw = [];
         while (i < lines.length && lines[i].trim() !== '' &&
-               !/^(```|#{1,3}\s|\s*[-*]\s+|\s*\d+[.)]\s+)/.test(lines[i]) &&
+               !BLOCK_START_RE.test(lines[i]) &&
                !HR_RE.test(lines[i]) && !isTableStart(lines, i)) {
           raw.push(lines[i]); buf.push(inlineMD(lines[i])); i++;
         }
