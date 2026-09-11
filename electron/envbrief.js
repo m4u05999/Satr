@@ -107,6 +107,21 @@ const MULTI_OPINION_LINE = 'العصف متعدد الآراء: حين يطلب 
   + 'ثالثاً حين يكون جاهزاً) كلٌّ في مجلد فارغ بلا أدوات؛ (3) تشغيل محرّك آخر من '
   + 'الطرفية المرئية بأعلامه الصحيحة (docs/AGENT-CLI-FLAGS.md) والتصريح بأن هذا ما فعلته.';
 
+// ── شكل الرد (قرائية ردود الوكيل — docs/READABILITY-PLAN.md، الطبقة ٣) ─────────
+// قياس آخر 50 رداً لكل محرك (2026-09-10): Claude في سطر يبني بنية ويبدأ بخلاصة، أما
+// Codex فعناوينه في 4% من ردوده الطويلة وخلاصته الأولى في 36%، والإيموجي في خُمس ردود
+// Claude، وختام «التالي:» شبه معدوم في الجميع. العتبات هنا عتبات سكربت القياس نفسه
+// (‏LONG_REPLY_WORDS وSUMMARY_MAX_WORDS في scripts/reply-shape-audit.js) كي تقيس إعادةُ
+// القياس بعد أسبوع ما يطلبه التوجيه حرفياً؛ وtest:envbrief يحرس التطابق.
+const REPLY_SHAPE_BLOCK = [
+  '## شكل الرد',
+  '- الرد الطويل (أكثر من نحو 120 كلمة) يبدأ بخلاصة في فقرة واحدة لا تتجاوز 40 كلمة قبل أي عنوان، ثم التفاصيل.',
+  '- الفقرة لا تتجاوز 60 كلمة؛ قسّم ما زاد عليها.',
+  '- في الرد الطويل: ## للأقسام و### لما تحتها، وقائمة للخطوات أو البنود المتوازية، وجدول لمقارنة أكثر من خاصيتين. والرد القصير نثرٌ بلا عناوين ولا قوائم.',
+  '- لا إيموجي في الرد.',
+  '- إن بقي عملٌ فاختم بسطر «التالي: …» يحمل خطوة واحدة.',
+].join('\n');
+
 function build(engine, model, options) {
   const normalized = engine === 'sdk' || engine === 'codex' || engine === 'kimi-code' ? engine : 'adapter';
   const names = toolNames(normalized);
@@ -130,6 +145,9 @@ function build(engine, model, options) {
   // طرق العصف متاحة لكل محرك: satr-diverge مهارة محمولة تعلنها كل الأسطح، وغرفة
   // العمليات سطح تطبيق لا قدرة محرك — فالسطر ينفع المحوّلات أيضاً.
   sections.push(MULTI_OPINION_LINE);
+  // شكل الرد لكل الأسطح (الأصيلة الثلاثة والمحوّلات): العارض والتصميم لا يصنعان بنيةً
+  // لا يكتبها النموذج — عناوين Codex في 4% من ردوده الطويلة.
+  sections.push(REPLY_SHAPE_BLOCK);
   if (normalized === 'sdk' || normalized === 'kimi-code') {
     sections.push('استخدم AskUserQuestion حين تحتاج اختياراً واضحاً من المستخدم. استخدم propose_memory لاقتراح ذاكرة دائمة ولا تحفظها مباشرةً.');
   }
@@ -137,4 +155,4 @@ function build(engine, model, options) {
   return compact ? sections.join('\n') : sections.join('\n\n');
 }
 
-module.exports = { SDK_TOOL_NAMES, toolNames, build };
+module.exports = { SDK_TOOL_NAMES, REPLY_SHAPE_BLOCK, toolNames, build };
