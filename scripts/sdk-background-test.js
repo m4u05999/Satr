@@ -7,6 +7,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ROOT = path.resolve(__dirname, '..');
+
+/** القسم المعماري انتقل من CLAUDE.md إلى docs/internals — نقرأ المجلد كله كي لا يعتمد الحارس على اسم ملف. */
+function readInternals() {
+  const dir = path.join(ROOT, 'docs', 'internals');
+  return fs.readdirSync(dir).filter((f) => f.endsWith('.md')).sort().map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
+}
+
 const TOOL_USE_ID = 'toolu_' + 'A1b2C3d4E5f6G7h8J9k0Lm2N';
 const TASK_ID = 'ab12cd34e';
 const UNKNOWN_TASK_ID = '000000000';
@@ -429,7 +436,7 @@ function testUiAndSeparationContracts() {
   const probe = read('scripts/sdk-background-probe.js');
   const pkg = JSON.parse(read('package.json'));
   const fullSuite = read('scripts/full-suite.js');
-  const docs = read('CLAUDE.md');
+  const docs = readInternals();
 
   assert.match(preload, /backgroundTask: \(toolUseId\) => ipcRenderer\.invoke\('satr:backgroundTask', \{ toolUseId \}\)/);
   assert.match(preload, /stopSdkTask: \(taskId\) => ipcRenderer\.invoke\('satr:stopSdkTask', \{ taskId \}\)/);

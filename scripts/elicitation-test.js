@@ -7,6 +7,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ROOT = path.resolve(__dirname, '..');
+
+/** القسم المعماري انتقل من CLAUDE.md إلى docs/internals — نقرأ المجلد كله كي لا يعتمد الحارس على اسم ملف. */
+function readInternals() {
+  const dir = path.join(ROOT, 'docs', 'internals');
+  return fs.readdirSync(dir).filter((f) => f.endsWith('.md')).sort().map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
+}
+
 const VALID_ID = 'el_' + 'a'.repeat(32);
 const SECRET_SENTINEL = 'sk-proj-' + 'A'.repeat(24);
 
@@ -348,7 +355,7 @@ function testPublicContracts() {
   const html = read('src/index.html');
   const component = read('src/ui/components/elicitation-dialog.js');
   const probe = read('scripts/elicitation-probe.js');
-  const docs = read('CLAUDE.md');
+  const docs = readInternals();
   const packageJson = JSON.parse(read('package.json'));
   const fullSuite = read('scripts/full-suite.js');
 
