@@ -104,6 +104,64 @@ const fmt = (c) => 'rgb(' + Math.round(c.r) + ',' + Math.round(c.g) + ',' + Math
 const out = [];
 `;
 
+// الرد النموذجي لقرائية الردود — يُقرأ من fixture حارس test:chat-md (نسخة واحدة).
+function readSampleReply() {
+  const source = fs.readFileSync(path.join(FIXTURES, 'chat-md-page.js'), 'utf8');
+  const match = source.match(/const SAMPLE_REPLY = (\[[\s\S]*?\])\.join\('\\n'\);/);
+  if (!match) throw new Error('تعذّر استخراج SAMPLE_REPLY من chat-md-page.js');
+  // مصدرنا الموثوق: مصفوفة نصوص حرفية داخل المستودع
+  return new Function('return ' + match[1])().join('\n'); // eslint-disable-line no-new-func
+}
+
+// جسم مشهدَي القرائية (48–49): يعرض الرد النموذجي عبر مكوّن chat الحقيقي ثم يقيس سلّم
+// العناوين والتباين على خلفية الفقاعة وعمود النثر — سطور تُطبع تحت علامة المشهد.
+const READABILITY_BODY = MEASURE + `
+  const chat = document.querySelector('satr-chat');
+  chat.addUserMsg('لماذا الصفحة الرئيسية بطيئة؟');
+  const block = chat.newAssistantBlock('Claude Code');
+  block.addText(${JSON.stringify(readSampleReply())});
+  block.finish({});
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const md = document.querySelector('.msg.assistant .answer-wrap .md');
+  const bubble = md.closest('.bubble');
+  const bg = effBg(bubble) || tok('--surface');
+  const px = (v) => parseFloat(v) || 0;
+  // متسامح مع غياب العنصر كي يقيس المشهدُ نفسه العارضَ القديم (خط «قبل» في PR القرائية):
+  // عنصرٌ غائب يعني أن علامته ظهرت نصاً حرفياً.
+  const describe = (label, el) => {
+    if (!el) { out.push(label + ': غائب — علامته تظهر نصاً حرفياً'); return; }
+    const cs = getComputedStyle(el);
+    const fg = parseColor(cs.color);
+    out.push(label + ': ' + px(cs.fontSize).toFixed(1) + 'px · وزن ' + cs.fontWeight + ' · لون ' + fmt(fg)
+      + ' · تباين ' + contrast(fg, bg).toFixed(2) + ':1 · هامش ' + px(cs.marginTop).toFixed(1) + '/' + px(cs.marginBottom).toFixed(1));
+  };
+  describe('h2', md.querySelector('h2'));
+  describe('h3', md.querySelector('h3'));
+  describe('h4', md.querySelector('h4'));
+  describe('p', md.querySelector('p'));
+  describe('blockquote', md.querySelector('blockquote'));
+  describe('link-url', md.querySelector('.md-link-url'));
+  describe('th', md.querySelector('th'));
+  // محارف السطر من عرض الحبر الفعلي، بطريقة test:chat-md نفسها (قسمة العدد الكلي على
+  // الأسطر تضلّل لأن السطر الأخير ناقص)
+  const p = md.querySelector('p');
+  const rect = p.getBoundingClientRect();
+  const range = document.createRange();
+  range.selectNodeContents(p);
+  const rects = Array.from(range.getClientRects());
+  const lines = new Set(rects.map((r) => Math.round(r.top))).size;
+  const ink = rects.reduce((sum, r) => sum + r.width, 0);
+  const perLine = rect.width / (ink / p.textContent.length);
+  const inner = bubble.clientWidth - px(getComputedStyle(bubble).paddingLeft) - px(getComputedStyle(bubble).paddingRight);
+  out.push('عمود النثر: ' + Math.round(rect.width) + 'px من ' + Math.round(inner) + 'px · ' + perLine.toFixed(1) + ' محرفاً/سطر على ' + lines + ' أسطر');
+  const pre = md.querySelector('pre');
+  out.push('الجدول: ' + Math.round(md.querySelector('table').getBoundingClientRect().width) + 'px · الكود: '
+    + (pre ? Math.round(pre.getBoundingClientRect().width) + 'px' : 'غائب'));
+  out.push('العناوين المرسومة h1–h6: ' + ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].map((t) => md.querySelectorAll(t).length).join('/')
+    + ' · تسرّب في النص: ' + (/#{2,}|\\]\\(|\\*\\*|\\[[ x]\\]|(^|\\n)\\s*>/.test(md.textContent) ? 'نعم' : 'لا'));
+  return out;
+`;
+
 // جسم مشهدَي بطاقة الحلقة بالمراجعة النوعية (30–31): يفتح الغرفة ويبثّ loop_update
 // اصطناعياً عبر خطّاف الـharness فيصل app.js ⇒ opsRoomEl.handleEvent (المسار الحقيقي)
 // ثم يقيس تباين نصوص قسم المراجعة على خلفيته. changes_required ⇒ الحالة --red.
@@ -800,6 +858,18 @@ const SHOTS = [
       block.addText(text.replace(filePath, tick + filePath + tick).replace('npm test', tick + 'npm test' + tick));
       block.finish({});
     `,
+  },
+
+  // ---------- قرائية الردود (جولة 2026-09-10): الرد النموذجي داكناً/فاتحاً مع القياس ----------
+  // الرد النموذجي نسخة واحدة من fixture الحارس (chat-md-page.js) كي تتطابق اللقطة مع ما
+  // يثبته test:chat-md وما يراه محمد في القبول. المشهد يقيس سلّم العناوين والتباين وعمود النثر.
+  {
+    out: '48-reply-readability', w: 1440, h: 1100,
+    js: READABILITY_BODY,
+  },
+  {
+    out: '49-reply-readability-light', w: 1440, h: 1100,
+    js: LIGHT + READABILITY_BODY,
   },
 
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------

@@ -108,4 +108,31 @@ for (const file of [
     'غلاف الذاكرة العربي غائب');
 }
 
-console.log('envbrief: نجح — جرد الأدوات الفعلي والسياسات موحّدان لكل المحركات.');
+// شكل الرد (قرائية ردود الوكيل، الطبقة ٣): كتلة واحدة من مصدرها لكل الأسطح الأربعة
+// ولموجز المحوّلات المضغوط — وأرقامها عتبات سكربت القياس نفسه، كي لا يطلب التوجيه
+// شيئاً ويعدّ السكربت غيره عند إعادة القياس (نمط «قائمة ثانية تتباعد بصمت»).
+{
+  const block = envbrief.REPLY_SHAPE_BLOCK;
+  assert(typeof block === 'string' && block.startsWith('## شكل الرد'), 'كتلة شكل الرد غير مُصدَّرة من envbrief');
+  for (const engine of ['sdk', 'codex', 'kimi-code', 'adapter']) {
+    assert(envbrief.build(engine, 'test-model').includes(block), 'موجز ' + engine + ' بلا كتلة شكل الرد');
+  }
+  assert(envbrief.build('adapter', 'test-model', { compact: true }).includes(block), 'الموجز المضغوط للمحوّلات بلا كتلة شكل الرد');
+  for (const rule of ['بخلاصة', '60 كلمة', 'لا إيموجي', '«التالي: …»', 'نثرٌ بلا عناوين']) {
+    assert(block.includes(rule), 'كتلة شكل الرد فقدت قاعدة: ' + rule);
+  }
+  const auditSource = fs.readFileSync(path.join(root, 'scripts', 'reply-shape-audit.js'), 'utf8');
+  const threshold = (name) => Number((auditSource.match(new RegExp('const ' + name + ' = (\\d+);')) || [])[1]);
+  const longWords = threshold('LONG_REPLY_WORDS');
+  const summaryWords = threshold('SUMMARY_MAX_WORDS');
+  assert(longWords > 0 && summaryWords > 0, 'تعذّر قراءة عتبات سكربت القياس');
+  assert(block.includes('نحو ' + longWords + ' كلمة'), 'عتبة «الرد الطويل» في التوجيه تخالف LONG_REPLY_WORDS=' + longWords);
+  assert(block.includes('لا تتجاوز ' + summaryWords + ' كلمة'), 'عتبة الخلاصة في التوجيه تخالف SUMMARY_MAX_WORDS=' + summaryWords);
+  // صيغة الختام التي يطلبها التوجيه يجب أن يعدّها NEXT_LINE في السكربت نفسه
+  const nextSource = (auditSource.match(/const NEXT_LINE = \/(.+)\/;/) || [])[1];
+  const closing = (block.match(/«([^»]+)»/) || [])[1];
+  assert(nextSource && closing && new RegExp(nextSource).test(closing),
+    'صيغة الختام «' + closing + '» لا يعدّها NEXT_LINE في scripts/reply-shape-audit.js');
+}
+
+console.log('envbrief: نجح — جرد الأدوات الفعلي والسياسات وكتلة شكل الرد موحّدة لكل المحركات.');
