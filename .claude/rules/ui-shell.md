@@ -12,6 +12,7 @@ paths:
   - "src/ui/components/git-panel.js"
   - "src/ui/components/sessions-panel.js"
   - "src/ui/components/perm-dialog.js"
+  - "src/ui/components/desktop-panel.js"
   - "src/ui/components/question-dialog.js"
   - "src/ui/lib/text-dir.js"
   - "src/ui/lib/diff.js"
@@ -51,3 +52,4 @@ paths:
 - `docs/internals/62-web-components.md` — مكوّنات الواجهة (تفكيك Web Components — اكتمل ت-0…ت-13)
 - `docs/internals/66-reply-readability.md` — قرائية ردود الوكيل: سلّم العناوين وعارض Markdown وعمود النثر (2026-09-11)
 - `docs/internals/68-models-boot-and-preview-controls.md` — إقلاع النماذج (`refreshEngineModels`) وأسقف اللوحات (2026-09-10)
+- `docs/internals/69-computer-use-desktop.md` — لوحة 🪟 سطح ويندوز: المنتقي وسجلّ الأفعال وعلم `desktopControl` (الخطوة ٥)

@@ -1315,6 +1315,7 @@ class SatrChat extends HTMLElement {
     let answerStarted = false;
     let manuallyCollapsed = false;
     const toolEls = {};
+    const desktopToolEls = []; // بطاقات أدوات سطح ويندوز بترتيبها — مضيف أسطر سجلّ الأفعال
 
     function normalizePhase(phase) { return phase === 'commentary' ? 'commentary' : 'final_answer'; }
     function phaseText(phase) {
@@ -1492,6 +1493,7 @@ class SatrChat extends HTMLElement {
         el.querySelector('.name').textContent = name;
         el.querySelector('.detail').textContent = toolDetail(inp);
         if (id) toolEls[id] = el;
+        if (/^mcp__satr-desktop__desktop_/.test(String(name || ''))) desktopToolEls.push(el);
         registerSdkTool(id, el, el.querySelector('.state'), el.querySelector('.detail'), isSdk);
         toolCount++;
         toolsLabel.textContent = 'الإجراءات (' + toolCount + ')';
@@ -1546,6 +1548,36 @@ class SatrChat extends HTMLElement {
         el.appendChild(name); el.appendChild(open); el.appendChild(state);
         tools.appendChild(el); toolsWrap.hidden = false; toolCount += 1;
         toolsLabel.textContent = 'الإجراءات (' + toolCount + ')'; revealActivity('يتحقق بصرياً'); scrollDown();
+      },
+      // سطح ويندوز (الحارس ٥): سطر desktop_activity داخل بطاقة أداة desktop_* الجارية (أحدث بطاقة لم
+      // تنتهِ)، وإلا صفّاً مستقلاً بنمط addScreenshot — فلا تعتمد رؤية الفعل على فتح لوحة 🪟.
+      // النص من الحدث كما هو (منقّى في main) عبر textContent وحده، واتجاهه إحصائي من textDir.
+      addDesktopActivity(text, stamp) {
+        const value = typeof text === 'string' ? text.slice(0, 300) : '';
+        if (!value.trim()) return false;
+        let host = null;
+        for (let i = desktopToolEls.length - 1; i >= 0; i--) {
+          const candidate = desktopToolEls[i];
+          if (candidate.isConnected && !candidate.classList.contains('done')) { host = candidate; break; }
+        }
+        if (!host) {
+          host = document.createElement('div'); host.className = 'tool done';
+          const name = document.createElement('span'); name.className = 'name'; name.textContent = 'سطح ويندوز';
+          const state = document.createElement('span'); state.className = 'state'; state.textContent = '✓';
+          host.appendChild(name); host.appendChild(state);
+          tools.appendChild(host); toolsWrap.hidden = false; toolCount += 1;
+          toolsLabel.textContent = 'الإجراءات (' + toolCount + ')';
+        }
+        host.classList.add('desktop-tool');
+        const line = document.createElement('div'); line.className = 'desktop-line'; line.setAttribute('dir', 'rtl');
+        const time = document.createElement('bdi'); time.className = 'desktop-time'; time.textContent = String(stamp || '');
+        const body = document.createElement('span'); body.className = 'desktop-text'; body.textContent = value;
+        body.setAttribute('dir', textDir(value) || 'rtl');
+        line.appendChild(time); line.appendChild(body);
+        host.appendChild(line);
+        revealActivity('يعمل على سطح ويندوز');
+        scrollDown();
+        return true;
       },
       addDiff(ev) {
         diffs.appendChild(bDiff(ev));

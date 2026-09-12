@@ -187,6 +187,7 @@ contextBridge.exposeInMainWorld('satr', {
   desktopTargets: () => ipcRenderer.invoke('satr:desktopTargets'),
   desktopSelect: (targetId, pid) => ipcRenderer.invoke('satr:desktopSelect', { targetId, pid }),
   desktopClear: () => ipcRenderer.invoke('satr:desktopClear'),
+  desktopStatus: () => ipcRenderer.invoke('satr:desktopStatus'), // الخطوة ٥: هل يوجد المعين (يكشف زرّ 🪟)
   undoEdit: (id) => ipcRenderer.invoke('satr:undoEdit', id),
   listBgProcs: () => ipcRenderer.invoke('satr:listBgProcs'),
   killBgProc: (id) => ipcRenderer.invoke('satr:killBgProc', id),

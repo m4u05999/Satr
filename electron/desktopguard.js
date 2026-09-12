@@ -56,6 +56,10 @@ const BLOCKED_PROCESSES = Object.freeze([
   'CredentialUIBroker.exe', // حوار بيانات الاعتماد
   'LockApp.exe',            // شاشة القفل
   'LogonUI.exe',            // شاشة الدخول
+  // نسخة «سطر» أخرى (إنتاج أو تطوير npm start): desktop.js يحجب النسخة نفسها بـprocess.pid وحده، فنسخة
+  // ثانية كانت تُعرض وتُختار فينقر وكيلُ نسخةٍ «سماح» في مربع إذن الأخرى (مراجعة القائد لـ#115)
+  'Satr.exe',
+  'electron.exe',
 ]);
 // يُطابق العنوان واسم الصنف (className إن أضافه المعين) مطابقةً تامة بلا حساسية لحالة الأحرف
 const BLOCKED_TITLES = Object.freeze([
@@ -315,6 +319,7 @@ module.exports = {
   BLOCKED_PROCESSES,
   BLOCKED_TITLES,
   ACTIONS,
+  PROCESS_LABELS,
   createSession,
   closeSession,
   isBlockedTarget,

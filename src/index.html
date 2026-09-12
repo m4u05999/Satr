@@ -149,6 +149,9 @@
   <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄 الملفات</button>
   <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">± التغييرات</button>
   <button id="galleryToggle" title="صور وفيديوهات ولّدها الوكيل في هذا المشروع">🖼 المعرض</button>
+  <!-- 🪟 سطح ويندوز (الخطوة ٥ من docs/COMPUTER-USE-DESKTOP.md): مخفي افتراضياً وتكشفه العملية الرئيسية
+       حصراً عبر `desktopStatus().available` حين يوجد معين satr-uia — فنسخة بلا معين لا تعرض الميزة -->
+  <button id="desktopToggle" type="button" title="اختر نافذة ويندوز يقودها الوكيل لهذه الجلسة وحدها، واقرأ سجلّ أفعاله" aria-pressed="false" hidden>🪟 سطح ويندوز</button>
   <!-- مخفي افتراضياً حتى يُبنى الـrelay ويصير للميزة بند «برو». الإظهار من العملية
        الرئيسية حصراً عبر `mobileStatus().available` (‏تشغيل تطوير أو SATR_MOBILE=1
        أو ~/.satr/labs.json) — القنوات نفسها مغلقة لا الزر فقط.
@@ -269,6 +272,9 @@
 <!-- لوحة 📱 التحكم من الجوال: قناة LAN محلية واقتران وأجهزة مفعّلة -->
 <satr-mobile-panel aria-label="التحكم من الجوال"></satr-mobile-panel>
 
+<!-- لوحة 🪟 سطح ويندوز: منتقي النافذة (لجلسة واحدة، الحارس ١) وسجلّ الأفعال المرئي (الحارس ٥) -->
+<satr-desktop-panel aria-label="سطح ويندوز"></satr-desktop-panel>
+
 <!-- لوحة /مهارات: مكوّن Web Component (تفكيك ت-2) — يملك حالة المفعّل/المعطّل -->
 <satr-skills-panel aria-label="المهارات"></satr-skills-panel>
 
@@ -358,6 +364,7 @@
 <script type="module" src="ui/components/files-panel.js"></script>
 <script type="module" src="ui/components/gallery-panel.js"></script>
 <script type="module" src="ui/components/mobile-panel.js"></script>
+<script type="module" src="ui/components/desktop-panel.js"></script>
 <script type="module" src="ui/components/file-viewer.js"></script>
 <script type="module" src="ui/components/gate.js"></script>
 <script type="module" src="ui/components/perm-dialog.js"></script>

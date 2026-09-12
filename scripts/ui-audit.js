@@ -251,6 +251,81 @@ const TESTSPRITE_JOB_INJECT = `
   await new Promise((r) => setTimeout(r, 400));
 `;
 
+// مشهدا لوحة 🪟 سطح ويندوز (50–51 — الخطوة ٥): الـharness لا يعرف قنوات desktop*، فتُحقن هنا على
+// window.satr (الـProxy يسمح بالكتابة على الهدف)، ويُكشف الزر كما تكشفه العملية الرئيسية بـdesktopStatus.
+// أسطر السجل تُبثّ عبر خطّاف الـharness فتمرّ بالمسار الحقيقي (app.js ⇒ appendActivity) لا بحقن DOM.
+const DESKTOP_TARGETS = [
+  { targetId: 'w5', pid: 4321, processName: 'notepad.exe', title: 'desktop-step5.txt - Notepad', rect: { x: 10, y: 10, w: 800, h: 600 } },
+  { targetId: 'w7', pid: 5150, processName: 'mspaint', title: 'بلا عنوان - الرسام', rect: { x: 0, y: 0, w: 1024, h: 768 } },
+  { targetId: 'w12', pid: 9090, processName: 'code', title: 'app.js - satr-2 - Visual Studio Code', rect: { x: 5, y: 5, w: 1440, h: 900 } },
+];
+const DESKTOP_LINES = [
+  'قُرئت شجرة نافذة المفكرة',
+  'كُتب نص (الطول 49) في [Text Editor] في نافذة المفكرة',
+  'ضُغط Ctrl+S في نافذة المفكرة',
+  'نُقر على [حفظ] في نافذة المفكرة',
+];
+const DESKTOP_BODY = `
+  const DT = ${JSON.stringify(DESKTOP_TARGETS)};
+  window.satr.desktopTargets = async () => ({ ok: true, targets: DT.map((t) => Object.assign({}, t)) });
+  window.satr.desktopSelect = async (targetId) => ({ ok: true, target: DT.find((t) => t.targetId === targetId) });
+  window.satr.desktopClear = async () => ({ ok: true });
+  document.getElementById("desktopToggle").hidden = false;
+  document.getElementById("desktopToggle").click();
+  await new Promise((r) => setTimeout(r, 450));
+  const firstSelect = document.querySelector("satr-desktop-panel").shadowRoot.querySelector(".target button");
+  if (firstSelect) firstSelect.click();
+  await new Promise((r) => setTimeout(r, 350));
+  for (const line of ${JSON.stringify(DESKTOP_LINES)}) {
+    window.__SATR_TESTSPRITE_HARNESS__.emitEvent({ type: "desktop_activity", text: line });
+  }
+  await new Promise((r) => setTimeout(r, 350));
+`;
+// قياس تباين نصوص اللوحة على خلفياتها الفعلية (المعيار ≥ 4.5:1 للنصوص)
+const DESKTOP_MEASURE = `
+  const dHost = document.querySelector("satr-desktop-panel");
+  const dRoot = dHost.shadowRoot;
+  // خلفية اللوحة من المضيف نفسه: عنصر داخل Shadow بلا أب عنصري، فـbackdropOf يسقط إلى الأبيض ويكذب
+  const panelBg = parseColor(getComputedStyle(dHost).backgroundColor) || tok("--surface");
+  const behindOf = (el) => effBg(el.closest(".card")) || panelBg;
+  const line = (label, el, bg) => {
+    if (!el) { out.push(label + ": ✗ غائب"); return; }
+    const c = parseColor(getComputedStyle(el).color);
+    const behind = bg || behindOf(el);
+    out.push(label + ": " + fmt(c) + " على " + fmt(behind) + " = " + contrast(c, behind).toFixed(2) + ":1");
+  };
+  out.push("خلفية اللوحة: " + fmt(panelBg));
+  line("رأس اللوحة", dRoot.querySelector(".panel-head"), panelBg);
+  line("عنوان البطاقة", dRoot.querySelector(".control .title"));
+  line("حالة التحكم", dRoot.querySelector(".state"));
+  line("التلميح", dRoot.querySelector(".control .hint"));
+  line("السطر الثابت للمحجوبة", dRoot.querySelector(".fixed"));
+  line("اسم النافذة", dRoot.querySelector(".target-label"));
+  line("عنوان النافذة", dRoot.querySelector(".target-title"));
+  line("ميتا النافذة", dRoot.querySelector(".target-meta .tech"));
+  const selectedRow = dRoot.querySelector(".target.selected");
+  if (selectedRow) line("الصف المختار", selectedRow.querySelector(".target-label"), effBg(selectedRow));
+  const selectedBox = dRoot.querySelector(".selected-box");
+  line("صندوق المختارة", dRoot.querySelector(".selected-text"), effBg(selectedBox));
+  const button = dRoot.querySelector(".target button");
+  if (button) line("زر الاختيار", button, effBg(button));
+  const logLines = dRoot.querySelectorAll(".log li");
+  out.push("أسطر السجل: " + logLines.length);
+  if (logLines.length) {
+    line("زمن السطر", logLines[0].querySelector(".time"));
+    line("نص السطر", logLines[0].querySelector(".text"));
+    const textEl = logLines[1] ? logLines[1].querySelector(".text") : null;
+    if (textEl) {
+      const r = document.createRange();
+      r.setStart(textEl.firstChild, 0); r.setEnd(textEl.firstChild, 1);
+      const cr = r.getBoundingClientRect(); const br = textEl.getBoundingClientRect();
+      out.push("رسوّ السطر «" + textEl.textContent.slice(0, 18) + "…»: من اليمين "
+        + (br.right - cr.right).toFixed(1) + "px ومن اليسار " + (cr.left - br.left).toFixed(1) + "px · dir " + textEl.getAttribute("dir"));
+    }
+  }
+  return out;
+`;
+
 const SHOTS = [
   // ---------- الأسطح اليومية ----------
   { out: '01-daily-1440', w: 1440, h: 900 },
@@ -871,6 +946,10 @@ const SHOTS = [
     out: '49-reply-readability-light', w: 1440, h: 1100,
     js: LIGHT + READABILITY_BODY,
   },
+
+  // ---------- لوحة 🪟 سطح ويندوز (الخطوة ٥): المنتقي وسجلّ الأفعال، داكناً وفاتحاً بالقياس ----------
+  { out: '50-desktop-panel', w: 1440, h: 950, js: MEASURE + DESKTOP_BODY + DESKTOP_MEASURE },
+  { out: '51-desktop-panel-light', w: 1440, h: 950, js: LIGHT + MEASURE + DESKTOP_BODY + DESKTOP_MEASURE },
 
   // ---------- مقارنة اتجاه نصوص الطرفية (fixture مستقل) ----------
   { out: '20-bidi-compare', w: 720, h: 520, file: path.join(FIXTURES, 'ui-audit-bidi.html') },
