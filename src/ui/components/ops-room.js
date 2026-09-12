@@ -47,13 +47,17 @@ const roomSheet = sheet(`
     resize: none;
   }
   :host([drawer]) .compact { display: none; }
+  /* OBS-171: كان المقبض يحمل transform: translateX(-50%) فنصفه (‏6px) خارج حافة المستند،
+     فيتجاوز جذر RTL بـ6px في المقاسات الثلاثة (مقيس: scrollWidth 1286 مقابل clientWidth
+     1280). الإزاحة صارت إلى الداخل بلا تحويل، والخطّ الذهبي نُقل إلى حافة المقبض
+     الخارجية (left: 0 بدل 50%) فيبقى في موضعه البصري نفسه وعرض منطقة الإمساك كما هو. */
   .resize-handle {
     position: absolute; top: var(--space-0); bottom: var(--space-0);
-    left: var(--space-0); width: var(--space-3); transform: translateX(-50%);
+    left: var(--space-0); width: var(--space-3);
     z-index: var(--z-sticky); cursor: ew-resize; touch-action: none;
   }
   .resize-handle::before {
-    content: ''; position: absolute; top: var(--space-2); bottom: var(--space-2); left: 50%;
+    content: ''; position: absolute; top: var(--space-2); bottom: var(--space-2); left: var(--space-0);
     width: 1px; background: var(--border); transition: background var(--dur) var(--ease);
   }
   .resize-handle:hover::before, .resize-handle:focus-visible::before,

@@ -9,6 +9,7 @@
 // الأسئلة لأن الحوار الوسطي يغطّي ما بُني عليه السؤال؛ غيابه يُبقي السلوك كما كان.
 import { sheet } from '../lib/sheet.js';
 import { controlsSheet } from '../lib/panel.css.js';
+import { applyDir } from '../lib/text-dir.js';
 
 const ownSheet = sheet(`
   :host {
@@ -45,7 +46,10 @@ const ownSheet = sheet(`
   .q-input:focus { border-color: var(--gold); outline: none; }
   .q-opt-body { flex: 1; min-width: 0; }
   .q-opt-label { color: var(--text); }
-  .q-opt-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; unicode-bidi: plaintext; }
+  /* OBS-170: لا unicode-bidi: plaintext هنا — كانت تحسم من أول حرف قوي فيرسو وصفٌ
+     عربيّ يبدأ بـ SHA-256 كلّه LTR (مقيس: fromLeft=0 مقابل fromRight=467). الحسم صار
+     إحصائياً على العنصر بـ applyDir من المصدر الواحد، وplaintext تتعارض مع dir الصريح. */
+  .q-opt-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
   .q-opt-preview {
     font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); direction: ltr; text-align: start;
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -210,7 +214,7 @@ class SatrQuestionDialog extends HTMLElement {
         lab.appendChild(input);
         const body = document.createElement('div'); body.className = 'q-opt-body';
         const l = document.createElement('div'); l.className = 'q-opt-label'; l.textContent = o.label || ''; body.appendChild(l);
-        if (o.description) { const d = document.createElement('div'); d.className = 'q-opt-desc'; d.textContent = o.description; body.appendChild(d); }
+        if (o.description) { const d = document.createElement('div'); d.className = 'q-opt-desc'; d.textContent = o.description; applyDir(d, o.description); body.appendChild(d); }
         if (o.preview) { const p = document.createElement('pre'); p.className = 'q-opt-preview'; p.textContent = o.preview; body.appendChild(p); }
         lab.appendChild(body);
         opts.appendChild(lab);
