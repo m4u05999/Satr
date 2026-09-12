@@ -36,7 +36,7 @@ class SatrContextPanel extends HTMLElement {
         '<span>السياق</span>' +
         '<span class="panel-head-actions">' +
           '<button class="refresh" title="تحديث">تحديث</button>' +
-          '<button class="close" title="إغلاق">✕</button>' +
+          '<button class="close" title="إغلاق" aria-label="إغلاق لوحة السياق">✕</button>' +
         '</span>' +
       '</div>' +
       '<div class="panel-list"></div>';

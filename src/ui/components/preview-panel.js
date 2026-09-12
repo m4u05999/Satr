@@ -314,15 +314,15 @@ const MARKUP = `
   <div id="pvAgentTag"></div>
   <div class="pv-head">
     <span id="pvConflictBadge"></span>
-    <button id="pvClose" type="button" title="إغلاق المعاينة">✕</button>
-    <button id="pvBack" type="button" title="رجوع" disabled>→</button>
-    <button id="pvFwd" type="button" title="تقدم" disabled>←</button>
-    <button id="pvReload" type="button" title="تحديث">⟳</button>
-    <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل">🔄</button>
-    <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)">🎯</button>
-    <button id="pvDevice" type="button" title="محاكاة الأجهزة: كامل/موبايل/لوحي (لاختبار التصميم المتجاوب)">🖥️</button>
-    <button id="pvConsoleBtn" type="button" title="لوحة Console والأخطاء (رسائل الصفحة وأخطاء الشبكة)">🐞</button>
-    <button id="pvMore" type="button" aria-expanded="false" title="أدوات إضافية: تسجيل، استوديو، أدوات المطوّر، الشبكة، التخزين">⋯</button>
+    <button id="pvClose" type="button" title="إغلاق المعاينة" aria-label="إغلاق المعاينة">✕</button>
+    <button id="pvBack" type="button" title="رجوع" aria-label="الصفحة السابقة" disabled>→</button>
+    <button id="pvFwd" type="button" title="تقدم" aria-label="الصفحة التالية" disabled>←</button>
+    <button id="pvReload" type="button" title="تحديث" aria-label="تحديث الصفحة">⟳</button>
+    <button id="pvAuto" type="button" title="تحديث تلقائي بعد كل تعديل من الوكيل" aria-label="التحديث التلقائي بعد كل تعديل">🔄</button>
+    <button id="pvPick" type="button" title="تحديد عنصر لتعديله (أشِر وانقر)" aria-label="تحديد عنصر في الصفحة لتعديله">🎯</button>
+    <button id="pvDevice" type="button" title="محاكاة الأجهزة: كامل/موبايل/لوحي (لاختبار التصميم المتجاوب)" aria-label="محاكاة الأجهزة">🖥️</button>
+    <button id="pvConsoleBtn" type="button" title="لوحة Console والأخطاء (رسائل الصفحة وأخطاء الشبكة)" aria-label="لوحة Console والأخطاء">🐞</button>
+    <button id="pvMore" type="button" aria-expanded="false" title="أدوات إضافية: تسجيل، استوديو، أدوات المطوّر، الشبكة، التخزين" aria-label="أدوات إضافية للمعاينة">⋯</button>
     <span id="pvServerState"><span id="pvServerDot"></span><span id="pvServerText">حالة الخادم</span><button id="pvServerRestart" type="button" hidden>تشغيل</button></span>
     <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
     <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
@@ -406,7 +406,7 @@ const MARKUP = `
       <button id="pcFiltConsole" class="pc-filt" type="button" title="رسائل console والأخطاء فقط">Console</button>
       <button id="pcFiltNet" class="pc-filt" type="button" title="طلبات الشبكة فقط">الشبكة</button>
       <button id="pcClear" type="button" title="مسح السجلّ">مسح</button>
-      <button id="pcClose" type="button" title="إغلاق اللوحة">✕</button>
+      <button id="pcClose" type="button" title="إغلاق اللوحة" aria-label="إغلاق لوحة Console والشبكة">✕</button>
     </div>
     <div id="pcLog"></div>
   </div>
@@ -422,7 +422,7 @@ const MARKUP = `
     <div class="pb-row">
       <input id="pbInput" type="text" placeholder="ماذا تريد أن يتغيّر في هذا العنصر؟ (مثال: اجعله أخضر)">
       <button id="pbSend" type="button" title="إرسال للوكيل">إرسال</button>
-      <button id="pbCancel" type="button" title="إلغاء">✕</button>
+      <button id="pbCancel" type="button" title="إلغاء" aria-label="إلغاء تحديد العنصر">✕</button>
     </div>
   </div>
 `;
@@ -1378,7 +1378,9 @@ class SatrPreviewPanel extends HTMLElement {
     const paintRecording = (active) => {
       recording = !!active;
       recBtn.classList.toggle('rec', recording);
+      // النصّ يصير رمزاً وحده أثناء التسجيل، فالاسم الوصولي يتبع الحالة
       recBtn.textContent = recording ? '⏹' : '⏺';
+      recBtn.setAttribute('aria-label', recording ? 'إيقاف التسجيل' : 'تسجيل فيديو للتصفح');
       recAspect.disabled = recording;
       micBtn.disabled = recording;
       sysAudio.disabled = recording;

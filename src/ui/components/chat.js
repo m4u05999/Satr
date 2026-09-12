@@ -54,9 +54,9 @@ const MARKUP = `
   <div class="thread-search" id="threadSearch" hidden>
     <input id="threadSearchInput" type="text" placeholder="ابحث داخل المحادثة…" autocomplete="off">
     <span class="thread-search-count" id="threadSearchCount" dir="ltr">0/0</span>
-    <button id="threadSearchPrev" type="button" title="التطابق السابق">↑</button>
-    <button id="threadSearchNext" type="button" title="التطابق التالي">↓</button>
-    <button id="threadSearchClose" type="button" title="إغلاق البحث">✕</button>
+    <button id="threadSearchPrev" type="button" title="التطابق السابق" aria-label="التطابق السابق">↑</button>
+    <button id="threadSearchNext" type="button" title="التطابق التالي" aria-label="التطابق التالي">↓</button>
+    <button id="threadSearchClose" type="button" title="إغلاق البحث" aria-label="إغلاق البحث في المحادثة">✕</button>
   </div>
   <div class="thread" id="thread">
     <!-- الحالة الفارغة: كانت شعاراً وأربع تلميحات باهتة فوق فراغ شاسع. صارت تبدأ
@@ -591,7 +591,9 @@ class SatrChat extends HTMLElement {
     for (const pre of mdEl.querySelectorAll('pre')) {
       if (pre.querySelector('.code-copy')) continue;
       const b = document.createElement('button');
+      // aria-label ثابت: نصّ الزر يصير ✓/✗ لثانية بعد النسخ فيفقد اسمه لحظتها
       b.type = 'button'; b.className = 'code-copy'; b.textContent = 'نسخ'; b.title = 'نسخ الكود';
+      b.setAttribute('aria-label', 'نسخ الكود');
       // النص من <code> لا <pre> — حتى لا يدخل نص الزر نفسه في المنسوخ
       b.addEventListener('click', () => copyWithFeedback(b, (pre.querySelector('code') || pre).innerText));
       pre.appendChild(b);
@@ -602,6 +604,7 @@ class SatrChat extends HTMLElement {
     if (!whoEl || whoEl.querySelector('.msg-copy')) return;
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'msg-copy'; b.textContent = 'نسخ'; b.title = 'نسخ نص الرسالة';
+    b.setAttribute('aria-label', 'نسخ نص الرسالة');
     b.addEventListener('click', () => copyWithFeedback(b, getText()));
     whoEl.appendChild(b);
   }
@@ -1219,6 +1222,7 @@ class SatrChat extends HTMLElement {
     dialog.className = 'shot-lightbox';
     const close = document.createElement('button');
     close.type = 'button'; close.className = 'shot-close'; close.textContent = '✕'; close.title = 'إغلاق';
+    close.setAttribute('aria-label', 'إغلاق عرض اللقطة');
     const image = document.createElement('img'); image.src = src; image.alt = alt || 'لقطة الوكيل';
     close.addEventListener('click', () => dialog.close());
     dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });

@@ -51,7 +51,7 @@ class SatrMcpPanel extends HTMLElement {
         '<span>توصيلات المشروع</span>' +
         '<span class="panel-head-actions">' +
           '<button class="refresh" title="تحديث">تحديث</button>' +
-          '<button class="close" title="إغلاق">✕</button>' +
+          '<button class="close" title="إغلاق" aria-label="إغلاق لوحة توصيلات المشروع">✕</button>' +
         '</span>' +
       '</div>' +
       '<div class="panel-list"><div class="project-connections"></div>' +

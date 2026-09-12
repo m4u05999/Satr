@@ -37,6 +37,7 @@ const SUITE = [
   'test:farsi-content',
   'test:memory',
   'test:design-guard',
+  'test:a11y-names',
   'test:gitdiff',
   'test:gitsafe',
   'test:keys',

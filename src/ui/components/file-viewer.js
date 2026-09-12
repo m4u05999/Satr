@@ -71,7 +71,7 @@ class SatrFileViewer extends HTMLElement {
           '<button class="save" type="button" title="حفظ التغييرات (Ctrl+S)" hidden>💾 حفظ</button>' +
           '<button class="cancel" type="button" title="إلغاء التحرير والعودة للقراءة" hidden>إلغاء</button>' +
           '<button class="dir" type="button" title="اتجاه العرض: تلقائي (عربي يميناً وكود يساراً) أو تجاوز يدوي RTL/LTR">الاتجاه: تلقائي</button>' +
-          '<button class="x" title="إغلاق">✕</button>' +
+          '<button class="x" title="إغلاق" aria-label="إغلاق عارض الملف">✕</button>' +
         '</div>' +
         '<div class="viewer-body"><pre></pre><textarea spellcheck="false"></textarea></div>' +
         '<div class="viewer-note" hidden></div>' +

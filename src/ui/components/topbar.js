@@ -81,6 +81,7 @@ class SatrTopbar extends HTMLElement {
       const p = document.createElement('span'); p.className = 'path'; p.textContent = d; p.title = d;
       const rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button'; rm.textContent = '✕';
       rm.title = 'إزالة';
+      rm.setAttribute('aria-label', 'إزالة المجلد الإضافي: ' + d);
       rm.addEventListener('click', () => {
         extraDirs = extraDirs.filter((x) => x !== d);
         localStorage.setItem('satr_extra_dirs', JSON.stringify(extraDirs));

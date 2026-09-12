@@ -120,7 +120,7 @@ class SatrSessionsPanel extends HTMLElement {
     r.innerHTML =
       '<div class="panel-head">' +
         '<span>الجلسات المحفوظة</span>' +
-        '<button class="close" title="إغلاق">✕</button>' +
+        '<button class="close" title="إغلاق" aria-label="إغلاق لوحة الجلسات المحفوظة">✕</button>' +
       '</div>' +
       '<div class="panel-search">' +
         '<input type="text" placeholder="🔍 ابحث بالعنوان أو المجلد…" autocomplete="off">' +
@@ -305,7 +305,9 @@ class SatrSessionsPanel extends HTMLElement {
       main.appendChild(t); main.appendChild(m); el.appendChild(main);
       const actions = document.createElement('div'); actions.className = 'sess-actions';
       const pin = document.createElement('button'); pin.type = 'button'; pin.className = 'pin' + (s.pinned ? ' active' : '');
+      // الاسم الوصولي يتبع الحالة كما يتبعها التلميح — الرمز وحده لا يُنطق
       pin.textContent = '📌'; pin.title = s.pinned ? 'إلغاء تثبيت الجلسة' : 'تثبيت الجلسة';
+      pin.setAttribute('aria-label', pin.title);
       pin.addEventListener('click', async (event) => {
         event.stopPropagation();
         const result = await this._saveMeta(s.id, { pinned: !s.pinned });
@@ -315,6 +317,7 @@ class SatrSessionsPanel extends HTMLElement {
       });
       const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'rename';
       rename.textContent = '✏️'; rename.title = 'إعادة تسمية الجلسة';
+      rename.setAttribute('aria-label', rename.title);
       rename.addEventListener('click', async (event) => {
         event.stopPropagation();
         const title = window.prompt('اسم الجلسة المخصّص (اتركه فارغاً لاستعادة العنوان الأصلي):', s.displayTitle || s.title);
@@ -331,12 +334,14 @@ class SatrSessionsPanel extends HTMLElement {
       actions.appendChild(pin); actions.appendChild(rename); el.appendChild(actions);
       if (s.kind === 'codex') {
         const fork = document.createElement('button'); fork.type = 'button'; fork.textContent = '⑂'; fork.title = 'تفريع جلسة Codex';
+        fork.setAttribute('aria-label', fork.title);
         fork.addEventListener('click', async (event) => {
           event.stopPropagation();
           const result = await window.satr.forkCodexSession(s.id);
           if (result && result.ok) await this.open(this._providers, this._cwd);
         });
         const archive = document.createElement('button'); archive.type = 'button'; archive.textContent = '▣'; archive.title = 'أرشفة جلسة Codex';
+        archive.setAttribute('aria-label', archive.title);
         archive.addEventListener('click', async (event) => {
           event.stopPropagation();
           if (!window.confirm('أرشفة جلسة Codex هذه وإخفاؤها من القائمة؟')) return;
@@ -344,6 +349,7 @@ class SatrSessionsPanel extends HTMLElement {
           if (result && result.ok) await this.open(this._providers, this._cwd);
         });
         const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '⌫'; remove.title = 'حذف جلسة Codex نهائياً';
+        remove.setAttribute('aria-label', remove.title);
         remove.addEventListener('click', async (event) => {
           event.stopPropagation();
           if (!window.confirm('حذف جلسة Codex هذه نهائياً؟ لا يمكن التراجع.')) return;

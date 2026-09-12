@@ -81,6 +81,7 @@ class SatrComposer extends HTMLElement {
       const im = document.createElement('img'); im.src = img.dataUrl; im.alt = 'صورة مرفقة';
       const rm = document.createElement('button');
       rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'إزالة';
+      rm.setAttribute('aria-label', 'إزالة الصورة المرفقة');
       rm.addEventListener('click', () => {
         pendingImages = pendingImages.filter((p) => p.id !== img.id);
         renderAttachments();

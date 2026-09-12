@@ -29,7 +29,7 @@ class SatrAgentsPanel extends HTMLElement {
         '<span>الوكلاء الفرعيون</span>' +
         '<span class="panel-head-actions">' +
           '<button class="refresh" title="تحديث">تحديث</button>' +
-          '<button class="close" title="إغلاق">✕</button>' +
+          '<button class="close" title="إغلاق" aria-label="إغلاق لوحة الوكلاء الفرعيين">✕</button>' +
         '</span>' +
       '</div>' +
       '<div class="panel-list"></div>';
