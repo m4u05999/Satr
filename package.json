@@ -174,6 +174,7 @@
     "test:filter-hook": "node scripts/filter-test-output-hook-test.js",
     "test:claude-md-size": "node scripts/claude-md-size-test.js",
     "test:uia-helper": "node scripts/uia-helper-test.js",
+    "test:release-uia": "node scripts/release-uia-test.js",
     "test:desktop-live": "node scripts/desktop-live-test.js",
     "test:model-routing": "node scripts/model-routing-test.js",
     "test:full-timeout": "node scripts/full-suite-timeout-test.js",

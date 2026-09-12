@@ -212,6 +212,39 @@ jobs:
       - name: مطابقة رقم الإصدار في README
         run: node scripts/sync-readme-version.js --check
 
+      # ‏OBS-161: `build.extraResources` يشير إلى `native/satr-uia/out-aot`، و**electron-builder
+      # يتخطّى المصدر الغائب صامتاً** — فمثبّت 2.16.22 خرج بلا معين وزرّ «سطح ويندوز» ميتاً في
+      # يد المستخدم بلا أي أحمر. المعين يُبنى NativeAOT هنا لا على جهاز التطوير (لا رابط MSVC
+      # هناك — `docs/COMPUTER-USE-DESKTOP.md` §١٠ الصفّ ١)، وداخل وظيفة `release` نفسها لا في
+      # وظيفة جديدة: أسماء الوظائف الثلاث معرّفات الفحوص المطلوبة في حماية الفرع، والوظيفة
+      # الجديدة تبقى اختيارية حتى تُعلَّم مطلوبة — «نيّة معلنة بلا آليّة» (‏OBS-117).
+      # التفصيل في `docs/internals/79-release-uia-helper.md`.
+      - name: إعداد .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # بلا `continue-on-error` خلافاً لنظيرتها في `uia-helper.yml`: هناك يُقاس البديل
+      # للمقارنة فيُحتمل السقوط، وهنا سقوط النشر يعني مثبّتاً بلا معين — فيسقط الإصدار
+      # بسبب مكتوب بدل أن يخرج ناقصاً صامتاً (‏OBS-161).
+      - name: نشر المعين NativeAOT
+        run: dotnet publish native/satr-uia -c Release -r win-x64 -o native/satr-uia/out-aot -nologo
+
+      # حارس قبل التعبئة: وجودُ الملف حيث ينتظره `extraResources`، وحجمه دون حدّ
+      # `test:uia-helper` نفسه (‏8 م.ب) — الحدّ مكرَّر رقماً هنا لأن خطوة CI لا تستورد JS.
+      - name: التحقق من المعين قبل التعبئة
+        shell: pwsh
+        run: |
+          $exe = 'native/satr-uia/out-aot/satr-uia.exe'
+          if (-not (Test-Path $exe)) {
+            throw "غاب المعين $exe بعد النشر — وextraResources كان سيتخطّاه صامتاً (OBS-161)"
+          }
+          $bytes = (Get-Item $exe).Length
+          Write-Host "::notice title=حجم المعين::$bytes بايت ($([math]::Round($bytes / 1MB, 2)) م.ب) · الحدّ 8388608"
+          if ($bytes -gt 8388608) {
+            throw "حجم المعين $bytes بايت يتجاوز الحدّ 8388608 (حدّ test:uia-helper)"
+          }
+
       - name: تثبيت الاعتماديات المقفلة
         run: npm ci
 
@@ -220,6 +253,18 @@ jobs:
         run: npm run dist -- --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # الحارس الذي يقيس الناتج لا النيّة: `extraResources` ينسخ إلى `resources/<to>/`،
+      # فغياب الملف هنا يعني مثبّتاً بلا معين — يفشل الإصدار قبل نشره لا بعد تنزيل المستخدم.
+      # ‏`win-unpacked` لا المثبّت NSIS: الأخير لا يُفكّ على العدّاء، وهو مبنيّ من هذا المجلد.
+      - name: التحقق من المعين داخل النسخة المبنية
+        shell: pwsh
+        run: |
+          $exe = 'dist/win-unpacked/resources/satr-uia/satr-uia.exe'
+          if (-not (Test-Path $exe)) {
+            throw "غاب المعين من النسخة المبنية ($exe) — المثبّت بلا سطح ويندوز (OBS-161)"
+          }
+          Write-Host "::notice title=المعين في النسخة المبنية::$exe موجود ($((Get-Item $exe).Length) بايت)"
 
       - name: إنشاء ورفع نسخة ZIP من المثبّت
         shell: pwsh

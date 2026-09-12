@@ -137,6 +137,7 @@ const SUITE = [
   'test:composer-narrow',
   'test:gallery',
   'test:desktop-panel',
+  'test:release-uia',
   'eval:agent',
 ];
 
