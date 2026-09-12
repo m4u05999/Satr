@@ -96,6 +96,10 @@ import { createPreviewShield } from './lib/preview-shield.js';
   function syncAwareness() {
     const effort = $('awarenessEffort'), thinking = $('awarenessThinking'), permission = $('awarenessPerm');
     const engine = $('engine').value;
+    // OBS-168: في العمود الضيّق يُقصّ نصّ المنتقي إلى بضعة محارف، فيحمل `title` اسم
+    // المحرك المختار كاملاً — دلالة تكشف المختار بلا توسيع التخطيط.
+    const engineSelected = $('engine').options[$('engine').selectedIndex];
+    if (engineSelected) $('engine').title = engineSelected.text;
     const effortSupported = engineSupportsEffort(engine);
     $('effort').disabled = !effortSupported;
     $('effort').title = effortSupported

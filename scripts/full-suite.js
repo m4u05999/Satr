@@ -134,6 +134,7 @@ const SUITE = [
   'test:question-dialog',
   'test:dialog-dir',
   'test:surface-overflow',
+  'test:composer-narrow',
   'test:gallery',
   'test:desktop-panel',
   'eval:agent',
