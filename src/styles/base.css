@@ -705,7 +705,12 @@
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .composer-tools select, .composer-tools button { width: 100%; }
+    /* OBS-168: نصف عرضٍ ضيّق أصلاً لا يسع اسم محرك واحداً — صفّ كامل للمنتقي
+       (ومعه `title` ديناميكي في app.js لأن الصفّ الكامل وحده لا يبلغ عرض الاسم) */
+    #engine { grid-column: 1 / -1; }
     #attachBtn { grid-column: 1 / -1; }
+    /* OBS-174: الالتفاف بدل قصٍّ صامت يخفي «الأذونات» و«السياق» */
+    .awareness-bar { flex-wrap: wrap; row-gap: var(--space-1); }
     .composer {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     }
