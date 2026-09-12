@@ -64,7 +64,7 @@ class SatrMobilePanel extends HTMLElement {
         '<span>التحكم من الجوال</span>' +
         '<span class="panel-head-actions">' +
           '<button class="refresh" type="button" title="تحديث">تحديث</button>' +
-          '<button class="close" type="button" title="إغلاق">✕</button>' +
+          '<button class="close" type="button" title="إغلاق" aria-label="إغلاق لوحة التحكم من الجوال">✕</button>' +
         '</span>' +
       '</div>' +
       '<div class="mobile-content">' +

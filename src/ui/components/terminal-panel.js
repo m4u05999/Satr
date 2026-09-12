@@ -15,7 +15,7 @@ const MARKUP = `
     <span class="term-dot" id="termDot" aria-hidden="true"></span>
     <!-- شريط التبويبات (المرحلة 15.2): تبويب لكل طرفية + زر ＋ لواحدة جديدة -->
     <div id="termTabs"></div>
-    <button id="termNew" type="button" title="طرفية جديدة">＋</button>
+    <button id="termNew" type="button" title="طرفية جديدة" aria-label="طرفية جديدة">＋</button>
     <!-- تنظيف التبويبات المنتهية: تتراكم عبر الجلسات الطويلة (مهام انتهت وخوادم
          أُوقفت) فيمتلئ الشريط بما لا يعمل. يظهر عند وجود تبويبين منتهيَين فأكثر. -->
     <button id="termCloseDead" type="button" title="إغلاق التبويبات المنتهية" hidden>🧹 المنتهية</button>
@@ -23,7 +23,7 @@ const MARKUP = `
     <span class="spacer"></span>
     <button id="termView" type="button" title="تبديل العارض: عربي (BiDi) / شبكي (xterm)">العرض: عربي</button>
     <button id="termRestart" type="button" title="إنهاء الصدفة الحالية وبدء واحدة جديدة">إعادة تشغيل</button>
-    <button id="termClose" type="button" title="إخفاء اللوحة (الطرفيات تبقى تعمل)">✕</button>
+    <button id="termClose" type="button" title="إخفاء اللوحة (الطرفيات تبقى تعمل)" aria-label="إخفاء لوحة الطرفية">✕</button>
   </div>
   <!-- مضيف الطرفيات: عرض (.term-view) لكل تبويب يُنشأ ديناميكياً، النشط وحده ظاهر -->
   <div id="termHost"></div>
@@ -32,7 +32,7 @@ const MARKUP = `
     <span id="termNoticeText"></span>
     <span class="spacer"></span>
     <button id="termNoticeBack" type="button">العرض العربي</button>
-    <button id="termNoticeClose" type="button" title="إخفاء">✕</button>
+    <button id="termNoticeClose" type="button" title="إخفاء" aria-label="إخفاء تنبيه الطرفية">✕</button>
   </div>
   <!-- سطر الإدخال (8.3): عابر — يُفرَّغ عند الإرسال وصدى الصدفة هو المعروض الوحيد -->
   <div id="termInputRow">
@@ -313,9 +313,11 @@ class SatrTerminalPanel extends HTMLElement {
       let rename = null;
       if (!t.isModel && !t.isJob) {
         rename = document.createElement('button'); rename.className = 'trename'; rename.type = 'button'; rename.textContent = '✎'; rename.title = 'إعادة تسمية';
+        rename.setAttribute('aria-label', 'إعادة تسمية التبويب: ' + tabDisplayName(t));
         rename.addEventListener('click', (event) => { event.stopPropagation(); beginTabRename(t); });
       }
       const x = document.createElement('button'); x.className = 'tx'; x.type = 'button'; x.textContent = '✕'; x.title = 'إغلاق';
+      x.setAttribute('aria-label', 'إغلاق التبويب: ' + tabDisplayName(t));
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t); });
       el.appendChild(dot); el.appendChild(lbl); if (rename) el.appendChild(rename); el.appendChild(x);
       el.addEventListener('click', () => { if (t !== active) activateTab(t); });

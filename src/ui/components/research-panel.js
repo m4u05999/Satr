@@ -47,7 +47,8 @@ class SatrResearchPanel extends HTMLElement {
     root.adoptedStyleSheets = [panelSheet, ownSheet];
     root.innerHTML =
       '<div class="panel-head"><span>فريق البحث</span><div class="panel-head-actions">' +
-        '<button class="stop" type="button" hidden>إيقاف الكل</button><button class="close" type="button">✕</button>' +
+        '<button class="stop" type="button" hidden>إيقاف الكل</button>'
+        + '<button class="close" type="button" title="إغلاق" aria-label="إغلاق لوحة فريق البحث">✕</button>' +
       '</div></div>' +
       '<div class="setup"><textarea class="question" maxlength="4000" placeholder="ما السؤال الذي تريد بحثه داخل المشروع؟"></textarea>' +
         '<div class="setup-row"><select class="count"><option value="1">باحث واحد</option><option value="2">باحثان</option><option value="3">3 باحثين</option></select>' +

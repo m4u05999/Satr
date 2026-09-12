@@ -32,7 +32,7 @@ class SatrSkillsPanel extends HTMLElement {
     r.innerHTML =
       '<div class="panel-head">' +
         '<span>المهارات</span>' +
-        '<button class="close" title="إغلاق">✕</button>' +
+        '<button class="close" title="إغلاق" aria-label="إغلاق لوحة المهارات">✕</button>' +
       '</div>' +
       '<div class="panel-list"></div>';
     this._list = r.querySelector('.panel-list');

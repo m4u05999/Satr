@@ -21,7 +21,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
     const light = theme === 'light';
     document.documentElement.dataset.theme = light ? 'light' : 'dark';
     const btn = $('themeToggle');
-    if (btn) { btn.textContent = light ? '☀️' : '🌙'; btn.title = light ? 'التبديل للوضع الداكن' : 'التبديل للوضع الفاتح'; }
+    // الرمز وحده لا يُنطق، والاسم الوصولي يتبع الحالة كما يتبعها التلميح
+    if (btn) {
+      btn.textContent = light ? '☀️' : '🌙';
+      btn.title = light ? 'التبديل للوضع الداكن' : 'التبديل للوضع الفاتح';
+      btn.setAttribute('aria-label', btn.title);
+    }
   }
   (function initTheme() {
     let saved = localStorage.getItem('satr_theme');

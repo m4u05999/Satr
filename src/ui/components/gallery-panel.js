@@ -99,12 +99,12 @@ class SatrGalleryPanel extends HTMLElement {
         '<span>🖼 معرض التوليدات</span>' +
         '<span class="panel-head-actions">' +
           '<button class="refresh" title="إعادة قراءة السجل">تحديث</button>' +
-          '<button class="close" title="إغلاق">✕</button>' +
+          '<button class="close" title="إغلاق" aria-label="إغلاق لوحة معرض التوليدات">✕</button>' +
         '</span>' +
       '</div>' +
       '<div class="panel-list gal-list"></div>' +
       '<div class="gal-lightbox" hidden>' +
-        '<button class="gal-lb-close" title="إغلاق العرض">✕</button>' +
+        '<button class="gal-lb-close" title="إغلاق العرض" aria-label="إغلاق العرض المكبّر">✕</button>' +
         '<img alt="الصورة المولّدة بحجم مكبّر">' +
         '<div class="gal-lb-caption">' +
           '<p class="gal-prompt" dir="auto"></p>' +
@@ -280,6 +280,8 @@ class SatrGalleryPanel extends HTMLElement {
       btn.type = 'button';
       btn.className = 'gal-thumb';
       btn.title = 'عرض مكبّر';
+      // اسم ثابت: نصّ الزر يتبدّل («…» ثم صورة المصغّرة) فلا يصلح اسماً
+      btn.setAttribute('aria-label', 'عرض الصورة مكبّرة');
       btn.dataset.rel = firstFile;
       btn.dataset.id = item.id || '';
       btn.textContent = '…';

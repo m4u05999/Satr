@@ -32,7 +32,7 @@ class SatrFilesPanel extends HTMLElement {
         '<span>ملفات المشروع</span>' +
         '<span class="panel-head-actions">' +
           '<button class="refresh" title="إعادة قراءة الشجرة">تحديث</button>' +
-          '<button class="close" title="إغلاق">✕</button>' +
+          '<button class="close" title="إغلاق" aria-label="إغلاق لوحة ملفات المشروع">✕</button>' +
         '</span>' +
       '</div>' +
       '<div class="panel-search">' +

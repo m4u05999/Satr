@@ -24,20 +24,20 @@
     <div class="field">
       <label for="cwd">مجلد المشروع</label>
       <input type="text" id="cwd" placeholder="اختر مجلداً…" spellcheck="false">
-      <button id="pickFolder" title="اختيار مجلد">📁</button>
+      <button id="pickFolder" title="اختيار مجلد" aria-label="اختيار مجلد المشروع">📁</button>
     </div>
     <button id="newSession">جلسة جديدة</button>
     <button id="sessionsToggle" title="تصفح الجلسات المحفوظة واستئنافها">الجلسات</button>
-    <button id="termToggle" title="الطرفية المدمجة">🖥️</button>
-    <button id="previewToggle" title="المعاينة المدمجة — متصفح لمشروعك (م-1)">🌐</button>
+    <button id="termToggle" title="الطرفية المدمجة" aria-label="الطرفية المدمجة">🖥️</button>
+    <button id="previewToggle" title="المعاينة المدمجة — متصفح لمشروعك (م-1)" aria-label="المعاينة المدمجة">🌐</button>
     <button id="opsRoomToggle" title="غرفة العمليات">غرفة العمليات</button>
     <!-- درج الأدوات الأقل استعمالاً: صفٌّ في التدفق لا قائمة منبثقة، كي تبقى
          منبثقات Δ و«؟» على غلافها النسبي وتعمل كما هي (نمط درج المعاينة) -->
-    <button id="topMore" type="button" aria-expanded="false" aria-controls="topTools"
+    <button id="topMore" type="button" aria-expanded="false" aria-controls="topTools" aria-label="أدوات إضافية"
             title="أدوات إضافية: الملفات، تغييرات المشروع، ملخّص الجلسة، التصدير، الثيم، الاختصارات">⋯</button>
     <!-- إعدادات قليلة اللمس (تُضبط مرة وتُنسى) مطوية خلف ⚙ لتخفيف الشريط — نفس المعرّفات فلا تغيير في المنطق -->
     <div class="settings-wrap">
-      <button id="settingsBtn" title="الإعدادات">⚙</button>
+      <button id="settingsBtn" title="الإعدادات" aria-label="الإعدادات">⚙</button>
       <div id="settingsPop" data-preview-overlay hidden>
         <!-- رأس اللوحة: اتساق مع بقية اللوحات (كانت الوحيدة بلا عنوان ولا زر إغلاق) -->
         <div class="settings-head">
@@ -120,11 +120,11 @@
         <div class="settings-keys" id="keysMgr">
           <div class="dirs-head"><span>مفاتيح المزوّدين والتكاملات</span></div>
           <div class="key-row">
-            <select id="keyProvider"></select>
+            <select id="keyProvider" aria-label="المزوّد أو التكامل"></select>
             <span id="keyStatus" class="key-status"></span>
           </div>
           <div class="key-row">
-            <input id="keyValue" type="password" placeholder="ألصق مفتاح API…" autocomplete="off" spellcheck="false">
+            <input id="keyValue" type="password" placeholder="ألصق مفتاح API…" autocomplete="off" spellcheck="false" aria-label="مفتاح المزوّد المختار">
             <button id="keySave" type="button">حفظ</button>
             <button id="keyClear" type="button">مسح</button>
           </div>
@@ -165,7 +165,8 @@
     </div>
   </div>
   <button id="exportChat" title="تصدير المحادثة الحالية (Markdown)">📤 تصدير</button>
-  <button id="themeToggle" title="تبديل الوضع الفاتح/الداكن">🌙</button>
+  <!-- الاسم الوصولي يتبدّل مع الحالة في applyTheme() كما يتبدّل التلميح -->
+  <button id="themeToggle" title="تبديل الوضع الفاتح/الداكن" aria-label="التبديل للوضع الفاتح">🌙</button>
   <div class="top-pop-wrap">
     <button id="shortcutsToggle" type="button" title="اختصارات لوحة المفاتيح">؟ اختصارات</button>
     <div id="shortcutsPop" data-preview-overlay class="top-pop shortcuts-pop" hidden>
@@ -197,29 +198,33 @@
      المرفقات/القوائم/المسودة/شريط الخلفية ويبث composer-send -->
 <satr-composer>
 <footer>
-  <div id="bgBar" aria-label="قيد التشغيل">
+  <!-- role يلزم كي لا يُسقط محرّك الوصولية aria-label عن عنصر generic (‏OBS-176) -->
+  <div id="bgBar" role="status" aria-label="قيد التشغيل">
     <span class="bg-label"><span class="bg-dot" aria-hidden="true"></span>قيد التشغيل</span>
     <span id="bgChips" class="bg-chips"></span>
     <button id="bgKillAll" type="button">إيقاف الكل</button>
   </div>
-  <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
+  <div id="attachments" class="attachments" role="group" aria-label="الصور المرفقة"></div>
   <!-- شريط المؤلّف (§5-د): محرك/نموذج + إرفاق، بجوار الإرسال (نمط Cursor) -->
   <div class="composer-tools">
-    <span class="ct-label">المحرك</span>
-    <select id="engine" title="المحرك/المزوّد">
+    <!-- label for لا span: التسمية البصرية تُخفى عند ضيق العمود (base.css:664)،
+         وaria-label يبقى الاسم الوصولي ثابتاً في كل العروض (‏OBS-167). الصنف كما هو
+         فلا يتغيّر أي نمط. -->
+    <label for="engine" class="ct-label">المحرك</label>
+    <select id="engine" title="المحرك/المزوّد" aria-label="المحرك">
       <option value="sdk">Claude — اشتراك Claude Code</option>
       <option value="codex">Codex — اشتراك ChatGPT</option>
       <option value="cli">Claude CLI — احتياطي</option>
       <option value="gemini">Google Gemini — مفتاح API</option>
     </select>
-    <span class="ct-label">النموذج</span>
-    <select id="model" title="النموذج"><option value="">الافتراضي</option></select>
+    <label for="model" class="ct-label">النموذج</label>
+    <select id="model" title="النموذج" aria-label="النموذج"><option value="">الافتراضي</option></select>
     <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (للمحركات الداعمة للصور)">📎 إرفاق</button>
     <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
   </div>
   <!-- شريط الوعي: ما لا يظهر في صف المحرك/النموذج أعلاه فقط — أُزيل «model:» المكرّر
        (منتقي النموذج بجواره يعرض الاسم الكامل)، وعُرّبت التسميات (القاعدة 3) -->
-  <div id="awarenessBar" class="awareness-bar" aria-label="حالة الدور الحالية">
+  <div id="awarenessBar" class="awareness-bar" role="status" aria-label="حالة الدور الحالية">
     <button id="awarenessEffort" type="button" title="تدوير جهد التفكير">الجهد: الافتراضي</button>
     <span aria-hidden="true">·</span>
     <button id="awarenessThinking" type="button" title="تفعيل/تعطيل التفكير الحي (Kimi Code)">التفكير: —</button>
@@ -308,7 +313,7 @@
   <button id="updateNotes" type="button" hidden>ما الجديد؟</button>
   <button id="updateDownload" type="button" hidden>نزّل الآن</button>
   <button id="updateRestart" type="button" hidden>أعد التشغيل الآن</button>
-  <button id="updateDismiss" type="button" title="إخفاء">✕</button>
+  <button id="updateDismiss" type="button" title="إخفاء" aria-label="إخفاء إشعار التحديث">✕</button>
 </div>
 
 <!-- «ما الجديد» داخل «سطر» بدل فتح متصفح خارجي: القاعدة المعلنة أن الويب يُعرض داخل
@@ -316,7 +321,7 @@
      النص يُجلب في العملية الرئيسية ويُكتب بـtextContent (محتوى خارجي غير موثوق). -->
 <div id="notesDialog" hidden>
   <div id="notesCard" role="dialog" aria-modal="true" aria-labelledby="notesTitle">
-    <div id="notesHead"><span id="notesTitle">ما الجديد</span><button id="notesClose" type="button" title="إغلاق">✕</button></div>
+    <div id="notesHead"><span id="notesTitle">ما الجديد</span><button id="notesClose" type="button" title="إغلاق" aria-label="إغلاق ما الجديد">✕</button></div>
     <pre id="notesBody" dir="auto"></pre>
     <div id="notesFoot"><button id="notesExternal" type="button">افتح في المتصفح</button></div>
   </div>

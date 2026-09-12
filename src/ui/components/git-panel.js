@@ -53,7 +53,7 @@ class SatrGitPanel extends HTMLElement {
         '<span>تغييرات المشروع ±</span>' +
         '<span class="panel-head-actions">' +
           '<button class="refresh" title="إعادة قراءة التغييرات">تحديث</button>' +
-          '<button class="close" title="إغلاق">✕</button>' +
+          '<button class="close" title="إغلاق" aria-label="إغلاق لوحة تغييرات المشروع">✕</button>' +
         '</span>' +
       '</div>' +
       '<div class="panel-list"></div>';

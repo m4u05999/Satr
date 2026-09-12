@@ -96,7 +96,7 @@ const studioSheet = sheet(`
 const MARKUP = `
   <div class="backdrop"></div>
   <section class="studio" role="document">
-    <header><h2>🎬 استوديو البرومو</h2><span id="aspect" dir="ltr">16:9</span><button id="close" type="button">✕</button></header>
+    <header><h2>🎬 استوديو البرومو</h2><span id="aspect" dir="ltr">16:9</span><button id="close" type="button" title="إغلاق" aria-label="إغلاق استوديو البرومو">✕</button></header>
     <div class="body">
       <div class="timeline" id="timeline"></div>
       <div class="preview">
@@ -107,7 +107,7 @@ const MARKUP = `
     </div>
     <footer>
       <span class="status" id="status">عدّل الخط الزمني ثم اعتمده قبل التصيير.</span>
-      <div class="progress" aria-label="تقدم التصيير"><span id="progress"></span></div>
+      <div class="progress" role="progressbar" aria-label="تقدم التصيير"><span id="progress"></span></div>
       <button id="import" type="button">＋ استورد</button>
       <button id="projectSave" type="button">حفظ المشروع</button>
       <button id="projectOpen" type="button">فتح مشروع</button>
@@ -118,7 +118,7 @@ const MARKUP = `
   <div class="import-dialog" id="importDialog" hidden>
     <div class="import-backdrop"></div>
     <div class="import-panel">
-      <header><h3>اختر وسيطاً من التنزيلات</h3><button id="importClose" type="button">✕</button></header>
+      <header><h3>اختر وسيطاً من التنزيلات</h3><button id="importClose" type="button" title="إغلاق" aria-label="إغلاق اختيار الوسيط">✕</button></header>
       <div class="import-list" id="importList"></div>
       <footer><span id="importStatus">جارٍ القراءة…</span><button id="importCancel" type="button">إلغاء</button></footer>
     </div>

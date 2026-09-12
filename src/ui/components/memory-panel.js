@@ -51,7 +51,8 @@ class SatrMemoryPanel extends HTMLElement {
     root.adoptedStyleSheets = [panelSheet, ownSheet];
     root.innerHTML =
       '<div class="panel-head"><span>ذاكرة المشروع</span><div class="panel-head-actions">' +
-        '<button class="refresh" type="button">تحديث</button><button class="close" type="button" title="إغلاق">✕</button>' +
+        '<button class="refresh" type="button">تحديث</button>'
+        + '<button class="close" type="button" title="إغلاق" aria-label="إغلاق لوحة ذاكرة المشروع">✕</button>' +
       '</div></div>' +
       '<div class="candidate" hidden><div class="candidate-title">اقتراح جديد — لم يُحفظ بعد</div>' +
         '<div class="candidate-note">راجعه وعدّله إن لزم، ثم وافق صراحةً على الحفظ أو ارفضه.</div><div class="candidate-editor"></div></div>' +
