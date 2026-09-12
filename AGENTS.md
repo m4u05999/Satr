@@ -128,6 +128,41 @@ npm run dist:dir   # مجلد بلا مثبّت (أسرع للتجربة)
 المبرّر مقيس: أول تطبيق كامل له (‏2.16.9) كشف عطلاً كان يُسقط التطبيق في إصدار منشور،
 بينما الطقم أخضر 75/75.
 
+## قواعد السماح للمنفّذين داخل الجلسة (‏OBS-185 — قرار مالك 2026-09-12)
+
+الوكلاء الفرعيون الذين يطلقهم القائد داخل جلسة سطر يعملون في نسخ عمل (`git worktree`)
+**خارج** مجلد الجلسة، فلا يغطيهم «قبول التعديلات» ويتوقفون عند كل `Edit`/`Bash` — مقيس:
+أربعة وكلاء توقفوا 2–3 مرات كلٌّ في جولة واحدة، وأكملوا بلا توقف بعد القواعد أدناه. الحلّ
+الدائم شقّان، كلاهما إلزامي قبل إطلاق أي منفّذ:
+
+1. **نسخ العمل ضمن المجلدات الإضافية للجلسة** (‏`--add-dir` أو إعداد الجلسة) كي يغطيها
+   `acceptEdits`؛ القواعد وحدها لا تكفي لمسارات خارج مجلد الجلسة.
+2. **قالب `.claude/settings.local.json`** (غير ملتزَم — `.gitignore`) في مجلد الجلسة؛ انسخه
+   وبدّل حرف القرص/المجلد الأب (`//d/sater/**` = `D:\sater\**` بصيغة القواعد):
+
+   ```json
+   { "permissions": { "allow": [
+     "Read(//d/sater/**)", "Edit(//d/sater/**)", "Write(//d/sater/**)",
+     "Bash(node *)", "Bash(npm run *)", "Bash(npm start *)", "Bash(npx electron-builder *)",
+     "Bash(git status*)", "Bash(git log *)", "Bash(git diff *)", "Bash(git show *)",
+     "Bash(git branch *)", "Bash(git worktree *)", "Bash(git merge-base *)", "Bash(git cherry *)",
+     "Bash(git add *)", "Bash(git commit *)", "Bash(git checkout *)", "Bash(git fetch *)",
+     "Bash(git pull *)", "Bash(git rebase *)", "Bash(GIT_EDITOR=true git rebase --continue)",
+     "Bash(git push *)", "Bash(git config *)",
+     "Bash(gh pr create *)", "Bash(gh pr view *)", "Bash(gh pr list *)", "Bash(gh pr checks *)",
+     "Bash(gh run *)", "Bash(iconv *)", "Bash(powershell *)", "Bash(tasklist)", "Bash(taskkill *)",
+     "PowerShell(node *)", "PowerShell(npm run *)", "PowerShell(git *)",
+     "PowerShell(Get-Process *)", "PowerShell(Get-CimInstance *)", "PowerShell(Get-ChildItem *)",
+     "PowerShell(New-Item *)"
+   ] } }
+   ```
+
+   **ما لا يدخل القالب عمداً**: `gh pr merge` (الدمج بكلمة المالك وحده) · `npm install`/`npm ci`
+   (تُمنح لحزمة بعينها حين تغيّر القفل) · أي `rm -rf`/`git clean`/`git reset --hard` · أوامر
+   الشبكة العامة. القاعدة fail-safe كما في `autogate.js`: قائمة سماح للآمن لا قائمة حظر للخطر.
+   **حدّ مُصرَّح به**: صيغة المسار `//d/…` على ويندوز قُبلت لأن الوكلاء أكملوا بعدها، ولم تُعضّ
+   بمسبار مستقل. «الدفعة الموثوقة» (قواعد مؤقتة بنطاق النسخة ومدة الدفعة) مؤجَّلة حتى يكثر المنفّذون.
+
 ## أعراف العمل
 - عدّل ملفاً قائماً بأسلوبه المحيط (كثافة التعليقات، التسمية، الاصطلاح) — لا تُدخل نمطاً غريباً.
 - لا تُدخل لوناً صلباً جديداً في CSS — كل لون عبر متغيّر Token (شرط عمل الوضعين فاتح/داكن).

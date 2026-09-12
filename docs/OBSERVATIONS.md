@@ -5881,3 +5881,83 @@ un-suite-instrumented.ps1` (خارج المستودع)
 - **المصدر**: المالك.
 - **الملاحظة**: ترتيب البدء المقرَّر: الدمجان ← الإصدار ← دفعة القرارين ٤ و٦ ← إدخال السائق ← جلسة الاختبار الثانية. أُدرج قبلها بطلب المالك إصلاح كيمي (`OBS-189`) ليشحن مع 2.16.22.
 - **مربوط بـ**: `OBS-185` · `OBS-188` · `OBS-183` · `OBS-161` · `OBS-186` · `OBS-179`.
+
+## OBS-191 — دفعة ترقية SDK ≥ 0.3.269: `get_hooks_listing` و`list_permission_rules` يعطيان ما يقرؤه `hookguard` بيده من ملفّين وحدث واحد — يصيران مصدر الحارس والمسح اليدوي ارتداداً
+
+- **الوسم**: `security`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة — بند في دفعة ترقية المحرّك (لا يعمل قبل `0.3.269`؛ بوابة `OBS-194` قائمة)
+- **الدليل**: `package.json:326` يثبّت `@anthropic-ai/claude-agent-sdk ^0.3.261` والقفل عند `0.3.261`. رادار سطر (العدد ٠١٠، 2026-09-12، مقيس بـ`diff` محلي على `sdk.d.ts` بين `0.3.268` و`0.3.269`؛ و٢٦٧↔٢٦٨ لا يحملهما): طلبا تحكّم جديدان في `SDKControlRequestInner` — `get_hooks_listing` يعيد لكل خطّاف `event`/`matcher`/`source`/`type`/`commandText`/`disabled` مع كتلة `policy` و`errors` («Settings files skipped by the merge — their hooks are neither listed nor running»)، و`list_permission_rules` يعيد قواعد الإذن الحيّة بـ`behavior`/`rule`/`source` (إحدى عشرة قيمة منها `localSettings` و`session` و`cliArg`) و`editability` و`notInEffect` و`workspaceDirectories`. مقابله في سطر: `electron/hookguard.js:116-121` (‏`hasSessionStartHook` يفحص `hooks.SessionStart` وحده) و`:148` (يبصم `JSON.stringify(parsed.hooks.SessionStart)`) والمسح محصور بمسارين ثابتين — وهي فجوة `OBS-156` نفسها؛ و`OBS-140` قاس التظليل ملفاً ملفاً بمسبار بينما `list_permission_rules` يعطيه حيّاً بمصدره.
+- **المصدر**: رادار سطر ٠١٠ (مباشر)، سجّله القائد.
+- **الملاحظة**: بعد الترقية يصير `get_hooks_listing` مصدر `hookguard` للخطّافات (كل حدث وكل مصدر بما فيه الإضافات وسياسة المؤسسة) والمسح اليدوي ارتداداً للمحرّكات الأقدم، و`list_permission_rules` يُقرأ عند بدء الجلسة فيصير تنبيه `OBS-140` مبنيّاً على ما ينفذ فعلاً. سؤالان يُحسمان قبل الكود: هل يبقى التنبيه إخباراً لا إنفاذاً حين يرى ٣٣ حدثاً (خطر تدريب المستخدم على تجاهل التنبيهات — رأس `hookguard.js`)؟ وهل تُبصَم `commandText` أم تُخزَّن (قاعدة الملف: لا مساره ولا أوامر الخطّاف)؟ **حدّ مُصرَّح به**: لم يُشغَّل الطلبان ولم يُقَس زمنهما ولا هل يُجابان قبل أول دور.
+- **مربوط بـ**: `OBS-156` · `OBS-140` · `OBS-194` · `docs/radar/010.md`.
+
+## OBS-192 — دفعة ترقية SDK ≥ 0.3.268: حقلا `defaultToNo` و`suppressAlwaysAllowRule` في طلب الإذن عقدٌ بصيغة «must» على المضيف — يجب أن يضيّقا `alwaysEligible` لا أن يوسّعاه، ومربع الإذن لا يعرف «افتح على الرفض»
+
+- **الوسم**: `security`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة — بند في دفعة ترقية المحرّك
+- **الدليل**: رادار سطر ٠١٠ من `sdk.d.ts 0.3.268`: `defaultToNo` («The ask must not be approvable by a single stray keystroke: open the prompt on its decline option and offer no one-key approve shortcut») و`suppressAlwaysAllowRule` («The ask must not offer a persistent "don't ask again" choice: the rule it would write grants more than this ask's own action»). سطر يملك الفكرة الثانية من مصدر آخر: `electron/agent.js:76` (‏`NEVER_ALWAYS_TOOLS` مجموعة ثابتة بأسماء أدوات) و`:1401` (‏`alwaysEligible: !NEVER_ALWAYS_TOOLS.has(toolName)`) و`:2552,2565` (‏`resolvePermission` يحترمها) ومسارات `neverAlways: true` لكل نداء (‏`:1274`، `:1361`). الفرق: قرار سطر باسم الأداة، وقرار المحرّك بهذا النداء بعينه (يعرف أن `Bash` هذه المرة تكتب خارج مساحة العمل).
+- **المصدر**: رادار سطر ٠١٠ (يستحق OBS)، سجّله القائد.
+- **الملاحظة**: قراءة الحقلين من `permission_request` وجعلهما يضيّقان: `alwaysEligible = !NEVER_ALWAYS_TOOLS.has(tool) && !suppressAlwaysAllowRule` (قائمة سطر تبقى سارية إن صمت المحرّك)، و`defaultToNo` يفتح مربع الإذن العربي على «رفض» ويلغي أي اختصار موافقة بضغطة. جردٌ أول: هل في `src/ui/components/perm-dialog.js` مفتاح يقبل بضغطة واحدة (Enter على الزر الافتراضي)؟ **حدّ مُصرَّح به**: لم يُرَ طلب إذن حقيقي يحمل الحقلين ولا يُعرف متى يضبطهما المحرّك.
+- **مربوط بـ**: `OBS-141` · `OBS-191` · `electron/autogate.js`.
+
+## OBS-193 — دفعة ترقية SDK ≥ 0.3.268: `verification_required` صنف خطأ حساب جديد في `SDKAssistantMessageError` — والسلسلة نفسها مستعملة في سطر رمزَ خطأ داخلي يعني «لم تُشغَّل الاختبارات قبل الدمج»
+
+- **الوسم**: `engines`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة — بند في دفعة ترقية المحرّك
+- **الدليل**: رادار سطر ٠١٠ (‏`diff` على `SDKAssistantMessageError` بين `0.3.267` و`0.3.268`): قيمة مضافة واحدة `'verification_required'` بين `account_on_hold` و`billing_error` (عائلة أخطاء الحساب). في سطر: `electron/integration.js:403,405` و`electron/merger.js:83` يعيدان `{ ok: false, error: 'verification_required' }` بمعنى «التحقّق المعتمد لم يمرّ»، و`src/ui/components/ops-room.js:482` يترجمها: «يلزم نجاح التحقق للأثر الحالي — شغّل الاختبارات المعتمدة…». المساران منفصلان اليوم (خطأ المحرّك لا يمرّ بجدول غرفة العمليات) فليس عطلاً قائماً بل فخّ تسمية. وفي Codex ظهرت في الأسبوع نفسه `userVerification/{status,enroll,delete,verify}` (‏`0.154.0`، رادار ٠٠٩) — لا يُدّعى أنهما شيء واحد.
+- **المصدر**: رادار سطر ٠١٠ (يستحق OBS)، سجّله القائد.
+- **الملاحظة**: عند الترقية تُضاف القيمة إلى خريطة أخطاء الحساب بنصّ عربي يوجّه إلى إكمال التحقّق (لا «أعد المحاولة»)، مع فصل صريح في التسمية عن الرمز الداخلي (مثلاً `account_verification_required` للوارد من المحرّك). جرد: هل يوجد جدول واحد يترجم رموز الأخطاء بلا تمييز مصدرها؟ **حدّ مُصرَّح به**: لا يُعرف متى يُصدرها المحرّك ولا الإجراء المطلوب من المستخدم.
+- **مربوط بـ**: `OBS-189` · `docs/internals/14-kimi-engine-acp.md` (نمط تصنيف الرفض بنصّه).
+
+## OBS-194 — بوابة ترقية SDK: كل ترقية تتجاوز `0.3.263` تُجمّد `appendSystemPrompt` (اسم النموذج والذاكرة وكتالوج المهارات) بلا خطأ ما لم يُمرَّر `systemPromptSnapshot: false` أو تُنقل الأجزاء المتغيّرة إلى ذيل الدور
+
+- **الوسم**: `engines`
+- **النوع**: عطل
+- **الحالة**: مفتوحة — بوابة على دفعة ترقية المحرّك (سطر على `0.3.261` غير متأثّر اليوم)
+- **الدليل**: رادار سطر ٠٠٨ و٠٠٩ (مقيس بمقارنة `sdk.d.ts`؛ و2.1.267 وثّقت `--system-prompt-snapshot off` و«sessions started with `--append-system-prompt` now record the system prompt and tool definitions once instead of re-rendering them»). في سطر: `electron/agent.js:1461` يبني `append: envbrief.build('sdk', model, …)` ويُلحق الذاكرة وكتالوج المهارات، ويمرّر `resume` و`model` معاً؛ فتبديل النموذج في جلسة قائمة أو ذاكرة تُضاف بعد أول دور يتركان النموذج يقرأ سطر بيئة قديماً صامتاً حتى الضغط أو جلسة جديدة. ⚠ `npm update` بلا أسماء يرفع الحزمة إلى `0.3.269` ويعبر هذه البوابة في أمر يبدو صيانة (رادار ٠١٠ — `OBS-197`).
+- **المصدر**: رادار سطر ٠٠٨/٠٠٩ (مباشر)، سجّله القائد.
+- **الملاحظة**: الدفعة تمرّر `systemPromptSnapshot: false` صراحةً كحدّ أدنى، والأصحّ نقل الأجزاء المتغيّرة إلى ذيل الدور كما يفعل `context.js` بـ`turnParts` للمحوّلات (وهو ما يستفيد من دفعة الكاش في 2.1.267). ومعها في الدفعة نفسها: `sdkMcpServerManifests` للخوادم الأربعة داخل العملية، و`Settings.bashEditDiffEnabled`، وتغيّر دلالة `cwd` بين الأدوار بعد 2.1.264. عضّة الدفعة: تبديل النموذج في جلسة مستأنفة ثم قراءة سطر البيئة الذي يراه النموذج.
+- **مربوط بـ**: `OBS-137` · `OBS-191` · `OBS-195` · `docs/radar/state.json` (‏`ENGINE UPGRADE BATCH`).
+
+## OBS-195 — دفعة ترقية SDK ≥ 0.3.268: أربعة عقود استئناف مسمّاة — `pending_permission_requests`/`pending_user_dialogs` مضمونتا الحضور (الغياب = محرّك أقدم لا «لا شيء معلّق»)، `resume_reason`، `reloadPlugins({holdOnCacheImpact})`، و`context_usage.kind` («صنّف عليه لا على الاسم الإنجليزي»)
+
+- **الوسم**: `engines`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة — بند في دفعة ترقية المحرّك
+- **الدليل**: رادار سطر ٠١٠ من `sdk.d.ts 0.3.268`: (١) الحقلان «Always present (possibly empty) on a success `initialize` response from Claude Code v2.1.268 or later; earlier versions could omit it, so treat absence as an older CLI» مع تحذير أن سؤالاً موروثاً من عامل سابق للجلسة نفسها «can remain answerable without appearing here»؛ (٢) `resume_reason` يميّز الدور المعاد آلياً بعد انقطاع ويحمل `user_message_uuid` للرسالة الأصلية؛ (٣) `holdOnCacheImpact` يرفض إعادة تحميل تغيّر قائمة الأدوات بينما الكاش يعتمدها ويعيد `held: true`؛ (٤) صفوف `context_usage` تحمل `kind: 'used'|'free'|'buffer'|'deferred'` («Classify on this, never on the English name»؛ `deferred` = مخططات أدوات خارج النافذة). في سطر: `electron/agent.js:2882` (‏`contextUsage`) تمرير خام إلى `src/ui/components/context-panel.js:61` — التصنيف يقع عند العرض ولم يُقرأ بعدُ هل يصنّف بالاسم. والدفعة تلتقي بعمل المالك: `a07bbb4` استمرارية المحادثة و`OBS-153` و`OBS-147/148`.
+- **المصدر**: رادار سطر ٠١٠ (للعلم — يُسجَّل بنداً مسمّى)، سجّله القائد.
+- **الملاحظة**: في الدفعة: قراءة الحقلين المضمونين بدل الاستنتاج، تمرير `resume_reason` إلى الواجهة كي لا يُعرض الدور المعاد كأنه جديد، احترام `held: true`، وتصنيف لوحة السياق على `kind`. جرد قبل الكود: `context-panel.js` — هل يقرأ الاسم الإنجليزي؟ **حدّ مُصرَّح به**: لم يُشغَّل أيّ من هذه المسارات.
+- **مربوط بـ**: `OBS-153` · `OBS-147` · `OBS-148` · `OBS-194`.
+
+## OBS-196 — `effortLevel: 'max'` يعمل «no higher than the organization's effort limit» — سقف ثالث لا يراه منتقي الجهد الذي يُبنى من قدرة النموذج وحدها؛ و`null` في `setSettings` يعيد ضبط الجلسة لا يسترجع الملف
+
+- **الوسم**: `engines`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة — بند في دفعة ترقية المحرّك (يبقى مفتوحاً على سؤال واحد)
+- **الدليل**: رادار سطر ٠٠٩ (‏`maxEffortLevel` في 2.1.267: قصّ من جانب العميل والأدنى يغلب عبر ملفات الإعداد) و٠١٠ (وصف `setSettings` في `0.3.269`: `'max'` «is session-only, runs as `'high'` on a model without `'max'` support, and runs no higher than the organization's effort limit for the model»؛ و`effortLevel`/`model`/`agent`/`ultracode` بقيمة `null` تعيد ضبط حالة الجلسة — `model` إلى افتراضي كلود كود «not `ANTHROPIC_MODEL` or `settings.model`»). في سطر: `electron/main.js:106-111` يشتقّ مستويات المنتقي من `supportsEffort === true` و`supportedEffortLevels` (قدرة النموذج) لا من الإعداد ولا من حدّ المؤسسة؛ وسطر يبدّل النموذج داخل الجلسة، فتمرير `model: null` يوماً «للعودة إلى المختار» يعود إلى افتراضي المحرّك.
+- **المصدر**: رادار سطر ٠٠٩/٠١٠ (يستحق OBS)، سجّله القائد.
+- **الملاحظة**: السؤال الذي يُسقط البند: هل يخصم المحرّك السقفين من `supportedEffortLevels` في ردّ قائمة النماذج؟ يُقاس بمسبار على حساب مؤسسي قبل أي كود. إن لم يخصم: وسم المستويات فوق السقف في المنتقي بدل حذفها. وسطر تعليق في `agent.js` عند `setSettings` يذكر دلالة `null`.
+- **مربوط بـ**: `OBS-063` · `docs/MODEL-ROUTING.md`.
+
+## OBS-197 — تصحيح مقيس لحالة الرادار: التنبيهات التشغيلية (`dev:false`) في القفل سبع لا واحدة — و`npm update` موجَّهاً بخمسة أسماء يزيل الثلاث العالية بلا مساس بـ`package.json` ولا عبور بوابة snapshot، بينما بلا أسماء يعبرها صامتاً
+
+- **الوسم**: `security`
+- **النوع**: تحسين
+- **الحالة**: مفتوحة — الدفعة على الفرع `feat/radar-010-lock-audit` (ح٣ من الجولة الثالثة)
+- **الدليل**: رادار سطر ٠١٠ (2026-09-12، `npm audit --json --package-lock-only` على القفل الحيّ بمطابقة كل حزمة بمسارها وحقل `dev`): الأعداد ٠٠٤–٠٠٩ كرّرت «الوحيد التشغيلي `@hono/node-server`» خطأً؛ المقيس: `js-yaml 4.2.0` (عالية، عبر `electron-updater` — يقرأ بها `latest.yml` من خلاصة التحديث) · `ip-address 10.2.0` (عالية، تجاوز فحوص SSRF) · `fast-uri 3.1.2` (عالية) · `hono`/`@hono/node-server` (متوسطتان) · `qs 6.15.2` (متوسطة) · `body-parser 2.2.2` (منخفضة) — وكلها تحت `@modelcontextprotocol/sdk 1.29.0` الذي يجرّه agent-sdk؛ و`builder-util-runtime` التشغيلي `9.7.0` فوق مدى الإصابة (المصاب `9.2.10` وهو `dev`). القياس على نسخة من القفل: `npm update --package-lock-only js-yaml qs body-parser ip-address fast-uri` ⇒ الإجمالي 23 ⇐ 18، التشغيلي 7 ⇐ 2، `package.json` مطابق بايتاً ببايت وagent-sdk يبقى `0.3.261`؛ بلا أسماء ⇒ 14 لكنه يرفع agent-sdk إلى `0.3.269` وmcp-sdk إلى `1.30.0` (بوابة `OBS-194`). في القفل الحيّ على `b7176d5` النسخ المصابة كما ذُكرت (بحث `node_modules/js-yaml` وأخواتها في `package-lock.json`).
+- **المصدر**: رادار سطر ٠١٠ (مباشر)، سجّله القائد.
+- **الملاحظة**: الأمر بالأسماء الخمسة حصراً ثم `npm ci` وطقم الاختبارات، وسطر في بوابة الإصدار يقرأ التدقيق بتقسيم `dev`/تشغيلي لا بالإجمالي (الإجمالي 23 لم يتحرّك منذ العدد ٠٠٨ بينما التصنيف تحته خاطئ). النصف الباقي (`hono`) محكوم بترقية MCP SDK المحكومة بدفعة `OBS-194`. **حدّ مُصرَّح به**: التصحيح في التصنيف لا في إثبات أن مساراً من السبعة مسلوك في سطر؛ وترقية `ip-address` ثانوية (10.2 ⇒ 10.7) يحسمها الطقم.
+- **مربوط بـ**: `OBS-194` · `docs/radar/010.md` · `docs/radar/state.json` (‏`_npm_audit_runtime_correction`).
+
+## OBS-198 — محرّكات جهاز المالك متأخّرة عن السجلّ (claude-code 2.1.261 مقابل 2.1.269 · codex 0.153.4 مقابل 0.154.0) و`engines_on_owner_machine` عند 2026-09-06 بينما kimi 0.42.0 مثبّت فعلاً
+
+- **الوسم**: `engines`
+- **النوع**: صقل
+- **الحالة**: مفتوحة — بيد المالك (ترقية) ثم `npm run radar:baseline -- --write`
+- **الدليل**: `docs/radar/state.json → baseline.engines_on_owner_machine` (‏`codex 0.153.4` · `kimi-code 0.41.0` · `claude-code 2.1.261` · `_updated 2026-09-06`) مقابل السجلّ في رادار ٠١٠ (‏`claude-code 2.1.269` وstable `2.1.236` · `codex 0.154.0` · `kimi-code 0.42.0`)؛ وقياس القائد 2026-09-12 (‏`OBS-189`) أن kimi-code 0.42.0 مثبّت فعلاً فالحقل متقادم. رادار ٠٠٩ قاس أن ترقية codex وkimi آمنة على سطح البروتوكول (+٤ توابع `userVerification/*` ولا حذف؛ ACP بلا فرق).
+- **المصدر**: رادار سطر ٠١٠ (حالة)، سجّله القائد.
+- **الملاحظة**: الترقية عبر `npm -g @latest` لا المثبّت الأصلي (يكسر `resolveClaudeBin` — ذاكرة `claude-upgrade-npm-only`)، ثم `radar:baseline -- --write` بالتزام مستقل. وجرد صغير عند ترقية codex: هل يتحمّل `codex.js` تابعاً/إشعاراً لا يعرفه بلا إسقاط الجلسة (المعالج قرب `:1191` يوحي بنعم — يُكتب لا يُفترض).
+- **مربوط بـ**: `OBS-189` · `AGENTS.md` قسم «رادار سطر».
