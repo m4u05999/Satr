@@ -53,3 +53,5 @@ paths:
 - `docs/internals/66-reply-readability.md` — قرائية ردود الوكيل: سلّم العناوين وعارض Markdown وعمود النثر (2026-09-11)
 - `docs/internals/68-models-boot-and-preview-controls.md` — إقلاع النماذج (`refreshEngineModels`) وأسقف اللوحات (2026-09-10)
 - `docs/internals/69-computer-use-desktop.md` — لوحة 🪟 سطح ويندوز: المنتقي وسجلّ الأفعال وعلم `desktopControl` (الخطوة ٥)
+- `docs/internals/70-accessibility-names.md` — أسماء الوصول: كل زر رمزي يحمل `aria-label` عربياً، والحقول
+  `<label for>`، والحاويات الموسومة `role` — يحرسها `npm run test:a11y-names` (‏OBS-166/167/176، 2026-09-12)

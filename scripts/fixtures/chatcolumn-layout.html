@@ -19,29 +19,33 @@
 </satr-chat>
 <satr-composer>
 <footer>
-  <div id="bgBar" aria-label="قيد التشغيل">
+  <!-- role يلزم كي لا يُسقط محرّك الوصولية aria-label عن عنصر generic (‏OBS-176) -->
+  <div id="bgBar" role="status" aria-label="قيد التشغيل">
     <span class="bg-label"><span class="bg-dot" aria-hidden="true"></span>قيد التشغيل</span>
     <span id="bgChips" class="bg-chips"></span>
     <button id="bgKillAll" type="button">إيقاف الكل</button>
   </div>
-  <div id="attachments" class="attachments" aria-label="الصور المرفقة"></div>
+  <div id="attachments" class="attachments" role="group" aria-label="الصور المرفقة"></div>
   <!-- شريط المؤلّف (§5-د): محرك/نموذج + إرفاق، بجوار الإرسال (نمط Cursor) -->
   <div class="composer-tools">
-    <span class="ct-label">المحرك</span>
-    <select id="engine" title="المحرك/المزوّد">
+    <!-- label for لا span: التسمية البصرية تُخفى عند ضيق العمود (base.css:664)،
+         وaria-label يبقى الاسم الوصولي ثابتاً في كل العروض (‏OBS-167). الصنف كما هو
+         فلا يتغيّر أي نمط. -->
+    <label for="engine" class="ct-label">المحرك</label>
+    <select id="engine" title="المحرك/المزوّد" aria-label="المحرك">
       <option value="sdk">Claude — اشتراك Claude Code</option>
       <option value="codex">Codex — اشتراك ChatGPT</option>
       <option value="cli">Claude CLI — احتياطي</option>
       <option value="gemini">Google Gemini — مفتاح API</option>
     </select>
-    <span class="ct-label">النموذج</span>
-    <select id="model" title="النموذج"><option value="">الافتراضي</option></select>
+    <label for="model" class="ct-label">النموذج</label>
+    <select id="model" title="النموذج" aria-label="النموذج"><option value="">الافتراضي</option></select>
     <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (للمحركات الداعمة للصور)">📎 إرفاق</button>
     <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
   </div>
   <!-- شريط الوعي: ما لا يظهر في صف المحرك/النموذج أعلاه فقط — أُزيل «model:» المكرّر
        (منتقي النموذج بجواره يعرض الاسم الكامل)، وعُرّبت التسميات (القاعدة 3) -->
-  <div id="awarenessBar" class="awareness-bar" aria-label="حالة الدور الحالية">
+  <div id="awarenessBar" class="awareness-bar" role="status" aria-label="حالة الدور الحالية">
     <button id="awarenessEffort" type="button" title="تدوير جهد التفكير">الجهد: الافتراضي</button>
     <span aria-hidden="true">·</span>
     <button id="awarenessThinking" type="button" title="تفعيل/تعطيل التفكير الحي (Kimi Code)">التفكير: —</button>

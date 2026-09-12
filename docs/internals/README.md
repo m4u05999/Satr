@@ -77,3 +77,4 @@
 | 67 | [`67-project-connections.md`](67-project-connections.md) | توصيلات المشروع المجانية (OBS-145 — دفعة الرمز الشخصي، 2026-09-08) | 4.2 ك.ب |
 | 68 | [`68-models-boot-and-preview-controls.md`](68-models-boot-and-preview-controls.md) | إقلاع النماذج وأسقف اللوحات · أزرار المعاينة وقصد المستخدم (2026-09-10) | 2.4 ك.ب |
 | 69 | [`69-computer-use-desktop.md`](69-computer-use-desktop.md) | استعمال الحاسوب — سطح ويندوز: المعين والمراجع والحرّاس والأدوات الثماني (الخطوات ٠–٤، 2026-09-11) | 12.2 ك.ب |
+| 70 | [`70-accessibility-names.md`](70-accessibility-names.md) | أسماء الوصول للأزرار الرمزية والحقول والحاويات (‏OBS-166/167/176 — 2026-09-12) | 6.2 ك.ب |
