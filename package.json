@@ -161,6 +161,7 @@
     "test:question-dialog": "electron scripts/question-dialog-live-test.js",
     "test:dialog-dir": "electron scripts/dialog-dir-test.js",
     "test:surface-overflow": "electron scripts/surface-overflow-test.js",
+    "test:composer-narrow": "electron scripts/composer-narrow-test.js",
     "test:askquestion": "node scripts/askquestion-test.js",
     "test:autogate": "node scripts/autogate.test.js",
     "test:adapters": "node scripts/adapters-test.js",
