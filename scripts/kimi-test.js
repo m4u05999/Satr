@@ -78,6 +78,25 @@ function initializeResult(extra) {
   };
 }
 
+// OBS-189: التصنيف بالنصّ لا بالرمز — كان كل -32000 «غير مسجَّل الدخول» فأخفى نفاد الحصة بعد الاستعمال الكثيف.
+function testRpcFailureClassification() {
+  const describe = kimi._internals.describeRpcFailure;
+  const quota = describe(Object.assign(new Error('Rate limit exceeded: too many requests, try again later'), { code: -32000 }), 'prompt');
+  assert.strictEqual(quota.kind, 'quota');
+  assert.ok(quota.text.includes('Rate limit exceeded') && quota.text.includes('حصة') && !quota.text.includes('kimi login'), quota.text);
+  const auth = describe(Object.assign(new Error('Unauthorized: login required'), { code: -32000 }), 'init');
+  assert.strictEqual(auth.kind, 'auth');
+  assert.ok(auth.text.includes('kimi login') && auth.text.includes('Unauthorized'), auth.text);
+  const bare = describe(Object.assign(new Error('rpc_error'), { code: -32000 }), 'init');
+  assert.strictEqual(bare.kind, 'auth', 'بلا نصّ يبقى الافتراض القديم (دخول) كي لا ينكسر السلوك');
+  const other = describe(Object.assign(new Error('session not found'), { code: -32001 }), 'prompt');
+  assert.strictEqual(other.kind, 'rpc');
+  assert.ok(other.text.startsWith('تعذّر بدء دور Kimi Code (رمز -32001): session not found'), other.text);
+  const secret = describe(Object.assign(new Error('quota exceeded for token sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij0123456789'), { code: -32000 }), 'prompt');
+  assert.strictEqual(secret.kind, 'quota');
+  assert.ok(!secret.text.includes('sk-ant-api03-ABCDEFGHIJ'), 'السرّ يُحجب في نصّ الرفض');
+}
+
 async function testNativeTurnAndPermission() {
   const events = [];
   let processRef;
@@ -1755,7 +1774,9 @@ async function testForkSessionProcessCount() {
   await testLanguageAnchorReachesKimi();
   await testStdinPipeErrorDoesNotEscape();
   testKimiLoginCommandAndCwd();
+  testRpcFailureClassification();
   console.log('✓ Kimi Code ACP مسجّل كمحرك أصيل مستقل عن REST');
+  console.log('✓ OBS-189: رفض -32000 يُصنَّف بنصّه (حصة/حدّ ≠ دخول) ويصل النصّ الأصلي محجوباً لا مرمياً');
   console.log('✓ طلبات ACP العكسية تكمل حتى عند تطابق معرّفها مع معرّف session/prompt');
   console.log('✓ الجلسة الجديدة والبث والأدوات والأذونات مطبّعة إلى عقد سطر');
   console.log('✓ الإيقاف يرسل session/cancel والاستمرار يستخدم session/resume بنفس المعرّف');
