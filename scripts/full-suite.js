@@ -121,6 +121,7 @@ const SUITE = [
   'test:browser-member-live',
   'test:preview-member-live',
   'test:preview-lease',
+  'test:preview-viewport-evaluate',
   'test:readability',
   'test:preview-shield',
   'test:topbar-surfaces',

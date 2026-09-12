@@ -694,8 +694,13 @@ function setNetwork(preset) {
 }
 
 // الواجهة تبلّغ مستطيل مساحة العرض؛ الصفر يبقى حجباً حتى بوجود مقاس طلبه الوكيل.
+// OBS-175: والسالب كذلك. كان الشرط يفحص `=== 0` وحده، فمستطيلٌ سالب العرض (تخطيط
+// لم يستقر بعد، أو لوحة مطويّة) يمرّ إلى `Math.max(1, …)` فيصير عرضاً **حقيقياً**
+// مقداره بكسل واحد: عرضٌ مفتوح بلا محتوى مرئي بدل حجب نظيف، فتعود كل قياسات
+// التخطيط عبر `browser_evaluate` بـ`innerWidth=1`. مقيس في
+// `scripts/preview-viewport-evaluate-test.js`: ‏`{width:-20}` ⇒ `{width:1}` قبل الإصلاح.
 function effectiveBounds(bounds) {
-  if (!viewportOverride || !bounds || bounds.width === 0 || bounds.height === 0) return bounds;
+  if (!viewportOverride || !bounds || !(bounds.width > 0) || !(bounds.height > 0)) return bounds;
   const width = Math.max(1, Math.min(bounds.width, viewportOverride.width));
   const height = viewportOverride.height
     ? Math.max(1, Math.min(bounds.height, viewportOverride.height)) : bounds.height;
@@ -2048,9 +2053,20 @@ async function setViewport(width, height) {
       || (h != null && (!Number.isInteger(h) || h < 240 || h > 1200))) return { error: 'bad_viewport' };
   viewportOverride = { width: w, height: h };
   if (view && lastBounds) applyBounds(lastBounds);
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  // OBS-175: كان هنا `setTimeout(80)` ثابتاً — رقم غير مقيس يجعل `actual` صادقاً حين
+  // يصادف أن الصفحة تكون قد استجابت، وكاذباً (مقاس بائت) حين تتأخّر. صار الانتظار
+  // **مشروطاً بالتقارب**: نستقصي `innerWidth` حتى يطابق العرض الذي طُبّق فعلاً على
+  // العرض الأصلي، بسقف 500ms — فإن لم يتقارب نُبلّغ المقاس كما هو بلا كذب.
+  const target = view && lastBounds ? effectiveBounds(lastBounds) : null;
+  const wantWidth = target && target.width > 0 ? target.width : null;
+  const deadline = Date.now() + 500;
   try {
-    const actual = await wc.executeJavaScript('({width:window.innerWidth,height:window.innerHeight,dpr:window.devicePixelRatio})', true);
+    let actual = null;
+    for (;;) {
+      actual = await wc.executeJavaScript('({width:window.innerWidth,height:window.innerHeight,dpr:window.devicePixelRatio})', true);
+      if (!wantWidth || (actual && actual.width === wantWidth) || Date.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     const result = { ok: true, requested: { width: w, height: h }, actual };
     // التجاوز صار مُعلَناً بدل أن يكون فشلاً صامتاً: عرض اللوحة سقفٌ للطلب دائماً،
     // وسببه إمّا وضع محاكاة الأجهزة أو ضيق اللوحة نفسها — نسمّي السبب ونذكر العلاج.
