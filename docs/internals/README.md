@@ -80,3 +80,4 @@
 | 70 | [`70-accessibility-names.md`](70-accessibility-names.md) | أسماء الوصول للأزرار الرمزية والحقول والحاويات (‏OBS-166/167/176 — 2026-09-12) | 6.2 ك.ب |
 | 71 | [`71-boot-order-chat-guard.md`](71-boot-order-chat-guard.md) | ترتيب الإقلاع وحارس `<satr-chat>` — نداءات القشرة قبل ترقية المكوّن (‏OBS-172 — 2026-09-12) | 6.0 ك.ب |
 | 73 | [`73-dialog-dir-and-surface-overflow.md`](73-dialog-dir-and-surface-overflow.md) | اتجاه وصف الخيار بـtextDir ومقبض غرفة العمليات داخل الحافة، وحارساهما البكسليان (‏OBS-170/171 — 2026-09-12) | 7.2 ك.ب |
+| 74 | [`74-preview-viewport-evaluate.md`](74-preview-viewport-evaluate.md) | مقاس المعاينة تحت أعين الوكيل: جذر `innerWidth=1` في `browser_evaluate` (‏OBS-175 — 2026-09-12) | 6.5 ك.ب |

@@ -121,6 +121,7 @@ const SUITE = [
   'test:browser-member-live',
   'test:preview-member-live',
   'test:preview-lease',
+  'test:preview-viewport-evaluate',
   'test:readability',
   'test:preview-shield',
   'test:topbar-surfaces',
@@ -275,6 +276,7 @@ const SKIP_ON_POSIX = Object.freeze([
   { name: 'eval:agent', reason: 'التقييم يعلن 12 مهمة وينفّذ 11 على POSIX فيُعدّ ناقصاً — يحتاج فحصاً مستقلاً لمهمته المشروطة بويندوز' },
   { name: 'test:uia-helper', reason: 'المعين native/satr-uia عميل UI Automation لويندوز وحده ويقيس نافذة «المفكرة» — يُبنى ويُختبر في uia-helper.yml على windows-latest' },
   { name: 'test:desktop-live', reason: 'قبول سطح ويندوز على «المفكرة» الحقيقية بالمعين نفسه (افتح، اكتب، احفظ، stale_ref) — ويندوز وحده' },
+  { name: 'test:preview-viewport-evaluate', reason: 'نافذة WebContentsView المخفية على xvfb لا تطبّق الحدود المضيَّقة أصلاً (مقيس في CI: set_viewport(844) ⇒ actual 860) فيسقط القياس بيئياً لا منطقياً — يُقاس على ويندوز حيث تتقارب الصفحة فوراً (OBS-175)' },
 ]);
 function skipReasonFor(name, platform = process.platform) {
   if (platform === 'win32') return null;
