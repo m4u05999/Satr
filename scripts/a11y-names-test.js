@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * حارس أسماء الوصول (‏OBS-166 · OBS-167 · OBS-176) — ساكن بلا Electron.
+ * حارس أسماء الوصول (‏OBS-166 · OBS-167 · OBS-176 · OBS-181) — ساكن بلا Electron.
  *
  * العلّة المقيسة: كل زر أيقوني في القشرة واللوحات كان يعتمد `title` وحده، فاسمه
  * المحسوب هو الإيموجي نفسه (‏`button "📁"` في لقطة الوصولية). و`title` سمة تلميح لا
@@ -13,8 +13,11 @@
  *
  *   ١. كل `<button …>…</button>` نصّه المرئي **رمزيّ** (بلا حرف عربي ولا لاتيني)
  *      يجب أن يحمل `aria-label` غير فارغ.
- *   ٢. كل `<select>` و`<input>` في `index.html` (عدا المخفي) يملك `<label for>`
- *      يشير إلى `id` موجود، أو `aria-label`. وكل `<label for>` يشير إلى `id` موجود.
+ *   ٢. كل `<input>` في `index.html` وقوالب المكوّنات وكل `<select>` في `index.html`
+ *      (عدا المخفي) يملك اسماً وصولياً من مصادر HTML-AAM: `aria-label` أو
+ *      `aria-labelledby` أو `<label for>` يشير إلى `id` موجود أو `<label>` حاضن
+ *      بنصّ مرئي، أو أحد الاحتياطيين الأخيرين في حساب الاسم `title`/`placeholder`.
+ *      وكل `<label for>` يشير إلى `id` موجود.
  *   ٣. كل `div`/`span` يحمل `aria-label` يملك `role` (وإلّا أسقط محرّك الوصولية
  *      السمة عن عنصر `generic`).
  *
@@ -23,7 +26,9 @@
  *     يراه هذا الحارس أصلاً، وكذلك زرّ في القالب نصّه كلّه `${…}` (يُعدّ ويُطبع في
  *     الخاتمة تحت «غير مفحوصة» فلا يُقرأ الصمت نجاحاً).
  *   - `aria-label="${…}"` يُقبل بوجوده لا بقيمته — القيمة تُحسب وقت التشغيل.
- *   - القاعدة ٢ محصورة بـ`index.html` بقرار الدفعة؛ حقول المكوّنات خارج نطاقها.
+ *   - القاعدة ٢ تقبل `title` و`placeholder` مصدرين احتياطيين بموجب HTML-AAM — حقل
+ *      يعتمد `placeholder` وحده يمرّ هنا ويُرحَّل اسمه الصريح تحسيناً مؤجَّلاً، ولا
+ *      يمرّ حقل بلا أي مصدر إطلاقاً. منتقيات المكوّنات (`<select>`) خارج نطاقها بعد.
  *   - هذا حارس **بنية** لا حارس نطق: أنّ قارئ شاشة حقيقياً (‏Narrator) ينطق الاسم
  *     المضاف لم يُختبر هنا ولا يُدّعى.
  */
@@ -43,6 +48,7 @@ const BUTTON_RE = /<button\b([^>]*)>([\s\S]*?)<\/button>/gi;
 const GENERIC_RE = /<(div|span)\b([^>]*)>/gi;
 const FIELD_RE = /<(select|input)\b([^>]*)>/gi;
 const LABEL_FOR_RE = /<label\b[^>]*\bfor\s*=\s*"([^"]*)"/gi;
+const WRAPPING_LABEL_RE = /<label\b[^>]*>([\s\S]*?)<\/label>/gi;
 const ID_RE = /\bid\s*=\s*"([^"]*)"/gi;
 
 const problems = [];
@@ -109,8 +115,8 @@ function checkButtons(source, rel) {
   }
 }
 
-/** القاعدة ٢: حقول index.html لها تسمية، وكل label for يشير إلى id موجود. */
-function checkFields(source, rel) {
+/** القاعدة ٢: كل حقل له اسم وصولي من مصادر HTML-AAM، وكل label for يشير إلى id موجود. */
+function checkFields(source, rel, { selects }) {
   const ids = new Set();
   let match;
   ID_RE.lastIndex = 0;
@@ -127,10 +133,21 @@ function checkFields(source, rel) {
     }
   }
 
+  // ‏<label> حاضن بنصّ مرئي يسمّي الحقل الذي بداخله بلا for (‏HTML-AAM)
+  const wrappedRanges = [];
+  WRAPPING_LABEL_RE.lastIndex = 0;
+  while ((match = WRAPPING_LABEL_RE.exec(source)) !== null) {
+    if (/<(?:input|select|textarea)\b/i.test(match[1]) && staticText(match[1])) {
+      wrappedRanges.push([match.index, match.index + match[0].length]);
+    }
+  }
+
   FIELD_RE.lastIndex = 0;
   while ((match = FIELD_RE.exec(source)) !== null) {
     const tag = match[1].toLowerCase();
     const attrs = match[2];
+    // منتقيات المكوّنات خارج نطاق التوسيع — <select> يُفحص في index.html فقط
+    if (tag === 'select' && !selects) continue;
     // المخفي لا يُعرض للمستخدم ولا لشجرة الوصولية
     if (hasAttr(attrs, 'hidden') || (attrValue(attrs, 'type') || '').toLowerCase() === 'hidden') continue;
     stats.fields += 1;
@@ -139,8 +156,14 @@ function checkFields(source, rel) {
     const labelledBy = attrValue(attrs, 'aria-labelledby');
     if ((label && label.trim()) || (labelledBy && labelledBy.trim())) continue;
     if (id && labelled.has(id)) continue;
+    if (wrappedRanges.some(([start, end]) => match.index >= start && match.index < end)) continue;
+    // title وplaceholder الاحتياطيان الأخيران في حساب الاسم للحقول بموجب HTML-AAM
+    const title = attrValue(attrs, 'title');
+    if (title && title.trim()) continue;
+    const placeholder = attrValue(attrs, 'placeholder');
+    if (placeholder && placeholder.trim()) continue;
     problems.push(rel + ':' + lineOf(source, match.index) + ' — <' + tag + (id ? ' id="' + id + '"' : '')
-      + '> بلا <label for> ولا aria-label.');
+      + '> بلا أي مصدر لاسم الوصول (aria-label أو label أو title أو placeholder).');
   }
 }
 
@@ -172,7 +195,7 @@ function main() {
     const source = fs.readFileSync(file, 'utf8');
     checkButtons(source, rel);
     checkGenerics(source, rel);
-    if (file === HTML_FILE) checkFields(source, rel);
+    checkFields(source, rel, { selects: file === HTML_FILE });
   }
 
   if (problems.length) {
@@ -182,7 +205,7 @@ function main() {
 
   console.log('✓ ' + stats.symbolic + ' زراً رمزياً يحمل aria-label عربياً (من ' + stats.buttons
     + ' زراً في ' + files.length + ' ملفاً؛ ' + stats.textual + ' اسمها نصّها المرئي)');
-  console.log('✓ ' + stats.fields + ' حقلاً في index.html له <label for> أو aria-label، ولا label يتيم');
+  console.log('✓ ' + stats.fields + ' حقلاً في index.html والمكوّنات لها اسم وصولي، ولا label يتيم');
   console.log('✓ ' + stats.generics + ' عنصر div/span يحمل aria-label ومعه role');
   console.log('ℹ غير مفحوصة (نصّها ديناميكي أو يُملأ وقت التشغيل): ' + stats.unchecked
     + (unchecked.length ? ' — ' + unchecked.slice(0, 6).join('، ')

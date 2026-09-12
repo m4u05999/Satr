@@ -123,7 +123,7 @@ class SatrSessionsPanel extends HTMLElement {
         '<button class="close" title="إغلاق" aria-label="إغلاق لوحة الجلسات المحفوظة">✕</button>' +
       '</div>' +
       '<div class="panel-search">' +
-        '<input type="text" placeholder="🔍 ابحث بالعنوان أو المجلد…" autocomplete="off">' +
+        '<input type="text" placeholder="🔍 ابحث بالعنوان أو المجلد…" aria-label="البحث في الجلسات بالعنوان أو المجلد" autocomplete="off">' +
       '</div>' +
       '<div class="panel-tools">' +
         '<label><input type="checkbox" class="hidetools"> أخفِ جلسات الأدوات</label>' +

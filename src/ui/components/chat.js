@@ -52,7 +52,7 @@ function formatModelUsage(mu) {
 const MARKUP = `
 <main id="main">
   <div class="thread-search" id="threadSearch" hidden>
-    <input id="threadSearchInput" type="text" placeholder="ابحث داخل المحادثة…" autocomplete="off">
+    <input id="threadSearchInput" type="text" placeholder="ابحث داخل المحادثة…" aria-label="البحث داخل المحادثة" autocomplete="off">
     <span class="thread-search-count" id="threadSearchCount" dir="ltr">0/0</span>
     <button id="threadSearchPrev" type="button" title="التطابق السابق" aria-label="التطابق السابق">↑</button>
     <button id="threadSearchNext" type="button" title="التطابق التالي" aria-label="التطابق التالي">↓</button>
