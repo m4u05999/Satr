@@ -774,7 +774,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
     lastEngine = $('engine').value;
     // OBS-172: مسار الاستعادة يلمس <satr-chat> مباشرةً (clearThread/showConversationHistory/
     // scrollToEnd) لا عبر addNotice وحدها — فانتظر ترقيته مرة واحدة هنا بدل حراسة كل نداء.
-    await customElements.whenDefined('satr-chat');
+    // الشرط لأن test:model-boot يستخرج هذه الدالة ويشغّلها في Node بلا DOM (لا customElements).
+    if (typeof customElements !== 'undefined') await customElements.whenDefined('satr-chat');
     if (!await restoreCurrentConversation()) await restoreAdapterSession();
     applyGateEngineSwitch(); // القائمة بُنيت الآن — طبّق تصحيح المحرك إن كان الفحص سبقها
   }
