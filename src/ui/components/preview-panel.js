@@ -328,7 +328,7 @@ const MARKUP = `
     <button id="pvMore" type="button" aria-expanded="false" title="أدوات إضافية: تسجيل، استوديو، أدوات المطوّر، الشبكة، التخزين" aria-label="أدوات إضافية للمعاينة">⋯</button>
     <span id="pvServerState"><span id="pvServerDot"></span><span id="pvServerText">حالة الخادم</span><button id="pvServerRestart" type="button" hidden>تشغيل</button></span>
     <span id="pvCtlBadge" title="وضع تحكّم المتصفح مفعّل — الوكيل يقود المعاينة">🖱️ تحكّم</span>
-    <input id="pvUrl" type="text" placeholder="http://localhost:3000 …" spellcheck="false">
+    <input id="pvUrl" type="text" aria-label="عنوان صفحة المعاينة" placeholder="http://localhost:3000 …" spellcheck="false">
   </div>
   <!-- درج الأدوات المتخصصة: صف في التدفق لا منبثق — WebContentsView تطفو فوق كل
        DOM، فقائمة مطلقة فوق مساحة العرض تختفي خلفها (الدرس نفسه من مربع الإذن). -->
@@ -423,7 +423,7 @@ const MARKUP = `
       <button id="pbImprove" class="pb-quick" type="button">حسّن</button>
     </div>
     <div class="pb-row">
-      <input id="pbInput" type="text" placeholder="ماذا تريد أن يتغيّر في هذا العنصر؟ (مثال: اجعله أخضر)">
+      <input id="pbInput" type="text" aria-label="وصف التغيير المطلوب في العنصر" placeholder="ماذا تريد أن يتغيّر في هذا العنصر؟ (مثال: اجعله أخضر)">
       <button id="pbSend" type="button" title="إرسال للوكيل">إرسال</button>
       <button id="pbCancel" type="button" title="إلغاء" aria-label="إلغاء تحديد العنصر">✕</button>
     </div>
