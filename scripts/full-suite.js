@@ -130,6 +130,8 @@ const SUITE = [
   'test:model-boot-ui',
   'test:sessions-panel',
   'test:question-dialog',
+  'test:dialog-dir',
+  'test:surface-overflow',
   'test:gallery',
   'test:desktop-panel',
   'eval:agent',
