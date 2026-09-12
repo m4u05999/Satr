@@ -82,3 +82,4 @@
 | 73 | [`73-dialog-dir-and-surface-overflow.md`](73-dialog-dir-and-surface-overflow.md) | اتجاه وصف الخيار بـtextDir ومقبض غرفة العمليات داخل الحافة، وحارساهما البكسليان (‏OBS-170/171 — 2026-09-12) | 7.2 ك.ب |
 | 74 | [`74-preview-viewport-evaluate.md`](74-preview-viewport-evaluate.md) | مقاس المعاينة تحت أعين الوكيل: جذر `innerWidth=1` في `browser_evaluate` (‏OBS-175 — 2026-09-12) | 6.5 ك.ب |
 | 72 | [`72-contrast-guard.md`](72-contrast-guard.md) | حارسا التباين — رموز الذهب الفاتح و--text-faint الداكن وعتبة WCAG تُفشل (‏OBS-169/173 — 2026-09-12) | 8.0 ك.ب |
+| 75 | [`75-composer-narrow.md`](75-composer-narrow.md) | المؤلّف في عمود الدردشة الضيّق — منتقي المحرك وشريط الوعي وحارس test:composer-narrow (‏OBS-168/174 — 2026-09-12) | 6.1 ك.ب |
