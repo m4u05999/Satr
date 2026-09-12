@@ -554,9 +554,12 @@
     background: linear-gradient(135deg, var(--chat-answer-surface), var(--surface));
     box-shadow: inset 0 0 0 1px var(--border-dim);
   }
-  .answer-wrap .md { font-size: 15.5px; line-height: 1.85; }
+  /* 16px لا 15.5px: كان الجواب أصغر من فقاعة المستخدم (16px) فبدا «أصغر من البطاقة» (بلاغ
+     المالك 2026-09-13)؛ عمود النثر بوحدة ch فيتمدّد مع الخط ويبقى ≈68 محرفاً للسطر. */
+  .answer-wrap .md { font-size: 16px; line-height: 1.85; }
   /* عمود النثر (--prose-measure): الفقرات والقوائم والاقتباس داخل الإجابة وحدها؛
-     الجداول وكتل الكود والعناوين بالعرض الكامل. RTL ⇒ يبدأ من اليمين ويترك الفراغ يساراً. */
+     الجداول وكتل الكود والعناوين بالعرض الكامل. RTL ⇒ يبدأ من اليمين ويترك الفراغ يساراً —
+     بشرط أن تكون حاوية .md نفسها rtl: chat.js يحسمها إحصائياً لا بـdir=auto (فخّ أول حرف قوي). */
   .answer-wrap .md p, .answer-wrap .md ul, .answer-wrap .md ol, .answer-wrap .md blockquote { max-width: var(--prose-measure); }
   .answer-wrap .md pre, .answer-wrap .md table { max-width: 100%; }
   .history-answer { animation: none; }
