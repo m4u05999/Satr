@@ -772,6 +772,10 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if ($('engine').value === 'kimi-code') checkKimiReady();
     refreshEngineModels();
     lastEngine = $('engine').value;
+    // OBS-172: مسار الاستعادة يلمس <satr-chat> مباشرةً (clearThread/showConversationHistory/
+    // scrollToEnd) لا عبر addNotice وحدها — فانتظر ترقيته مرة واحدة هنا بدل حراسة كل نداء.
+    // الشرط لأن test:model-boot يستخرج هذه الدالة ويشغّلها في Node بلا DOM (لا customElements).
+    if (typeof customElements !== 'undefined') await customElements.whenDefined('satr-chat');
     if (!await restoreCurrentConversation()) await restoreAdapterSession();
     applyGateEngineSwitch(); // القائمة بُنيت الآن — طبّق تصحيح المحرك إن كان الفحص سبقها
   }
@@ -895,7 +899,16 @@ import { createPreviewShield } from './lib/preview-shield.js';
   try { desktopControlOn = localStorage.getItem('satr_desktop_control') === '1'; } catch (e) {}
   // بادئة نصّ desktop.UNAVAILABLE_MESSAGE (يحرس test:desktop-panel وصول النص الحقيقي إشعاراً)
   const DESKTOP_UNAVAILABLE_PREFIX = 'تحكّم سطح المكتب غير متاح';
-  function addNotice(text) { chatEl.addNotice(text); }
+  // OBS-172: `index.html` يحمّل القشرة **قبل** المكوّنات عمداً (تربط مستمعيها قبل الترقية)،
+  // فنداءات الإقلاع قد تبلغ <satr-chat> قبل ترقيته — وعلى حاضن TestSprite يعود جسر IPC
+  // المزيّف في microtask فينفجر `chatEl.addNotice is not a function` ويُبتلع ما بعده.
+  // طابور تأجيل صغير بدل قلب ترتيب التحميل؛ الترتيب محفوظ لأن الوعد واحد والـthen بالتسلسل.
+  let chatUpgraded = typeof chatEl.addNotice === 'function';
+  if (!chatUpgraded) customElements.whenDefined('satr-chat').then(() => { chatUpgraded = true; });
+  function addNotice(text) {
+    if (chatUpgraded) { chatEl.addNotice(text); return; }
+    customElements.whenDefined('satr-chat').then(() => chatEl.addNotice(text));
+  }
   $('cwd').addEventListener('change', () => {
     const cwd = $('cwd').value.trim();
     if (applyingResumedCwd) { lastConversationCwd = cwd; return; }

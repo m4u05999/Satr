@@ -78,3 +78,4 @@
 | 68 | [`68-models-boot-and-preview-controls.md`](68-models-boot-and-preview-controls.md) | إقلاع النماذج وأسقف اللوحات · أزرار المعاينة وقصد المستخدم (2026-09-10) | 2.4 ك.ب |
 | 69 | [`69-computer-use-desktop.md`](69-computer-use-desktop.md) | استعمال الحاسوب — سطح ويندوز: المعين والمراجع والحرّاس والأدوات الثماني (الخطوات ٠–٤، 2026-09-11) | 12.2 ك.ب |
 | 70 | [`70-accessibility-names.md`](70-accessibility-names.md) | أسماء الوصول للأزرار الرمزية والحقول والحاويات (‏OBS-166/167/176 — 2026-09-12) | 6.2 ك.ب |
+| 71 | [`71-boot-order-chat-guard.md`](71-boot-order-chat-guard.md) | ترتيب الإقلاع وحارس `<satr-chat>` — نداءات القشرة قبل ترقية المكوّن (‏OBS-172 — 2026-09-12) | 6.0 ك.ب |
