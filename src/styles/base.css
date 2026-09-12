@@ -13,7 +13,11 @@
     --border-strong: #62605b;  /* sand8 — حدود مُبرزة */
     --text: #eeeeec;           /* sand12 */
     --text-dim: #b5b3ad;       /* sand11 — نص ثانوي بتباين مقروء */
-    --text-faint: #7c7b74;     /* sand10 — أخفت (أرقام أسطر ونحوها) */
+    /* رُفع من #7c7b74 في دفعة التباين (OBS-173): كان 4.45:1 على --bg و4.14:1 على
+       --surface — تحت AA لنصوص تُقرأ فعلاً (.empty-examples-head و.work-meta و.meta).
+       صار 5.38/5.01/4.54:1 على bg/surface/surface-2، ويبقى 1.67:1 تحت --text-dim
+       فالدرجة الثالثة محفوظة. يحرسه npm run test:contrast-tokens */
+    --text-faint: #8a8982;     /* sand10 مرفوع — أخفت (طوابع وميتا وأرقام أسطر) */
     /* الهوية الذهبية — ثابتة */
     --gold: #D9A441;
     --gold-strong: #E5B655;    /* تحويم/توهج */
@@ -101,7 +105,10 @@
        السلّم درجةً: فصل أوضح بين bg/surface/surface-2، وحدود تُرى فعلاً.
        دفعة إصلاح مقاسة (ui:audit مشاهد 22–26): فقاعة الرد كانت 1.07:1 على محيطها،
        وborder-dim 1.17:1 على surface، و--text-faint 3.26:1 على bg، وشريط النجاح
-       3.68:1 — رُفعت كلها فوق عتباتها (انظر CLAUDE.md «نظام التصميم»). */
+       3.68:1 — رُفعت كلها فوق عتباتها (انظر CLAUDE.md «نظام التصميم»).
+       دفعة التباين (OBS-169/173): الذهب نفسه لم يُقَس يومها فبقي تحت AA حتى قِيس هنا
+       (‏--gold و--gold-strong و--on-gold)، وصار لقيم هذه الكتلة حارس ساكن دائم:
+       npm run test:contrast-tokens. */
     --bg: #fdfdfc;             /* sand1 فاتح */
     --surface: #f4f3f1;        /* sand2 — أغمق قليلاً ليفصل الشريط والمؤلّف عن الخلفية */
     --surface-2: #e6e5e2;      /* sand4 — خلفية الأزرار تبرز عن سطحها */
@@ -112,12 +119,20 @@
     --text: #21201c;           /* sand12 */
     --text-dim: #63605b;       /* sand11 — نص ثانوي مقروء */
     --text-faint: #6e6c66;     /* بين sand10/11 — 5.16:1 على bg و4.73:1 على surface (WCAG AA) */
-    /* الهوية الذهبية — مُغمَّقة للتباين على الفاتح (تبقى «ذهباً» بصرياً) */
-    --gold: #9a6a10;
+    /* الهوية الذهبية — مُغمَّقة للتباين على الفاتح (تبقى «ذهباً» بصرياً: الصبغة 39.3°
+       والإشباع 90% كما كانا، اللمعان وحده نزل). دفعة التباين (OBS-169): كان #9a6a10
+       يعطي 4.26/3.75/3.26:1 على surface/-2/-3 و4.39:1 لـ--on-gold عليه — كلها تحت AA
+       ورأس اللوحة مقيساً حياً 4.26:1 (ui:audit مشهد 51). المرشّحات المرفوضة بالقياس:
+       #8a5f0e (3.89 على surface-3) و#80570c (4.40) و#7d560d (4.51 بهامش 0.01 وهو قيمة
+       --ops-review-title نفسها). القيم الآن: --gold 6.11/5.38/4.67:1 و--on-gold عليه 6.30:1.
+       و--gold-strong كان #b07d1a أي 3.56:1 على --bg وهو نصّ في ~12 موضعاً
+       (.prompt-suggestion-label و#browserCtl.active وعناوين لوحة المعاينة): يُعمَّق لا
+       يُفتح — في الفاتح التحويم أقوى بالتعميق عكس الداكن. يحرسه test:contrast-tokens */
+    --gold: #7a540c;
     --on-gold: #fdf6e8;        /* نص فاتح على الذهب الداكن — الداكن يرث #1A1408 على ذهب فاتح */
-    --gold-strong: #b07d1a;
+    --gold-strong: #63450a;
     --gold-soft: rgba(217, 164, 65, 0.16);
-    --gold-border: rgba(154, 106, 16, 0.4);
+    --gold-border: rgba(122, 84, 12, 0.4);
     --chat-user-surface: rgba(154, 106, 16, 0.08);
     --chat-answer-surface: rgba(154, 106, 16, 0.11);
     /* دلالية — أغمق من نسخ الداكن لتقرأ على خلفية فاتحة */
@@ -155,7 +170,7 @@
     color-scheme: dark;
     --bg-deep: #0d0d0c; --bg: #111110; --surface: #191918; --surface-2: #222221; --surface-3: #2a2a28;
     --border-dim: #2a2a28; --border: #3b3a37; --border-strong: #62605b;
-    --text: #eeeeec; --text-dim: #b5b3ad; --text-faint: #7c7b74;
+    --text: #eeeeec; --text-dim: #b5b3ad; --text-faint: #8a8982; /* يطابق الداكن بعد رفع OBS-173 */
     --gold: #D9A441; --gold-strong: #E5B655; --gold-soft: rgba(217, 164, 65, 0.12); --gold-border: rgba(217, 164, 65, 0.35);
     --green: #71d083; --green-soft: rgba(113, 208, 131, 0.12); --green-border: rgba(113, 208, 131, 0.4);
     --red: #ec5d5e; --red-soft: rgba(236, 93, 94, 0.1);
@@ -167,7 +182,9 @@
      القياسية عليها محلياً (انظر preview-panel.js). */
   html[data-theme="light"] satr-preview-panel {
     --pv-console-bg: #111110; --pv-console-surface: #191918; --pv-console-text: #eeeeec;
-    --pv-console-text-dim: #b5b3ad; --pv-console-text-faint: #7c7b74;
+    /* --pv-console-text-faint ينسخ قيمة الداكن نفسها ويُقرأ فعلاً (#pcLog .pc-src)،
+       فيتبع رفع OBS-173: كان 4.45:1 على سطح السجلّ وصار 5.38:1 */
+    --pv-console-text-dim: #b5b3ad; --pv-console-text-faint: #8a8982;
     --pv-console-border: #3b3a37; --pv-console-border-dim: #2a2a28;
     --pv-console-red: #ec5d5e; --pv-console-gold: #D9A441; --pv-console-gold-strong: #E5B655;
     --pv-console-gold-soft: rgba(217, 164, 65, 0.12); --pv-console-gold-border: rgba(217, 164, 65, 0.35);

@@ -38,6 +38,7 @@ const SUITE = [
   'test:memory',
   'test:design-guard',
   'test:a11y-names',
+  'test:contrast-tokens',
   'test:gitdiff',
   'test:gitsafe',
   'test:keys',

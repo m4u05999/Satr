@@ -13,6 +13,11 @@
   صلبة جديدة في CSS (شرط عمل الوضعين معاً).
 - **السلالم الحاكمة**: `--z-base..--z-system` و`--space-0..7` و`--radius-xs..pill` بالقيم
   المرجعية في `docs/DESIGN-SYSTEM.md`. الترحيل عند لمس المكوّن فقط؛ WebContentsView خارج سلم CSS.
+- **حارس التباين (دفعة «تباين الذهب» 2026-09-12)**: `npm run test:contrast-tokens`
+  (`scripts/contrast-tokens-test.js`، داخل `SUITE`) يحسب تباين WCAG لأزواج (نصّ، سطح)
+  معلنة من `base.css` في الوضعين ويسقط تحت العتبة؛ و`npm run ui:audit` صار يُفشل
+  المشهد الذي يهبط زوج فيه تحت عتبته. `design-guard` يمنع اللون الصلب ولا يقيس
+  تبايناً — التفصيل والحدود في `docs/internals/72-contrast-guard.md`.
 - **حارس التصميم الآلي (دفعة «design-guard»)**: `npm run test:design-guard`
   (`scripts/design-guard-test.js`) يفحص src/ui وindex.html: ألوان صلبة خارج tokens،
   ‏z-index رقمية خارج سلّم `--z-*`، وقيم px داخل تصريحات `border-radius` خارج سلّم

@@ -9,6 +9,13 @@
  * ولا تفشل على اختلاف بصري — لذلك هي **خارج test:full** عمداً؛ حراس الانحدار
  * البصري هم الاختبارات الحية (chatcolumn-layout وterminal-tabs وopsroom-ui-live).
  *
+ * منذ الدفعة ب يُفشل المشهد الذي يهبط زوج فيه تحت عتبته: assertContrast تُعلّم السطر
+ * بـ✓/✗ وcapture ترمي خطأً بعد طباعة السطور، فيُعدّ المشهد ✗ ويعود الأمر بـ1. العتبة
+ * 4.5:1 للنصّ العادي و3.0:1 للنصّ الكبير (≥24px أو ≥18.66px بوزن ≥700 — محسوب من
+ * getComputedStyle)، والعنصر المعطَّل (:disabled/[aria-disabled=true]/.disabled) يُطبع
+ * «مستثنى: معطَّل» ولا يُحتسب. يبقى خارج SUITE (‏Electron على CI لينكس مكلف) — الحارس
+ * الساكن لقيم الرموز هو npm run test:contrast-tokens، وهذا يحرس ما يُرسم فعلاً.
+ *
  * التشغيل:
  *   npm run ui:audit              كل المشاهد
  *   npm run ui:audit -- light     المشاهد التي يطابق اسمها «light»
@@ -102,6 +109,30 @@ function effBg(el) {
 }
 const fmt = (c) => 'rgb(' + Math.round(c.r) + ',' + Math.round(c.g) + ',' + Math.round(c.b) + (c.a < 1 ? '/' + c.a.toFixed(2) : '') + ')';
 const out = [];
+// تأكيد التباين (الدفعة ب): السطر المخالف يبدأ بالعلامة التي تلتقطها capture فترمي
+// خطأً بعد الطباعة. العتبة 4.5 للنصّ العادي و3.0 للكبير — لا عتبة عائمة.
+const FAIL_MARK = '✗ تباين';
+function assertContrast(label, fg, bg, min) {
+  const ratio = contrast(fg, bg);
+  const ok = ratio >= min;
+  out.push((ok ? '✓ ' : FAIL_MARK + ' ') + label + ': ' + fmt(fg) + ' على ' + fmt(bg)
+    + ' = ' + ratio.toFixed(2) + ':1 (العتبة ' + min.toFixed(1) + ')');
+  return ratio;
+}
+// العتبة من حجم الخطّ ووزنه كما يرسمهما المتصفح فعلاً، والمعطَّل مستثنى صراحةً
+function assertContrastEl(label, el, bg) {
+  if (!el) { out.push('✗ ' + label + ': العنصر غائب'); return null; }
+  if (el.matches && el.matches(':disabled, [aria-disabled="true"], .disabled')) {
+    out.push('⊘ ' + label + ': مستثنى — معطَّل'); return null;
+  }
+  const cs = getComputedStyle(el);
+  const size = parseFloat(cs.fontSize) || 0;
+  const weight = parseInt(cs.fontWeight, 10) || 400;
+  const large = size >= 24 || (size >= 18.66 && weight >= 700);
+  const behind = bg || effBg(el) || backdropOf(el);
+  return assertContrast(label + ' (' + size.toFixed(1) + 'px' + (large ? '، كبير' : '') + ')',
+    parseColor(cs.color), behind, large ? 3 : 4.5);
+}
 `;
 
 // الرد النموذجي لقرائية الردود — يُقرأ من fixture حارس test:chat-md (نسخة واحدة).
@@ -142,6 +173,11 @@ const READABILITY_BODY = MEASURE + `
   describe('blockquote', md.querySelector('blockquote'));
   describe('link-url', md.querySelector('.md-link-url'));
   describe('th', md.querySelector('th'));
+  // التأكيد (الدفعة ب): كل نصّ في الرد على خلفية الفقاعة بعتبته من حجمه ووزنه
+  for (const sel of ['h2', 'h3', 'h4', 'p', 'blockquote', '.md-link-url', 'th']) {
+    const el = md.querySelector(sel);
+    if (el) assertContrastEl('نصّ الرد ' + sel, el, bg);
+  }
   // محارف السطر من عرض الحبر الفعلي، بطريقة test:chat-md نفسها (قسمة العدد الكلي على
   // الأسطر تضلّل لأن السطر الأخير ناقص)
   const p = md.querySelector('p');
@@ -180,11 +216,8 @@ const LOOP_REVIEW_BODY = `
   const review = card.querySelector('.loop-review');
   if (!review) { out.push('✗ لم يظهر قسم المراجعة النوعية'); return out; }
   const reviewBg = effBg(review);
-  const measureLine = (el, label) => {
-    if (!el) { out.push(label + ': ✗ العنصر غائب'); return; }
-    const c = parseColor(getComputedStyle(el).color);
-    out.push(label + ': ' + fmt(c) + ' على ' + fmt(reviewBg) + ' = ' + contrast(c, reviewBg).toFixed(2) + ':1');
-  };
+  // الدفعة ب: القياس صار تأكيداً — نصوص بطاقة المراجعة على خلفيتها بعتبة حجمها
+  const measureLine = (el, label) => { assertContrastEl(label, el, reviewBg); };
   out.push('خلفية قسم المراجعة: ' + fmt(reviewBg));
   measureLine(review.querySelector('.loop-review-title'), 'العنوان');
   const stateEl = review.querySelector('.loop-review-state');
@@ -288,12 +321,8 @@ const DESKTOP_MEASURE = `
   // خلفية اللوحة من المضيف نفسه: عنصر داخل Shadow بلا أب عنصري، فـbackdropOf يسقط إلى الأبيض ويكذب
   const panelBg = parseColor(getComputedStyle(dHost).backgroundColor) || tok("--surface");
   const behindOf = (el) => effBg(el.closest(".card")) || panelBg;
-  const line = (label, el, bg) => {
-    if (!el) { out.push(label + ": ✗ غائب"); return; }
-    const c = parseColor(getComputedStyle(el).color);
-    const behind = bg || behindOf(el);
-    out.push(label + ": " + fmt(c) + " على " + fmt(behind) + " = " + contrast(c, behind).toFixed(2) + ":1");
-  };
+  // الدفعة ب: نصوص اللوحة تُؤكَّد لا تُطبع فقط (رأس اللوحة كان 4.26:1 بالذهب القديم)
+  const line = (label, el, bg) => { assertContrastEl(label, el, bg || (el ? behindOf(el) : null)); };
   out.push("خلفية اللوحة: " + fmt(panelBg));
   line("رأس اللوحة", dRoot.querySelector(".panel-head"), panelBg);
   line("عنوان البطاقة", dRoot.querySelector(".control .title"));
@@ -434,6 +463,15 @@ const SHOTS = [
       out.push('السلّم: bg ' + fmt(bg) + ' · surface ' + fmt(s1) + ' · surface-2 ' + fmt(s2) + ' · surface-3 ' + fmt(s3));
       out.push('فصل الأسطح: bg/surface ' + contrast(bg, s1).toFixed(2) + ':1 · surface/2 ' + contrast(s1, s2).toFixed(2) + ':1 · 2/3 ' + contrast(s2, s3).toFixed(2) + ':1');
       out.push('الحدود على surface: border-dim ' + contrast(bd, s1).toFixed(2) + ':1 · border ' + contrast(b, s1).toFixed(2) + ':1');
+      // التأكيد (الدفعة ب): الذهب النصّي على أشدّ ثلاثة أسطح — هذا ما كان يسقط في OBS-169
+      assertContrast('--gold على surface', tok('--gold'), s1, 4.5);
+      assertContrast('--gold على surface-2', tok('--gold'), s2, 4.5);
+      assertContrast('--gold على surface-3', tok('--gold'), s3, 4.5);
+      assertContrast('--gold-strong على surface-3', tok('--gold-strong'), s3, 4.5);
+      // الحدّ فصل بصري لا قراءة: الأساس 1.5 كما في test:contrast-tokens.
+      // و--border-dim مستثنى تشخيصياً بسبب مكتوب: «فواصل خافتة» عمداً (‏1.34:1 مقيسة)،
+      // وظيفتها إيحاء بالفصل لا إبرازه — رفعها يحوّلها إلى --border فتضيع الدرجتان.
+      assertContrast('--border على surface', b, s1, 1.5);
       return out;
     `,
   },
@@ -448,12 +486,10 @@ const SHOTS = [
       await new Promise((r) => setTimeout(r, 400));
       const faint = tok('--text-faint');
       out.push('--text-faint ' + fmt(faint) + ' على bg ' + contrast(faint, tok('--bg')).toFixed(2) + ':1 · على surface ' + contrast(faint, tok('--surface')).toFixed(2) + ':1 (المعيار ≥4.5:1)');
+      assertContrast('--text-faint على bg', faint, tok('--bg'), 4.5);
+      assertContrast('--text-faint على surface', faint, tok('--surface'), 4.5);
       const meta = document.querySelector('.meta');
-      if (meta) {
-        const c = parseColor(getComputedStyle(meta).color);
-        const behind = backdropOf(meta);
-        out.push('.meta فعلياً: ' + fmt(c) + ' على ' + fmt(behind) + ' = ' + contrast(c, behind).toFixed(2) + ':1');
-      }
+      if (meta) assertContrastEl('.meta فعلياً', meta, backdropOf(meta));
       return out;
     `,
   },
@@ -466,9 +502,7 @@ const SHOTS = [
       banner.className = 'ok';
       banner.textContent = 'تم حفظ المفتاح بنجاح';
       await new Promise((r) => setTimeout(r, 50));
-      const fg = parseColor(getComputedStyle(banner).color);
-      const bgEff = effBg(banner);
-      out.push('#banner.ok: نص ' + fmt(fg) + ' على ' + fmt(bgEff) + ' = ' + contrast(fg, bgEff).toFixed(2) + ':1 (المعيار ≥4.5:1)');
+      assertContrastEl('#banner.ok', banner, effBg(banner));
       return out;
     `,
   },
@@ -893,14 +927,8 @@ const SHOTS = [
       const badge = root.querySelector('.auto-mode-badge');
       const stopAuto = root.querySelector('.auto-mode-stop');
       out.push('الشارة ظاهرة: ' + !!(badge && !badge.hidden) + ' · زر الإطفاء ظاهر: ' + !!(stopAuto && !stopAuto.hidden));
-      if (badge && !badge.hidden) {
-        const badgeContrast = contrast(parseColor(getComputedStyle(badge).color), effBg(badge));
-        out.push('تباين شارة «آلي» في الفاتح: ' + badgeContrast.toFixed(2) + ':1');
-      }
-      if (stopAuto && !stopAuto.hidden) {
-        const stopContrast = contrast(parseColor(getComputedStyle(stopAuto).color), effBg(stopAuto));
-        out.push('تباين زر الإطفاء في الفاتح: ' + stopContrast.toFixed(2) + ':1');
-      }
+      if (badge && !badge.hidden) assertContrastEl('شارة «آلي» في الفاتح', badge, effBg(badge));
+      if (stopAuto && !stopAuto.hidden) assertContrastEl('زر الإطفاء في الفاتح', stopAuto, effBg(stopAuto));
       return out;
     `,
   },
@@ -982,6 +1010,12 @@ async function capture(win, shot, url) {
   fs.writeFileSync(path.join(OUT, shot.out + '.png'), image.toPNG());
   const size = image.getSize();
   if (Array.isArray(measures)) for (const line of measures) console.log('  ▸', line);
+  // الدفعة ب: المشهد الذي هبط زوج فيه تحت عتبته يُعدّ ✗ (بعد طباعة سطوره كاملة —
+  // الرمي قبل الطباعة يخفي الدليل الذي من أجله وُجد المشهد)
+  const failures = Array.isArray(measures)
+    ? measures.filter((line) => typeof line === 'string' && line.startsWith('✗ تباين'))
+    : [];
+  if (failures.length) throw new Error('تباين تحت العتبة (' + failures.length + '): ' + failures[0].replace('✗ تباين ', ''));
   return size.width + 'x' + size.height;
 }
 
