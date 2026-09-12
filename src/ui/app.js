@@ -1715,7 +1715,10 @@ import { createPreviewShield } from './lib/preview-shield.js';
         const eng = $('engine').value;
         if (eng === 'sdk' || eng === 'cli' || eng === 'codex' || eng === 'kimi-code') {
           const name = eng === 'codex' ? 'Codex' : eng === 'kimi-code' ? 'Kimi Code' : 'Claude Code';
-          block.error('فشل تشغيل أمر ' + name + ' — تأكد أنه مثبت ومسجّل دخوله.\n' + (ev.text || ''));
+          // OBS-189: حين يصنّف المحرك الرفض (quota/rpc) فالنصّ الأصلي هو الرسالة؛ تلميح «مثبت ومسجّل
+          // دخوله» كان يُلصق حتى على نفاد الحصة فيُضلّل المستخدم إلى إعادة تسجيل الدخول بلا جدوى.
+          if (ev.kind && ev.kind !== 'auth' && ev.text) block.error(ev.text);
+          else block.error('فشل تشغيل أمر ' + name + ' — تأكد أنه مثبت ومسجّل دخوله.\n' + (ev.text || ''));
         } else {
           block.error(ev.text || ('تعذّر الاتصال بـ ' + engineLabel() + '.'));
         }

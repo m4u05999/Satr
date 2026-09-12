@@ -192,6 +192,40 @@ function scrubError(value) {
   return scrubStreamText(value, 4000);
 }
 
+// OBS-189: كان كل خطأ JSON-RPC برمز -32000 يُترجَم إلى «غير مسجَّل الدخول» ويُرمى نصّ كيمي الأصلي،
+// فبدا نفاد الحصة/الحدّ بعد الاستعمال الكثيف عطلَ دخول بينما `kimi login` يقول إن الدخول سليم.
+// التصنيف بالنصّ لا بالرمز وحده، والنصّ الأصلي يصل المستخدم دائماً (محجوب الأسرار ومقصوصاً).
+const AUTH_RE = /unauthori[sz]ed|not logged|login|auth|credential|token expired|invalid token|\b401\b|sign[- ]?in/i;
+const QUOTA_RE = /quota|rate[- ]?limit|too many|\b429\b|exhaust|insufficient|balance|usage limit|capacity|overload|\b503\b|try again later/i;
+function describeRpcFailure(error, phase) {
+  const raw = scrubError(error && error.message ? String(error.message) : '');
+  const code = error && Number.isFinite(error.code) ? error.code : null;
+  const detail = raw && raw !== 'rpc_error' ? raw : '';
+  const codeText = code != null ? ' (رمز ' + code + ')' : '';
+  if (code === -32000 && (!detail || AUTH_RE.test(detail)) && !QUOTA_RE.test(detail)) {
+    return { kind: 'auth', text: 'Kimi Code غير مسجَّل الدخول. شغّل `kimi login` في طرفية سطر ثم أعد المحاولة.' + (detail ? '\nرسالة Kimi: ' + detail : '') };
+  }
+  if (QUOTA_RE.test(detail)) {
+    return { kind: 'quota', text: 'رفض Kimi Code الطلب' + codeText + ' — يبدو أنه حدّ استعمال أو حصة لا خطأ دخول: ' + detail
+      + '\nانتظر نافذة الاستعمال أو بدّل النموذج (K2.7 بدل K3)؛ لا تعد تسجيل الدخول.' };
+  }
+  const verb = phase === 'prompt' ? 'تعذّر بدء دور Kimi Code' : 'تعذّر تهيئة Kimi Code';
+  return { kind: 'rpc', text: verb + codeText + ': ' + (detail || 'خطأ بلا نصّ') };
+}
+// سطر تشخيصي دائم لكل رفض من كيمي (الرمز والنصّ المحجوب والمرحلة) — كان الخطأ يضيع مع إغلاق سطر
+// فلا يُعرف بعد يومين لماذا «توقف كيمي». السقف: الملف يُقصّ عند 512 ك.ب.
+function recordEngineError(phase, error, kind) {
+  try {
+    const dir = path.join(os.homedir(), '.satr');
+    const file = path.join(dir, 'engine-errors.log');
+    fs.mkdirSync(dir, { recursive: true });
+    try { if (fs.statSync(file).size > 512 * 1024) fs.writeFileSync(file, ''); } catch (statError) { /* لا ملف بعد */ }
+    const line = [new Date().toISOString(), 'kimi', phase, kind, error && error.code != null ? 'code=' + error.code : 'code=-',
+      scrubError(error && error.message ? String(error.message) : '').replace(/\s+/g, ' ').slice(0, 600)].join(' | ');
+    fs.appendFileSync(file, line + '\n');
+  } catch (writeError) { /* التشخيص لا يكسر الدور */ }
+}
+
 function scrubStreamText(value, max) {
   // K5-أ: الحجب عبر البوابة المشتركة secretscrub (JWT/Bearer/PEM/AWS/GitHub/Slack
   // فوق النمطين القائمين)، والقص يبقى هنا مسؤولية المستهلك.
@@ -1296,10 +1330,9 @@ function create(deps) {
           if (!finished) {
             finished = true;
             emitAssistantMessages();
-            const message = error && error.code === -32000
-              ? 'Kimi Code غير مسجَّل الدخول. شغّل `kimi login` في طرفية سطر ثم أعد المحاولة.'
-              : 'تعذّر بدء دور Kimi Code: ' + scrubError(error && error.message);
-            emit({ type: 'spawn_error', text: message });
+            const failure = describeRpcFailure(error, 'prompt');
+            recordEngineError('prompt', error, failure.kind);
+            emit({ type: 'spawn_error', text: failure.text, kind: failure.kind });
             emit({ type: 'result', subtype: 'error', is_error: true, session_id: sessionId, duration_ms: Date.now() - startedAt });
           }
           destroyChannel(1);
@@ -1307,10 +1340,9 @@ function create(deps) {
       } catch (error) {
         if (!finished) {
           finished = true;
-          const message = error && error.code === -32000
-            ? 'Kimi Code غير مسجَّل الدخول. شغّل `kimi login` في طرفية سطر ثم أعد المحاولة.'
-            : 'تعذّر تهيئة Kimi Code: ' + scrubError(error && error.message);
-          emit({ type: 'spawn_error', text: message });
+          const failure = describeRpcFailure(error, 'init');
+          recordEngineError('init', error, failure.kind);
+          emit({ type: 'spawn_error', text: failure.text, kind: failure.kind });
           emit({ type: 'result', subtype: 'error', is_error: true, session_id: sessionId, duration_ms: Date.now() - startedAt });
         }
         destroyChannel(1);
@@ -1638,6 +1670,6 @@ module.exports = {
   _internals: {
     inside, safeExistingPath, safeWritablePath, safePlanPath, selectedOutcome, spawnKimi, scrubError,
     buildSatrMcpTools, configOptionValues, configValue, parseUsageText, parseCompactionText,
-    toolLabel, isEmbeddedMcpTool, loginCommand, loginCwd,
+    toolLabel, isEmbeddedMcpTool, loginCommand, loginCwd, describeRpcFailure,
   },
 };
