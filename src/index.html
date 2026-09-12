@@ -224,7 +224,10 @@
   </div>
   <!-- شريط الوعي: ما لا يظهر في صف المحرك/النموذج أعلاه فقط — أُزيل «model:» المكرّر
        (منتقي النموذج بجواره يعرض الاسم الكامل)، وعُرّبت التسميات (القاعدة 3) -->
-  <div id="awarenessBar" class="awareness-bar" role="status" aria-label="حالة الدور الحالية">
+  <!-- role=group لا status (OBS-188، قرار المالك ٤): أزرار التدوير الأربعة أدناه يغيّر
+       نقرها نصّها، فـstatus يجعل الشريط منطقة حيّة تُعلَن عند كل نقرة — ضجيج لا خبر.
+       group يُبقي aria-label اسماً للمجموعة بلا إعلان تلقائي. لا تُضِف aria-live. -->
+  <div id="awarenessBar" class="awareness-bar" role="group" aria-label="حالة الدور الحالية">
     <button id="awarenessEffort" type="button" title="تدوير جهد التفكير">الجهد: الافتراضي</button>
     <span aria-hidden="true">·</span>
     <button id="awarenessThinking" type="button" title="تفعيل/تعطيل التفكير الحي (Kimi Code)">التفكير: —</button>
