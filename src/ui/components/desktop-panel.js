@@ -96,7 +96,7 @@ class SatrDesktopPanel extends HTMLElement {
         '<span>🪟 سطح ويندوز</span>' +
         '<span class="panel-head-actions">' +
           '<button class="refresh" type="button" title="حدّث قائمة النوافذ">تحديث</button>' +
-          '<button class="close" type="button" title="إغلاق">✕</button>' +
+          '<button class="close" type="button" title="إغلاق" aria-label="إغلاق لوحة سطح ويندوز">✕</button>' +
         '</span>' +
       '</div>' +
       '<div class="desktop-content">' +
