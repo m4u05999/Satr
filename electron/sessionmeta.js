@@ -66,17 +66,52 @@ function createStore(options = {}) {
     } catch (error) {}
   }
 
+  /**
+   * كتابة ذرية بإعادة محاولة للاستبدال (‏OBS-199). المقيس على ويندوز: فاحص الملفات
+   * (أو أي قارئ لحظي) يمسك الملف الهدف فيسقط `renameSync` بـ`EPERM`/`EBUSY` عشوائياً —
+   * أول سقوط عند المدخل 149–190 في `C:\Temp`، ولا سقوط إطلاقاً على `D:` ولا حين يُبطَّأ
+   * fs بغلاف. العلاج: حتى 5 محاولات بتراجع **متزامن** (10/20/40/80/160 م.ث) — الدالة
+   * متزامنة وعقدها لا يتغيّر، فلا `await` هنا. الفشل النهائي يبقى `false` مع حفظ رمز
+   * الخطأ الأخير في `lastPersistCode` كي تحمله نتائج `write_failed`.
+   */
+  const RENAME_RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY']);
+  const RENAME_BACKOFF_MS = [10, 20, 40, 80, 160];
+  let lastPersistCode = null;
+
+  // نوم متزامن بلا اعتمادية: Atomics.wait على مخزن مشترك (الخيط الرئيسي مسموح له هنا).
+  function sleepSync(ms) {
+    try {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    } catch (error) {}
+  }
+
   function persist() {
     const temp = file + '.tmp-' + process.pid + '-' + Date.now();
+    lastPersistCode = null;
     try {
       io.mkdirSync(path.dirname(file), { recursive: true });
       io.writeFileSync(temp, JSON.stringify(entries, null, 2), 'utf8');
-      io.renameSync(temp, file);
-      return true;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          io.renameSync(temp, file);
+          return true;
+        } catch (renameError) {
+          const code = renameError && renameError.code ? renameError.code : null;
+          lastPersistCode = code;
+          if (attempt >= RENAME_BACKOFF_MS.length || !RENAME_RETRY_CODES.has(code)) throw renameError;
+          sleepSync(RENAME_BACKOFF_MS[attempt]);
+        }
+      }
     } catch (error) {
+      if (!lastPersistCode) lastPersistCode = error && error.code ? error.code : null;
       try { io.unlinkSync(temp); } catch (cleanupError) {}
       return false;
     }
+  }
+
+  // نتيجة فشل كتابة موحّدة: العقد نفسه + `code` بالرمز الأصلي حين يوفّره النظام.
+  function writeFailed() {
+    return { ok: false, error: 'write_failed', code: lastPersistCode };
   }
 
   function list() {
@@ -135,7 +170,7 @@ function createStore(options = {}) {
       if (before) entries[sessionId] = before;
       else delete entries[sessionId];
       for (const [id, entry] of evicted) entries[id] = entry;
-      return { ok: false, error: 'write_failed' };
+      return writeFailed();
     }
     return { ok: true, entry: entries[sessionId] ? { ...entries[sessionId] } : null };
   }
@@ -177,7 +212,7 @@ function createStore(options = {}) {
       if (before) entries[sessionId] = before;
       else delete entries[sessionId];
       for (const [id, entry] of evicted) entries[id] = entry;
-      return { ok: false, error: 'write_failed' };
+      return writeFailed();
     }
     return { ok: true, entry: { ...entries[sessionId] } };
   }
@@ -188,7 +223,7 @@ function createStore(options = {}) {
     if (!(sessionId in entries)) return { ok: true, removed: false };
     const before = { ...entries[sessionId] };
     delete entries[sessionId];
-    if (!persist()) { entries[sessionId] = before; return { ok: false, error: 'write_failed' }; }
+    if (!persist()) { entries[sessionId] = before; return writeFailed(); }
     return { ok: true, removed: true };
   }
 

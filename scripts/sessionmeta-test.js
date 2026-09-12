@@ -156,10 +156,38 @@ try {
   };
   const rollback = sessionmeta.createStore({ file: path.join(root, 'rollback.json'), fs: failingFs });
   const rollbackBefore = rollback.list();
+  // خطأ بلا رمز (Error عادي) ⇒ code: null، ولا إعادة محاولة لأنه ليس من أصناف القفل العابر
   assert.deepStrictEqual(rollback.set('rollback-overflow', { pinned: true }),
-    { ok: false, error: 'write_failed' });
+    { ok: false, error: 'write_failed', code: null });
   assert.deepStrictEqual(rollback.list(), rollbackBefore,
     'فشل persist بعد الإخلاء لم يُعِد لقطة المخزن كاملة');
+
+  // OBS-199: قفل عابر على الملف الهدف (فاحص ملفات ويندوز) — rename يفشل مرتين بـEPERM ثم
+  // ينجح ⇒ الكتابة تمرّ بثلاث محاولات؛ وفشل دائم ⇒ write_failed يحمل الرمز الأصلي.
+  function epermFs(failures) {
+    const state = { renames: 0 };
+    return {
+      state,
+      readFileSync() { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); },
+      mkdirSync() {},
+      writeFileSync() {},
+      renameSync() {
+        state.renames += 1;
+        if (state.renames <= failures) throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+      },
+      unlinkSync() {},
+    };
+  }
+  const transient = epermFs(2);
+  const transientStore = sessionmeta.createStore({ file: path.join(root, 'transient.json'), fs: transient });
+  assert.strictEqual(transientStore.setKind('transient-session', 'tool').ok, true,
+    'قفل عابر مرتين على rename يجب أن يُتجاوز بإعادة المحاولة (OBS-199)');
+  assert.strictEqual(transient.state.renames, 3, 'عدد محاولات rename عند فشلين عابرين يجب أن يكون 3 — وجد ' + transient.state.renames);
+  const permanent = epermFs(Infinity);
+  const permanentStore = sessionmeta.createStore({ file: path.join(root, 'permanent.json'), fs: permanent });
+  assert.deepStrictEqual(permanentStore.setKind('permanent-session', 'tool'),
+    { ok: false, error: 'write_failed', code: 'EPERM' }, 'الفشل الدائم يحمل رمز الخطأ الأصلي');
+  assert.strictEqual(permanent.state.renames, 6, 'محاولة أولى + خمس إعادات = 6 — وجد ' + permanent.state.renames);
 
   const cappedFile = path.join(root, 'cap.json');
   const seed = {};
