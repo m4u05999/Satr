@@ -1,0 +1,366 @@
+{
+  "scenario": "step5",
+  "note": "أدلة حقيقية مقصوصة من تشغيل 2026-09-12 للسائق الشخصي (8/8). القص: أوامر PowerShell في تفاصيل الإذن استُبدلت بوصف، والصور والحقول التي لا يقرأها judge حُذفت.",
+  "startedAt": "2026-09-12T16:08:52.121Z",
+  "finishedAt": "2026-09-12T16:11:12.559Z",
+  "exe": "D:\\sater\\desktop-step5-accept\\build\\win-unpacked\\Satr.exe",
+  "profile": "D:\\sater\\accept-driver\\profile",
+  "note_file": "D:\\sater\\accept-driver\\step5.txt",
+  "storageReset": [
+    "satr_desktop_control=1"
+  ],
+  "storageKept": false,
+  "promptSent": "اكتب في المفكرة المختارة السطر التالي ثم احفظه بـCtrl+S: سطر القبول الآلي 19:09:00",
+  "fileBefore": "سطر القبول الأول — كتبه محمد قبل بدء التجربة.\n",
+  "fileAfter": "سطر القبول الأول — كتبه محمد قبل بدء التجربة.\nسطر القبول الآلي 19:09:00",
+  "shell": {
+    "model": "default",
+    "cwd": "",
+    "engine": "sdk"
+  },
+  "cost": "هذه الجلسة · إدخال 32 · إخراج 4,495 · من المخبّأ 646 ألف · الكلفة التقديرية: ~$0.7313",
+  "consoleErrors": [],
+  "exceptions": [],
+  "questions": [],
+  "perms": [
+    {
+      "k": 1,
+      "tool": "mcp__satr-desktop__desktop_targets",
+      "alwaysHidden": false,
+      "turnHidden": false,
+      "detail": "النافذة: المفكرة (w9) «step5 - Notepad»",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:09:07",
+      "shot": "perm-1.png"
+    },
+    {
+      "k": 2,
+      "tool": "mcp__satr-desktop__desktop_snapshot",
+      "alwaysHidden": false,
+      "turnHidden": false,
+      "detail": "النافذة: المفكرة (w9) «step5 - Notepad»",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:09:09",
+      "shot": "perm-2.png"
+    },
+    {
+      "k": 3,
+      "tool": "PowerShell",
+      "alwaysHidden": false,
+      "turnHidden": false,
+      "detail": "(أمر PowerShell — مقصوص من الـfixture)",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:09:48",
+      "shot": "perm-3.png"
+    },
+    {
+      "k": 4,
+      "tool": "PowerShell",
+      "alwaysHidden": false,
+      "turnHidden": false,
+      "detail": "(أمر PowerShell — مقصوص من الـfixture)",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:10:13",
+      "shot": "perm-4.png"
+    },
+    {
+      "k": 5,
+      "tool": "mcp__satr-desktop__desktop_press_key",
+      "alwaysHidden": true,
+      "turnHidden": false,
+      "detail": "النافذة: المفكرة (w9) «step5 - Notepad»\nالمفاتيح: Ctrl+A",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:10:16",
+      "shot": "perm-5.png"
+    },
+    {
+      "k": 6,
+      "tool": "mcp__satr-desktop__desktop_press_key",
+      "alwaysHidden": true,
+      "turnHidden": false,
+      "detail": "النافذة: المفكرة (w9) «step5 - Notepad»\nالمفاتيح: Ctrl+C",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:10:19",
+      "shot": "perm-6.png"
+    },
+    {
+      "k": 7,
+      "tool": "PowerShell",
+      "alwaysHidden": false,
+      "turnHidden": false,
+      "detail": "(أمر PowerShell — مقصوص من الـfixture)",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:10:25",
+      "shot": "perm-7.png"
+    },
+    {
+      "k": 8,
+      "tool": "mcp__satr-desktop__desktop_snapshot",
+      "alwaysHidden": false,
+      "turnHidden": false,
+      "detail": "النافذة: المفكرة (w9) «step5 - Notepad»",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:10:41",
+      "shot": "perm-8.png"
+    },
+    {
+      "k": 9,
+      "tool": "mcp__satr-desktop__desktop_type",
+      "alwaysHidden": true,
+      "turnHidden": false,
+      "detail": "النافذة: المفكرة (w9) «step5 - Notepad»\nالعنصر: w2:e2 — edit «Text Editor»\nالنص المراد كتابته: \"سطر القبول الأول — كتبه محمد قبل بدء التجربة.\\nسطر القبول الآلي 19:09:00\"",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:10:44",
+      "shot": "perm-9.png"
+    },
+    {
+      "k": 10,
+      "tool": "mcp__satr-desktop__desktop_press_key",
+      "alwaysHidden": true,
+      "turnHidden": false,
+      "detail": "النافذة: المفكرة (w9) «step5 - Notepad»\nالمفاتيح: Ctrl+S",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:10:46",
+      "shot": "perm-10.png"
+    },
+    {
+      "k": 11,
+      "tool": "mcp__satr-desktop__desktop_snapshot",
+      "alwaysHidden": false,
+      "turnHidden": false,
+      "detail": "النافذة: المفكرة (w9) «step5 - Notepad»",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:10:48",
+      "shot": "perm-11.png"
+    },
+    {
+      "k": 12,
+      "tool": "PowerShell",
+      "alwaysHidden": false,
+      "turnHidden": false,
+      "detail": "(أمر PowerShell — مقصوص من الـfixture)",
+      "clicked": true,
+      "verdict": "allow",
+      "at": "19:10:57",
+      "shot": "perm-12.png"
+    }
+  ],
+  "steps": {
+    "1": {
+      "toggleHidden": false,
+      "shot": "step-1.png"
+    },
+    "2": {
+      "open": true,
+      "targets": [
+        {
+          "label": "مستكشف الملفات",
+          "title": "Activate Windows.Go to Settings to activate Windows.",
+          "id": "w1"
+        },
+        {
+          "label": "shellexperiencehost",
+          "title": "New notification",
+          "id": "w2"
+        },
+        {
+          "label": "مستكشف الملفات",
+          "title": "Task Switcher",
+          "id": "w3"
+        },
+        {
+          "label": "مستكشف الملفات",
+          "title": "Taskbar",
+          "id": "w4"
+        },
+        {
+          "label": "wispr flow",
+          "title": "Status",
+          "id": "w5"
+        },
+        {
+          "label": "المفكرة",
+          "title": "step5 - Notepad",
+          "id": "w9"
+        },
+        {
+          "label": "مستكشف الملفات",
+          "title": "Downloads",
+          "id": "w12"
+        },
+        {
+          "label": "مستكشف الملفات",
+          "title": "docs",
+          "id": "w16"
+        },
+        {
+          "label": "svchost",
+          "title": "(بلا عنوان)",
+          "id": "w17"
+        },
+        {
+          "label": "مستكشف الملفات",
+          "title": "Program Manager",
+          "id": "w18"
+        }
+      ],
+      "fixed": "نوافذ النظام ونافذة سطر والمصغّرة لا تُعرض.",
+      "shot": "step-2.png"
+    },
+    "3": {
+      "toggleText": "🪟 سطح ويندوز ●",
+      "enabled": true,
+      "state": "مفعّل — يُسجَّل للجلسة التي تبدأ به",
+      "normalized": true,
+      "notices": [
+        "🪟 فُعّل تحكّم سطح المكتب — يُسجَّل مع رسالتك التالية. اختر نافذة من اللوحة قبل الإرسال، وكل فعل يُسأل عنه."
+      ],
+      "shot": "pre-step-3.png"
+    },
+    "4": {
+      "sendText": "إرسال",
+      "inputValue": "اكتب سطراً في المفكرة واحفظ",
+      "engine": "sdk",
+      "notices": [
+        "🪟 تحكّم سطح المكتب مفعّل ولم تُختر نافذة — اختر نافذة أولاً. لم يُرسل الطلب.افتح لوحة سطح ويندوز"
+      ],
+      "shot": "step-4.png"
+    },
+    "5": {
+      "selectedText": "المختارة: المفكرة «step5 - Notepad» w9",
+      "shot": "step-5.png"
+    },
+    "6": {
+      "turnEnded": true,
+      "panelLog": [
+        {
+          "time": "19:09:09",
+          "text": "قُرئت شجرة نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "time": "19:10:16",
+          "text": "ضُغط Ctrl+A في نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "time": "19:10:19",
+          "text": "ضُغط Ctrl+C في نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "time": "19:10:41",
+          "text": "قُرئت شجرة نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "time": "19:10:44",
+          "text": "كُتب نص (الطول 71) في [Text Editor] في نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "time": "19:10:46",
+          "text": "ضُغط Ctrl+S في نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "time": "19:10:48",
+          "text": "قُرئت شجرة نافذة المفكرة",
+          "dir": "rtl"
+        }
+      ],
+      "chatLines": [
+        {
+          "text": "قُرئت شجرة نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "text": "ضُغط Ctrl+A في نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "text": "ضُغط Ctrl+C في نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "text": "قُرئت شجرة نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "text": "كُتب نص (الطول 71) في [Text Editor] في نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "text": "ضُغط Ctrl+S في نافذة المفكرة",
+          "dir": "rtl"
+        },
+        {
+          "text": "قُرئت شجرة نافذة المفكرة",
+          "dir": "rtl"
+        }
+      ],
+      "toolNames": [
+        "ToolSearch",
+        "mcp__satr-desktop__desktop_targets",
+        "mcp__satr-desktop__desktop_snapshot",
+        "Glob",
+        "Glob",
+        "PowerShell",
+        "PowerShell",
+        "mcp__satr-desktop__desktop_press_key",
+        "mcp__satr-desktop__desktop_press_key",
+        "PowerShell",
+        "mcp__satr-desktop__desktop_snapshot",
+        "mcp__satr-desktop__desktop_type",
+        "mcp__satr-desktop__desktop_press_key",
+        "mcp__satr-desktop__desktop_snapshot",
+        "PowerShell"
+      ],
+      "notices": [
+        "🪟 تحكّم سطح المكتب مفعّل ولم تُختر نافذة — اختر نافذة أولاً. لم يُرسل الطلب.افتح لوحة سطح ويندوز",
+        "🪟 اختيرت نافذة المفكرة (w9) لهذه الجلسة وحدها.",
+        "✓ تمت الموافقة على أداة mcp__satr-desktop__desktop_targets",
+        "✓ تمت الموافقة على أداة mcp__satr-desktop__desktop_snapshot",
+        "✓ تمت الموافقة على أداة PowerShell",
+        "✓ تمت الموافقة على أداة PowerShell",
+        "✓ تمت الموافقة على أداة mcp__satr-desktop__desktop_press_key",
+        "✓ تمت الموافقة على أداة mcp__satr-desktop__desktop_press_key",
+        "✓ تمت الموافقة على أداة PowerShell",
+        "✓ تمت الموافقة على أداة mcp__satr-desktop__desktop_snapshot",
+        "✓ تمت الموافقة على أداة mcp__satr-desktop__desktop_type",
+        "✓ تمت الموافقة على أداة mcp__satr-desktop__desktop_press_key",
+        "✓ تمت الموافقة على أداة mcp__satr-desktop__desktop_snapshot",
+        "✓ تمت الموافقة على أداة PowerShell"
+      ],
+      "shot": "step-6.png"
+    },
+    "7": {
+      "bytesBefore": 83,
+      "bytesAfter": 122,
+      "shot": "step-7.png",
+      "screenShot": "notepad-after.png"
+    },
+    "8": {
+      "enabled": false,
+      "selectedText": "لم تُختر نافذة — الوكيل لا يرى أي نافذة.",
+      "newNotices": [],
+      "notices": [
+        "🪟 أُوقف تحكّم سطح المكتب تلقائياً مع الجلسة الجديدة.",
+        "تعذّر حفظ اختيار محادثة جديدة؛ قد يعود السجل السابق عند إعادة التشغيل.",
+        "🪟 سُحب اختيار النافذة مع الجلسة الجديدة — الاختيار لجلسة واحدة."
+      ],
+      "shot": "step-8.png"
+    }
+  }
+}
