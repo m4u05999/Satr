@@ -353,6 +353,12 @@ class SatrChat extends HTMLElement {
     const cls = task ? ' class="md-task' + (task[1] === ' ' ? '' : ' done') + '"' : '';
     return '<li' + cls + '><bdi' + dirAttr(raw) + '>' + inlineMD(raw) + '</bdi>' + childrenHTML + '</li>';
   }
+  // كتلة الكود تقطع القائمة إلى <ol> ثانية؛ رقم أول عنصر هو مصدر start لا عدّاد محلي.
+  function orderedStartAttr(item) {
+    if (!item.ordered) return '';
+    const start = item.marker.match(/^\d+/)[0].replace(/^0+(?=\d)/, '');
+    return start === '1' ? '' : ' start="' + start + '"';
+  }
   function renderList(items) {
     let html = '';
     let openTag = null;
@@ -362,7 +368,7 @@ class SatrChat extends HTMLElement {
       const tag = item.ordered ? 'ol' : 'ul';
       if (openTag !== tag) {
         if (openTag) html += '</' + openTag + '>';
-        html += '<' + tag + '>';
+        html += '<' + tag + orderedStartAttr(item) + '>';
         openTag = tag;
       }
       let j = k + 1;
@@ -371,7 +377,8 @@ class SatrChat extends HTMLElement {
       let kidsHTML = '';
       if (kids.length) {
         const kidTag = kids[0].ordered ? 'ol' : 'ul';
-        kidsHTML = '<' + kidTag + '>' + kids.map((kid) => listItemHTML(kid.text, '')).join('') + '</' + kidTag + '>';
+        kidsHTML = '<' + kidTag + orderedStartAttr(kids[0]) + '>'
+          + kids.map((kid) => listItemHTML(kid.text, '')).join('') + '</' + kidTag + '>';
       }
       html += listItemHTML(item.text, kidsHTML);
       k = j;
@@ -424,7 +431,7 @@ class SatrChat extends HTMLElement {
         const items = [];
         while (i < lines.length && LIST_ITEM_RE.test(lines[i])) {
           const m = lines[i].match(LIST_ITEM_RE);
-          items.push({ level: listLevel(m[1]), ordered: /^\d/.test(m[2]), text: m[3] });
+          items.push({ level: listLevel(m[1]), ordered: /^\d/.test(m[2]), marker: m[2], text: m[3] });
           i++;
         }
         if (items[0].level === 1) items[0].level = 0; // عنصر مسنون بلا أب: يُعامل جذراً

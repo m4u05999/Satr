@@ -83,6 +83,22 @@ async function main() {
     await win.loadFile(FIXTURE);
     const result = await waitForResult(win);
     assert(result.pass, 'فشل حارس القرائية:\n' + (result.error || '') + '\nviolations: ' + JSON.stringify(result.violations || []));
+    const interrupted = await win.webContents.executeJavaScript(`(() => {
+      const chat = document.querySelector('satr-chat');
+      const block = chat.newAssistantBlock('اختبار استئناف القائمة المرقمة');
+      const fence = String.fromCharCode(96, 96, 96);
+      block.addText(['1. الخطوة الأولى', '2. الخطوة الثانية', fence + 'js',
+        'const nextStep = 3;', fence, '3. الخطوة الثالثة'].join('\\n'));
+      block.finish({});
+      const allMd = document.querySelectorAll('.msg.assistant .answer-wrap .md');
+      const md = allMd[allMd.length - 1];
+      const lists = md.querySelectorAll(':scope > ol');
+      return { count: lists.length, start: lists[1] && lists[1].getAttribute('start'),
+        html: lists[1] && lists[1].outerHTML };
+    })()`, true);
+    assert.strictEqual(interrupted.count, 2, 'كتلة الكود يجب أن تقطع القائمة المرقمة إلى قائمتين.');
+    assert.strictEqual(interrupted.start, '3',
+      'القائمة المرقمة الثانية يجب أن تحمل start="3"؛ وجدت ' + interrupted.html);
     const m = result.measures;
     console.log('chat-md: نجح — صفر تسرّب؛ h2/h3/h4/p = ' + [m.h2, m.h3, m.h4, m.p].join('/') + 'px؛ هامش h2 الأول ' + m.h2Top
       + '؛ عمود النثر ' + m.proseWidth + 'px من ' + m.bubbleInner + ' (' + m.charsPerLine + ' محرفاً/سطر على ' + m.lines + ' أسطر)؛ الكود '
