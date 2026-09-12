@@ -46,7 +46,7 @@ const readme = fs.readFileSync(path.join(INTERNALS, 'README.md'), 'utf8');
 for (const file of files) {
   ok(readme.includes(`(${file})`), `الفهرس لا يذكر ${file}`);
   const first = fs.readFileSync(path.join(INTERNALS, file), 'utf8').split('\n')[0];
-  ok(/^#{2,3} /.test(first), `${file} لا يبدأ بعنوان`);
+  ok(/^#{2,3} /.test(first), `${file} لا يبدأ بعنوان — يجب أن يبدأ الملف بـ \`##\` أو \`###\` لا \`#\``);
 }
 for (const match of readme.matchAll(/\]\(([0-9]{2}-[^)]+\.md)\)/g)) {
   ok(fs.existsSync(path.join(INTERNALS, match[1])), `الفهرس يذكر ملفاً غير موجود: ${match[1]}`);
