@@ -2,7 +2,7 @@
 
 ## الخلاصة أولاً
 
-**الرفع الآلي لا يُرجَّح أن يعمل بحساب مطوّر فردي، والأتمتة تنتظر حساب شركة.** السبب
+**الرفع الآلي يشترط مستأجر Entra وتطبيقاً بدور Manager؛ التوثيق يوحي بأن الحساب الفردي لا يبلغهما، لكن قياس الواجهة على حسابنا (أدناه) يعرض الطريق مفتوحاً بخطوة إعداد واحدة لم تُنفَّذ بعد.** السبب
 سلسلة موثَّقة لا استنتاج: واجهة `Microsoft Store submission API` تشترط قبل أي نداء أن
 يكون لدى الحساب **مستأجر Microsoft Entra ID مرتبط بـPartner Center**، وأن يُضاف
 **تطبيق Entra** في صفحة «Users» ويُمنح دور **Manager**، ومن صفحة ذلك التطبيق وحدها
@@ -16,11 +16,18 @@ account»**. وحساب سطر فردي (الناشر `Moxa`، ‏Store ID ‏`9
 الرفع ممنوعة على الحساب الفردي. الممنوع المنصوص عليه هو **تعدّد المستخدمين**، وربط
 المستأجر موصوف بلغة المؤسسات (**«your organization's Microsoft Entra ID»**) لا بلغة
 منع صريح. فالاستنتاج أعلاه **ترجيح مبنيّ على شرطٍ موثَّق يبدو غير قابل للاستيفاء**، لا
-حكم منقول. الحسم الوحيد بيد المالك: فتح
-`Partner Center → Account settings → Tenants` ورؤية هل يظهر زرّ
-**«Associate Microsoft Entra ID with your Partner Center account»** ويعمل على هذا
-الحساب. تلك تجربة دقيقتين تُغني عن كل تخمين — وحتى تُجرى تبقى هذه الوثيقة **مسبار جدوى
-لا خطة تنفيذ**.
+حكم منقول.
+
+**قياس القائد على حساب سطر نفسه (2026-09-13، بعد كتابة الترجيح أعلاه)**: صفحة
+`Account settings → Tenants` **موجودة** في الحساب الفردي وتعرض زرّين عاملَين
+**«Create Microsoft Entra ID»** و**«Associate Microsoft Entra ID»** وجدول ارتباطات فارغاً؛
+وصفحة `User management` تعرض «To manage users, sign in with your associated Microsoft Entra
+ID credentials» مع زرّ **«Sign in with Microsoft Entra ID»**. أي أن الواجهة الرسومية **لا
+تغلق الباب**: الطريق المعروض هو إنشاء مستأجر مجاني من الزرّ الأول، ثم ربطه، ثم الدخول به إلى
+إدارة المستخدمين لإضافة تطبيق Entra بدور Manager. **ما بقي غير مقيس**: أن الربط يكتمل فعلاً
+على حساب فردي وأن تبويب «Microsoft Entra applications» يظهر بعده — لم يُضغط الزرّ لأن
+إنشاء مستأجر وربطه قرار مالك لا يُتراجع عنه بسهولة. فالوثيقة تبقى **مسبار جدوى لا خطة
+تنفيذ**، لكن الترجيح انقلب من «الأرجح مغلق» إلى «الأرجح مفتوح بخطوة إعداد واحدة».
 
 ولذلك: **لا سكربت رفع في هذه الدفعة.** كتابة أداة لمسارٍ قد يكون مغلقاً على حسابنا
 تُنتج كوداً لا يستطيع أحد تشغيله ولا اختباره حياً — وهو بالضبط «الحارس الأخضر الكاذب»
@@ -269,17 +276,20 @@ GET  /v1.0/my/applications/9N7F5RKQJ9WF/submissions/{submissionId}/status
 هذا هو المسار المعتمد حتى إشعار آخر، وهو أيضاً **شرط تفعيل الواجهة لاحقاً** (البند ٦
 في جدول المتطلبات).
 
-1. **ابنِ الحزمة**: `npm run dist:appx` ⇒ `Satr-Store-<version>.appx` غير موقّعة عمداً
-   (مايكروسوفت توقّعها بنفسها — انظر `docs/internals/41-msix-store-package.md`). و«The
-   Microsoft Store automatically signs all MSIX/AppX packages with a Microsoft
-   certificate… You don't need to provide your own code signing certificate for Store
-   distribution».
-2. **ابدأ submission**: من صفحة نظرة التطبيق في Partner Center اضغط **Start
-   submission**، فتظهر مسودّة بكل الخطوات. أكمل الأقسام الستة: **Pricing and
-   availability** · **Properties** · **Age ratings** (كل الأسئلة إلزامية) ·
-   **Packages** (ارفع ملف `.appx`) · **Store listings** (الوصف ولقطة واحدة على الأقلّ
-   إلزاميان) · **Submission options**. في تحديثات الإصدار لا يتغيّر عادةً غير
-   **Packages** و**What's new in this version**.
+1. **خذ الحزمة من إصدار GitHub**: منذ هذه الدفعة تبنيها بوابة الإصدار على كل وسم وترفعها
+   أصلاً باسم `Satr-Store-<version>.appx` (غير موقّعة عمداً — مايكروسوفت توقّعها بنفسها،
+   انظر `docs/internals/41-msix-store-package.md`؛ و«The Microsoft Store automatically signs
+   all MSIX/AppX packages with a Microsoft certificate… You don't need to provide your own
+   code signing certificate for Store distribution»). البناء المحلي `npm run dist:appx`
+   يبقى بديلاً، بشرط وجود `native/satr-uia/out-aot/satr-uia.exe` وإلا خرجت الحزمة بلا
+   سطح ويندوز صامتةً.
+2. **ابدأ التحديث** (مقيس على حساب سطر 2026-09-13): في صفحة نظرة التطبيق قسم **Product
+   release** اضغط **Start update** (لا «Start submission» — ذاك للتطبيق الجديد)، فتظهر
+   مسودّة تنسخ آخر إرسال وكل أقسامها «Unchanged» عدا ما تغيّره. افتح **Packages**،
+   ارفع ملف `.appx` من «browse your files»، فتحلّ الحزمة الجديدة محلّ القديمة تلقائياً
+   وتظهر **Validated** خلال نحو دقيقة. الأقسام الأخرى (**Pricing and availability** ·
+   **Properties** · **Age ratings** · **Store listings** · **Submission options**) لا
+   تحتاج لمساً في تحديث إصدار، إلا **What's new in this version** إن أردت.
 3. **أرسل**: «Once you have completed all the sections, you can submit your app for
    certification by clicking **Submit for certification** button on the Application
    overview page.»
@@ -297,9 +307,9 @@ GET  /v1.0/my/applications/9N7F5RKQJ9WF/submissions/{submissionId}/status
 
 الفصل بين ما قرأتُه وما خمّنته — وبلا هذا القسم تصير الوثيقة أوثق ممّا تستحق.
 
-1. **هل يعمل ربط مستأجر Entra على حسابنا الفردي فعلاً؟** لم يُجرَّب. لا صفحة تمنعه
-   حرفياً ولا صفحة تُجيزه للفردي. **هذا السؤال الوحيد الذي يحسم الوثيقة كلها**،
-   وجوابه بفتح `Account settings → Tenants`.
+1. **هل يكتمل ربط مستأجر Entra على حسابنا الفردي فعلاً؟** الصفحة والزرّان **مقيسان
+   موجودَين** (الخلاصة أعلاه)، لكن الزرّ لم يُضغط: إنشاء مستأجر وربطه قرار مالك، وبعده يبقى
+   سؤال ثانٍ غير مقيس هو ظهور تبويب «Microsoft Entra applications» في إدارة المستخدمين.
 2. **لم يُنفَّذ أي نداء حقيقي.** لا رمز استُخرج ولا `GET /applications/9N7F5RKQJ9WF`
    نُفِّذ. كل ما ورد أعلاه **منقول من التوثيق** لا مرصود من الشبكة.
 3. **نسخة الـSAS التي تعيدها Partner Center فعلياً** (`sv=` في `fileUploadUrl`) غير
