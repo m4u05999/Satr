@@ -40,7 +40,7 @@ const MARKUP = `
          بترتيبه الصحيح، و auto عند الكتابة كي يحسم الأمر اللاتيني اتجاهه بنفسه.
          السبب المثبّت: dir="auto" على حقل فارغ يحسم LTR فينقلب ترتيب أزواج
          «Enter ينفّذ — Ctrl+C يقطع» بصرياً في نص عربي. -->
-    <input type="text" id="termInput" dir="rtl" spellcheck="false"
+    <input type="text" id="termInput" dir="rtl" spellcheck="false" aria-label="سطر أوامر الطرفية"
            placeholder="اكتب أمراً… (Enter ينفّذ — Ctrl+C يقطع — ▲▼ التاريخ والحقل فارغ)">
     <button id="termInputMask" type="button" aria-pressed="false"
             aria-label="إخفاء إدخال الطرفية" title="إخفاء الإدخال بصرياً فقط">👁</button>

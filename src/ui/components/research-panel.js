@@ -51,7 +51,7 @@ class SatrResearchPanel extends HTMLElement {
         + '<button class="close" type="button" title="إغلاق" aria-label="إغلاق لوحة فريق البحث">✕</button>' +
       '</div></div>' +
       '<div class="setup"><textarea class="question" maxlength="4000" placeholder="ما السؤال الذي تريد بحثه داخل المشروع؟"></textarea>' +
-        '<div class="setup-row"><select class="count"><option value="1">باحث واحد</option><option value="2">باحثان</option><option value="3">3 باحثين</option></select>' +
+        '<div class="setup-row"><select class="count" aria-label="عدد الباحثين"><option value="1">باحث واحد</option><option value="2">باحثان</option><option value="3">3 باحثين</option></select>' +
         '<button class="start" type="button">ابدأ البحث</button></div>' +
         '<div class="setup-hint">قراءة فقط: بلا كتابة أو أوامر أو أذونات. كل باحث مستقل وله مهلة محدودة.</div></div>' +
       '<div class="status" aria-live="polite"></div><div class="panel-list"><div class="empty">ابدأ بسؤال محدد؛ سيعيد الباحث خلاصة ومصادر من ملفات المشروع.</div></div>';

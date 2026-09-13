@@ -70,26 +70,26 @@ register('ollama', ollama.build(), ollama.META);
 
 // عائلة المتوافقة مع OpenAI: نفس البروتوكول، مفتاح لكل مزوّد في ~/.satr/keys.json.
 // البروتوكول متحقَّق حيّاً (عبر نقطة Gemini المتوافقة)؛ المفاتيح يضيفها المستخدم.
-// DeepSeek V4 (رادار سطر ٠٠١ — 2026-09-03): الاسمان `deepseek-chat`/`deepseek-reasoner`
-// أُعلن إيقافهما رسمياً بتاريخ 2026-07-24 (api-docs.deepseek.com/updates). **المقيس حياً**
-// (free-providers-probe، 2026-09-03): الاسم القديم ما زال يُقبل ويُخدَم كـ`deepseek-v4-flash`
-// — أي alias بلا موعد قطع معلن، فالانتقال هنا استباقي لا إصلاح عطل واقع. البدائل الصريحة
-// `deepseek-v4-flash` (بيتا عام 07-31) و`deepseek-v4-pro` (‏GA 08-13). التفكير في V4
+// DeepSeek V4.1 (المصدر الأول: https://api-docs.deepseek.com/updates، اطّلاع 2026-09-13):
+// الاسم الرسمي للأحدث `deepseek-flash`؛ أما `deepseek-v4-flash` فمتقاعد وموجّه مؤقتاً
+// إلى V4.1 للتوافق، و`deepseek-v4-pro` مستمر رسمياً بعد 2026-09-14. بلا مسبار حيّ
+// لهذه الجولة لغياب مفتاح API؛ القياس من صفحة التحديثات الرسمية فقط. التفكير في V4
 // **مفعّل افتراضياً** (effort=high) وجهده `reasoning_effort: low|high|max`، ومع `tools`
 // يجب إعادة `reasoning_content` في كل جولة لاحقة وإلا رُفضت — عقد K3 نفسه، فيرث
 // `reasoningKey`/`effortMap` من مسار Kimi المثبت (كانا غائبين هنا، وهذه الثغرة الفعلية).
 register('deepseek', openaiCompatible.make({
   id: 'deepseek', // معرّف مجلد الذاكرة على القرص (~/.satr/chats/deepseek/) — الدفعة 1.3
   host: 'api.deepseek.com', path: '/chat/completions',
-  keyName: 'DEEPSEEK_API_KEY', defaultModel: 'deepseek-v4-flash', label: 'DeepSeek', includeUsage: true,
+  keyName: 'DEEPSEEK_API_KEY', defaultModel: 'deepseek-flash', label: 'DeepSeek', includeUsage: true,
   capabilities: { strictTools: true },
   reasoningKey: 'reasoning_content',
   effortMap: { low: 'low', medium: 'high', high: 'high', xhigh: 'max', max: 'max' },
 }), {
   label: 'DeepSeek — مفتاح API', family: 'openai', keyName: 'DEEPSEEK_API_KEY',
   models: [
-    { value: '', label: 'الافتراضي' },
-    { value: 'deepseek-v4-flash', label: 'V4 Flash' },
+    { value: '', label: 'الافتراضي — Flash (V4.1)' },
+    { value: 'deepseek-flash', label: 'Flash (V4.1)' },
+    { value: 'deepseek-v4-flash', label: 'V4 Flash — اسم متقاعد موجّه مؤقتاً' },
     { value: 'deepseek-v4-pro', label: 'V4 Pro' },
   ],
 });
@@ -156,6 +156,10 @@ register('minimax', openaiCompatible.make({
 // nemotron-3-super نجح فوراً، وdeepseek-v4-pro نجح بعد إعادة (الطبقة المجانية تتقلب
 // بإقلاع بارد وECONNRESET عارض — المصنع يعيد الرسالة للمستخدم والدور التالي يمر).
 // kimi-k3 وdeepseek-v4-flash على NIM أثبتا الدردشة لا الأدوات فلم يدخلا الكتالوج.
+// المصدر الأول: https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b (اطّلاع
+// 2026-09-13) يحمل تقاعد 2026-10-02؛ يبقى افتراضياً بقرار المالك. المرشح المقيس لاحقاً
+// https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b (اطّلاع 2026-09-13):
+// Free Endpoint وfunctionCalling=true وبلا deprecationNotice في الحمولة الخام.
 register('nvidia', openaiCompatible.make({
   id: 'nvidia', // مجلد الذاكرة ~/.satr/chats/nvidia/
   host: 'integrate.api.nvidia.com', path: '/v1/chat/completions',
@@ -166,7 +170,9 @@ register('nvidia', openaiCompatible.make({
   models: [
     { value: '', label: 'الافتراضي (Nemotron 3 Super)' },
     { value: 'nvidia/nemotron-3-super-120b-a12b', label: 'Nemotron 3 Super 120B' },
-    { value: 'deepseek-ai/deepseek-v4-pro-0813', label: 'DeepSeek V4 Pro' },
+    // المصدر الأول: https://build.nvidia.com/poolside/laguna-xs-2.1 (اطّلاع 2026-09-13):
+    // Free Endpoint وfunctionCalling=true وميزات reasoning/tools؛ بلا مسبار حيّ لغياب المفتاح.
+    { value: 'poolside/laguna-xs-2.1', label: 'Laguna XS 2.1 — أدوات' },
   ],
 });
 
@@ -185,6 +191,8 @@ register('groq', openaiCompatible.make({
     { value: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
     { value: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B — سريع' },
     { value: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B' },
+    // المصدران الأولان (اطّلاع 2026-09-13): غائب من https://console.groq.com/docs/models
+    // وبلا بند في https://console.groq.com/docs/deprecations؛ لذلك يبقى بلا حذف أو ادعاء إيقاف.
     { value: 'allam-2-7b', label: 'ALLaM 7B — عربي، دردشة بلا أدوات' },
   ],
 });

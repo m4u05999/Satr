@@ -105,3 +105,14 @@ result`)، فالواجهة لا تتغيّر.
   جلسات كلود كما كانا (لا مساس). المصنع openai-compatible يأخذ `id` في config هو اسم
   مجلد الذاكرة؛ بدونه تبقى الذاكرة حيّة فقط.
 
+### قياس كتالوج المزوّدات بعد جولة F5 (2026-09-13)
+
+من المصادر الأولى فقط، وبلا مسبار API حيّ لغياب المفاتيح: صار `deepseek-flash`
+افتراضي DeepSeek الرسمي لـV4.1، وبقي الاسم المتقاعد `deepseek-v4-flash` مؤقتاً لحفظ
+الإعدادات القديمة. واستُبدل NIM المتقاعد `deepseek-ai/deepseek-v4-pro-0813` بـ
+`poolside/laguna-xs-2.1` لأن [حمولة NVIDIA](https://build.nvidia.com/poolside/laguna-xs-2.1)
+تعلنه Free Endpoint ويدعم الأدوات. بقي Nemotron 3 Super افتراضياً بقرار المالك رغم إشعار
+تقاعد 2026-10-02؛ والمرشح المقيس لخلافته هو
+[`nvidia/nemotron-3-ultra-550b-a55b`](https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b).
+وبقي `allam-2-7b` لأن غيابه من [كتالوج Groq](https://console.groq.com/docs/models)
+لا يصاحبه بند إيقاف في [صفحة الإيقافات](https://console.groq.com/docs/deprecations).

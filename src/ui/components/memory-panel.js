@@ -58,7 +58,7 @@ class SatrMemoryPanel extends HTMLElement {
       '</div></div>' +
       '<div class="candidate" hidden><div class="candidate-title">اقتراح جديد — لم يُحفظ بعد</div>' +
         '<div class="candidate-note">راجعه وعدّله إن لزم، ثم وافق صراحةً على الحفظ أو ارفضه.</div><div class="candidate-editor"></div></div>' +
-      '<div class="panel-search"><input class="search" type="text" placeholder="ابحث في الحقائق والقرارات والأوامر والفشل…"></div>' +
+      '<div class="panel-search"><input class="search" type="text" aria-label="البحث في الذاكرة" placeholder="ابحث في الحقائق والقرارات والأوامر والفشل…"></div>' +
       '<div class="status" aria-live="polite"></div><div class="panel-list"></div>';
     this._candidateBox = root.querySelector('.candidate');
     this._candidateEditor = root.querySelector('.candidate-editor');

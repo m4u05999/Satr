@@ -13,10 +13,11 @@
  *
  *   ١. كل `<button …>…</button>` نصّه المرئي **رمزيّ** (بلا حرف عربي ولا لاتيني)
  *      يجب أن يحمل `aria-label` غير فارغ.
- *   ٢. كل `<input>` في `index.html` وقوالب المكوّنات وكل `<select>` في `index.html`
+ *   ٢. كل `<input>` وكل `<select>` في `index.html` وقوالب المكوّنات
  *      (عدا المخفي) يملك اسماً وصولياً من مصادر HTML-AAM: `aria-label` أو
  *      `aria-labelledby` أو `<label for>` يشير إلى `id` موجود أو `<label>` حاضن
- *      بنصّ مرئي، أو أحد الاحتياطيين الأخيرين في حساب الاسم `title`/`placeholder`.
+ *      بنصّ مرئي، أو `title` احتياطاً أخيراً. لا يُقبل `placeholder` لأنه تلميح
+ *      يختفي عند الكتابة؛ ويبقى `title` لأنه اسم ثابت لا يزول مع قيمة الحقل.
  *      وكل `<label for>` يشير إلى `id` موجود.
  *   ٣. كل `div`/`span` يحمل `aria-label` يملك `role` (وإلّا أسقط محرّك الوصولية
  *      السمة عن عنصر `generic`).
@@ -29,9 +30,8 @@
  *     يراه هذا الحارس أصلاً، وكذلك زرّ في القالب نصّه كلّه `${…}` (يُعدّ ويُطبع في
  *     الخاتمة تحت «غير مفحوصة» فلا يُقرأ الصمت نجاحاً).
  *   - `aria-label="${…}"` يُقبل بوجوده لا بقيمته — القيمة تُحسب وقت التشغيل.
- *   - القاعدة ٢ تقبل `title` و`placeholder` مصدرين احتياطيين بموجب HTML-AAM — حقل
- *      يعتمد `placeholder` وحده يمرّ هنا ويُرحَّل اسمه الصريح تحسيناً مؤجَّلاً، ولا
- *      يمرّ حقل بلا أي مصدر إطلاقاً. منتقيات المكوّنات (`<select>`) خارج نطاقها بعد.
+ *   - القاعدة ٢ تقبل `title` احتياطاً أخيراً لأنه ثابت، ولا تقبل `placeholder`
+ *     لأنه يختفي عند الكتابة. منتقيات المكوّنات (`<select>`) في النطاق نفسه.
  *   - هذا حارس **بنية** لا حارس نطق: أنّ قارئ شاشة حقيقياً (‏Narrator) ينطق الاسم
  *     المضاف لم يُختبر هنا ولا يُدّعى.
  */
@@ -119,7 +119,7 @@ function checkButtons(source, rel) {
 }
 
 /** القاعدة ٢: كل حقل له اسم وصولي من مصادر HTML-AAM، وكل label for يشير إلى id موجود. */
-function checkFields(source, rel, { selects }) {
+function checkFields(source, rel) {
   const ids = new Set();
   let match;
   ID_RE.lastIndex = 0;
@@ -149,8 +149,6 @@ function checkFields(source, rel, { selects }) {
   while ((match = FIELD_RE.exec(source)) !== null) {
     const tag = match[1].toLowerCase();
     const attrs = match[2];
-    // منتقيات المكوّنات خارج نطاق التوسيع — <select> يُفحص في index.html فقط
-    if (tag === 'select' && !selects) continue;
     // المخفي لا يُعرض للمستخدم ولا لشجرة الوصولية
     if (hasAttr(attrs, 'hidden') || (attrValue(attrs, 'type') || '').toLowerCase() === 'hidden') continue;
     stats.fields += 1;
@@ -160,13 +158,11 @@ function checkFields(source, rel, { selects }) {
     if ((label && label.trim()) || (labelledBy && labelledBy.trim())) continue;
     if (id && labelled.has(id)) continue;
     if (wrappedRanges.some(([start, end]) => match.index >= start && match.index < end)) continue;
-    // title وplaceholder الاحتياطيان الأخيران في حساب الاسم للحقول بموجب HTML-AAM
+    // title احتياط أخير ثابت؛ placeholder تلميح يختفي عند الكتابة فلا يُقبل اسماً
     const title = attrValue(attrs, 'title');
     if (title && title.trim()) continue;
-    const placeholder = attrValue(attrs, 'placeholder');
-    if (placeholder && placeholder.trim()) continue;
     problems.push(rel + ':' + lineOf(source, match.index) + ' — <' + tag + (id ? ' id="' + id + '"' : '')
-      + '> بلا أي مصدر لاسم الوصول (aria-label أو label أو title أو placeholder).');
+      + '> بلا أي مصدر ثابت لاسم الوصول (aria-label أو label أو title؛ placeholder لا يكفي).');
   }
 }
 
@@ -212,7 +208,7 @@ function main() {
     const source = fs.readFileSync(file, 'utf8');
     checkButtons(source, rel);
     checkGenerics(source, rel);
-    checkFields(source, rel, { selects: file === HTML_FILE });
+    checkFields(source, rel);
     if (file === HTML_FILE) checkAwarenessBar(source, rel);
   }
 

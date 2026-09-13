@@ -335,7 +335,8 @@ async function main() {
     const deepseek = adapters.list().find((provider) => provider.name === 'deepseek');
     assert.ok(deepseek, 'DeepSeek is registered in the Community adapter registry');
     assert.strictEqual(deepseek.keyName, 'DEEPSEEK_API_KEY');
-    assert.deepStrictEqual(deepseek.models.map((model) => model.value), ['', 'deepseek-v4-flash', 'deepseek-v4-pro']);
+    assert.deepStrictEqual(deepseek.models.map((model) => model.value),
+      ['', 'deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-pro']);
     for (const retired of RETIRED_MODEL_NAMES) {
       assert.ok(!deepseek.models.some((model) => model.value === retired), 'retired DeepSeek name in registry: ' + retired);
     }
@@ -352,8 +353,10 @@ async function main() {
     assert.strictEqual(deepseekRequests[0].options.host, 'api.deepseek.com');
     assert.strictEqual(deepseekRequests[0].options.path, '/chat/completions');
     assert.strictEqual(deepseekRequests[0].options.headers.Authorization, 'Bearer deepseek-test-key');
-    // الافتراضي هو V4 Flash لا الاسم الميت، والجهد يُطبَّع إلى سلّم V4 (low|high|max)
-    assert.strictEqual(deepseekRequests[0].body.model, 'deepseek-v4-flash');
+    // الافتراضي هو V4.1 Flash الرسمي، والجهد يُطبَّع إلى سلّم V4 (low|high|max)
+    assert.ok(deepseek.models.some((model) => model.value === deepseekRequests[0].body.model),
+      'DeepSeek defaultModel ليس عضواً في models: ' + deepseekRequests[0].body.model);
+    assert.strictEqual(deepseekRequests[0].body.model, 'deepseek-flash');
     assert.ok(!RETIRED_MODEL_NAMES.includes(deepseekRequests[0].body.model));
     assert.strictEqual(deepseekRequests[0].body.reasoning_effort, 'high');
 
@@ -628,7 +631,14 @@ async function main() {
     console.log('✓ Kimi uses the Kimi Code endpoint and bearer key directly');
     console.log('✓ Kimi keeps one prompt_cache_key across tool rounds');
     console.log('✓ Kimi reasoning effort is mapped and reasoning_content survives tool rounds');
-    console.log('✓ DeepSeek defaults to deepseek-v4-flash, maps effort to V4 levels, and lists no retired model name');
+    const nvidia = adapters.list().find((provider) => provider.name === 'nvidia');
+    assert.deepStrictEqual(nvidia.models.map((model) => model.value),
+      ['', 'nvidia/nemotron-3-super-120b-a12b', 'poolside/laguna-xs-2.1']);
+    const groq = adapters.list().find((provider) => provider.name === 'groq');
+    assert.ok(groq.models.some((model) => model.value === 'allam-2-7b'),
+      'ALLaM يُحفظ حتى تعلن Groq إيقافه رسمياً');
+    console.log('✓ DeepSeek defaults to deepseek-flash, maps effort to V4 levels, and lists no retired legacy name');
+    console.log('✓ NVIDIA NIM replaces retired DeepSeek V4 Pro with tool-capable Laguna XS 2.1; Groq keeps undocumented ALLaM');
     console.log('✓ Authentication rejection is not retried as a tool compatibility failure');
     console.log('✓ REST provider failures are not mislabeled as Claude executable failures');
     console.log('✓ Retry-After parsing accepts seconds only and rejects HTTP-date, negatives, and oversized values');
