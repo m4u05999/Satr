@@ -913,6 +913,13 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (chatUpgraded) { chatEl.addNotice(text); return; }
     customElements.whenDefined('satr-chat').then(() => chatEl.addNotice(text));
   }
+  // مدة انقطاع الشبكة بالعربية (ثوانٍ تحت الدقيقة، وإلا دقائق) — لإشعار connectivity.
+  function formatDownTime(ms) {
+    const sec = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+    if (sec < 60) return sec + ' ث';
+    const min = Math.round(sec / 60);
+    return min === 1 ? 'دقيقة' : min === 2 ? 'دقيقتين' : min <= 10 ? min + ' دقائق' : min + ' دقيقة';
+  }
   $('cwd').addEventListener('change', () => {
     const cwd = $('cwd').value.trim();
     if (applyingResumedCwd) { lastConversationCwd = cwd; return; }
@@ -1621,6 +1628,19 @@ import { createPreviewShield } from './lib/preview-shield.js';
       if (chatEl.showOpsEvent) chatEl.showOpsEvent(ev.entry);
       return;
     }
+    if (ev.type === 'connectivity') {
+      // مراقب الاتصال (انقطاع الشبكة 2026-09-13): يصل بين الأدوار أيضاً، فلا يتعلق بكتلة الرد.
+      if (ev.online) {
+        addNotice(ev.recovered
+          ? '📡 عاد الاتصال بالإنترنت بعد ' + formatDownTime(ev.downMs) + ' — اضغط «أعد المحاولة» لإكمال آخر طلب.'
+          : '📡 الاتصال بالإنترنت متاح الآن — كان الانقطاع عابراً؛ اضغط «أعد المحاولة».');
+      } else if (ev.gaveUp) {
+        addNotice('📡 ما زال الإنترنت مقطوعاً بعد ' + formatDownTime(ev.downMs) + '؛ توقّف الفحص التلقائي — أعد المحاولة يدوياً حين تعود الشبكة.');
+      } else {
+        addNotice('📡 لا اتصال بالإنترنت (' + (ev.code || 'DNS') + ') — سطر يفحص الشبكة كل بضع ثوانٍ وسيخبرك حين تعود. لا حاجة لإعادة تشغيل سطر.');
+      }
+      return;
+    }
     if (ev.type === 'system' && ev.subtype === 'commands_changed') {
       // حدث كتالوج مستقل عن عمر كتلة الرد: يستبدل الكاش حتى لو وصل بين دورين.
       if (composerEl.commandsChanged) composerEl.commandsChanged(ev.commands);
@@ -1654,6 +1674,10 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (!block || block.done) return;
     if (ev.type === 'sdk_agent_progress') {
       if (block.updateAgentProgress) block.updateAgentProgress(ev);
+      return;
+    }
+    if (ev.type === 'api_retry') {
+      if (block.apiRetry) block.apiRetry(ev);
       return;
     }
     if (ev.type === 'stream_text') {
@@ -1700,7 +1724,9 @@ import { createPreviewShield } from './lib/preview-shield.js';
         $('sessionInfo').textContent = 'جلسة: ' + shortSessionLabel(sessionId);
       }
       if (ev.is_error && ev.result) {
-        if (deadSessionRecovery(ev.result)) block.error(conversationId ? 'تعذّر استئناف جلسة المحرك؛ سياق المحادثة محفوظ، أعد الإرسال.' : 'تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
+        // خطأ شبكة مصنَّف في main.js: السبب العربي أولاً ثم النصّ الأصلي سطراً تقنياً.
+        if (ev.net && ev.net.message) block.error(ev.net.message + '\n' + String(ev.result));
+        else if (deadSessionRecovery(ev.result)) block.error(conversationId ? 'تعذّر استئناف جلسة المحرك؛ سياق المحادثة محفوظ، أعد الإرسال.' : 'تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
         else if (isClaudeAuthError(ev.result)) block.error(claudeAuthErrorMessage());
         else block.error(String(ev.result));
       }
@@ -1713,7 +1739,11 @@ import { createPreviewShield } from './lib/preview-shield.js';
       // Query قد يبقى حياً لإشعار مهمة SDK، لكن دور المستخدم انتهى ويجب تحرير المؤلف الآن.
       if (completedEngine === 'sdk') releaseRunControls();
     } else if (ev.type === 'spawn_error') {
-      if (deadSessionRecovery(ev.text)) block.error(conversationId ? 'تعذّر استئناف جلسة المحرك؛ سياق المحادثة محفوظ، أعد الإرسال.' : 'تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
+      // exit_after_result: خروج CLI التابع لخطأ شُرح في نتيجة الدور للتوّ — صندوق ثانٍ بتلميح
+      // «مثبت ومسجّل دخوله» كان يضلّل (انقطاع الشبكة 2026-09-13)؛ يبقى زر الإعادة وإنهاء الدور.
+      if (ev.kind === 'exit_after_result') { /* لا صندوق ثانياً */ }
+      else if (ev.net && ev.net.message) block.error(ev.net.message + '\n' + (ev.text || ''));
+      else if (deadSessionRecovery(ev.text)) block.error(conversationId ? 'تعذّر استئناف جلسة المحرك؛ سياق المحادثة محفوظ، أعد الإرسال.' : 'تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
       else if (isClaudeAuthError(ev.text)) block.error(claudeAuthErrorMessage());
       else {
         const eng = $('engine').value;

@@ -103,6 +103,7 @@
     "test:codex-account-probe": "node scripts/codex-account-probe.js",
     "test:kimi": "node scripts/kimi-test.js",
     "test:kimi-keepalive": "node scripts/kimi-keepalive-test.js",
+    "test:neterror": "node scripts/neterror-test.js",
     "test:browserguard": "node scripts/browserguard-test.js",
     "test:surface": "node scripts/surface-test.js",
     "test:browserorigin": "node scripts/browserorigin-test.js",

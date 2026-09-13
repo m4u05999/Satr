@@ -935,6 +935,25 @@ function buildQuestionAnswer(originalInput, selections) {
   return { ...originalInput, questions: qs, answers };
 }
 
+// انقطاع الشبكة (2026-09-13): Claude Code يعيد المحاولة حتى ~3 دقائق ويبثّ system/api_retry لكل
+// محاولة، وكانت تُمرَّر خاماً فتتجاهلها الواجهة — فيرى المستخدم «يستعد» صامتاً ثم فشلاً مفاجئاً.
+// تُطبَّع هنا إلى حدث `api_retry` بأرقام مُنقّاة ونصّ خطأ مقصوص؛ main.js يُلحق تصنيف الشبكة.
+function apiRetryEvent(message) {
+  const num = (v, max) => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(max, Math.round(Number(v)))) : 0);
+  const rawError = message && message.error;
+  const errorText = typeof rawError === 'string' ? rawError
+    : rawError && typeof rawError.message === 'string' ? rawError.message
+      : rawError && typeof rawError.type === 'string' ? rawError.type : '';
+  return {
+    type: 'api_retry',
+    attempt: num(message && message.attempt, 1000),
+    max_retries: num(message && message.max_retries, 1000),
+    retry_delay_ms: num(message && message.retry_delay_ms, 10 * 60 * 1000),
+    error_status: Number.isInteger(message && message.error_status) ? message.error_status : null,
+    error: String(errorText || '').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300),
+  };
+}
+
 function isUnsupportedElicitationResult(message) {
   if (!message || message.type !== 'user' || !message.message || !Array.isArray(message.message.content)) {
     return false;
@@ -2427,6 +2446,9 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   });
 
   // حلقة الاستهلاك تعمل في الخلفية؛ الأحداث تصل الواجهة تباعاً
+  // resultEmitted: بعد result بخطأ يخرج CLI برمز 1 فيرمي Query «process exited with code 1» —
+  // خروجٌ تابع لخطأ شُرح للتوّ لا عطل تشغيل، فيُوسم كذلك كي لا تُلصق الواجهة تلميح «مثبت ومسجّل دخوله».
+  let resultEmitted = false;
   const done = (async () => {
     try {
       for await (const msg of q) {
@@ -2470,6 +2492,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           if (phaseEvent) emit(phaseEvent);
         } else if (msg.type === 'assistant') {
           emit(annotateAssistantMessage(msg));
+        } else if (msg.type === 'system' && msg.subtype === 'api_retry') {
+          emit(apiRetryEvent(msg));
         } else if (msg.type === 'system' || msg.type === 'user') {
           // task_notification/task_progress الخامان يحملان usage/UUID وحقول SDK داخلية؛
           // استُهلكا أعلاه إلى أحداث allowlist منقّاة، فلا يعبران إلى renderer أو المراقبين.
@@ -2482,6 +2506,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         } else if (msg.type === 'result') {
           connectionsActive = false;
           connectionGate.stop();
+          resultEmitted = true;
           emit(msg);
           turnAllowed.clear();
           promptSuggestionGate.markResult();
@@ -2491,7 +2516,8 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       }
       emit({ type: 'proc_done', code: 0 });
     } catch (e) {
-      emit({ type: 'spawn_error', text: String((e && e.message) || e) });
+      const text = String((e && e.message) || e);
+      emit(resultEmitted ? { type: 'spawn_error', text, kind: 'exit_after_result' } : { type: 'spawn_error', text });
       emit({ type: 'proc_done', code: 1 });
     } finally {
       connectionsActive = false;
