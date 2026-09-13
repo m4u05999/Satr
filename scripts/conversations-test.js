@@ -224,16 +224,48 @@ try {
     ok(store.stop(running.runId));
     const stopped = read(current.id);
     assert.strictEqual(stopped.bindings.sdk.lastCompletedRevision, before);
-    assert.strictEqual(stopped.bindings.sdk.valid, false);
+    // OBS-201: الإيقاف لا يُفقد الجلسة — الربط يبقى صالحاً والدور المقطوع يُنقل زيادةً إلى الجلسة نفسها.
+    assert.strictEqual(stopped.bindings.sdk.valid, true);
     assert.strictEqual(stopped.runs.at(-1).status, 'stopped');
     assert(stopped.messages.some((message) => message.text === 'جزء لم يكتمل'));
     assert(stopped.messages.some((message) => message.text === 'ألغِ التنفيذ الآن.'));
     const recovered = begin('تابع بعد الإيقاف', { conversationId: current.id });
-    assert.strictEqual(recovered.sessionId, '');
+    assert.strictEqual(recovered.sessionId, 'sdk-stop');
     assert(recovered.context.includes('"status":"stopped"'));
     assert(recovered.context.includes('ألغِ التنفيذ الآن.'));
-    init(recovered, 'sdk-after-stop');
+    assert(!recovered.context.includes('أوقف المهمة عند طلبي'), 'ما قبل آخر إكمال لا يُنقل إلى جلسة تملكه');
     complete(recovered);
+  });
+
+  test('الإيقاف في جلسة طويلة لا يحبسها خلف سقف النقل (OBS-201)', () => {
+    // قبل الإصلاح: الإيقاف يُبطل الربط ⇒ الإرسال التالي ينقل التاريخ كله ⇒ transfer_limit ولا إرسال.
+    const tight = conversations.createStore({ root: path.join(temp, 'store-tight'), maxTransferChars: 4000 });
+    const start = ok(tight.prepare({ cwd: project, engine: 'sdk', prompt: 'بداية' }));
+    ok(tight.acceptEvent(start.runId, { type: 'system', subtype: 'init', session_id: 'sdk-long' }));
+    ok(tight.acceptEvent(start.runId, { type: 'assistant', message: { content: [{ type: 'text', text: 'ر'.repeat(3000) }] } }));
+    ok(tight.acceptEvent(start.runId, { type: 'result', is_error: false }));
+    const second = ok(tight.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'ثانية' }));
+    ok(tight.acceptEvent(second.runId, { type: 'assistant', message: { content: [{ type: 'text', text: 'ن'.repeat(3000) }] } }));
+    ok(tight.acceptEvent(second.runId, { type: 'result', is_error: false }));
+    const interrupted = ok(tight.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'دور سيُوقف' }));
+    ok(tight.acceptEvent(interrupted.runId, { type: 'stream_text', text: 'جزء' }));
+    ok(tight.stop(interrupted.runId));
+    const after = ok(tight.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'أكمل' }));
+    assert.strictEqual(after.sessionId, 'sdk-long');
+    assert(after.context.includes('دور سيُوقف'));
+    assert(after.context.length < 4000);
+    ok(tight.acceptEvent(after.runId, { type: 'stream_text', text: 'ط'.repeat(5000) }));
+    ok(tight.stop(after.runId));
+    // زيادة موقوفة تتجاوز السقف: الجلسة الأصلية تملكها، فيُسقط النقل ويُعلَن بدل حجب الإرسال.
+    const oversized = ok(tight.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'ما زلت هنا' }));
+    assert.strictEqual(oversized.sessionId, 'sdk-long');
+    assert.strictEqual(oversized.context, '');
+    assert.strictEqual(oversized.transfer.needed, false);
+    assert.strictEqual(oversized.transfer.omitted, 'transfer_limit');
+    assert(oversized.transfer.coverage.issues.includes('transfer_limit'));
+    ok(tight.acceptEvent(oversized.runId, { type: 'result', is_error: false }));
+    // الحجب الصريح يبقى لمحرك آخر لم يرَ التاريخ.
+    assert.strictEqual(tight.prepare({ cwd: project, engine: 'codex', conversationId: start.id, prompt: 'انتقال' }).error, 'transfer_limit');
   });
 
   test('استبدال جلسة مفقودة يحتاج حزمة كاملة ويُحظر بعد بدء التنفيذ', () => {
