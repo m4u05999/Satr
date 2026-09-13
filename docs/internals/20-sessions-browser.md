@@ -7,7 +7,7 @@
   (لا فواصل مسار ولا `..`) + فحص أن المسار النهائي داخل `~/.claude/projects`
 - **التثبيت وإعادة التسمية**: تبقى ملفات `~/.claude` و`~/.codex` ومحادثات المحوّلات
   قراءة فقط؛ `electron/sessionmeta.js` يحفظ `{pinned?, title?}` جانبياً في
-  `~/.satr/session-meta.json`. قناتا IPC المحددتان هما `satr:sessionMetaList` و
+  `~/.satr/session-meta.json`. الكتابة ذرية (ملف مؤقت ثم `rename`) **مع إعادة محاولة حتى خمس مرات** على `EPERM`/`EBUSY`/`EACCES`/`ENOTEMPTY` بتراجع 10–160 م.ث، ونتيجة `write_failed` تحمل `code` بالرمز الأصلي (‏OBS-199، 2026-09-13: قفل عابر من فاحص الملفات على ويندوز أسقط `test:sessionmeta` عشوائياً في مجلد Temp على C:). قناتا IPC المحددتان هما `satr:sessionMetaList` و
   `satr:sessionMetaSet {sessionId,pinned?,title?}`؛ `main.js` يعيد التحقق من `sessionId`
   بـ`SAFE_SESSION` ومن الأنواع قبل المخزن. العنوان المنقّى يجُبّ المشتق، والمثبتة تصعد
   أعلى القائمة. `preload.js` يكشف `sessionMetaList()` و`sessionMetaSet()` فقط.
