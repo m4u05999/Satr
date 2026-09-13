@@ -36,6 +36,10 @@ const opsPlannerModule = require('./opsplanner');
 const reviewChangesModule = require('./reviewchanges'); // «راجع تغييراتي الآن» — مراجعة عمياء من المحادثة
 const agentsList = require('./agents');
 const agent = require('./agent');
+// انقطاع الشبكة (2026-09-13): تصنيف خطأ الشبكة في قُمع emit المشترك لكل المحرّكات + مراقب يفحص
+// حلّ الأسماء بعد أول خطأ مصنَّف ويبثّ `connectivity` عند العودة. الدفعة في docs/internals/13.
+const neterror = require('./neterror');
+const connectivity = require('./connectivity').create({ onChange: (event) => emitToWindow(event) });
 const orchestratorModule = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
 const executorModule = require('./executor'); // نواة عامل محايدة عن المحرك داخل worktree — الخطوة 2
 const executionTeamModule = require('./executionteam'); // 1–3 عوامل بملكية ملفات — الخطوة 3
@@ -1876,6 +1880,14 @@ function sanitizeClaudePolishText(value, maxLength) {
   return text && !memory.hasSecret(text) ? text : '';
 }
 
+// اسم المحرك في رسالة انقطاع الشبكة — نصّ عرض قصير لا معرّف تقني.
+function netEngineLabel(engine) {
+  if (engine === 'sdk' || engine === 'cli') return 'Claude Code';
+  if (engine === 'codex') return 'Codex';
+  if (engine === kimi.ENGINE_ID) return 'Kimi Code';
+  return typeof engine === 'string' && /^[a-z0-9-]{1,40}$/i.test(engine) ? engine : 'المحرك';
+}
+
 function sanitizeClaudePolishEvent(event) {
   if (!event || typeof event !== 'object') return null;
   if (event.type === 'prompt_suggestion') {
@@ -3072,6 +3084,15 @@ async function handleSendRequest(event, payload, requestEpoch) {
     }
     if (obj.type === 'permission_request') {
       offerMobilePermission(obj, { token, cwd, engine: runEngine, sessionId: activeSessionId });
+    }
+    // خطأ شبكة أياً كان محركه (SDK/Codex/Kimi/محوّلات REST): يُلحق `net` بنصّ عربي يقول السبب
+    // الحقيقي، ويوقظ مراقب الاتصال. بعد acceptEvent عمداً — سجل المحادثة يحفظ الحدث الأصلي.
+    if ((obj.type === 'result' && obj.is_error) || obj.type === 'spawn_error' || obj.type === 'api_retry') {
+      const annotated = neterror.annotate(obj, netEngineLabel(runEngine));
+      if (annotated !== obj) {
+        obj = annotated;
+        connectivity.noteFailure({ code: obj.net.code, engine: runEngine });
+      }
     }
     emitToWindow(obj, lateSdkBackgroundEvent ? runEngine : undefined);
   };

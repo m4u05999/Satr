@@ -63,6 +63,7 @@ const SUITE = [
   'test:codex-account',
   'test:kimi',
   'test:kimi-keepalive',
+  'test:neterror',
   'test:browserguard',
   'test:surface',
   'test:browserorigin',

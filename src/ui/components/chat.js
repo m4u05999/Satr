@@ -1678,6 +1678,26 @@ class SatrChat extends HTMLElement {
           renderUsageSummary();
         }
       },
+      // إعادة محاولة API (انقطاع الشبكة 2026-09-13): Claude Code يعيد المحاولة حتى دقائق؛ بدل
+      // «يستعد» الصامت يُقال ما يجري وكم بقي، في سطر واحد يُحدَّث بلا تكديس.
+      apiRetry(ev) {
+        const attempt = Number(ev && ev.attempt) || 0;
+        const max = Number(ev && ev.max_retries) || 0;
+        const sec = Math.max(1, Math.round((Number(ev && ev.retry_delay_ms) || 0) / 1000));
+        const reason = ev && ev.net && ev.net.code ? 'تعذّر الوصول إلى الخادم (' + ev.net.code + ')'
+          : ev && ev.error_status ? 'الخادم ردّ بالرمز ' + ev.error_status : 'تعذّر الوصول إلى الخادم';
+        revealActivity('يعيد الاتصال بالخادم' + (max ? ' (' + attempt + '/' + max + ')' : ''));
+        let note = w.querySelector('.retry-note');
+        if (!note) {
+          note = document.createElement('div');
+          note.className = 'meta retry-note';
+          note.setAttribute('role', 'status');
+          w.appendChild(note);
+        }
+        note.textContent = '⏳ ' + reason + ' — إعادة المحاولة ' + (max ? attempt + ' من ' + max : attempt)
+          + ' بعد ' + sec + ' ث. المحادثة محفوظة ولا حاجة لإعادة تشغيل سطر.';
+        scrollDown();
+      },
       error(text) {
         worklog.classList.remove('working', 'answering');
         worklog.classList.add('failed');
