@@ -1270,7 +1270,11 @@ class SatrChat extends HTMLElement {
 
     const commentaryWrap = document.createElement('section'); commentaryWrap.className = 'work-section commentary-wrap'; commentaryWrap.hidden = true;
     const commentaryHead = document.createElement('div'); commentaryHead.className = 'work-section-head'; commentaryHead.textContent = 'سجل التفكير';
-    const commentaryMd = document.createElement('div'); commentaryMd.className = 'md commentary-md'; commentaryMd.dir = 'auto';
+    // اتجاه حاوية Markdown يُحسم **إحصائياً** عند كل تصيير (‏`textDir`) لا بـ`dir="auto"`:
+    // `auto` يحسم من أول حرف قوي، فردٌّ عربي يبدأ برمز لاتيني («PR ح٣ صار #130…») يرسو LTR
+    // كاملاً وتقفز فقرات عمود النثر (`--prose-measure`) إلى اليسار بفراغ كبير يميناً — لقطة
+    // المالك 2026-09-13 ومقيس بالبكسل (gapRight=458px). الافتراضي rtl حتى يصل نص.
+    const commentaryMd = document.createElement('div'); commentaryMd.className = 'md commentary-md'; commentaryMd.dir = 'rtl';
     commentaryWrap.appendChild(commentaryHead); commentaryWrap.appendChild(commentaryMd);
 
     const toolsWrap = document.createElement('section'); toolsWrap.className = 'work-section tools-wrap'; toolsWrap.hidden = true;
@@ -1304,7 +1308,7 @@ class SatrChat extends HTMLElement {
     const answerWrap = document.createElement('section'); answerWrap.className = 'answer-wrap'; answerWrap.hidden = true;
     const answerLabel = document.createElement('div'); answerLabel.className = 'answer-label'; answerLabel.textContent = 'الإجابة';
     const bubble = document.createElement('div'); bubble.className = 'bubble';
-    const md = document.createElement('div'); md.className = 'md'; md.dir = 'auto';
+    const md = document.createElement('div'); md.className = 'md'; md.dir = 'rtl'; // إحصائي عند التصيير — انظر commentaryMd
     bubble.appendChild(md); answerWrap.appendChild(answerLabel); answerWrap.appendChild(bubble);
     w.appendChild(worklog); w.appendChild(answerWrap);
     thread.appendChild(w); scrollDown();
@@ -1382,10 +1386,12 @@ class SatrChat extends HTMLElement {
       const text = phaseText(phase);
       if (phase === 'commentary') {
         commentaryWrap.hidden = false;
+        commentaryMd.dir = textDir(text) || 'rtl';
         commentaryMd.innerHTML = renderMD(text);
         revealActivity('يفكّر ويستكشف');
       } else {
         startAnswer();
+        md.dir = textDir(text) || 'rtl';
         md.innerHTML = renderMD(text);
       }
       scrollDown();
@@ -1395,10 +1401,12 @@ class SatrChat extends HTMLElement {
       const answerText = phaseText('final_answer');
       if (commentaryText) {
         commentaryWrap.hidden = false;
+        commentaryMd.dir = textDir(commentaryText) || 'rtl';
         commentaryMd.innerHTML = renderMD(commentaryText);
       }
       if (answerText) {
         answerWrap.hidden = false;
+        md.dir = textDir(answerText) || 'rtl';
         md.innerHTML = renderMD(answerText);
       }
     }
@@ -1749,7 +1757,7 @@ class SatrChat extends HTMLElement {
       const answerWrap = document.createElement('section'); answerWrap.className = 'answer-wrap history-answer';
       const answerLabel = document.createElement('div'); answerLabel.className = 'answer-label'; answerLabel.textContent = 'الإجابة';
       const bubble = document.createElement('div'); bubble.className = 'bubble';
-      const md = document.createElement('div'); md.className = 'md'; md.dir = 'auto';
+      const md = document.createElement('div'); md.className = 'md'; md.dir = textDir(msg.text) || 'rtl'; // إحصائي لا auto
       md.innerHTML = renderMD(msg.text);
       bubble.appendChild(md); answerWrap.appendChild(answerLabel); answerWrap.appendChild(bubble); w.appendChild(answerWrap);
       addCodeCopyButtons(md);

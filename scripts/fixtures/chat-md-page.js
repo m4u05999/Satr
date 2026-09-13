@@ -136,6 +136,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     const brCell = Array.from(md2.querySelectorAll('td')).find((td) => td.querySelector('br'));
     assert(brCell && !/<br/i.test(md2.textContent), 'وسم <br> داخل الخلية سطرٌ جديد لا نصٌّ ظاهر.');
 
+    // ---------- حاوية .md: حسم إحصائي لا dir=auto (بلاغ المالك 2026-09-13) ----------
+    // ردٌّ عربي الجوهر يبدأ برمز لاتيني: بـdir=auto كانت الحاوية ترسو LTR (أول حرف قوي) فتقفز
+    // فقرات عمود النثر إلى اليسار بفراغ ≈458px يميناً. المعيار بالبكسل: الفقرة الثانية
+    // تلتصق بحافة الحاوية اليمنى (فرق ≤ 1px) والفراغ كله على اليسار.
+    const latinFirst = chat.newAssistantBlock('اختبار رمز لاتيني بادئ');
+    latinFirst.addText([
+      'PR ح٣ صار #130. الآن بالتوازي: عضّتا ح١ ثم دفعه وفتح PR، وإطلاق ح٢ من جديد.',
+      '',
+      'الترتيب المقترح للدمج: #127 ثم #128 ثم #129، مع إعادة تأسيس الباقي بعد كل دمج.',
+    ].join('\n'));
+    latinFirst.finish({});
+    const mds3 = document.querySelectorAll('.msg.assistant .answer-wrap .md');
+    const md3 = mds3[mds3.length - 1];
+    assert(md3.getAttribute('dir') === 'rtl', 'حاوية .md لردّ يبدأ برمز لاتيني تُحسم rtl إحصائياً — وجد dir=' + md3.getAttribute('dir'));
+    assert(getComputedStyle(md3).direction === 'rtl', 'اتجاه الحاوية المحسوب rtl.');
+    const p3 = md3.querySelectorAll('p')[1];
+    const md3Rect = md3.getBoundingClientRect(), p3Rect = p3.getBoundingClientRect();
+    assert(Math.abs(md3Rect.right - p3Rect.right) <= 1 && p3Rect.left - md3Rect.left > 40,
+      'فقرة عمود النثر ترسو يميناً والفراغ يساراً — وجد gapRight=' + Math.round(md3Rect.right - p3Rect.right)
+      + ' gapLeft=' + Math.round(p3Rect.left - md3Rect.left));
+    assert(px(getComputedStyle(md3).fontSize) === 16, 'خط الجواب 16px كفقاعة المستخدم — وجد ' + getComputedStyle(md3).fontSize);
+
     // ---------- التصميم: سلّم العناوين والهوامش ----------
     const p = measureHeading(firstP);
     const h2 = measureHeading(md.querySelector('h2'));
