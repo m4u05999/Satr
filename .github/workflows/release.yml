@@ -1,6 +1,16 @@
 name: التحقق وإصدار ويندوز
 
 on:
+  # التشغيل اليدوي مسار **تجربة** لحزمة المتجر بلا قطع وسم: وظيفة `release` تعمل،
+  # تبني MSIX وترفعها artifact، ولا تلمس إصدارات GitHub إطلاقاً (لا وسم فلا إصدار).
+  # ⚠️ اسم أي خطوة أو وصف مدخل يحوي «: » يُسقط workflow_dispatch صامتاً من واجهة
+  # Actions (درس مقيس) — فلا نقطتين متبوعتين بفراغ في أي نصّ أُضيف في هذه الدفعة.
+  workflow_dispatch:
+    inputs:
+      msix_only:
+        description: 'ابنِ حزمة المتجر MSIX وحدها (تخطَّ مثبّت NSIS) وارفعها artifact'
+        type: boolean
+        default: false
   push:
     branches:
       - '**'
@@ -178,7 +188,10 @@ jobs:
 
   release:
     name: بناء ونشر مثبّت ويندوز
-    if: startsWith(github.ref, 'refs/tags/v')
+    # مساران في وظيفة **واحدة** لا في وظيفة رابعة: الوظيفة الجديدة تبقى اختيارية في
+    # حماية الفرع حتى تُعلَّم مطلوبة يدوياً — «نيّة معلنة بلا آليّة» (‏OBS-117).
+    # مسار الوسم = كل ما كان؛ مسار التشغيل اليدوي = بناء MSIX وartifact فقط.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     # قرار مالك (2026-09-03): بوابة الاختبارات تُبلّغ ولا تمنع الإصدار في جولتها الأولى —
     # لم تُشغَّل على Actions فعلياً بعد (Node 20 على لينكس مقابل 26 على جهاز التطوير). بعد
     # تشغيلين ناجحين على `main` تُضاف `tests` هنا فتصير شرطاً؛ لا أحمر يعطّل إصداراً بلا سبب مقيس.
@@ -196,7 +209,9 @@ jobs:
           node-version: '20'
 
       # يمنع إنشاء إصدار بعنوان لا يطابق النسخة المبنية فعلياً.
+      # مسار الوسم وحده — التشغيل اليدوي لا وسم له.
       - name: مطابقة الوسم مع package.json
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         shell: pwsh
         run: |
           $tagVersion = '${{ github.ref_name }}' -replace '^v', ''
@@ -210,6 +225,7 @@ jobs:
       # **عند الوسم لا عند كل push**: بين الإصدارات يكون README على الرقم المنشور
       # بينما package.json قد رُفع، ففحصٌ أبكر كان سيكسر CI على عمل سليم.
       - name: مطابقة رقم الإصدار في README
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         run: node scripts/sync-readme-version.js --check
 
       # ‏OBS-161: `build.extraResources` يشير إلى `native/satr-uia/out-aot`، و**electron-builder
@@ -249,8 +265,11 @@ jobs:
         run: npm ci
 
       # npmRebuild:false في package.json يمنع إعادة بناء node-pty تحت Electron.
+      # ‏`msix_only` يتخطّى NSIS كاملاً؛ وعلى التشغيل اليدوي (إن لم يُطلب msix_only)
+      # يُبنى المثبّت بـ`--publish never` لأنه لا وسم ولا مسودة إصدار يُرفع إليها.
       - name: بناء الأصول ورفعها إلى مسودة الإصدار
-        run: npm run dist -- --publish always
+        if: ${{ !inputs.msix_only }}
+        run: npm run dist -- --publish ${{ github.event_name == 'workflow_dispatch' && 'never' || 'always' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -258,6 +277,7 @@ jobs:
       # فغياب الملف هنا يعني مثبّتاً بلا معين — يفشل الإصدار قبل نشره لا بعد تنزيل المستخدم.
       # ‏`win-unpacked` لا المثبّت NSIS: الأخير لا يُفكّ على العدّاء، وهو مبنيّ من هذا المجلد.
       - name: التحقق من المعين داخل النسخة المبنية
+        if: ${{ !inputs.msix_only }}
         shell: pwsh
         run: |
           $exe = 'dist/win-unpacked/resources/satr-uia/satr-uia.exe'
@@ -266,7 +286,67 @@ jobs:
           }
           Write-Host "::notice title=المعين في النسخة المبنية::$exe موجود ($((Get-Item $exe).Length) بايت)"
 
+      # ── حزمة Microsoft Store (‏MSIX) ──
+      # موضعها هنا **بعد** نشر المعين والتحقق منه عمداً: `extraResources` يُنسخ في كل
+      # هدف، فبناء الحزمة قبل `dotnet publish` كان سيشحن حزمة متجر بلا `satr-uia`
+      # وelectron-builder يتخطّى المصدر الغائب صامتاً (‏OBS-161).
+      # الحزمة **غير موقّعة** عمداً — مايكروسوفت توقّعها عند النشر؛ فهي للرفع إلى
+      # Partner Center لا للتثبيت المباشر. التفصيل في `docs/internals/41-msix-store-package.md`.
+      - name: بناء حزمة المتجر MSIX
+        shell: pwsh
+        run: |
+          npm run dist:appx
+          if ($LASTEXITCODE -ne 0) { throw 'فشل بناء حزمة MSIX (npm run dist:appx)' }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $appx = Get-ChildItem dist -Filter *.appx -File | Select-Object -First 1
+          if (-not $appx) { throw 'لم تُنتج حزمة appx في dist رغم نجاح electron-builder' }
+          # الحزمة appx هي ملف zip؛ نقرأ AppxManifest.xml من داخلها بمكتبة .NET المدمجة
+          # لا بـExpand-Archive تحسّباً لمدخل `[Content_Types].xml` (الأقواس المربّعة
+          # تُفسَّر أنماطاً في مسارات PowerShell)، وبلا اعتمادية جديدة.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($appx.FullName)
+          try {
+            $entry = $archive.Entries | Where-Object { $_.FullName -eq 'AppxManifest.xml' }
+            if (-not $entry) { throw 'لا AppxManifest.xml داخل حزمة appx — الحزمة تالفة' }
+            $reader = New-Object System.IO.StreamReader($entry.Open())
+            try { $manifestXml = [xml]$reader.ReadToEnd() } finally { $reader.Dispose() }
+          } finally { $archive.Dispose() }
+          # نسخة MSIX رباعية المقاطع (‏a.b.c.0) بينما package.json ثلاثية — نقبل مقطعاً رابعاً.
+          $packageVersion = $manifestXml.Package.Identity.Version
+          if ($packageVersion -notmatch "^$([regex]::Escape($version))(\.\d+)?$") {
+            throw "إصدار حزمة MSIX ($packageVersion) لا يطابق package.json ($version)"
+          }
+          # اسم ثابت يُعتمد عليه في الفحوص وفي ملاحظات الإصدار.
+          $assetName = "Satr-Store-$version.appx"
+          if ($appx.Name -ne $assetName) {
+            Move-Item -LiteralPath $appx.FullName -Destination (Join-Path 'dist' $assetName) -Force
+          }
+          $final = Join-Path 'dist' $assetName
+          Write-Host "::notice title=حزمة المتجر::$assetName ($((Get-Item $final).Length) بايت) · هوية $packageVersion"
+
+      - name: رفع حزمة المتجر إلى الإصدار
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $appx = Join-Path 'dist' "Satr-Store-$version.appx"
+          if (-not (Test-Path $appx)) { throw "غابت حزمة المتجر $appx" }
+          gh release upload '${{ github.ref_name }}' $appx --clobber
+
+      # مسار التجربة بلا وسم — الحزمة تنزل من صفحة التشغيل بدل إصدار GitHub.
+      - name: رفع حزمة المتجر artifact
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: satr-store-msix
+          path: dist/Satr-Store-*.appx
+          if-no-files-found: error
+          retention-days: 14
+
       - name: إنشاء ورفع نسخة ZIP من المثبّت
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -279,6 +359,7 @@ jobs:
           gh release upload '${{ github.ref_name }}' $zip --clobber
 
       - name: التحقق من أصول التحديث
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -296,10 +377,14 @@ jobs:
           if (-not ($assets | Where-Object { $_ -like 'Satr-Setup-*.zip' })) {
             throw 'لم تُرفع نسخة ZIP من المثبّت'
           }
+          if (-not ($assets | Where-Object { $_ -like 'Satr-Store-*.appx' })) {
+            throw 'لم تُرفع حزمة المتجر MSIX'
+          }
 
       # electron-builder ينشئ مسودة افتراضياً؛ هذه الخطوة تحسب بصمة المثبّت،
       # تُدرجها في ملاحظات الإصدار (فلا تُحدَّث يدوياً في README)، ثم تنشر بلا تدخل.
       - name: نشر إصدار GitHub مع بصمة المثبّت
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -335,7 +420,11 @@ jobs:
             "",
             "**بصمة SHA-256** (للتحقق الاختياري من سلامة الملف):",
             "",
-            "    $hash"
+            "    $hash",
+            "",
+            "**``Satr-Store-$version.appx``** — حزمة Microsoft Store، **غير موقّعة عمداً**",
+            "(مايكروسوفت توقّعها عند النشر). هذا الملف للرفع إلى Partner Center لا للتثبيت",
+            "المباشر؛ لتثبيت سطر على جهازك استعمل المثبّت أعلاه."
           )
           $lines | Out-File release-notes.md -Encoding utf8
           gh release edit '${{ github.ref_name }}' --notes-file release-notes.md --draft=false --latest

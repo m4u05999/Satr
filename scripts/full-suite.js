@@ -139,6 +139,7 @@ const SUITE = [
   'test:gallery',
   'test:desktop-panel',
   'test:release-uia',
+  'test:release-msix',
   'test:accept-driver',
   'eval:agent',
 ];

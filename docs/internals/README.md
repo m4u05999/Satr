@@ -49,7 +49,7 @@
 | 38 | [`38-ad-music-quality-round.md`](38-ad-music-quality-round.md) | جولة جودة موسيقى الإعلان بعد الرفض السمعي (الجولة 10 التكميلي) | 3.4 ك.ب |
 | 39 | [`39-claude-code-parity-commands.md`](39-claude-code-parity-commands.md) | أوامر التكافؤ مع Claude Code (الدفعة الأخيرة قبل التجميد) | 2.4 ك.ب |
 | 40 | [`40-subagents.md`](40-subagents.md) | الوكلاء الفرعيون (Subagents — المرحلة 14.2) | 1.4 ك.ب |
-| 41 | [`41-msix-store-package.md`](41-msix-store-package.md) | حزمة Microsoft Store (‏MSIX — 2026-09-04) | 3.9 ك.ب |
+| 41 | [`41-msix-store-package.md`](41-msix-store-package.md) | حزمة Microsoft Store (‏MSIX — 2026-09-04) | 8.2 ك.ب |
 | 42 | [`42-auto-update.md`](42-auto-update.md) | التحديث التلقائي (المرحلة 17) | 3.1 ك.ب |
 | 43 | [`43-run-in-terminal-tool.md`](43-run-in-terminal-tool.md) | دمج الطرفية مع النموذج — أداة run_in_terminal (المرحلة 16) | 2.4 ك.ب |
 | 44 | [`44-background-terminal-jobs.md`](44-background-terminal-jobs.md) | مهام الطرفية المعمّرة — run_in_background | 7.7 ك.ب |
