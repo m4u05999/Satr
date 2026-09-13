@@ -5586,7 +5586,7 @@ un-suite-instrumented.ps1` (خارج المستودع)
 
 - **الوسم**: `process`
 - **النوع**: تحسين
-- **الحالة**: مفتوحة — قرار مالك 2026-09-12 (القرار ب في مراجعة #113): تُسجَّل الآن، والربط دفعة مستقلة قبل أي إصدار يكشف الميزة للمستخدم (الخطوة ٥ فما بعد).
+- **الحالة**: منجزة — دُمج في `main` بالالتزام `0ad40d7` (‏PR #129، المرشّح ١): وظيفة `release` في `release.yml` تبني المعين NativeAOT قبل `npm run dist` بلا `continue-on-error`، وتفشل صراحةً إن غاب الملف أو تجاوز 8 م.ب، وتتحقق من وجوده داخل `dist/win-unpacked/resources/satr-uia/`؛ حارس `test:release-uia`. أول إصدار يحمله 2.16.23. (كانت «مفتوحة» بعد الدمج بيومين — تعفّن سجل لا عملٍ.)
 - **الدليل**: `package.json` في `d2e9ae8` (‏`build.extraResources` من `native/satr-uia/out-aot` بمرشّح `satr-uia.exe`)، بينما `.github/workflows/release.yml` لا يحوي خطوة `dotnet` ولا تنزيل artifact؛ الناتج يُبنى في `.github/workflows/uia-helper.yml` وحده ويُرفع باسم `satr-uia-win-x64`. تقرير منفّذ #113: `npm run dist:dir` نجح مع تحذير electron-builder «file source doesn't exist». وفي `electron/desktop.js` يعيد `resolveHelperPath()` ‏`null` عند الغياب فلا يُسجَّل الخادم ويصل إشعار `UNAVAILABLE_MESSAGE` وحده — أي مثبّت يُقطع اليوم يشحن الميزة ميتة بصمت.
 - **المصدر**: تقرير منفّذ #113 (2026-09-11) وتحقّق القائد.
 - **الملاحظة**: مرشّحان: (١) خطوة في `release.yml` على عدّاء ويندوز تبني المعين NativeAOT قبل `npm run dist` (‏.NET 10، نحو دقيقتين، ورقم الحجم والإقلاع يُطبعان كما في `uia-helper.yml`)؛ (٢) تنزيل artifact آخر تشغيل ناجح لـ`uia-helper.yml` على الالتزام نفسه مع فحص بصمة SHA-256 للثنائي. وفي الحالين حارس: فشل صريح لا تحذير حين يُطلب التحزيم بالمعين وغاب الملف.
