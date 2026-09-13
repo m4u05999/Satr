@@ -37,7 +37,13 @@ const CSS = path.join(ROOT, 'src', 'styles', 'base.css');
 const PAIRS = [
   { fg: '--text', bgs: ['--bg', '--surface', '--surface-2'], min: 4.5, note: 'نصّ أساسي' },
   { fg: '--text-dim', bgs: ['--bg', '--surface', '--surface-2'], min: 4.5, note: 'نصّ ثانوي' },
-  { fg: '--text-faint', bgs: ['--bg', '--surface', '--surface-2'], min: 4.5, note: 'نصّ خافت يُقرأ (طوابع/ميتا)' },
+  // --surface-2 مرفوع من أزواج --text-faint عمداً (دفعة OBS-183): الرمز الفاتح
+  // (#6e6c66) ما زال 4.17:1 عليه — لم نرفعه (قرار الدفعة ب: رفعه يلغي الدرجة
+  // الثالثة) — لكن لم يبقَ له مستعمِل واحد على هذا السطح بعد نقل #traceList/.trace-last
+  // (preview-panel.js) و.meta (memory-panel.js) إلى --text-dim. فالعقد المعلن صار:
+  // --text-faint للـbg والسطح الأول فقط. وأي استعمال جديد على --surface-2 يمسكه
+  // ui:audit (يقيس ما يُرسم فعلاً). الاستثناء الذي كان هنا حُذف لزوال سببه.
+  { fg: '--text-faint', bgs: ['--bg', '--surface'], min: 4.5, note: 'نصّ خافت يُقرأ (طوابع/ميتا)' },
   { fg: '--gold', bgs: ['--surface', '--surface-2', '--surface-3'], min: 4.5, note: 'ذهب نصّي (رؤوس اللوحات وأزرار الفعل)' },
   { fg: '--gold-strong', bgs: ['--surface', '--surface-2', '--surface-3'], min: 4.5, note: 'ذهب التحويم/الإبراز نصّياً' },
   { fg: '--on-gold', bgs: ['--gold', '--gold-strong'], min: 4.5, note: 'نصّ فوق سطح ذهبي (#send وأخواته)' },
@@ -50,16 +56,10 @@ const PAIRS = [
 // ---------- الاستثناءات: كل سطر بسبب مكتوب ومقيس ----------
 // أي استثناء بلا سبب (أو بسبب أقصر من 20 محرفاً) يُسقط الحارس، وأي استثناء
 // لا يطابق زوجاً في الجدول يُسقطه أيضاً (استثناء متعفّن).
-const EXCEPTIONS = [
-  {
-    mode: 'light', fg: '--text-faint', bg: '--surface-2',
-    reason: 'مقيس: رفع --text-faint الفاتح ليجتاز surface-2 يلزمه #66645e فيصير 1.06:1 من '
-      + '--text-dim (#63605b) — أي إلغاء الدرجة الثالثة كلها. مستعملو الرمز مقيسون على --bg '
-      + 'و--surface (‏4.73:1 و5.16:1)؛ الاستعمالان على surface-2 (‏#pvTaskTrace/#traceList في '
-      + 'preview-panel.js و.memory:hover في memory-panel.js) عيب موضعي يُصلَح بنقلهما إلى '
-      + '--text-dim في المكوّن لا برفع الرمز — مذكور كملاحظة للمالك لا منفَّذاً هنا.',
-  },
-];
+// دفعة OBS-183: القائمة **فارغة** — الاستثناء الوحيد (‏light · --text-faint على
+// --surface-2) زال بزوال سببه: مستعملاه نُقلا إلى --text-dim ورُفع الزوج من PAIRS
+// (انظر التعليق هناك). إبقاء استثناء بعد زوال سببه هو ما يصنع الحارس الأخضر الكاذب.
+const EXCEPTIONS = [];
 
 // ---------- أدوات اللون (منسوخة من scripts/ui-audit.js عمداً) ----------
 // النسخ لا الاستيراد: ui-audit.js يحمّل Electron عند require فيسقط الحارس على

@@ -35,7 +35,9 @@ const ownSheet = sheet(`
   .memory-actions { display: flex; gap: var(--space-1h); margin-inline-start: auto; }
   .memory-actions button { padding: 2px var(--space-2); font-size: 10.5px; }
   .content { margin-top: var(--space-2); font-size: 13px; line-height: 1.7; white-space: pre-wrap; unicode-bidi: plaintext; }
-  .meta { margin-top: var(--space-1h); color: var(--text-faint); font-size: 10.5px; line-height: 1.6; unicode-bidi: plaintext; }
+  /* --text-dim لا --text-faint: .memory:hover خلفيته --surface-2 والخافت عليها 4.17:1
+     في الفاتح (تحت AA) — نقل المستعمِل هو العلاج لا رفع الرمز (OBS-183) */
+  .meta { margin-top: var(--space-1h); color: var(--text-dim); font-size: 10.5px; line-height: 1.6; unicode-bidi: plaintext; }
   .scope-path { direction: ltr; font-family: var(--mono); }
   .share-hint { margin-top: var(--space-2); color: var(--gold); font-size: 11px; line-height: 1.6; }
   .empty { padding: var(--space-5) var(--space-4); text-align: center; }

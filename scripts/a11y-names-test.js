@@ -20,6 +20,9 @@
  *      وكل `<label for>` يشير إلى `id` موجود.
  *   ٣. كل `div`/`span` يحمل `aria-label` يملك `role` (وإلّا أسقط محرّك الوصولية
  *      السمة عن عنصر `generic`).
+ *   ٤. `#awarenessBar` يحمل `role="group"` تحديداً لا `status` (‏OBS-188، قرار
+ *      المالك ٤): أزراره الأربعة تدوير يغيّر نقرها نصّها، و`status` منطقة حيّة
+ *      تُعلن كل تغيير فتصير ضجيجاً. القاعدة ٣ تقبل أي `role` — فهذه تثبّت القرار.
  *
  * ⚠️ **حدود مُصرَّح بها — تُذكر ولا يُدّعى خلافها**:
  *   - الفحص ساكن على النصّ: زرٌّ يُبنى بـ`createElement` ويُملأ نصّه من متغيّر لا
@@ -184,6 +187,20 @@ function checkGenerics(source, rel) {
   }
 }
 
+/** القاعدة ٤: شريط الوعي group لا status (‏OBS-188 — منطقة حيّة تُعلن كل نقرة تدوير). */
+function checkAwarenessBar(source, rel) {
+  const match = source.match(/<div\b[^>]*\bid\s*=\s*"awarenessBar"[^>]*>/i);
+  if (!match) {
+    problems.push(rel + ' — #awarenessBar غير موجود؛ القاعدة ٤ (‏OBS-188) بلا هدف — حدّث الحارس أو أعد العنصر.');
+    return;
+  }
+  const role = attrValue(match[0], 'role');
+  if (role !== 'group') {
+    problems.push(rel + ':' + lineOf(source, match.index) + ' — #awarenessBar role="' + (role || '') + '" '
+      + 'والمطلوب "group" (‏OBS-188): status يجعله منطقة حيّة تُعلن كل نقرة تدوير.');
+  }
+}
+
 function main() {
   const files = [HTML_FILE];
   for (const entry of fs.readdirSync(COMPONENTS_DIR)) {
@@ -196,6 +213,7 @@ function main() {
     checkButtons(source, rel);
     checkGenerics(source, rel);
     checkFields(source, rel, { selects: file === HTML_FILE });
+    if (file === HTML_FILE) checkAwarenessBar(source, rel);
   }
 
   if (problems.length) {
@@ -207,6 +225,7 @@ function main() {
     + ' زراً في ' + files.length + ' ملفاً؛ ' + stats.textual + ' اسمها نصّها المرئي)');
   console.log('✓ ' + stats.fields + ' حقلاً في index.html والمكوّنات لها اسم وصولي، ولا label يتيم');
   console.log('✓ ' + stats.generics + ' عنصر div/span يحمل aria-label ومعه role');
+  console.log('✓ #awarenessBar بـrole="group" لا status (‏OBS-188)');
   console.log('ℹ غير مفحوصة (نصّها ديناميكي أو يُملأ وقت التشغيل): ' + stats.unchecked
     + (unchecked.length ? ' — ' + unchecked.slice(0, 6).join('، ')
       + (unchecked.length > 6 ? ' و' + (unchecked.length - 6) + ' غيرها' : '') : ''));

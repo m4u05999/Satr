@@ -52,6 +52,14 @@
 `.memory:hover` في `memory-panel.js`) — إصلاحهما بنقلهما إلى `--text-dim` في المكوّن،
 وهو **مذكور للمالك لا منفَّذ** في هذه الدفعة.
 
+> **تحديث (‏OBS-183 — 2026-09-13، دفعة قرارَي المالك ٤/٦)**: نُفِّذ. والمستعملون
+> **ثلاثة** لا اثنان — فات هذا التعليل `.trace-last` وهو داخل `#pvTaskTrace` نفسه —
+> ونُقلوا جميعاً (`#traceList li` و`.trace-last` في `preview-panel.js`، و`.meta` في
+> `memory-panel.js`) إلى `--text-dim`. فزال سبب الاستثناء: `EXCEPTIONS` صارت **فارغة**
+> و`--surface-2` رُفع من أزواج `--text-faint` في `PAIRS` (لم يبقَ للزوج مستعمِل، ورفعه
+> أصدق من استثنائه). الرمز نفسه لم يتغيّر (`#6e6c66`، 4.17:1 على `--surface-2`).
+> التفاصيل في [`76-awareness-group-contrast-cleanup.md`](76-awareness-group-contrast-cleanup.md).
+
 ### ٣. `ui:audit` صار يُفشل
 
 `assertContrast(label, fg, bg, min)` و`assertContrastEl(label, el, bg)` داخل كتلة

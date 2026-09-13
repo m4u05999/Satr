@@ -218,13 +218,16 @@ const previewSheet = sheet(`
   #pvTaskTrace.collapsed #traceList { display: none; }
   .trace-last {
     flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    color: var(--text-faint);
+    /* --text-dim لا --text-faint: خلفية #pvTaskTrace هي --surface-2، والخافت عليها
+       4.17:1 في الفاتح (تحت AA). نقل المستعمِل هو العلاج، لا رفع الرمز — OBS-183 */
+    color: var(--text-dim);
   }
   #pvTaskTrace:not(.collapsed) .trace-last { display: none; }
   #traceStop { border: 1px solid var(--red-border); background: var(--red-soft); color: var(--red);
     border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); cursor: pointer; }
   #traceList { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; max-height: 66px; overflow: auto; }
-  #traceList li { display: flex; gap: var(--space-2); min-width: 0; font-size: 10.5px; color: var(--text-faint); }
+  /* --text-dim لا --text-faint للسبب نفسه أعلاه (الخلفية --surface-2) — OBS-183 */
+  #traceList li { display: flex; gap: var(--space-2); min-width: 0; font-size: 10.5px; color: var(--text-dim); }
   #traceList .trace-title { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #traceList .trace-action { flex: none; color: var(--gold-strong); }
   /* مساحة العرض: فارغة — WebContentsView الأصلية تُرسم فوقها بنفس المستطيل */
