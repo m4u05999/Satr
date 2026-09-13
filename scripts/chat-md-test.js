@@ -7,8 +7,8 @@
  *    <a>، قوائم مهام، عزل مقاطع الكود، وتنظيف الشطب ~~ و<br> داخل الخلايا؛ مع بقاء
  *    الاتجاه الإحصائي كما هو.
  *  - التصميم (base.css): سلّم h2 > h3 > p بالنسبة ~1.28، الأوزان 700/500/700، h2 ذهبي وh3
- *    بلون المتن، هامش العنوان أعلاه أكبر من أسفله، وعمود النثر (--prose-measure) يقصر
- *    الفقرة إلى 60–72 محرفاً للسطر (معيار الخطة «لا يتجاوز ~70») دون الجدول وكتلة الكود.
+ *    بلون المتن، هامش العنوان أعلاه أكبر من أسفله، والفقرة تملأ البطاقة (OBS-202: أُزيل عمود
+ *    النثر 45ch بقرار المالك) وطول السطر يحكمه --column-max على العمود كله (≈80–125 محرفاً).
  * الرد النموذجي نسخة واحدة في fixtures/chat-md-page.js تتشاركها مشاهد ui:audit والقبول.
  */
 const assert = require('assert');
@@ -51,10 +51,13 @@ function assertStaticContract() {
     'الشطب ~~ ووسم <br> يُنظَّفان في inlineMD.');
   assert(chat.includes("from '../lib/text-dir.js'") && /dirAttr\(raw\.join\('\\n'\)\)/.test(chat),
     'الاتجاه الإحصائي للفقرات باقٍ من المصدر المشترك.');
-  // التصميم: token عمود النثر والسلّم في base.css
-  assert(/--prose-measure:\s*\d+ch;/.test(css), 'token --prose-measure معرَّف بوحدة ch.');
-  assert(/\.answer-wrap \.md p, \.answer-wrap \.md ul, \.answer-wrap \.md ol, \.answer-wrap \.md blockquote \{ max-width: var\(--prose-measure\); \}/.test(css),
-    'عمود النثر مطبَّق على الفقرات والقوائم والاقتباس داخل الإجابة فقط.');
+  // التصميم (OBS-202): عرض العمود token واحد، ولا عمود نثر يقصر الفقرة دون البطاقة
+  assert(/--column-max:\s*\d+px;/.test(css), 'token --column-max معرَّف بالبكسل.');
+  assert(!css.includes('--prose-measure'), 'عمود النثر أُزيل بقرار المالك (OBS-202) — لا يعود خفيةً.');
+  assert(/\.answer-wrap \.md p, \.answer-wrap \.md ul, \.answer-wrap \.md ol, \.answer-wrap \.md blockquote \{ max-width: 100%; \}/.test(css),
+    'الفقرات والقوائم والاقتباس بعرض البطاقة كاملاً.');
+  assert(/\.thread \{ max-width: var\(--column-max\);/.test(css) && /\.composer \{ max-width: var\(--column-max\);/.test(css),
+    'الخيط والمؤلّف يتشاركان --column-max.');
   assert(/\.md h2 \{ color: var\(--gold\); font-size: 1\.28em; font-weight: 700; \}/.test(css), 'h2 بنسبة 1.28 ذهبي 700.');
   assert(/\.md h3 \{ color: var\(--text\); font-size: 1\.1em; font-weight: 500; \}/.test(css), 'h3 بلون المتن 500 — لا لون ثانٍ.');
   assert(!/\.md h1, \.md h2, \.md h3 \{ color: var\(--gold\); font-size: 1\.08em/.test(css), 'القاعدة القديمة التي تساوي المستويات أُزيلت.');
@@ -101,7 +104,7 @@ async function main() {
       'القائمة المرقمة الثانية يجب أن تحمل start="3"؛ وجدت ' + interrupted.html);
     const m = result.measures;
     console.log('chat-md: نجح — صفر تسرّب؛ h2/h3/h4/p = ' + [m.h2, m.h3, m.h4, m.p].join('/') + 'px؛ هامش h2 الأول ' + m.h2Top
-      + '؛ عمود النثر ' + m.proseWidth + 'px من ' + m.bubbleInner + ' (' + m.charsPerLine + ' محرفاً/سطر على ' + m.lines + ' أسطر)؛ الكود '
+      + '؛ النثر ' + m.proseWidth + 'px من ' + m.bubbleInner + ' (' + m.charsPerLine + ' محرفاً/سطر على ' + m.lines + ' أسطر)؛ الكود '
       + m.preWidth + 'px؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();

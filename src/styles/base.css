@@ -54,13 +54,13 @@
     --ease: cubic-bezier(.2, .8, .3, 1);
     --dur: .18s;
     --side-surfaces-wide: 120rem; /* يطابق MULTI_SURFACE_MEDIA في app.js */
-    /* عمود النثر في الإجابة (جولة القرائية 2026-09-10): كان السطر ~105 محارف على فقاعة
-       834px فيتعب القارئ ويتوه بين الأسطر. الوحدة ch هي عرض الصفر في الخط (≈0.6em في
-       IBM Plex Sans Arabic) والحرف العربي أضيق منه بكثير (≈0.4em مقيساً بعرض الحبر)،
-       فالقيمة لا تُقرأ محارفَ: 45ch ≈ 419px ≈ 68 محرفاً ≈ 11 كلمة للسطر — وهو «≈68» الذي
-       قصدته الخطة ومعيارها «لا يتجاوز ~70»، مقيس في test:chat-md (‏50ch أعطت 75.8). الرقم
-       الوحيد الذي يُضبط عند القبول البشري. الجداول وكتل الكود بالعرض الكامل؛ النثر وحده يُقصر. */
-    --prose-measure: 45ch;
+    /* عرض عمود الدردشة (الخيط والمؤلّف وشريط الحالة معاً). OBS-202 (2026-09-13): كان عمود
+       النثر (رمز 45ch أُزيل) يقصر الفقرة إلى ≈419px داخل بطاقة ≈834px فيبقى نصف
+       البطاقة فارغاً يساراً حتى أثناء البث؛ قرار المالك: النص يملأ بطاقته ويتبع تكبيرها
+       وتصغيرها، والعرض المريح يُضبط على العمود كله لا على الفقرة. 720px ⇒ فقاعة داخلية
+       ≈654px ≈ 105 محرفاً عربياً للسطر (مقيس في test:chat-md). الرقم الوحيد الذي يُضبط
+       عند القبول البشري. */
+    --column-max: 720px;
     --shadow-pop: 0 10px 30px rgba(0, 0, 0, .45);
     --shadow-panel: -10px 0 34px rgba(0, 0, 0, .5);
     --shadow-dock: 6px 0 18px rgba(0, 0, 0, .18);
@@ -327,7 +327,7 @@
   }
   #jumpDown[hidden] { display: none; }
   #jumpDown:hover { background: var(--gold-soft); }
-  .thread { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-6); }
+  .thread { max-width: var(--column-max); margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-6); }
   /* المحتوى صار أطول (دعوة + أمثلة) وقد يضيق العمود بسطح جانبي مفتوح، فالفراغ
      العلوي الكبير كان يدفع التلميحات تحت الطيّ ويُظهر تمريراً في محادثة فارغة */
   .empty { text-align: center; color: var(--text-dim); margin-top: 3vh; }
@@ -557,10 +557,10 @@
   /* 16px لا 15.5px: كان الجواب أصغر من فقاعة المستخدم (16px) فبدا «أصغر من البطاقة» (بلاغ
      المالك 2026-09-13)؛ عمود النثر بوحدة ch فيتمدّد مع الخط ويبقى ≈68 محرفاً للسطر. */
   .answer-wrap .md { font-size: 16px; line-height: 1.85; }
-  /* عمود النثر (--prose-measure): الفقرات والقوائم والاقتباس داخل الإجابة وحدها؛
-     الجداول وكتل الكود والعناوين بالعرض الكامل. RTL ⇒ يبدأ من اليمين ويترك الفراغ يساراً —
-     بشرط أن تكون حاوية .md نفسها rtl: chat.js يحسمها إحصائياً لا بـdir=auto (فخّ أول حرف قوي). */
-  .answer-wrap .md p, .answer-wrap .md ul, .answer-wrap .md ol, .answer-wrap .md blockquote { max-width: var(--prose-measure); }
+  /* OBS-202: النثر والقوائم والاقتباس بعرض البطاقة كاملاً كالجداول وكتل الكود — لا عمود نثر
+     مستقل (كان 45ch ويترك نصف البطاقة فارغاً)؛ طول السطر يحكمه --column-max على العمود كله.
+     حاوية .md نفسها rtl: chat.js يحسمها إحصائياً لا بـdir=auto (فخّ أول حرف قوي). */
+  .answer-wrap .md p, .answer-wrap .md ul, .answer-wrap .md ol, .answer-wrap .md blockquote { max-width: 100%; }
   .answer-wrap .md pre, .answer-wrap .md table { max-width: 100%; }
   .history-answer { animation: none; }
 
@@ -662,8 +662,8 @@
   /* منذ ت-10: footer داخل مكوّن satr-composer (بلا Shadow — غلاف شفاف للتخطيط) */
   satr-composer { display: contents; }
   footer { border-top: 1px solid var(--border); background: var(--surface); padding: var(--space-3) var(--space-4) var(--space-3); position: relative; } /* خارج السلّم عمداً — التقريب يغيّر البصر المحروس */
-  .composer { max-width: 880px; margin: 0 auto; display: flex; gap: var(--space-2h); align-items: flex-end; position: relative; }
-  .prompt-suggestion { max-width: 880px; margin: 0 auto var(--space-2); display: flex; align-items: center; gap: var(--space-2);
+  .composer { max-width: var(--column-max); margin: 0 auto; display: flex; gap: var(--space-2h); align-items: flex-end; position: relative; }
+  .prompt-suggestion { max-width: var(--column-max); margin: 0 auto var(--space-2); display: flex; align-items: center; gap: var(--space-2);
     width: 100%; border: 1px solid var(--gold-border); border-radius: var(--radius-lg); padding: var(--space-2) var(--space-3);
     background: var(--gold-soft); color: var(--text); font-family: var(--sans); text-align: start; cursor: pointer; }
   .prompt-suggestion[hidden] { display: none; }
@@ -683,12 +683,12 @@
   #browserCtl:hover { border-color: var(--gold); color: var(--text); }
   #browserCtl.active { background: var(--gold-soft); color: var(--gold-strong); border-color: var(--gold-border); }
   /* شريط المؤلّف (§5-د-1): محرك/نموذج بجوار الإرسال */
-  .composer-tools { max-width: 880px; margin: 0 auto var(--space-2); display: flex; gap: var(--space-1h); align-items: center; flex-wrap: wrap; }
+  .composer-tools { max-width: var(--column-max); margin: 0 auto var(--space-2); display: flex; gap: var(--space-1h); align-items: center; flex-wrap: wrap; }
   .composer-tools .ct-label { font-size: 11.5px; color: var(--text-dim); }
   .composer-tools select, .composer-tools button { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-lg); padding: var(--space-1h) var(--space-2h); font-size: 12.5px; font-family: var(--sans); outline: none; cursor: pointer; }
   .composer-tools select:hover, .composer-tools button:hover { border-color: var(--gold); }
   .awareness-bar {
-    max-width: 880px; margin: 0 auto var(--space-2); display: flex; align-items: center; justify-content: flex-start;
+    max-width: var(--column-max); margin: 0 auto var(--space-2); display: flex; align-items: center; justify-content: flex-start;
     gap: var(--space-1h); overflow-x: auto; color: var(--text-faint); font-size: 11px;
   }
   .awareness-bar button { flex: none; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-dim); background: var(--surface-2); color: var(--text-dim); font-size: 11px; }
@@ -697,7 +697,7 @@
   #awarenessPerm.mode-plan { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
   .ct-hint { font-size: 11.5px; color: var(--text-dim); }
   /* شريط الحالة عربي RTL — المعرّفات والأرقام اللاتينية تنعزل LTR تلقائياً بخوارزمية BiDi */
-  .statusline { max-width: 880px; margin: var(--space-2) auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
+  .statusline { max-width: var(--column-max); margin: var(--space-2) auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
   .statusline span { unicode-bidi: plaintext; }
 
   /* استجابة المؤلّف تتبع عرض عمود الدردشة لا عرض النافذة؛ قد تضيق الدردشة داخل نافذة واسعة. */
@@ -827,7 +827,7 @@
   .file-item.active, .file-item:hover { background: var(--gold-soft); }
 
   /* شريط الصور المرفقة فوق محرّر الإدخال */
-  .attachments { max-width: 880px; margin: 0 auto var(--space-2); display: none; gap: var(--space-2); flex-wrap: wrap; }
+  .attachments { max-width: var(--column-max); margin: 0 auto var(--space-2); display: none; gap: var(--space-2); flex-wrap: wrap; }
   .attachments.open { display: flex; }
   .attach-chip { position: relative; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 3px; background: var(--surface-2); }
   .attach-chip img { height: 46px; width: auto; max-width: 110px; border-radius: var(--radius-sm); display: block; object-fit: cover; }
@@ -838,7 +838,7 @@
   }
   .attach-chip .rm:hover { border: none; }
   /* ===== شريط عمليات الخلفية قيد التشغيل (فوق المحرّر) ===== */
-  #bgBar { max-width: 880px; margin: 0 auto var(--space-2); display: none; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  #bgBar { max-width: var(--column-max); margin: 0 auto var(--space-2); display: none; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   #bgBar.open { display: flex; }
   .bg-chips { display: contents; }
   .bg-label { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: var(--space-1h); white-space: nowrap; }
