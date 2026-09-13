@@ -7,6 +7,7 @@
   "author": "Moxa",
   "license": "MIT",
   "scripts": {
+    "accept:driver": "node scripts/accept-driver.js",
     "eval:agent": "node scripts/agent-eval.js",
     "eval:agent:baseline": "node scripts/agent-eval.js --report docs/AGENT-EVAL-BASELINE.md",
     "test:mobile-crypto": "node scripts/mobilecrypto-test.js",
@@ -163,6 +164,7 @@
     "test:dialog-dir": "electron scripts/dialog-dir-test.js",
     "test:surface-overflow": "electron scripts/surface-overflow-test.js",
     "test:composer-narrow": "electron scripts/composer-narrow-test.js",
+    "test:accept-driver": "node scripts/accept-driver-test.js",
     "test:askquestion": "node scripts/askquestion-test.js",
     "test:autogate": "node scripts/autogate.test.js",
     "test:adapters": "node scripts/adapters-test.js",
