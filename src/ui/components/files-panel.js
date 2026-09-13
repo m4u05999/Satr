@@ -36,7 +36,7 @@ class SatrFilesPanel extends HTMLElement {
         '</span>' +
       '</div>' +
       '<div class="panel-search">' +
-        '<input type="text" placeholder="🔍 ابحث في محتوى الملفات… (Enter)" autocomplete="off">' +
+        '<input type="text" placeholder="🔍 ابحث في محتوى الملفات… (Enter)" aria-label="البحث في محتوى ملفات المشروع" autocomplete="off">' +
       '</div>' +
       '<div class="panel-list hits" hidden></div>' +
       '<div class="panel-list tree"></div>';
