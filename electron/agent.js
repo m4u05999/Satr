@@ -2449,6 +2449,9 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   // resultEmitted: بعد result بخطأ يخرج CLI برمز 1 فيرمي Query «process exited with code 1» —
   // خروجٌ تابع لخطأ شُرح للتوّ لا عطل تشغيل، فيُوسم كذلك كي لا تُلصق الواجهة تلميح «مثبت ومسجّل دخوله».
   let resultEmitted = false;
+  // stopRequested (OBS-201): بعد stop() يخرج CLI برمز 1 بلا result — خروجٌ طلبه المستخدم لا عطل
+  // تشغيل، فيُوسم exit_after_stop كي لا تُرسم بطاقة «فشل تشغيل أمر Claude Code» فوق «أوقف الدور».
+  let stopRequested = false;
   const done = (async () => {
     try {
       for await (const msg of q) {
@@ -2517,7 +2520,9 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       emit({ type: 'proc_done', code: 0 });
     } catch (e) {
       const text = String((e && e.message) || e);
-      emit(resultEmitted ? { type: 'spawn_error', text, kind: 'exit_after_result' } : { type: 'spawn_error', text });
+      if (resultEmitted) emit({ type: 'spawn_error', text, kind: 'exit_after_result' });
+      else if (stopRequested) emit({ type: 'spawn_error', text, kind: 'exit_after_stop' });
+      else emit({ type: 'spawn_error', text });
       emit({ type: 'proc_done', code: 1 });
     } finally {
       connectionsActive = false;
@@ -2630,6 +2635,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     },
     // إيقاف حقيقي: مقاطعة النموذج + إنهاء الإدخال + رفض الأذونات والأسئلة المعلقة
     async stop() {
+      stopRequested = true;
       connectionsActive = false;
       connectionGate.stop();
       sdkBackgroundController.finish('stopped');

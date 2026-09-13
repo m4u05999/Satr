@@ -1741,7 +1741,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
     } else if (ev.type === 'spawn_error') {
       // exit_after_result: خروج CLI التابع لخطأ شُرح في نتيجة الدور للتوّ — صندوق ثانٍ بتلميح
       // «مثبت ومسجّل دخوله» كان يضلّل (انقطاع الشبكة 2026-09-13)؛ يبقى زر الإعادة وإنهاء الدور.
-      if (ev.kind === 'exit_after_result') { /* لا صندوق ثانياً */ }
+      // exit_after_stop (OBS-201): الخروج الذي سبّبه زر الإيقاف نفسه — «أوقف الدور» تكفي.
+      if (ev.kind === 'exit_after_result' || ev.kind === 'exit_after_stop') { /* لا صندوق ثانياً */ }
       else if (ev.net && ev.net.message) block.error(ev.net.message + '\n' + (ev.text || ''));
       else if (deadSessionRecovery(ev.text)) block.error(conversationId ? 'تعذّر استئناف جلسة المحرك؛ سياق المحادثة محفوظ، أعد الإرسال.' : 'تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
       else if (isClaudeAuthError(ev.text)) block.error(claudeAuthErrorMessage());

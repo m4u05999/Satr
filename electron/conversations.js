@@ -284,14 +284,17 @@ function createStore(options = {}) {
     }
     return data;
   }
-  function packet(data, fromRevision, toRevision) {
+  // native: النقل زيادةٌ إلى جلسة المحرك نفسه التي تملك التاريخ أصلاً (استئناف بعد إيقاف أو توجيه
+  // متأخر)، فالحزمة تذكيرٌ مرجعي لا مصدرَ السياق الوحيد: النقص أو تجاوز السقف يُعلَنان في
+  // coverage ولا يحجبان الإرسال. الحجب الصريح يبقى لنقل التاريخ إلى محرك آخر أو جلسة جديدة.
+  function packet(data, fromRevision, toRevision, { native = false } = {}) {
     const messages = data.messages.filter((message) => message.seq > fromRevision && message.seq <= toRevision);
     const sourceIssues = data.coverage.sourceIssues || data.coverage.issues.filter((issue) => issue === 'history_incomplete');
     const issues = [...new Set([...sourceIssues, ...messages.flatMap((message) => message.issues)])];
     const coverage = { complete: issues.length === 0, issues, messageCount: messages.length, firstSeq: messages[0]?.seq || null, lastSeq: messages.at(-1)?.seq || null };
     const transfer = { needed: messages.length > 0 || (fromRevision === 0 && issues.length > 0), fromRevision, toRevision, coverage };
     if (!transfer.needed) return { ok: true, context: '', transfer };
-    if (issues.some((issue) => BLOCKING_ISSUES.has(issue))) return failure('transfer_incomplete', { context: '', transfer });
+    if (!native && issues.some((issue) => BLOCKING_ISSUES.has(issue))) return failure('transfer_incomplete', { context: '', transfer });
     const records = messages.map((message) => ({
       source: { conversationId: data.id, seq: message.seq, engine: message.engine, runId: message.runId,
         status: data.runs.find((run) => run.id === message.runId)?.status || 'imported' },
@@ -312,6 +315,7 @@ function createStore(options = {}) {
     ].join('\n');
     if (context.length > maxTransferChars) {
       transfer.coverage = { ...coverage, complete: false, issues: [...issues, 'transfer_limit'], requiredChars: context.length, limitChars: maxTransferChars };
+      if (native) return { ok: true, context: '', transfer: { ...transfer, needed: false, omitted: 'transfer_limit' } };
       return failure('transfer_limit', { context: '', transfer });
     }
     return { ok: true, context, transfer };
@@ -389,7 +393,10 @@ function createStore(options = {}) {
         if (input.sessionId && !binding && data.messages.length) throw new Error('session_mismatch');
         const sessionId = binding?.valid ? binding.sessionId : '';
         const fromRevision = sessionId ? binding.lastCompletedRevision : 0;
-        const prepared = packet(data, fromRevision, data.revision);
+        // الزيادة «أصلية» فقط إن كانت كلها من المحرك نفسه (دور موقوف أو توجيه متأخر)؛ زيادة جاءت
+        // من المحرك الآخر لم يرها هذا المحرك قط، فتبقى محكومة بالحجب الصريح.
+        const native = !!sessionId && data.messages.every((message) => message.seq <= fromRevision || message.engine === input.engine);
+        const prepared = packet(data, fromRevision, data.revision, { native });
         // نقص التاريخ السابق لا يحجب جلسة أصلية تملكه بالفعل ولا تحتاج نقلاً.
         if (sessionId && fromRevision === data.revision) {
           prepared.ok = true; prepared.context = '';
@@ -455,7 +462,10 @@ function createStore(options = {}) {
     run.finishedAt = new Date().toISOString();
     const binding = data.bindings[run.engine];
     if (binding && binding.sessionId === run.sessionId) {
-      binding.valid = status === 'completed';
+      // OBS-201: الإيقاف اليدوي لا يُفقد الجلسة — المحرك نفسه يملك الدور المقطوع في سجله، فيبقى
+      // الربط صالحاً ويُنقل إليه ما بعد آخر إكمال زيادةً؛ إبطاله كان يفرض نقل التاريخ كاملاً
+      // فيحبس الجلسات الطويلة خلف transfer_limit. الفشل وحده ما زال يُبطل الربط.
+      binding.valid = status === 'completed' || status === 'stopped';
       if (status === 'completed') binding.lastCompletedRevision = data.revision;
     }
   }
