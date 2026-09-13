@@ -151,11 +151,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     const md3 = mds3[mds3.length - 1];
     assert(md3.getAttribute('dir') === 'rtl', 'حاوية .md لردّ يبدأ برمز لاتيني تُحسم rtl إحصائياً — وجد dir=' + md3.getAttribute('dir'));
     assert(getComputedStyle(md3).direction === 'rtl', 'اتجاه الحاوية المحسوب rtl.');
+    // OBS-202: الفقرة صارت بعرض البطاقة فلا فراغ يكشف الرسوّ؛ الدليل موضع أول محرف بالبكسل
+    // (القاعدة ٣): أول محرف في الفقرة الثانية يلتصق بالحافة اليمنى، وسطرها الأخير الناقص
+    // يترك فراغه يساراً.
     const p3 = md3.querySelectorAll('p')[1];
-    const md3Rect = md3.getBoundingClientRect(), p3Rect = p3.getBoundingClientRect();
-    assert(Math.abs(md3Rect.right - p3Rect.right) <= 1 && p3Rect.left - md3Rect.left > 40,
-      'فقرة عمود النثر ترسو يميناً والفراغ يساراً — وجد gapRight=' + Math.round(md3Rect.right - p3Rect.right)
-      + ' gapLeft=' + Math.round(p3Rect.left - md3Rect.left));
+    const md3Rect = md3.getBoundingClientRect();
+    const firstCharRange = document.createRange();
+    firstCharRange.setStart(p3.firstChild, 0); firstCharRange.setEnd(p3.firstChild, 1);
+    const firstCharRect = firstCharRange.getBoundingClientRect();
+    const p3Lines = Array.from((() => { const r = document.createRange(); r.selectNodeContents(p3); return r.getClientRects(); })());
+    const lastLine = p3Lines[p3Lines.length - 1];
+    assert(md3Rect.right - firstCharRect.right <= 2 && md3Rect.right - lastLine.right <= 2,
+      'فقرة تبدأ برمز لاتيني ترسو يميناً — أول محرف عند ' + Math.round(md3Rect.right - firstCharRect.right)
+      + 'px من الحافة اليمنى، وآخر سطر عند ' + Math.round(md3Rect.right - lastLine.right) + 'px');
     assert(px(getComputedStyle(md3).fontSize) === 16, 'خط الجواب 16px كفقاعة المستخدم — وجد ' + getComputedStyle(md3).fontSize);
 
     // ---------- التصميم: سلّم العناوين والهوامش ----------
@@ -192,21 +200,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     const inkWidth = rects.reduce((sum, r) => sum + r.width, 0);
     const pxPerChar = inkWidth / firstP.textContent.length;
     const charsPerLine = pRect.width / pxPerChar;
-    assert(pRect.width < bubbleInner - 40, 'الفقرة أضيق من الفقاعة (عمود النثر) — ' + Math.round(pRect.width) + ' من ' + Math.round(bubbleInner));
-    // معيار الخطة: سطر النثر «لا يتجاوز ~70 محرفاً» (≈11 كلمة؛ الحرف العربي هنا ≈6.1px
-    // فـ45ch ≈ 419px ≈ 68 محرفاً). السقف 72 هامش «~»، والأرضية 60 كي لا يضيق العمود حتى
-    // تتكسّر الجمل — لا معيار لاتيني (66ch) ولا الوضع القديم (~105).
-    assert(charsPerLine >= 60 && charsPerLine <= 72, 'سطر النثر نحو 60–72 محرفاً — وجد ' + charsPerLine.toFixed(1) + ' على ' + lines
+    // OBS-202 (قرار المالك 2026-09-13): لا عمود نثر — الفقرة تملأ البطاقة وتتبع عرضها، وطول
+    // السطر يحكمه عرض العمود كله (--column-max). الفراغ الأيسر الذي تركه 45ch كان الشكوى.
+    assert(pRect.width >= bubbleInner - 8, 'الفقرة تملأ الفقاعة — ' + Math.round(pRect.width) + ' من ' + Math.round(bubbleInner));
+    // سقف السطر على العمود 720px: ≈105 محرفاً عربياً (الحرف ≈6.2px). الأرضية 80 تكشف عودة
+    // أي قصر خفي، والسقف 125 يكشف اتساع العمود فوق قراره.
+    assert(charsPerLine >= 80 && charsPerLine <= 125, 'سطر النثر نحو 80–125 محرفاً على عمود 720px — وجد ' + charsPerLine.toFixed(1) + ' على ' + lines
       + ' أسطر (عرض ' + Math.round(pRect.width) + 'px، max-width ' + getComputedStyle(firstP).maxWidth + ')');
     const table = md.querySelector('table');
     assert(table.getBoundingClientRect().left >= bubble.getBoundingClientRect().left, 'الجدول داخل الفقاعة.');
     assert(getComputedStyle(table).maxWidth === '100%' || px(getComputedStyle(table).maxWidth) >= bubbleInner - 1,
-      'الجدول لا يقيّده عمود النثر (max-width 100%).');
+      'الجدول بعرض البطاقة (max-width 100%).');
     const preRect = md.querySelector('pre').getBoundingClientRect();
-    assert(preRect.width >= bubbleInner - 24 && preRect.width > pRect.width + 40,
-      'كتلة الكود بالعرض الكامل لا بعمود النثر — ' + Math.round(preRect.width) + 'px مقابل النثر ' + Math.round(pRect.width) + 'px');
-    assert(getComputedStyle(md.querySelector('ul')).maxWidth !== 'none', 'القوائم داخل عمود النثر.');
-    assert(getComputedStyle(quote).maxWidth !== 'none', 'الاقتباس داخل عمود النثر.');
+    assert(preRect.width >= bubbleInner - 24 && Math.abs(preRect.width - pRect.width) <= 24,
+      'كتلة الكود والنثر بالعرض نفسه — ' + Math.round(preRect.width) + 'px مقابل النثر ' + Math.round(pRect.width) + 'px');
+    assert(getComputedStyle(md.querySelector('ul')).maxWidth === '100%', 'القوائم بعرض البطاقة.');
+    assert(getComputedStyle(quote).maxWidth === '100%', 'الاقتباس بعرض البطاقة.');
+    const thread = md.closest('.thread');
+    assert(!thread || thread.getBoundingClientRect().width <= 720, 'عمود الدردشة لا يتجاوز --column-max (720px).');
 
     assert(violations.length === 0, 'رُصد securitypolicyviolation.');
     window.__chatMdResult = {

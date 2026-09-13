@@ -1279,8 +1279,8 @@ class SatrChat extends HTMLElement {
     const commentaryHead = document.createElement('div'); commentaryHead.className = 'work-section-head'; commentaryHead.textContent = 'سجل التفكير';
     // اتجاه حاوية Markdown يُحسم **إحصائياً** عند كل تصيير (‏`textDir`) لا بـ`dir="auto"`:
     // `auto` يحسم من أول حرف قوي، فردٌّ عربي يبدأ برمز لاتيني («PR ح٣ صار #130…») يرسو LTR
-    // كاملاً وتقفز فقرات عمود النثر (`--prose-measure`) إلى اليسار بفراغ كبير يميناً — لقطة
-    // المالك 2026-09-13 ومقيس بالبكسل (gapRight=458px). الافتراضي rtl حتى يصل نص.
+    // كاملاً وكانت فقرات عمود النثر (أُزيل في OBS-202) تقفز إلى اليسار بفراغ كبير يميناً — لقطة
+    // المالك 2026-09-13 ومقيس بالبكسل (gapRight=458px)؛ الآن يُقاس بموضع أول محرف. الافتراضي rtl حتى يصل نص.
     const commentaryMd = document.createElement('div'); commentaryMd.className = 'md commentary-md'; commentaryMd.dir = 'rtl';
     commentaryWrap.appendChild(commentaryHead); commentaryWrap.appendChild(commentaryMd);
 
