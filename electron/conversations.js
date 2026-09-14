@@ -385,8 +385,12 @@ function createStore(options = {}) {
             try { process.kill(run.pid, 0); live = true; } catch (_) {}
           }
           if (live) throw new Error('conversation_busy');
+          // OBS-205: دور تركته عملية ماتت (إغلاق سطر أو إعادة تشغيل الجهاز أثناء الدور) يُغلق
+          // «مقطوعاً» ولا يُبطل ربط الجلسة إن كان المحرك قد أكّدها بـinit — كالإيقاف اليدوي في
+          // OBS-201، فالجلسة الأصلية تملك ما جرى ويُنقل ما بعد آخر إكمال زيادةً. إبطاله كان يفرض
+          // نقل التاريخ كاملاً فيحبس المحادثة الطويلة خلف transfer_limit في كل إرسال ولا يُحفظ شيء.
           run.status = 'interrupted';
-          if (data.bindings[run.engine]) data.bindings[run.engine].valid = false;
+          if (data.bindings[run.engine] && !sessionConfirmed(data, run)) data.bindings[run.engine].valid = false;
         }
         const binding = data.bindings[input.engine];
         if (input.sessionId && binding && input.sessionId !== binding.sessionId) throw new Error('session_mismatch');
@@ -444,10 +448,20 @@ function createStore(options = {}) {
     const previous = data.bindings[run.engine];
     if (previous && previous.sessionId !== sessionId && !run.allowRebind && previous.valid) throw new Error('session_mismatch');
     run.sessionId = sessionId;
+    run.sessionConfirmed = true;
     if (!previous || previous.sessionId !== sessionId) data.bindings[run.engine] = {
       sessionId, lastCompletedRevision: 0, valid: true,
       previousSessionIds: previous ? [...new Set([...(previous.previousSessionIds || []), previous.sessionId])] : [],
     };
+  }
+  // الجلسة «مؤكَّدة» إن ربطها المحرك في هذا الدور (init أو result) وهي جلسة الربط الحالي:
+  // عندها كل ما وقع بعدها مسجَّل في ملف المحرك نفسه. الفشل قبل التأكيد (تعذّر الإقلاع أو
+  // جلسة مفقودة عند الاستئناف) يبقى يُبطل الربط ليُعاد بناء السياق من السجل — عقد الوثيقة.
+  // السجلات السابقة للعلم تُستدل بخرج المحرك في الدور: رد أو نتيجة أداة لا يكونان إلا بعد استئناف ناجح.
+  function sessionConfirmed(data, run) {
+    const binding = data.bindings[run.engine];
+    if (!binding || !run.sessionId || binding.sessionId !== run.sessionId) return false;
+    return !!run.sessionConfirmed || data.messages.some((message) => message.runId === run.id && message.role !== 'user');
   }
   function finish(data, run, handle, status) {
     for (const [phase, text] of handle.streams) {
@@ -464,8 +478,9 @@ function createStore(options = {}) {
     if (binding && binding.sessionId === run.sessionId) {
       // OBS-201: الإيقاف اليدوي لا يُفقد الجلسة — المحرك نفسه يملك الدور المقطوع في سجله، فيبقى
       // الربط صالحاً ويُنقل إليه ما بعد آخر إكمال زيادةً؛ إبطاله كان يفرض نقل التاريخ كاملاً
-      // فيحبس الجلسات الطويلة خلف transfer_limit. الفشل وحده ما زال يُبطل الربط.
-      binding.valid = status === 'completed' || status === 'stopped';
+      // فيحبس الجلسات الطويلة خلف transfer_limit. OBS-205: الفشل بعد تأكيد الجلسة (انقطاع
+      // الشبكة أو خروج العملية أثناء الدور) يُبقيه أيضاً؛ الفشل قبل التأكيد وحده يُبطله.
+      binding.valid = status === 'completed' || status === 'stopped' || (status === 'failed' && sessionConfirmed(data, run));
       if (status === 'completed') binding.lastCompletedRevision = data.revision;
     }
   }
