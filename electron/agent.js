@@ -2498,6 +2498,9 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   // stopRequested (OBS-201): بعد stop() يخرج CLI برمز 1 بلا result — خروجٌ طلبه المستخدم لا عطل
   // تشغيل، فيُوسم exit_after_stop كي لا تُرسم بطاقة «فشل تشغيل أمر Claude Code» فوق «أوقف الدور».
   let stopRequested = false;
+  // OBS-191: مطابقة واحدة بعد init بين ما يعلنه المحرّك (getHooksListing/listPermissionRules)
+  // وما مسحه hookguard بيده — تنبيه إخباري عند الاختلاف، بلا حجب ولا تغيير لمصدر الحقيقة.
+  let engineReconciled = false;
   const done = (async () => {
     try {
       for await (const msg of q) {
@@ -2531,6 +2534,19 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         // ضغط المحادثة يعلّم الجلسة: دورها التالي يبدأ بمرساة اللغة القوية
         if (msg && msg.type === 'system' && msg.subtype === 'compact_boundary' && observedSessionId) {
           markCompacted(observedSessionId);
+        }
+        // OBS-191: الطريقتان منفَّذتان في sdk.mjs@0.3.270 وغير معلنتين على interface Query في
+        // sdk.d.ts (مقيس)، فيلزم فحص typeof: إن سُحبتا لا يُكسر شيء. لا انتظار داخل الحلقة.
+        if (!internalPolicy && !engineReconciled && msg && msg.type === 'system' && msg.subtype === 'init') {
+          engineReconciled = true;
+          void (async () => {
+            if (typeof q.getHooksListing !== 'function' || typeof q.listPermissionRules !== 'function') return;
+            const [hooksListing, permissionRules] = await Promise.all([
+              q.getHooksListing().catch(() => null), q.listPermissionRules().catch(() => null),
+            ]);
+            const event = hookguard.noticeEvent(await hookguard.reconcileProject(cwd, { hooksListing, permissionRules }));
+            if (event) emit(event);
+          })().catch(() => {});
         }
         emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingTaskCreates, startedClaudeTaskIds);
         const agentProgress = sdkAgentProgressEvent(msg);
