@@ -122,3 +122,64 @@
   بلا إرسال، وعقد الإيقاف؛ وهو مسجل داخل `test:full` ولا يشغّل شبكة. حارس
   `test:sdk-background` الذي كان يثبت الاسم المحلي `rawTaskNotification` حُدث بوعي إلى
   `rawPrivateLifecycle` ليثبت حجب كل من `task_notification/task_progress` الخامَين.
+
+### تضييق مربع الإذن بحقلَي المحرّك: `defaultToNo` و`suppressAlwaysAllowRule` (ب٢ — 2026-09-15، ‏OBS-192)
+
+- **المصدر بنصّه**: `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` (‏`0.3.270`)،
+  الوسيط الثالث لـ`CanUseTool` (بعد `title`/`displayName`/`description`):
+  - `defaultToNo?: boolean` — «The ask must not be approvable by a single stray
+    keystroke: open the prompt on its decline option and offer no one-key approve
+    shortcut.»
+  - `suppressAlwaysAllowRule?: boolean` — «The ask must not offer a persistent "don't
+    ask again" choice: the rule it would write grants more than this ask's own action.»
+  كلاهما بصيغة **must على المضيف** لا اقتراحاً، وكلاهما يصف **هذا النداء بعينه**: المحرّك
+  يعرف أن `Bash` هذه المرّة تكتب خارج مساحة العمل، بينما قرار «سطر» (`NEVER_ALWAYS_TOOLS`)
+  باسم الأداة وحده. فالفكرتان متكاملتان لا متنافستان.
+- **القاعدة المعمارية: يضيّقان ولا يوسّعان**. المنطق في دالة نقيّة واحدة
+  `autogate.askFlags({ baseAlwaysEligible, baseNeverAlways, suppressAlwaysAllowRule,
+  defaultToNo })` تعيد `{ alwaysEligible, neverAlways, suppressed, defaultToNo }`:
+  `alwaysEligible = baseAlwaysEligible === true && !suppressed`. فلا يستطيع حقلٌ من
+  المحرّك أن يرفع أهلية دوامٍ منعها «سطر»، وقائمة «سطر» تبقى سارية إن صمت المحرّك.
+  والتضييق يُقاس **بالصدق** لا بـ`=== true` (محرّك يرسل `1`/`'yes'` يجب أن يضيّق)، بينما
+  التوسيع وحده يشترط `=== true` (المجهول لا يوسّع) — نفس اتجاه fail-safe في `autogate`.
+- **الحارس في العملية الرئيسية لا في الواجهة**: `suppressAlwaysAllowRule` لا يكتفي بتغيير
+  ما يُبثّ؛ يُثبَّت في `pending` بـ`neverAlways: true` و`suppressAlways: true`، فردّ واجهة
+  كاذب (`window.satr.permission(id, true, /*always*/ true)` من مصحّح أو واجهة مخترقة) لا
+  يضيف الأداة إلى `alwaysAllowed`. و`suppressAlways` **ذُكر صراحةً في فرع ثقة النطاق**
+  داخل `resolvePermission` لأن ذلك الفرع (`trustedBrowserOrigins.add(origin)`) لا يمرّ
+  بـ`neverAlways` أصلاً — لولاه لبقيت «ثق بالنطاق لهذه الجلسة» قابلةً للكتابة رغم المنع،
+  وهي أوسع من فعل الطلب نفسه بالتعريف.
+- **المواضع الثلاثة**: كل بثّ لـ`permission_request` في `agent.js` يمرّ الآن على
+  `askFlags` — مسار كلفة التوليد (كان `alwaysEligible:false` أصلاً)، وكتلة المتصفح
+  (`baseAlwaysEligible = originTrust && !!origin`)، والمسار العام
+  (`baseAlwaysEligible = !NEVER_ALWAYS_TOOLS.has(tool)`). `defaultToNo` يُبثّ **حقلاً
+  مشروطاً** (`...(ask.defaultToNo ? { defaultToNo: true } : {})`) فشكل الحدث القائم لا
+  يتغيّر حين يصمت المحرّك.
+- **المربع (`perm-dialog.js`)**: الطلب الحسّاس يفتح على **«رفض»** (هو المركَّز لا زرّ
+  الموافقة)، ويعرض سطراً عربياً «⚠ طلب حسّاس: القبول بالنقر الصريح — لا يقبله مفتاح.»
+  وتنفيذ «لا اختصار قبول بمفتاح واحد» بطبقتين: `keydown` على `Enter`/`Space` فوق زرّ قبول
+  يُمنع بـ`preventDefault` (قبل أن يولّد المتصفح النقرة الأصلية)، وأزرار القبول تمرّ عبر
+  `_approve` الذي يشترط نقرة مؤشّر حقيقية (`event.detail > 0`؛ النقرة المولَّدة بلوحة
+  المفاتيح تصل بـ`detail === 0`). **الرفض يبقى متاحاً بالمفتاح كاملاً** — العقد يمنع
+  القبول العابر لا يغلق الباب على من لا يستعمل فأرة. وإخفاء صفّ «الموافقة الدائمة» عند
+  `alwaysEligible === false` كان قائماً من قبل (كتلة المتصفح) فلم يُغيَّر، بل ثُبّت بالحارس.
+- **الحارس `npm run test:perm-ask-fields`** (‏`electron scripts/perm-ask-fields-test.js`،
+  ‏49 فحصاً، بلا شبكة): يشغّل **مصدر الإنتاج نفسه** — يستخرج ذيل `canUseTool` وجسد
+  `resolvePermission` نصّياً من `agent.js` ويشغّلهما في `vm` بمُوفِّرات مزيّفة، فلا يقارن
+  الشيء بإعادة كتابته. يغطّي: التضييق في الحدث وفي `pending`، أن `always:true` الكاذب لا
+  يُثمر دواماً ولا ثقة نطاق، أن السلوك القائم بلا الحقلين لم يتغيّر (ومعه شاهدٌ موجب: بلا
+  `suppress` يُكتب الدوام وثقة النطاق فعلاً)، وعقد المصدر النصّي (المواضع الثلاثة كلها
+  تمرّ على `askFlags`، ولا `alwaysEligible` محسوب خارجها). ثم يقيس المربع **حيّاً في
+  Chromium** (‏`BrowserWindow show:false` + fixture بـCSP صارم وجسر `window.satr` مزيّف):
+  تركيز «رفض»، منع النقرة المولَّدة بلوحة المفاتيح، `preventDefault` على `Enter`، قبول
+  النقرة الحقيقية، وأن الطلب العادي بقي على سلوكه (تركيز «موافقة» والقبول بالمفتاح).
+  ⚠️ **فخّ مقيس في الحارس**: `instanceof Set` لا يعبر عوالم `vm` — فحص الإنتاج
+  `trustedBrowserOrigins instanceof Set` كان يفشل صامتاً مع `Set` من عالم المضيف فيُسقط
+  فرع ثقة النطاق (أخضر كاذب)؛ لذا يُنشأ داخل عالم الصندوق.
+- **⚠️ حدّان مُصرَّح بهما**: (١) **لم يُرَ طلب إذن حقيقي من المحرّك يحمل الحقلين** ولا
+  يُعرف متى يضبطهما — المقيس هو سلوك «سطر» **إن وصلا**، لا أنهما يصلان. (٢) المسار
+  **غير مكتمل من طرف الواجهة**: `src/ui/app.js` يبني وسيط `permEl.request(...)` بحقول
+  مسمّاة (`turnEligible`/`alwaysEligible`/`alwaysLabel`) فيُسقط `defaultToNo` قبل أن يصل
+  المكوّن. يلزم سطر واحد هناك (`defaultToNo: ev.defaultToNo === true`) — الملف ليس ملكاً
+  لهذه الدفعة فلم يُلمَس. **التضييق الأمني (`suppressAlwaysAllowRule`) يعمل كاملاً بلا
+  ذلك السطر** لأن مرساته في العملية الرئيسية؛ المعلَّق هو أثر `defaultToNo` البصري وحده.

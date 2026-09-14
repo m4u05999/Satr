@@ -80,4 +80,33 @@ function decideAutoApproval(toolName, ctx) {
   return 'prompt';
 }
 
-module.exports = { PERMISSION_MODES, AUTO_SAFE_TOOLS, autoNeedsPrompt, nonSdkPerm, decideAutoApproval };
+// ‏OBS-192 — حقلا طلب الإذن في وسيط canUseTool الثالث منذ SDK ‏0.3.268، بنصّ عقدهما:
+//   defaultToNo: «The ask must not be approvable by a single stray keystroke: open the
+//                 prompt on its decline option and offer no one-key approve shortcut.»
+//   suppressAlwaysAllowRule: «The ask must not offer a persistent "don't ask again"
+//                 choice: the rule it would write grants more than this ask's own action.»
+// كلاهما بصيغة «must» على المضيف، وكلاهما **يضيّق فقط**: قرار المحرّك يخصّ هذا النداء
+// بعينه (يعرف أن Bash هذه المرة تكتب خارج مساحة العمل)، وقرار «سطر» باسم الأداة
+// (NEVER_ALWAYS_TOOLS) يبقى سارياً إن صمت المحرّك. فالدالة تعطف ولا تستبدل:
+// لا يمكن لحقل من المحرّك أن يرفع أهلية دوامٍ منعها «سطر».
+//
+// fail-safe: التضييق يُقاس بالصدق لا بـ‏`=== true` — محرّك يرسل 1 أو 'yes' يجب أن يضيّق
+// لا أن يُتجاهل. والتوسيع (baseAlwaysEligible) وحده يشترط `=== true` (المجهول لا يُوسّع).
+// opts: { baseAlwaysEligible, baseNeverAlways, suppressAlwaysAllowRule, defaultToNo }
+//   - baseAlwaysEligible: ما قرّره «سطر» قبل سماع المحرّك (‏!NEVER_ALWAYS_TOOLS.has(tool)
+//     أو ثقة النطاق في كتلة المتصفح) — يحسبه المستدعي.
+//   - baseNeverAlways: تثبيت «لا دوام» قائم في «سطر» (forcePrompt، مسار الكلفة).
+// تُرجع: { alwaysEligible, neverAlways, suppressed, defaultToNo } — الأولان للبثّ ولـpending
+// (الحارس في العملية الرئيسية لا في الواجهة: واجهة كاذبة ترسل always:true لا تُثمر دواماً).
+function askFlags(opts) {
+  const o = opts || {};
+  const suppressed = !!o.suppressAlwaysAllowRule;
+  return {
+    alwaysEligible: o.baseAlwaysEligible === true && !suppressed,
+    neverAlways: !!o.baseNeverAlways || suppressed,
+    suppressed,
+    defaultToNo: !!o.defaultToNo,
+  };
+}
+
+module.exports = { PERMISSION_MODES, AUTO_SAFE_TOOLS, autoNeedsPrompt, nonSdkPerm, decideAutoApproval, askFlags };
