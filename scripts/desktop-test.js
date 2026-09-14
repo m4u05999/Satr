@@ -112,7 +112,7 @@ async function main() {
   check('agent.js يسجّل satr-desktop بقرار الجلسة وحده', /if \(desktopPlan\.enabled && sdk\.createSdkMcpServer && sdk\.tool && z\)/.test(agentSrc));
   check('اسم الخادم satr-desktop مسجَّل في موضع واحد', (agentSrc.match(/'satr-desktop':/g) || []).length === 1);
   // OBS-194: الموجز الثابت يمرّ withEnvironmentLine:false أيضاً — المهم أن قرار سطح ويندوز هو نفسه.
-  check('الموجز يتبع القرار نفسه', /envbrief.build('sdk', model, { desktop: desktopPlan.enabled(?:, [^}]*)? })/.test(agentSrc));
+  check('الموجز يتبع القرار نفسه', agentSrc.includes("envbrief.build('sdk', model, { desktop: desktopPlan.enabled,"));
   const browserAutoBlock = agentSrc.slice(agentSrc.indexOf('const BROWSER_AUTO_TOOLS'), agentSrc.indexOf(']);', agentSrc.indexOf('const BROWSER_AUTO_TOOLS')));
   check('لا أداة سطح مكتب في BROWSER_AUTO_TOOLS', !browserAutoBlock.includes('desktop'));
   check('لا أداة سطح مكتب في AUTO_SAFE_TOOLS', ![...autogate.AUTO_SAFE_TOOLS].some((n) => n.includes('desktop')));
