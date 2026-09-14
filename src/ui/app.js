@@ -59,6 +59,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
   let lastUserTurn = { prompt: '', images: [] }; // مصدر زر إعادة المحاولة (نص + صور كما أُرسلت)
   let gated = true; // محجوب حتى يؤكّد فحص أول التشغيل توفّر Claude Code (مانع إطلاق)
 
+  // سطح الوكلاء الفرعيين الأحياء (‏OBS-207/151) — مستقل عن الكتلة والجلسة.
+  // **الإعلان هنا مبكراً عمداً** (نظير desktopEl): `detachConversation` أدناه يصفّره،
+  // وهي تُستدعى من مسارات استعادة قد تسبق قسم المكوّنات — ومنطقة الموت الزمنية
+  // (‏TDZ) لثابتٍ مُعلَن متأخراً ترمي ReferenceError لا يلتقطه `typeof`.
+  const agentsLiveEl = document.querySelector('satr-agents-live');
+
   // ---------- إعدادات محفوظة ----------
   ['cwd', 'model', 'perm', 'engine', 'effort'].forEach((id) => {
     const el = $(id);
@@ -543,6 +549,9 @@ import { createPreviewShield } from './lib/preview-shield.js';
     conversationId = null;
     continuitySource = null;
     conversationRestoreBusy = false;
+    // ‏OBS-207: كل مسارات «جلسة جديدة/استئناف/تبديل مجلد» تمرّ من هنا — وصفوف الوكلاء
+    // تخصّ الجلسة المتروكة، فبقاؤها بعدها كذبٌ مرئي (نظير chatEl.clearThread بجوارها).
+    if (agentsLiveEl) agentsLiveEl.reset();
   }
   function rememberContinuitySource(engine) {
     if (!conversationId && !continuitySource && sessionId && supportsConversation(engine)) {
@@ -802,6 +811,9 @@ import { createPreviewShield } from './lib/preview-shield.js';
     conversationRestoreBusy = false;
     rememberContinuitySource(previousEngine);
     clearPromptSuggestion();
+    // ‏OBS-207: صفوف الوكلاء تخصّ محرّكها (‏SDK) — تبديل المحرّك يفرّغها حتى في فرع
+    // الاستمرارية الذي لا يمرّ بـdetachConversation (المحادثة تستمر، والوكلاء لا).
+    if (agentsLiveEl) agentsLiveEl.reset();
     localStorage.setItem('satr_engine', e);
     rebuildModels();
     applyEngineCommands(e); // إخفاء أوامر Claude-الخاصة مع Codex (المرحلة 4)
@@ -1247,6 +1259,24 @@ import { createPreviewShield } from './lib/preview-shield.js';
     }
   });
 
+  // ‏OBS-207/151: زر «⏹ إيقاف» في سطح الوكلاء الأحياء — القناة القائمة نفسها
+  // (‏stopSdkTask)، ونفس نمط `failSdkTaskStop`: رفض main يعيد الزر برسالة عربية داخل الصف.
+  if (agentsLiveEl) agentsLiveEl.addEventListener('agent-stop-request', async (event) => {
+    const taskId = event.detail && event.detail.taskId;
+    try {
+      const result = await window.satr.stopSdkTask(taskId);
+      if (result && result.ok) addNotice('⏹ طُلب إيقاف الوكيل الفرعي.');
+      else {
+        const message = (result && result.message) || 'تعذّر إيقاف هذا الوكيل الفرعي.';
+        agentsLiveEl.failStop(taskId, message);
+        addNotice(message);
+      }
+    } catch (e) {
+      agentsLiveEl.failStop(taskId, 'تعذّر إيقاف هذا الوكيل الفرعي.');
+      addNotice('تعذّر إيقاف هذا الوكيل الفرعي.');
+    }
+  });
+
   chatEl.addEventListener('checkpoint-verify', async (event) => {
     const detail = event.detail || {};
     if (sessionControlBusy || sessionResumeBusy) { addNotice('انتظر اكتمال عملية الجلسة قبل تشغيل التحقق'); return; }
@@ -1358,6 +1388,9 @@ import { createPreviewShield } from './lib/preview-shield.js';
         alwaysEligible: ev.alwaysEligible !== false, alwaysLabel: ev.alwaysLabel || '',
         defaultToNo: ev.defaultToNo === true, // OBS-192: يفتح المربع على «رفض» ويمنع القبول بمفتاح
       });
+      // ‏OBS-207: الطالب وكيل فرعي معروف ⇒ صفّه في السطح الدائم يقول «ينتظر إذنك: <أداة>».
+      // الزوال يأتي بمعرّف الطلب من حدث perm-answered (الرد أو سحب المربع) لا بالتخمين.
+      if (agentsLiveEl && ev.requester) agentsLiveEl.setWaitingPermission(ev.requester, ev.tool, ev.id);
       // الدور متوقف ينتظر قرارك — أكثر الحالات إلحاحاً وكانت أصمتها (بلاغ 2026-08-23)
       if (chatEl.notifyAttention) chatEl.notifyAttention('⏸ مطلوب إذن: ' + (ev.tool || 'أداة'));
       return;
@@ -1448,6 +1481,20 @@ import { createPreviewShield } from './lib/preview-shield.js';
           testspriteNoticeState.phase = 'running';
           testspriteNoticeState.signature = signature;
           showTransientNotice(`🧪 TestSprite: اكتملت ${completed}/${total} — ${counts}`);
+        }
+      }
+      return;
+    }
+    // ‏OBS-207/151 — حالة الوكلاء الفرعيين: مستقلة عن الكتلة وعن runningEngine/busy تماماً
+    // (نمط bg_procs). الوكيل الخلفي يعيش أطول من الدور ويُستأنف عبر أدوار، فحارس الكتلة
+    // أدناه كان يُسقط تقدّمه صامتاً — والسطح يملك التحقق الدفاعي كله.
+    if (ev.type === 'sdk_agent_state') {
+      if (agentsLiveEl) {
+        agentsLiveEl.applyAgentState(ev);
+        // تنبيه واحد فقط: توقّف وكيل بالفشل. الاكتمال لا يُنبَّه له (ضجيج).
+        if (ev.kind === 'finished' && ev.status === 'failed' && chatEl.notifyAttention) {
+          const why = typeof ev.summary === 'string' && ev.summary ? ev.summary.slice(0, 120) : 'بلا ملخّص';
+          chatEl.notifyAttention('⚠ توقف وكيل فرعي: ' + why);
         }
       }
       return;
@@ -1803,6 +1850,11 @@ import { createPreviewShield } from './lib/preview-shield.js';
   // إصلاح احتجاب المربع خلف المعاينة (لقطة مالك): تنزوي المعاينة أثناء ظهوره ثم تعود
   permEl.addEventListener('perm-visible', (e) => {
     surfaceCoordinator.setDialog('permission-dialog', !!e.detail);
+  });
+  // ‏OBS-207: حُسم الطلب (رد المستخدم، أو سحب المربع عبر closeAll — قرار الجوال
+  // وreleaseRunControls يمرّان به) ⇒ يزول «ينتظر إذنك» عن صف الوكيل بمعرّفه.
+  permEl.addEventListener('perm-answered', (e) => {
+    if (agentsLiveEl && e.detail) agentsLiveEl.clearWaitingPermission(e.detail.id);
   });
   function permDetailText(tool, inp) {
     const browserDetail = formatPermissionDetail(tool, inp);
