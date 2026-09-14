@@ -109,8 +109,8 @@
     **تجاوزان معلَنان**: `bypassPermissions` مستثنى (تجاوزه مقصود)، والمطابقة **بالاسم
     وحده** فقاعدة `Bash(npm run test:*)` تُلزم كل `Bash` بالسؤال — البديل نسخةٌ ثانية من
     مطابِق قواعد Claude تتباعد بصمت، والسؤال الزائد يُستدرك والتنفيذ الصامت لا يُستدرك.
-    ويغطّي محرك `sdk` وحده لأن التظليل مقيسٌ فيه. يحرسه `test:hookguard` (‏65 فحصاً)،
-    ومُثبَت أنه يعضّ.
+    ويغطّي محرك `sdk` وحده لأن التظليل مقيسٌ فيه. يحرسه `test:hookguard` (‏82 فحصاً
+    بعد دفعة `OBS-191`)، ومُثبَت أنه يعضّ.
   - **وصيغُ القواعد مقيسة**: الاسم المجرّد (`Write`/`Bash`) **يظلّل**، والمقيَّدة
     المخالِفة (`Write(//nowhere/…)`/`Bash(git:*)`) **تُبوَّب** ⇒ الوسيطة تُقرأ فعلاً.
     فالمطابقة بالاسم وحده **كاملة لا ناقصة** (تمسك المجرّد وتمسك المقيَّد لو ظلّل)،
@@ -183,3 +183,69 @@
   المكوّن. يلزم سطر واحد هناك (`defaultToNo: ev.defaultToNo === true`) — الملف ليس ملكاً
   لهذه الدفعة فلم يُلمَس. **التضييق الأمني (`suppressAlwaysAllowRule`) يعمل كاملاً بلا
   ذلك السطر** لأن مرساته في العملية الرئيسية؛ المعلَّق هو أثر `defaultToNo` البصري وحده.
+
+### OBS-191 — ما يعلنه المحرّك مقابل ما يقرؤه `hookguard` بيده (دفعة ب٣ — 2026-09-15، ‏SDK 0.3.270)
+
+- **المسبار الحيّ ونتيجته** (‏`D:\sater\hooks-probe\probe.mjs` خارج المستودع عمداً،
+  خرجه `result.json`): `query()` بـ`pathToClaudeCodeExecutable` على `claude.exe` المثبّت
+  عالمياً، ‏`cwd = D:\sater\satr-2-b3`، ‏`claude-haiku-4-5-20251001`، ‏`maxTurns: 1`،
+  ‏prompt `hi`، والنداءان بعد أوّل `system/init`. النتيجة: `result` بـ`success`،
+  و**الطريقتان موجودتان وتُجيبان** (`typeof === 'function'` لكليهما، ولا خطأ).
+- **⚠️ فجوة typings مقيسة**: `getHooksListing` و`listPermissionRules` **موجودتان في
+  `sdk.mjs` ومنفَّذتان** (`request({subtype:'get_hooks_listing'}).response`) لكنهما
+  **غير معلنتين على `interface Query` في `sdk.d.ts@0.3.270`** — أنواع الطلب/الردّ معلنة
+  (`SDKControlGetHooksListingResponse`، ‏`SDKControlListPermissionRulesResponse`،
+  ‏`SDKPermissionRuleEntry`) والطريقتان لا. فالاستدعاء يعمل ولا يُطمئنه المُترجم؛ لا
+  يُبنى على وجودهما بلا فحص `typeof`.
+- **الشكل الفعلي المقيس — وهو غير متماثل بين النداءين**:
+  - `getHooksListing()` يعيد **الكائن مباشرةً**: مفاتيحه `events` · `hooks` ·
+    `eventCatalog` · `policy` (و`errors` **غائب** حين لا خطأ، لا فارغ).
+  - `listPermissionRules()` يعيده **ملفوفاً** `{ state: { rules, workspaceDirectories,
+    originalCwd, managedOnly } }` (و`errors` غائب كذلك). لذلك يقبل `permissionState()`
+    الشكلين معاً فلا تنكسر المطابقة بتغيّر اللفّ.
+- **الأعداد الحيّة**: `events` عنصر واحد (`PreToolUse`، ‏`hookCount:1`، ‏`supportsMatcher:true`)،
+  و`hooks` **صفّ واحد** بمفاتيح `commandText, contentLabel, displayText, editable, event,
+  matcher, source, sourceLabel, timeout, type` ومصدره `projectSettings`
+  (`sourceLabel: "Project settings (.claude/settings.json)"`) — وهو خطّاف
+  `PreToolUse` الحقيقي في `.claude/settings.json`. و`eventCatalog` **٣٣ حدثاً**
+  (وهذا جواب سؤال `OBS-191` الأول: **القائمة المعروضة صفوفُ `hooks` لا الكتالوج**،
+  فالعدد المتوقَّع في مشروع حقيقي واحدٌ لا ٣٣ — فلا خطر «تدريب على تجاهل التنبيه»).
+  و`policy` كلُّه سالب: `disabledByPolicy/managedOnly/pluginOnly/allDisabled = false`
+  و`policyHookCount: 0`؛ ولا `safeMode` ولا `bareMode`.
+  و`state.rules` **قاعدتان**، كلتاهما `behavior:'allow'` · `source:'localSettings'` ·
+  `editability:'persistent'` (بلا `description` وبلا `notInEffect`)، من فخّ قياس مؤقت
+  (`WebFetch(domain:example.invalid)` و`Read(//nowhere/**)`) كُتب في
+  `.claude/settings.local.json` المُتجاهَل ثم أُزيل. `workspaceDirectories` فارغة،
+  و`originalCwd` مسار المشروع، و`managedOnly:false`. لا قاعدة `cliArg` — لأن `agent.js`
+  لا يمرّر `allowedTools` إطلاقاً (مطابق لما هو موثّق أعلاه).
+- **جواب السؤال الثاني في `OBS-191` (تُبصَم `commandText` أم تُخزَّن؟): لا هذا ولا ذاك.**
+  الهويّة المقارَنة **اسم الحدث/الأداة ونطاق المصدر وحدهما** (`hook:PreToolUse@project`،
+  ‏`allow:Write@local`). المحرّك يعطي `commandText` و`editable.config` كاملَين؛ وقاعدة
+  الملف ألّا يعبره محتوى إعداد، فلا يُخزَّنان ولا يُبصَمان ولا يدخلان التنبيه. وحتى
+  `matcher` مستبعَد (قد يحمل نصّاً من مستودع غير موثوق). والاسم يمرّ بمصفاة
+  `/^[A-Za-z0-9_.:-]{1,48}$/` **على الطرفين معاً** فلا يولّد إسقاطُها فرقاً كاذباً.
+- **المنفَّذ**: `reconcileWithEngine({ hooksListing, permissionRules }, snapshot)` نقيّة
+  بلا أثر جانبي تعيد `{ agreed, missingInLocal, missingInEngine, engineErrors }`، ومعها
+  `reconcileNoticeText(report)` (نصٌّ عربيّ **من الحارس** لا من المحرّك) و
+  `guard.reconcileProject(cwd, engine)` الذي يمسح بنفسه ويعيد النصّ أو `null`.
+  `engineErrors` تحمل **اسم الملف المجرّد وحقله** (`settings.json → hooks.SessionStart`)
+  ولا تحمل المسار ولا رسالة المحرّك (قد تحمل قيمة الإعداد المخالفة أو أمراً).
+- **حدود الدفعة — معلنة**:
+  - **مصدر الحقيقة لم يتبدّل**: المسح اليدوي يبقى المصدر، وهذه مطابقةٌ إخبارية
+    بتنبيه واحد. تحويل المصدر إلى المحرّك دفعةٌ لاحقة.
+  - **غير موصولة**: لا استدعاء في `agent.js` بعد — ملكيةُ ذلك الملف خارج هذه الدفعة.
+  - قواعد السماح تُقارَن في **النطاقين المقيسين مُظلِّلَين** (`userSettings` و
+    `localSettings`) وحدهما؛ ‏`session`/`cliArg`/`projectSettings` خارج المدى عمداً
+    (‏`OBS-140`) — وإدخال `session` كان سينبّه عند كل موافقة جلسة.
+  - `.claude/setup.mjs` ليس خطّافاً عند المحرّك فلا يدخل الطرفين.
+  - كلُّ قسم `fail-open` ومعزول: مدخلٌ لا يُقرأ «غير معروف» فيُسقط **قسمه** من
+    المطابقة، لا يُقرأ «لا شيء» (الدرس نفسه من `OBS-087 ب` و`OBS-140`). والمدخل
+    المشوّه يعيد `agreed:true` بقوائم فارغة — «لا شيء يُقال» لا «كلّ شيء اختفى».
+  - **لم يُقَس زمن النداءين** ولا سلوكهما قبل أول دور غير `init`؛ المقيس أنهما
+    يُجابان مباشرةً بعد `system/init`.
+- **الشاهد الحيّ على الإنتاج**: تمرير `result.json` نفسه على
+  `reconcileProject('D:/sater/satr-2-b3', …)` أعطى بنداً واحداً — «خطّاف «PreToolUse»
+  (المشروع)» في `missingInLocal` — وهو **فجوة `OBS-156` بعينها** (الحارس يمسح
+  `SessionStart` وحده)؛ والقاعدتان المحليّتان تطابقتا فلم تُنتجا فرقاً. أي أن
+  المطابقة تعضّ على العطل القائم لا على ضجيج.
+- **الحارس**: `npm run test:hookguard` — ‏82 فحصاً (كانت 65)، منها ١٧ لـ`OBS-191`.

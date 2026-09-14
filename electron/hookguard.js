@@ -25,6 +25,11 @@
  * التكوين فقط: لا رابط ولا رمز ولا أي حقل من التكوين نفسه. وأوّل رصد يُسجَّل
  * صامتاً فلا ينبّه إلا التغيّر. ومسح MCP معزول عن مسح الخطّافات: فشله يعني «غير
  * معروف» فيُبقي الأساس المسجّل كما هو ولا يُسقط تنبيه البند (أ).
+ *
+ * OBS-191 (SDK ≥ 0.3.270): المحرّك صار يعلن خطّافاته وقواعده حيّةً
+ * (`getHooksListing()` و`listPermissionRules()` — مقيسان). و**مصدر الحقيقة هنا لم
+ * يتغيّر**: المسح اليدوي أعلاه يبقى المصدر، و`reconcileWithEngine` تقارن فقط
+ * وتُنتج تنبيهاً إخبارياً واحداً عند الاختلاف. تفاصيل الحدود عند الدالة نفسها.
  */
 
 'use strict';
@@ -400,6 +405,228 @@ function localAllowNoticeText(names) {
     + 'راجع الملف واحذفه إن لم تكن أنت من كتبه؛ لن يوقف «سطر» هذا الدور.');
 }
 
+// ── OBS-191: مطابقة المسح اليدوي بما يعلنه المحرّك (SDK ≥ 0.3.270) ─────────
+//
+// المحرّك صار يجيب طلبَي تحكّم: `get_hooks_listing` (كل خطّاف مُدرَج بحدثه ومصدره)
+// و`list_permission_rules` (القواعد الحيّة بمصدرها). و**المسح اليدوي يبقى مصدر
+// الحقيقة في هذه الدفعة**: هذه الدالة تقارن لا تستبدل، ومخرجها تنبيهٌ إخباري واحد.
+//
+// حدودٌ مقصودة ومُعلَنة:
+//  - الهويّة المقارَنة **اسم الحدث/الأداة ونطاق المصدر وحدهما**. لا `matcher` ولا
+//    `commandText` ولا `editable.config` ولا مسار — المحرّك يعطيها كاملةً، وقاعدة
+//    هذا الملف ألّا يعبره محتوى إعداد.
+//  - قواعد السماح تُقارَن في **النطاقين المقيسين مُظلِّلَين** (`userSettings` و
+//    `localSettings`) وحدهما. قواعد `session`/`cliArg`/`projectSettings` خارج مدى
+//    المسح عمداً (OBS-140)، وإدخالها كان سينبّه عند كل موافقة جلسة.
+//  - `.claude/setup.mjs` ليس خطّافاً عند المحرّك فلا يدخل الطرفين.
+//  - fail-open كالمعتاد: قسمٌ لا تُقرأ مدخلاته «غير معروف» فيُتخطّى، لا «لا شيء».
+const ENGINE_HOOK_SCOPES = Object.freeze({
+  userSettings: 'user',
+  projectSettings: 'project',
+  localSettings: 'local',
+});
+// نطاقا التظليل المقيسان — القائمة نفسها التي يقرؤها `shadowingAllowToolNamesSync`.
+const ENGINE_ALLOW_SCOPES = Object.freeze({ userSettings: 'user', localSettings: 'local' });
+const FINDING_PATH_SCOPES = Object.freeze({
+  '.claude/settings.json': 'project',
+  '.claude/settings.local.json': 'local',
+});
+const RECONCILE_SCOPE_LABELS = Object.freeze({
+  user: 'إعدادك', project: 'المشروع', local: 'ملف المشروع المحلي',
+});
+// اسمٌ آمنٌ للعرض والمفاتيح: حروف وأرقام وفواصل أسماء الأدوات (`mcp__srv__tool`)
+// لا أكثر. ما خالفها يسقط من **الطرفين معاً** فلا يولّد فرقاً كاذباً.
+const SAFE_ENGINE_LABEL = /^[A-Za-z0-9_.:-]{1,48}$/;
+const MAX_RECONCILE_ITEMS = 32;
+const MAX_RECONCILE_ERRORS = 8;
+const MAX_RECONCILE_NAMED = 6;
+
+function engineLabel(raw) {
+  const text = String(raw == null ? '' : raw).replace(MCP_UNSAFE_NAME, '').trim();
+  return SAFE_ENGINE_LABEL.test(text) ? text : null;
+}
+
+function plainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+function addKey(set, prefix, name, scope) {
+  if (name && scope) set.add(prefix + ':' + name + '@' + scope);
+}
+
+// خطّافات المحرّك: صفٌّ لكل خطّاف مُدرَج. المعطَّل (`disabled`) لا يعمل فلا يُقارَن.
+function engineHookKeys(listing) {
+  const rows = listing && Array.isArray(listing.hooks) ? listing.hooks : null;
+  if (!rows) return null;
+  const keys = new Set();
+  for (const row of rows.slice(0, MAX_RECONCILE_ITEMS * 4)) {
+    const entry = plainObject(row);
+    if (!entry || entry.disabled === true) continue;
+    const event = engineLabel(entry.event);
+    const scope = ENGINE_HOOK_SCOPES[entry.source] || engineLabel(entry.source);
+    addKey(keys, 'hook', event, scope);
+  }
+  return keys;
+}
+
+// قواعد الإذن: يُقبل الردّ ملفوفاً `{ state }` كما يعيده `listPermissionRules()`
+// **مقيساً**، أو الحالة مباشرةً — فلا تنكسر المطابقة بتغيّر اللفّ.
+function permissionState(response) {
+  const payload = plainObject(response);
+  if (!payload) return null;
+  const state = plainObject(payload.state) || payload;
+  return Array.isArray(state.rules) ? state : null;
+}
+
+function engineAllowKeys(state, scopes) {
+  if (!state) return null;
+  const keys = new Set();
+  for (const row of state.rules.slice(0, MAX_RECONCILE_ITEMS * 4)) {
+    const entry = plainObject(row);
+    if (!entry || entry.behavior !== 'allow') continue;
+    const scope = ENGINE_ALLOW_SCOPES[entry.source];
+    if (!scope || !scopes.has(scope)) continue;
+    addKey(keys, 'allow', engineLabel(allowRuleToolName(entry.rule)), scope);
+  }
+  return keys;
+}
+
+// أخطاء المحرّك = ملفات إعداد تخطّاها الدمج. يُنقل **اسم الملف المجرّد وحقلُه**
+// فقط: لا مسار كامل ولا نصّ الرسالة (قد يحمل قيمة الإعداد المخالفة أو أمراً).
+function reconcileErrors(sources) {
+  const seen = new Set();
+  const errors = [];
+  for (const list of sources) {
+    if (!Array.isArray(list)) continue;
+    for (const row of list) {
+      const entry = plainObject(row);
+      if (!entry) continue;
+      let file = '';
+      try { file = engineLabel(path.basename(String(entry.file || ''))) || ''; } catch { file = ''; }
+      const field = engineLabel(entry.path) || '';
+      const key = file + '|' + field;
+      if (key === '|' || seen.has(key)) continue;
+      seen.add(key);
+      errors.push({ file, field });
+      if (errors.length >= MAX_RECONCILE_ERRORS) return errors;
+    }
+  }
+  return errors;
+}
+
+function sortedDiff(engine, local) {
+  const missingInLocal = [];
+  const missingInEngine = [];
+  if (engine && local) {
+    for (const key of engine) if (!local.has(key)) missingInLocal.push(key);
+    for (const key of local) if (!engine.has(key)) missingInEngine.push(key);
+  }
+  return { missingInLocal, missingInEngine };
+}
+
+/**
+ * يقارن ما قرأه الحارس بيده بما يعلنه المحرّك، بلا أي أثر جانبي.
+ *
+ * `snapshot`: `{ findings, allowNames, localAllowNames }` — أي ما يجمعه `inspect`
+ * أصلاً. و`null` في أيّ منها تعني **«غير معروف»** فيُتخطّى قسمها (لا يُقرأ «لا شيء»).
+ * `engine`: `{ hooksListing, permissionRules }` كما يعيدهما SDK حرفياً.
+ *
+ * يعيد دائماً `{ agreed, missingInLocal, missingInEngine, engineErrors }` ولا يرمي
+ * مهما كان شكل المدخل.
+ */
+function reconcileWithEngine(engine, snapshot) {
+  try {
+    const payload = plainObject(engine) || {};
+    const local = plainObject(snapshot) || {};
+
+    const listing = plainObject(payload.hooksListing);
+    const engineHooks = engineHookKeys(listing);
+    const findings = Array.isArray(local.findings) ? local.findings : null;
+    let localHooks = null;
+    if (findings) {
+      localHooks = new Set();
+      for (const row of findings.slice(0, MAX_RECONCILE_ITEMS * 4)) {
+        const entry = plainObject(row);
+        if (!entry || entry.kind !== 'session_start') continue;
+        addKey(localHooks, 'hook', 'SessionStart', FINDING_PATH_SCOPES[entry.path]);
+      }
+    }
+    const hooks = sortedDiff(engineHooks, localHooks);
+
+    // كل نطاق سماح يدخل المقارنة فقط إن قرأه الحارس فعلاً — وإلا فكلا الطرفين يسقط.
+    const scopes = new Set();
+    const localAllow = new Set();
+    if (Array.isArray(local.allowNames)) {
+      scopes.add('user');
+      for (const name of local.allowNames) addKey(localAllow, 'allow', engineLabel(name), 'user');
+    }
+    if (Array.isArray(local.localAllowNames)) {
+      scopes.add('local');
+      for (const name of local.localAllowNames) addKey(localAllow, 'allow', engineLabel(name), 'local');
+    }
+    const state = permissionState(payload.permissionRules);
+    const engineAllow = scopes.size ? engineAllowKeys(state, scopes) : null;
+    const allow = sortedDiff(engineAllow, scopes.size ? localAllow : null);
+
+    const missingInLocal = hooks.missingInLocal.concat(allow.missingInLocal)
+      .sort().slice(0, MAX_RECONCILE_ITEMS);
+    const missingInEngine = hooks.missingInEngine.concat(allow.missingInEngine)
+      .sort().slice(0, MAX_RECONCILE_ITEMS);
+    const engineErrors = reconcileErrors([
+      listing ? listing.errors : null, state ? state.errors : null,
+    ]);
+    return {
+      agreed: !missingInLocal.length && !missingInEngine.length && !engineErrors.length,
+      missingInLocal,
+      missingInEngine,
+      engineErrors,
+    };
+  } catch {
+    // مدخلٌ مشوّه لا يُسقط الدور ولا يخترع فرقاً: «متّفق» يعني هنا «لا شيء يُقال».
+    return { agreed: true, missingInLocal: [], missingInEngine: [], engineErrors: [] };
+  }
+}
+
+function describeReconcileKey(key) {
+  const [prefix, rest] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
+  const at = rest.lastIndexOf('@');
+  const name = at < 0 ? rest : rest.slice(0, at);
+  const scope = at < 0 ? '' : rest.slice(at + 1);
+  const where = RECONCILE_SCOPE_LABELS[scope] || scope;
+  return (prefix === 'hook' ? 'خطّاف «' : 'أداة مسموحة «') + name + '» (' + where + ')';
+}
+
+function reconcileList(keys) {
+  const shown = keys.slice(0, MAX_RECONCILE_NAMED).map(describeReconcileKey);
+  const hidden = keys.length - shown.length;
+  return shown.join('، ') + (hidden > 0 ? '، و' + hidden + ' غيرها' : '');
+}
+
+/**
+ * نصّ التنبيه العربي — **من الحارس نفسه** لا من المحرّك، فلا يعبر نصُّ المحرّك
+ * الواجهةَ. يعيد `null` عند الاتفاق.
+ */
+function reconcileNoticeText(report) {
+  const value = plainObject(report);
+  if (!value || value.agreed) return null;
+  const parts = [];
+  if (value.missingInLocal && value.missingInLocal.length) {
+    parts.push('يعلنه المحرّك ولم يره فحص «سطر»: ' + reconcileList(value.missingInLocal));
+  }
+  if (value.missingInEngine && value.missingInEngine.length) {
+    parts.push('رآه فحص «سطر» ولا يعلنه المحرّك: ' + reconcileList(value.missingInEngine));
+  }
+  if (value.engineErrors && value.engineErrors.length) {
+    parts.push('وملفات إعداد تخطّاها المحرّك فلا تعمل قواعدها: '
+      + value.engineErrors.map((entry) => '«' + (entry.file || 'ملف إعداد')
+        + (entry.field ? ' → ' + entry.field : '') + '»').join('، '));
+  }
+  if (!parts.length) return null;
+  return scrubSecrets('⚠️ تنبيه أمني: ما يعلنه محرّك Claude لا يطابق ما قرأه «سطر» من ملفات '
+    + 'الإعداد — ' + parts.join('؛ ') + '. راجع إعداداتك؛ «سطر» يعتمد فحصه المحلي في هذا '
+    + 'الدور ولن يوقفه.');
+}
+
 function cleanProjects(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
       || value.version !== STORE_VERSION || !value.projects
@@ -579,13 +806,46 @@ function createGuard(options = {}) {
     return run;
   }
 
-  return { inspectProject };
+  // OBS-191: لقطة المسح اليدوي وحدها — بلا مخزن ولا كتابة ولا تنبيه. كلُّ قسم
+  // معزول: فشله `null` («غير معروف») فيسقط قسمه من المطابقة بدل أن يُقرأ «لا شيء».
+  // ⚠️ لا يُعاد استعمال `inspect` هنا عمداً: هناك فشلُ المسح يُسقط الدور كلّه، وهنا
+  // يجب أن يُسقط قسمه وحده.
+  async function snapshotOf(cwd) {
+    const snapshot = { findings: null, allowNames: null, localAllowNames: null };
+    try { snapshot.findings = await scanProject(io, cwd); } catch { snapshot.findings = null; }
+    try {
+      snapshot.allowNames = await collectUserAllowRules(io, userSettings);
+    } catch { snapshot.allowNames = null; }
+    try {
+      snapshot.localAllowNames = await collectUserAllowRules(
+        io, path.join(cwd, '.claude', LOCAL_SETTINGS_NAME),
+      );
+    } catch { snapshot.localAllowNames = null; }
+    return snapshot;
+  }
+
+  /**
+   * OBS-191: يعيد **نصّ تنبيه عربي واحد** عند اختلاف ما يعلنه المحرّك عمّا قرأه
+   * الحارس، أو `null` عند الاتفاق أو عند أي تعذّر. لا يكتب شيئاً ولا يغيّر مصدر
+   * الحقيقة — المسح اليدوي يبقى المصدر في هذه الدفعة.
+   */
+  async function reconcileProject(cwd, engine) {
+    try {
+      if (typeof cwd !== 'string' || !cwd.trim()) return null;
+      return reconcileNoticeText(reconcileWithEngine(engine, await snapshotOf(cwd)));
+    } catch {
+      return null;
+    }
+  }
+
+  return { inspectProject, reconcileProject };
 }
 
 const guard = createGuard();
 
 module.exports = {
   inspectProject: guard.inspectProject,
+  reconcileProject: guard.reconcileProject,
   createGuard,
   noticeEvent,
   projectKey,
@@ -608,4 +868,9 @@ module.exports = {
   MAX_ALLOW_RULES,
   MAX_ALLOW_TOOL_NAME,
   MAX_ALLOW_NAMED_IN_NOTICE,
+  // OBS-191
+  reconcileWithEngine,
+  reconcileNoticeText,
+  MAX_RECONCILE_ITEMS,
+  MAX_RECONCILE_ERRORS,
 };
