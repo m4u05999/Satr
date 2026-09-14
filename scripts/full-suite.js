@@ -30,6 +30,7 @@ const SUITE = [
   'test:observations',
   'test:suite-coverage',
   'test:radar-graveyard',
+  'test:sdk-version-parity',
   'test:hookguard',
   'test:probe-runner',
   'test:langmetric',
