@@ -18,4 +18,8 @@
   `docs/internals/05-claude-sdk-background-tasks.md` قسم «قناة حالة الوكلاء الأحياء وبقاء
   Query». و`parent_agent_id` لا يصل في البثّ الحي، فمفتاح الربط هو `task_id` (وهو نفسه
   `agentID` في `canUseTool` ونفسه `requester` في `permission_request` — مقيس).
+- **حالة الوكيل الحيّ ⇐ سطح مستقل**: بطاقة الوكيل أعلاه ابنةُ كتلة الدور، فلا تصف وكيلاً
+  خلفياً يعيش بعده ولا استئنافاً بـ`SendMessage`. سطحُ الحالة الدائم ومفتاحه `taskId`
+  وعقد `sdk_agent_state` في `docs/internals/80-agents-live.md` (‏OBS-207/151) — البطاقة
+  هنا تبقى كما هي، والسطح يضاف ولا يستبدلها.
 
