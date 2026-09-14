@@ -1516,6 +1516,12 @@ function resolvePermissionThroughCurrentHandles(id, allow, always, turn) {
     if (!ok && currentCliRun && typeof currentCliRun.resolvePermission === 'function') {
       ok = currentCliRun.resolvePermission(id, !!allow, !!always, !!turn);
     }
+    // OBS-208: الطلب قد يخصّ Query انتهى دوره وبقي له وكيل فرعي خلفي — المعرّف يحسم المالك.
+    if (!ok) {
+      for (const run of sdkBackgroundRuns) {
+        if (run && typeof run.resolvePermission === 'function' && run.resolvePermission(id, !!allow, !!always, !!turn)) { ok = true; break; }
+      }
+    }
     if (!ok && pendingVerificationPermissions.has(id)) {
       const resolve = pendingVerificationPermissions.get(id);
       pendingVerificationPermissions.delete(id);
@@ -2974,9 +2980,14 @@ async function handleSendRequest(event, payload, requestEpoch) {
     }
     // OBS-142: عدّ الحدث **قبل أي مرشّح** — نقطة القياس الأولى من الثلاث. بلا نصّ.
     eventTrace.emitted(token, obj);
+    // OBS-208: طلب الإذن وسؤال النموذج من وكيل فرعي خلفي بعد انتهاء الدور كانا يُسقطان هنا
+    // «بائتين»، فيبقى وعد canUseTool بلا ردّ حتى يغلق Claude Code قناة الإذن ويرفض كل ما
+    // بعدها. الآن يعبران إلى مربع الإذن العربي (الواجهة تعالجهما ولو انتهت الكتلة)، والردّ
+    // يعود إلى الدور الخلفي نفسه عبر resolvePermissionThroughCurrentHandles/answerQuestion.
     const lateSdkBackgroundEvent = token !== runSeq && runEngine === 'sdk'
       && sdkRunForEmit && sdkBackgroundRuns.has(sdkRunForEmit)
       && (obj.type === 'sdk_task_notification' || obj.type === 'sdk_task_started'
+        || obj.type === 'permission_request' || obj.type === 'question_request'
         || (obj.type === 'task_update' && obj.source === 'claude_agent'));
     // OBS-142: كان `return` **صامتاً** — فغيابُ الحدث لا يُفرَّق عن عدم إنتاجه، وهو
     // نفسه سبب بقاء الملاحظة مفتوحة. الآن يُسجَّل السبب ورمزا الدور بلا أي نصّ.
@@ -3703,6 +3714,12 @@ ipcMain.handle('satr:answerQuestion', (event, p) => {
   }));
   let ok = false;
   if (currentRun && typeof currentRun.resolveQuestion === 'function') ok = currentRun.resolveQuestion(p.id, selections);
+  // OBS-208: سؤال من وكيل فرعي خلفي بعد انتهاء دور Query الأصلي — المعرّف يحسم المالك.
+  if (!ok) {
+    for (const run of sdkBackgroundRuns) {
+      if (run && typeof run.resolveQuestion === 'function' && run.resolveQuestion(p.id, selections)) { ok = true; break; }
+    }
+  }
   return { ok };
 });
 

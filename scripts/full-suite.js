@@ -15,6 +15,7 @@ const SUITE = [
   'test:chat-md',
   'test:empty-block',
   'test:eventtrace',
+  'test:subagent-permission',
   'test:update-ui',
   'test:settings-account',
   'test:task-ledger-ui',
