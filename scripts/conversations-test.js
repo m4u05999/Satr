@@ -268,9 +268,9 @@ try {
     assert.strictEqual(tight.prepare({ cwd: project, engine: 'codex', conversationId: start.id, prompt: 'انتقال' }).error, 'transfer_limit');
   });
 
-  test('دور يتيم بعملية ماتت أو فشل بعد تأكيد الجلسة لا يحبسها خلف سقف النقل (OBS-205)', () => {
+  test('الفشل والدور اليتيم لا يحبسان الجلسة، وفقدها المعلن وحده يُبطلها برسالة صادقة (OBS-205)', () => {
     // قبل الإصلاح: prepare() يجد دوراً «جارياً» بعملية ميتة فيُبطل الربط ⇒ نقل التاريخ كله ⇒ transfer_limit
-    // على كل إرسال، ولا يُحفظ شيء فيتكرر الفشل حرفياً. الفشل بعد init كان يسلك الفخ نفسه.
+    // على كل إرسال، ولا يُحفظ شيء فيتكرر الفشل حرفياً. الفشل لأي سبب كان يسلك الفخ نفسه.
     const orphanRoot = path.join(temp, 'store-orphan');
     const tight = conversations.createStore({ root: orphanRoot, maxTransferChars: 4000 });
     const start = ok(tight.prepare({ cwd: project, engine: 'sdk', prompt: 'بداية' }));
@@ -280,55 +280,65 @@ try {
     const second = ok(tight.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'ثانية' }));
     ok(tight.acceptEvent(second.runId, { type: 'assistant', message: { content: [{ type: 'text', text: 'ن'.repeat(3000) }] } }));
     ok(tight.acceptEvent(second.runId, { type: 'result', is_error: false }));
-    // (١) فشل بعد تأكيد الجلسة (انقطاع الشبكة أثناء الدور): الربط يبقى صالحاً.
+    // (١) فشل بعد بدء الدور (انقطاع الشبكة): الربط يبقى صالحاً.
     const dropped = ok(tight.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'سينقطع الاتصال' }));
     ok(tight.acceptEvent(dropped.runId, { type: 'system', subtype: 'init', session_id: 'sdk-orphan' }));
     assert.strictEqual(ok(tight.acceptEvent(dropped.runId, { type: 'proc_done', code: 1 })).status, 'failed');
     let saved = ok(tight.load(start.id, project)).conversation;
-    assert.strictEqual(saved.bindings.sdk.valid, true, 'فشل بعد init لا يُفقد الجلسة');
-    assert.strictEqual(saved.runs.at(-1).sessionConfirmed, true);
-    // (٢) دور يتيم: العملية ماتت قبل أي حدث إنهاء (إعادة تشغيل الجهاز)، ولديه خرج من المحرك
-    //     لكن بلا علم sessionConfirmed — كالسجلات المكتوبة قبل هذا الإصلاح.
+    assert.strictEqual(saved.bindings.sdk.valid, true, 'فشل الشبكة لا يُفقد الجلسة');
+    // (٢) فشل قبل أي إشارة بدء (تعذّر إقلاع أو انتهاء الدخول): قرار المالك — الربط يبقى أيضاً.
+    const early = ok(tight.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'لن يقلع' }));
+    assert.strictEqual(early.sessionId, 'sdk-orphan');
+    assert.strictEqual(ok(tight.acceptEvent(early.runId, { type: 'spawn_error' })).status, 'failed');
+    assert.strictEqual(ok(tight.load(start.id, project)).conversation.bindings.sdk.valid, true, 'تعذّر الإقلاع ليس دليلاً على فقد الجلسة');
+    // (٣) دور يتيم: العملية ماتت قبل أي حدث إنهاء (إعادة تشغيل الجهاز) وبلا أي خرج من المحرك.
     const orphan = ok(tight.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'دور ستموت عمليته' }));
-    ok(tight.acceptEvent(orphan.runId, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool-orphan', content: 'خرج أداة قبل الموت' }] } }));
     const deadChild = require('child_process').spawnSync(process.execPath, ['-e', 'process.exit(0)'], { windowsHide: true });
     const file = allFiles(orphanRoot).find((name) => path.basename(name) === start.id + '.json');
     const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
     const legacy = onDisk.runs.find((run) => run.id === orphan.runId);
     assert.strictEqual(legacy.status, 'running');
     legacy.pid = deadChild.pid;
-    delete legacy.sessionConfirmed;
     fs.writeFileSync(file, JSON.stringify(onDisk));
     const restarted = conversations.createStore({ root: orphanRoot, maxTransferChars: 4000 });
     const after = ok(restarted.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'أكمل بعد إعادة التشغيل' }));
-    assert.strictEqual(after.sessionId, 'sdk-orphan', 'الدور اليتيم لا يُبطل جلسة أكّدها المحرك');
+    assert.strictEqual(after.sessionId, 'sdk-orphan', 'الدور اليتيم لا يُبطل الجلسة');
     assert(after.context.includes('"status":"interrupted"'));
     assert(after.context.includes('دور ستموت عمليته'));
     assert(after.context.includes('سينقطع الاتصال'));
+    assert(after.context.includes('لن يقلع'));
     assert(!after.context.includes('بداية'), 'ما قبل آخر إكمال لا يُنقل إلى جلسة تملكه');
     saved = ok(restarted.load(start.id, project)).conversation;
     assert.strictEqual(saved.runs.find((run) => run.id === orphan.runId).status, 'interrupted');
     assert.strictEqual(saved.bindings.sdk.valid, true);
     ok(restarted.acceptEvent(after.runId, { type: 'result', is_error: false }));
-    // (٣) الفشل قبل التأكيد (تعذّر الإقلاع أو جلسة مفقودة) يبقى يُبطل الربط — عقد إعادة البناء من السجل.
-    const early = ok(restarted.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'لن يقلع' }));
-    assert.strictEqual(ok(restarted.acceptEvent(early.runId, { type: 'spawn_error' })).status, 'failed');
-    assert.strictEqual(ok(restarted.load(start.id, project)).conversation.bindings.sdk.valid, false);
-    // ودور يتيم بلا أي خرج من المحرك ولا علم: لا دليل على استئناف ناجح فيبقى الإبطال.
-    const mute = conversations.createStore({ root: path.join(temp, 'store-mute') });
-    const first = ok(mute.prepare({ cwd: project, engine: 'sdk', prompt: 'بداية' }));
-    ok(mute.acceptEvent(first.runId, { type: 'system', subtype: 'init', session_id: 'sdk-mute' }));
-    ok(mute.acceptEvent(first.runId, { type: 'result', is_error: false }));
-    const silent = ok(mute.prepare({ cwd: project, engine: 'sdk', conversationId: first.id, prompt: 'مات قبل أي حدث' }));
-    const muteFile = allFiles(path.join(temp, 'store-mute')).find((name) => path.basename(name) === first.id + '.json');
-    const muteDisk = JSON.parse(fs.readFileSync(muteFile, 'utf8'));
-    muteDisk.runs.find((run) => run.id === silent.runId).pid = deadChild.pid;
-    fs.writeFileSync(muteFile, JSON.stringify(muteDisk));
-    const muteAgain = conversations.createStore({ root: path.join(temp, 'store-mute') });
-    const rebuilt = ok(muteAgain.prepare({ cwd: project, engine: 'sdk', conversationId: first.id, prompt: 'أعد البناء' }));
+    // (٤) الجلسة مفقودة فعلاً: الحدث المقيس حياً من SDK وحده يُبطل الربط، ولا يُعدّ result الخاطئ ربطاً.
+    const missing = ok(restarted.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'استئناف جلسة محذوفة' }));
+    assert.strictEqual(ok(restarted.acceptEvent(missing.runId, {
+      type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'sdk-orphan',
+      errors: ['No conversation found with session ID: sdk-orphan'],
+    })).status, 'failed');
+    assert.strictEqual(ok(restarted.acceptEvent(missing.runId, { type: 'spawn_error', kind: 'exit_after_result' })).ignored, true);
+    assert.strictEqual(ok(restarted.load(start.id, project)).conversation.bindings.sdk.valid, false, 'فقد الجلسة المعلن يُبطل الربط');
+    // وفي المحادثة الطويلة المخرج الصادق «جلسة جديدة» لا «عُد إلى المحرك السابق».
+    const lost = restarted.prepare({ cwd: project, engine: 'sdk', conversationId: start.id, prompt: 'بعد الفقد' });
+    assert.strictEqual(lost.error, 'session_lost');
+    assert.strictEqual(lost.cause, 'transfer_limit');
+    assert(!ok(restarted.load(start.id, project)).conversation.messages.some((message) => message.text === 'بعد الفقد'));
+    // والانتقال إلى محرك آخر يبقى على رسالته الأصلية.
+    assert.strictEqual(restarted.prepare({ cwd: project, engine: 'codex', conversationId: start.id, prompt: 'انتقال' }).error, 'transfer_limit');
+    // والمحادثة القصيرة بعد الفقد تُعاد بناءً من السجل كما يقضي العقد.
+    const shortRoot = path.join(temp, 'store-missing-short');
+    const small = conversations.createStore({ root: shortRoot });
+    const first = ok(small.prepare({ cwd: project, engine: 'sdk', prompt: 'قيد قصير' }));
+    ok(small.acceptEvent(first.runId, { type: 'system', subtype: 'init', session_id: 'sdk-short' }));
+    ok(small.acceptEvent(first.runId, { type: 'result', is_error: false }));
+    const gone = ok(small.prepare({ cwd: project, engine: 'sdk', conversationId: first.id, prompt: 'استأنف' }));
+    ok(small.acceptEvent(gone.runId, { type: 'result', is_error: true, result: 'No conversation found with session ID: sdk-short' }));
+    const rebuilt = ok(small.prepare({ cwd: project, engine: 'sdk', conversationId: first.id, prompt: 'أعد البناء' }));
     assert.strictEqual(rebuilt.sessionId, '');
-    assert(rebuilt.context.includes('مات قبل أي حدث'));
-    ok(muteAgain.stop(rebuilt.runId));
+    assert(rebuilt.context.includes('قيد قصير'));
+    ok(small.stop(rebuilt.runId));
   });
 
   test('استبدال جلسة مفقودة يحتاج حزمة كاملة ويُحظر بعد بدء التنفيذ', () => {
@@ -359,7 +369,8 @@ try {
     assert.strictEqual(late.late, true);
     assert.strictEqual(read(current.id).messages.at(-1).text, 'توجيه مقبول وصل إقراره متأخراً');
     assert.strictEqual(read(current.id).bindings.sdk.lastCompletedRevision, completedRevision);
-    assert.strictEqual(read(current.id).bindings.sdk.valid, false);
+    // OBS-205 (قرار المالك): التوجيه المتأخر لا يُبطل الربط؛ يُنقل زيادةً إلى الجلسة نفسها.
+    assert.strictEqual(read(current.id).bindings.sdk.valid, true);
     const next = begin('تابع مع التوجيه', { conversationId: current.id });
     assert(next.context.includes('توجيه مقبول وصل إقراره متأخراً'));
     ok(store.stop(next.runId));
