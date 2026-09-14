@@ -522,8 +522,197 @@ function broken2() {
     }
   }
 
+  // ── OBS-191: مطابقة ما يعلنه المحرّك بما قرأه الحارس بيده ─────────────────
+  // المدخلات هنا **مأخوذة من مسبار حيّ** على SDK 0.3.270 (الشكل موثّق في
+  // docs/internals/06-claude-sdk-polish.md): `getHooksListing()` يعيد الكائن
+  // مباشرةً، و`listPermissionRules()` يعيده ملفوفاً في `{ state }`.
+  {
+    const engineHook = (extra) => Object.assign({
+      event: 'SessionStart',
+      matcher: '',
+      source: 'projectSettings',
+      sourceLabel: 'Project settings (.claude/settings.json)',
+      type: 'command',
+      displayText: 'node "D:/secret/path/boot.js"',
+      commandText: 'node "D:/secret/path/boot.js"',
+      contentLabel: 'Command',
+      editable: { matcher: '', config: { type: 'command', command: 'node "D:/secret/path/boot.js"' } },
+    }, extra);
+    const engineRule = (rule, source) => ({
+      behavior: 'allow', source, rule, editability: 'persistent',
+    });
+    const listing = (hooks, errors) => {
+      const value = { events: [], hooks, eventCatalog: [], policy: { allDisabled: false } };
+      if (errors) value.errors = errors;
+      return value;
+    };
+    const rules = (list, errors) => {
+      const state = {
+        rules: list, workspaceDirectories: [], originalCwd: 'D:\\sater\\satr-2', managedOnly: false,
+      };
+      if (errors) state.errors = errors;
+      return { state };
+    };
+    const localSnapshot = (findings, allowNames, localAllowNames) => ({
+      findings, allowNames, localAllowNames,
+    });
+
+    // (١) تطابق تام ⇒ agreed:true ولا تنبيه.
+    {
+      const report = hookguard.reconcileWithEngine(
+        {
+          hooksListing: listing([engineHook()]),
+          permissionRules: rules([engineRule('Bash(npm run test:*)', 'localSettings')]),
+        },
+        localSnapshot(
+          [{ kind: 'session_start', path: '.claude/settings.json', contentDigest: 'x' }],
+          [], ['Bash'],
+        ),
+      );
+      ok(report.agreed === true && !report.missingInLocal.length
+        && !report.missingInEngine.length && !report.engineErrors.length,
+      'OBS-191: تطابق تام ⇒ agreed:true بلا فروق');
+      ok(hookguard.reconcileNoticeText(report) === null,
+        'OBS-191: عند الاتفاق لا نصّ تنبيه');
+    }
+
+    // (٢) خطّاف يعلنه المحرّك ولم يره المسح اليدوي (فجوة OBS-156 بعينها).
+    {
+      const report = hookguard.reconcileWithEngine(
+        { hooksListing: listing([engineHook({ event: 'PreToolUse', source: 'localSettings' })]) },
+        localSnapshot([], null, null),
+      );
+      ok(report.agreed === false
+        && report.missingInLocal.join() === 'hook:PreToolUse@local'
+        && !report.missingInEngine.length,
+      'OBS-191: خطّاف في المحرك غائب محلياً ⇒ missingInLocal');
+      const notice = hookguard.reconcileNoticeText(report);
+      ok(notice.includes('PreToolUse') && notice.includes('⚠️')
+        && !notice.includes('secret') && !notice.includes('boot.js')
+        && !notice.includes('D:'),
+      'OBS-191: التنبيه عربي ويسمّي الحدث بلا مسار ولا نصّ أمر');
+    }
+
+    // (٣) قاعدة سماح محلية رآها الحارس ولا يعلنها المحرّك.
+    {
+      const report = hookguard.reconcileWithEngine(
+        { hooksListing: listing([]), permissionRules: rules([]) },
+        localSnapshot([], [], ['Write']),
+      );
+      ok(report.missingInEngine.join() === 'allow:Write@local' && report.agreed === false,
+        'OBS-191: قاعدة سماح محلية غائبة في المحرك ⇒ missingInEngine');
+      // والنطاق غير المقروء لا يولّد فرقاً: `allowNames:null` يُسقط نطاق المستخدم.
+      const skipped = hookguard.reconcileWithEngine(
+        { hooksListing: listing([]), permissionRules: rules([engineRule('Write', 'userSettings')]) },
+        localSnapshot([], null, []),
+      );
+      ok(skipped.agreed === true,
+        'OBS-191: نطاق لم يُقرأ («غير معروف») يسقط من الطرفين لا يُقرأ «لا قواعد»');
+      // وقواعد خارج النطاقين المقيسين (جلسة/مشروع) لا تُقارَن أصلاً.
+      const outOfScope = hookguard.reconcileWithEngine(
+        {
+          hooksListing: listing([]),
+          permissionRules: rules([
+            engineRule('Write', 'session'), engineRule('Write', 'projectSettings'),
+            engineRule('Write', 'cliArg'),
+          ]),
+        },
+        localSnapshot([], [], []),
+      );
+      ok(outOfScope.agreed === true,
+        'OBS-191: قواعد session/projectSettings/cliArg خارج مدى المطابقة المعلن');
+    }
+
+    // (٤) errors من المحرّك تُنقل بلا مسار ولا رسالة ولا نصّ أوامر.
+    {
+      const report = hookguard.reconcileWithEngine(
+        {
+          hooksListing: listing([], [{
+            file: 'D:\\sater\\satr-2\\.claude\\settings.json',
+            path: 'hooks.SessionStart',
+            message: 'Invalid command: rm -rf / --no-preserve-root ' + SECRET,
+          }]),
+          permissionRules: rules([], [{
+            file: 'C:\\Users\\x\\.claude\\settings.json', path: '', message: 'bad ' + SECRET,
+          }]),
+        },
+        localSnapshot([], [], []),
+      );
+      ok(report.agreed === false && report.engineErrors.length === 2,
+        'OBS-191: errors من النداءين تُجمعان وتُبطلان الاتفاق');
+      const dumped = JSON.stringify(report.engineErrors);
+      ok(!dumped.includes('rm -rf') && !dumped.includes(SECRET)
+        && !dumped.includes('\\\\') && !dumped.includes('C:') && !dumped.includes('D:')
+        && dumped.includes('settings.json') && dumped.includes('hooks.SessionStart'),
+      'OBS-191: الخطأ يحمل اسم الملف المجرّد وحقله فقط — لا مسار ولا رسالة');
+      const notice = hookguard.reconcileNoticeText(report);
+      ok(notice.includes('settings.json') && !notice.includes('rm -rf')
+        && !notice.includes(SECRET),
+      'OBS-191: تنبيه الأخطاء بلا رسالة المحرّك');
+    }
+
+    // (٥) مدخلات مشوّهة لا ترمي — ولا تخترع فرقاً (fail-open كبقية الحارس).
+    {
+      const junk = [
+        undefined, null, 0, 'nope', [], { hooksListing: null, permissionRules: null },
+        { hooksListing: { hooks: 'no' }, permissionRules: { state: { rules: 'no' } } },
+        { hooksListing: listing([null, 7, { event: '\u0000\u202E', source: 'x' }]) },
+      ];
+      let clean = true;
+      for (const engine of junk) {
+        for (const snapshot of [undefined, null, 'x', {}, { findings: 'x' },
+          localSnapshot([{ kind: 'setup', path: '.claude/setup.mjs' }], [], [])]) {
+          const report = hookguard.reconcileWithEngine(engine, snapshot);
+          if (!report || typeof report.agreed !== 'boolean'
+            || !Array.isArray(report.missingInLocal) || !Array.isArray(report.missingInEngine)
+            || !Array.isArray(report.engineErrors) || report.agreed !== true) clean = false;
+        }
+      }
+      ok(clean, 'OBS-191: مدخلات مشوّهة لا ترمي وتعيد العقد نفسه بلا فرق مخترَع');
+      ok(hookguard.reconcileNoticeText(null) === null
+        && hookguard.reconcileNoticeText('x') === null
+        && hookguard.reconcileNoticeText({ agreed: false }) === null,
+      'OBS-191: نصّ التنبيه يتحمّل المشوّه ويصمت بلا بنود');
+    }
+
+    // (٦) المسار الموصول: reconcileProject يمسح بنفسه ولا يكتب مخزناً.
+    {
+      const dir = projectDir('obs191-wired');
+      writeJson(path.join(dir, '.claude', 'settings.json'),
+        { hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] } });
+      const store = path.join(ROOT, 'obs191-store.json');
+      const g = hookguard.createGuard({
+        file: store,
+        claudeJson: path.join(ROOT, 'obs191-claude.json'),
+        userSettings: path.join(ROOT, 'fake-home-191', '.claude', 'settings.json'),
+      });
+      const agreedNotice = await g.reconcileProject(dir, {
+        hooksListing: listing([engineHook()]), permissionRules: rules([]),
+      });
+      ok(agreedNotice === null, 'OBS-191: reconcileProject صامت عند الاتفاق');
+      const notice = await g.reconcileProject(dir, {
+        hooksListing: listing([engineHook({ event: 'Stop', source: 'userSettings' })]),
+        permissionRules: rules([]),
+      });
+      ok(typeof notice === 'string' && notice.includes('Stop')
+        && notice.includes('SessionStart'),
+      'OBS-191: reconcileProject يبني التنبيه من مسحه الخاص');
+      ok(!fs.existsSync(store), 'OBS-191: المطابقة لا تكتب المخزن — لا تبدّل مصدر الحقيقة');
+      ok(await g.reconcileProject('', { hooksListing: listing([]) }) === null
+        && await g.reconcileProject(null, null) === null,
+      'OBS-191: بلا cwd ⇒ null بلا استثناء');
+    }
+
+    // (٧) العقد المصدَّر والسقوف.
+    ok(typeof hookguard.reconcileWithEngine === 'function'
+      && typeof hookguard.reconcileNoticeText === 'function'
+      && typeof hookguard.reconcileProject === 'function'
+      && hookguard.MAX_RECONCILE_ITEMS === 32 && hookguard.MAX_RECONCILE_ERRORS === 8,
+    'OBS-191: الدوال الثلاث مصدَّرة والسقوف معلنة');
+  }
+
   fs.rmSync(ROOT, { recursive: true, force: true });
-  console.log('\nhookguard-test: ok — ' + passed + ' فحصاً لبصمة خوادم MCP (‏OBS-087 ب) وقواعد السماح (‏OBS-140).');
+  console.log('\nhookguard-test: ok — ' + passed + ' فحصاً لبصمة خوادم MCP (‏OBS-087 ب) وقواعد السماح (‏OBS-140) ومطابقة المحرّك (‏OBS-191).');
   process.exit(0);
 })().catch((error) => {
   try { fs.rmSync(ROOT, { recursive: true, force: true }); } catch {}
