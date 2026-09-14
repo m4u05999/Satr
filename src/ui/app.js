@@ -551,7 +551,10 @@ import { createPreviewShield } from './lib/preview-shield.js';
     conversationRestoreBusy = false;
     // ‏OBS-207: كل مسارات «جلسة جديدة/استئناف/تبديل مجلد» تمرّ من هنا — وصفوف الوكلاء
     // تخصّ الجلسة المتروكة، فبقاؤها بعدها كذبٌ مرئي (نظير chatEl.clearThread بجوارها).
-    if (agentsLiveEl) agentsLiveEl.reset();
+    // حارس `typeof` لا `if (agentsLiveEl)`: أطقم القشرة (‏`conversation-ui`/`model-boot`)
+    // **تقتطع** هذه الدالة نصّاً وتشغّلها في نطاق VM لا يعرف ثوابت القشرة، والمعرّف غير
+    // المُعلَن يرمي ReferenceError بينما `typeof` يعيد 'undefined' بلا رمي (مقيس).
+    if (typeof agentsLiveEl !== 'undefined' && agentsLiveEl) agentsLiveEl.reset();
   }
   function rememberContinuitySource(engine) {
     if (!conversationId && !continuitySource && sessionId && supportsConversation(engine)) {
@@ -813,7 +816,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
     clearPromptSuggestion();
     // ‏OBS-207: صفوف الوكلاء تخصّ محرّكها (‏SDK) — تبديل المحرّك يفرّغها حتى في فرع
     // الاستمرارية الذي لا يمرّ بـdetachConversation (المحادثة تستمر، والوكلاء لا).
-    if (agentsLiveEl) agentsLiveEl.reset();
+    // ‏`typeof` لأن هذا المستمع مقتطَع نصّاً في طقمَي القشرة — انظر detachConversation.
+    if (typeof agentsLiveEl !== 'undefined' && agentsLiveEl) agentsLiveEl.reset();
     localStorage.setItem('satr_engine', e);
     rebuildModels();
     applyEngineCommands(e); // إخفاء أوامر Claude-الخاصة مع Codex (المرحلة 4)
