@@ -48,6 +48,12 @@ const SAFE_CLAUDE_MODEL = /^[A-Za-z0-9./-]{1,64}(\[1m\])?$/; // لاحقة [1m] 
 const SAFE_SDK_TOOL_USE_ID = /^toolu_[A-Za-z0-9]{16,64}$/;
 const SAFE_SDK_TASK_ID = /^[a-z0-9]{6,64}$/;
 const SDK_TASK_NOTIFICATION_STATUSES = new Set(['completed', 'failed', 'stopped']);
+// OBS-207: أنواع المهام التي لها سطح حيّ عندنا — وكيل فرعي وBash خلفي (‏sdk.d.ts: «Set for
+// local_agent and local_bash tasks»). الواجهة تميّز بينهما بـtaskType؛ ما عداهما لا سطح له.
+const SDK_AGENT_TASK_TYPES = new Set(['local_agent', 'local_bash']);
+// حالات task_updated.patch.status كما تعلنها typings؛ ما خرج عنها يُسقط (قائمة سماح).
+const SDK_AGENT_UPDATE_STATUSES = new Set(['pending', 'running', 'completed', 'failed', 'killed', 'paused']);
+const MAX_SDK_SPAWN_DEPTH = 16;
 
 // أدوات تعديل الملفات التي نعرض لها فرقاً (Diff) — المرحلة 3
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
@@ -499,6 +505,112 @@ function sdkTaskStartedEvent(toolUseId, taskId) {
   return { type: 'sdk_task_started', toolUseId: String(toolUseId), taskId: String(taskId) };
 }
 
+// OBS-207/151 — قناة حالة الوكلاء الأحياء: سطحٌ مستقل عن كتلة الدور (‏<satr-agents-live>)
+// يعيش ما دام الوكيل حياً ولو انتهى الدور، ويربط الاستئناف بمعرّف المهمة نفسه.
+//
+// القياسات التي بُني عليها العقد (مسبار حيّ 2026-09-15، SDK 0.3.270 / CLI 2.1.270):
+//   • `agentID` في `canUseTool` == `task_id` حرفياً — فمعرّف المهمة هو مفتاح الربط الوحيد
+//     (‏`parent_agent_id` لا يصل في البثّ الحي أصلاً).
+//   • الاستئناف بـ`SendMessage` يولّد `task_started` جديداً **بالمعرّف نفسه** وبـ
+//     `tool_use_id` جديد ⇒ `resumed` يُحسم بـ«هل رأت هذه Query بدايته من قبل؟».
+//   • `background_tasks_changed` يحمل قائمة **كاملة** (دلالة REPLACE) والقائمة الفارغة خمول.
+//   • `task_notification` يصل لكل مقطع (إطلاق/استئناف) بـ`tool_use_id` مقطعه.
+//
+// الدالة **نقية**: لا تقرأ حالة خارجية ولا تكتبها؛ `ctx.seen` مجموعة معرّفات المهام التي
+// شاهدت Query نفسها `task_started` لها، ويملؤها المتحكم **بعد** البثّ. كل نص حر يمرّ بـ
+// `safeSdkTaskText` (تنظيف التحكم/Bidi + قصّ 300 + إسقاط عند `memory.hasSecret`)، ولا يعبر
+// `prompt` ولا `output_file` ولا `usage` ولا `uuid` ولا `session_id`.
+function sdkAgentStateEvent(message, ctx) {
+  if (!message || message.type !== 'system') return null;
+  const hasSeen = (id) => !!(ctx && ctx.seen && typeof ctx.seen.has === 'function' && ctx.seen.has(id));
+  if (message.subtype === 'background_tasks_changed') {
+    const taskIds = [];
+    for (const task of Array.isArray(message.tasks) ? message.tasks : []) {
+      if (!task || typeof task !== 'object' || task.ambient === true || task.skip_transcript === true) continue;
+      const id = String(task.task_id || '');
+      if (SAFE_SDK_TASK_ID.test(id) && !taskIds.includes(id)) taskIds.push(id);
+    }
+    return { type: 'sdk_agent_state', kind: 'live', taskIds };
+  }
+  const taskId = String(message.task_id || '');
+  if (!SAFE_SDK_TASK_ID.test(taskId)) return null;
+  // المهام المحيطة/المستبعدة من النصّ ليست عملاً يراه المالك — لا سطح لها.
+  if (message.ambient === true || message.skip_transcript === true) return null;
+  const rawToolUseId = String(message.tool_use_id || '');
+  const toolUseId = SAFE_SDK_TOOL_USE_ID.test(rawToolUseId) ? rawToolUseId : '';
+  if (message.subtype === 'task_started') {
+    if (!SDK_AGENT_TASK_TYPES.has(message.task_type)) return null;
+    const event = {
+      type: 'sdk_agent_state',
+      taskId,
+      kind: 'started',
+      description: safeSdkTaskText(message.description, 300),
+      taskType: message.task_type,
+      backgrounded: message.is_backgrounded === true,
+      resumed: hasSeen(taskId),
+    };
+    if (toolUseId) event.toolUseId = toolUseId;
+    const subagentType = safeSdkTaskText(message.subagent_type, 80);
+    if (subagentType) event.subagentType = subagentType;
+    if (Number.isInteger(message.spawn_depth) && message.spawn_depth >= 0
+      && message.spawn_depth <= MAX_SDK_SPAWN_DEPTH) event.spawnDepth = message.spawn_depth;
+    return event;
+  }
+  if (message.subtype === 'task_progress') {
+    // القياس 4: description متغيّر («Writing PROBE_A.txt») وsummary قد يغيب — أيّهما حضر كفى.
+    const description = safeSdkTaskText(message.description, 300);
+    const summary = safeSdkTaskText(message.summary, 300);
+    if (!description && !summary) return null;
+    const event = { type: 'sdk_agent_state', taskId, kind: 'progress' };
+    if (toolUseId) event.toolUseId = toolUseId;
+    if (description) event.description = description;
+    if (summary) event.summary = summary;
+    return event;
+  }
+  if (message.subtype === 'task_updated') {
+    const patch = message.patch && typeof message.patch === 'object' ? message.patch : {};
+    const status = SDK_AGENT_UPDATE_STATUSES.has(patch.status) ? patch.status : '';
+    const description = safeSdkTaskText(patch.description, 300);
+    const error = safeSdkTaskText(patch.error, 300);
+    const backgrounded = patch.is_backgrounded === true;
+    if (!status && !description && !error && !backgrounded) return null;
+    const event = { type: 'sdk_agent_state', taskId, kind: 'updated' };
+    if (status) event.status = status;
+    if (description) event.description = description;
+    if (error) event.error = error;
+    if (backgrounded) event.backgrounded = true;
+    return event;
+  }
+  if (message.subtype === 'task_notification') {
+    if (!SDK_TASK_NOTIFICATION_STATUSES.has(message.status)) return null;
+    // مفارقة upstream الموثّقة: Query مستأنفة متزامنة تتلقى `stopped` كاذبة لمهمة لم ترَ
+    // بدايتها. لا نحسم سطح الوكيل بإشعارٍ لسنا مالكيه.
+    if (!hasSeen(taskId)) return null;
+    const event = { type: 'sdk_agent_state', taskId, kind: 'finished', status: message.status };
+    if (toolUseId) event.toolUseId = toolUseId;
+    const summary = safeSdkTaskText(message.summary, 300);
+    if (summary) event.summary = summary;
+    return event;
+  }
+  return null;
+}
+
+// الحسم المحلي (انتهاء Query أو إيقاف الدور): `local:true` يخبر الواجهة أن الحالة استُنتجت
+// عندنا لا وصلت من SDK، فلا تُعرض بوصفها نتيجة الوكيل.
+function sdkAgentLocalFinishedEvent(taskId, toolUseId, status, summary) {
+  const id = String(taskId || '');
+  if (!SAFE_SDK_TASK_ID.test(id)) return null;
+  const event = {
+    type: 'sdk_agent_state', taskId: id, kind: 'finished',
+    status: SDK_TASK_NOTIFICATION_STATUSES.has(status) ? status : 'failed',
+    local: true,
+  };
+  if (SAFE_SDK_TOOL_USE_ID.test(String(toolUseId || ''))) event.toolUseId = String(toolUseId);
+  const text = safeSdkTaskText(summary, 300);
+  if (text) event.summary = text;
+  return event;
+}
+
 function createSdkBackgroundController({ query, emit, closeInput, holdInput, isolated }) {
   const taskIdByToolUse = new Map();
   const toolUseByTaskId = new Map();
@@ -509,12 +621,39 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
   // وكان إشعارها الختامي يُسقط هنا صامتاً (‏rawPrivateLifecycle يحجب الخام) فتبقى الشارة
   // إلى الأبد. يُمرَّر لها الإشعار المنقّى نفسه (‏sdkTaskNotificationEvent) لا أكثر.
   const modelBackgroundedTasks = new Set(); // task_id
+  // OBS-207/151: ثلاث مجموعات تحسم «من حيّ الآن» بالقياس لا بالافتراض.
+  //   seenStartedTaskIds — رأت هذه Query نفسها `task_started` للمعرّف (مفتاح `resumed`،
+  //     ومفتاح رفض الإشعار الكاذب من Query مستأنفة متزامنة، وأساس سياسة الإيقاف الجديدة).
+  //   modelLiveTasks — مهام خلفية بدأها **النموذج** وما زالت في آخر قائمة
+  //     `background_tasks_changed` (دلالة REPLACE؛ القائمة الفارغة = خمول) ولم يصل إشعارها.
+  //   resolvedTaskIds — حُسمت بإشعار ختامي أو محلياً؛ لا إيقاف لها ولا حسم ثانٍ.
+  const seenStartedTaskIds = new Set();
+  const modelLiveTasks = new Set();
+  const resolvedTaskIds = new Set();
   let active = true;
   let resultSeen = false;
   let observedSessionId = '';
 
+  // Query تعيش ما دام أي وكيل/أمر خلفي حيّاً: نقل المستخدم (moveStates) **أو** خلفية النموذج.
+  // قبل OBS-207 كان الشرط نقل المستخدم وحده، فكان الإرسال التالي يقتل وكيل النموذج الخلفي.
+  function hasLiveBackgroundWork() {
+    return moveStates.size > 0 || modelLiveTasks.size > 0;
+  }
+
   function finishInputIfIdle() {
-    if (resultSeen && moveStates.size === 0 && typeof closeInput === 'function') closeInput();
+    if (resultSeen && !hasLiveBackgroundWork() && typeof closeInput === 'function') closeInput();
+  }
+
+  function noteModelLive(taskId) {
+    if (resolvedTaskIds.has(taskId) || modelLiveTasks.has(taskId)) return;
+    const wasIdle = modelLiveTasks.size === 0;
+    modelLiveTasks.add(taskId);
+    if (wasIdle && typeof holdInput === 'function') holdInput();
+  }
+
+  function dropModelLive(taskId) {
+    if (!modelLiveTasks.delete(taskId)) return;
+    finishInputIfIdle();
   }
 
   function rememberTask(toolUseId, taskId) {
@@ -541,7 +680,11 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
     moveStates.delete(toolUseId);
     const taskId = state.taskId || String(message && message.task_id || '');
     taskIdByToolUse.delete(toolUseId);
-    if (SAFE_SDK_TASK_ID.test(taskId)) toolUseByTaskId.delete(taskId);
+    if (SAFE_SDK_TASK_ID.test(taskId)) {
+      resolvedTaskIds.add(taskId);
+      modelLiveTasks.delete(taskId);
+      toolUseByTaskId.delete(taskId);
+    }
     finishInputIfIdle();
   }
 
@@ -549,6 +692,7 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
   // لها أصلاً) وبلا Ledger إضافي (‏emitClaudeTasks يتولاه). بلا tool_use_id لا بطاقة فلا حدث.
   function finalizeModelTask(toolUseId, taskId, message) {
     modelBackgroundedTasks.delete(taskId);
+    dropModelLive(taskId);
     if (!SAFE_SDK_TOOL_USE_ID.test(toolUseId)) return;
     const event = sdkTaskNotificationEvent(message, toolUseId);
     if (event && typeof emit === 'function') emit(event);
@@ -565,14 +709,42 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
     const cleanedTitle = safeSdkTaskText(message.description, 300);
     if (SAFE_SDK_TASK_ID.test(taskId) && cleanedTitle) taskTitleById.set(taskId, cleanedTitle);
     rememberTask(toolUseId, taskId);
+    // OBS-207: دلالة REPLACE — القائمة الكاملة تصل قبل `task_started` وتعود فارغة قبل
+    // الإشعار الختامي. كل مهمة حيّة غابت عنها لم تعد تعمل، فلا يبقى الـinput محجوزاً بها.
+    if (message.type === 'system' && message.subtype === 'background_tasks_changed') {
+      const live = new Set();
+      for (const task of Array.isArray(message.tasks) ? message.tasks : []) {
+        if (!task || typeof task !== 'object' || task.ambient === true || task.skip_transcript === true) continue;
+        const id = String(task.task_id || '');
+        if (SAFE_SDK_TASK_ID.test(id)) live.add(id);
+      }
+      for (const id of Array.from(modelLiveTasks)) {
+        if (!live.has(id)) dropModelLive(id);
+      }
+      return;
+    }
     if (message.type === 'system' && SAFE_SDK_TASK_ID.test(taskId)) {
+      if (message.subtype === 'task_started') {
+        // الاستئناف يعيد المعرّف نفسه؛ فمهمة حُسمت ثم استُؤنفت تعود حيّة.
+        seenStartedTaskIds.add(taskId);
+        resolvedTaskIds.delete(taskId);
+      }
       // الشرط نفسه الذي يولّد شارة الواجهة في sdkAgentProgressEvent — تناظرٌ مقصود.
       const backgroundedByModel = message.subtype === 'task_started' ? message.is_backgrounded === true
         : message.subtype === 'task_updated' ? !!(message.patch && message.patch.is_backgrounded === true)
         : false;
-      if (backgroundedByModel) modelBackgroundedTasks.add(taskId);
+      if (backgroundedByModel) {
+        modelBackgroundedTasks.add(taskId);
+        noteModelLive(taskId);
+      }
     }
     if (message.type !== 'system' || message.subtype !== 'task_notification') return;
+    // إشعار ختامي حقيقي لمهمة رأينا بدايتها ⇒ حُسمت: لا إيقاف بعده ولا حجز input.
+    if (SAFE_SDK_TASK_ID.test(taskId) && SDK_TASK_NOTIFICATION_STATUSES.has(message.status)
+      && seenStartedTaskIds.has(taskId)) {
+      resolvedTaskIds.add(taskId);
+      dropModelLive(taskId);
+    }
     const resolvedToolUseId = SAFE_SDK_TOOL_USE_ID.test(toolUseId)
       ? toolUseId : toolUseByTaskId.get(taskId) || '';
     const state = moveStates.get(resolvedToolUseId);
@@ -633,15 +805,26 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
     return state.promise;
   }
 
+  // OBS-151 (قرار معلن 2026-09-15): سياسة الإيقاف كانت «نقل المستخدم وحده» فلم يكن للوكيل
+  // الفرعي الخلفي ولا لـBash الخلفي زرُّ إيقاف حقيقي. صارت: **كل مهمة شاهدت هذه Query نفسها
+  // `task_started` لها ولم تُحسم بعد** — مقيسٌ أن `query.stopTask(taskId)` يُحسم `undefined`
+  // لأي معرّف يعرفه CLI أثناء حياة Query، ويرفض بعدها بـ«ProcessTransport is not ready for
+  // writing» (يُحوَّل إلى الخطأ العربي الثابت). لا يزال المجهول يُرفض fail-closed.
+  function taskStillOpen(taskId) {
+    const id = String(taskId || '');
+    if (!SAFE_SDK_TASK_ID.test(id) || resolvedTaskIds.has(id)) return false;
+    if (seenStartedTaskIds.has(id) || modelLiveTasks.has(id)) return true;
+    const state = moveStates.get(toolUseByTaskId.get(id) || '');
+    return !!state && state.status === 'backgrounded';
+  }
+
   async function stopSdkTask(taskId) {
     if (typeof taskId !== 'string' || !SAFE_SDK_TASK_ID.test(taskId)) {
       return { ok: false, error: 'bad_id', message: 'معرّف مهمة Claude غير صالح.' };
     }
     if (isolated) return { ok: false, error: 'unsupported', message: 'إيقاف مهمة خلفية غير متاح في هذا السياق المعزول.' };
     if (!active) return { ok: false, error: 'no_active_turn', message: 'لا يوجد دور Claude نشط.' };
-    const toolUseId = toolUseByTaskId.get(taskId) || '';
-    const state = moveStates.get(toolUseId);
-    if (!state || state.status !== 'backgrounded') {
+    if (!taskStillOpen(taskId)) {
       return { ok: false, error: 'not_found', message: 'لم تُسجّل هذه المهمة ضمن مهام Claude الخلفية.' };
     }
     if (!query || typeof query.stopTask !== 'function') {
@@ -686,9 +869,26 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
         if (!SAFE_SDK_TOOL_USE_ID.test(toolUseId) || moveStates.has(toolUseId)) continue;
         emit({ type: 'sdk_task_notification', toolUseId, taskId, status: finalStatus, summary });
       }
+      // OBS-207: سطح الوكلاء الأحياء يُحسم لكل مهمة حيّة **معروفة** لا لمهام النقل وحدها —
+      // نقل المستخدم، وخلفية النموذج، وكل مهمة رأينا بدايتها ولم يصلنا إشعارها الختامي.
+      const liveKnown = new Set();
+      for (const [, state] of moveStates) {
+        const taskId = String(state.taskId || '');
+        if (SAFE_SDK_TASK_ID.test(taskId)) liveKnown.add(taskId);
+      }
+      for (const taskId of modelLiveTasks) liveKnown.add(taskId);
+      for (const taskId of seenStartedTaskIds) liveKnown.add(taskId);
+      for (const taskId of liveKnown) {
+        if (resolvedTaskIds.has(taskId)) continue;
+        const event = sdkAgentLocalFinishedEvent(taskId, toolUseByTaskId.get(taskId) || '', finalStatus, summary);
+        if (event) emit(event);
+      }
     }
     moveStates.clear();
     modelBackgroundedTasks.clear();
+    modelLiveTasks.clear();
+    seenStartedTaskIds.clear();
+    resolvedTaskIds.clear();
     taskIdByToolUse.clear();
     toolUseByTaskId.clear();
     taskTitleById.clear();
@@ -701,11 +901,11 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
     markResult() { resultSeen = true; finishInputIfIdle(); },
     finish,
     pendingCount: () => moveStates.size,
-    hasSdkBackgroundTasks: () => moveStates.size > 0,
+    // سياق `sdkAgentStateEvent` النقي: يُقرأ **قبل** observe كي يعرف `resumed` الحالة السابقة.
+    agentStateContext: () => ({ seen: seenStartedTaskIds }),
+    hasSdkBackgroundTasks: () => hasLiveBackgroundWork(),
     ownsSdkTask(taskId) {
-      const toolUseId = toolUseByTaskId.get(String(taskId || '')) || '';
-      const state = moveStates.get(toolUseId);
-      return !!state && state.status === 'backgrounded';
+      return active && taskStillOpen(taskId);
     },
   };
 }
@@ -2551,7 +2751,12 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         emitClaudeTasks(msg, emit, taskTitles, taskStatuses, pendingTaskCreates, startedClaudeTaskIds);
         const agentProgress = sdkAgentProgressEvent(msg);
         if (agentProgress) emit(agentProgress);
+        // OBS-207: سطح الوكلاء الأحياء. يُحسب **قبل** observe لأن `resumed` و«الإشعار
+        // الحقيقي» يقرآن مجموعة البدايات التي يملؤها observe نفسه، ويُبثّ **بعده** كي يجد
+        // `ownsSdkTask` في main.js المهمةَ مسجّلة فيسند زر الإيقاف إلى مالكه الصحيح.
+        const agentState = sdkAgentStateEvent(msg, sdkBackgroundController.agentStateContext());
         sdkBackgroundController.observe(msg);
+        if (agentState) emit(agentState);
         if (msg.type === 'stream_event') {
           const phaseEvent = phaseEventFromStreamEvent(msg.event);
           if (phaseEvent) emit(phaseEvent);
@@ -3014,6 +3219,8 @@ module.exports = {
   createPromptSuggestionGate,
   emitClaudeTasks,
   sdkAgentProgressEvent,
+  sdkAgentStateEvent,
+  sdkAgentLocalFinishedEvent,
   sdkCompactSummaryEvent,
   sdkTaskNotificationEvent,
   sdkTaskStartedEvent,
