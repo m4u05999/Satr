@@ -502,7 +502,8 @@ function reconcileErrors(sources) {
       const entry = plainObject(row);
       if (!entry) continue;
       let file = '';
-      try { file = engineLabel(path.basename(String(entry.file || ''))) || ''; } catch { file = ''; }
+      // اسم الملف بعد آخر فاصل من النوعين: مسار ويندوز يصل من المحرّك ولو كان الحارس على POSIX (بوابة لينكس).
+      try { file = engineLabel(String(entry.file || '').split(/[\/]/).pop()) || ''; } catch { file = ''; }
       const field = engineLabel(entry.path) || '';
       const key = file + '|' + field;
       if (key === '|' || seen.has(key)) continue;
