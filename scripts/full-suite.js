@@ -19,6 +19,7 @@ const SUITE = [
   'test:update-ui',
   'test:settings-account',
   'test:task-ledger-ui',
+  'test:agents-live-ui',
   'test:daily-loop-ui',
   'test:sessionmeta',
   'test:sessions-cwd',
