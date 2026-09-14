@@ -1356,6 +1356,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
         id: ev.id, tool: ev.tool, detail: ev.detail || permDetailText(ev.tool, ev.input),
         requester: ev.requester || '', turnEligible: ev.turnEligible === true,
         alwaysEligible: ev.alwaysEligible !== false, alwaysLabel: ev.alwaysLabel || '',
+        defaultToNo: ev.defaultToNo === true, // OBS-192: يفتح المربع على «رفض» ويمنع القبول بمفتاح
       });
       // الدور متوقف ينتظر قرارك — أكثر الحالات إلحاحاً وكانت أصمتها (بلاغ 2026-08-23)
       if (chatEl.notifyAttention) chatEl.notifyAttention('⏸ مطلوب إذن: ' + (ev.tool || 'أداة'));
