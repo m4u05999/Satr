@@ -143,7 +143,7 @@ async function main() {
     const unverifiedIntegration = integrationModule.create({
       worktrees: manager, termjobs: fakeTermjobs, waitForUrl: async () => ({ ok: true }),
     });
-    assert.strictEqual((await unverifiedIntegration.preparePreview(successArtifact, true)).error, 'verification_required');
+    assert.strictEqual((await unverifiedIntegration.preparePreview(successArtifact, true)).error, 'verification_not_passed');
     const previewed = await integration.preparePreview({ ...successArtifact, command: 'node external-evil.js' }, true);
     assert.strictEqual(previewed.ok, true);
     assert.strictEqual(previewed.url, 'http://localhost:4319/');
@@ -288,7 +288,7 @@ async function main() {
 
     const reviewGate = { ok: true, verdict: 'approve' };
     const unverifiedMerge = await merger.apply({ ...currentArtifact, review_gate: reviewGate, confirmed: true });
-    assert.strictEqual(unverifiedMerge.error, 'verification_required');
+    assert.strictEqual(unverifiedMerge.error, 'verification_not_passed');
     const merged = await merger.apply({
       ...currentArtifact, review_gate: reviewGate, verification: currentPassed.verification, confirmed: true,
     });

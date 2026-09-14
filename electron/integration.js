@@ -400,9 +400,9 @@ function create(options) {
   }
 
   function gate(artifact, verification) {
-    if (!validArtifact(artifact) || !verification) return { ok: false, error: 'verification_required' };
+    if (!validArtifact(artifact) || !verification) return { ok: false, error: 'verification_not_passed' };
     if (verification.artifact_id !== artifact.artifact_id) return { ok: false, error: 'verification_artifact_mismatch' };
-    if (verification.state !== 'passed') return { ok: false, error: 'verification_required' };
+    if (verification.state !== 'passed') return { ok: false, error: 'verification_not_passed' };
     return { ok: true };
   }
 

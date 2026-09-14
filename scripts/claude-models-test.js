@@ -27,6 +27,9 @@ function loadMainContract() {
     os: { homedir: () => 'C:\\Users\\safe-user' },
     agent: {},
     exported: {},
+    // OBS-196: الوحدة الحقيقية لا بديل عنها — ومجلد المنزل المزروع غير موجود على القرص،
+    // فالقراءة fail-open تعيد «لا سقف» حتماً ولا تتسرّب إعدادات المطوّر إلى النتيجة.
+    effortcap: require(path.join(ROOT, 'electron', 'effortcap.js')),
   };
   vm.runInNewContext(`
     ${safeModel[0]}
@@ -310,7 +313,7 @@ async function testMainSanitization() {
       `عبر حقل جهد لنموذج لا يعلنه صراحةً: ${value}`);
   }
   for (const model of effortResult.models) {
-    const allowed = ['description', 'effortLevels', 'label', 'value'];
+    const allowed = ['description', 'effortLevelInfo', 'effortLevels', 'label', 'value'];
     for (const key of Object.keys(model)) assert.ok(allowed.includes(key), `حقل غير معلن في العقد العام: ${key}`);
     assert.equal(model.supportsEffort, undefined, 'عبر supportsEffort الخام إلى renderer');
     for (const level of model.effortLevels || []) {
@@ -320,6 +323,25 @@ async function testMainSanitization() {
   assert.ok(!JSON.stringify(effortResult).includes(SECRET_SENTINEL), 'تسرّب قيمة غير معلنة عبر مستويات الجهد');
   // المصفوفة المعادة نسخة جديدة لا مرجع مشترك مع SDK
   assert.notEqual(byValue.get('sonnet').effortLevels, effortRaw[0].supportedEffortLevels);
+
+  // OBS-196: سقف الإعدادات يقصّ المنتقي، و`max` يُوسَم جلسياً. يُمرَّر المُحلَّل مباشرةً لا عبر
+  // القرص: المفحوص هنا وصل `sanitizeClaudeModelsResult` بالسقف؛ وقراءة الملفات نفسها
+  // يغطّيها `npm run test:effortcap` بـio محقون.
+  const capped = plain(contract.sanitizeClaudeModelsResult({ ok: true, models: effortRaw }, [{ maxEffortLevel: 'high' }]));
+  const cappedByValue = new Map(capped.models.map((model) => [model.value, model]));
+  assert.deepEqual(cappedByValue.get('sonnet').effortLevels, ['low', 'medium', 'high'],
+    'سقف الإعدادات لم يقصّ مستويات المنتقي');
+  assert.deepEqual(cappedByValue.get('sonnet').effortLevelInfo,
+    [{ level: 'low', sessionOnly: false }, { level: 'medium', sessionOnly: false }, { level: 'high', sessionOnly: false }]);
+  const modelCapped = plain(contract.sanitizeClaudeModelsResult({ ok: true, models: effortRaw },
+    [{ maxEffortLevel: 'xhigh', modelSettings: { sonnet: { maxEffortLevel: 'low' } } }]));
+  assert.deepEqual(new Map(modelCapped.models.map((m) => [m.value, m])).get('sonnet').effortLevels, ['low'],
+    'سقف النموذج لم يغلب السقف العام');
+  const info = byValue.get('sonnet').effortLevelInfo;
+  assert.ok(Array.isArray(info) && info.some((entry) => entry.level === 'max' && entry.sessionOnly === true),
+    '`max` لم يُوسَم جلسياً في بيانات المنتقي');
+  assert.ok(info.filter((entry) => entry.level !== 'max').every((entry) => entry.sessionOnly === false),
+    'مستوى غير جلسيّ وُسِم جلسياً');
 
   const accountResult = plain(await contract.handleClaudeAccountRequest({
     async claudeAccount(cwd) {

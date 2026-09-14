@@ -22,6 +22,7 @@
     "test:radar-graveyard": "node scripts/radar-graveyard-test.js",
     "radar:baseline": "node scripts/radar-baseline.js",
     "test:hookguard": "node scripts/hookguard-test.js",
+    "test:effortcap": "node scripts/effortcap-test.js",
     "test:probe-runner": "node scripts/probe-runner-test.js",
     "probe:run": "node scripts/probe-runner.js",
     "test:webpush-probe": "node scripts/webpush-probe.js",
