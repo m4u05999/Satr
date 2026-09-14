@@ -135,6 +135,7 @@ const SUITE = [
   'test:sessions-panel',
   'test:question-dialog',
   'test:dialog-dir',
+  'test:perm-ask-fields',
   'test:surface-overflow',
   'test:composer-narrow',
   'test:gallery',

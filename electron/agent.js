@@ -230,7 +230,8 @@ const BROWSER_AUTO_TOOLS = new Set([
 ]);
 // وضع auto (الموجة 4): المنطق النقي وقائمة الأدوات الآمنة في autogate.js (قابل للاختبار
 // مستقلاً عن electron/SDK — نمط diff.js/inject.js). autoNeedsPrompt يقرّر إجبار المربع.
-const { autoNeedsPrompt, decideAutoApproval } = require('./autogate');
+// askFlags (‏OBS-192): تضييق أهلية «الموافقة الدائمة» بحقلَي طلب الإذن من المحرّك.
+const { autoNeedsPrompt, decideAutoApproval, askFlags } = require('./autogate');
 // حارس المتصفح الخارجي المشترك مع Codex (دفعة «تحكم الوكيل الكامل» — 2026-07-18):
 // اعتراض أوامر فتح متصفح النظام + فحص طلب المستخدم الصريح الذي يعطّل الاعتراض للدور.
 const browserguard = require('./browserguard');
@@ -1239,7 +1240,10 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
     // المستخدم/المشروع. ضبطه على الثلاثة يجعل المحرك يطابق Claude Code التفاعلي.
     settingSources: isolatedPolicy ? [] : ['user', 'project', 'local'],
     stderr: (data) => emit({ type: 'stderr', text: String(data) }),
-    canUseTool: async (toolName, input, { signal, toolUseID, agentID }) => {
+    // ‏OBS-192: `defaultToNo` و`suppressAlwaysAllowRule` حقلان يصفان **هذا النداء بعينه**
+    // (‏SDK ‏≥ 0.3.268)، بصيغة «must» على المضيف. يُلتقطان هنا ويمرّان على askFlags النقية
+    // في كل موضع يبثّ permission_request — تضييقاً فقط: لا يرفعان أهلية دوامٍ منعها «سطر».
+    canUseTool: async (toolName, input, { signal, toolUseID, agentID, defaultToNo, suppressAlwaysAllowRule }) => {
       // نواة التوصيلات تسأل بعد فحص المورد، فلا سؤال مزدوج ولا إعفاء بسبب bypass.
       if (connectionTools.NAMES.some((name) => toolName === 'mcp__satr-connections__' + name)) {
         return connectionsActive
@@ -1287,13 +1291,18 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           + ' · تراكمي الجلسة: $' + prepared.input.session_cost_usd_estimate
           + '\nالنموذج: ' + prepared.input.model + ' عبر ' + prepared.input.provider
           + ' · العدد: ' + prepared.input.count;
+        // مسار الكلفة لا دوام فيه أصلاً (‏baseAlwaysEligible: false)؛ askFlags هنا لنقل
+        // defaultToNo وحده وللإبقاء على مصدر واحد لقرار الدوام.
+        const costAsk = askFlags({ suppressAlwaysAllowRule, defaultToNo, baseAlwaysEligible: false, baseNeverAlways: true });
         emit({
           type: 'permission_request', id, tool: toolName, input: prepared.input, requester,
           detail: humanCost + '\n\nتفاصيل توليد الوسائط:\n' + JSON.stringify(prepared.input, null, 2),
-          turnEligible: false, alwaysEligible: false,
+          turnEligible: false, alwaysEligible: costAsk.alwaysEligible,
+          ...(costAsk.defaultToNo ? { defaultToNo: true } : {}),
         });
         return new Promise((resolve) => {
-          pending.set(id, { resolve, toolName, input, turnEligible: false, neverAlways: true });
+          pending.set(id, { resolve, toolName, input, turnEligible: false,
+            neverAlways: costAsk.neverAlways, suppressAlways: costAsk.suppressed });
           if (signal) {
             signal.addEventListener('abort', () => {
               if (pending.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
@@ -1374,16 +1383,22 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           const id = String(toolUseID || 'perm_' + Math.random().toString(36).slice(2));
           const requester = typeof agentID === 'string'
             ? agentID.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 80) : '';
+          // ‏OBS-192: «الموافقة الدائمة» هنا هي ثقة النطاق — وهي أوسع من فعل الطلب نفسه
+          // بالتعريف، فـsuppressAlwaysAllowRule يطفئها. تُحفظ `suppressAlways` في pending
+          // لأن فرع ثقة النطاق في resolvePermission لا يمرّ بـneverAlways.
+          const browserAsk = askFlags({ suppressAlwaysAllowRule, defaultToNo,
+            baseAlwaysEligible: originTrust && !!origin, baseNeverAlways: forcePrompt });
           emit({
             type: 'permission_request', id, tool: toolName, input: safeInput, requester,
             detail: [trustDetail, policyDetail, 'تفاصيل الفعل:\n' + JSON.stringify(safeInput || {}, null, 2).slice(0, 8000)].filter(Boolean).join('\n\n'),
-            turnEligible: false, alwaysEligible: originTrust && !!origin,
-            alwaysLabel: originTrust ? 'ثق بالنطاق لهذه الجلسة' : '', originTrust,
+            turnEligible: false, alwaysEligible: browserAsk.alwaysEligible,
+            alwaysLabel: originTrust && !browserAsk.suppressed ? 'ثق بالنطاق لهذه الجلسة' : '', originTrust,
+            ...(browserAsk.defaultToNo ? { defaultToNo: true } : {}),
           });
           return new Promise((resolve) => {
             pending.set(id, {
               resolve, toolName, input, turnEligible: false, originTrust, origin,
-              neverAlways: forcePrompt,
+              neverAlways: browserAsk.neverAlways, suppressAlways: browserAsk.suppressed,
               budgetAction: budgetStatus.impacting, budgetExtend: budgetStatus.impacting && !budgetStatus.allowed,
             });
             if (signal) {
@@ -1416,10 +1431,16 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       const turnEligible = !NEVER_TURN_TOOLS.has(toolName);
       // سطح ويندوز: المربع يعرض النافذة والعنصر والنص (desktop.permissionDetail) — بلا مسار ولا مقبض
       const desktopDetail = DESKTOP_TOOL_RE.test(String(toolName || '')) ? desktop.permissionDetail(toolName, input) : '';
+      // ‏OBS-192: قائمة «سطر» (NEVER_ALWAYS_TOOLS) تبقى الأساس، وقرار المحرّك لهذا النداء
+      // يضيّقها ولا يوسّعها؛ وdefaultToNo يُبثّ حقلاً للواجهة (يفتح المربع على «رفض»).
+      const ask = askFlags({ suppressAlwaysAllowRule, defaultToNo,
+        baseAlwaysEligible: !NEVER_ALWAYS_TOOLS.has(toolName) });
       emit({ type: 'permission_request', id, tool: toolName, input, requester, turnEligible,
-        alwaysEligible: !NEVER_ALWAYS_TOOLS.has(toolName), ...(desktopDetail ? { detail: desktopDetail } : {}) });
+        alwaysEligible: ask.alwaysEligible, ...(ask.defaultToNo ? { defaultToNo: true } : {}),
+        ...(desktopDetail ? { detail: desktopDetail } : {}) });
       return new Promise((resolve) => {
-        pending.set(id, { resolve, toolName, input, turnEligible, budgetAction: !!browserClass });
+        pending.set(id, { resolve, toolName, input, turnEligible, budgetAction: !!browserClass,
+          neverAlways: ask.neverAlways, suppressAlways: ask.suppressed });
         if (signal) {
           signal.addEventListener('abort', () => {
             if (pending.delete(id)) resolve({ behavior: 'deny', message: 'أُلغي الطلب' });
@@ -2578,7 +2599,9 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       const p = pending.get(id);
       if (!p) return false;
       pending.delete(id);
-      const permanent = !!(allow && always && ((p.originTrust && p.origin
+      // ‏OBS-192: `suppressAlways` (من suppressAlwaysAllowRule للمحرّك) يطفئ الدوام
+      // بفرعيه. ذُكر صراحةً في فرع ثقة النطاق لأنه لا يمرّ بـ`neverAlways` أصلاً.
+      const permanent = !!(allow && always && !p.suppressAlways && ((p.originTrust && p.origin
         && trustedBrowserOrigins instanceof Set)
         || (!p.originTrust && !p.neverAlways && !NEVER_ALWAYS_TOOLS.has(p.toolName))));
       const decisionClassification = allow ? (permanent ? 'user_permanent' : 'user_temporary') : 'user_reject';
@@ -2591,7 +2614,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
           return true;
         }
       }
-      if (allow && always && p.originTrust && p.origin && trustedBrowserOrigins instanceof Set) {
+      if (allow && always && !p.suppressAlways && p.originTrust && p.origin && trustedBrowserOrigins instanceof Set) {
         trustedBrowserOrigins.add(p.origin);
       } else if (allow && always && !p.neverAlways && !NEVER_ALWAYS_TOOLS.has(p.toolName)) alwaysAllowed.add(p.toolName);
       if (allow && turn && p.turnEligible) turnAllowed.add(p.toolName);

@@ -6,7 +6,7 @@
 'use strict';
 
 const assert = require('assert');
-const { PERMISSION_MODES, AUTO_SAFE_TOOLS, autoNeedsPrompt, nonSdkPerm, decideAutoApproval } = require('../electron/autogate');
+const { PERMISSION_MODES, AUTO_SAFE_TOOLS, autoNeedsPrompt, nonSdkPerm, decideAutoApproval, askFlags } = require('../electron/autogate');
 
 let passed = 0;
 function check(label, cond) {
@@ -92,5 +92,15 @@ check('nonSdkPerm(plan) = plan', nonSdkPerm('plan') === 'plan');
 check('nonSdkPerm(bypassPermissions) محفوظ', nonSdkPerm('bypassPermissions') === 'bypassPermissions');
 check('nonSdkPerm(قيمة فاسدة) = default', nonSdkPerm('garbage') === 'default');
 check('PERMISSION_MODES يشمل auto', PERMISSION_MODES.has('auto') === true);
+
+// 8) askFlags (‏OBS-192): حقلا طلب الإذن من المحرّك يضيّقان أهلية الدوام ولا يوسّعانها.
+// التفصيل الكامل (ذيل canUseTool + resolvePermission + المربع حيّاً) في test:perm-ask-fields؛
+// هنا نواة الدالة النقيّة مع بقية autogate.
+check('askFlags: بلا حقول ⇒ قرار سطر كما هو', askFlags({ baseAlwaysEligible: true }).alwaysEligible === true);
+check('askFlags: suppress يطفئ الأهلية', askFlags({ baseAlwaysEligible: true, suppressAlwaysAllowRule: true }).alwaysEligible === false);
+check('askFlags: suppress يثبّت neverAlways', askFlags({ baseAlwaysEligible: true, suppressAlwaysAllowRule: true }).neverAlways === true);
+check('askFlags: لا يوسّع ما منعه سطر', askFlags({ baseAlwaysEligible: false }).alwaysEligible === false);
+check('askFlags: قيمة غير منطقية تضيّق (fail-safe)', askFlags({ baseAlwaysEligible: true, suppressAlwaysAllowRule: 'yes' }).alwaysEligible === false);
+check('askFlags: defaultToNo منطقيّ', askFlags({ defaultToNo: true }).defaultToNo === true && askFlags({}).defaultToNo === false);
 
 console.log('\nالنتيجة: ' + passed + '/' + passed + ' ناجحة.');
