@@ -39,6 +39,7 @@ const agent = require('./agent');
 // انقطاع الشبكة (2026-09-13): تصنيف خطأ الشبكة في قُمع emit المشترك لكل المحرّكات + مراقب يفحص
 // حلّ الأسماء بعد أول خطأ مصنَّف ويبثّ `connectivity` عند العودة. الدفعة في docs/internals/13.
 const neterror = require('./neterror');
+const effortcap = require('./effortcap'); // OBS-196: سقف الجهد من ملفات الإعدادات
 const connectivity = require('./connectivity').create({ onChange: (event) => emitToWindow(event) });
 const orchestratorModule = require('./orchestrator'); // باحثون قراءة فقط — أولوية 6/الخطوة 1
 const executorModule = require('./executor'); // نواة عامل محايدة عن المحرك داخل worktree — الخطوة 2
@@ -110,14 +111,20 @@ const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // يعيد مصفوفة جديدة منقّاة أو null. الشرط الصريح supportsEffort === true (لا truthy)،
 // ويُسقَط ما ليس نصاً أو خارج القائمة المغلقة، ويُزال التكرار ضمناً بالمرور على القائمة.
 // غياب الحقلين — CLI أقدم أو نموذج لا يعلن جهداً — يعيد null فيبقى العقد العام كما هو.
-function sanitizeClaudeEffortLevels(item) {
+function sanitizeClaudeEffortLevels(item, settingsFiles) {
   if (!item || item.supportsEffort !== true || !Array.isArray(item.supportedEffortLevels)) return null;
   const declared = new Set(item.supportedEffortLevels.filter((level) => typeof level === 'string'));
   const levels = CLAUDE_EFFORT_LEVELS.filter((level) => declared.has(level));
-  return levels.length ? levels : null;
+  if (!levels.length) return null;
+  // OBS-196: قدرة النموذج ليست السقف الوحيد — `maxEffortLevel` في ملفات الإعدادات
+  // يقصّ من جانب العميل، فمستوى يُعرَض فوقه يُختار ثم يُقصّ صامتاً. المنطق في
+  // `electron/effortcap.js` (الأدنى يغلب عبر الملفات، وسقف النموذج يحلّ محلّ العام داخل الملف).
+  // القيمة المنقّاة لا الخام: مطابقة مفاتيح `modelSettings` تتمّ على اسم محدود الطول.
+  const capped = effortcap.clampForModel(levels, settingsFiles, cleanClaudePublicText(item && item.value, 64));
+  return capped.length ? capped : null;
 }
 
-function sanitizeClaudeModelsResult(result) {
+function sanitizeClaudeModelsResult(result, settingsFiles) {
   if (!result || result.ok !== true || !Array.isArray(result.models)) return { ok: false, models: [] };
   const seen = new Set();
   const models = [];
@@ -136,8 +143,14 @@ function sanitizeClaudeModelsResult(result) {
     seen.add(value);
     const model = { value, label, description };
     // حقل اختياري: يُضاف فقط حين يعلن المحرك مستويات صالحة، فيبقى العقد القديم حرفياً لغيره
-    const effortLevels = sanitizeClaudeEffortLevels(item);
-    if (effortLevels) model.effortLevels = effortLevels;
+    const effortLevels = sanitizeClaudeEffortLevels(item, settingsFiles);
+    if (effortLevels) {
+      model.effortLevels = effortLevels;
+      // OBS-196: حقل موازٍ لا بديل — `max` جلسيّ لا يُكتب في الإعدادات، ووسمُه هنا يقطع
+      // التخمين عن الواجهة حين تعرضه. المستهلك القائم (`src/ui/app.js:703`) يقرأ `effortLevels`
+      // وحده، فلم تُغيَّر الواجهة في هذه الدفعة.
+      model.effortLevelInfo = effortcap.describeEffortLevels(effortLevels);
+    }
     models.push(model);
     if (models.length >= 12) break;
   }
@@ -162,9 +175,13 @@ function sanitizeClaudeFallbackModel(value, primaryModel) {
   return value;
 }
 
-async function handleClaudeModelsRequest(agentImpl = agent) {
+async function handleClaudeModelsRequest(agentImpl = agent, cwd = '') {
   try {
-    return sanitizeClaudeModelsResult(await agentImpl.claudeModels(os.homedir()));
+    // الملفات تُقرأ مرة واحدة لكل النماذج لا مرة لكل نموذج، وقراءتها fail-open بسقف حجم.
+    // **حدّ مُصرَّح به**: معالج الـIPC لا يمرّر cwd اليوم (الواجهة تطلب القائمة بلا مشروع)،
+    // فيسري سقف إعداد المستخدم وحده؛ وسقفا المشروع مدعومان في الوحدة ويسريان حين يُمرَّر.
+    const settingsFiles = effortcap.readSettings({ homeDir: os.homedir(), cwd });
+    return sanitizeClaudeModelsResult(await agentImpl.claudeModels(os.homedir()), settingsFiles);
   } catch {
     return { ok: false, models: [] };
   }

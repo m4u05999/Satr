@@ -1684,8 +1684,14 @@ class SatrChat extends HTMLElement {
         const attempt = Number(ev && ev.attempt) || 0;
         const max = Number(ev && ev.max_retries) || 0;
         const sec = Math.max(1, Math.round((Number(ev && ev.retry_delay_ms) || 0) / 1000));
-        const reason = ev && ev.net && ev.net.code ? 'تعذّر الوصول إلى الخادم (' + ev.net.code + ')'
-          : ev && ev.error_status ? 'الخادم ردّ بالرمز ' + ev.error_status : 'تعذّر الوصول إلى الخادم';
+        // OBS-193: ‏`engine_error` مشتقّ من رمز `SDKAssistantMessageError` لا من نصّ الخطأ،
+        // وعائلة الحساب (`account`) تسبق تصنيف الشبكة: سببها لن يزول بإعادة محاولة،
+        // فإخفاؤه خلف «تعذّر الوصول إلى الخادم» يترك المستخدم ينتظر ما لا يأتي.
+        const engineError = ev && ev.engine_error && typeof ev.engine_error.message === 'string' ? ev.engine_error : null;
+        const reason = engineError && engineError.account === true ? engineError.message
+          : ev && ev.net && ev.net.code ? 'تعذّر الوصول إلى الخادم (' + ev.net.code + ')'
+            : engineError ? engineError.message
+              : ev && ev.error_status ? 'الخادم ردّ بالرمز ' + ev.error_status : 'تعذّر الوصول إلى الخادم';
         revealActivity('يعيد الاتصال بالخادم' + (max ? ' (' + attempt + '/' + max + ')' : ''));
         let note = w.querySelector('.retry-note');
         if (!note) {

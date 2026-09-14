@@ -38,6 +38,7 @@ const envbrief = require('./envbrief');
 const adapterTools = require('./tools');
 const connectionTools = require('./connection-tools');
 const hookguard = require('./hookguard'); // OBS-087: تنبيه كسول لإعدادات SessionStart/setup غير المرئية
+const engineerror = require('./engineerror'); // OBS-193: ترجمة رموز SDKAssistantMessageError إلى عربية
 
 const IS_WIN = process.platform === 'win32';
 const CLAUDE_METADATA_TTL_MS = 2 * 60 * 1000;
@@ -944,7 +945,7 @@ function apiRetryEvent(message) {
   const errorText = typeof rawError === 'string' ? rawError
     : rawError && typeof rawError.message === 'string' ? rawError.message
       : rawError && typeof rawError.type === 'string' ? rawError.type : '';
-  return {
+  const event = {
     type: 'api_retry',
     attempt: num(message && message.attempt, 1000),
     max_retries: num(message && message.max_retries, 1000),
@@ -952,6 +953,13 @@ function apiRetryEvent(message) {
     error_status: Number.isInteger(message && message.error_status) ? message.error_status : null,
     error: String(errorText || '').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300),
   };
+  // OBS-193: ‏`message.error` هنا هو الحقل الوحيد في «سطر» المطبوع `SDKAssistantMessageError` —
+  // رمزٌ من اتحادٍ مغلق لا نصًّا حرّاً. يُترجَم إلى العربية في حقلٍ مستقلّ (`engine_error`) بدل
+  // تشويه `error` نفسه، فيبقى الرمز الأصلي للسجلّ والتشخيص. غياب الحقل = رمزٌ لا نعرفه
+  // (محرّك أحدث) والواجهة تسقط إلى نصّها العام — fail-open في العرض لا في التصنيف.
+  const classified = engineerror.classify(event.error);
+  if (classified) event.engine_error = classified;
+  return event;
 }
 
 function isUnsupportedElicitationResult(message) {

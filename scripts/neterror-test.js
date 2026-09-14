@@ -16,6 +16,7 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '..');
 const neterror = require(path.join(ROOT, 'electron', 'neterror.js'));
 const connectivity = require(path.join(ROOT, 'electron', 'connectivity.js'));
+const engineerror = require(path.join(ROOT, 'electron', 'engineerror.js')); // OBS-193
 
 let checks = 0;
 function check(name, fn) {
@@ -209,6 +210,58 @@ function guardSources() {
     assert.match(app, /ev\.net && ev\.net\.message/);
     assert.match(chat, /apiRetry\(ev\)/);
     assert.match(chat, /retry-note/);
+  });
+  // OBS-193: تصنيف رموز المحرّك (`SDKAssistantMessageError`) — طبقة مستقلّة عن تصنيف
+  // الشبكة: ذاك بالنصّ وهذا بالرمز، وكلاهما يلتقيان في سطر السبب الواحد في الواجهة.
+  check('engineerror يترجم verification_required الوارد من المحرّك ويعدّه خطأ حساب', () => {
+    const cls = engineerror.classify('verification_required');
+    assert.equal(cls.code, 'verification_required');
+    assert.equal(cls.account, true);
+    assert.match(cls.message, /claude\.ai/);
+    assert.equal(/[؀-ۿ]/.test(cls.message), true);
+  });
+  check('engineerror يغطّي اتحاد sdk.d.ts كاملاً', () => {
+    const dts = path.join(ROOT, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'sdk.d.ts');
+    // حدّ مُصرَّح به: بلا node_modules (نسخة سطحية) يسقط الفحص إلى القائمة
+    // المعلنة في الوحدة نفسها بسطر مُعلن — لا يُصبغ الطقم أحمر لسبب بيئي.
+    if (!fs.existsSync(dts)) {
+      console.log('    ℹ sdk.d.ts غير موجود — يُكتفى بالقائمة المعلنة في engineerror.CODES');
+      assert.ok(engineerror.CODES.includes('verification_required'));
+      return;
+    }
+    const declared = fs.readFileSync(dts, 'utf8');
+    const line = /export declare type SDKAssistantMessageError = ([^;]+);/.exec(declared);
+    assert.ok(line, 'لم يُعثر على الاتحاد في sdk.d.ts');
+    const codes = line[1].split('|').map((part) => part.trim().replace(/^'|'$/g, ''));
+    for (const code of codes) assert.ok(engineerror.classify(code), 'رمز بلا نصّ عربي: ' + code);
+  });
+  check('engineerror يرفض المجهول وغير النصّ (fail-open في العرض)', () => {
+    assert.equal(engineerror.classify('brand_new_code'), null);
+    assert.equal(engineerror.classify(''), null);
+    assert.equal(engineerror.classify(null), null);
+    assert.equal(engineerror.classify({ code: 'rate_limit' }), null);
+  });
+  check('رمز غير حسابي لا يُوسَم account', () => {
+    assert.equal(engineerror.classify('overloaded').account, false);
+    assert.equal(engineerror.classify('server_error').account, false);
+  });
+  check('agent.js يلحق engine_error بحدث api_retry', () => {
+    assert.match(agent, /const classified = engineerror\.classify\(event\.error\);/);
+    assert.match(agent, /if \(classified\) event\.engine_error = classified;/);
+  });
+  check('الواجهة تستهلك engine_error وتقدّم عائلة الحساب على تصنيف الشبكة', () => {
+    assert.match(chat, /ev\.engine_error/);
+    assert.match(chat, /engineError && engineError\.account === true \? engineError\.message/);
+  });
+  // فكّ تعارض OBS-193: الرمز الداخلي لغرفة العمليات لم يعد يساوي رمز المحرّك.
+  check('الرمز الداخلي verification_not_passed ولا يصادم رمز المحرّك', () => {
+    const integration = fs.readFileSync(path.join(ROOT, 'electron', 'integration.js'), 'utf8');
+    const mergerSrc = fs.readFileSync(path.join(ROOT, 'electron', 'merger.js'), 'utf8');
+    const opsUi = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'components', 'ops-room.js'), 'utf8');
+    for (const [name, src] of [['integration.js', integration], ['merger.js', mergerSrc], ['ops-room.js', opsUi]]) {
+      assert.match(src, /verification_not_passed/, name + ' لا يحمل الرمز الجديد');
+      assert.equal(/verification_required/.test(src), false, name + ' ما زال يحمل رمز المحرّك');
+    }
   });
   check('test:neterror مسجّل في الطقم الكامل', () => {
     const suite = fs.readFileSync(path.join(ROOT, 'scripts', 'full-suite.js'), 'utf8');

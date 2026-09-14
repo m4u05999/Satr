@@ -31,6 +31,7 @@ const SUITE = [
   'test:suite-coverage',
   'test:radar-graveyard',
   'test:hookguard',
+  'test:effortcap',
   'test:probe-runner',
   'test:langmetric',
   'test:langshadow',

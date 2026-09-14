@@ -80,7 +80,7 @@ function create(options) {
       return { ok: false, error: 'review_required' };
     }
     if (!data.verification || data.verification.state !== 'passed') {
-      return { ok: false, error: 'verification_required' };
+      return { ok: false, error: 'verification_not_passed' };
     }
     if (!/^[0-9a-f]{64}$/.test(data.artifact_id || '')
       || data.artifact_id !== crypto.createHash('sha256').update(data.head + '\0' + data.patch).digest('hex')
