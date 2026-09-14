@@ -35,6 +35,7 @@ const keys = require('./keys');
 const testsprite = require('./testsprite');
 const testspritejobs = require('./testspritejobs');
 const envbrief = require('./envbrief');
+const turncontext = require('./turncontext'); // OBS-194: المتغيّر كل دور خارج systemPrompt المجمّد
 const adapterTools = require('./tools');
 const connectionTools = require('./connection-tools');
 const hookguard = require('./hookguard'); // OBS-087: تنبيه كسول لإعدادات SessionStart/setup غير المرئية
@@ -1048,6 +1049,19 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   // المعزولة وحدها بل عوامل غرفة العمليات ومراجعوها أيضاً — لأن الكتلة ليست مشتقة من
   // cwd كالذاكرة، فلا يكفي المجلد المؤقت الفارغ ليعزلها (حصر cwd في termjobs حاجز ثانٍ).
   const backgroundPrompt = internalPolicy ? '' : termjobs.pendingNoticeText(cwd);
+  // كتلة سياق الدور (OBS-194): كل ما يتغيّر بين دور ودور يذهب إلى ذيل الدور لا إلى
+  // `systemPrompt.append` — فالأخير يتجمّد عند أول دور في CLI 2.1.270 ولا يفكّه
+  // `systemPromptSnapshot:false`، فذاكرةُ الدور الثاني وإشعاراتُه واسمُ نموذجه لا تصل
+  // النموذج أصلاً. البوابات القائمة محفوظة حرفياً: الذاكرة مقصاة في السياق المعزول،
+  // والإشعارات في كل internalPolicy (كلاهما محسوم أعلاه في المتغيّرين نفسيهما).
+  // text-only مستشارٌ نصي يُستبدل موجزه كاملاً أدناه — فلا كتالوج مهارات ولا سطر بيئة له.
+  const turnContextText = turncontext.build({
+    engine: policyMode === 'text-only' ? '' : 'sdk',
+    model,
+    memoryPrompt,
+    backgroundPrompt,
+    skillCatalogPrompt: policyMode === 'text-only' ? '' : portableSkillPrompt,
+  });
   const mediaCostState = { total: 0 };
   const genmediaOverride = internalPolicy && internalPolicy.genmedia;
   const { query } = await loadSdk();
@@ -1091,9 +1105,12 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   function buildContent() {
     const conversationContext = !internalPolicy && typeof continuityContext === 'string' ? continuityContext : '';
     if ((!images || !images.length) && !conversationContext) {
-      return anchorText ? effectivePrompt + '\n\n' + anchorText : effectivePrompt;
+      // كتلة سياق الدور أولاً ثم الطلب ثم المرساة الذيلية (OBS-194) — كما يسبق
+      // `<satr_verification_result>` الطلبَ في main.js.
+      return [turnContextText, effectivePrompt, anchorText].filter(Boolean).join('\n\n');
     }
     const blocks = [];
+    if (turnContextText) blocks.push({ type: 'text', text: turnContextText });
     if (conversationContext) blocks.push({ type: 'text', text: conversationContext });
     if (effectivePrompt) blocks.push({ type: 'text', text: effectivePrompt });
     for (const im of images || []) {
@@ -1495,18 +1512,18 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
   const desktopPlan = desktopRegistration({ desktopControl, sessionId, internalPolicy, available: desktop.isAvailable() });
   if (desktopPlan.notice) emit({ type: 'stderr', text: desktopPlan.notice });
   if (sessionId && !internalPolicy) pinDesktopDecision(sessionId, desktopPlan.enabled);
+  // OBS-194: هنا الثابت وحده — الهوية وعقد اللغة وجرد الأدوات وسياسات التنفيذ والمتصفح
+  // وشكل الرد وسطر سطح ويندوز. أما اسم النموذج (`runtimeenv.environmentLine`) وكتالوج
+  // المهارات والذاكرة وإشعارات المهام الخلفية فمتغيّرة كل دور، ومكانها كتلة سياق الدور
+  // أعلاه (`turnContextText`) لأن هذا الحقل يتجمّد عند أول دور فلا يصل تغييرُه النموذج.
   options.systemPrompt = {
     type: 'preset',
     preset: 'claude_code',
-    append: envbrief.build('sdk', model, { desktop: desktopPlan.enabled })
-      + (portableSkillPrompt ? '\n\n' + portableSkillPrompt : ''),
+    append: envbrief.build('sdk', model, { desktop: desktopPlan.enabled, withEnvironmentLine: false }),
   };
   if (policyMode === 'text-only') {
     options.systemPrompt = 'أنت مستشار نصي عربي مستقل. أجب من الموجز فقط، بلا أدوات أو ملفات أو متصفح أو طرفية.';
   }
-  // ذاكرة المشروع خارج توجيه/أدوات المتصفح: سياق شخصي وافق عليه المستخدم، ضمن ميزانية ثابتة.
-  if (memoryPrompt) options.systemPrompt.append += '\n\n' + memoryPrompt;
-  if (backgroundPrompt) options.systemPrompt.append += '\n\n' + backgroundPrompt;
   // جهد التفكير (المرحلة 14.4): منقّى في main.js — الـ SDK يخفّضه صامتاً إن لم يدعمه النموذج
   if (effort) options.effort = effort;
   // مجلدات إضافية يصل إليها النموذج بجانب cwd (منقّاة في main.js: موجودة فعلاً، بسقف 10)

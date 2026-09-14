@@ -166,7 +166,11 @@ function build(engine, model, options) {
   if (normalized === 'sdk' || normalized === 'kimi-code') {
     sections.push('استخدم AskUserQuestion حين تحتاج اختياراً واضحاً من المستخدم. استخدم propose_memory لاقتراح ذاكرة دائمة ولا تحفظها مباشرةً.');
   }
-  sections.push(runtimeenv.environmentLine(normalized, model));
+  // سطر البيئة يحمل **اسم النموذج**، وهو متغيّر بين دور ودور. مستهلكٌ يضع الموجز في
+  // موضع مجمّد (‏`systemPrompt.append` في SDK — ‏OBS-194) يطلب `withEnvironmentLine:false`
+  // ويحمله في كتلة دوره (`turncontext.js`). الافتراض `true` فبقية المحرّكات كما هي.
+  const withEnvironmentLine = !(options && options.withEnvironmentLine === false);
+  if (withEnvironmentLine) sections.push(runtimeenv.environmentLine(normalized, model));
   return compact ? sections.join('\n') : sections.join('\n\n');
 }
 
