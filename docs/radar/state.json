@@ -148,12 +148,12 @@
     "_sdk_installed_drift": "package.json والقفل يعلنان claude-agent-sdk 0.3.261 بينما node_modules فيه 0.3.176 (قياس 2026-09-06) — أي أن التطوير والاختبار محلياً يجريان على SDK غير الذي يثبّته npm ci في CI. فأي إعادة جسّ للعقود الخمسة تلزمها إعادة تثبيت أولاً وإلا أُعيد قياس 0.3.176 وخُلص إلى «لا شيء تغيّر». مسجَّل في OBS-137",
     "_repo_moved": "المالك أنجز منذ العدد ٠٠١: هجرة DeepSeek إلى v4، فصل كتالوج NIM عن Groq، manifests winget، حزمة MSIX، ترقية SDK، تحصين edit_file، بوابة ويندوز (PR #42)، وOBS-133/134/135 (PR #71)",
     "engines_on_owner_machine": {
-      "codex": "0.153.4",
-      "kimi-code": "0.41.0",
-      "claude-code": "2.1.261",
+      "codex": "0.154.0",
+      "kimi-code": "0.42.0",
+      "claude-code": "2.1.270",
       "node": "26.5.0",
       "npm": "11.17.0",
-      "_updated": "2026-09-06"
+      "_updated": "2026-09-15"
     },
     "_hooks_ungated": "جديد 2026-09-07: صفحة أذونات Claude Code، جدول 'What runs before you trust a folder'، عمود 'claude -p or the SDK, folder never trusted' — 'Hooks in settings files ... Used' (بلا بوابة ثقة)، بينما permissions.allow في .claude/settings.json 'Not used' (فيتطابق مع قياس OBS-140)، و.mcp.json 'Connected without asking'. وسطر يمرّر settingSources:['user','project','local'] في agent.js:1068. وhookguard.hasSessionStartHook يفحص hooks.SessionStart وحده من 33 حدثاً معلناً، ونتيجته إخبار غير حاجب. الرافعتان من الوثيقة: --settings '{\"disableAllHooks\":true}' (ولا يكفي في إعداد المستخدم لأن إعداد المشروع يغلبه ويعيده false) وdisabledMcpjsonServers",
     "_msix_store_live": "أُغلق 2026-09-07/08 بشهادة المالك: حزمة MSIX معتمدة ومنشورة على apps.microsoft.com (Store ID 9N7F5RKQJ9WF، الناشر Moxa) ومفهرسة في winget --source msstore (تحقّق حيّ في 171c1e2 بأمر winget show)، وConPTY يولّد من داخل الحاوية (OBS-096 بند ج). فسقط السؤال المعلّق منذ العدد ٠٠١، ورُفعت البوابة عن مرشّح F11 @microsoft/winappcli. الرادار لم يقس هذا بنفسه",
