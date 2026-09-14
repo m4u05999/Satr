@@ -80,6 +80,7 @@ const SUITE = [
   'test:termjobs-done',
   'test:secretscrub',
   'test:envbrief',
+  'test:turncontext',
   'test:satr-guide',
   'test:handoff-bar-live',
   'test:preview-recording',

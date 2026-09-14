@@ -120,6 +120,7 @@
     "test:secretscrub": "node scripts/secretscrub-test.js",
     "test:loop-mode": "node scripts/loop-mode-test.js",
     "test:envbrief": "node scripts/envbrief-test.js",
+    "test:turncontext": "node scripts/turncontext-test.js",
     "test:genmedia": "node scripts/genmedia-test.js",
     "test:gallery": "electron scripts/gallery-live-test.js",
     "test:desktop-panel": "electron scripts/desktop-panel-live-test.js",
