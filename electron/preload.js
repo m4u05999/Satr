@@ -23,7 +23,8 @@ contextBridge.exposeInMainWorld('satr', {
   providers: () => ipcRenderer.invoke('satr:providers'),
   testspriteJobStatus: () => ipcRenderer.invoke('satr:testspriteJobStatus'),
   testspriteJobCancel: (jobId) => ipcRenderer.invoke('satr:testspriteJobCancel', { jobId, confirmed: true }),
-  claudeModels: () => ipcRenderer.invoke('satr:claudeModels'),
+  // cwd اختياري: به يسري سقفا الجهد في إعدادات المشروع (`.claude/settings*.json`) لا سقف المستخدم وحده
+  claudeModels: (cwd) => ipcRenderer.invoke('satr:claudeModels', { cwd }),
   claudeAccount: () => ipcRenderer.invoke('satr:claudeAccount'),
   codexStatus: () => ipcRenderer.invoke('satr:codexStatus'),
   codexModels: () => ipcRenderer.invoke('satr:codexModels'),
