@@ -7,6 +7,7 @@
 const path = require('path');
 const os = require('os');
 const fsp = require('fs/promises');
+const satrblocks = require('./satrblocks'); // كتل سطر المحقونة في نصّ المستخدم — تُنزع عند القراءة
 
 const PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
 const SAFE_NAME = /^[A-Za-z0-9._-]{1,180}$/; // مكوّن مسار واحد — بلا فواصل مسار إطلاقاً
@@ -44,7 +45,9 @@ function userText(entry) {
   else if (Array.isArray(c)) {
     text = c.filter((b) => b && b.type === 'text' && b.text).map((b) => b.text).join('\n');
   }
-  text = text.trim();
+  // كتل سطر (`<satr_turn_context>` وأخواتها) تُسبق بها الرسالة قبل الإرسال؛ بدون نزعها كانت
+  // الرسالة تبدأ بـ`<` فتسقط من العرض كلها، أو تظهر بالكتلة خامّةً.
+  text = satrblocks.stripSatrBlocks(text.trim()).text;
   if (!text || text.startsWith('<') || text.startsWith('Caveat:')) return null;
   return text;
 }
@@ -252,7 +255,11 @@ function buildContinuityMessages(raw) {
     for (const block of blocks) {
       if (block?.type === 'text' && typeof block.text === 'string') {
         if (block.text.includes('<satr_conversation_history>')) issues.add('injected_history');
-        texts.push(block.text);
+        // نصّ المستخدم يُنزع منه ما حقنه سطر (سياق الدور/نتيجة التحقق/المرساة/الذاكرة) كي لا يُنقل
+        // إلى محرك آخر كأنه كلام المستخدم؛ نصّ المساعد يبقى حرفياً.
+        const cleaned = entry.type === 'user' ? satrblocks.stripSatrBlocks(block.text) : null;
+        if (cleaned && cleaned.stripped.length) { if (cleaned.text) texts.push(cleaned.text); }
+        else texts.push(block.text);
       } else if (block?.type === 'image') {
         imagesComplete = false;
         images.push(imageMetadata(block));

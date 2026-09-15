@@ -103,7 +103,8 @@ class SatrContextPanel extends HTMLElement {
     // صفوف الفئات (عدا «الفراغ» الذي تعكسه النسبة أصلاً)
     const cats = Array.isArray(u.categories) ? u.categories : [];
     for (const c of cats) {
-      if (/free/i.test(c.name) || !c.tokens) continue;
+      // التصنيف بـ`kind` المقيس (‏used · deferred · free) لا بالاسم الإنجليزي؛ الاسم احتياط لمحرّك لا يرسل kind
+      if (c.kind === 'free' || (!c.kind && /free/i.test(c.name)) || !c.tokens) continue;
       const cell = document.createElement('div'); cell.className = 'ctx-cat';
       const r = document.createElement('div'); r.className = 'ctx-cat-row';
       const nm = document.createElement('span'); nm.className = 'ctx-cat-name';

@@ -436,6 +436,10 @@ try {
     assert(corrupt.coverage.issues.includes('invalid_jsonl'));
     const injected = sessions.buildContinuityMessages(JSON.stringify({ type: 'user', message: { content: '<satr_conversation_history>duplicated</satr_conversation_history>' } }));
     assert.strictEqual(injected.coverage.complete, false);
+    // كتلة سياق الدور (OBS-194) تُحقن قبل نصّ المستخدم وتُحفظ في jsonl — لا تُنقل كأنها كلامه
+    const turnContext = sessions.buildContinuityMessages(JSON.stringify({ type: 'user', message: { content: '<satr_turn_context>\nسياق\n</satr_turn_context>\n\nسؤال المستخدم' } }));
+    assert.strictEqual(turnContext.messages[0].text, 'سؤال المستخدم');
+    assert.strictEqual(turnContext.coverage.complete, true);
   });
 
 

@@ -178,8 +178,8 @@ function sanitizeClaudeFallbackModel(value, primaryModel) {
 async function handleClaudeModelsRequest(agentImpl = agent, cwd = '') {
   try {
     // الملفات تُقرأ مرة واحدة لكل النماذج لا مرة لكل نموذج، وقراءتها fail-open بسقف حجم.
-    // **حدّ مُصرَّح به**: معالج الـIPC لا يمرّر cwd اليوم (الواجهة تطلب القائمة بلا مشروع)،
-    // فيسري سقف إعداد المستخدم وحده؛ وسقفا المشروع مدعومان في الوحدة ويسريان حين يُمرَّر.
+    // الواجهة تمرّر cwd المشروع الحالي (كان الحدّ المُصرَّح به في OBS-196 أنه لا يُمرَّر،
+    // فكان سقف المستخدم وحده يسري)؛ غيابه يُبقي سقف المستخدم كما كان.
     const settingsFiles = effortcap.readSettings({ homeDir: os.homedir(), cwd });
     return sanitizeClaudeModelsResult(await agentImpl.claudeModels(os.homedir()), settingsFiles);
   } catch {
@@ -533,7 +533,9 @@ ipcMain.handle('satr:codexStatus', async () => {
 });
 
 // بيانات Claude العامة فقط؛ دوال التنقية أعلاه تبني عقداً مسموحاً ولا تمرّر حقول SDK الأخرى.
-ipcMain.handle('satr:claudeModels', () => handleClaudeModelsRequest());
+// cwd نصّ اختياري يُقصّ ويُمرَّر لقارئ الإعدادات (يقرأ ملفات ثابتة الأسماء داخله بسقف حجم، fail-open)
+ipcMain.handle('satr:claudeModels', (event, p) => handleClaudeModelsRequest(agent,
+  p && typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd.trim() : ''));
 ipcMain.handle('satr:claudeAccount', () => handleClaudeAccountRequest());
 
 ipcMain.handle('satr:codexModels', async () => {
