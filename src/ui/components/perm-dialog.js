@@ -131,11 +131,25 @@ class SatrPermDialog extends HTMLElement {
     event.preventDefault(); next.focus();
   }
 
+  // إعلان حسم الطلب بمعرّفه — إضافة OBS-207 (سطح الوكلاء الأحياء): الصف يقول «ينتظر
+  // إذنك» ويلزمه أن يعرف متى زال الانتظار **بالمعرّف** لا بالتخمين. حدث إعلان بحت:
+  // لا يمسّ الرد ولا ترتيبه ولا الطابور — يُبثّ بعد ما كان يحدث أصلاً.
+  _announceAnswered(id, allow) {
+    if (id == null || id === '') return;
+    this.dispatchEvent(new CustomEvent('perm-answered', {
+      bubbles: true, composed: true, detail: { id, allow: !!allow },
+    }));
+  }
+
   // انتهاء/إيقاف الدور: تفريغ الطابور وإخفاء المربع
   closeAll() {
+    // الطلبات المسحوبة تُعلَن أيضاً (الردود المعلّقة تفكّها العملية الرئيسية): بلا هذا
+    // يبقى صفّ الوكيل على «ينتظر إذنك» إلى الأبد بعد انتهاء الدور أو قرار الجوال.
+    const dropped = this._current ? [this._current, ...this._queue] : [...this._queue];
     this._queue.length = 0;
     this._current = null;
     this._setOpen(false);
+    for (const req of dropped) this._announceAnswered(req.id, false);
   }
 
   _showNext() {
@@ -174,6 +188,7 @@ class SatrPermDialog extends HTMLElement {
           : (turn ? '✓ موافقة حتى نهاية الدور على أداة ' + req.tool : '✓ تمت الموافقة على أداة ' + req.tool))
         : '✗ رُفض استخدام أداة ' + req.tool,
     }));
+    this._announceAnswered(req.id, allow);
     this._showNext();
   }
 }

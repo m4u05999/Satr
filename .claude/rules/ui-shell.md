@@ -12,6 +12,7 @@ paths:
   - "src/ui/components/git-panel.js"
   - "src/ui/components/sessions-panel.js"
   - "src/ui/components/perm-dialog.js"
+  - "src/ui/components/agents-live.js"
   - "src/ui/components/desktop-panel.js"
   - "src/ui/components/question-dialog.js"
   - "src/ui/lib/text-dir.js"
@@ -55,3 +56,6 @@ paths:
 - `docs/internals/69-computer-use-desktop.md` — لوحة 🪟 سطح ويندوز: المنتقي وسجلّ الأفعال وعلم `desktopControl` (الخطوة ٥)
 - `docs/internals/70-accessibility-names.md` — أسماء الوصول: كل زر رمزي يحمل `aria-label` عربياً، والحقول
   `<label for>`، والحاويات الموسومة `role` — يحرسها `npm run test:a11y-names` (‏OBS-166/167/176، 2026-09-12)
+- `docs/internals/80-agents-live.md` — سطح الوكلاء الفرعيين الأحياء `<satr-agents-live>` خارج كتلة الدور:
+  مفتاحه `taskId` (الاستئناف لا يُنشئ صفاً ثانياً)، وتوجيه `sdk_agent_state` **قبل** حارس الكتلة في
+  `app.js`، وحدث `perm-answered` في `perm-dialog.js` — يحرسه `npm run test:agents-live-ui` (‏OBS-207/151، 2026-09-15)
