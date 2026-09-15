@@ -1045,7 +1045,12 @@ function annotateAssistantMessage(msg) {
       content.push(block); // tool_use وبقية الكتل تبقى حرفياً كما كانت
     }
   }
-  return { ...msg, message: { ...msg.message, content } };
+  const annotated = { ...msg, message: { ...msg.message, content } };
+  // OBS-193 (الشقّ الباقي): `assistant.error` رمزٌ من اتحاد `SDKAssistantMessageError` نفسه الذي
+  // يترجمه `api_retry` — يُترجَم هنا في الحقل المستقلّ نفسه `engine_error` والرمز الأصلي يبقى.
+  const classified = engineerror.classify(msg.error);
+  if (classified) annotated.engine_error = classified;
+  return annotated;
 }
 
 // يحوّل حدث بث SDK واحداً إلى عقد سطر، أو null إن لم يكن نصاً قابلاً للعرض.
@@ -3235,6 +3240,7 @@ module.exports = {
   sdkAgentProgressEvent,
   sdkAgentStateEvent,
   sdkAgentLocalFinishedEvent,
+  annotateAssistantMessage,
   sdkCompactSummaryEvent,
   sdkTaskNotificationEvent,
   sdkTaskStartedEvent,

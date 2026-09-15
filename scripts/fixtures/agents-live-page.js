@@ -164,6 +164,26 @@ async function run(el) {
   assert(badgeOf(el, 'rebb002') === 'اكتمل', 'حسم محلي ثانٍ قلب الخاتمة الحقيقية.');
   checks.push('finished-not-redecided');
 
+  // ---------- ٣ج. القبول الحي (2026-09-15): الإشعار الحقيقي بعد `updated`، والاستئناف من Query جديدة ----------
+  // القياس الحي: `updated{completed}` يسبق `task_notification` فكان الملخّص الختامي يضيع؛
+  // والاستئناف بـSendMessage يصل من Query جديدة بـ`resumed:false` فبقي العدّاد صفراً.
+  el.reset();
+  el.applyAgentState(started('livef01', { backgrounded: true, toolUseId: 'toolu_01Fe9aJLKrhbVCLfAmJmMty7' }));
+  el.applyAgentState(updated('livef01', { status: 'completed' }));
+  assert(badgeOf(el, 'livef01') === 'اكتمل', 'الصف لم يُحسم بـupdated.');
+  assert(el.applyAgentState(finished('livef01', { status: 'completed', summary: 'AGENT_DONE_1' })) === true,
+    'رُفض الإشعار الحقيقي بعد updated{completed}.');
+  const liveRow = () => el.snapshot().find((r) => r.taskId === 'livef01');
+  assert(liveRow().summary === 'AGENT_DONE_1', 'الملخّص الختامي من الإشعار الحقيقي لم يُعرض: ' + JSON.stringify(liveRow().summary));
+  assert(badgeOf(el, 'livef01') === 'اكتمل', 'الإشعار الحقيقي غيّر الشارة خطأً.');
+  el.applyAgentState(started('livef01', { backgrounded: true, resumed: false, toolUseId: 'toolu_01LNHDNVCgrHk1sKiCesmZqF' }));
+  assert(rowsOf(el).length === 1, 'الاستئناف من Query جديدة أنشأ صفاً ثانياً.');
+  assert(liveRow().resumes === 1, 'عدّاد الاستئناف لم يزد رغم بداية ثانية لصف منتهٍ: ' + liveRow().resumes);
+  assert(badgeOf(el, 'livef01') === 'يعمل في الخلفية', 'الاستئناف لم يُحيِ الصف.');
+  assert(el.applyAgentState(finished('livef01', { status: 'stopped', local: true })) === true, 'الحسم المحلي لصف حيّ رُفض.');
+  assert(el.applyAgentState(finished('livef01', { status: 'stopped', local: true })) === false, 'حسم محلي ثانٍ على صف منتهٍ قُبل.');
+  checks.push('live-findings-summary-and-resume');
+
   // ---------- ٤. «ينتظر إذنك» ثم زوالها بالمعرّف ----------
   el.reset();
   el.applyAgentState(started('permaa1', { backgrounded: false }));

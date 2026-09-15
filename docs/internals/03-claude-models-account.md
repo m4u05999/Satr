@@ -170,3 +170,19 @@
      مسارات ويندوز المكتوبة داخل مستند منقول عبر طبقات اقتباس تنهار إلى محارف هروب
      (`\s`⇒`s` و`\r`⇒CR)، فصار جذر المستودع `D:satersatr-2-b4`. المسبار يكتب مساراته بشرطة
      أمامية ويطبع سطر إنهاء إلى stderr لأجل هذا.
+
+#### مذكورات منفّذي الدفعة ب (2026-09-15) — أربعة شقوق صغيرة أُغلقت دفعةً واحدة
+
+- **`satr:claudeModels` يمرّر `cwd` المشروع** (‏`preload.js` ⇒ `{ cwd }` ⇒ `handleClaudeModelsRequest(agent, cwd)`)
+  فيسري سقفا `.claude/settings.json`/`settings.local.json` في المشروع (كان حدّاً مُصرَّحاً به في OBS-196:
+  سقف المستخدم وحده). الواجهة تطلب القائمة بـ`$('cwd')` وتعيد طلبها عند تغيير المجلد (معالج مسمّى
+  `refreshModelsForProject` — صياغة السهم كانت تسبق مرساة اقتطاع `conversation-ui-test`). الحارس:
+  `test:claude-models` (مجلد مؤقت بسقف `medium` ⇒ `['low','medium']`؛ بلا cwd ⇒ القائمة كاملة).
+- **`effortLevelInfo.sessionOnly` يُعرض**: منتقي الجهد يلحق «— لهذه الجلسة فقط» وعنواناً بالمستوى الجلسي
+  (`max`)؛ اللاحقة بعد « — » كي يبقى `effortShort` كما هو في شريط الوعي. `refreshClaudeModels` صار يحمل
+  الحقل الموازي إلى `claudeDynamicModels`.
+- **`assistant.error` يمرّ بـ`engineerror`**: `annotateAssistantMessage` يضيف `engine_error` المترجَم (الرمز
+  الأصلي يبقى)، والقشرة تحفظه في الكتلة وتقدّمه في نتيجة الدور قبل التخمين من النصّ. مسار خطّاف
+  `StopFailure` **غير موصول** بعد (حدّ مُصرَّح به — لا خطّاف مسجَّل له في `agent.js`). الحارس في `test:neterror`.
+- **لوحة السياق تصنّف بـ`kind`** (‏`used`/`deferred`/`free` — القيم المقيسة في `getContextUsage`) لا بالاسم
+  الإنجليزي؛ الاسم احتياط لمحرّك بلا `kind`. عقد مصدر في `test:daily-loop-ui`.

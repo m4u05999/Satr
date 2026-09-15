@@ -119,6 +119,10 @@ async function main() {
     await evaluate(win, "document.getElementById('awarenessContext').click()");
     await waitFor(win, "document.getElementById('awarenessContext').textContent.includes('42%')", 'تحديث مؤشر السياق');
     assert.strictEqual(await evaluate(win, "document.querySelector('satr-context-panel').hasAttribute('open')"), true);
+    // عقد مصدر (مذكور منفّذ الدفعة ب): فئات السياق تُصنَّف بـ`kind` المقيس (used/deferred/free)
+    // لا بالاسم الإنجليزي وحده — الاسم احتياط لمحرّك لا يرسل kind.
+    assert.match(require('node:fs').readFileSync(require('node:path').resolve(__dirname, '..', 'src', 'ui', 'components', 'context-panel.js'), 'utf8'),
+      /c\.kind === 'free' \|\| \(!c\.kind && \/free\/i\.test\(c\.name\)\)/, 'لوحة السياق عادت تصنّف بالاسم لا بـkind');
 
     await evaluate(win, `(() => {
       const engine = document.getElementById('engine');

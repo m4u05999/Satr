@@ -241,6 +241,19 @@ function guardSources() {
     assert.equal(engineerror.classify(null), null);
     assert.equal(engineerror.classify({ code: 'rate_limit' }), null);
   });
+  check('annotateAssistantMessage يترجم assistant.error في engine_error ويبقي الرمز (الشقّ الباقي من OBS-193)', () => {
+    const { annotateAssistantMessage } = require(path.join(ROOT, 'electron', 'agent.js'));
+    const failed = annotateAssistantMessage({ type: 'assistant', error: 'verification_required',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'x' }] } });
+    assert.equal(failed.error, 'verification_required', 'الرمز الأصلي يبقى للسجلّ');
+    assert.equal(failed.engine_error.code, 'verification_required');
+    assert.equal(failed.engine_error.account, true);
+    assert.equal(/[؀-ۿ]/.test(failed.engine_error.message), true);
+    const fine = annotateAssistantMessage({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x' }] } });
+    assert.equal('engine_error' in fine, false, 'رسالة بلا خطأ لا تحمل الحقل');
+    const unknown = annotateAssistantMessage({ type: 'assistant', error: 'brand_new_code', message: { role: 'assistant', content: [] } });
+    assert.equal('engine_error' in unknown, false, 'رمز مجهول ⇒ لا حقل (fail-open في العرض)');
+  });
   check('رمز غير حسابي لا يُوسَم account', () => {
     assert.equal(engineerror.classify('overloaded').account, false);
     assert.equal(engineerror.classify('server_error').account, false);
