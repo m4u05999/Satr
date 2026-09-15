@@ -7,6 +7,9 @@
  *      وهو جوهر `OBS-207`: `taskId` مستقرّ و`toolUseId` يتغيّر مع كل `SendMessage`.
  *   ٢. الشارات الثماني بنصّها العربي حرفياً.
  *   ٣. دلالة REPLACE في `live`: الغائب بلا `finished` ⇒ «يُحسم…» ثم يحسمه `finished`.
+ *   ٣ب. **لا يُعاد حسم صفٍّ محسوم**: `finished{local:true}` (يبثّه المحرّك لكل مهمة رآها
+ *      عند انتهاء Query) لا يقلب «اكتمل» إلى «انتهى مع الدور»؛ والاستثناء الوحيد أن
+ *      صفّاً منتهياً بالحسم المحلي يقبل خاتمةً حقيقية لاحقة لأنها أدقّ.
  *   ٤. «ينتظر إذنك: <أداة>» تزول **بمعرّف الطلب** لا بالتخمين.
  *   ٥. زر الإيقاف يبثّ `agent-stop-request` ويعود عند `failStop` برسالة عربية.
  *   ٦. الإخفاء التام عند الخلو: `display:none` وارتفاع صفر مقيسان.
@@ -116,6 +119,7 @@ const EXPECTED_CHECKS = [
   'single-row-across-resume',
   'eight-badges',
   'live-replace-semantics',
+  'finished-not-redecided',
   'permission-wait-and-clear',
   'stop-request-and-fail-return',
   'zero-height-when-empty',
@@ -154,7 +158,7 @@ async function main() {
     console.log('  طفرة dir="auto": anchor=' + result.mutantMeasure.anchor + ' ' + fmt(result.mutantMeasure)
       + ' (لو رست rtl لكان الفحص بلا أسنان)');
     console.log('agents-live-ui: نجح — ' + EXPECTED_CHECKS.length
-      + ' فحصاً: صفّ واحد عبر الاستئناف، الشارات الثماني، REPLACE، الإذن بالمعرّف، '
+      + ' فحصاً: صفّ واحد عبر الاستئناف، الشارات الثماني، REPLACE، لا إعادة حسم لمحسوم، الإذن بالمعرّف، '
       + 'الإيقاف وعودته، الاختفاء التام، رسوّ الاتجاه بالبكسل مع فحص طفرته، '
       + 'رفض المشوّه، حدّ الخمسين؛ صفر CSP/console.');
   } finally {

@@ -313,11 +313,18 @@ class SatrAgentsLive extends HTMLElement {
   _applyFinished(taskId, ev) {
     const row = this._rows.get(taskId);
     if (!row) return false;
+    // `local: true` ⇒ حسم محلي عند انتهاء Query أو إيقاف الدور، لا خبر من الوكيل نفسه
+    const local = ev.local === true;
+    // **لا يُعاد حسم صفٍّ محسوم** (مراجعة القائد على PR #161): المحرّك يبثّ
+    // `finished{local:true}` عند انتهاء Query لكل مهمة رآها، فيصل لوكيلٍ أمامي أُنهي
+    // صفّه قبله بـ`updated{status:'completed'}` فيقلب «اكتمل» إلى «انتهى مع الدور» —
+    // تراجعٌ في الدقة لا تحديث. الاستثناء الوحيد: صفٌّ منتهٍ **بالحسم المحلي** يقبل
+    // خاتمةً حقيقية لاحقة (بلا `local`)، لأن إشعار الوكيل نفسه أدقّ من حسمنا عنه.
+    if (row.ended && !(row.endKind === 'local' && !local)) return false;
     if (SAFE_TOOL_USE_ID.test(String(ev.toolUseId || ''))) row.toolUseId = ev.toolUseId;
     const summary = safeText(String(ev.summary || ''));
     if (summary) row.summary = summary;
-    // `local: true` ⇒ حسم محلي عند انتهاء Query أو إيقاف الدور، لا خبر من الوكيل نفسه
-    const kind = ev.local === true ? 'local'
+    const kind = local ? 'local'
       : ev.status === 'failed' ? 'failed'
       : ev.status === 'stopped' ? 'stopped' : 'done';
     this._endRow(row, kind);

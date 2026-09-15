@@ -141,6 +141,29 @@ async function run(el) {
   assert(badgeOf(el, 'liveaa1') === 'اكتمل', '`finished` بعد الغياب يجب أن يحسم الصف.');
   checks.push('live-replace-semantics');
 
+  // ---------- ٣ب. لا يُعاد حسم صفٍّ محسوم (مراجعة القائد على PR #161) ----------
+  // المحرّك يبثّ finished{local:true} عند انتهاء Query لكل مهمة رآها، فقد يصل لوكيلٍ
+  // أُنهي صفّه قبله — وقلبُ «اكتمل» إلى «انتهى مع الدور» تراجعٌ في الدقة لا تحديث.
+  el.reset();
+  el.applyAgentState(started('reaa001', { backgrounded: false }));
+  el.applyAgentState(updated('reaa001', { status: 'completed' }));
+  assert(badgeOf(el, 'reaa001') === 'اكتمل', '`updated{completed}` لم يحسم الصف «اكتمل».');
+  assert(el.applyAgentState(finished('reaa001', { status: 'stopped', local: true })) === false,
+    'قُبل حسم محلي على صفٍّ محسوم أصلاً.');
+  assert(badgeOf(el, 'reaa001') === 'اكتمل',
+    '`finished{local:true}` قلب «اكتمل» إلى «انتهى مع الدور».');
+  // الاستثناء الوحيد: الحسم المحلي يقبل خاتمةً حقيقية لاحقة — إشعار الوكيل أدقّ
+  el.applyAgentState(started('rebb002', { backgrounded: false }));
+  el.applyAgentState(finished('rebb002', { status: 'stopped', local: true }));
+  assert(badgeOf(el, 'rebb002') === 'انتهى مع الدور', 'الحسم المحلي لم يظهر.');
+  assert(el.applyAgentState(finished('rebb002', { status: 'completed', summary: 'AGENT_DONE_2' })) === true,
+    'رُفضت الخاتمة الحقيقية بعد حسم محلي.');
+  assert(badgeOf(el, 'rebb002') === 'اكتمل', 'الخاتمة الحقيقية لم تصحّح الحسم المحلي.');
+  assert(el.applyAgentState(finished('rebb002', { status: 'stopped', local: true })) === false,
+    'حسم محلي ثانٍ قُبل بعد الخاتمة الحقيقية.');
+  assert(badgeOf(el, 'rebb002') === 'اكتمل', 'حسم محلي ثانٍ قلب الخاتمة الحقيقية.');
+  checks.push('finished-not-redecided');
+
   // ---------- ٤. «ينتظر إذنك» ثم زوالها بالمعرّف ----------
   el.reset();
   el.applyAgentState(started('permaa1', { backgrounded: false }));
