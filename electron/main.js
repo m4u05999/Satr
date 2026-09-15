@@ -3004,6 +3004,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
     const lateSdkBackgroundEvent = token !== runSeq && runEngine === 'sdk'
       && sdkRunForEmit && sdkBackgroundRuns.has(sdkRunForEmit)
       && (obj.type === 'sdk_task_notification' || obj.type === 'sdk_task_started'
+        || obj.type === 'sdk_agent_state'
         || obj.type === 'permission_request' || obj.type === 'question_request'
         || (obj.type === 'task_update' && obj.source === 'claude_agent'));
     // OBS-142: كان `return` **صامتاً** — فغيابُ الحدث لا يُفرَّق عن عدم إنتاجه، وهو
@@ -3025,6 +3026,17 @@ async function handleSendRequest(event, payload, requestEpoch) {
       sdkTaskOwners.set(String(obj.taskId), sdkRunForEmit);
     }
     if (obj.type === 'sdk_task_notification' && sdkRunForEmit) {
+      const owner = sdkTaskOwners.get(String(obj.taskId || ''));
+      if (owner === sdkRunForEmit) sdkTaskOwners.delete(String(obj.taskId));
+    }
+    // OBS-207/151: سطح الوكلاء الأحياء يسجّل المالك نفسه — بدايةُ مهمة يملكها هذا التشغيل
+    // تعطي زر الإيقاف وجهةً، وحسمُها (بإشعار SDK أو محلياً) يسحبها فلا يبقى مالك ميت.
+    if (obj.type === 'sdk_agent_state' && obj.kind === 'started' && sdkRunForEmit
+        && typeof sdkRunForEmit.ownsSdkTask === 'function'
+        && sdkRunForEmit.ownsSdkTask(String(obj.taskId || ''))) {
+      sdkTaskOwners.set(String(obj.taskId), sdkRunForEmit);
+    }
+    if (obj.type === 'sdk_agent_state' && obj.kind === 'finished' && sdkRunForEmit) {
       const owner = sdkTaskOwners.get(String(obj.taskId || ''));
       if (owner === sdkRunForEmit) sdkTaskOwners.delete(String(obj.taskId));
     }

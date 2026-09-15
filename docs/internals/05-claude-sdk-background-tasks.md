@@ -30,8 +30,10 @@
   مجهول `false` من نوع boolean، بينما حُسمت `stopTask` لمعرّف مجهول بقيمة `undefined`.
   بعد انتهاء الدور رفض الاستدعاءان بخطأ `Error` ورسالة
   `ProcessTransport is not ready for writing`. الإنتاج لا يعيد هذه الرسالة الخام؛ يحولها
-  إلى خطأ عربي ثابت، ولا يستدعي `stopTask` إلا لمعرّف مهمة تعلّمه من SDK وربطه بأداة
-  نقلها المستخدم فعلاً.
+  إلى خطأ عربي ثابت، ولا يستدعي `stopTask` إلا لمعرّف مهمة تعلّمه من SDK ولم يُحسم بعد.
+  ⚠️ **صيغة هذا البند تغيّرت بقرار معلن (OBS-151، 2026-09-15)**: كانت «وربطه بأداة نقلها
+  المستخدم فعلاً» فصارت «عبر `task_started` في هذه Query نفسها ولم يُحسم بعد» — التفصيل في
+  قسم «قناة حالة الوكلاء الأحياء وبقاء Query» آخر الملف.
 - **المحرك ودورة الحياة**: مقبض التشغيل العادي لمحرك `sdk` يكشف داخلياً فقط
   `moveToBackground(toolUseId)` و`stopSdkTask(taskId)`. الحارسان الصارمان يقبلان بادئة
   `toolu_` ثم `16..64` محرفاً أبجدياً رقمياً، أو معرّف مهمة من `6..64` محرفاً لاتينياً
@@ -186,7 +188,7 @@
   يكون مصدرهما Query في `sdkBackgroundRuns`؛ والواجهة تعالج طلب الإذن ولو انتهت الكتلة أصلاً.
   والردّ يعود إلى مالكه: `resolvePermissionThroughCurrentHandles` و`satr:answerQuestion`
   يجرّبان `sdkBackgroundRuns` بعد الدور الحالي — المعرّف يحسم المالك ولا يُسند لغيره.
-- **الحارس**: `npm run test:subagent-permission` (13 فحصاً، ضمن `test:full`) يشغّل المرشّح
+- **الحارس**: `npm run test:subagent-permission` (‏23 فحصاً بعد توسيع OBS-207، ضمن `test:full`) يشغّل المرشّح
   ومسارَي الردّ من نصّ `main.js` الإنتاجي في صندوق بمحرك بديل يعدّ الردود: الطلب والسؤال
   الخلفيان يصلان ويعودان إلى الدور الخلفي نفسه؛ والبثّ المتأخر ما زال بائتاً؛ ودور انتهى بلا
   مهام خلفية لا يمرّر طلباً متأخراً ولا يجد مالكاً؛ والمعرّف المجهول يُرفض. فحصا طفرة (إسقاط
@@ -195,3 +197,110 @@
   طلب `elicitation` من وكيل خلفي لم يُقَس ولم يُوسَّع له. السطح المرئي للوكيل الخلفي
   (‏OBS-207) ما زال ناقصاً: الطلب يظهر في مربع الإذن باسم الطالب، لكن لا بطاقة حيّة له.
   قاعدة التشغيل حتى قبول الإصلاح بشرياً: المنفّذون في المقدمة.
+  **حُلّ الشقّ الأخير في القسم التالي** (‏OBS-207/151، 2026-09-15).
+
+
+#### قناة حالة الوكلاء الأحياء وبقاء Query (OBS-207/151 — 2026-09-15)
+
+- **القياسات السبعة** (مسبار حيّ `D:\sater\agents-live-probe\probe.mjs` ونتيجته
+  `result.json`، ‏SDK `0.3.270` وCLI `2.1.270 (Claude Code)`، النموذج `sonnet`، دوران:
+  إطلاق وكيل خلفي ثم استئنافه بـ`SendMessage`):
+  1. **`agentID` في `canUseTool` == `task_id` حرفياً**: `a1cadac9484258db2` (‏17 محرفاً من
+     `[a-z0-9]`، يطابق `SAFE_SDK_TASK_ID`). وهو نفسه `requester` الذي يبثّه `agent.js` في
+     `permission_request`، ونفسه قيمة `to` في أداة `SendMessage`. فمعرّف المهمة هو **مفتاح
+     الربط الوحيد** بين مربع الإذن والسطح الحيّ.
+  2. **الاستئناف بـ`SendMessage` في دور لاحق يولّد `task_started` جديداً بالمعرّف نفسه**
+     (‏`a1cadac9484258db2`) وبـ`tool_use_id` جديد هو معرّف أداة `SendMessage`
+     (‏`toolu_01Fe9aJLKrhbVCLfAmJmMty7` للإطلاق مقابل `toolu_01LNHDNVCgrHk1sKiCesmZqF`
+     للاستئناف)، ومعه `is_backgrounded: true` و`description` الأصلي («probe agent») و
+     `subagent_type` و`task_type: 'local_agent'` و`spawn_depth: 1` و`prompt` (نصّ الرسالة).
+     فـ`resumed` يُحسم بـ«هل رأت هذه Query بداية هذا المعرّف من قبل؟» لا بحقل من SDK.
+  3. **`background_tasks_changed` بدلالة REPLACE**: يصل قبل `task_started` مباشرةً بقائمة
+     **كاملة** `[{task_id, task_type, description, ambient?}]` (‏seq 7 ثم 29)، ويصل ثانيةً
+     **بقائمة فارغة** (‏seq 17 ثم 39) قبل `task_updated{status:'completed'}` و
+     `task_notification`. فالقائمة الفارغة = خمول، وهي إشارة الإفراج المقيسة.
+  4. **`task_progress`** يحمل `description` **متغيّراً** («Writing PROBE_A.txt» ثم
+     «Writing PROBE_B.txt») و`tool_use_id` مقطع الإطلاق/الاستئناف الحالي؛ `summary` قد يغيب.
+  5. **`task_notification`** يصل لكل مقطع (إطلاق واستئناف) بـ`tool_use_id` مقطعه و`status`
+     و`summary` (نصّ ردّ الوكيل الأخير: `AGENT_DONE_1` ثم `AGENT_DONE_2`).
+  6. **بعد كل `task_notification` يشغّل CLI دوراً تلقائياً** في الجلسة نفسها (`init` →
+     `assistant` → `result`) يسلّم النموذجَ نتيجة الوكيل — أي أن Query القديمة تبثّ
+     `assistant`/`result` بعد نتيجة الدور الأصلية (‏`result:4` في دورين). خارج نطاق هذه
+     الدفعة، لكن `result` الثانية ليست خطأ ولا تُعامل معاملته.
+  7. **`parent_agent_id` لا يصل في البثّ الحي** (مثبت سابقاً في
+     `scripts/subagent-tree-probe.js`) — لا يُعتمد عليه في الربط.
+- **العطل المقيس**: `createSdkBackgroundController.hasSdkBackgroundTasks()` كانت تعيد
+  `moveStates.size > 0` — أي **نقل المستخدم وحده**. وكيل خلفي أطلقه النموذج
+  (‏`is_backgrounded`) كان يبقى في `modelBackgroundedTasks` فقط، فلا تدخل Query في
+  `sdkBackgroundRuns` بـ`main.js`، فترتّب على ذلك ثلاثة: (أ) الإرسال التالي يستدعي
+  `stopAll(false)` فيوقف `currentRun` و**يقتل الوكيل الخلفي**؛ (ب) شرط
+  `lateSdkBackgroundEvent` (إصلاح OBS-208) يشترط `sdkBackgroundRuns.has(run)` فطلب إذن ذلك
+  الوكيل بعد انتهاء الدور يبقى بائتاً رغم الإصلاح؛ (ج) `promptSuggestionGate` يغلق `input`
+  عند `result` لأن `holdInput` لم يكن يُستدعى إلا لنقل المستخدم.
+- **العقد الجديد** — حدث منقّى واحد على `satr:event` بخمسة أنواع (يضاف ولا يستبدل:
+  `sdk_agent_progress` و`sdk_task_started` و`sdk_task_notification` و`task_update` تبقى كما
+  هي، فبطاقة الكتلة ودفتر المهام يستهلكانها):
+  - `{type:'sdk_agent_state',taskId,kind:'started',toolUseId?,description,subagentType?,taskType,backgrounded,spawnDepth?,resumed}`
+  - `{type:'sdk_agent_state',taskId,kind:'progress',toolUseId?,description?,summary?}`
+  - `{type:'sdk_agent_state',taskId,kind:'updated',status?,description?,error?,backgrounded?}`
+  - `{type:'sdk_agent_state',taskId,kind:'finished',toolUseId?,status,summary?,local?}`
+  - `{type:'sdk_agent_state',kind:'live',taskIds:string[]}`
+  يولّده `sdkAgentStateEvent(message, ctx)` **النقية** في `agent.js` (مصدَّرة للاختبار،
+  و`ctx.seen` مجموعة المعرّفات التي رأت هذه Query بدايتها). `started` لـ`task_type` من
+  `local_agent` و`local_bash` فقط؛ `status` في `updated` من قائمة سماح
+  (`pending|running|completed|failed|killed|paused`) وفي `finished` من
+  `completed|failed|stopped`. كل نص حرّ يمرّ بـ`safeSdkTaskText` (تنظيف التحكم وBidi، قصّ
+  `300` نقطة Unicode، إسقاط كامل عند `memory.hasSecret`)، والمعرّفات تُفحص بـ
+  `SAFE_SDK_TASK_ID`/`SAFE_SDK_TOOL_USE_ID`، ومهام `ambient`/`skip_transcript` تُستبعد. لا
+  يعبر `prompt` ولا `output_file` ولا `usage` ولا `uuid` ولا `session_id`. و`local:true`
+  يميّز الحسم **المحلي** (انتهاء Query أو إيقاف الدور) بملخص عربي ثابت، فلا تعرضه الواجهة
+  بوصفه نتيجة الوكيل.
+- **«مهمة حيّة» — التعريف المنفَّذ**: مهمة بدأها النموذج خلفياً تدخل `modelLiveTasks` عند
+  `task_started{is_backgrounded}` أو `task_updated.patch.is_backgrounded`، وتخرج منها بأحد
+  ثلاثة: غيابها عن آخر قائمة `background_tasks_changed` (دلالة REPLACE — القياس 3)، أو
+  وصول إشعارها الختامي، أو نهاية Query. و`hasSdkBackgroundTasks()` صارت
+  `moveStates.size > 0 || modelLiveTasks.size > 0`، ويُستدعى `holdInput` عند أول مهمة حيّة
+  و`closeInput` عند خلوّ الاثنين (مع بقاء شرط `resultSeen` — فالإفراج لا يسبق نتيجة الدور).
+  `finish()` يبثّ `finished{local:true}` لكل مهمة حيّة **معروفة** (نقل المستخدم، وخلفية
+  النموذج، وكل مهمة رأينا بدايتها ولم تُحسم) لا لمهام `moveStates` وحدها كما كان.
+  و«حُسمت» تشمل مسارين لا واحداً (مراجعة القائد لـPR #160): إشعار `task_notification`
+  ختامي، **أو `task_updated` بحالة نهائية** (`completed`/`failed`/`killed`) — فالوكيل
+  **الأمامي** (‏`is_backgrounded:false`، وهو الأشيع) يُحسم بالثاني ولا يصله الأول
+  بالضرورة، وبدونه كان الحسم المحلي يقلب «اكتمل» إلى «انتهى مع الدور». `paused` ليست
+  نهائية (انتظار لا انتهاء)، والاستئناف (`task_started` بالمعرّف نفسه) يعيد المهمة حيّة.
+- **قرار توسيع الإيقاف (OBS-151 — بقرار معلن لا تسلّلاً)**: سياسة `stopSdkTask`/`ownsSdkTask`
+  كانت «مهمة نقلها المستخدم بنفسه» (‏`moveStates[toolUseId].status === 'backgrounded'`)،
+  فصارت **كل مهمة شاهدت Query نفسها `task_started` لها ولم تُحسم بعد** — نقل المستخدم أو
+  خلفية النموذج سواء. الأساس المقيس: `query.stopTask(taskId)` يُحسم `undefined` لأي معرّف
+  يعرفه CLI أثناء حياة Query، ويرفض بعدها بـ`ProcessTransport is not ready for writing`
+  (يُحوَّل إلى الخطأ العربي الثابت، ولا يُستدعى أصلاً لأن `active=false` يردّ
+  `no_active_turn`). المجهول يبقى مرفوضاً `fail-closed`، والمحسومة لا تُوقف ثانيةً،
+  والاستئناف يعيدها حيّة بالمعرّف نفسه فتصير قابلة للإيقاف من جديد. تبعاً لذلك **انقلب
+  بندان في `test:sdk-background`** بقرار واعٍ ومعلن في رسالة الالتزام وفي الحارس نفسه:
+  «Query لا تُحجز لمهمة لم ينقلها المستخدم» و«إيقاف مهمة النموذج الخلفية يبقى مرفوضاً» —
+  البند القديم في هذه الوثيقة («لا يستدعي `stopTask` إلا لمعرّف تعلّمه من SDK وربطه بأداة
+  نقلها المستخدم فعلاً») يُقرأ من اليوم: **إلا لمعرّف تعلّمه من SDK عبر `task_started` في
+  هذه Query نفسها ولم يُحسم بعد**.
+- **`main.js`**: `sdk_agent_state` أُضيف إلى `lateSdkBackgroundEvent` فيعبر من Query انتهى
+  دوره وبقي في `sdkBackgroundRuns`؛ ويُسجَّل المالك في `sdkTaskOwners` عند
+  `kind:'started'` إن أقرّ `ownsSdkTask` (بجانب التسجيل القائم عند `sdk_task_started`)،
+  ويُسحب عند `kind:'finished'`. لا عقد IPC جديد ولا تعديل في `preload.js`: `satr:stopSdkTask
+  {taskId}` القائم يكفي.
+- **الأثر المقبول والموثَّق**: `runSdkSessionControl` (التفريع/استرجاع الملفات) يبقى مشغولاً
+  ما دام وكيل خلفي حيّاً — رسالته العربية القائمة («انتظر انتهاء دور Claude أو مهمته
+  الخلفية…») تكفي. والجلسة الجديدة/تبديل المحرك يستدعيان `stopAll(true)` فتُوقَف Queries
+  الخلفية ⇒ تصل الواجهةَ `finished{local:true,status:'stopped'}` فلا يبقى سطر معلّق.
+- **حدود مُصرَّح بها**: (١) الحدث يُنقّى في `agent.js` ولا يُعاد تنقيته في `main.js` — نظير
+  `sdk_task_notification` القائم، لا استثناء جديد. (٢) القياسات من دور مسبار واحد بنموذج
+  `sonnet` وعمق تفريع 1؛ الوكيل الأعمق (`spawn_depth > 1`) لم يُقَس حياً وإن كان الحقل
+  يعبر. (٣) القياس 6 (الدور التلقائي بعد الإشعار) لم يُعالَج في هذه الدفعة — مسجَّل ملاحظةً.
+  (٤) الإفراج عند القائمة الفارغة مشروط بوصول `result`؛ لو لم يبثّ CLI
+  `background_tasks_changed` أصلاً فالإفراج من الإشعار الختامي أو نهاية Query (لا تعليق إلى
+  الأبد)، وهو محروس. (٥) لا قياس حيّ لهذا الإصلاح نفسه بعد — الحرّاس صندوقية بأشكال المسبار.
+- **التحقق**: `npm run test:sdk-agent-state` (جديد، ضمن `test:full`) يغطي الأنواع الخمسة
+  وتنقيتها والاستئناف وambient والسرّ والإشعار الكاذب ودلالة REPLACE وحجز/إفراج input
+  وسياسة الإيقاف وحدودها، بثلاثة فحوص طفرة موسومة `⭐` (إسقاط توسيع `hasSdkBackgroundTasks`
+  يُسقطها). و`npm run test:sdk-background` مُحدَّث بالبندين المنقلبين. و
+  `npm run test:subagent-permission` أضيف إليه سيناريو محرك بديل تُشتق فيه
+  `hasSdkBackgroundTasks` من مهام النموذج: قبل التوسيع يوقف الإرسالُ التالي Queryَ الوكيل
+  الخلفي ويبقى طلب إذنها بائتاً، وبعده تنجو ويصل طلبها ويعود إليها.

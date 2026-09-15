@@ -31,8 +31,9 @@ function loadRuntime(root) {
   const handlers = {};
   const sandbox = {
     fs, os, path, randomBytes, console,
-    setTimeout: () => ({ unref() {} }),
+    setTimeout: () => ({ unref() {} }), clearTimeout: () => {},
     STOP_ALL_SEND_TIMEOUT_MS: 5000, SDK_START_TIMEOUT_MS: 90000,
+    SDK_STOP_GRACE_MS: 5000, SDK_FORCE_CLOSE_GRACE_MS: 1000,
     runSeq: 0, currentRun: null, currentCliRun: null, lastEngine: '',
     activeConversationRunId: null,
     sdkSessionControlBusy: false, sdkRunInFlight: false,
@@ -65,11 +66,16 @@ function loadRuntime(root) {
         // المحرك البديل: يملك طلباته بمعرّفاتها، ويعدّ الردود التي وصلته — لا يحسم شيئاً بنفسه.
         const run = {
           input, cwd, emit, stopped: false, background: true, owned: new Set(),
-          hasSdkBackgroundTasks: () => run.background,
+          // OBS-207: `derived` يحوّل المحرك البديل إلى دلالة الإنتاج بعد الإصلاح —
+          // `hasSdkBackgroundTasks` **مشتقّة من مهام النموذج الخلفية الحيّة** لا من علم
+          // ثابت ولا من نقل المستخدم وحده. مع `derived:false` نحاكي الدلالة القديمة.
+          derived: false, modelTasks: new Set(),
+          hasSdkBackgroundTasks: () => (run.derived ? run.modelTasks.size > 0 : run.background),
           // كما في الإنتاج: `done` ينتهي بخروج Query فيُنظَّف الدور (currentRun والخلفية).
           finish: null,
           ownsSdkTask: () => true,
-          stop() { run.stopped = true; },
+          // إيقاف Query يُنهي استهلاكها فعلاً؛ بدون حسم `done` لا يكتمل `stopSdkRun`.
+          stop() { run.stopped = true; run.finish(); },
           resolvePermission(id, allow) {
             if (!run.owned.has(id)) return false;
             run.owned.delete(id); resolved.push({ run, id, allow, kind: 'permission' }); return true;
@@ -93,7 +99,9 @@ function loadRuntime(root) {
     section('function resolvePermissionThroughCurrentHandles(', '// تشخيص مؤقت (يُفعَّل بـSATR_MOBILE_DEBUG=1)'),
     section('function stopAll(', 'function notifyObservers('),
     section('function forgetSdkBackgroundRun(', 'const rewindPreviews ='),
-    section('function markSdkRunInFlight(', 'function cancelPendingSendRequest('),
+    // ‏OBS-207: مسار الإيقاف الحقيقي (‏settleSdkPromise/stopSdkRun/trackSdkStop) صار لازماً —
+    // السيناريو (٧) يُبقي وكيلاً خلفياً داخل الدور الجاري فيمرّ stopAll(false) به فعلاً.
+    section('function markSdkRunInFlight(', 'async function runSdkSessionControl('),
     section('async function handleSendRequest(', "ipcMain.handle('satr:stop',"),
     section("ipcMain.handle('satr:permission',", '// ---------- C1: التوجيه أثناء الدور'),
     section("ipcMain.handle('satr:answerQuestion',", 'const elicitationOpening = new Set();'),
@@ -175,10 +183,62 @@ async function main() {
 
     // (٦) الردّ على معرّف مجهول لا يُسند لأي دور خلفي.
     ok((await rt.handlers['satr:permission']({}, { id: 'perm_unknown', allow: false })).ok === false, 'المعرّف المجهول يُرفض');
+
+    // ---------- OBS-207: عضوية sdkBackgroundRuns لوكيل خلفي أطلقه **النموذج** ----------
+    // معرّف المسبار الحيّ نفسه (‏agentID في canUseTool == task_id، 2026-09-15).
+    const AGENT_TASK_ID = 'a1cadac9484258db2';
+
+    // (٧) ⭐ قياس العطل **قبل** التوسيع: بالدلالة القديمة (نقل المستخدم وحده) لا تدخل
+    //     Query السجل الخلفي، فيقتلها `stopAll(false)` — وهو أول ما يفعله كل إرسال.
+    const pre = await rt.start(project, 'session-pre');
+    pre.derived = false;
+    pre.background = false;                 // hasSdkBackgroundTasks القديمة: moveStates.size > 0
+    pre.modelTasks.add(AGENT_TASK_ID);      // ووكيل خلفي أطلقه النموذج يعمل فعلاً
+    pre.emit({ type: 'result' });
+    ok(!rt.sandbox.sdkBackgroundRuns.has(pre) && rt.sandbox.currentRun === pre,
+      'بالدلالة القديمة يبقى وكيل النموذج الخلفي معلَّقاً بالدور الجاري');
+    await rt.start(project, 'session-pre-next'); // الإرسال التالي: stopAll(false) ثم token = ++runSeq
+    ok(pre.stopped === true,
+      '⭐ قبل التوسيع: stopAll(false) الذي يبدأ به كل إرسال يقتل Query الوكيل الخلفي');
+    const preRendered = rt.rendered.length;
+    pre.owned.add('perm_pre_1');
+    pre.emit({ type: 'permission_request', id: 'perm_pre_1', tool: 'Write', input: {}, requester: AGENT_TASK_ID });
+    ok(rt.rendered.length === preRendered && rt.dropped.at(-1)[2] === 'stale_token',
+      '⭐ وطلب إذنه يبقى بائتاً رغم إصلاح OBS-208 (الشرط يتطلب عضوية sdkBackgroundRuns)');
+
+    // (٨) ⭐ بعد التوسيع: الدلالة المشتقّة من مهام النموذج تُبقي Query حيّة.
+    const live = await rt.start(project, 'session-live');
+    live.derived = true;
+    live.modelTasks.add(AGENT_TASK_ID);
+    live.emit({
+      type: 'sdk_agent_state', taskId: AGENT_TASK_ID, kind: 'started', description: 'probe agent',
+      taskType: 'local_agent', backgrounded: true, resumed: false,
+    });
+    ok(rt.sandbox.sdkTaskOwners.get(AGENT_TASK_ID) === live,
+      'سطح الوكلاء الأحياء يسجّل مالك المهمة لزر الإيقاف');
+    live.emit({ type: 'result' });
+    ok(rt.sandbox.sdkBackgroundRuns.has(live) && rt.sandbox.currentRun !== live,
+      'Query الوكيل الخلفي انتقلت إلى السجل الخلفي بالدلالة المشتقّة');
+    await rt.start(project, 'session-after');
+    ok(live.stopped === false, '⭐ الإرسال التالي لم يعد يوقف Query الوكيل الخلفي');
+
+    // ...وطلب إذنها المتأخر يصل ويعود إليها (إصلاح OBS-208 يعمل لهذه الحالة فعلاً).
+    live.owned.add('perm_agent_1');
+    live.emit({ type: 'permission_request', id: 'perm_agent_1', tool: 'Write', input: {}, requester: AGENT_TASK_ID });
+    ok(rt.rendered.at(-1).event.id === 'perm_agent_1', '⭐ طلب إذن الوكيل الخلفي وصل النافذة');
+    const agentReply = await rt.handlers['satr:permission']({}, { id: 'perm_agent_1', allow: true });
+    ok(agentReply.ok === true && rt.resolved.at(-1).run === live, '⭐ والردّ عاد إلى Query الوكيل نفسه');
+
+    // (٩) حدث السطح الحي نفسه يعبر متأخراً، وحسمُه يسحب المالك.
+    live.modelTasks.delete(AGENT_TASK_ID);
+    live.emit({ type: 'sdk_agent_state', taskId: AGENT_TASK_ID, kind: 'finished', status: 'completed', summary: 'تمّ' });
+    ok(rt.rendered.at(-1).event.type === 'sdk_agent_state' && rt.rendered.at(-1).event.kind === 'finished',
+      'حدث سطح الوكلاء المتأخر يصل النافذة ولا يُسقط بائتاً');
+    ok(!rt.sandbox.sdkTaskOwners.has(AGENT_TASK_ID), 'ويُسحب المالك عند حسم المهمة');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-  console.log('subagent-permission-test: ok — ' + passed + ' فحصاً (طلب الإذن والسؤال من وكيل خلفي بعد انتهاء الدور يصلان ويعودان إلى مالكهما، وبلا توسيع للبائت).');
+  console.log('subagent-permission-test: ok — ' + passed + ' فحصاً (طلب الإذن والسؤال من وكيل خلفي بعد انتهاء الدور يصلان ويعودان إلى مالكهما، وبلا توسيع للبائت؛ وعضوية sdkBackgroundRuns المشتقّة من مهام النموذج تُبقي Query حيّة بعد أن كان الإرسال التالي يقتلها).');
 }
 
 main().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });

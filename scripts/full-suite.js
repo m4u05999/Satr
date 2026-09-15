@@ -100,6 +100,7 @@ const SUITE = [
   'test:fork-rewind',
   'test:claude-models',
   'test:elicitation',
+  'test:sdk-agent-state',
   'test:sdk-background',
   'test:sdk-polish',
   'test:testsprite-ready',

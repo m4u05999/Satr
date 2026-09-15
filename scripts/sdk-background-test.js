@@ -190,11 +190,16 @@ async function testAgentController() {
   });
   assert.equal((await stopped.moveToBackground(TOOL_USE_ID)).ok, true);
   stopped.finish('stopped');
-  assert.equal(stoppedEvents.length, 2, 'لم تُحسم البطاقة وTask Ledger عند إيقاف الدور');
+  // OBS-207: صار الحسم المحلي يبثّ ثالثاً — سطح الوكلاء الأحياء (`sdk_agent_state`).
+  assert.equal(stoppedEvents.length, 3, 'لم تُحسم البطاقة وTask Ledger وسطح الوكلاء عند إيقاف الدور');
   assert.equal(stoppedEvents[0].status, 'stopped');
   assert.equal(stoppedEvents[1].type, 'task_update');
   assert.equal(stoppedEvents[1].tasks[0].status, 'blocked');
   assert.equal(stoppedEvents[1].tasks[0].title, 'بناء المشروع');
+  assert.deepEqual(plain(stoppedEvents[2]), {
+    type: 'sdk_agent_state', taskId: TASK_ID, kind: 'finished', status: 'stopped', local: true,
+    toolUseId: TOOL_USE_ID, summary: 'أُوقفت مهمة Claude الخلفية مع إيقاف الدور.',
+  }, 'الحسم المحلي لسطح الوكلاء الأحياء');
   assert.equal(stopped.ownsSdkTask(TASK_ID), false);
 
   const orphanEvents = [];
@@ -232,29 +237,49 @@ async function testAgentController() {
   // OBS-094) كان إشعارها الختامي يُسقط هنا صامتاً (لا moveState) فتبقى بطاقتها «يعمل في
   // الخلفية» — وكانت الشارة تقفل الجلسة في الواجهة. الآن يُمرَّر الإشعار المنقّى نفسه،
   // بلا حجز input (لا نقل مستخدم) وبلا إيقاف (main لا يملكها).
+  //
+  // ⚠️ تحديث معلن (OBS-207/151، 2026-09-15): بندان في هذا الحارس انقلبا **بقرار واعٍ** —
+  //   (١) «Query لا تُحجز لمهمة لم ينقلها المستخدم» ⇒ صارت تُحجز: وكيل النموذج الخلفي يعيش
+  //       أطول من الدور، وبقاء `hasSdkBackgroundTasks` على نقل المستخدم وحده كان يجعل
+  //       الإرسال التالي (`stopAll(false)`) **يقتل الوكيل**. الإفراج من القائمة الفارغة
+  //       في `background_tasks_changed` أو من الإشعار الختامي أو من نهاية Query.
+  //   (٢) «إيقاف مهمة النموذج الخلفية يبقى مرفوضاً» ⇒ صار مسموحاً لكل مهمة شاهدت هذه
+  //       Query نفسها `task_started` لها ولم تُحسم بعد (نصّ OBS-151: «بقرار واعٍ لا تسلّلاً»).
   const modelEvents = [];
+  const modelStops = [];
   let modelCloses = 0;
+  let modelHolds = 0;
   const modelBg = createSdkBackgroundController({
-    query: { async backgroundTasks() { return true; }, async stopTask() { throw new Error('must not stop'); } },
-    emit: (event) => modelEvents.push(event), closeInput: () => { modelCloses++; }, isolated: false,
+    query: { async backgroundTasks() { return true; }, async stopTask(id) { modelStops.push(id); } },
+    emit: (event) => modelEvents.push(event),
+    closeInput: () => { modelCloses++; }, holdInput: () => { modelHolds++; }, isolated: false,
+  });
+  modelBg.observe({
+    type: 'system', subtype: 'background_tasks_changed',
+    tasks: [{ task_id: TASK_ID, task_type: 'local_bash', description: 'npm test' }],
   });
   modelBg.observe({
     type: 'system', subtype: 'task_started', task_id: TASK_ID, tool_use_id: TOOL_USE_ID,
     is_backgrounded: true, task_type: 'local_bash', description: 'npm test',
   });
-  assert.equal(modelBg.hasSdkBackgroundTasks(), false, 'مهمة النموذج الخلفية ليست نقل مستخدم — لا حجز');
+  assert.equal(modelBg.hasSdkBackgroundTasks(), true, 'مهمة النموذج الخلفية الحيّة تُبقي Query');
+  assert.equal(modelHolds, 1, 'لم يُحجز input عند أول مهمة خلفية حيّة');
   modelBg.markResult();
-  assert.equal(modelCloses, 1, 'Query لا تُحجز لمهمة لم ينقلها المستخدم');
-  assert.deepEqual(plain(await modelBg.stopSdkTask(TASK_ID)), {
-    ok: false, error: 'not_found', message: 'لم تُسجّل هذه المهمة ضمن مهام Claude الخلفية.',
-  }, 'إيقاف مهمة النموذج الخلفية يبقى مرفوضاً — الواجهة لا تعرض له زراً');
+  assert.equal(modelCloses, 0, 'أُغلق Query ووكيل النموذج الخلفي ما زال حياً');
+  assert.deepEqual(plain(await modelBg.stopSdkTask(TASK_ID)), { ok: true },
+    'إيقاف مهمة النموذج الخلفية مسموح الآن (OBS-151)');
+  assert.deepEqual(modelStops, [TASK_ID]);
   modelBg.observe(taskMessage());
   assert.deepEqual(plain(modelEvents), [{
     type: 'sdk_task_notification', taskId: TASK_ID, toolUseId: TOOL_USE_ID, status: 'completed', summary: 'اكتملت المهمة',
   }], 'إشعار مهمة النموذج الخلفية يجب أن يصل البطاقة منقّى');
+  assert.equal(modelCloses, 1, 'لم يُغلق Query بعد حسم آخر مهمة خلفية حيّة');
   assert.ok(!JSON.stringify(modelEvents).includes(SECRET_SENTINEL), 'تسرّب output_file إلى إشعار مهمة النموذج');
   modelBg.observe(taskMessage());
   assert.equal(modelEvents.length, 1, 'الإشعار المكرر لمهمة محسومة لا يُبثّ ثانيةً');
+  assert.deepEqual(plain(await modelBg.stopSdkTask(TASK_ID)), {
+    ok: false, error: 'not_found', message: 'لم تُسجّل هذه المهمة ضمن مهام Claude الخلفية.',
+  }, 'المهمة المحسومة لا تُوقَف ثانيةً');
 
   // الأمامية (‏is_backgrounded=false) بلا شارة ⇒ لا إشعار لها (نتيجة أداتها تكفي بطاقتها)
   const foregroundEvents = [];
@@ -278,7 +303,10 @@ async function testAgentController() {
   assert.deepEqual(plain(patchedEvents), [{
     type: 'sdk_task_notification', toolUseId: TOOL_USE_ID, taskId: TASK_ID, status: 'failed',
     summary: 'انتهى تشغيل Claude قبل وصول إشعار المهمة الخلفية.',
-  }], 'شارة مهمة النموذج تُحسم عند انتهاء Query بلا Ledger إضافي');
+  }, {
+    type: 'sdk_agent_state', taskId: TASK_ID, kind: 'finished', status: 'failed', local: true,
+    toolUseId: TOOL_USE_ID, summary: 'انتهى تشغيل Claude قبل وصول إشعار المهمة الخلفية.',
+  }], 'شارة مهمة النموذج وسطحها الحي يُحسمان عند انتهاء Query بلا Ledger إضافي');
 
   const direct = sdkTaskNotificationEvent(taskMessage(), TOOL_USE_ID);
   assert.deepEqual(Object.keys(direct).sort(), ['status', 'summary', 'taskId', 'toolUseId', 'type']);
@@ -495,7 +523,9 @@ function testUiAndSeparationContracts() {
   assert.doesNotMatch(probe, /console\.log\([^\n]*(output_file|summary|toolInput)/);
 
   assert.equal(pkg.scripts['test:sdk-background'], 'node scripts/sdk-background-test.js');
-  assert.match(fullSuite, /'test:elicitation',\s*\r?\n\s*'test:sdk-background',/);
+  // OBS-207: أُقحم `test:sdk-agent-state` بين الاثنين — `test:sdk-polish` يقفل جوار
+  // `sdk-background`↔`sdk-polish`، فالمكان الوحيد الباقي بجوار هذا الحارس هو قبله.
+  assert.match(fullSuite, /'test:elicitation',\s*\r?\n\s*'test:sdk-agent-state',\s*\r?\n\s*'test:sdk-background',/);
   assert.match(docs, /### مهام Claude SDK الخلفية \(دفعة D/);
   assert.ok(docs.includes("{type:'sdk_task_notification',taskId?,toolUseId,status:'completed'|'failed'|'stopped',summary?}"));
   assert.ok(docs.includes('13557ms') && docs.includes('run_in_terminal'));
