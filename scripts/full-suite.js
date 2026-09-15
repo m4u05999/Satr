@@ -24,6 +24,7 @@ const SUITE = [
   'test:sessionmeta',
   'test:sessions-cwd',
   'test:conversations',
+  'test:satrblocks',
   'test:conversation-ui',
   'test:conversation-main',
   'test:codexsessions',

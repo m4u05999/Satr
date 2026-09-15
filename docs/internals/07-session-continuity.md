@@ -95,3 +95,14 @@
 `scripts/conversation-live-test.js` يقود واجهة الإنتاج عبر نافذة الاختبار المعزولة
 وحدود بروتوكول محلية؛ نتيجته تثبت النقل والتخزين والعرض، ولا تثبت فهم نموذج مدفوع.
 
+
+#### نزع كتل سطر المحقونة عند قراءة جلسات Claude (2026-09-15 — مذكور منفّذ الدفعة ب)
+
+سطر يُسبق نصّ المستخدم بكتل موسومة قبل إرساله (`<satr_turn_context>` OBS-194 · `<satr_verification_result>` ·
+`<satr_lang>` · `<satr_project_memory>` · `<satr_context_budget>` · `<satr_testsprite_run>`) فتُحفظ في jsonl داخل
+رسالة المستخدم. كان `sessions.js` يمرّرها خامّةً للنقل (`buildContinuityMessages`)، وفي العرض (`userText`) كانت
+الرسالة **تسقط كلها** لأنها تبدأ بـ`<`. الوحدة النقية `electron/satrblocks.js` هي المصدر الواحد للقائمة المغلقة
+و`stripSatrBlocks(text)` (كتلة مغلقة أو مقصوصة بلا إغلاق، بسمات أو بلا)، ويستعملها القارئان لنصّ **المستخدم**
+وحده — نصّ المساعد يبقى حرفياً. `<satr_conversation_history>` ليست في القائمة عمداً: علامة حقن يعلنها القارئ
+(`injected_history`) لا كتلة تُنزع. **حدّ مُصرَّح به**: `codexsessions.js` و`kimi.js` لهما نزعٌ خاص بأغلفة
+محرّكيهما ولم يُوحَّدا هنا. الحارس: `test:satrblocks` (18 فحصاً) + حالة في `test:conversations`.

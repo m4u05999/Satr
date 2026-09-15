@@ -411,7 +411,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
   let claudeDynamicModels = [];
   async function refreshClaudeModels() {
     try {
-      const result = await window.satr.claudeModels();
+      // cwd المشروع الحالي كي يسري سقفا الجهد في إعداداته (OBS-196 — كان يُطلب بلا مشروع)
+      const result = await window.satr.claudeModels($('cwd').value.trim());
       const list = result && result.ok === true && Array.isArray(result.models) ? result.models : [];
       if (list.length) {
         claudeDynamicModels = list.map((model) => ({
@@ -420,6 +421,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
           description: model.description || '',
           // OBS-063 مرشّح (أ): حقل اختياري في العقد — غيابه يعني «لم يعلن» لا «لا يدعم»
           effortLevels: Array.isArray(model.effortLevels) ? model.effortLevels : [],
+          // OBS-196: وسم المستويات الجلسيّة (`max` لا يُكتب في الإعدادات) — يُعرض في المنتقي
+          effortLevelInfo: Array.isArray(model.effortLevelInfo) ? model.effortLevelInfo : [],
         }));
       }
     } catch (e) { /* تبقى قائمة Claude الثابتة */ }
@@ -715,16 +718,31 @@ import { createPreviewShield } from './lib/preview-shield.js';
     const levels = engine === 'codex' ? model.efforts : model.effortLevels;
     return Array.isArray(levels) && levels.length ? levels : null;
   }
+  // OBS-196: المستويات الجلسيّة كما يعلنها المحرك (`effortLevelInfo[].sessionOnly`) — `max` يعمل
+  // في هذه الجلسة ولا يُكتب في إعدادات Claude؛ يُقال في المنتقي بلا تخمين من الواجهة.
+  function declaredSessionOnlyLevels() {
+    if ($('engine').value !== 'sdk' || !claudeDynamicModels.length) return new Set();
+    const model = claudeDynamicModels.find((item) => item.value === $('model').value);
+    const info = model && Array.isArray(model.effortLevelInfo) ? model.effortLevelInfo : [];
+    return new Set(info.filter((item) => item && item.sessionOnly === true && typeof item.level === 'string')
+      .map((item) => item.level));
+  }
   function rebuildEfforts() {
     const effortSelect = $('effort');
     const previous = effortSelect.value;
     const declared = declaredEffortLevels();
+    const sessionOnly = declaredSessionOnlyLevels();
     const values = declared ? ['', ...declared] : EFFORT_CYCLE;
     effortSelect.innerHTML = '';
     for (const value of [...new Set(values)]) {
       const option = document.createElement('option');
       option.value = value;
       option.textContent = EFFORT_LABELS[value] || value;
+      if (sessionOnly.has(value)) {
+        // اللاحقة بعد « — » كي يبقى الاسم المختصر (effortShort) كما هو في شريط الوعي
+        option.textContent += ' — لهذه الجلسة فقط';
+        option.title = 'مستوى جلسيّ: يسري على هذه الجلسة ولا يُحفظ في إعدادات Claude';
+      }
       effortSelect.appendChild(option);
     }
     if ([...effortSelect.options].some((option) => option.value === previous)) effortSelect.value = previous;
@@ -768,6 +786,11 @@ import { createPreviewShield } from './lib/preview-shield.js';
     rebuildEfforts();
     syncAwareness();
   }
+  // OBS-196: تغيير مجلد المشروع يغيّر سقفَي الجهد في إعداداته ⇒ تُعاد قائمة Claude به.
+  // معالج مسمّى عمداً: `conversation-ui-test` يبدأ مقطعاً عند أول `$('cwd').addEventListener('change', () => {`
+  // في هذا الملف، وصياغة سهم هنا كانت تسبق تلك المرساة فتضمّ المقطعُ نصف القشرة.
+  function refreshModelsForProject() { if ($('engine').value === 'sdk') refreshEngineModels('sdk'); }
+  $('cwd').addEventListener('change', refreshModelsForProject);
   async function loadProviders() {
     const sel = $('engine');
     let list = [];
@@ -1746,6 +1769,11 @@ import { createPreviewShield } from './lib/preview-shield.js';
       paintDesktopControl(); // الجلسة ثبّتت قرار سطح ويندوز ⇒ «يسري مع الجلسة القادمة» في اللوحة
       // 1.3: مؤشر الاستئناف يكتبه المحوّل نفسه على القرص (chats.save) — لا حفظ هنا
     } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
+      // OBS-193: رمز `assistant.error` مترجَماً (engine_error) — يُحفظ ليُقدَّم في نتيجة الدور
+      // بدل النصّ الإنجليزي الخام (النتيجة تصل بعده حاملةً النصّ نفسه بلا رمز).
+      if (ev.engine_error && typeof ev.engine_error.message === 'string' && !ev.parent_tool_use_id) {
+        block.engineErrorMessage = ev.engine_error.message;
+      }
       // parent_tool_use_id (المرحلة 14.2): رسائل الوكيل الفرعي تتوجه لبطاقة وكيلها
       for (const c of ev.message.content) {
         if (c.type === 'text' && c.text && c.text.trim()) block.addText(c.text, ev.parent_tool_use_id, c.phase || ev.phase);
@@ -1779,6 +1807,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
         // خطأ شبكة مصنَّف في main.js: السبب العربي أولاً ثم النصّ الأصلي سطراً تقنياً.
         if (ev.net && ev.net.message) block.error(ev.net.message + '\n' + String(ev.result));
         else if (deadSessionRecovery(ev.result)) block.error(conversationId ? 'تعذّر استئناف جلسة المحرك؛ سياق المحادثة محفوظ، أعد الإرسال.' : 'تعذّر استئناف الجلسة السابقة — بدأت جلسة جديدة، أعد الإرسال.');
+        // OBS-193: رمز المحرّك المترجَم من رسالة assistant السابقة يسبق التخمين من النصّ
+        else if (block.engineErrorMessage) block.error(block.engineErrorMessage + '\n' + String(ev.result));
         else if (isClaudeAuthError(ev.result)) block.error(claudeAuthErrorMessage());
         else block.error(String(ev.result));
       }

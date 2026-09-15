@@ -337,6 +337,24 @@ async function testMainSanitization() {
     [{ maxEffortLevel: 'xhigh', modelSettings: { sonnet: { maxEffortLevel: 'low' } } }]));
   assert.deepEqual(new Map(modelCapped.models.map((m) => [m.value, m])).get('sonnet').effortLevels, ['low'],
     'سقف النموذج لم يغلب السقف العام');
+  // cwd المشروع يصل المعالج فيسري سقف `.claude/settings.json` فيه (كان حدّاً مُصرَّحاً به في OBS-196)
+  const projectDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'satr-effort-project-'));
+  try {
+    fs.mkdirSync(path.join(projectDir, '.claude'));
+    fs.writeFileSync(path.join(projectDir, '.claude', 'settings.json'), JSON.stringify({ maxEffortLevel: 'medium' }));
+    const projectCapped = plain(await contract.handleClaudeModelsRequest({
+      async claudeModels() { return { ok: true, models: effortRaw }; },
+    }, projectDir));
+    assert.deepEqual(new Map(projectCapped.models.map((m) => [m.value, m])).get('sonnet').effortLevels, ['low', 'medium'],
+      'سقف إعدادات المشروع لم يسرِ رغم تمرير cwd');
+    const noCwd = plain(await contract.handleClaudeModelsRequest({
+      async claudeModels() { return { ok: true, models: effortRaw }; },
+    }, ''));
+    assert.deepEqual(new Map(noCwd.models.map((m) => [m.value, m])).get('sonnet').effortLevels,
+      ['low', 'medium', 'high', 'xhigh', 'max'], 'بلا cwd يبقى السلوك القديم (سقف المستخدم وحده)');
+  } finally {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  }
   const info = byValue.get('sonnet').effortLevelInfo;
   assert.ok(Array.isArray(info) && info.some((entry) => entry.level === 'max' && entry.sessionOnly === true),
     '`max` لم يُوسَم جلسياً في بيانات المنتقي');
@@ -494,7 +512,8 @@ function testUiAndIpcContracts() {
   const htmlSource = read('src/index.html');
   const preloadSource = read('electron/preload.js');
   const mainSource = read('electron/main.js');
-  assert.match(appSource, /window\.satr\.claudeModels\(\)/);
+  // cwd المشروع يُمرَّر لسقفَي الجهد في إعداداته (OBS-196)
+  assert.match(appSource, /window\.satr\.claudeModels\(\$\('cwd'\)\.value\.trim\(\)\)/);
   assert.match(appSource, /catch \(e\) \{ \/\* تبقى قائمة Claude الثابتة \*\//);
   assert.match(appSource, /localStorage\.getItem\('satr_fallback_model'\)/);
   assert.match(appSource, /fallbackModel: engine === 'sdk' \? \$\('fallbackModel'\)\.value : ''/);
@@ -511,9 +530,10 @@ function testUiAndIpcContracts() {
   assert.match(htmlSource, /<option value="">بلا<\/option>/);
   assert.match(htmlSource, /id="claudeAccountEmail"/);
   assert.doesNotMatch(htmlSource.slice(htmlSource.indexOf('id="claudeAccountSection"'), htmlSource.indexOf('id="activitySection"')), /token|secret|apiKey|internalId/i);
-  assert.match(preloadSource, /claudeModels: \(\) => ipcRenderer\.invoke\('satr:claudeModels'\)/);
+  // cwd يُمرَّر لسقفَي المشروع (OBS-196) — الواجهة تطلب القائمة بمجلد المشروع الحالي
+  assert.match(preloadSource, /claudeModels: \(cwd\) => ipcRenderer\.invoke\('satr:claudeModels', \{ cwd \}\)/);
   assert.match(preloadSource, /claudeAccount: \(\) => ipcRenderer\.invoke\('satr:claudeAccount'\)/);
-  assert.match(mainSource, /ipcMain\.handle\('satr:claudeModels', \(\) => handleClaudeModelsRequest\(\)\)/);
+  assert.match(mainSource, /ipcMain\.handle\('satr:claudeModels', \(event, p\) => handleClaudeModelsRequest\(agent,/);
   assert.match(mainSource, /ipcMain\.handle\('satr:claudeAccount', \(\) => handleClaudeAccountRequest\(\)\)/);
 }
 
