@@ -120,6 +120,7 @@ const EXPECTED_CHECKS = [
   'eight-badges',
   'live-replace-semantics',
   'finished-not-redecided',
+  'live-findings-summary-and-resume',
   'permission-wait-and-clear',
   'stop-request-and-fail-return',
   'zero-height-when-empty',

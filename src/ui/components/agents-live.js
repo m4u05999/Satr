@@ -253,8 +253,11 @@ class SatrAgentsLive extends HTMLElement {
     if (!row) {
       row = this._createRow(taskId);
       this._rows.set(taskId, row);
-    } else if (resumed) {
-      // الاستئناف يحيي الصف نفسه ولا يُنشئ ثانياً (‏`taskId` مستقرّ عبر `SendMessage`)
+    } else if (resumed || row.ended || (SAFE_TOOL_USE_ID.test(String(ev.toolUseId || '')) && ev.toolUseId !== row.toolUseId)) {
+      // الاستئناف يحيي الصف نفسه ولا يُنشئ ثانياً (‏`taskId` مستقرّ عبر `SendMessage`).
+      // القبول الحي (2026-09-15): الاستئناف يصل من Query **جديدة** لم ترَ البداية فيأتي
+      // `resumed:false` — الصف هنا يعرف أكثر من المحرّك: بداية ثانية لصف قائم (منتهٍ أو
+      // بمعرّف أداة مختلف) استئنافٌ مهما قال العلم.
       row.resumes += 1;
     }
     row.ended = false;
@@ -315,12 +318,13 @@ class SatrAgentsLive extends HTMLElement {
     if (!row) return false;
     // `local: true` ⇒ حسم محلي عند انتهاء Query أو إيقاف الدور، لا خبر من الوكيل نفسه
     const local = ev.local === true;
-    // **لا يُعاد حسم صفٍّ محسوم** (مراجعة القائد على PR #161): المحرّك يبثّ
-    // `finished{local:true}` عند انتهاء Query لكل مهمة رآها، فيصل لوكيلٍ أمامي أُنهي
-    // صفّه قبله بـ`updated{status:'completed'}` فيقلب «اكتمل» إلى «انتهى مع الدور» —
-    // تراجعٌ في الدقة لا تحديث. الاستثناء الوحيد: صفٌّ منتهٍ **بالحسم المحلي** يقبل
-    // خاتمةً حقيقية لاحقة (بلا `local`)، لأن إشعار الوكيل نفسه أدقّ من حسمنا عنه.
-    if (row.ended && !(row.endKind === 'local' && !local)) return false;
+    // **الحسم المحلي لا يُعيد حسم صفٍّ محسوم** (مراجعة القائد على PR #161): المحرّك يبثّ
+    // `finished{local:true}` عند انتهاء Query لكل مهمة رآها، فيصل لوكيلٍ أُنهي صفّه قبله
+    // فيقلب «اكتمل» إلى «انتهى مع الدور» — تراجعٌ في الدقة لا تحديث.
+    // أما الخاتمة **الحقيقية** (بلا `local`) فتُطبَّق دائماً ولو كان الصف منتهياً: القبول الحي
+    // (2026-09-15) أثبت أن `updated{completed}` يسبق `task_notification` بأجزاء الثانية، فرفضُها
+    // على صفٍّ أنهاه `updated` كان يُسقط الملخّص الختامي (ردّ الوكيل) إلى الأبد.
+    if (row.ended && local) return false;
     if (SAFE_TOOL_USE_ID.test(String(ev.toolUseId || ''))) row.toolUseId = ev.toolUseId;
     const summary = safeText(String(ev.summary || ''));
     if (summary) row.summary = summary;
