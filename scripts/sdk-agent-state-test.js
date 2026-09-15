@@ -298,6 +298,43 @@ function testLocalFinish() {
   const before = resolved.events.length;
   resolved.controller.finish('failed');
   ok(resolved.events.length === before, 'لا حسم محلي مكرر لمهمة وصل إشعارها الختامي');
+
+  // ⭐ فحص طفرة (مراجعة القائد لـPR #160): الوكيل **الأمامي** — الحالة الأشيع — يُحسم بـ
+  // `task_updated` بحالة نهائية ولا يصله `task_notification` بالضرورة. بلا إضافته إلى
+  // `resolvedTaskIds` في `observe` يبثّ `finish()` له حسماً محلياً كاذباً فتقلب الواجهة
+  // «اكتمل» إلى «انتهى مع الدور».
+  for (const status of ['completed', 'failed', 'killed']) {
+    const foreground = makeController();
+    foreground.controller.observe(startedMessage({ is_backgrounded: false }));
+    foreground.controller.observe(updatedMessage({ status, end_time: 1789427515767 }));
+    const mark = foreground.events.length;
+    foreground.controller.finish('stopped');
+    ok(foreground.events.length === mark,
+      '⭐ طفرة: وكيل أمامي حُسم بـtask_updated{' + status + '} لا يُحسم محلياً عند نهاية Query');
+    ok(foreground.controller.ownsSdkTask(TASK_ID) === false,
+      'وكيل أمامي محسوم بـtask_updated{' + status + '} لم يعد مملوكاً');
+  }
+
+  // ...ومقابله المطلوب: مهمة لم تُحسم (أو حالة غير نهائية) يصلها الحسم المحلي فعلاً
+  for (const patch of [{ status: 'running' }, { status: 'paused' }]) {
+    const open = makeController();
+    open.controller.observe(startedMessage({ is_backgrounded: false }));
+    open.controller.observe(updatedMessage(patch));
+    open.controller.finish('stopped');
+    const local = open.events.filter((event) => event.type === 'sdk_agent_state' && event.kind === 'finished');
+    ok(local.length === 1 && local[0].local === true && local[0].status === 'stopped'
+      && local[0].taskId === TASK_ID,
+      'المهمة الحيّة بحالة ' + patch.status + ' يصلها حسم محلي واحد');
+  }
+
+  // والاستئناف بعد الحسم يعيدها حيّة، فتُحسم محلياً إن انتهت Query قبل نتيجتها
+  const revived = makeController();
+  revived.controller.observe(startedMessage({ is_backgrounded: false }));
+  revived.controller.observe(updatedMessage({ status: 'completed' }));
+  revived.controller.observe(startedMessage({ is_backgrounded: false, tool_use_id: TOOL_USE_B }));
+  revived.controller.finish('stopped');
+  ok(revived.events.filter((event) => event.type === 'sdk_agent_state' && event.kind === 'finished').length === 1,
+    'الاستئناف بعد حسم task_updated يعيد المهمة حيّة فتُحسم محلياً عند نهاية Query');
 }
 
 async function testStopPolicy() {

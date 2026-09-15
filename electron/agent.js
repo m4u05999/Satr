@@ -53,6 +53,10 @@ const SDK_TASK_NOTIFICATION_STATUSES = new Set(['completed', 'failed', 'stopped'
 const SDK_AGENT_TASK_TYPES = new Set(['local_agent', 'local_bash']);
 // حالات task_updated.patch.status كما تعلنها typings؛ ما خرج عنها يُسقط (قائمة سماح).
 const SDK_AGENT_UPDATE_STATUSES = new Set(['pending', 'running', 'completed', 'failed', 'killed', 'paused']);
+// الحالات النهائية منها: الوكيل **الأمامي** (‏is_backgrounded:false — الحالة الأشيع) يُحسم
+// بـtask_updated ولا يصله task_notification بالضرورة، فبدونها كان finish() يقلب «اكتمل»
+// إلى «انتهى مع الدور». `paused` ليست نهائية (الوكيل ينتظر لا ينتهي).
+const SDK_AGENT_TERMINAL_UPDATE_STATUSES = new Set(['completed', 'failed', 'killed']);
 const MAX_SDK_SPAWN_DEPTH = 16;
 
 // أدوات تعديل الملفات التي نعرض لها فرقاً (Diff) — المرحلة 3
@@ -736,6 +740,16 @@ function createSdkBackgroundController({ query, emit, closeInput, holdInput, iso
       if (backgroundedByModel) {
         modelBackgroundedTasks.add(taskId);
         noteModelLive(taskId);
+      }
+      // مراجعة القائد لـPR #160: الوكيل الأمامي يُحسم بـ`task_updated` بحالة نهائية ولا يصله
+      // `task_notification` بالضرورة. بلا هذا يبقى في `seenStartedTaskIds` خارج
+      // `resolvedTaskIds`، فيبثّ `finish()` له `finished{local:'failed'|'stopped'}` كاذباً
+      // فتقلب الواجهة «اكتمل» إلى «انتهى مع الدور». الاستئناف يبقى يعيده حيّاً (‏`task_started`
+      // أعلاه يحذفه من `resolvedTaskIds`).
+      if (message.subtype === 'task_updated' && seenStartedTaskIds.has(taskId)
+        && SDK_AGENT_TERMINAL_UPDATE_STATUSES.has(message.patch && message.patch.status)) {
+        resolvedTaskIds.add(taskId);
+        dropModelLive(taskId);
       }
     }
     if (message.type !== 'system' || message.subtype !== 'task_notification') return;
