@@ -173,4 +173,5 @@ function injectFiles(prompt, cwd) {
 
 // resolveInside/looksBinary/readCapped تُصدَّر ليعيد files.js (عارض القراءة — 1.2)
 // استخدام نفس كود الأمان بلا تكرار
-module.exports = { injectFiles, resolveInside, looksBinary, readCapped, MAX_FILE, MAX_TOTAL, MAX_FILES };
+// langOf تُصدَّر لـattachments.js (المرفقات النصّية تُحقن بالصيغة نفسها)
+module.exports = { injectFiles, resolveInside, looksBinary, readCapped, langOf, MAX_FILE, MAX_TOTAL, MAX_FILES };

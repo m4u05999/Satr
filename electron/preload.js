@@ -67,6 +67,9 @@ contextBridge.exposeInMainWorld('satr', {
   listKimiSessions: () => ipcRenderer.invoke('satr:listKimiSessions'),
   readKimiSession: (id) => ipcRenderer.invoke('satr:readKimiSession', { id }),
   listFiles: (cwd) => ipcRenderer.invoke('satr:listFiles', cwd),
+  // مرفقات من أي نوع (دفعة 2026-09-17): غير النصّي يُنسخ إلى <cwd>/.satr/attachments ويُعاد مساره النسبي
+  saveAttachment: (cwd, name, data) => ipcRenderer.invoke('satr:saveAttachment', { cwd, name, data }),
+  removeAttachment: (cwd, rel) => ipcRenderer.invoke('satr:removeAttachment', { cwd, rel }),
   readFile: (cwd, rel) => ipcRenderer.invoke('satr:readFile', { cwd, rel }), // عارض القراءة (1.2)
   writeFile: (cwd, rel, content, version) => ipcRenderer.invoke('satr:writeFile', { cwd, rel, content, version }), // تحرير خفيف في العارض (الدفعة 4)
   searchFiles: (cwd, query) => ipcRenderer.invoke('satr:searchFiles', { cwd, query }), // بحث محتوى المشروع (الدفعة 4.6)

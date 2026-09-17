@@ -26,7 +26,8 @@ async function sizeForEvidence(win, width, height) {
   win.setContentSize(width, height);
   for (let attempt = 0; attempt < 100; attempt++) {
     const actual = await win.webContents.executeJavaScript('({ width: innerWidth, height: innerHeight })', true);
-    if (actual.width === width && actual.height === height) return;
+    // OBS-220: مقياس شاشة ويندوز غير 100٪ يعيد أبعاداً تفرق بكسلاً أو اثنين — تسامح ≤2px
+    if (Math.abs(actual.width - width) <= 2 && Math.abs(actual.height - height) <= 2) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('لم تستقر أبعاد لقطة التشخيص.');

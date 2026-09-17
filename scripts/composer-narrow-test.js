@@ -81,6 +81,10 @@ async function measure(win) {
         clipped, maskImage, afterWidth,
       },
       footerHeight: document.querySelector('footer') ? document.querySelector('footer').clientHeight : -1,
+      // دفعة ضغط المؤلّف (2026-09-17): شريط الأدوات وشريط الوعي على صف واحد حين يتّسع العمود
+      toolsTop: Math.round(document.querySelector('.composer-tools').getBoundingClientRect().top),
+      barTop: Math.round(bar.getBoundingClientRect().top),
+      toolbarRows: Math.round(document.querySelector('.composer-toolbar').getBoundingClientRect().height / 26),
     };
   })()`);
 }
@@ -113,7 +117,9 @@ async function main() {
     await pause(260);
     for (const [width, height] of SIZES) {
       win.setContentSize(width, height);
-      await waitFor(win, 'innerWidth === ' + width, 'استقرار العرض ' + width);
+      // OBS-220: تحت مقياس شاشة ويندوز غير 100٪ يعيد setContentSize عرضاً يفرق بكسلاً أو اثنين
+      // (‏844 ⇒ 846 مقيس) فلا يستقر «===» أبداً — تسامح ≤2px لا يغيّر ما يُقاس.
+      await waitFor(win, 'Math.abs(innerWidth - ' + width + ') <= 2', 'استقرار العرض ' + width);
       await pause(180);
       const m = await measure(win);
       const engineOk = m.engine.ratio >= TEXT_RATIO_MIN || m.engine.titleMatches;
@@ -139,6 +145,15 @@ async function main() {
       if (!barOk) {
         failures.push('#awarenessBar عند ' + width + '×' + height + ': scrollWidth=' + m.bar.scrollWidth
           + ' مقابل clientWidth=' + m.bar.clientWidth + ' بلا دلالة قصّ — OBS-174');
+      }
+      // ضغط المؤلّف (2026-09-17): عند 1920 (العمود ≥ 720px حتى مع غرفة العمليات) الشريطان على صف
+      // واحد (فرق الأعلى ≤ 4px) والمؤلّف كله ≤ 140px — كان 182px بأربعة صفوف قبل الدفعة.
+      if (width >= 1920) {
+        const sameRow = Math.abs(m.toolsTop - m.barTop) <= 4;
+        console.log('    الصف الواحد: toolsTop=' + m.toolsTop + '، barTop=' + m.barTop + '، footer=' + m.footerHeight + 'px ⇒ '
+          + (sameRow ? 'صف واحد' : 'صفّان'));
+        if (!sameRow) failures.push('شريط الأدوات وشريط الوعي على صفّين عند ' + width + ' — عاد المؤلّف إلى أربعة صفوف');
+        if (m.footerHeight > 140) failures.push('ارتفاع المؤلّف ' + m.footerHeight + 'px > 140 عند ' + width + ' — تراجع ضغط المؤلّف');
       }
     }
     assert.deepStrictEqual(failures, [],

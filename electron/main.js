@@ -291,6 +291,7 @@ const opsPlanner = opsPlannerModule.create({ runner: sdkPlannerRunner });
 // غرفة العمليات بلا مسار ثانٍ يتباعد عنها.
 const reviewChanges = reviewChangesModule.create({ resolveEngine: resolveOpsRoomRunner });
 const inject = require('./inject');
+const attachments = require('./attachments'); // مرفقات من أي نوع (دفعة 2026-09-17)
 const chats = require('./chats');
 const agentTools = require('./tools'); // أدوات المحوّلات (2.1/2.2) — للتراجع عن تعديلاتها
 const features = require('./features');
@@ -2881,8 +2882,6 @@ ipcMain.handle('satr:rewindFiles', async (event, payload) => runSdkSessionContro
 async function handleSendRequest(event, payload, requestEpoch) {
   const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : '';
   const images = sanitizeImages(payload.images);
-  // يُسمح بطلب بلا نص إن رافقته صورة («صف هذه الصورة» مثلاً)
-  if (!prompt && !images.length) return { error: 'empty_prompt' };
   if (sdkSessionControlBusy) {
     return { error: 'session_control_busy', message: 'انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل إرسال طلب جديد.' };
   }
@@ -2893,6 +2892,10 @@ async function handleSendRequest(event, payload, requestEpoch) {
   } catch {
     return { error: 'bad_cwd', message: 'مجلد المشروع غير موجود: ' + cwd };
   }
+  // مرفقات من أي نوع (دفعة 2026-09-17): تُنقّى بعد ثبوت cwd لأن المنسوخ يُتحقق من وجوده تحته
+  const messageAttachments = attachments.sanitizeAttachments(payload.attachments, cwd);
+  // يُسمح بطلب بلا نص إن رافقته صورة أو مرفق («صف هذه الصورة» · «لخّص هذا الملف»)
+  if (!prompt && !images.length && !messageAttachments.length) return { error: 'empty_prompt' };
 
   // إصلاح الموثوقية (2026-07-30): سقف دفاعي — تعليق إيقاف الدور السابق (قناة محرك
   // ميتة) كان يحبس sendRequestBusy إلى الأبد فترتد كل الرسائل بـ«انتظر اكتمال بدء
@@ -2979,9 +2982,15 @@ async function handleSendRequest(event, payload, requestEpoch) {
   const continuityRestart = continuity ? () => conversationBridge.restart(continuity.runId) : undefined;
   const browserBudget = browserBudgetFor(runEngine, activeSessionId);
   const priorVerification = activeSessionId ? checkpoints.consumeVerification(runEngine, activeSessionId) : '';
+  // المرفقات تسبق نصّ المستخدم لكل المحركات: النصّي محقون كاملاً، والمنسوخ بمساره (المحوّل الأعمى
+  // يُبلَّغ أنه لا يقرأه). تُعرَض للمحرك فقط — الواجهة تعرض نصّ المستخدم الخام مع أسماء المرفقات.
+  const adapterMeta = adapters.get(payload.engine) ? adapters.list().find((p) => p.name === payload.engine) : null;
+  const promptWithAttachments = attachments.applyToPrompt(prompt, messageAttachments, {
+    blind: !!adapters.get(payload.engine) && (!adapterMeta || adapterMeta.family !== 'claude'),
+  });
   const enginePrompt = priorVerification
-    ? '<satr_verification_result>\n' + priorVerification + '\n</satr_verification_result>\n\n' + prompt
-    : prompt;
+    ? '<satr_verification_result>\n' + priorVerification + '\n</satr_verification_result>\n\n' + promptWithAttachments
+    : promptWithAttachments;
   const runId = 'run-' + token;
   checkpoints.begin({ runId, engine: runEngine, sessionId: activeSessionId, cwd });
   beginMobileRunState(cwd);
@@ -3967,6 +3976,17 @@ ipcMain.handle('satr:readKimiSession', (event, p) => kimi.readSession(p && p.id)
 ipcMain.handle('satr:listFiles', (event, cwd) => {
   const dir = typeof cwd === 'string' && cwd.trim() ? cwd.trim() : os.homedir();
   return files.listFiles(dir);
+});
+
+// مرفقات من أي نوع (دفعة 2026-09-17): غير النصّي يُنسخ إلى <cwd>/.satr/attachments — التنقية كلها في
+// attachments.js (اسم مجرّد بلا مسار ولا محارف تحكم، سقف 20 م.ب، مسار مُعاد تحت المجلد حصراً).
+ipcMain.handle('satr:saveAttachment', (event, payload) => {
+  const p = payload || {};
+  return attachments.saveAttachment(p.cwd, p.name, p.data);
+});
+ipcMain.handle('satr:removeAttachment', (event, payload) => {
+  const p = payload || {};
+  return attachments.removeAttachment(p.cwd, p.rel);
 });
 
 // ---------- ذاكرة المحوّلات (الدفعة 1.3): مؤشر آخر جلسة لكل مزوّد ----------

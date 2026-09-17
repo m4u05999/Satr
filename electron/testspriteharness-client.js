@@ -88,6 +88,13 @@
     verifyCheckpoint: async () => ({ ok: false, error: 'disabled_in_harness' }),
     verifyConfigCreate: async () => ({ ok: false, error: 'disabled_in_harness' }),
     listFiles: async () => ['src/index.html', 'src/ui/app.js', 'src/styles/base.css'],
+    // المرفقات غير النصّية (دفعة 2026-09-17): محاكاة النسخ إلى .satr/attachments بلا قرص
+    saveAttachment: async function saveAttachment(_cwd, name, data) {
+      remember('saveAttachment', [name, typeof data === 'string' ? data.length : -1]);
+      const safe = String(name || 'file').replace(/[\\/]/g, '_');
+      return { ok: true, rel: '.satr/attachments/' + safe, name: safe, bytes: typeof data === 'string' ? Math.floor(data.length * 3 / 4) : 0 };
+    },
+    removeAttachment: async function removeAttachment(_cwd, rel) { remember('removeAttachment', [rel]); return { ok: true }; },
     searchFiles: async () => ({ ok: true, results: [] }),
     readFile: async (_cwd, rel) => ({ ok: true, rel, content: 'TestSprite harness: قراءة تجريبية فقط.', version: 'harness' }),
     writeFile: async () => ({ ok: false, error: 'disabled_in_harness' }),

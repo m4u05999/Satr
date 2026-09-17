@@ -703,7 +703,10 @@ class SatrChat extends HTMLElement {
       who.appendChild(badge);
       component.dispatchEvent(new CustomEvent('user-edit', {
         bubbles: true,
-        detail: { text: text || '', images: Array.isArray(images) ? images.slice() : [] },
+        detail: {
+          text: text || '', images: Array.isArray(images) ? images.slice() : [],
+          attachments: meta && Array.isArray(meta.attachments) ? meta.attachments.slice() : [],
+        },
       }));
     });
     const fork = document.createElement('button'); fork.type = 'button'; fork.className = 'msg-user-fork';
@@ -770,6 +773,19 @@ class SatrChat extends HTMLElement {
         ic.appendChild(im);
       }
       w.appendChild(ic);
+    }
+    // مرفقات غير الصور (دفعة 2026-09-17): أسماؤها فقط — محتواها يذهب للمحرك لا للخيط
+    const files = meta && Array.isArray(meta.attachments) ? meta.attachments.filter((f) => f && f.name) : [];
+    if (files.length) {
+      const list = document.createElement('div'); list.className = 'msg-attachments';
+      list.setAttribute('role', 'list'); list.setAttribute('aria-label', 'المرفقات');
+      for (const f of files) {
+        const chip = document.createElement('span'); chip.className = 'msg-attachment'; chip.setAttribute('role', 'listitem');
+        chip.textContent = (f.kind === 'file' ? '📦 ' : '📄 ') + f.name;
+        chip.title = f.kind === 'file' ? 'نُسخ إلى ' + (f.rel || '') : 'حُقن محتواه في الطلب';
+        list.appendChild(chip);
+      }
+      w.appendChild(list);
     }
     thread.appendChild(w);
     if (meta && meta.messageId) bindUserMessageElement(w, meta.messageId, meta.sessionId, meta.cwd);

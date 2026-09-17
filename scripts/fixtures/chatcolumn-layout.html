@@ -25,7 +25,11 @@
     <span id="bgChips" class="bg-chips"></span>
     <button id="bgKillAll" type="button">إيقاف الكل</button>
   </div>
-  <div id="attachments" class="attachments" role="group" aria-label="الصور المرفقة"></div>
+  <div id="attachments" class="attachments" role="group" aria-label="المرفقات"></div>
+  <!-- صف الأدوات الواحد (دفعة ضغط المؤلّف 2026-09-17): شريط المحرك/النموذج/الإرفاق وشريط الوعي
+       عنصران مستقلان (لهما حراسهما وأسماؤهما الوصولية) داخل غلاف flex واحد يلتفّ عند الضيق —
+       من أربعة صفوف إلى ثلاثة كي لا يضيق المؤلّف على المحادثة فوقه. -->
+  <div class="composer-toolbar">
   <!-- شريط المؤلّف (§5-د): محرك/نموذج + إرفاق، بجوار الإرسال (نمط Cursor) -->
   <div class="composer-tools">
     <!-- label for لا span: التسمية البصرية تُخفى عند ضيق العمود (base.css:664)،
@@ -40,19 +44,20 @@
     </select>
     <label for="model" class="ct-label">النموذج</label>
     <select id="model" title="النموذج" aria-label="النموذج"><option value="">الافتراضي</option></select>
-    <button id="attachBtn" type="button" title="إرفاق صورة من الجهاز (للمحركات الداعمة للصور)">📎 إرفاق</button>
-    <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+    <button id="attachBtn" type="button" title="إرفاق ملفات من الجهاز: الصور للمحركات الداعمة، والنصوص تُحقن في الطلب، وسواها يُنسخ إلى .satr/attachments في المشروع">📎 إرفاق</button>
+    <input id="fileInput" type="file" multiple hidden aria-label="اختيار ملفات للإرفاق">
   </div>
   <!-- شريط الوعي: ما لا يظهر في صف المحرك/النموذج أعلاه فقط — أُزيل «model:» المكرّر
        (منتقي النموذج بجواره يعرض الاسم الكامل)، وعُرّبت التسميات (القاعدة 3) -->
+  <!-- role=group لا status (OBS-188، قرار المالك ٤): أزرار التدوير الأربعة أدناه يغيّر
+       نقرها نصّها، فـstatus يجعل الشريط منطقة حيّة تُعلَن عند كل نقرة — ضجيج لا خبر.
+       group يُبقي aria-label اسماً للمجموعة بلا إعلان تلقائي. لا تُضِف aria-live. -->
   <div id="awarenessBar" class="awareness-bar" role="group" aria-label="حالة الدور الحالية">
     <button id="awarenessEffort" type="button" title="تدوير جهد التفكير">الجهد: الافتراضي</button>
-    <span aria-hidden="true">·</span>
     <button id="awarenessThinking" type="button" title="تفعيل/تعطيل التفكير الحي (Kimi Code)">التفكير: —</button>
-    <span aria-hidden="true">·</span>
     <button id="awarenessPerm" type="button" title="تدوير وضع الأذونات الآمن">الأذونات: افتراضي</button>
-    <span aria-hidden="true">·</span>
     <button id="awarenessContext" type="button" title="فتح لوحة السياق">السياق: —</button>
+  </div>
   </div>
   <!-- دفعة E: اقتراح Claude يملأ المحرّر فقط ولا يرسل -->
   <button id="promptSuggestion" class="prompt-suggestion" type="button" hidden>

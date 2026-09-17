@@ -59,3 +59,6 @@ paths:
 - `docs/internals/80-agents-live.md` — سطح الوكلاء الفرعيين الأحياء `<satr-agents-live>` خارج كتلة الدور:
   مفتاحه `taskId` (الاستئناف لا يُنشئ صفاً ثانياً)، وتوجيه `sdk_agent_state` **قبل** حارس الكتلة في
   `app.js`، وحدث `perm-answered` في `perm-dialog.js` — يحرسه `npm run test:agents-live-ui` (‏OBS-207/151، 2026-09-15)
+- `docs/internals/81-composer-compact-attachments.md` — ضغط المؤلّف إلى ثلاثة صفوف (غلاف .composer-toolbar) وإرفاق أي ملف
+  (composer.addAnyFile · attachments.js · قناتا saveAttachment/removeAttachment) — يحرسه `npm run test:attachments`
+  و`npm run test:composer-attach` وقياس الصف الواحد في `test:composer-narrow` (طلب المالك، 2026-09-17)

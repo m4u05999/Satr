@@ -88,3 +88,4 @@
 | 78 | [`78-radar-sync-and-lock-audit.md`](78-radar-sync-and-lock-audit.md) | مزامنة الرادار (الأعداد ٠٠٦–٠١٠ ودمج state.json) ورفع خمس حزم تشغيلية في القفل وحده وتدقيق dev/تشغيلي (2026-09-13) | 11.3 ك.ب |
 | 79 | [`79-release-uia-helper.md`](79-release-uia-helper.md) | شحن المعين satr-uia في مثبّت الإصدار — بناء NativeAOT داخل وظيفة release وحارس test:release-uia (‏OBS-161 — 2026-09-13) | 6.4 ك.ب |
 | 80 | [`80-agents-live.md`](80-agents-live.md) | سطح الوكلاء الفرعيين الأحياء `<satr-agents-live>` خارج كتلة الدور — مفتاحه taskId وحارسه البكسلي (‏OBS-207/151 — 2026-09-15) | 11.4 ك.ب |
+| 81 | [`81-composer-compact-attachments.md`](81-composer-compact-attachments.md) | ضغط المؤلّف إلى ثلاثة صفوف (182⇒124px) وإرفاق أي ملف (نصّي يُحقن / غير نصّي يُنسخ إلى .satr/attachments) مع حارسَي test:attachments وtest:composer-attach (طلب المالك — 2026-09-17) | 7.5 ك.ب |
