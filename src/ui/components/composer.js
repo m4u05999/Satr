@@ -155,7 +155,7 @@ class SatrComposer extends HTMLElement {
     const id = 'att_' + Math.random().toString(36).slice(2);
     const textual = bytes.length <= MAX_TEXT_BYTES && (TEXT_EXT.test(file.name) || looksText(bytes)) && looksText(bytes);
     if (textual) {
-      const text = new TextDecoder('utf-8').decode(bytes).replace(/^﻿/, '');
+      const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
       pendingFiles.push({ id, kind: 'text', name: file.name, text, bytes: bytes.length });
       renderAttachments();
       return;
