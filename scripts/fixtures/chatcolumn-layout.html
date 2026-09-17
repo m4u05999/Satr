@@ -44,8 +44,6 @@
     </select>
     <label for="model" class="ct-label">النموذج</label>
     <select id="model" title="النموذج" aria-label="النموذج"><option value="">الافتراضي</option></select>
-    <button id="attachBtn" type="button" title="إرفاق ملفات من الجهاز: الصور للمحركات الداعمة، والنصوص تُحقن في الطلب، وسواها يُنسخ إلى .satr/attachments في المشروع">📎 إرفاق</button>
-    <input id="fileInput" type="file" multiple hidden aria-label="اختيار ملفات للإرفاق">
   </div>
   <!-- شريط الوعي: ما لا يظهر في صف المحرك/النموذج أعلاه فقط — أُزيل «model:» المكرّر
        (منتقي النموذج بجواره يعرض الاسم الكامل)، وعُرّبت التسميات (القاعدة 3) -->
@@ -68,6 +66,9 @@
     <div id="slashMenu" data-preview-overlay role="listbox"></div>
     <div id="fileMenu" data-preview-overlay role="listbox"></div>
     <textarea id="input" placeholder="اكتب طلبك… (Enter للإرسال، Shift+Enter لسطر جديد، / للأوامر، @ للملفات)" rows="1" spellcheck="true"></textarea>
+    <!-- زر الإرفاق أيقونةً في صف الكتابة على يسار المحرّر (طلب المالك 2026-09-17) — يحرّر صف الأدوات -->
+    <button id="attachBtn" type="button" aria-label="إرفاق ملفات" title="إرفاق ملفات من الجهاز: الصور للمحركات الداعمة، والنصوص تُحقن في الطلب، وسواها يُنسخ إلى .satr/attachments في المشروع">📎</button>
+    <input id="fileInput" type="file" multiple hidden aria-label="اختيار ملفات للإرفاق">
     <button id="browserCtl" type="button" aria-pressed="false" title="وضع تحكّم المتصفح: امنح المحرك الأصلي صلاحية قيادة المعاينة (يوافق تلقائياً على أفعال المتصفح فقط)">🖱️ متصفح</button>
     <button id="send">إرسال</button>
   </div>

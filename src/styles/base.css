@@ -683,6 +683,9 @@
   /* وضع تحكّم المتصفح (نمط Comet): محايد افتراضياً، ذهبي بارز حين يكون مفعّلاً */
   #browserCtl { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; font-family: var(--sans); transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
   #browserCtl:hover { border-color: var(--gold); color: var(--text); }
+  /* زر الإرفاق أيقونةً في صف الكتابة (يسار المحرّر في RTL) — بارتفاع المحرّر الأدنى */
+  #attachBtn { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-3); font-size: 16px; line-height: 1; min-height: 46px; cursor: pointer; transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  #attachBtn:hover { border-color: var(--gold); color: var(--text); }
   #browserCtl.active { background: var(--gold-soft); color: var(--gold-strong); border-color: var(--gold-border); }
   /* صف الأدوات الواحد: شريط المحرك/النموذج/الإرفاق + شريط الوعي في غلاف flex يلتفّ عند الضيق.
      التسميات المرئية (.ct-label) مخفية في كل العروض — الاسم الوصولي باقٍ في aria-label (‏OBS-167)،
@@ -730,13 +733,13 @@
     /* OBS-168: نصف عرضٍ ضيّق أصلاً لا يسع اسم محرك واحداً — صفّ كامل للمنتقي
        (ومعه `title` ديناميكي في app.js لأن الصفّ الكامل وحده لا يبلغ عرض الاسم) */
     #engine { grid-column: 1 / -1; }
-    #attachBtn { grid-column: 1 / -1; }
     /* OBS-174: الالتفاف (صار افتراضياً في كل العروض أعلاه) — الشريط يأخذ الصف كاملاً هنا */
     .awareness-bar { flex: 1 1 100%; }
     .composer {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .composer textarea { grid-column: 1 / -1; width: 100%; }
+    #attachBtn { grid-column: 1 / -1; width: 100%; }
     #browserCtl, #send { width: 100%; }
     .statusline { font-size: 10.5px; }
   }

@@ -34,7 +34,11 @@ class SatrComposer extends HTMLElement {
         const w = input.clientWidth;
         if (!w) return; // مخفي — لا قرار
         const want = w < 700 ? SHORT_PLACEHOLDER : FULL_PLACEHOLDER;
-        if (input.getAttribute('placeholder') !== want) input.setAttribute('placeholder', want);
+        if (input.getAttribute('placeholder') !== want) {
+          input.setAttribute('placeholder', want);
+          // التلميح الطويل الملتفّ كان يرفع scrollHeight فيبقى المحرّر بسطرين بعد التبديل (مقيس 78px)
+          if (!input.value) autoResize();
+        }
       });
       placeholderRo.observe(input);
     }
