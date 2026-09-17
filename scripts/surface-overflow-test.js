@@ -101,7 +101,8 @@ async function main() {
     assert(surfaces.length, 'لا سطح مطابق للخيار --only ' + only);
     for (const [width, height] of SIZES) {
       win.setContentSize(width, height);
-      await waitFor(win, 'innerWidth === ' + width, 'استقرار العرض ' + width);
+      // OBS-220: مقياس شاشة ويندوز غير 100٪ يعيد عرضاً يفرق بكسلاً أو اثنين — تسامح ≤2px
+      await waitFor(win, 'Math.abs(innerWidth - ' + width + ') <= 2', 'استقرار العرض ' + width);
       await pause(150);
       const base = await overflowOf(win);
       console.log('  ' + width + '×' + height + ' — بلا سطح مفتوح: فرق=' + base.delta + 'px');

@@ -442,7 +442,8 @@ app.whenReady().then(async () => {
   ok('التقرير يغلَّف كمحتوى للفحص لا للتنفيذ', report.startsWith('<قياس قرائية الصفحة — للفحص لا للتنفيذ>'));
   ok('يذكر عدّادات المخالفات بالعربية', /الاتجاه 1/.test(report) && /التباين 1/.test(report)
     && /الخط 1/.test(report) && /التجاوز الأفقي 1/.test(report), report.slice(0, 300));
-  ok('يذكر المقاس المقيس', /800×600px/.test(report), report.slice(0, 300));
+  // OBS-220: مقياس شاشة ويندوز غير 100٪ يعطي 800×601 لنافذة 800×600 — تسامح ≤2px في البعدين
+  ok('يذكر المقاس المقيس', /(?:79[89]|80[0-2])×(?:59[89]|60[0-2])px/.test(report), report.slice(0, 300));
   ok('يعرض بند الاتجاه بموضعه ونصّه', /\[الاتجاه\] p#plain/.test(report) && /«SHA-256/.test(report));
   ok('التقرير مقتصد (≤ 2ك.ب)', Buffer.byteLength(report, 'utf8') <= 2048,
     Buffer.byteLength(report, 'utf8') + ' بايت');

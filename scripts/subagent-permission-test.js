@@ -55,10 +55,11 @@ function loadRuntime(root) {
     browserBudgetFor: () => ({}), browserBudgets: new Map(),
     trustedBrowserOrigins: new Set(),
     checkpoints: { begin() {}, bindSession() {}, consumeVerification: () => '', finish: () => null },
+    attachments: require('../electron/attachments'), // وحدة نقية — مرفقات الرسالة (دفعة 2026-09-17)
     sanitizeImages: () => [], sanitizeSkills: () => [], sanitizeExtraDirs: () => [],
     sanitizeClaudeFallbackModel: () => null,
     PERMISSION_MODES: new Set(['default']), EFFORT_LEVELS: new Set(),
-    kimi: { ENGINE_ID: 'kimi-code' }, adapters: { get: () => null },
+    kimi: { ENGINE_ID: 'kimi-code' }, adapters: { get: () => null, list: () => [] },
     nonSdkPerm: (mode) => mode,
     exported: {},
     agent: {

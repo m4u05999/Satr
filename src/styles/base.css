@@ -661,7 +661,9 @@
   /* ===== الإدخال + قائمة الأوامر ===== */
   /* منذ ت-10: footer داخل مكوّن satr-composer (بلا Shadow — غلاف شفاف للتخطيط) */
   satr-composer { display: contents; }
-  footer { border-top: 1px solid var(--border); background: var(--surface); padding: var(--space-3) var(--space-4) var(--space-3); position: relative; } /* خارج السلّم عمداً — التقريب يغيّر البصر المحروس */
+  /* دفعة ضغط المؤلّف (2026-09-17): كان 182px بأربعة صفوف في العرض الواسع؛ صار صف أدوات واحد +
+     المحرّر + سطر حالة رفيع. الأرقام قبل/بعد في docs/internals/81-composer-compact-attachments.md */
+  footer { border-top: 1px solid var(--border); background: var(--surface); padding: var(--space-2) var(--space-4) var(--space-2); position: relative; } /* خارج السلّم عمداً — التقريب يغيّر البصر المحروس */
   .composer { max-width: var(--column-max); margin: 0 auto; display: flex; gap: var(--space-2h); align-items: flex-end; position: relative; }
   .prompt-suggestion { max-width: var(--column-max); margin: 0 auto var(--space-2); display: flex; align-items: center; gap: var(--space-2);
     width: 100%; border: 1px solid var(--gold-border); border-radius: var(--radius-lg); padding: var(--space-2) var(--space-3);
@@ -673,7 +675,7 @@
   textarea {
     flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
     border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); font-family: var(--sans); font-size: 16px; line-height: 1.7;
-    resize: none; min-height: 52px; max-height: 220px; outline: none; unicode-bidi: plaintext;
+    resize: none; min-height: 46px; max-height: 220px; outline: none; unicode-bidi: plaintext;
     transition: border-color var(--dur) var(--ease);
   }
   #send { background: var(--gold); color: var(--on-gold); border: none; font-weight: 600; padding: var(--space-3) var(--space-5); border-radius: var(--radius-lg); }
@@ -681,29 +683,36 @@
   /* وضع تحكّم المتصفح (نمط Comet): محايد افتراضياً، ذهبي بارز حين يكون مفعّلاً */
   #browserCtl { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; font-family: var(--sans); transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
   #browserCtl:hover { border-color: var(--gold); color: var(--text); }
+  /* زر الإرفاق أيقونةً في صف الكتابة (يسار المحرّر في RTL) — بارتفاع المحرّر الأدنى */
+  #attachBtn { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-3); font-size: 16px; line-height: 1; min-height: 46px; cursor: pointer; transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+  #attachBtn:hover { border-color: var(--gold); color: var(--text); }
   #browserCtl.active { background: var(--gold-soft); color: var(--gold-strong); border-color: var(--gold-border); }
+  /* صف الأدوات الواحد: شريط المحرك/النموذج/الإرفاق + شريط الوعي في غلاف flex يلتفّ عند الضيق.
+     التسميات المرئية (.ct-label) مخفية في كل العروض — الاسم الوصولي باقٍ في aria-label (‏OBS-167)،
+     والمنتقي يقول محتواه بنفسه؛ إظهارها كان يكلّف ~80px تُخرج الصف عن 720px. */
+  .composer-toolbar { max-width: var(--column-max); margin: 0 auto var(--space-1h); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-1) var(--space-2); }
   /* شريط المؤلّف (§5-د-1): محرك/نموذج بجوار الإرسال */
-  .composer-tools { max-width: var(--column-max); margin: 0 auto var(--space-2); display: flex; gap: var(--space-1h); align-items: center; flex-wrap: wrap; }
-  .composer-tools .ct-label { font-size: 11.5px; color: var(--text-dim); }
-  .composer-tools select, .composer-tools button { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-lg); padding: var(--space-1h) var(--space-2h); font-size: 12.5px; font-family: var(--sans); outline: none; cursor: pointer; }
+  .composer-tools { flex: 1 1 auto; min-width: 0; display: flex; gap: var(--space-1); align-items: center; flex-wrap: wrap; }
+  .composer-tools .ct-label { display: none; font-size: 11.5px; color: var(--text-dim); }
+  .composer-tools select, .composer-tools button { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); font-size: 12px; font-family: var(--sans); outline: none; cursor: pointer; max-width: 16rem; }
   .composer-tools select:hover, .composer-tools button:hover { border-color: var(--gold); }
+  /* OBS-174: الالتفاف دائماً بدل قصٍّ صامت يخفي «الأذونات» و«السياق» — لا overflow-x */
   .awareness-bar {
-    max-width: var(--column-max); margin: 0 auto var(--space-2); display: flex; align-items: center; justify-content: flex-start;
-    gap: var(--space-1h); overflow-x: auto; color: var(--text-faint); font-size: 11px;
+    flex: 0 1 auto; min-width: 0; display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap;
+    gap: var(--space-1); row-gap: var(--space-1); color: var(--text-faint); font-size: 11px;
   }
-  .awareness-bar button { flex: none; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-dim); background: var(--surface-2); color: var(--text-dim); font-size: 11px; }
+  .awareness-bar button { flex: none; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-dim); background: var(--surface-2); color: var(--text-dim); font-size: 11px; border-radius: var(--radius-md); }
   .awareness-bar button:hover { border-color: var(--gold-border); color: var(--text); }
   #awarenessPerm.mode-warning { border-color: var(--gold-border); background: var(--gold-soft); color: var(--gold); }
   #awarenessPerm.mode-plan { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
   .ct-hint { font-size: 11.5px; color: var(--text-dim); }
   /* شريط الحالة عربي RTL — المعرّفات والأرقام اللاتينية تنعزل LTR تلقائياً بخوارزمية BiDi */
-  .statusline { max-width: var(--column-max); margin: var(--space-2) auto 0; display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
+  .statusline { max-width: var(--column-max); margin: var(--space-1) auto 0; display: flex; justify-content: space-between; gap: var(--space-2); font-size: 11px; line-height: 1.5; color: var(--text-faint); font-family: var(--mono); }
   .statusline span { unicode-bidi: plaintext; }
 
   /* استجابة المؤلّف تتبع عرض عمود الدردشة لا عرض النافذة؛ قد تضيق الدردشة داخل نافذة واسعة. */
   @container chat-column (max-width: 48rem) {
-    footer { padding: var(--space-3); }
-    .composer-tools .ct-label { display: none; }
+    footer { padding: var(--space-2) var(--space-3); }
     .composer-tools select { flex: 1 1 13rem; min-width: 0; max-width: 100%; }
     .composer-tools button { flex: 0 1 auto; min-width: 0; }
     .awareness-bar { justify-content: flex-start; }
@@ -724,14 +733,14 @@
     /* OBS-168: نصف عرضٍ ضيّق أصلاً لا يسع اسم محرك واحداً — صفّ كامل للمنتقي
        (ومعه `title` ديناميكي في app.js لأن الصفّ الكامل وحده لا يبلغ عرض الاسم) */
     #engine { grid-column: 1 / -1; }
-    #attachBtn { grid-column: 1 / -1; }
-    /* OBS-174: الالتفاف بدل قصٍّ صامت يخفي «الأذونات» و«السياق» */
-    .awareness-bar { flex-wrap: wrap; row-gap: var(--space-1); }
+    /* OBS-174: الالتفاف (صار افتراضياً في كل العروض أعلاه) — الشريط يأخذ الصف كاملاً هنا */
+    .awareness-bar { flex: 1 1 100%; }
     .composer {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .composer textarea { grid-column: 1 / -1; width: 100%; }
-    #browserCtl, #send { width: 100%; }
+    #attachBtn { grid-column: 1 / -1; }
+    #attachBtn, #browserCtl, #send { width: 100%; }
     .statusline { font-size: 10.5px; }
   }
 
@@ -837,6 +846,13 @@
     font-size: 11px; line-height: 18px; text-align: center; cursor: pointer;
   }
   .attach-chip .rm:hover { border: none; }
+  /* مرفقات غير الصور (دفعة 2026-09-17): رقاقة اسم + حجم، المسار LTR معزول */
+  .attach-file { display: inline-flex; align-items: center; gap: var(--space-1h); padding: var(--space-1) var(--space-2h); font-size: 12px; max-width: 18rem; }
+  .attach-file .attach-name { font-family: var(--mono); direction: ltr; unicode-bidi: isolate; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attach-file .attach-size { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+  textarea.drop-target { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-soft); }
+  .msg.user .msg-attachments { display: flex; flex-wrap: wrap; gap: var(--space-1h); margin-top: var(--space-1h); }
+  .msg.user .msg-attachment { font-size: 12px; padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); color: var(--text-dim); font-family: var(--mono); direction: ltr; unicode-bidi: isolate; }
   /* ===== شريط عمليات الخلفية قيد التشغيل (فوق المحرّر) ===== */
   #bgBar { max-width: var(--column-max); margin: 0 auto var(--space-2); display: none; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   #bgBar.open { display: flex; }

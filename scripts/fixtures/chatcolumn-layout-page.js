@@ -205,7 +205,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     await customElements.whenDefined('satr-composer');
     await frames(3);
     const layouts = [
-      { name: 'layout-806', width: 806, toolsDisplay: 'flex', composerDisplay: 'flex', hideLabels: false },
+      // دفعة ضغط المؤلّف (2026-09-17): تسميات الأدوات المرئية مخفية في كل العروض (aria-label باقٍ)
+      { name: 'layout-806', width: 806, toolsDisplay: 'flex', composerDisplay: 'flex', hideLabels: true },
       { name: 'layout-504', width: 504, toolsDisplay: 'flex', composerDisplay: 'flex', hideLabels: true },
       { name: 'layout-381', width: 381, toolsDisplay: 'grid', composerDisplay: 'grid', hideLabels: true },
     ];

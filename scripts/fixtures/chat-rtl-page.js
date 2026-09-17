@@ -64,6 +64,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(getComputedStyle(paragraphs[0]).direction === 'rtl',
       'اتجاه الفقرة المحسوب يجب أن يكون rtl.');
 
+    // 6. OBS-219 (أ): زر نسخ كتلة الكود ينتج نصاً خالياً من محارف التحكم بالاتجاه — الحافظة
+    //    مستبدَلة بمصيدة، والنقر على الزر الحقيقي هو ما يُقاس لا دالة موازية.
+    const written = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text) => { written.push(text); } },
+    });
+    const marks = '\u061C\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069';
+    const copyBlock = chat.newAssistantBlock('اختبار النسخ');
+    copyBlock.addText(['ثبّت المجلد بالأمر التالي:', '', '```powershell',
+      '\u200Fmkdir $HOME\\.local\\bin -Force\u202C' + marks, 'New-Item \u2066-ItemType\u2069 File', '```'].join('\n'));
+    copyBlock.finish({});
+    const copyButtons = document.querySelectorAll('.msg.assistant .md pre .code-copy');
+    const copyBtn = copyButtons[copyButtons.length - 1];
+    assert(copyBtn, 'زر نسخ كتلة الكود لم يُحقن بعد اكتمال الدور.');
+    copyBtn.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert(written.length === 1, 'زر النسخ لم يكتب في الحافظة.');
+    assert(!/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/.test(written[0]),
+      'المنسوخ يحمل محارف اتجاه خفية: ' + JSON.stringify(written[0]));
+    assert(written[0].includes('mkdir $HOME\\.local\\bin -Force') && written[0].includes('New-Item -ItemType File'),
+      'المنسوخ فقد محتوى الأمر: ' + JSON.stringify(written[0]));
+
     assert(violations.length === 0, 'رُصد securitypolicyviolation.');
     window.__chatRtlResult = { pass: true };
   } catch (error) {

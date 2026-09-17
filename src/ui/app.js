@@ -56,7 +56,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
   let kimiDeclaredCommands = []; // أوامر Kimi المعلنة عبر ACP في الجلسة الجارية (system/available_commands)
   let sessionCwd = null;     // المجلد الذي وُلدت فيه الجلسة الحالية (جلسات Claude Code مرتبطة بمجلدها)
   let lastSentPrompt = '';   // آخر طلب أُرسل — يُستعاد للمحرّر عند فشل استئناف جلسة ميتة
-  let lastUserTurn = { prompt: '', images: [] }; // مصدر زر إعادة المحاولة (نص + صور كما أُرسلت)
+  let lastUserTurn = { prompt: '', images: [], attachments: [] }; // مصدر زر إعادة المحاولة (نص + صور + مرفقات كما أُرسلت)
   let gated = true; // محجوب حتى يؤكّد فحص أول التشغيل توفّر Claude Code (مانع إطلاق)
 
   // سطح الوكلاء الفرعيين الأحياء (‏OBS-207/151) — مستقل عن الكتلة والجلسة.
@@ -2043,7 +2043,9 @@ import { createPreviewShield } from './lib/preview-shield.js';
       addNotice('المحرك المختار لا يدعم الصور — لم تُرسَل الصور المرفقة');
       images = [];
     }
-    if (!prompt && !images.length) return;
+    // مرفقات من أي نوع (دفعة 2026-09-17): تصل العملية الرئيسية فتحقن النصّي وتذكر مسار المنسوخ
+    const attachments = composerEl.getAttachments ? composerEl.getAttachments() : [];
+    if (!prompt && !images.length && !attachments.length) return;
     // الحارس ١: تحكّم سطح المكتب مفعّل لمحرك SDK بلا نافذة مختارة ⇒ لا يُرسل الدور (والإرسال كان
     // سيثبّت قرار الجلسة). إشعار بزرّ يفتح اللوحة، والنص يبقى في المحرّر كما كتبه المستخدم.
     if (desktopControlOn && desktopAvailable && engine === 'sdk' && !(desktopEl && desktopEl.selected)) {
@@ -2068,12 +2070,13 @@ import { createPreviewShield } from './lib/preview-shield.js';
     rememberContinuitySource(engine);
     const sendEpoch = ++conversationEpoch;
     lastSentPrompt = prompt;
-    lastUserTurn = { prompt, images: images.map((image) => image.dataUrl) };
+    lastUserTurn = { prompt, images: images.map((image) => image.dataUrl), attachments };
     input.value = '';
     if (composerEl.afterSend) composerEl.afterSend(); // تمدد + مسودة + إغلاق القائمتين
     if (composerEl.clearImages) composerEl.clearImages();
     chatEl.addUserMsg(prompt, images.map((i) => i.dataUrl), {
       awaitingSdkIdentity: engine === 'sdk' || engine === 'kimi-code',
+      attachments,
     });
 
     busy = true;
@@ -2099,6 +2102,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
       thinking: engine === 'kimi-code' ? thinkingValue : '',
       extraDirs: topbarEl.getExtraDirs ? topbarEl.getExtraDirs() : [],
       images: images.map((i) => ({ media_type: i.media_type, data: i.data })),
+      attachments, // نصّي {kind,name,text} · منسوخ {kind,name,rel} — التنقية في main (attachments.js)
       browserControl: browserControlOn, // تفويض صريح لأدوات المتصفح في المحركات الأصلية الداعمة
       desktopControl: desktopControlOn, // سطح ويندوز: محور مستقل — main يقرؤه في مسار SDK وحده (§٦)
     };
@@ -2365,7 +2369,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
       });
     }
     if (isBlindEngine(engNow)) { try { window.satr.forgetChat(engNow); } catch (e) {} }
-    sessionId = null; currentBlock = null; lastUserTurn = { prompt: '', images: [] };
+    sessionId = null; currentBlock = null; lastUserTurn = { prompt: '', images: [], attachments: [] };
     if (composerEl.clearImages) composerEl.clearImages();
     $('sessionInfo').textContent = 'لا جلسة';
     chatEl.reset(); // حالة الفراغ + تصفير الكلفة التراكمية وشريطها (داخل المكوّن منذ ت-12)
@@ -2967,7 +2971,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
   composerEl.addEventListener('notice', (e) => addNotice(e.detail));
   chatEl.addEventListener('user-edit', (event) => {
     const detail = event.detail || {};
-    if (composerEl.restoreTurn) composerEl.restoreTurn(detail.text || '', detail.images || []);
+    if (composerEl.restoreTurn) composerEl.restoreTurn(detail.text || '', detail.images || [], detail.attachments || []);
     else input.value = detail.text || '';
     addNotice('✏️ أُعيدت الرسالة إلى المحرّر. الإرسال الجديد لا يرجع سياق الخادم ولا يفرّع الجلسة.');
   });
@@ -3206,8 +3210,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
     }
   });
   chatEl.addEventListener('retry-request', () => {
-    if (busy || (!lastUserTurn.prompt && !lastUserTurn.images.length)) return;
-    if (composerEl.restoreTurn) composerEl.restoreTurn(lastUserTurn.prompt, lastUserTurn.images);
+    if (busy || (!lastUserTurn.prompt && !lastUserTurn.images.length && !(lastUserTurn.attachments || []).length)) return;
+    if (composerEl.restoreTurn) composerEl.restoreTurn(lastUserTurn.prompt, lastUserTurn.images, lastUserTurn.attachments || []);
     else input.value = lastUserTurn.prompt;
     send();
   });

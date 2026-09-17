@@ -50,7 +50,8 @@ function loadRuntime(root, options = {}) {
     sdkSessionControlBusy: false, sdkRunInFlight: false, sdkStartingPromise: null, sdkStoppingPromise: null,
     sendRequestBusy: false, sendRequestEpoch: 0, sdkBackgroundRuns: new Set(), sdkTaskOwners: new Map(),
     conversations: { ...conversations, ...store }, conversationBridge: { ...bridge, messageFor: bridgeModule.messageFor },
-    agent: native('sdk'), codex: native('codex'), kimi: { ENGINE_ID: 'kimi-code' }, adapters: { get: () => null },
+    agent: native('sdk'), codex: native('codex'), kimi: { ENGINE_ID: 'kimi-code' }, adapters: { get: () => null, list: () => [] },
+    attachments: require('../electron/attachments'), // وحدة نقية — مرفقات الرسالة (دفعة 2026-09-17)
     ipcMain: { handle(name, callback) { handlers[name] = callback; } },
     eventTrace: { emitted: noop, dropped(...args) { dropped.push(args); } },
     emitToWindow: (event, engine) => rendered.push({ event: plain(event), engine }),

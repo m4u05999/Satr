@@ -34,7 +34,11 @@ class SatrComposer extends HTMLElement {
         const w = input.clientWidth;
         if (!w) return; // مخفي — لا قرار
         const want = w < 700 ? SHORT_PLACEHOLDER : FULL_PLACEHOLDER;
-        if (input.getAttribute('placeholder') !== want) input.setAttribute('placeholder', want);
+        if (input.getAttribute('placeholder') !== want) {
+          input.setAttribute('placeholder', want);
+          // التلميح الطويل الملتفّ كان يرفع scrollHeight فيبقى المحرّر بسطرين بعد التبديل (مقيس 78px)
+          if (!input.value) autoResize();
+        }
       });
       placeholderRo.observe(input);
     }
@@ -59,21 +63,36 @@ class SatrComposer extends HTMLElement {
 // قائمتي / و@ + المسودة) — التغييرات الوحيدة: addNotice⇒notice وsend⇒emitSend
 // وCOMMANDS⇒commands المحقونة
 
-  // §5-د-3: زر إرفاق صورة من الجهاز — القشرة تحسم دعم المحرك من capabilities.vision
+  // §5-د-3: زر إرفاق من الجهاز — الصور تحسم القشرة دعمها من capabilities.vision، وسواها
+  // (دفعة 2026-09-17) يُرفق من أي نوع: نصّي يُقرأ هنا ويُحقن في العملية الرئيسية، وغير نصّي يُنسخ
+  // عبر satr:saveAttachment إلى .satr/attachments في المشروع ويُمرَّر مساره.
   $('attachBtn').addEventListener('click', () => $('fileInput').click());
   $('fileInput').addEventListener('change', (e) => {
-    for (const f of (e.target.files || [])) addImageFile(f);
+    for (const f of (e.target.files || [])) addAnyFile(f);
     e.target.value = ''; // يسمح بإعادة اختيار الملف نفسه
   });
 
   // ---------- لصق الصور من الحافظة ----------
   let pendingImages = []; // {id, media_type, data(base64), dataUrl}
+  // مرفقات غير الصور: {id, kind:'text', name, text, bytes} | {id, kind:'file', name, rel, bytes}
+  let pendingFiles = [];
   const attachmentsBar = $('attachments');
   const ALLOWED_PASTE = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+  const MAX_FILES = 12; // سقف المرفقات غير الصور — نفس سقف الحقن في العملية الرئيسية
+  const MAX_TEXT_BYTES = 64 * 1024; // أكبر من هذا يُعامَل ملفاً منسوخاً لا محقوناً
+  const MAX_FILE_BYTES = 20 * 1024 * 1024;
+  // امتدادات نصّية معروفة — وسواها يُحسم بفحص المحتوى (بايت NUL أو UTF-8 غير صالح ⇒ ثنائي)
+  const TEXT_EXT = /\.(txt|md|markdown|json|jsonl|csv|tsv|yml|yaml|toml|ini|cfg|conf|env|xml|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|vue|svelte|py|rb|go|rs|java|kt|c|h|cpp|hpp|cs|php|sh|ps1|bat|cmd|sql|log|diff|patch|tex|rst|srt|vtt)$/i;
+
+  function fmtBytes(n) {
+    if (n < 1024) return n + ' بايت';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' ك.ب';
+    return (n / (1024 * 1024)).toFixed(1) + ' م.ب';
+  }
 
   function renderAttachments() {
     attachmentsBar.replaceChildren();
-    if (!pendingImages.length) { attachmentsBar.classList.remove('open'); return; }
+    if (!pendingImages.length && !pendingFiles.length) { attachmentsBar.classList.remove('open'); return; }
     attachmentsBar.classList.add('open');
     for (const img of pendingImages) {
       const chip = document.createElement('div');
@@ -89,6 +108,75 @@ class SatrComposer extends HTMLElement {
       chip.appendChild(im); chip.appendChild(rm);
       attachmentsBar.appendChild(chip);
     }
+    for (const file of pendingFiles) {
+      const chip = document.createElement('div');
+      chip.className = 'attach-chip attach-file';
+      chip.dataset.kind = file.kind;
+      chip.title = file.kind === 'text' ? 'ملف نصّي — يُحقن محتواه في الطلب' : 'نُسخ إلى ' + file.rel + ' — يقرؤه المحرك بأدواته';
+      const icon = document.createElement('span'); icon.className = 'attach-icon'; icon.textContent = file.kind === 'text' ? '📄' : '📦';
+      const name = document.createElement('span'); name.className = 'attach-name'; name.textContent = file.name;
+      const size = document.createElement('span'); size.className = 'attach-size'; size.textContent = fmtBytes(file.bytes);
+      const rm = document.createElement('button');
+      rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'إزالة';
+      rm.setAttribute('aria-label', 'إزالة المرفق ' + file.name);
+      rm.addEventListener('click', () => {
+        pendingFiles = pendingFiles.filter((p) => p.id !== file.id);
+        // المنسوخ يُحذف من المشروع حين يزيله المستخدم قبل الإرسال (لا يُترك أثر بلا رسالة)
+        if (file.kind === 'file' && file.rel && typeof window.satr.removeAttachment === 'function') {
+          window.satr.removeAttachment($('cwd').value.trim(), file.rel).catch(() => {});
+        }
+        renderAttachments();
+      });
+      chip.appendChild(icon); chip.appendChild(name); chip.appendChild(size); chip.appendChild(rm);
+      attachmentsBar.appendChild(chip);
+    }
+  }
+
+  // هل هذا المحتوى نصّ؟ بايت NUL في أول 8 ك.ب أو UTF-8 غير صالح ⇒ ثنائي
+  function looksText(bytes) {
+    const n = Math.min(bytes.length, 8192);
+    for (let i = 0; i < n; i++) if (bytes[i] === 0) return false;
+    try { new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, n)); return true; }
+    catch (e) { return false; }
+  }
+
+  function bytesToBase64(bytes) {
+    let binary = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    return btoa(binary);
+  }
+
+  // أي ملف: صورة ⇒ مسار الصور؛ نصّ صغير ⇒ يُقرأ ويُحقن؛ وإلا ⇒ يُنسخ إلى المشروع ويُمرَّر مساره
+  async function addAnyFile(file) {
+    if (!file) return;
+    if (ALLOWED_PASTE.has(file.type)) { addImageFile(file); return; }
+    if (pendingFiles.length >= MAX_FILES) { notice('الحد الأقصى ' + MAX_FILES + ' مرفقاً لكل رسالة'); return; }
+    if (file.size > MAX_FILE_BYTES) { notice('الملف ' + file.name + ' أكبر من 20 م.ب — لم يُرفق'); return; }
+    let bytes;
+    try { bytes = new Uint8Array(await file.arrayBuffer()); }
+    catch (e) { notice('تعذّرت قراءة ' + file.name); return; }
+    const id = 'att_' + Math.random().toString(36).slice(2);
+    const textual = bytes.length <= MAX_TEXT_BYTES && (TEXT_EXT.test(file.name) || looksText(bytes)) && looksText(bytes);
+    if (textual) {
+      const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+      pendingFiles.push({ id, kind: 'text', name: file.name, text, bytes: bytes.length });
+      renderAttachments();
+      return;
+    }
+    const cwd = $('cwd').value.trim();
+    if (!cwd) { notice('اختر مجلد المشروع أولاً — الملفات غير النصّية تُنسخ إليه'); return; }
+    if (typeof window.satr.saveAttachment !== 'function') { notice('إرفاق الملفات غير النصّية غير متاح هنا'); return; }
+    let saved;
+    try { saved = await window.satr.saveAttachment(cwd, file.name, bytesToBase64(bytes)); }
+    catch (e) { saved = null; }
+    if (!saved || !saved.ok) {
+      const reason = saved && saved.error === 'too_large' ? 'أكبر من السقف' : saved && saved.error === 'bad_name' ? 'اسمه غير صالح' : 'تعذّر نسخه إلى المشروع';
+      notice('لم يُرفق ' + file.name + ' — ' + reason);
+      return;
+    }
+    pendingFiles.push({ id, kind: 'file', name: saved.name, rel: saved.rel, bytes: saved.bytes || bytes.length });
+    renderAttachments();
   }
 
   function addImageFile(file) {
@@ -126,12 +214,24 @@ class SatrComposer extends HTMLElement {
     if (!items) return;
     let handled = false;
     for (const it of items) {
-      if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+      if (it.kind === 'file') {
         const f = it.getAsFile();
-        if (f) { addImageFile(f); handled = true; }
+        if (f) { addAnyFile(f); handled = true; }
       }
     }
-    if (handled) e.preventDefault(); // لا نلصق بايتات الصورة كنص في المحرّر
+    if (handled) e.preventDefault(); // لا نلصق بايتات الملف كنص في المحرّر
+  });
+  // سحب وإفلات على المحرّر (دفعة 2026-09-17): الملفات تمرّ بمسار الإرفاق نفسه
+  input.addEventListener('dragover', (e) => {
+    if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); input.classList.add('drop-target'); }
+  });
+  input.addEventListener('dragleave', () => input.classList.remove('drop-target'));
+  input.addEventListener('drop', (e) => {
+    input.classList.remove('drop-target');
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
+    e.preventDefault();
+    for (const f of files) addAnyFile(f);
   });
   // ---------- شريط عمليات الخلفية قيد التشغيل ----------
   const bgBar = $('bgBar'), bgChips = $('bgChips');
@@ -601,11 +701,26 @@ class SatrComposer extends HTMLElement {
     this.setCommands = (list) => { commands = Array.isArray(list) ? list : []; };
     this.getImages = () => pendingImages.slice();
     this.addImageData = addImageData;
-    this.clearImages = () => { pendingImages = []; renderAttachments(); };
-    this.restoreTurn = (text, images) => {
+    // مرفقات غير الصور كما تُرسل للعملية الرئيسية (بلا معرّفات محلية)
+    this.getAttachments = () => pendingFiles.map((f) => (f.kind === 'text'
+      ? { kind: 'text', name: f.name, text: f.text }
+      : { kind: 'file', name: f.name, rel: f.rel }));
+    this.addFile = addAnyFile; // للحراس والقشرة: File واحد يمرّ بمسار الإرفاق الحقيقي
+    // clearImages يبقى اسماً موروثاً (تستهلكه القشرة والحراس) ويصفّر كل المرفقات بعد الإرسال/الجلسة الجديدة
+    this.clearImages = () => { pendingImages = []; pendingFiles = []; renderAttachments(); };
+    this.restoreTurn = (text, images, files) => {
       input.value = String(text || '');
       pendingImages = [];
+      pendingFiles = [];
       for (const image of (Array.isArray(images) ? images : [])) addImageData(image);
+      for (const f of (Array.isArray(files) ? files : [])) {
+        if (!f || (f.kind !== 'text' && f.kind !== 'file') || typeof f.name !== 'string') continue;
+        if (f.kind === 'text' && typeof f.text !== 'string') continue;
+        if (f.kind === 'file' && typeof f.rel !== 'string') continue;
+        pendingFiles.push({ id: 'att_' + Math.random().toString(36).slice(2), kind: f.kind, name: f.name, text: f.text, rel: f.rel,
+          bytes: f.kind === 'text' ? new TextEncoder().encode(f.text).length : (f.bytes || 0) });
+      }
+      renderAttachments();
       autoResize(); saveDraft(); closeSlash(); closeFiles(); input.focus();
     };
     this.switchDraft = switchDraft;
