@@ -65,3 +65,11 @@ PDF لا يُرسل كتلة وثيقة إلى SDK بل يُنسخ ويقرؤه 
 `setContentSize(844, …)` يعيد `innerWidth = 846` على جهاز المالك (مقياس ويندوز غير 100٪)، فلا يستقر
 شرط `===` في `composer-narrow` و`surface-overflow` و`pwa-readability` أبداً. صار الانتظار بتسامح ≤ 2px في
 الثلاثة (لا يغيّر ما يُقاس). `readability` (‏`800×600px` في التقرير) لم يُمسّ — يبقى في OBS-220.
+
+## ٤ — درس الصناديق الرملية
+
+ثلاثة حراس تستخرج `handleSendRequest` من `main.js` إلى `vm` بصندوق يعدّد وحداته يدوياً
+(`subagent-permission` · `conversation-main` · `mobile-task-owner` الذي يشغّله `sdk-background`) — أي
+`require` جديد في المعالج يسقطها بـ`ReferenceError: attachments is not defined` في الطقم الكامل لا في حراس
+الدفعة. أُضيفت الوحدة النقية إليها مع `adapters.list`. القاعدة: عند إضافة وحدة إلى مسار الإرسال ابحث
+`grep -l handleSendRequest scripts/` وأضفها إلى كل صندوق.
