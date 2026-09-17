@@ -586,6 +586,11 @@ class SatrChat extends HTMLElement {
   $('threadSearchClose').addEventListener('click', closeThreadSearch);
 
   // ---------- أزرار النسخ (دفعة UX) ----------
+  // OBS-219: محارف التحكم بالاتجاه (ALM/LRM/RLM/الإحاطة/العزل) لا مكان لها في أمر أو كود يُلصق في
+  // طرفية — تصل PowerShell كمحارف خفية فيفشل الأمر بخطأ مضلِّل («ew-Item» · «-Forceδ½ª»). كتلة
+  // الكود تُنسخ نظيفة منها دائماً؛ نص الرسالة يبقى كما هو (فيه عزل مقصود حول أسماء الملفات).
+  const BIDI_CONTROLS_RE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+  function stripBidiControls(text) { return String(text).replace(BIDI_CONTROLS_RE, ''); }
   // نسخ للحافظة مع تأكيد بصري قصير على الزر نفسه
   async function copyWithFeedback(btn, text) {
     try { await navigator.clipboard.writeText(text); btn.textContent = '✓'; }
@@ -602,7 +607,7 @@ class SatrChat extends HTMLElement {
       b.type = 'button'; b.className = 'code-copy'; b.textContent = 'نسخ'; b.title = 'نسخ الكود';
       b.setAttribute('aria-label', 'نسخ الكود');
       // النص من <code> لا <pre> — حتى لا يدخل نص الزر نفسه في المنسوخ
-      b.addEventListener('click', () => copyWithFeedback(b, (pre.querySelector('code') || pre).innerText));
+      b.addEventListener('click', () => copyWithFeedback(b, stripBidiControls((pre.querySelector('code') || pre).innerText)));
       pre.appendChild(b);
     }
   }

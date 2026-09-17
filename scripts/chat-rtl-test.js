@@ -37,6 +37,9 @@ function assertStaticContract() {
     'يجب ألا تعود plaintext إلى فقرات .md أو فقاعة المستخدم (dir الصريح يتولى).');
   assert.strictEqual(packageJson.scripts['test:chat-rtl'], 'electron scripts/chat-rtl-test.js');
   assert(fullSuite.includes("'test:chat-rtl'"), 'غاب test:chat-rtl من full-suite.');
+  // OBS-219 (أ): زر نسخ كتلة الكود يمرّ بمنقّي محارف الاتجاه — العقد البنيوي، والقياس الحي في fixture
+  assert(/copyWithFeedback\(b, stripBidiControls\(/.test(chatSource) && /u2066-\\u2069\]\/g/.test(chatSource),
+    'زر نسخ كتلة الكود يجب أن ينقّي محارف التحكم بالاتجاه (OBS-219).');
   assert(chatSource.includes("!worklog.classList.contains('stopped')")
     && chatSource.includes("!worklog.classList.contains('failed')")
     && chatSource.includes("!worklog.classList.contains('done')"),

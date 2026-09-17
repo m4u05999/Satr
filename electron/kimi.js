@@ -108,6 +108,7 @@ const APP_VERSION = (() => {
 const editSnapshots = new Map();
 const alwaysAllowed = new Set();
 let kimiBinResolved;
+const INSTALL_COMMAND = 'irm https://code.kimi.com/kimi-code/install.ps1 | iex';
 
 function publicInfo() {
   return {
@@ -131,19 +132,30 @@ function pathExists(candidate) {
   try { fs.statSync(candidate); return true; } catch { return false; }
 }
 
-function resolveKimiBin(force) {
-  if (!force && kimiBinResolved !== undefined) return kimiBinResolved;
+// المرشّحون الثابتون (بلا `where`): تُعرض في رسالة «لم يُعثر» كي يعرف المستخدم أين بحث سطر.
+// OBS-215: مثبّت Kimi Code الرسمي (install.ps1) يضع الثنائي في `<KIMI_CODE_HOME|~/.kimi-code>/bin`
+// ويعتمد على إضافة المجلد إلى Path — وإن فشلت الإضافة (رفض كتابة HKCU\Environment) أو لم
+// يُعَد تشغيل سطر بعدها بقي «غير مثبّت» رغم وجوده. المسار الرسمي أول المرشّحين بعد KIMI_BIN.
+function kimiBinCandidates() {
   const candidates = [];
   if (process.env.KIMI_BIN) candidates.push(process.env.KIMI_BIN);
   const home = os.homedir();
   if (IS_WIN) {
+    candidates.push(path.join(dataRoot(), 'bin', 'kimi.exe'));
     candidates.push(path.join(home, '.local', 'bin', 'kimi.exe'));
     candidates.push(path.join(home, '.local', 'bin', 'kimi.cmd'));
     if (process.env.APPDATA) candidates.push(path.join(process.env.APPDATA, 'npm', 'kimi.cmd'));
     if (process.env.LOCALAPPDATA) candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'kimi-code', 'kimi.exe'));
   } else {
+    candidates.push(path.join(dataRoot(), 'bin', 'kimi'));
     candidates.push(path.join(home, '.local', 'bin', 'kimi'), '/usr/local/bin/kimi', '/usr/bin/kimi');
   }
+  return candidates;
+}
+
+function resolveKimiBin(force) {
+  if (!force && kimiBinResolved !== undefined) return kimiBinResolved;
+  const candidates = kimiBinCandidates();
   try {
     const found = execSync(IS_WIN ? 'where kimi' : 'which kimi', { encoding: 'utf8', windowsHide: true })
       .split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -197,13 +209,26 @@ function scrubError(value) {
 // التصنيف بالنصّ لا بالرمز وحده، والنصّ الأصلي يصل المستخدم دائماً (محجوب الأسرار ومقصوصاً).
 const AUTH_RE = /unauthori[sz]ed|not logged|login|auth|credential|token expired|invalid token|\b401\b|sign[- ]?in/i;
 const QUOTA_RE = /quota|rate[- ]?limit|too many|\b429\b|exhaust|insufficient|balance|usage limit|capacity|overload|\b503\b|try again later/i;
-function describeRpcFailure(error, phase) {
+// OBS-215/219: أمر الدخول بالمسار الكامل الذي حلّه سطر لا بالاسم المجرّد `kimi` (قد لا يكون في Path)،
+// وعلى سطر مستقل كي يُنسخ نظيفاً من فقرة عربية. `bin` اختياري: بلا مسار يبقى الاسم المجرّد.
+function loginHint(bin) {
+  return bin ? 'شغّل هذا الأمر في طرفية سطر ثم أعد المحاولة (اكتبه أو انسخه كاملاً على سطره):\n' + loginCommand(bin)
+    : 'شغّل `kimi login` في طرفية سطر ثم أعد المحاولة.';
+}
+
+function describeRpcFailure(error, phase, bin) {
   const raw = scrubError(error && error.message ? String(error.message) : '');
   const code = error && Number.isFinite(error.code) ? error.code : null;
   const detail = raw && raw !== 'rpc_error' ? raw : '';
   const codeText = code != null ? ' (رمز ' + code + ')' : '';
+  // OBS-217: خروج العملية ليس رفض RPC — نصّه (المرحلة والرمز وذيل stderr) يصل كما هو،
+  // ولا يُصنَّف بأنماط الدخول/الحصة كي لا يحرف سطرٌ عابر في stderr التشخيص.
+  if (error && error.processExited) {
+    return { kind: 'exit', text: (phase === 'prompt' ? 'تعذّر بدء دور Kimi Code: ' : 'تعذّر تهيئة Kimi Code: ') + detail
+      + '\nالتفاصيل محفوظة في ~/.satr/engine-errors.log' };
+  }
   if (code === -32000 && (!detail || AUTH_RE.test(detail)) && !QUOTA_RE.test(detail)) {
-    return { kind: 'auth', text: 'Kimi Code غير مسجَّل الدخول. شغّل `kimi login` في طرفية سطر ثم أعد المحاولة.' + (detail ? '\nرسالة Kimi: ' + detail : '') };
+    return { kind: 'auth', text: 'Kimi Code غير مسجَّل الدخول. ' + loginHint(bin) + (detail ? '\nرسالة Kimi: ' + detail : '') };
   }
   if (QUOTA_RE.test(detail)) {
     return { kind: 'quota', text: 'رفض Kimi Code الطلب' + codeText + ' — يبدو أنه حدّ استعمال أو حصة لا خطأ دخول: ' + detail
@@ -212,15 +237,62 @@ function describeRpcFailure(error, phase) {
   const verb = phase === 'prompt' ? 'تعذّر بدء دور Kimi Code' : 'تعذّر تهيئة Kimi Code';
   return { kind: 'rpc', text: verb + codeText + ': ' + (detail || 'خطأ بلا نصّ') };
 }
+// OBS-217: خروج عملية Kimi قبل اكتمال التهيئة كان يصل «Kimi exited» وحدها — لا رمز ولا مرحلة ولا
+// ما كتبه Kimi على stderr قبل موته (الواجهة لا تعرض أحداث stderr). الخطأ الآن يحمل الثلاثة: رمز
+// الخروج/الإشارة، والمرحلة التي كان الطلب المعلّق فيها، وذيلاً محدوداً من stderr محجوب الأسرار.
+const STDERR_TAIL_LINES = 20;
+const STDERR_TAIL_BYTES = 2048;
+function createStderrTail() {
+  const lines = [];
+  let partial = '';
+  return {
+    push(chunk) {
+      partial += String(chunk);
+      const parts = partial.split(/\r?\n/);
+      partial = parts.pop();
+      for (const part of parts) if (part.trim()) lines.push(part.slice(0, 400));
+      while (lines.length > STDERR_TAIL_LINES) lines.shift();
+    },
+    text() {
+      const all = partial.trim() ? lines.concat([partial.slice(0, 400)]) : lines;
+      const joined = all.join('\n');
+      return scrubError(joined.length > STDERR_TAIL_BYTES ? '…' + joined.slice(-STDERR_TAIL_BYTES) : joined);
+    },
+  };
+}
+
+function exitDetail(code, signal) {
+  if (signal) return 'إشارة ' + signal;
+  return code == null ? 'رمز الخروج غير معروف' : 'رمز الخروج ' + code;
+}
+
+// الخطأ الذي يُرفض به كل طلب معلّق حين تخرج العملية: نصّه يذكر المرحلة والرمز والذيل،
+// وحقوله (exitCode/signal/phase/stderrTail) تبقى مقروءة للسجلّ والحراس.
+function processExitError(code, signal, phase, stderrTail) {
+  const tail = stderrTail && stderrTail.text ? stderrTail.text() : '';
+  const error = new Error('خرجت عملية Kimi أثناء ' + (phase || 'غير معروف') + ' (' + exitDetail(code, signal) + ')'
+    + (tail ? '\nآخر ما كتبه Kimi:\n' + tail : '\nلم يكتب Kimi شيئاً على stderr.'));
+  error.exitCode = code == null ? null : code;
+  error.signal = signal || null;
+  error.phase = phase || null;
+  error.stderrTail = tail;
+  error.processExited = true;
+  return error;
+}
+
 // سطر تشخيصي دائم لكل رفض من كيمي (الرمز والنصّ المحجوب والمرحلة) — كان الخطأ يضيع مع إغلاق سطر
 // فلا يُعرف بعد يومين لماذا «توقف كيمي». السقف: الملف يُقصّ عند 512 ك.ب.
-function recordEngineError(phase, error, kind) {
+function recordEngineError(phase, error, kind, logFile) {
   try {
-    const dir = path.join(os.homedir(), '.satr');
-    const file = path.join(dir, 'engine-errors.log');
-    fs.mkdirSync(dir, { recursive: true });
+    const file = logFile || path.join(os.homedir(), '.satr', 'engine-errors.log');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     try { if (fs.statSync(file).size > 512 * 1024) fs.writeFileSync(file, ''); } catch (statError) { /* لا ملف بعد */ }
-    const line = [new Date().toISOString(), 'kimi', phase, kind, error && error.code != null ? 'code=' + error.code : 'code=-',
+    // OBS-217: المرحلة الدقيقة (initialize/session/new/…) ورمز الخروج يسبقان رمز RPC حين تخرج العملية.
+    const exact = error && error.phase ? error.phase : phase;
+    const codeText = error && error.processExited
+      ? 'exit=' + (error.signal || (error.exitCode == null ? '?' : error.exitCode))
+      : (error && error.code != null ? 'code=' + error.code : 'code=-');
+    const line = [new Date().toISOString(), 'kimi', exact, kind, codeText,
       scrubError(error && error.message ? String(error.message) : '').replace(/\s+/g, ' ').slice(0, 600)].join(' | ');
     fs.appendFileSync(file, line + '\n');
   } catch (writeError) { /* التشخيص لا يكسر الدور */ }
@@ -505,14 +577,22 @@ function createRpc(proc, handlers) {
   let nextId = 0;
   let buffer = '';
   let closed = false;
+  let lastMethod = null; // OBS-217: آخر طلب صادر — هو «المرحلة» حين تخرج العملية
   const pending = new Map();
 
   function write(message) {
     if (closed) return;
     try { proc.stdin.write(JSON.stringify(message) + '\n'); } catch { /* أُغلقت العملية */ }
   }
+  // المرحلة الجارية: الطلب المعلّق الأحدث، وإلا آخر طلب أُرسل (خروج بين طلبين يُنسب إليه).
+  function phase() {
+    let latest = null;
+    for (const item of pending.values()) latest = item.method;
+    return latest || lastMethod;
+  }
   function request(method, params, timeoutMs) {
     const id = ++nextId;
+    lastMethod = method;
     return new Promise((resolve, reject) => {
       let timer = null;
       if (timeoutMs) timer = setTimeout(() => {
@@ -520,6 +600,7 @@ function createRpc(proc, handlers) {
         reject(new Error('انتهت مهلة ' + method));
       }, timeoutMs);
       pending.set(id, {
+        method,
         resolve: (value) => { if (timer) clearTimeout(timer); resolve(value); },
         reject: (error) => { if (timer) clearTimeout(timer); reject(error); },
       });
@@ -572,7 +653,7 @@ function createRpc(proc, handlers) {
     for (const item of pending.values()) item.reject(error || new Error('ACP closed'));
     pending.clear();
   }
-  return { request, notify, respond, respondError, close, write };
+  return { request, notify, respond, respondError, close, write, phase };
 }
 
 function noOpHandle() {
@@ -589,6 +670,7 @@ function create(deps) {
   const spawnImpl = options.spawn || spawn;
   const resolveBin = options.resolveKimiBin || resolveKimiBin;
   const resolveDataRoot = options.dataRoot || dataRoot;
+  const engineErrorsLog = options.engineErrorsLog || null; // للحراس: سجلّ مؤقت بدل ~/.satr
   const mcpFactory = options.startMcp || codexmcp.start;
   // K2 keep-alive: سجل قنوات ACP الحية لهذه النسخة من المحرك (سقف 2، خمول 15 دقيقة).
   // الحجب والقص يُحقنان هنا حتى تمر الأحداث المتأخرة ببوابة أحداث الدور نفسها.
@@ -603,9 +685,13 @@ function create(deps) {
   async function start(input, cwd, emit) {
     const bin = resolveBin();
     if (!bin) {
+      // OBS-215/219: أين بحث سطر (كي يعرف المستخدم أن التثبيت تمّ في مكان آخر أو أن Path لم يُحدَّث)،
+      // وأمر التثبيت على سطر مستقل يُنسخ نظيفاً من فقرة عربية.
       emit({
         type: 'spawn_error',
-        text: 'لم يُعثر على Kimi Code CLI. ثبّته من PowerShell: irm https://code.kimi.com/kimi-code/install.ps1 | iex',
+        text: 'لم يُعثر على Kimi Code CLI. بحث سطر في:\n' + kimiBinCandidates().join('\n')
+          + '\nإن كان مثبّتاً في مكان آخر فاضبط KIMI_BIN أو KIMI_CODE_HOME، وإلا ثبّته من PowerShell ثم أعد تشغيل سطر:\n'
+          + INSTALL_COMMAND,
       });
       emit({ type: 'proc_done', code: 1 });
       return noOpHandle();
@@ -1152,8 +1238,12 @@ function create(deps) {
 
     // معالجات العملية تُسجَّل مرة واحدة عند إنشاء القناة وتفوّض دوماً إلى الدور النشط.
     if (!lease) {
+      // OBS-217: ذيل stderr يُحفظ على القناة كي يُرفق بخطأ الخروج — حدث stderr وحده لا يبلغ الواجهة.
+      const stderrTail = createStderrTail();
       proc.stderr.on('data', (chunk) => {
-        const text = scrubError(chunk.toString('utf8'));
+        const raw = chunk.toString('utf8');
+        stderrTail.push(raw);
+        const text = scrubError(raw);
         if (text && !/debug|trace|polling|token refresh/i.test(text)) emitShared({ type: 'stderr', text });
       });
       proc.on('error', (error) => {
@@ -1161,11 +1251,14 @@ function create(deps) {
         const t = shared.turn;
         if (t && t.onProcError) t.onProcError(error);
       });
-      proc.on('exit', (code) => {
-        rpc.close(new Error('Kimi exited'));
+      proc.on('exit', (code, signal) => {
+        rpc.close(processExitError(code, signal, rpc.phase(), stderrTail));
         if (channelRef.sessionId) keepalive.remove(channelRef.sessionId);
         const t = shared.turn;
-        if (t && t.onProcExit) t.onProcExit(code);
+        // OBS-217: رفض الطلب المعلّق (بالمرحلة والرمز والذيل) يصل الدور في microtask؛ لو نادينا
+        // onProcExit متزامناً لسبقه صندوق «أُنهيت عملية» العاري ثم تلاه صندوق ثانٍ. setImmediate
+        // يترك الرفض يحسم `finished` أولاً فيصير onProcExit مجرد ضامن لـproc_done.
+        if (t && t.onProcExit) setImmediate(() => t.onProcExit(code));
       });
     }
 
@@ -1330,8 +1423,8 @@ function create(deps) {
           if (!finished) {
             finished = true;
             emitAssistantMessages();
-            const failure = describeRpcFailure(error, 'prompt');
-            recordEngineError('prompt', error, failure.kind);
+            const failure = describeRpcFailure(error, 'prompt', bin);
+            recordEngineError('prompt', error, failure.kind, engineErrorsLog);
             emit({ type: 'spawn_error', text: failure.text, kind: failure.kind });
             emit({ type: 'result', subtype: 'error', is_error: true, session_id: sessionId, duration_ms: Date.now() - startedAt });
           }
@@ -1340,8 +1433,8 @@ function create(deps) {
       } catch (error) {
         if (!finished) {
           finished = true;
-          const failure = describeRpcFailure(error, 'init');
-          recordEngineError('init', error, failure.kind);
+          const failure = describeRpcFailure(error, 'init', bin);
+          recordEngineError('init', error, failure.kind, engineErrorsLog);
           emit({ type: 'spawn_error', text: failure.text, kind: failure.kind });
           emit({ type: 'result', subtype: 'error', is_error: true, session_id: sessionId, duration_ms: Date.now() - startedAt });
         }
@@ -1417,8 +1510,10 @@ function create(deps) {
       onRequest(message, channel) { channel.respondError(message.id, -32601, 'غير متاح أثناء قراءة الجلسات'); },
       onNotification(method, params) { if (onNotification) onNotification(method, params); },
     });
+    const probeTail = createStderrTail();
+    proc.stderr.on('data', (chunk) => probeTail.push(chunk.toString('utf8')));
     proc.on('error', (error) => rpc.close(error));
-    proc.on('exit', () => rpc.close(new Error('Kimi exited')));
+    proc.on('exit', (code, signal) => rpc.close(processExitError(code, signal, rpc.phase(), probeTail)));
     try {
       const initialized = await rpc.request('initialize', {
         protocolVersion: 1, clientCapabilities: {},
@@ -1671,5 +1766,6 @@ module.exports = {
     inside, safeExistingPath, safeWritablePath, safePlanPath, selectedOutcome, spawnKimi, scrubError,
     buildSatrMcpTools, configOptionValues, configValue, parseUsageText, parseCompactionText,
     toolLabel, isEmbeddedMcpTool, loginCommand, loginCwd, describeRpcFailure,
+    createStderrTail, processExitError, recordEngineError, kimiBinCandidates, loginHint,
   },
 };

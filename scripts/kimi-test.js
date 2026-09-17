@@ -1429,6 +1429,122 @@ async function testThinkingConfigOption() {
   }]);
 }
 
+// OBS-217: خروج العملية أثناء التهيئة كان يصل «Kimi exited» وحدها. الحارس يشغّل عملية وهمية تكتب إلى
+// stderr (ومنها سرّ) ثم تخرج برمز غير صفري أثناء session/new، ويتحقق أن النصّ المعروض وسطر السجلّ
+// يحملان الثلاثة: المرحلة ورمز الخروج وذيل stderr محجوب الأسرار.
+async function testProcessExitDuringInitCarriesDiagnostics() {
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-kimi-exit-'));
+  const logFile = path.join(sandbox, 'engine-errors.log');
+  const events = [];
+  const engine = kimi.create({
+    resolveKimiBin: () => 'C:\\fake\\kimi.exe',
+    engineErrorsLog: logFile,
+    spawn: () => new FakeProcess((message, proc) => {
+      if (message.method === 'initialize') proc.send({ jsonrpc: '2.0', id: message.id, result: initializeResult() });
+      else if (message.method === 'session/new') {
+        // يكتب Kimi تشخيصه على stderr على دفعتين (سطر مقطوع) ثم يموت بلا ردّ
+        setTimeout(() => {
+          proc.stderr.emit('data', Buffer.from('DEBUG polling token refresh\nAssertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\\win\\async.c, line 76\nAuthorization: Bearer '));
+          proc.stderr.emit('data', Buffer.from('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH\n'));
+          proc.emit('exit', 3221226505, null);
+        }, 0);
+      }
+    }),
+  });
+  try {
+    await engine.start({
+      prompt: 'مرحباً', sessionId: null, model: 'k3', permissionMode: 'default',
+      skills: [], images: [], browserControl: false,
+    }, root, (event) => events.push(event));
+    await waitFor(() => events.some((event) => event.type === 'result'));
+    const failure = events.find((event) => event.type === 'spawn_error');
+    assert.ok(failure, 'لا spawn_error بعد خروج العملية');
+    assert.strictEqual(failure.kind, 'exit', 'خروج العملية تصنيفه exit لا rpc/auth/quota');
+    assert.ok(failure.text.includes('session/new'), 'النصّ لا يحمل المرحلة: ' + failure.text);
+    assert.ok(failure.text.includes('3221226505'), 'النصّ لا يحمل رمز الخروج: ' + failure.text);
+    assert.ok(failure.text.includes('UV_HANDLE_CLOSING'), 'النصّ لا يحمل ذيل stderr: ' + failure.text);
+    assert.ok(!failure.text.includes('abcdefghijklmnopqrstuvwxyz0123456789'), 'السرّ في stderr وصل الواجهة غير محجوب');
+    assert.ok(!failure.text.includes('Kimi exited'), 'النصّ القديم العاري لم يُستبدل');
+    const spawnErrors = events.filter((event) => event.type === 'spawn_error');
+    assert.strictEqual(spawnErrors.length, 1, 'صندوق خطأ واحد لا اثنان (onProcExit لا يكرّر)');
+    assert.ok(events.some((event) => event.type === 'proc_done'), 'proc_done لم يُبثّ بعد الخروج');
+    const line = fs.readFileSync(logFile, 'utf8').trim().split('\n').pop();
+    assert.ok(line.includes('| session/new |'), 'سطر السجلّ لا يحمل المرحلة الدقيقة: ' + line);
+    assert.ok(line.includes('exit=3221226505'), 'سطر السجلّ لا يحمل رمز الخروج: ' + line);
+    assert.ok(line.includes('UV_HANDLE_CLOSING') && !line.includes('abcdefghijklmnopqrstuvwxyz0123456789'), 'سطر السجلّ بلا ذيل أو بسرّ: ' + line);
+    assert.ok(line.includes('| exit |'), 'سطر السجلّ لا يحمل التصنيف exit: ' + line);
+  } finally {
+    await engine.keepalive.killAll();
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+
+  // الوحدة النقية: الإشارة تغلب الرمز، والذيل محدود بـ20 سطراً/2 ك.ب، والخروج بلا stderr يُصرَّح به
+  const { createStderrTail, processExitError } = kimi._internals;
+  const tail = createStderrTail();
+  for (let i = 0; i < 40; i++) tail.push('line ' + i + '\n');
+  assert.ok(!tail.text().includes('line 0\n') && tail.text().includes('line 39'), 'الذيل لا يحتفظ بآخر 20 سطراً فقط');
+  const big = createStderrTail();
+  big.push('x'.repeat(5000) + '\n');
+  assert.ok(big.text().length <= 2048 + 2, 'الذيل يتجاوز 2 ك.ب');
+  const signalled = processExitError(null, 'SIGTERM', 'initialize', createStderrTail());
+  assert.ok(signalled.message.includes('إشارة SIGTERM') && signalled.message.includes('initialize') && signalled.message.includes('لم يكتب Kimi'), signalled.message);
+  assert.strictEqual(signalled.signal, 'SIGTERM');
+  assert.strictEqual(signalled.phase, 'initialize');
+}
+
+// OBS-215: مثبّت Kimi الرسمي يضع الثنائي في ~/.kimi-code/bin (أو KIMI_CODE_HOME) — المرشّح الأول بعد
+// KIMI_BIN، ورسالتا «لم يُعثر» و«login» تذكران المسار الفعلي لا الاسم المجرّد.
+async function testOfficialInstallDirCandidate() {
+  const { kimiBinCandidates, loginHint } = kimi._internals;
+  const savedHome = process.env.KIMI_CODE_HOME;
+  const savedBin = process.env.KIMI_BIN;
+  try {
+    delete process.env.KIMI_BIN;
+    delete process.env.KIMI_CODE_HOME;
+    const defaults = kimiBinCandidates();
+    const official = path.join(os.homedir(), '.kimi-code', 'bin', process.platform === 'win32' ? 'kimi.exe' : 'kimi');
+    assert.strictEqual(defaults[0], official, 'المسار الرسمي ليس أول المرشّحين: ' + defaults.join(' , '));
+    process.env.KIMI_CODE_HOME = path.join(os.tmpdir(), 'satr-kimi-home-x');
+    const custom = kimiBinCandidates();
+    assert.strictEqual(custom[0], path.join(path.resolve(process.env.KIMI_CODE_HOME), 'bin', process.platform === 'win32' ? 'kimi.exe' : 'kimi'),
+      'KIMI_CODE_HOME غير محترم في المرشّحين');
+    process.env.KIMI_BIN = 'C:\\explicit\\kimi.exe';
+    assert.strictEqual(kimiBinCandidates()[0], 'C:\\explicit\\kimi.exe', 'KIMI_BIN لم يعد أول المرشّحين');
+  } finally {
+    if (savedHome === undefined) delete process.env.KIMI_CODE_HOME; else process.env.KIMI_CODE_HOME = savedHome;
+    if (savedBin === undefined) delete process.env.KIMI_BIN; else process.env.KIMI_BIN = savedBin;
+  }
+  // الحلّ الفعلي: مجلد وهمي فيه kimi.exe في الموضع الرسمي يُحلّ بلا Path
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'satr-kimi-official-'));
+  try {
+    const binDir = path.join(sandbox, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    const exe = path.join(binDir, process.platform === 'win32' ? 'kimi.exe' : 'kimi');
+    fs.writeFileSync(exe, '');
+    process.env.KIMI_CODE_HOME = sandbox;
+    delete process.env.KIMI_BIN;
+    assert.strictEqual(kimi.resolveKimiBin(true), exe, 'resolveKimiBin لا يجد الثنائي في KIMI_CODE_HOME/bin');
+  } finally {
+    if (savedHome === undefined) delete process.env.KIMI_CODE_HOME; else process.env.KIMI_CODE_HOME = savedHome;
+    if (savedBin === undefined) delete process.env.KIMI_BIN; else process.env.KIMI_BIN = savedBin;
+    kimi.resolveKimiBin(true);
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+  // رسالة الدخول بالمسار المحلول على سطر مستقل (OBS-219 ب)، وبلا مسار تبقى العامة
+  const hint = loginHint('C:\\Users\\u\\.kimi-code\\bin\\kimi.exe');
+  assert.ok(hint.endsWith('\n& "C:\\Users\\u\\.kimi-code\\bin\\kimi.exe" login'), 'أمر الدخول ليس بالمسار الكامل على سطره: ' + hint);
+  const auth = kimi._internals.describeRpcFailure(Object.assign(new Error('Unauthorized'), { code: -32000 }), 'init', 'C:\\Users\\u\\.kimi-code\\bin\\kimi.exe');
+  assert.ok(auth.text.includes('& "C:\\Users\\u\\.kimi-code\\bin\\kimi.exe" login'), auth.text);
+  assert.ok(kimi._internals.describeRpcFailure(Object.assign(new Error('Unauthorized'), { code: -32000 }), 'init').text.includes('kimi login'));
+  // رسالة «لم يُعثر» تسرد المرشّحين وتضع أمر التثبيت على سطر مستقل
+  const events = [];
+  const missing = kimi.create({ resolveKimiBin: () => null });
+  await missing.start({ prompt: 'x', sessionId: null, model: 'k3', permissionMode: 'default', skills: [], images: [], browserControl: false }, root, (event) => events.push(event));
+  const notFound = events.find((event) => event.type === 'spawn_error');
+  assert.ok(notFound && notFound.text.includes(path.join('.kimi-code', 'bin')), 'رسالة عدم العثور لا تذكر أين بحث سطر: ' + (notFound && notFound.text));
+  assert.ok(/\nirm https:\/\/code\.kimi\.com\/kimi-code\/install\.ps1 \| iex$/.test(notFound.text), 'أمر التثبيت ليس على سطر مستقل في نهاية الرسالة');
+}
+
 function testKimiLoginCommandAndCwd() {
   const { loginCommand, loginCwd } = kimi._internals;
   const cmd = loginCommand('C:\\Users\\User\\.kimi-code\\bin\\kimi.exe');
@@ -1775,7 +1891,11 @@ async function testForkSessionProcessCount() {
   await testStdinPipeErrorDoesNotEscape();
   testKimiLoginCommandAndCwd();
   testRpcFailureClassification();
+  await testProcessExitDuringInitCarriesDiagnostics();
+  await testOfficialInstallDirCandidate();
   console.log('✓ Kimi Code ACP مسجّل كمحرك أصيل مستقل عن REST');
+  console.log('✓ OBS-217: خروج العملية أثناء التهيئة يصل بالمرحلة ورمز الخروج وذيل stderr محجوباً، في الواجهة والسجلّ');
+  console.log('✓ OBS-215: ~/.kimi-code/bin (أو KIMI_CODE_HOME) أول المرشّحين، ورسالتا login/عدم العثور بالمسار الفعلي');
   console.log('✓ OBS-189: رفض -32000 يُصنَّف بنصّه (حصة/حدّ ≠ دخول) ويصل النصّ الأصلي محجوباً لا مرمياً');
   console.log('✓ طلبات ACP العكسية تكمل حتى عند تطابق معرّفها مع معرّف session/prompt');
   console.log('✓ الجلسة الجديدة والبث والأدوات والأذونات مطبّعة إلى عقد سطر');
