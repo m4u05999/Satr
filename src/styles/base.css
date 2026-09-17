@@ -739,8 +739,8 @@
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .composer textarea { grid-column: 1 / -1; width: 100%; }
-    #attachBtn { grid-column: 1 / -1; width: 100%; }
-    #browserCtl, #send { width: 100%; }
+    #attachBtn { grid-column: 1 / -1; }
+    #attachBtn, #browserCtl, #send { width: 100%; }
     .statusline { font-size: 10.5px; }
   }
 
