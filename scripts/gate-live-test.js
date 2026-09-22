@@ -23,6 +23,7 @@ const { app, BrowserWindow } = require('electron');
 
 const TIMEOUT_MS = 30000;
 const CHECKS = [
+  'defer-without-readiness', 'dismiss-survives-pending-scan', 'selected-engine-recheck',
   'codex-only-opens', 'claude-only-opens', 'kimi-only-opens',
   'key-provider-opens', 'key-section-guidance', 'key-setup-saves-and-opens',
   'key-save-error-redacted', 'recheck-forces-scan',

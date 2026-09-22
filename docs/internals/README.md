@@ -26,7 +26,7 @@
 | 15 | [`15-keys-vault.md`](15-keys-vault.md) | مخزن الأسرار ومركز المفاتيح (keys.js — المرحلة 5ب) | 1.4 ك.ب |
 | 16 | [`16-testsprite-mcp.md`](16-testsprite-mcp.md) | تكامل TestSprite MCP (اختياري) | 8.0 ك.ب |
 | 17 | [`17-testsprite-jobs.md`](17-testsprite-jobs.md) | نواة مدير جولة TestSprite (testspritejobs.js — العقد المجمَّد v1) | 5.2 ك.ب |
-| 18 | [`18-features-community-enterprise.md`](18-features-community-enterprise.md) | طبقة القدرات ونموذج Community + Enterprise (features.js — المرحلة 5ج) | 1.3 ك.ب |
+| 18 | [`18-features-community-enterprise.md`](18-features-community-enterprise.md) | طبقة القدرات ونموذج Community + Enterprise (features.js — المرحلة 5ج) | 2.2 ك.ب |
 | 19 | [`19-phase5-ipcs.md`](19-phase5-ipcs.md) | IPCs المرحلة 5 (قراءة/كتابة، مُنقّاة في main.js) | 0.9 ك.ب |
 | 20 | [`20-sessions-browser.md`](20-sessions-browser.md) | متصفح الجلسات (المرحلة 1) | 5.2 ك.ب |
 | 21 | [`21-skills-panel.md`](21-skills-panel.md) | لوحة المهارات (Skills) | 16.7 ك.ب |
@@ -66,7 +66,7 @@
 | 55 | [`55-at-files-image-paste.md`](55-at-files-image-paste.md) | منصّة @ للملفات + لصق الصور (المرحلة 4) | 1.0 ك.ب |
 | 56 | [`56-arabic-diff-viewer.md`](56-arabic-diff-viewer.md) | عارض الفرق (Diff) العربي (المرحلة 3) | 2.0 ك.ب |
 | 57 | [`57-arabic-terminal.md`](57-arabic-terminal.md) | الطرفية العربية المدمجة (المرحلة 8 — مكتملة: 8.1–8.4) | 9.5 ك.ب |
-| 58 | [`58-preview-panel.md`](58-preview-panel.md) | لوحة المعاينة المدمجة 🌐 (م-1 — الدفعة 5 «سطر يرى الويب») | 62.7 ك.ب |
+| 58 | [`58-preview-panel.md`](58-preview-panel.md) | لوحة المعاينة المدمجة 🌐 (م-1 — الدفعة 5 «سطر يرى الويب») | 72.2 ك.ب |
 | 59 | [`59-design-system.md`](59-design-system.md) | نظام التصميم (الدفعة 4.1) | 12.3 ك.ب |
 | 60 | [`60-quick-ux-batch.md`](60-quick-ux-batch.md) | دفعة UX السريعة (بعد 4.1 — من مراجعة UX بموافقة المالك) | 1.6 ك.ب |
 | 61 | [`61-daily-loop-polish.md`](61-daily-loop-polish.md) | دفعة تلميع الحلقة اليومية (2026-07-19) | 1.8 ك.ب |
@@ -89,3 +89,6 @@
 | 79 | [`79-release-uia-helper.md`](79-release-uia-helper.md) | شحن المعين satr-uia في مثبّت الإصدار — بناء NativeAOT داخل وظيفة release وحارس test:release-uia (‏OBS-161 — 2026-09-13) | 6.4 ك.ب |
 | 80 | [`80-agents-live.md`](80-agents-live.md) | سطح الوكلاء الفرعيين الأحياء `<satr-agents-live>` خارج كتلة الدور — مفتاحه taskId وحارسه البكسلي (‏OBS-207/151 — 2026-09-15) | 11.4 ك.ب |
 | 81 | [`81-composer-compact-attachments.md`](81-composer-compact-attachments.md) | ضغط المؤلّف إلى ثلاثة صفوف (182⇒124px) وإرفاق أي ملف (نصّي يُحقن / غير نصّي يُنسخ إلى .satr/attachments) مع حارسَي test:attachments وtest:composer-attach (طلب المالك — 2026-09-17) | 7.5 ك.ب |
+| 82 | [`82-pro-saved-tasks-v1.md`](82-pro-saved-tasks-v1.md) | مهام برو المحفوظة والقبول المحلي؛ اختبار Claude الحقيقي في المصدر وقبول محاكاة الحزمة؛ الاستئناف §32 (آخر طقم 147/148) | 115.2 ك.ب |
+| 83 | [`83-pro-accounts-sandbox.md`](83-pro-accounts-sandbox.md) | أساس حساب برو وStripe: عقود الهوية والمعاملات؛ موصل وتوقيع محليان 30/30، دون ربط حي | 31.8 ك.ب |
+| 84 | [`84-permission-metrics.md`](84-permission-metrics.md) | قياس أسباب بطاقات الإذن ومدد انتظارها دون تغيير سياسة السماح | 7.7 ك.ب |

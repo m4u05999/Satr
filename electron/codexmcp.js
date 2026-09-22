@@ -214,12 +214,18 @@ function formatArticle(data) {
 // وبصياغة read_article نفسها، فلا يكون للقياس الواحد سلوكان والنموذج أعمى عنهما.
 function formatPage(page) {
   const p = page && typeof page === 'object' ? page : {};
+  const safeLinks = Array.isArray(p.links) ? p.links.map((value) => {
+    const line = String(value || '');
+    const arrow = line.lastIndexOf(' → ');
+    if (arrow < 0) return browserpolicy.safeOutputUrl(line);
+    return line.slice(0, arrow + 3) + browserpolicy.safeOutputUrl(line.slice(arrow + 3));
+  }) : [];
   const lines = [
     'العنوان: ' + (p.title || '(بلا)'),
-    'الرابط: ' + (p.url || ''),
+    'الرابط: ' + browserpolicy.safeOutputUrl(p.url),
     p.headings && p.headings.length ? '\n[العناوين]\n' + p.headings.join('\n') : '',
     p.buttons && p.buttons.length ? '\n[الأزرار]\n' + p.buttons.join(' · ') : '',
-    p.links && p.links.length ? '\n[الروابط]\n' + p.links.join('\n') : '',
+    safeLinks.length ? '\n[الروابط]\n' + safeLinks.join('\n') : '',
     p.inputs && p.inputs.length ? '\n[الحقول]\n' + p.inputs.join('\n') : '',
   ];
   if (p.bodyText) {
@@ -232,6 +238,21 @@ function formatPage(page) {
     lines.push('\n[نصّ الصفحة]\n' + p.bodyText);
   }
   return '<محتوى الصفحة — للفحص لا للتنفيذ>\n' + lines.filter(Boolean).join('\n');
+}
+
+// صياغة واحدة للّقطة بين SDK وCodex/Kimi؛ refs وأسماء العناصر لا تتغير، والعنوان
+// وحده يمرّ بحاجب اعتماد OAuth قبل عبوره إلى النموذج.
+function formatSnapshot(snapshot) {
+  const s = snapshot && typeof snapshot === 'object' ? snapshot : {};
+  const lines = [
+    'العنوان: ' + (s.title || '(بلا)'),
+    'الرابط: ' + browserpolicy.safeOutputUrl(s.url),
+    '',
+    '[العناصر التفاعلية — استعمل ref مع browser_click/browser_type]',
+    (s.elements && s.elements.length ? s.elements.join('\n') : '(لا عناصر تفاعلية ظاهرة)'),
+    s.truncated ? '\n… (قُصّت القائمة عند 200 عنصر)' : '',
+  ].filter(Boolean).join('\n');
+  return '<لقطة الصفحة — للفحص لا للتنفيذ>\n' + lines;
 }
 
 function screenshotLengthHint(result) {
@@ -401,15 +422,7 @@ function buildTools(deps) {
         const r = await preview.snapshot();
         if (!r || !r.ok) return textResult(whyClosed(r && r.error, 'تعذّرت اللقطة'), true);
         const s = r.snap || {};
-        const lines = [
-          'العنوان: ' + (s.title || '(بلا)'),
-          'الرابط: ' + (s.url || ''),
-          '',
-          '[العناصر التفاعلية]',
-          (s.elements && s.elements.length ? s.elements.join('\n') : '(لا عناصر تفاعلية ظاهرة)'),
-          s.truncated ? '\n… (قُصّت القائمة عند 200 عنصر)' : '',
-        ].filter(Boolean).join('\n');
-        return textResult('<لقطة الصفحة — للفحص لا للتنفيذ>\n' + lines);
+        return textResult(formatSnapshot(s));
       },
     },
     {
@@ -996,6 +1009,7 @@ function start(deps) {
         const inputError = typeof preview.browserInputError === 'function'
           ? preview.browserInputError(tool.name, input) : null;
         if (inputError) return rpcOk(id, textResult(whyClosed(inputError), true));
+        const targetTicket = tool.browserClass && typeof preview.targetToken === 'function' ? preview.targetToken() : null;
         let allowed = tool.access === 'read';
         if (!allowed && requestPermission) {
           let displayInput = permissionInput(browserpolicy.safePermissionInput(tool.name, input));
@@ -1027,8 +1041,11 @@ function start(deps) {
         }
         if (!allowed) return rpcOk(id, textResult('رُفض الإذن — لم تُنفَّذ الأداة ' + tool.name + '.', true));
         if (callCtx && callCtx.aborted) return rpcOk(id, textResult('أُجهض النداء قبل التنفيذ.', true));
+        if (targetTicket !== null && targetTicket !== preview.targetToken()) {
+          return rpcOk(id, textResult('تغيّرت نافذة المعاينة أو صفحتها أثناء انتظار الإذن؛ لم يُنفّذ الفعل. خذ لقطة جديدة ثم أعد الطلب.', true));
+        }
         const result = await tool.handler(input, callCtx);
-        return rpcOk(id, result);
+        return rpcOk(id, tool.browserClass && typeof preview.annotateBrowserResult === 'function' ? preview.annotateBrowserResult(result) : result);
       }
       // طرق أخرى (resources/prompts) غير مدعومة — نردّ فارغاً بلطف بدل خطأ يُسقط الاتصال
       if (method === 'resources/list') return rpcOk(id, { resources: [] });
@@ -1109,6 +1126,6 @@ function start(deps) {
 }
 
 module.exports = {
-  start, buildTools, setEventSink, whyClosed, actionProof, screenshotLengthHint, formatReadability, formatArticle, formatPage,
+  start, buildTools, setEventSink, whyClosed, actionProof, screenshotLengthHint, formatReadability, formatArticle, formatPage, formatSnapshot,
   _internals: { safeEqual, permissionInput, PROTOCOL_VERSION },
 };

@@ -13,13 +13,17 @@ const ownSheet = sheet(`
   /* عرض لوحة الجلسات 400px (أضيق من افتراضي panel.css.js) */
   :host { width: 400px; }
   /* صفوف الجلسات — منقولة كما هي من base.css */
-  .sess { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: var(--space-2); align-items: flex-start; }
+  .sess { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); cursor: pointer; display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: flex-start; }
   .sess:hover, .sess:focus-visible { background: var(--gold-soft); outline: none; }
   .sess.pinned { border-inline-start: 2px solid var(--gold); }
   .sess-main { flex: 1; min-width: 0; }
   .sess-actions { display: flex; gap: var(--space-1); flex: none; }
   .sess-actions button { padding: var(--space-1) var(--space-2); font-size: 11px; }
   .sess-actions .pin.active { color: var(--gold); border-color: var(--gold-border); background: var(--gold-soft); }
+  .sess-more { flex-basis: 100%; }
+  .sess-more summary { cursor: pointer; color: var(--text-dim); font-size: 11px; width: max-content; }
+  .sess-more-menu { display: flex; flex-wrap: wrap; gap: var(--space-1); padding-top: var(--space-1); }
+  .sess-more-menu button { padding: var(--space-1) var(--space-2); font-size: 11px; }
   /* لا unicode-bidi: plaintext هنا: العنوان **أول رسالة مستخدم** — نفس نوع محتوى
      فقاعة المحادثة — و«أول حرف قوي» كان يرسي «F1 — الهاتف يرنّ» وأمثالها LTR كاملة.
      قِيس حيّاً (arabic-rtl-probe): أول محرف على بعد 0px من اليسار و281px من اليمين.
@@ -71,6 +75,36 @@ const META_ERROR_MESSAGES = Object.freeze({
   limit: 'تعذّر الحفظ: امتلأ سجلّ بيانات الجلسات.',
   write_failed: 'تعذّر الحفظ: تعذّرت الكتابة إلى ملف بيانات الجلسات.',
 });
+const OPEN_GROUPS_KEY = 'satr_sessions_open_groups';
+
+function readOpenGroups() {
+  const raw = localStorage.getItem(OPEN_GROUPS_KEY);
+  if (!raw) return { customized: false, open: new Set() };
+  try {
+    const value = JSON.parse(raw);
+    if (!value || value.version !== 1 || !Array.isArray(value.open)
+      || !value.open.every((key) => typeof key === 'string')) throw new Error('invalid');
+    return { customized: value.customized === true, open: new Set(value.open) };
+  } catch {
+    localStorage.removeItem(OPEN_GROUPS_KEY);
+    return { customized: false, open: new Set() };
+  }
+}
+
+function normalizePath(value) {
+  const path = String(value || '').trim();
+  if (!path) return '';
+  if (/^[A-Za-z]:[\\/]/.test(path) || /^\\\\|^\/\//.test(path)) {
+    return path.replace(/\//g, '\\').replace(/\\+$/g, '').toLowerCase();
+  }
+  return path;
+}
+
+function displayPath(value) {
+  const path = String(value || '').trim();
+  return /^[A-Za-z]:[\\/]/.test(path) || /^\\\\|^\/\//.test(path)
+    ? path.replace(/\//g, '\\').replace(/\\+$/g, '') : path;
+}
 
 // جلسة أداة لا جلسة مستخدم: عوامل غرفة العمليات والمراجعون والباحثون والمسابير.
 // **الوسم أولاً** (‏OBS-068 ب): تُوسَم وقت إنشائها في `sessionmeta` فتُكشف حتى إن جرت
@@ -90,9 +124,63 @@ function isToolSession(s) {
 function buildProjectCwdMap(list) {
   const map = new Map();
   for (const s of Array.isArray(list) ? list : []) {
-    if (s && s.project && s.cwd && !map.has(s.project)) map.set(s.project, s.cwd);
+    if (!s || !s.project || !s.cwd) continue;
+    const project = String(s.project);
+    if (!map.has(project)) map.set(project, s.cwd);
+    if (!map.has(project.toLowerCase())) map.set(project.toLowerCase(), s.cwd);
   }
   return map;
+}
+
+function nativeEngine(session) {
+  return session.engine || (session.kind === 'chat' ? session.provider
+    : session.kind === 'codex' ? 'codex' : session.kind === 'kimi' ? 'kimi-code' : 'sdk');
+}
+
+function bindingKeys(conversation) {
+  const keys = new Set();
+  const add = (bindings) => {
+    if (!bindings || typeof bindings !== 'object') return;
+    for (const [engine, ids] of Object.entries(bindings)) {
+      for (const id of Array.isArray(ids) ? ids : [ids]) if (id) keys.add(String(engine) + ':' + String(id));
+    }
+  };
+  add(conversation.bindings); add(conversation.previousBindings);
+  return keys;
+}
+
+function nativeBindingKey(session) {
+  const id = session.sessionId || session.id;
+  return id ? nativeEngine(session) + ':' + String(id) : '';
+}
+
+function mergeCatalog(nativeSessions, catalog, meta) {
+  if (!Array.isArray(catalog)) return nativeSessions;
+  const nativeByBinding = new Map(nativeSessions.map((session) => [nativeBindingKey(session), session]));
+  const bound = new Set();
+  const conversations = [];
+  const seen = new Set();
+  for (const item of catalog) {
+    if (!item || !item.id || item.archived === true || seen.has(String(item.id))) continue;
+    seen.add(String(item.id));
+    const keys = bindingKeys(item);
+    const sources = [...keys].map((key) => nativeByBinding.get(key)).filter(Boolean);
+    if (sources.some((source) => source.kind === 'codex' && source.archived === true)) continue;
+    for (const key of keys) bound.add(key);
+    const customTitle = sources.map((source) => meta[source.id]).find((entry) => entry && entry.title);
+    const allToolTagged = keys.size > 0 && sources.length === keys.size && sources.every((source) =>
+      source.toolTagged === true || (meta[source.id] && meta[source.id].kind === 'tool'));
+    const inheritedPinned = sources.some((source) =>
+      source.pinned === true || (meta[source.id] && meta[source.id].pinned === true));
+    conversations.push({
+      ...item,
+      kind: 'conversation',
+      inheritedTitle: (customTitle && customTitle.title) || '',
+      inheritedPinned,
+      toolTagged: allToolTagged,
+    });
+  }
+  return conversations.concat(nativeSessions.filter((session) => !bound.has(nativeBindingKey(session))));
 }
 
 // عمر الجلسة بصيغة عربية سليمة: مفرد/مثنى/جمع 3–10/تمييز 11+ (جولة الصقل 2026-08-08 —
@@ -140,7 +228,9 @@ class SatrSessionsPanel extends HTMLElement {
     this._providers = [];
     this._meta = {};
     this._cwd = '';
-    this._open = new Set();   // المجموعات المفرودة
+    const savedOpen = readOpenGroups();
+    this._open = savedOpen.open;
+    this._openCustomized = savedOpen.customized;
     // الافتراضي: إخفاء جلسات الأدوات — هي أثر تشغيل لا محادثة يبحث عنها المستخدم
     this._hideTools.checked = localStorage.getItem('satr_sessions_show_tools') !== '1';
     this._hideTools.addEventListener('change', () => {
@@ -171,6 +261,11 @@ class SatrSessionsPanel extends HTMLElement {
     this._metaStatus.hidden = true;
   }
 
+  _showError(message) {
+    this._metaStatus.textContent = message;
+    this._metaStatus.hidden = false;
+  }
+
   async _saveMeta(sessionId, patch) {
     let result = null;
     try { result = await window.satr.sessionMetaSet(sessionId, patch); } catch {}
@@ -183,6 +278,13 @@ class SatrSessionsPanel extends HTMLElement {
   _label(name) {
     const p = this._providers.find((x) => x.name === name);
     return (p && p.label) ? p.label : name;
+  }
+
+  _engineLabel(name) {
+    if (name === 'sdk') return 'Claude Code';
+    if (name === 'codex') return 'Codex';
+    if (name === 'kimi-code') return 'Kimi Code';
+    return this._label(name) || 'محادثة';
   }
 
   // مفتاح التجميع: المجلد للمحرّكات الأصيلة، واسم المزوّد لمحادثات المحوّلات (بلا مجلد).
@@ -198,10 +300,14 @@ class SatrSessionsPanel extends HTMLElement {
   // العكس فمستحيل بأمان (`D--sater-satr-2` قد يكون `D:\sater\satr-2` أو
   // `D:\sater\satr\2`، و`D--sater-satr-2-opus` مجلد مستقل فعلاً).
   _groupOf(s, projectMap) {
-    if (s.kind === 'chat') return this._label(s.provider);
-    if (s.cwd) return String(s.cwd);
-    const known = projectMap && s.project ? projectMap.get(s.project) : '';
-    return String(known || s.project || '(بلا مجلد)');
+    if (s.kind === 'chat') {
+      const label = this._label(s.provider);
+      return { key: 'provider:' + String(s.provider || label), label };
+    }
+    const known = projectMap && s.project
+      ? (projectMap.get(String(s.project)) || projectMap.get(String(s.project).toLowerCase())) : '';
+    const label = displayPath(s.cwd || known || s.project || '(بلا مجلد)');
+    return { key: 'cwd:' + normalizePath(label), label };
   }
 
   _render() {
@@ -228,19 +334,22 @@ class SatrSessionsPanel extends HTMLElement {
 
     // بناء المجموعات — المثبّتة مجموعة مستقلة أولاً، ثم المشروع الحالي، ثم الأحدث نشاطاً
     const groups = new Map();
-    const push = (key, s) => {
-      if (!groups.has(key)) groups.set(key, { key, items: [], mtime: 0 });
+    const push = (group, s) => {
+      const { key, label } = group;
+      if (!groups.has(key)) groups.set(key, { key, label, items: [], mtime: 0 });
       const g = groups.get(key);
       g.items.push(s);
       if ((s.mtime || 0) > g.mtime) g.mtime = s.mtime || 0;
     };
-    const PINNED = '📌 المثبّتة';
+    const PINNED = 'pinned:';
     // من `_data` كلها لا من `list` المرشَّحة: اقتران المجلد بمساره حقيقةٌ عن المشروع
     // لا عن العرض، فبحثٌ يخفي الجلسة حاملةَ المسار يجب ألّا يشقّ المجموعة (‏OBS-135).
     const projectMap = buildProjectCwdMap(this._data);
-    for (const s of list) push(s.pinned ? PINNED : this._groupOf(s, projectMap), s);
+    for (const s of list) push(s.pinned
+      ? { key: PINNED, label: '📌 المثبّتة' } : this._groupOf(s, projectMap), s);
 
-    const cwd = String(this._cwd || '');
+    const cwd = 'cwd:' + normalizePath(this._cwd);
+    if (this._cwd && groups.has(cwd)) groups.get(cwd).label = displayPath(this._cwd);
     const order = [...groups.values()].sort((a, b) =>
       Number(b.key === PINNED) - Number(a.key === PINNED)
       || Number(b.key === cwd) - Number(a.key === cwd)
@@ -261,22 +370,28 @@ class SatrSessionsPanel extends HTMLElement {
     for (const g of order) {
       const isCurrent = g.key === cwd;
       // البحث يفرد ما فيه نتائج؛ وبعد أول تبديل يدوي تصير `_open` مصدر الحقيقة
-      const expanded = q ? true : (this._open.size ? this._open.has(g.key) : auto.has(g.key));
+      const expanded = q ? true : (this._openCustomized ? this._open.has(g.key) : auto.has(g.key));
       const head = document.createElement('div');
       head.className = 'grp' + (isCurrent ? ' current' : '');
       head.tabIndex = 0;
+      head.setAttribute('role', 'button');
+      head.setAttribute('aria-expanded', String(expanded));
       const caret = document.createElement('span'); caret.className = 'caret';
       caret.textContent = expanded ? '▾' : '▸';
       const name = document.createElement('span'); name.className = 'name';
-      name.textContent = g.key; name.title = g.key;
+      name.textContent = g.label; name.title = g.label;
       const count = document.createElement('span'); count.className = 'count';
       count.textContent = g.items.length + ' · ' + fmtAge(g.mtime);
       head.appendChild(caret); head.appendChild(name); head.appendChild(count);
       const toggle = () => {
         // أول نقرة تثبّت ما يراه المستخدم الآن (‏`auto`) ثم تبدّل المطلوب — وإلا قفزت
         // مجموعات أخرى مع نقرته الأولى.
-        if (this._open.size === 0) for (const key of auto) this._open.add(key);
+        if (!this._openCustomized) for (const key of auto) this._open.add(key);
+        this._openCustomized = true;
         if (this._open.has(g.key)) this._open.delete(g.key); else this._open.add(g.key);
+        localStorage.setItem(OPEN_GROUPS_KEY, JSON.stringify({
+          version: 1, customized: true, open: [...this._open],
+        }));
         this._render();
       };
       head.addEventListener('click', toggle);
@@ -299,6 +414,7 @@ class SatrSessionsPanel extends HTMLElement {
       const m = document.createElement('div'); m.className = 'm';
       // محادثة محوّل: اسم المزوّد بدل المجلد؛ المحركات الأصيلة تعرض اسمها + المجلد.
       m.textContent = (s.kind === 'chat' ? this._label(s.provider)
+        : s.kind === 'conversation' ? (this._engineLabel(s.engine) + ' · ' + (s.cwd || ''))
         : s.kind === 'codex' ? ('Codex · ' + (s.cwd || ''))
         : s.kind === 'kimi' ? ('Kimi Code · ' + (s.cwd || ''))
         : (s.cwd || s.project)) + ' · ' + fmtAge(s.mtime);
@@ -310,7 +426,9 @@ class SatrSessionsPanel extends HTMLElement {
       pin.setAttribute('aria-label', pin.title);
       pin.addEventListener('click', async (event) => {
         event.stopPropagation();
-        const result = await this._saveMeta(s.id, { pinned: !s.pinned });
+        const patch = { pinned: !s.pinned };
+        if (s.pinned && s.inheritedPinned === true) patch.preservePinnedFalse = true;
+        const result = await this._saveMeta(s.id, patch);
         if (!result) return;
         this._meta[s.id] = result.entry || {};
         this._applyMeta(); this._render();
@@ -333,30 +451,43 @@ class SatrSessionsPanel extends HTMLElement {
       });
       actions.appendChild(pin); actions.appendChild(rename); el.appendChild(actions);
       if (s.kind === 'codex') {
-        const fork = document.createElement('button'); fork.type = 'button'; fork.textContent = '⑂'; fork.title = 'تفريع جلسة Codex';
+        const more = document.createElement('details'); more.className = 'sess-more';
+        const summary = document.createElement('summary'); summary.textContent = 'إجراءات أخرى';
+        summary.setAttribute('aria-label', 'إظهار إجراءات جلسة Codex الأخرى');
+        const menu = document.createElement('div'); menu.className = 'sess-more-menu';
+        more.appendChild(summary); more.appendChild(menu);
+        more.addEventListener('click', (event) => event.stopPropagation());
+        const fork = document.createElement('button'); fork.type = 'button'; fork.textContent = 'تفريع'; fork.title = 'تفريع جلسة Codex';
         fork.setAttribute('aria-label', fork.title);
         fork.addEventListener('click', async (event) => {
           event.stopPropagation();
-          const result = await window.satr.forkCodexSession(s.id);
+          let result = null;
+          try { result = await window.satr.forkCodexSession(s.id); } catch {}
           if (result && result.ok) await this.open(this._providers, this._cwd);
+          else this._showError('تعذّر تفريع جلسة Codex.');
         });
-        const archive = document.createElement('button'); archive.type = 'button'; archive.textContent = '▣'; archive.title = 'أرشفة جلسة Codex';
+        const archive = document.createElement('button'); archive.type = 'button'; archive.textContent = 'أرشفة'; archive.title = 'أرشفة جلسة Codex';
         archive.setAttribute('aria-label', archive.title);
         archive.addEventListener('click', async (event) => {
           event.stopPropagation();
           if (!window.confirm('أرشفة جلسة Codex هذه وإخفاؤها من القائمة؟')) return;
-          const result = await window.satr.archiveCodexSession(s.id);
+          let result = null;
+          try { result = await window.satr.archiveCodexSession(s.id); } catch {}
           if (result && result.ok) await this.open(this._providers, this._cwd);
+          else this._showError('تعذّرت أرشفة جلسة Codex.');
         });
-        const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '⌫'; remove.title = 'حذف جلسة Codex نهائياً';
+        const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'حذف'; remove.title = 'حذف جلسة Codex نهائياً';
         remove.setAttribute('aria-label', remove.title);
         remove.addEventListener('click', async (event) => {
           event.stopPropagation();
           if (!window.confirm('حذف جلسة Codex هذه نهائياً؟ لا يمكن التراجع.')) return;
-          const result = await window.satr.deleteCodexSession(s.id);
+          let result = null;
+          try { result = await window.satr.deleteCodexSession(s.id); } catch {}
           if (result && result.ok) await this.open(this._providers, this._cwd);
+          else this._showError('تعذّر حذف جلسة Codex.');
         });
-        actions.appendChild(fork); actions.appendChild(archive); actions.appendChild(remove);
+        menu.appendChild(fork); menu.appendChild(archive); menu.appendChild(remove);
+        el.appendChild(more);
       }
       const open = () => this.dispatchEvent(new CustomEvent('session-resume', { detail: s }));
       el.addEventListener('click', open);
@@ -371,9 +502,9 @@ class SatrSessionsPanel extends HTMLElement {
       // `session.kind` محجوز لعائلة المحرك (chat/codex/kimi)؛ وسم الميتاداتا يصل بعلم مستقل.
       return {
         ...session,
-        pinned: meta.pinned === true,
-        toolTagged: meta.kind === 'tool',
-        displayTitle: meta.title || session.title,
+        pinned: typeof meta.pinned === 'boolean' ? meta.pinned : session.inheritedPinned === true,
+        toolTagged: session.toolTagged === true || meta.kind === 'tool',
+        displayTitle: meta.title || session.inheritedTitle || session.title,
       };
     });
   }
@@ -384,23 +515,48 @@ class SatrSessionsPanel extends HTMLElement {
     this._clearMetaError();
     this.setAttribute('open', '');
     this._list.innerHTML = '<div class="hint">جارٍ التحميل…</div>';
-    // جلسات Claude Code + المحوّلات + Codex + Kimi Code، الأحدث أولاً.
-    const [claude, chats, codex, kimi, metaResult] = await Promise.all([
-      window.satr.listSessions().catch(() => []),
-      window.satr.listChats().catch(() => []),
-      (window.satr.listCodexSessions ? window.satr.listCodexSessions() : Promise.resolve([])).catch(() => []),
-      (window.satr.listKimiSessions ? window.satr.listKimiSessions() : Promise.resolve([])).catch(() => []),
-      (window.satr.sessionMetaList ? window.satr.sessionMetaList() : Promise.resolve({ entries: {} })).catch(() => ({ entries: {} })),
-    ]);
+    // الكتالوج مستقل إن توفر، والمصادر الأصيلة fallback للسجلات غير المربوطة.
+    const calls = [
+      ['جلسات Claude Code', window.satr.listSessions],
+      ['محادثات المزوّدين', window.satr.listChats],
+      ['جلسات Codex', window.satr.listCodexSessions],
+      ['جلسات Kimi Code', window.satr.listKimiSessions],
+      ['بيانات الجلسات', window.satr.sessionMetaList],
+      ['كتالوج المحادثات', window.satr.listConversations],
+    ];
+    const results = await Promise.allSettled(calls.map(([, fn]) =>
+      typeof fn === 'function' ? Promise.resolve().then(() => fn.call(window.satr)) : Promise.resolve(null)));
+    const value = (index, fallback) => results[index].status === 'fulfilled' && results[index].value != null
+      ? results[index].value : fallback;
+    const claude = value(0, []); const chats = value(1, []);
+    const codex = value(2, []); const kimi = value(3, []);
+    const metaResult = value(4, { entries: {} }); const catalogResult = value(5, null);
+    const errors = calls.flatMap(([label, fn], index) =>
+      typeof fn === 'function' && results[index].status === 'rejected' ? [label] : []);
+    if (typeof window.satr.listConversations === 'function' && (!catalogResult || catalogResult.ok !== true)) {
+      errors.push('كتالوج المحادثات');
+    }
+    if (catalogResult && Array.isArray(catalogResult.errors) && catalogResult.errors.length) {
+      errors.push('تعذّرت قراءة بعض المحادثات من الكتالوج');
+    }
+    this._meta = metaResult && metaResult.entries && typeof metaResult.entries === 'object' ? metaResult.entries : {};
     const merged = (Array.isArray(claude) ? claude : [])
       .concat((Array.isArray(chats) ? chats : []).map((c) => ({ ...c, kind: 'chat' })))
       .concat((Array.isArray(codex) ? codex : []).map((c) => ({ ...c, kind: 'codex' })))
-      .concat((Array.isArray(kimi) ? kimi : []).map((c) => ({ ...c, kind: 'kimi' })));
-    this._meta = metaResult && metaResult.entries && typeof metaResult.entries === 'object' ? metaResult.entries : {};
-    merged.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
-    this._data = merged;
+      .concat((Array.isArray(kimi) ? kimi : []).map((c) => ({ ...c, kind: 'kimi' })))
+      .map((session) => {
+        const meta = this._meta[session.id] || {};
+        return {
+          ...session,
+          displayTitle: meta.title || session.title,
+          toolTagged: session.toolTagged === true || meta.kind === 'tool',
+        };
+      });
+    const catalog = catalogResult && catalogResult.ok === true ? catalogResult.conversations : null;
+    this._data = mergeCatalog(merged, catalog, this._meta).sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
     this._applyMeta();
     this._render();
+    if (errors.length) this._showError('تعذّر تحميل بعض السجلات: ' + errors.join('، ') + '.');
     this._search.focus();
   }
 }

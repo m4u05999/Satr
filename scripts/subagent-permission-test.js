@@ -13,11 +13,12 @@ const vm = require('node:vm');
 const { randomBytes } = require('node:crypto');
 const tasks = require('../electron/tasks');
 const mobilestate = require('../electron/mobilestate');
+const { checkAppControlEvents } = require('./lib/sdk-control-ui-checks');
 
 function plain(value) { return JSON.parse(JSON.stringify(value)); }
 
 function loadRuntime(root) {
-  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8');
+  const source = fs.readFileSync(process.env.SATR_METRICS_MAIN_FILE || path.join(__dirname, '../electron/main.js'), 'utf8');
   function section(start, end) {
     const from = source.indexOf(start);
     const to = source.indexOf(end, from + start.length);
@@ -39,6 +40,7 @@ function loadRuntime(root) {
     sdkSessionControlBusy: false, sdkRunInFlight: false,
     sdkStartingPromise: null, sdkStoppingPromise: null,
     sendRequestBusy: false, sendRequestEpoch: 0,
+    savedTaskHost: { isReserved: () => false }, nativeStoppingRuns: new Set(),
     sdkBackgroundRuns: new Set(), sdkTaskOwners: new Map(),
     pendingVerificationPermissions: new Map(), mobilePermissionRaces: new Map(),
     mobileControlEnabled: false,
@@ -46,13 +48,14 @@ function loadRuntime(root) {
     mobilestate,
     tasks: { ...tasks, apply: (update) => tasks.apply(update, { root }) },
     ipcMain: { handle(name, callback) { handlers[name] = callback; } },
+    permissionMetrics: require('../electron/permissionmetrics').create(),
     eventTrace: { emitted() {}, dropped(...args) { dropped.push(args); } },
     emitToWindow: (event, engine) => rendered.push({ event: plain(event), engine }),
     preview: { endHandoff() {}, clearSensitiveState() {} },
     promocapture: { stopAll: async () => {} },
     withdrawMobilePermissions() {}, withdrawMobilePermission() {}, publishMobileState() {},
     offerMobilePermission() {}, notifyObservers() {}, noteShadowOverride() {},
-    browserBudgetFor: () => ({}), browserBudgets: new Map(),
+    browserpolicy: require('../electron/browserpolicy'),
     trustedBrowserOrigins: new Set(),
     checkpoints: { begin() {}, bindSession() {}, consumeVerification: () => '', finish: () => null },
     attachments: require('../electron/attachments'), // وحدة نقية — مرفقات الرسالة (دفعة 2026-09-17)
@@ -136,23 +139,28 @@ async function main() {
 
     // (١) ⭐ طلب إذن من A بعد انتهاء دوره يصل النافذة ولا يُسقط بائتاً.
     a.owned.add('perm_bg_1');
-    a.emit({ type: 'permission_request', id: 'perm_bg_1', tool: 'Edit', input: {}, requester: 'agent-a', turnEligible: true, alwaysEligible: true });
+    a.emit({ type: 'permission_request', id: 'perm_bg_1', tool: 'Edit', input: {}, requester: 'agent-a',
+      ownerKey: 'sdk:spoofed', turnEligible: true, alwaysEligible: true });
+    ok(rt.sandbox.permissionMetrics.snapshot().pending.length === 1, 'قياس الطلب الخلفي يبدأ عند إصداره فعلاً');
     const shown = rt.rendered.at(-1);
     ok(shown && shown.event.type === 'permission_request' && shown.event.id === 'perm_bg_1',
       'طلب إذن الوكيل الخلفي وصل النافذة');
+    ok(shown.event.ownerKey === 'sdk:1', 'main يكتب مالك الطلب من token ويتجاهل حمولة المحرك');
     ok(!rt.dropped.some((args) => args[1] && args[1].type === 'permission_request'),
       'ولم يُسقط بوصفه stale_token');
 
     // (٢) ⭐ الردّ من الواجهة يعود إلى A لا إلى B (المعرّف يحسم المالك).
     const reply = await rt.handlers['satr:permission']({}, { id: 'perm_bg_1', allow: true });
     ok(reply.ok === true, 'الردّ قُبل');
+    ok(rt.sandbox.permissionMetrics.snapshot().counts.allow_once === 1, 'قياس الرد المقبول لا يعده إلغاءً');
     ok(rt.resolved.length === 1 && rt.resolved[0].run === a && rt.resolved[0].allow === true && rt.resolved[0].kind === 'permission',
       'الردّ وصل الدور الخلفي A نفسه');
 
     // (٣) سؤال النموذج من A يسلك المسار نفسه.
     a.owned.add('q_bg_1');
     a.emit({ type: 'question_request', id: 'q_bg_1', questions: [] });
-    ok(rt.rendered.at(-1).event.type === 'question_request', 'سؤال الوكيل الخلفي وصل النافذة');
+    ok(rt.rendered.at(-1).event.type === 'question_request' && rt.rendered.at(-1).event.ownerKey === 'sdk:1',
+      'سؤال الوكيل الخلفي وصل النافذة بمالك Query نفسه');
     const answer = await rt.handlers['satr:answerQuestion']({}, { id: 'q_bg_1', selections: [{ questionIndex: 0, optionIndexes: [0] }] });
     ok(answer.ok === true && rt.resolved.at(-1).run === a && rt.resolved.at(-1).kind === 'question',
       'جواب السؤال وصل الدور الخلفي A');
@@ -162,6 +170,25 @@ async function main() {
     a.emit({ type: 'stream_text', text: 'نص متأخر', phase: 'final_answer' });
     ok(rt.dropped.length === droppedBefore + 1 && rt.dropped.at(-1)[2] === 'stale_token',
       'البث المتأخر من A ما زال يُسقط stale_token');
+
+    // إلغاء طلب بعينه من Query الخلفية يمرّ بحقول مغلقة؛ payload لا يستطيع تبديل المالك.
+    a.emit({ type: 'permission_request', id: 'perm_bg_2', tool: 'Bash', input: {} });
+    a.emit({ type: 'sdk_control_request_closed', id: 'perm_bg_2', kind: 'permission', ownerKey: 'sdk:spoofed' });
+    ok(rt.sandbox.permissionMetrics.snapshot().counts.cancelled === 1, 'إغلاق طلب من SDK يسجل إلغاء لا رفضاً');
+    const requestClosed = rt.rendered.at(-1).event;
+    ok(requestClosed.type === 'sdk_control_request_closed' && requestClosed.id === 'perm_bg_2'
+      && requestClosed.kind === 'permission' && requestClosed.ownerKey === 'sdk:1',
+    'إلغاء الطلب المتأخر وصل بمالك A وحقول مغلقة');
+
+    // حسم Query الحقيقي وحده يغلق مالكها، حتى بعد تقدّم token، ولا يخلط مالك B.
+    a.emit({ type: 'permission_request', id: 'perm_bg_3', tool: 'Bash', input: {} });
+    a.finish();
+    await new Promise((resolve) => setImmediate(resolve));
+    ok(rt.sandbox.permissionMetrics.snapshot().pending.length === 0
+      && rt.sandbox.permissionMetrics.snapshot().counts.cancelled === 2, 'حسم Query يغلق طلباته المقاسة');
+    const ownerClosed = rt.rendered.at(-1).event;
+    ok(ownerClosed.type === 'sdk_control_owner_closed' && ownerClosed.ownerKey === 'sdk:1',
+      'run.done أغلق مالك A القديم دون انتظار حدث بث من المحرك');
 
     // (٥) لا توسيع زائد: دور انتهى **بلا** مهام خلفية لا يمرّر طلب إذن متأخراً.
     const settle = async (run) => { run.finish(); await new Promise((resolve) => setImmediate(resolve)); };
@@ -236,10 +263,13 @@ async function main() {
     ok(rt.rendered.at(-1).event.type === 'sdk_agent_state' && rt.rendered.at(-1).event.kind === 'finished',
       'حدث سطح الوكلاء المتأخر يصل النافذة ولا يُسقط بائتاً');
     ok(!rt.sandbox.sdkTaskOwners.has(AGENT_TASK_ID), 'ويُسحب المالك عند حسم المهمة');
+    const uiChecks = checkAppControlEvents(path.join(__dirname, '..'),
+      rt.rendered.map((entry) => entry.event));
+    ok(uiChecks === 10, 'حارس OBS-213 شغّل app.js ومكوّني الحوار الحقيقيين');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-  console.log('subagent-permission-test: ok — ' + passed + ' فحصاً (طلب الإذن والسؤال من وكيل خلفي بعد انتهاء الدور يصلان ويعودان إلى مالكهما، وبلا توسيع للبائت؛ وعضوية sdkBackgroundRuns المشتقّة من مهام النموذج تُبقي Query حيّة بعد أن كان الإرسال التالي يقتلها).');
+  console.log('subagent-permission-test: ok — ' + passed + ' فحصاً (طلب الإذن والسؤال من وكيل خلفي يعودان إلى مالكهما؛ وحارس OBS-213 يشغّل app.js ومكوّني الحوار ويحفظ الملكية عبر result والإغلاق المحدد).');
 }
 
 main().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });

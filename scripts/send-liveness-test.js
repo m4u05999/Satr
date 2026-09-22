@@ -153,12 +153,11 @@ async function scenarioStopAfterCleanup(root) {
   console.log('✓ الإيقاف بعد إنهاء stdin بلا استثناء غير ملتقط ويُحسم فوراً (لا انتظار مهلة)');
 }
 
-function scenarioMainGuards() {
+async function scenarioMainGuards() {
   const main = fssync.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
   assert.ok(main.includes('STOP_ALL_SEND_TIMEOUT_MS'), 'main defines stopAll send cap');
   assert.ok(main.includes('SDK_START_TIMEOUT_MS'), 'main defines sdk start cap');
-  assert.ok(/Promise\.race\(\[\s*\n?\s*stopAll\(false\)/.test(main),
-    'send path races stopAll against the cap');
+  await require('./lib/main-stop-handler-check').checkSendStopCap(main);
   assert.ok(main.includes("reject(new Error('sdk_boot_timeout'))"), 'sdk start raced with timeout');
   assert.ok(main.includes('تأخر إقلاع محرك Claude'), 'sdk boot timeout has Arabic message');
   const codexSrc = fssync.readFileSync(path.join(__dirname, '..', 'electron', 'codex.js'), 'utf8');
@@ -190,7 +189,7 @@ async function main() {
     await scenarioSilentBoot(root);
     await scenarioDeadChannelStop(root);
     await scenarioStopAfterCleanup(root);
-    scenarioMainGuards();
+    await scenarioMainGuards();
     console.log('send-liveness-test: ok — مهلة الإقلاع، إيقاف القناة الميتة، الإيقاف بعد إنهاء stdin، حصون قفل الإرسال');
   } finally {
     if (prevBin === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = prevBin;

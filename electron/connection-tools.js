@@ -88,16 +88,17 @@ function sdkShape(z, name) {
 }
 
 // بوابة صريحة مستقلة عن bypass و«دائماً». كل إذن مرتبط بنداء ودور حيين.
-function createPermissionGate({ emit, isActive: active }) {
+function createPermissionGate({ emit, isActive: active, onClose }) {
   const pending = new Map();
   let closed = false;
   const alive = () => !closed && isActive({ isActive: active });
-  const settle = (id, allow) => {
+  const settle = (id, allow, notifyClose = false) => {
     const entry = pending.get(id);
     if (!entry) return false;
     pending.delete(id);
     if (entry.signal && entry.abort) entry.signal.removeEventListener('abort', entry.abort);
     entry.resolve(allow === true && alive());
+    if (notifyClose && entry.emitted && typeof onClose === 'function') onClose(id);
     return true;
   };
   return {
@@ -108,10 +109,12 @@ function createPermissionGate({ emit, isActive: active }) {
         const entry = { resolve, signal: callCtx && callCtx.signal };
         pending.set(id, entry);
         if (entry.signal && typeof entry.signal.addEventListener === 'function') {
-          entry.abort = () => settle(id, false);
+          entry.abort = () => settle(id, false, true);
           entry.signal.addEventListener('abort', entry.abort, { once: true });
         }
-        if (callCtx && callCtx.abortedPromise) callCtx.abortedPromise.then(() => settle(id, false));
+        if (callCtx && callCtx.abortedPromise) callCtx.abortedPromise.then(() => settle(id, false, true));
+        if (!pending.has(id)) return;
+        entry.emitted = true;
         try {
           emit({ type: 'permission_request', id, tool: NAMES[1], input,
             detail: input.action === 'trigger_build'
@@ -124,7 +127,7 @@ function createPermissionGate({ emit, isActive: active }) {
     resolvePermission(id, allow) { return settle(id, allow); },
     stop() {
       closed = true;
-      for (const id of pending.keys()) settle(id, false);
+      for (const id of pending.keys()) settle(id, false, true);
     },
   };
 }

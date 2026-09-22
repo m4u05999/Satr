@@ -17,10 +17,13 @@ const SAFE_RUN = /^run-[0-9a-f-]{36}$/;
 const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 const ENGINES = new Set(['sdk', 'codex']);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_DISPLAY_IMAGE_BYTES = 11 * 1024 * 1024;
 const MAX_TEXT_CHARS = 256 * 1024;
 const DEFAULT_TRANSFER_CHARS = 64 * 1024;
 const TOOL_EXCERPT_CHARS = 2000;
 const STATUSES = new Set(['running', 'completed', 'stopped', 'failed', 'interrupted']);
+// مصدر الإيقاف رمز مغلق للتشخيص؛ لا نص حر ولا افتراض أن الواجهة تعني نقرة بشرية.
+const STOP_SOURCES = new Set(['unspecified', 'renderer_request', 'new_request', 'window_closed', 'app_quit', 'mobile_request', 'continuity_failure', 'superseded_before_start']);
 const BLOCKING_ISSUES = new Set(['secret_redacted', 'text_too_large', 'history_incomplete']);
 const REDACTED = '[حُجب النص من سجل الاستمرارية لاحتوائه على سر ظاهر]';
 const ROOT = path.join(os.homedir(), '.satr', 'conversations');
@@ -115,10 +118,10 @@ function createStore(options = {}) {
     noLink(directory(cwd));
     fs.mkdirSync(directory(cwd), { recursive: true, mode: 0o700 });
   }
-  function atomicWrite(target, data) {
+  function atomicWrite(target, data, maxBytes = MAX_FILE_BYTES) {
     noLink(target);
     const encoded = JSON.stringify(data);
-    if (Buffer.byteLength(encoded, 'utf8') > MAX_FILE_BYTES) throw new Error('store_limit');
+    if (Buffer.byteLength(encoded, 'utf8') > maxBytes) throw new Error('store_limit');
     const temp = target + '.tmp-' + crypto.randomUUID();
     let fd;
     try {
@@ -182,12 +185,12 @@ function createStore(options = {}) {
     }
   }
 
-  function readJson(target) {
+  function readJson(target, maxBytes = MAX_FILE_BYTES) {
     noLink(root);
     noLink(path.dirname(target));
     noLink(target);
     try {
-      if (fs.statSync(target).size > MAX_FILE_BYTES) throw new Error('store_limit');
+      if (fs.statSync(target).size > maxBytes) throw new Error('store_limit');
       return JSON.parse(fs.readFileSync(target, 'utf8'));
     } catch (error) {
       if (error.code === 'ENOENT') return null;
@@ -215,7 +218,10 @@ function createStore(options = {}) {
         || !ENGINES.has(message.engine) || typeof message.text !== 'string'
         || !Array.isArray(message.issues) || message.issues.some((issue) => typeof issue !== 'string')
         || (message.runId && !SAFE_RUN.test(message.runId))
-        || hasSecret(message.text)) throw new Error('store_corrupt');
+        || hasSecret(message.text)
+        || (message.displayText !== undefined && (typeof message.displayText !== 'string' || hasSecret(message.displayText)))
+        || (message.messageId !== undefined && !safeSession(message.messageId))
+        || (message.sourceSessionId && !safeSession(message.sourceSessionId))) throw new Error('store_corrupt');
       previous = message.seq;
     }
     if (previous !== data.revision) throw new Error('store_corrupt');
@@ -230,6 +236,17 @@ function createStore(options = {}) {
         || !Number.isInteger(run.startRevision) || run.startRevision < 0 || run.startRevision > data.revision
         || !Array.isArray(run.seen) || !Array.isArray(run.toolIds)
         || (run.sessionId && !safeSession(run.sessionId))) throw new Error('store_corrupt');
+      if (run.stopSource !== undefined && !STOP_SOURCES.has(run.stopSource)) throw new Error('store_corrupt');
+      if (run.draft && (typeof run.draft !== 'object' || Array.isArray(run.draft)
+        || Object.entries(run.draft).some(([phase, text]) => !['commentary', 'final_answer'].includes(phase) || typeof text !== 'string' || hasSecret(text)))) throw new Error('store_corrupt');
+      if (run.draftIssues && (typeof run.draftIssues !== 'object' || Object.values(run.draftIssues).some(issues => !Array.isArray(issues) || issues.some(issue => !BLOCKING_ISSUES.has(issue))))) throw new Error('store_corrupt');
+      if (run.displayTools && (!Array.isArray(run.displayTools) || run.displayTools.some(tool => !tool || !safeSession(tool.toolId) || typeof tool.name !== 'string' || tool.name.length > 200 || hasSecret(tool.name) || !Number.isFinite(tool.seq)))) throw new Error('store_corrupt');
+    }
+    const draft = readJson(path.join(directory(cwd), id + '.draft.json'));
+    const pending = draft && data.runs.find(run => run.id === draft.runId && run.status === 'running');
+    if (pending && draft.revision === data.revision && draft.streams && typeof draft.streams === 'object') {
+      pending.draftIssues = Object.fromEntries(Object.entries(draft.issues || {}).map(([phase, issues]) => [phase, Array.isArray(issues) ? issues.filter(issue => BLOCKING_ISSUES.has(issue)) : []]));
+      pending.draft = Object.fromEntries(Object.entries(draft.streams).filter(([phase, text]) => ['commentary', 'final_answer'].includes(phase) && typeof text === 'string' && !hasSecret(text)));
     }
     return data;
   }
@@ -242,6 +259,7 @@ function createStore(options = {}) {
       .map((name) => read(name.slice(0, -5), cwd));
   }
   function save(data) {
+    for (const message of data.messages) for (const image of message.images || []) delete image.dataUrl;
     const current = read(data.id, data.cwd);
     if (current && current.writeVersion !== data.writeVersion) throw new Error('revision_conflict');
     const sourceIssues = data.coverage.sourceIssues || data.coverage.issues.filter((issue) => issue === 'history_incomplete');
@@ -257,13 +275,58 @@ function createStore(options = {}) {
     try { atomicWrite(path.join(directory(data.cwd), '_latest.json'), { id: data.id }); return true; }
     catch (_) { return false; }
   }
+
+  function displayImages(data, images) {
+    return imagesMetadata(images).map((meta, index) => {
+      const image = images[index];
+      const url = typeof image === 'string' ? image : image?.dataUrl
+        || (image?.data && meta.mime !== 'image/unknown' ? 'data:' + meta.mime + ';base64,' + image.data : '');
+      const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(url || '');
+      if (!match || match[2].length > 10 * 1024 * 1024) return meta;
+      const asset = digest(url);
+      const target = path.join(directory(data.cwd), 'image-' + asset + '.json');
+      atomicWrite(target, { dataUrl: url }, MAX_DISPLAY_IMAGE_BYTES);
+      return { ...meta, mime: match[1], asset };
+    });
+  }
+  function hydrateImages(data) {
+    if (!data) return data;
+    for (const message of data.messages) {
+      if (!Array.isArray(message.images)) continue;
+      message.images = message.images.map(image => {
+        if (!/^[a-f0-9]{64}$/.test(image.asset || '')) return image;
+        try {
+          const saved = readJson(path.join(directory(data.cwd), 'image-' + image.asset + '.json'), MAX_DISPLAY_IMAGE_BYTES);
+          if (saved && typeof saved.dataUrl === 'string' && digest(saved.dataUrl) === image.asset
+            && /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/.test(saved.dataUrl)) return { ...image, dataUrl: saved.dataUrl };
+        } catch (_) { /* غياب صورة لا يخفي نص الحوار. */ }
+        return image;
+      });
+    }
+    return data;
+  }
+  // مسودة مستقلة صغيرة تحفظ البث المرئي قبل الإكمال، ولا تدخل حزمة سياق المحرك.
+  function draftState(handle) {
+    const cleaned = [...handle.streams].map(([phase, text]) => [phase, messageText(text, 'assistant')]);
+    const streams = Object.fromEntries(cleaned.map(([phase, value]) => [phase, value.text]));
+    const issues = Object.fromEntries(cleaned.map(([phase, value]) => [phase, [...value.issues, ...(handle.overflowPhases.has(phase) ? ['text_too_large'] : [])]]));
+    return { streams, issues };
+  }
+  function saveDraft(handle, runId) {
+    atomicWrite(path.join(directory(handle.cwd), handle.id + '.draft.json'), { runId, revision: handle.revision, ...draftState(handle) });
+  }
+
   function append(data, role, text, engine, runId, extra = {}) {
     const cleaned = messageText(text, role);
     const message = { seq: ++data.revision, role, engine, runId: runId || '', ...cleaned };
-    const images = imagesMetadata(extra.images);
+    const images = displayImages(data, extra.images);
     if (images.length) { message.images = images; message.issues.push('images_metadata_only'); }
     if (typeof extra.toolId === 'string' && SAFE_SESSION.test(extra.toolId)) message.toolId = extra.toolId;
     if (extra.isError !== undefined) message.isError = !!extra.isError;
+    if (safeSession(extra.messageId)) message.messageId = extra.messageId;
+    if (safeSession(extra.sessionId)) message.sourceSessionId = extra.sessionId;
+    if (typeof extra.displayText === 'string') message.displayText = messageText(extra.displayText, role).text;
+    if (extra.steer === true) message.steer = true;
     if (extra.phase === 'commentary' || extra.phase === 'final_answer') message.phase = extra.phase;
     data.messages.push(message);
     return message;
@@ -308,7 +371,7 @@ function createStore(options = {}) {
       source: { conversationId: data.id, seq: message.seq, engine: message.engine, runId: message.runId,
         status: data.runs.find((run) => run.id === message.runId)?.status || 'imported' },
       role: message.role, text: message.text,
-      ...(message.images ? { images: message.images } : {}),
+      ...(message.images ? { images: imagesMetadata(message.images) } : {}),
       ...(message.issues.length ? { limitations: message.issues } : {}),
       ...(message.originalChars ? { originalChars: message.originalChars } : {}),
       ...(message.role === 'tool_result' ? { isError: !!message.isError, toolId: message.toolId || '' } : {}),
@@ -347,7 +410,7 @@ function createStore(options = {}) {
     });
   }
   function load(id, cwd) {
-    return protect(() => ({ ok: true, conversation: read(id, normalizeCwd(cwd)) }));
+    return protect(() => ({ ok: true, conversation: hydrateImages(read(id, normalizeCwd(cwd))) }));
   }
   function latest(cwd) {
     return protect(() => {
@@ -355,7 +418,7 @@ function createStore(options = {}) {
       const marker = readJson(path.join(directory(normalized), '_latest.json'));
       if (!marker || marker.id === null) return { ok: true, conversation: null };
       if (!SAFE_ID.test(marker.id)) throw new Error('store_corrupt');
-      return { ok: true, conversation: read(marker.id, normalized) };
+      return { ok: true, conversation: hydrateImages(read(marker.id, normalized)), engine: marker.engine };
     });
   }
   function forget(cwd) {
@@ -364,12 +427,57 @@ function createStore(options = {}) {
       return locked(normalized, () => { atomicWrite(path.join(directory(normalized), '_latest.json'), { id: null }); return { ok: true }; });
     });
   }
+
+  // الفهرس المحلي يعرض المحادثة مرة واحدة مهما تعددت جلسات المحركات المرتبطة بها.
+  function list() {
+    return protect(() => {
+      noLink(root);
+      if (!fs.existsSync(root)) return { ok: true, conversations: [], errors: [] };
+      const conversations = [], errors = [];
+      for (const dir of fs.readdirSync(root)) {
+        if (!/^[a-f0-9]{64}$/.test(dir)) continue;
+        try {
+          const folder = path.join(root, dir); noLink(folder);
+          for (const name of fs.readdirSync(folder)) {
+            if (!name.endsWith('.json') || !SAFE_ID.test(name.slice(0, -5))) continue;
+            try {
+              const header = readJson(path.join(folder, name));
+              if (!header || digest(header.cwd) !== dir) throw new Error('store_corrupt');
+              const data = read(name.slice(0, -5), header.cwd);
+              const engine = data.runs.at(-1)?.engine || data.messages.at(-1)?.engine || 'sdk';
+              conversations.push({
+                id: data.id, cwd: data.cwd, engine,
+                title: data.messages.filter(message => message.role === 'user').map(message => message.displayText ?? message.text).find(text => text.trim())?.slice(0, 160) || 'محادثة بلا عنوان',
+                mtime: Date.parse(data.updatedAt) || 0, sessionId: data.bindings[engine]?.sessionId || null,
+                bindings: Object.fromEntries(Object.entries(data.bindings).map(([key, value]) => [key, value.sessionId])),
+                previousBindings: Object.fromEntries(Object.entries(data.bindings).map(([key, value]) => [key, value.previousSessionIds || []])),
+              });
+            } catch (_) { errors.push('unreadable_conversation'); }
+          }
+        } catch (_) { errors.push('unreadable_project'); }
+      }
+      return { ok: true, conversations: conversations.sort((a, b) => b.mtime - a.mtime), errors };
+    });
+  }
+  function select(id, cwd, engine) {
+    return protect(() => {
+      const normalized = normalizeCwd(cwd);
+      if (engine !== undefined && !ENGINES.has(engine)) return failure('bad_engine_or_session');
+      return locked(normalized, () => {
+        const data = read(id, normalized);
+        if (!data) return failure('not_found');
+        atomicWrite(path.join(directory(normalized), '_latest.json'), { id, engine });
+        return { ok: true };
+      });
+    });
+  }
+
   function findBySession(cwd, engine, sessionId) {
     return protect(() => {
       if (!ENGINES.has(engine) || !safeSession(sessionId)) throw new Error('bad_engine_or_session');
       const matches = all(normalizeCwd(cwd)).filter((data) => hasBoundSession(data, engine, sessionId));
       if (matches.length > 1) throw new Error('session_already_bound');
-      return { ok: true, conversation: matches[0] || null };
+      return { ok: true, conversation: hydrateImages(matches[0] || null) };
     });
   }
   function prepare(input = {}) {
@@ -398,6 +506,11 @@ function createStore(options = {}) {
           // «مقطوعاً» ولا يمسّ ربط الجلسة — كالإيقاف اليدوي في OBS-201: موت العملية ليس دليلاً
           // على فقد الجلسة، فيُنقل ما بعد آخر إكمال زيادةً. الإبطال كان يفرض نقل التاريخ كاملاً
           // فيحبس المحادثة الطويلة خلف transfer_limit في كل إرسال ولا يُحفظ شيء.
+          for (const [phase, text] of Object.entries(run.draft || {})) if (text) {
+            const message = append(data, 'assistant', text, run.engine, run.id, { phase });
+            message.issues.push(...(run.draftIssues?.[phase] || []));
+          }
+          delete run.draft;
           run.status = 'interrupted';
         }
         const binding = data.bindings[input.engine];
@@ -427,7 +540,7 @@ function createStore(options = {}) {
         data.runs.push(run);
         append(data, 'user', input.prompt, input.engine, runId, { images: input.images });
         save(data);
-        active.set(runId, { id: data.id, cwd, seenObjects: new WeakSet(), streams: new Map(), overflowPhases: new Set() });
+        active.set(runId, { id: data.id, cwd, revision: data.revision, seenObjects: new WeakSet(), streams: new Map(), overflowPhases: new Set() });
         return { ok: true, id: data.id, runId, sessionId, context: prepared.context, transfer: prepared.transfer,
           conversation: copy(data), latestSaved: remember(data) };
       });
@@ -445,7 +558,14 @@ function createStore(options = {}) {
         if (!run || run.status !== 'running') return failure('run_closed');
         const result = action(data, run, handle);
         if (result && result.ok === false) return result;
+        // النص الذي بقي مع حدث يغيّر revision يُحفظ في المعاملة نفسها؛ انقطاع الكتابة
+        // بين السجل والمسودة الجانبية لا يفقد بثاً سبق تثبيته على القرص.
+        const checkpoint = draftState(handle);
+        run.draft = checkpoint.streams;
+        run.draftIssues = checkpoint.issues;
         save(data);
+        handle.revision = data.revision;
+        saveDraft(handle, runId);
         if (run.status !== 'running') {
           active.delete(runId);
           closed.set(runId, { status: run.status, handle });
@@ -496,7 +616,7 @@ function createStore(options = {}) {
       || (event.type === 'system' && event.subtype !== 'init')) return { ok: true, ignored: true };
     const handle = active.get(runId);
     if (handle?.seenObjects.has(event)) return { ok: true, duplicate: true };
-    // دفعات البث تبقى في الذاكرة حتى النهائي/الإيقاف، فلا نكتب JSON ونزامن القرص لكل كلمة.
+    // تُحفظ مسودة البث الصغيرة فور وصولها كي ينجو النص المرئي من إغلاق العملية.
     if (event.type === 'stream_text' && typeof event.text === 'string') {
       if (!handle) return closed.has(runId) ? { ok: true, ignored: true } : failure('unknown_run');
       const phase = event.phase === 'commentary' ? 'commentary' : 'final_answer';
@@ -505,6 +625,8 @@ function createStore(options = {}) {
         handle.streams.set(phase, '[لم يُحفظ بث يتجاوز سعة السجل]');
         handle.overflowPhases.add(phase);
       } else if (!handle.overflowPhases.has(phase)) handle.streams.set(phase, previous + event.text);
+      const saved = protect(() => { saveDraft(handle, runId); return { ok: true }; });
+      if (!saved.ok) return saved;
       handle.seenObjects.add(event);
       return { ok: true, id: handle.id, status: 'running' };
     }
@@ -513,15 +635,26 @@ function createStore(options = {}) {
       const eventId = event.uuid || event.message?.id;
       const eventKey = safeSession(eventId) ? event.type + ':' + eventId : '';
       if (eventKey && run.seen.includes(eventKey)) return { duplicate: true };
+      if (event.type === 'user' && run.engine === 'sdk' && safeSession(event.uuid)
+        && (typeof blocks === 'string' || (Array.isArray(blocks) && blocks.some(block => block?.type === 'text')))) {
+        const user = data.messages.findLast(message => message.runId === run.id && message.role === 'user' && !message.messageId);
+        if (user) { user.messageId = event.uuid; user.sourceSessionId = safeSession(event.session_id) ? event.session_id : run.sessionId; }
+      }
       if (event.type === 'system' && event.subtype === 'init') bind(data, run, event.session_id);
       else if (event.type === 'assistant' && Array.isArray(blocks)) {
         for (const block of blocks) {
           if (block?.type === 'text' && typeof block.text === 'string' && block.text) {
-            const phase = block.phase === 'commentary' ? 'commentary' : 'final_answer';
+            const phase = (block.phase || event.phase) === 'commentary' ? 'commentary' : 'final_answer';
             state.streams.delete(phase);
             state.overflowPhases.delete(phase);
             append(data, 'assistant', block.text, run.engine, run.id, { phase });
-          } else if (block?.type === 'tool_use' && safeSession(block.id) && !run.toolIds.includes(block.id)) run.toolIds.push(block.id);
+          } else if (block?.type === 'tool_use' && safeSession(block.id) && !run.toolIds.includes(block.id)) {
+            run.toolIds.push(block.id);
+            // لا نحفظ مدخلات الأداة أو أسرارها؛ الاسم والهوية يكفيان لربط حالة التنفيذ.
+            if (typeof block.name === 'string' && block.name.length <= 200 && !hasSecret(block.name)) {
+              (run.displayTools ||= []).push({ seq: data.revision + 0.5, toolId: block.id, name: block.name });
+            }
+          }
         }
       } else if (event.type === 'user' && Array.isArray(blocks)) {
         for (const block of blocks) {
@@ -554,8 +687,12 @@ function createStore(options = {}) {
     if (result.ok && handle) handle.seenObjects.add(event);
     return result;
   }
-  function stop(runId) {
-    return changeRun(runId, (data, run, handle) => { finish(data, run, handle, 'stopped'); return {}; });
+  function stop(runId, source = 'unspecified') {
+    return changeRun(runId, (data, run, handle) => {
+      run.stopSource = STOP_SOURCES.has(source) ? source : 'unspecified';
+      finish(data, run, handle, 'stopped');
+      return {};
+    });
   }
   function recordUser(runId, text, images) {
     // قد يصل إقرار steer بعد result؛ لا تسقط تصحيح المستخدم المقبول بسبب ترتيب الإشعارات.
@@ -567,7 +704,7 @@ function createStore(options = {}) {
         if (!data) throw new Error('not_found');
         const run = data.runs.find((item) => item.id === runId);
         if (!run) return failure('unknown_run');
-        append(data, 'user', text, run.engine, run.id, { images });
+        append(data, 'user', text, run.engine, run.id, { images, steer: true });
         if (run.status === 'completed') run.status = 'interrupted';
         // OBS-205 (قرار المالك 2026-09-14): لا يُبطل الربط. التوجيه يقع بعد آخر إكمال فيُنقل
         // زيادةً إلى الجلسة نفسها مع الإرسال التالي؛ أسوأ الاحتمالين أن يراه المحرك مرتين مرجعاً.
@@ -578,7 +715,7 @@ function createStore(options = {}) {
     });
     return changeRun(runId, (data, run) => {
       if (typeof text !== 'string' || (!text.trim() && !images?.length)) return failure('empty_prompt');
-      append(data, 'user', text, run.engine, run.id, { images });
+      append(data, 'user', text, run.engine, run.id, { images, steer: true });
       return {};
     });
   }
@@ -595,7 +732,7 @@ function createStore(options = {}) {
       return { context: result.context, transfer: result.transfer };
     });
   }
-  return { create, load, latest, forget, findBySession, prepare, acceptEvent, stop, recordUser, contextForRestart };
+  return { create, load, latest, forget, list, select, findBySession, prepare, acceptEvent, stop, recordUser, contextForRestart };
 }
 
 module.exports = { SCHEMA_VERSION, SAFE_ID, SAFE_SESSION, DEFAULT_TRANSFER_CHARS, createStore, normalizeCwd, ...createStore() };

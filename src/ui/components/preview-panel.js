@@ -232,6 +232,15 @@ const previewSheet = sheet(`
   #traceList .trace-action { flex: none; color: var(--gold-strong); }
   /* مساحة العرض: فارغة — WebContentsView الأصلية تُرسم فوقها بنفس المستطيل */
   #pvBox { flex: 1; position: relative; min-height: 0; }
+  #pvPopup, #pvPopupWarning { padding: var(--space-2); background: var(--surface-2); color: var(--text); font-size: 12px; }
+  #pvPopup { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  #pvPopup[hidden], #pvPopupWarning[hidden] { display: none; }
+  #pvPopupOrigin { direction: ltr; unicode-bidi: isolate; overflow-wrap: anywhere; min-width: 0; flex: 1; }
+  #pvPopupWarning { margin: 0; line-height: 1.6; }
+  #pvPopupClose { color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font: inherit; cursor: pointer; }
+  #pvPopupLock[hidden] { display: none; }
+  #pvPopupLock { width: 14px; height: 14px; flex: none; }
+
   .pv-hint {
     position: absolute; inset: 0; display: flex; flex-direction: column; gap: var(--space-2);
     align-items: center; justify-content: center; color: var(--text-dim);
@@ -389,6 +398,13 @@ const MARKUP = `
     </div>
     <ol id="traceList"></ol>
   </div>
+  <div id="pvPopup" hidden>
+    <span dir="rtl">نافذة منبثقة</span>
+    <svg id="pvPopupLock" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-label="اتصال HTTPS"><rect x="3" y="7" width="10" height="8" rx="1"/><path d="M5 7V4a3 3 0 0 1 6 0v3"/></svg>
+    <span id="pvPopupOrigin" dir="ltr"></span>
+    <button id="pvPopupClose" type="button" dir="rtl">إغلاق النافذة المنبثقة</button>
+  </div>
+  <p id="pvPopupWarning" dir="rtl" role="status" hidden></p>
   <div id="pvBox">
     <div class="pv-hint" id="pvHint">
       <span class="big">🌐</span>
@@ -1012,11 +1028,20 @@ class SatrPreviewPanel extends HTMLElement {
     const hideSecretRequest = () => { secretRequestId = null; secretBar.classList.remove('show'); };
     this.hideSecretRequest = hideSecretRequest;
 
+    $('pvPopupClose').addEventListener('click', () => runPreviewAction('popup_close'));
     // ---------- أحداث العرض الأصلي ----------
     window.satr.onPreview((ev) => {
       if (!ev) return;
       if (ev.type === 'closed') {
+        $('pvPopup').hidden = true; $('pvPopupWarning').hidden = true;
         resetPreviewState(true);
+      } else if (ev.type === 'popup') {
+        $('pvPopup').hidden = !ev.active;
+        $('pvPopupOrigin').textContent = ev.origin || 'about:blank';
+        $('pvPopupLock').hidden = !ev.secure;
+        $('pvPopupWarning').textContent = ev.warning || '';
+        $('pvPopupWarning').hidden = !ev.warning;
+        reportBounds();
       } else if (ev.type === 'network') {
         const index = NET_MODES.findIndex(mode => mode.key === ev.preset);
         if (index >= 0) { netIdx = index; paintNetwork(); }
@@ -1671,18 +1696,36 @@ class SatrPreviewPanel extends HTMLElement {
     // المحرك (SDK/Codex) هو من ينهي التسليم فعلياً ويصفّر السجلات في العملية الرئيسية.
     const hoBar = $('pvHandoff'), hoPrefix = $('hoPrefix'), hoReason = $('hoReason'), hoDone = $('hoDone');
     let handoffId = null;
-    const answerHandoff = (done) => {
-      if (!handoffId) return;
+    let handoffResponder = null;
+    let handoffOwnerKey = '';
+    let handoffSending = false;
+    const answerHandoff = async (done) => {
+      if (!handoffId || handoffSending) return;
       const id = handoffId;
-      handoffId = null;
+      const respond = handoffResponder;
+      const ownerKey = handoffOwnerKey;
+      handoffSending = true;
+      hoDone.disabled = true; $('hoCancel').disabled = true;
+      let result = null;
+      try { result = await (respond ? respond({ id, done }) : window.satr.handoffDone(id, done)); } catch {}
+      if (handoffId !== id || handoffOwnerKey !== ownerKey) return;
+      handoffSending = false;
+      hoDone.disabled = false; $('hoCancel').disabled = false;
+      if (!result || result.ok !== true) {
+        hoReason.textContent = 'تعذّر إرسال القرار؛ التسليم ما زال معلّقاً.';
+        return;
+      }
+      handoffId = null; handoffResponder = null; handoffOwnerKey = '';
       hoBar.classList.remove('show');
-      window.satr.handoffDone(id, done);
     };
     hoDone.addEventListener('click', () => answerHandoff(true));
     $('hoCancel').addEventListener('click', () => answerHandoff(false));
-    this.showHandoff = (id, reason, mode) => {
+    this.showHandoff = (id, reason, mode, respond, ownerKey) => {
       openPanel(false); // التسليم يفترض معاينة مفتوحة — فتح اللوحة إن كانت مطوية كي يُرى الشريط
       handoffId = String(id || '');
+      handoffResponder = typeof respond === 'function' ? respond : null;
+      handoffOwnerKey = String(ownerKey || '');
+      handoffSending = false; hoDone.disabled = false; $('hoCancel').disabled = false;
       hoPrefix.textContent = mode === 'step' ? 'أكمل:' : 'الوكيل يسلّمك القيادة:';
       hoDone.textContent = mode === 'step' ? 'تم ✓' : 'استلمت ✓';
       hoReason.textContent = String(reason || '');
@@ -1690,7 +1733,11 @@ class SatrPreviewPanel extends HTMLElement {
       // القيادة بيد المستخدم — أخفِ مؤشر نشاط الوكيل إن كان ظاهراً
       agentTag.classList.remove('show'); agentLine.classList.remove('show');
     };
-    this.hideHandoff = () => { handoffId = null; hoBar.classList.remove('show'); };
+    this.hideHandoff = (ownerKey) => {
+      if (ownerKey === undefined ? !!handoffOwnerKey : String(ownerKey) !== handoffOwnerKey) return;
+      handoffId = null; handoffResponder = null; handoffOwnerKey = ''; handoffSending = false;
+      hoDone.disabled = false; $('hoCancel').disabled = false; hoBar.classList.remove('show');
+    };
   }
 }
 

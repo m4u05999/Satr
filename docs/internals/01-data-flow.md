@@ -119,3 +119,9 @@
 rollback. أما محرك sdk فيضيف بجواره فعلاً مستقلاً «🌿 فرّع من هنا» واسترجاع ملفات أصلياً
 كما في العقد التالي.
 
+
+### قياس الأذونات (2026-09-21)
+
+permission_request قد يحمل permissionReasons برموز مغلقة للتشخيص فقط؛ لا يقرأها المصيّر لاتخاذ قرار.
+window.satr.permissionMetrics() يقرأ لقطة الذاكرة عبر satr:permissionMetrics بلا مدخلات أو محتوى بطاقة.
+العقد والسقوف وحدود القياس في [84-permission-metrics.md](84-permission-metrics.md).

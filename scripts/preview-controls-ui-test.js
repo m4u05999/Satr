@@ -147,6 +147,13 @@ async function main() {
     await act(win, "document.querySelector('satr-preview-panel').holdForDialog(false)"); current = await state(win);
     check(positive(current.bounds).some((args) => args[5] === true), 'release from hold must flush pending viewport reset');
     evidence.push({ scenario: 'device-intent', state: current });
+    await act(win, "__PREVIEW_CONTROLS__.emit({type:'popup',active:true,count:1,origin:'https://example.test',secure:true,warning:'تحقّق من اكتمال الربط في الصفحة الأم.'})");
+    check(await evaluate(win, "(() => { const r=document.querySelector('satr-preview-panel').shadowRoot;return !r.getElementById('pvPopup').hidden && r.getElementById('pvPopupOrigin').textContent==='https://example.test' && !r.getElementById('pvPopupLock').hidden && !r.getElementById('pvPopupWarning').hidden; })()"), 'popup chrome displays origin and warning');
+    await clear(win); await click(win,'pvPopupClose');
+    check((await state(win)).calls.some(c=>c.name==='action'&&c.args[0]==='popup_close') && !(await state(win)).calls.some(c=>c.name==='close'), 'popup close button targets child only');
+    await act(win, "__PREVIEW_CONTROLS__.emit({type:'popup',active:false,count:0,origin:'http://localhost',secure:false,warning:''})");
+    check(await evaluate(win,"document.querySelector('satr-preview-panel').shadowRoot.getElementById('pvPopup').hidden && document.querySelector('satr-preview-panel').shadowRoot.getElementById('pvPopupWarning').hidden"),'popup chrome clears on return to parent');
+
 
     for (const method of ['open', 'navigate']) {
       if (method === 'open') await act(win, "__PREVIEW_CONTROLS__.emit({ type: 'closed' })");

@@ -127,6 +127,50 @@ class SatrQuestionDialog extends HTMLElement {
     this._showNext();
   }
 
+  closeRequest(id, ownerKey) {
+    if (id == null || id === '') return false;
+    const matches = (req) => req && req.id === id
+      && (req.ownerKey || '') === (ownerKey || '');
+    let dropped = false;
+    this._queue = this._queue.filter((req) => {
+      if (!matches(req)) return true;
+      dropped = true;
+      return false;
+    });
+    if (this._current && matches(this._current)) {
+      dropped = true;
+      this._requestEpoch += 1;
+      this._current = null;
+      this._sending = false;
+      this._pendingWrite = null;
+      this._list.textContent = '';
+      this._setOpen(false);
+      this._showNext();
+    }
+    return dropped;
+  }
+
+  closeOwner(ownerKey) {
+    if (!ownerKey) return;
+    this._queue = this._queue.filter((req) => req.ownerKey !== ownerKey);
+    if (this._current && this._current.ownerKey === ownerKey) {
+      this._requestEpoch += 1;
+      this._current = null;
+      this._sending = false;
+      this._pendingWrite = null;
+      this._list.textContent = '';
+      this._setOpen(false);
+      this._showNext();
+    }
+  }
+
+  closeUnowned() {
+    this._queue = this._queue.filter((req) => !!req.ownerKey);
+    if (this._current && !this._current.ownerKey) {
+      this._requestEpoch+=1;this._current=null;this._sending=false;this._pendingWrite=null;
+      this._list.textContent='';this._setOpen(false);this._showNext();
+    }
+  }
   // انتهاء/إيقاف الدور: تفريغ الطابور وإخفاء المربع (الردود المعلّقة تفكّها العملية الرئيسية)
   closeAll() {
     this._requestEpoch += 1;
@@ -157,6 +201,7 @@ class SatrQuestionDialog extends HTMLElement {
     if (this._current || !this._queue.length) return;
     this._current = this._queue.shift();
     this._render(this._current.questions, this._current.context);
+    this._write.disabled = this._current.allowWrite === false;
     this._setOpen(true);
   }
 
@@ -292,12 +337,18 @@ class SatrQuestionDialog extends HTMLElement {
     this._submit.disabled = true; this._cancel.disabled = true; this._write.disabled = true;
     this._msg.hidden = true;
     let ok = false;
-    try { const r = await window.satr.answerQuestion(req.id, selections); ok = !!(r && r.ok); }
+    try {
+      const respond = typeof req.respond === 'function'
+        ? req.respond
+        : (value) => window.satr.answerQuestion(value.id, value.selections);
+      const r = await respond({ id: req.id, selections });
+      ok = !!(r && r.ok);
+    }
     catch (e) { ok = false; }
     if (epoch !== this._requestEpoch || this._current !== req) return;
     this._sending = false;
     this._cancel.disabled = false;
-    this._write.disabled = false;
+    this._write.disabled = this._current && this._current.allowWrite === false;
     const write = this._pendingWrite;
     this._pendingWrite = null; // لا يتسرّب إلى سؤال لاحق سواء نجح أو فشل
     if (ok) {

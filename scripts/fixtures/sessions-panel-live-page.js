@@ -10,6 +10,7 @@ window.__panelProgress = 'boot';
 // بعد إطفاء مرشّح الأدوات كان يُفشل التالي **زوراً** بفحص لا علاقة له بالتغيير.
 // هنا يقع المسح قبل تحميل وحدة المكوّن (‏script كلاسيكي يسبق `type="module"`).
 localStorage.removeItem('satr_sessions_show_tools');
+localStorage.removeItem('satr_sessions_open_groups');
 const violations = [];
 document.addEventListener('securitypolicyviolation', (e) => {
   violations.push(String(e.violatedDirective || '') + ' ' + String(e.blockedURI || ''));
@@ -27,7 +28,7 @@ const many = (prefix, cwd, count, baseHours) => Array.from({ length: count }, (_
   S(prefix + i, cwd, 'جلسة ' + prefix + ' رقم ' + i, baseHours + i));
 const CLAUDE = [
   S('a1', CWD, 'أكمل واجهة الدفع', 1),
-  S('a2', CWD, 'أصلح اختبار البناء', 3),
+  S('a2', 'd:/PROJ/ALPHA/', 'أصلح اختبار البناء', 3),
   S('a3', CWD, 'راجع العقود', 30),
   S('b1', 'D:\\proj\\beta', 'ابدأ مشروع بيتا', 5),
   S('b2', 'D:\\proj\\beta', 'أضف صفحة الهبوط', 50),
@@ -49,8 +50,20 @@ const CLAUDE = [
   { id: 'o1', project: CWD.replace(/[\\:]/g, '-'), cwd: '', title: 'جلسة بلا مجلد مسجَّل', mtime: now - 2 * HOUR },
 ];
 const CHATS = [{ id: 'c1', provider: 'openai', title: 'صف الصورة', mtime: now - 8 * HOUR }];
+const CODEX = [{ id: 'cx1', cwd: CWD, title: 'جلسة Codex للإجراءات', mtime: now - 10 * HOUR }];
+const CONVERSATIONS = [
+  { id: 'conv-main', cwd: CWD, engine: 'sdk', title: 'عنوان الكتالوج',
+    mtime: now - HOUR / 2, sessionId: 'a1', bindings: { sdk: 'a1' },
+    previousBindings: { sdk: ['b1'] }, archived: false },
+  { id: 'conv-tool', cwd: CWD, engine: 'sdk', title: 'محادثة أداة موحدة',
+    mtime: now - 6 * HOUR, sessionId: 'p1', bindings: { sdk: 'p1' }, archived: false },
+  { id: 'conv-local', cwd: 'D:\\proj\\local-only', engine: 'sdk', title: 'سجل محلي بلا جلسة محرك',
+    mtime: now - 11 * HOUR, sessionId: '', bindings: {}, archived: false },
+];
 
 const meta = { entries: {
+  a1: { title: 'عنوان أصيل مخصّص', pinned: true },
+  'conv-main': { title: 'عنوان محادثة مخصّص' },
   a3: { pinned: true },
   p1: { kind: 'tool' },
   // موسومة **ومثبّتة**: التثبيت قرار صريح من المستخدم فيغلب مرشّح الأدوات كما هو اليوم.
@@ -60,13 +73,27 @@ const meta = { entries: {
 window.satr = {
   listSessions: async () => CLAUDE.map((x) => ({ ...x })),
   listChats: async () => CHATS.map((x) => ({ ...x })),
-  listCodexSessions: async () => [],
-  listKimiSessions: async () => [],
+  listCodexSessions: async () => CODEX.map((x) => ({ ...x })),
+  listKimiSessions: async () => { throw new Error('kimi-list-test'); },
+  listConversations: async () => ({ ok: true, conversations: CONVERSATIONS.map((x) => ({ ...x })),
+    errors: ['unreadable_conversation'] }),
   sessionMetaList: async () => ({ entries: JSON.parse(JSON.stringify(meta.entries)) }),
   sessionMetaSet: async (id, patch) => {
-    meta.entries[id] = Object.assign({}, meta.entries[id], patch);
-    return { ok: true, entry: meta.entries[id] };
+    const next = Object.assign({}, meta.entries[id]);
+    if (Object.prototype.hasOwnProperty.call(patch, 'pinned')) {
+      if (patch.pinned === true) next.pinned = true;
+      else if (patch.preservePinnedFalse === true) next.pinned = false;
+      else delete next.pinned;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'title')) {
+      if (patch.title) next.title = patch.title; else delete next.title;
+    }
+    if (Object.keys(next).length) meta.entries[id] = next; else delete meta.entries[id];
+    return { ok: true, entry: meta.entries[id] || null };
   },
+  forkCodexSession: async () => ({ ok: false }),
+  archiveCodexSession: async () => ({ ok: false }),
+  deleteCodexSession: async () => ({ ok: false }),
 };
 
 const PROVIDERS = [{ name: 'openai', label: 'OpenAI (Responses)' }];
@@ -142,7 +169,7 @@ function view(root) {
     if (!titles().includes('عصف ثلاثي مثبّت')) fail('الموسومة المثبّتة أُخفيت — التثبيت قرار صريح');
     checks.push('tagged-tool-hidden-untagged-visible');
 
-    if (v.tally !== '25 من 28') fail('العدّاد لا يعلن الإخفاء: ' + v.tally);
+    if (v.tally !== '26 من 29') fail('العدّاد لا يعلن الإخفاء: ' + v.tally);
     checks.push('tools-hidden-by-default');
 
     // 3) المثبّتة أولاً، ثم المشروع الحالي
@@ -174,15 +201,15 @@ function view(root) {
     await sleep(20);
     v = view(root);
     if (!v.groups.some((g) => /worktrees/i.test(g.name))) fail('إطفاء المرشّح لم يُظهر جلسات الأدوات');
-    if (v.tally !== '28 جلسة') fail('العدّاد لم يعد كاملاً: ' + v.tally);
-    if (!titles().includes('مخطط مهام غرفة العمليات')) fail('إطفاء المرشّح لم يُظهر الجلسة الموسومة');
+    if (v.tally !== '29 جلسة') fail('العدّاد لم يعد كاملاً: ' + v.tally);
+    if (!titles().includes('محادثة أداة موحدة')) fail('إطفاء المرشّح لم يُظهر المحادثة الموسومة');
     box.checked = true; box.dispatchEvent(new Event('change'));
     await sleep(20);
     checks.push('tools-filter-toggles');
 
     // 7) البحث يصل جلسة في مجموعة مطوية — جوهر العطل المُبلَّغ
     const search = root.querySelector('.panel-search input');
-    search.value = 'بيتا'; search.dispatchEvent(new Event('input'));
+    search.value = 'الهبوط'; search.dispatchEvent(new Event('input'));
     await sleep(20);
     v = view(root);
     if (v.rows !== 1) fail('البحث لم يُعِد نتيجة واحدة: ' + v.rows);
@@ -197,13 +224,100 @@ function view(root) {
     if (!view(root).groups.some((g) => g.name === 'OpenAI (Responses)')) fail('محادثة المحوّل بلا مجموعة مزوّد');
     checks.push('chat-grouped-by-provider');
 
-    // 9) النقر يُصدر session-resume بحمولة الجلسة
+    // 9) توحيد مسار Windows والكتالوج: current/previous bindings بلا تكرار، مع وراثة metadata.
+    const shown = titles();
+    if ([...root.querySelectorAll('.grp')].some((head) => head.getAttribute('role') !== 'button'
+      || !head.hasAttribute('aria-expanded'))) fail('رأس المجموعة بلا حالة وصولية');
+    if (view(root).groups.filter((g) => g.name.toLowerCase() === CWD.toLowerCase()).length !== 1
+      || view(root).groups.some((g) => g.name.includes('/'))) fail('توحيد case/slash لمسار Windows فشل');
+    checks.push('windows-path-normalized');
+    if (!shown.includes('عنوان محادثة مخصّص') || shown.includes('ابدأ مشروع بيتا')
+      || shown.includes('محادثة أداة موحدة') || !shown.includes('سجل محلي بلا جلسة محرك')) {
+      fail('دمج الكتالوج أو وراثة metadata/وسم الأداة فشل: ' + JSON.stringify(shown));
+    }
+    const status = root.querySelector('.meta-status').textContent;
+    if (!status.includes('Kimi Code') || !status.includes('تعذّرت قراءة بعض المحادثات من الكتالوج')
+      || status.includes('unreadable_conversation')) fail('أخطاء السرد لم تُعرّب أو لم تظهر');
+    checks.push('catalog-dedup-meta-errors');
+
+    // 10) الاستئناف يحمل سجل conversation، وحفظ بياناته الجانبية يستعمل conv-id.
     let resumed = null;
     el.addEventListener('session-resume', (e) => { resumed = e.detail; }, { once: true });
-    root.querySelector('.sess').click();
-    await sleep(20);
-    if (!resumed || !resumed.id) fail('النقر لم يُصدر session-resume');
+    const conversationRow = [...root.querySelectorAll('.sess')]
+      .find((row) => row.querySelector('.t').textContent === 'عنوان محادثة مخصّص');
+    conversationRow.click(); await sleep(20);
+    if (!resumed || resumed.kind !== 'conversation' || resumed.id !== 'conv-main') fail('حمولة conversation خاطئة');
+    if (!conversationRow.classList.contains('pinned')) fail('المحادثة لم ترث تثبيت الجلسة الأصلية');
+    if (!conversationRow.querySelector('.m').textContent.startsWith('Claude Code')) fail('اسم محرك sdk لم يُعرّب');
+    conversationRow.querySelector('.pin').click(); await sleep(20);
+    if (meta.entries['conv-main'].pinned !== false) fail('pinned:false الصريح لم يتقدم على الموروث');
+    if (meta.entries['conv-main'].preservePinnedFalse !== undefined) fail('العلم الانتقالي تسرّب إلى metadata');
+    await el.open(PROVIDERS, CWD); await sleep(20);
+    let refreshed = [...root.querySelectorAll('.sess')]
+      .find((row) => row.querySelector('.t').textContent === 'عنوان محادثة مخصّص');
+    if (!refreshed || refreshed.classList.contains('pinned')) fail('إعادة الفتح تجاهلت pinned:false المحفوظ');
+    refreshed.querySelector('.pin').click(); await sleep(20);
+    if (meta.entries['conv-main'].pinned !== true) fail('pinned:true لم يُحفظ بمعرف conv-id');
+    refreshed = [...root.querySelectorAll('.sess')]
+      .find((row) => row.querySelector('.t').textContent === 'عنوان محادثة مخصّص');
+    window.prompt = () => '';
+    refreshed.querySelector('.rename').click(); await sleep(20);
+    const afterClear = [...root.querySelectorAll('.sess .t')].map((node) => node.textContent);
+    if (!afterClear.includes('عنوان أصيل مخصّص') || afterClear.includes('عنوان محادثة مخصّص')) {
+      fail('مسح عنوان المحادثة أعاد displayTitle القديم بدل inheritedTitle');
+    }
+    checks.push('conversation-resume-and-meta-id');
+    checks.push('catalog-inherited-title-and-pin');
     checks.push('row-click-resumes');
+
+    // 11) خمسة أزرار Codex لا تزاحم العنوان: اثنان أساسيان وثلاثة في صف ثانٍ مسمّى.
+    const codexRow = [...root.querySelectorAll('.sess')]
+      .find((row) => row.querySelector('.t').textContent === 'جلسة Codex للإجراءات');
+    if (!codexRow || codexRow.querySelectorAll('.sess-actions button').length !== 2) fail('صف العنوان مزدحم');
+    if (codexRow.querySelector('.sess-main').getBoundingClientRect().width
+      < codexRow.getBoundingClientRect().width * 0.5) fail('العنوان فقد نصف عرض الصف');
+    const secondary = [...codexRow.querySelectorAll('.sess-more button')];
+    if (secondary.length !== 3 || secondary.some((button) => !button.getAttribute('aria-label'))) {
+      fail('الإجراءات الثانوية أو أسماؤها الوصولية ناقصة');
+    }
+    secondary[0].click(); await sleep(10);
+    if (!root.querySelector('.meta-status').textContent.includes('تفريع')) fail('خطأ التفريع ابتُلع');
+    window.confirm = () => true;
+    secondary[1].click(); await sleep(10);
+    if (!root.querySelector('.meta-status').textContent.includes('أرشفة')) fail('خطأ الأرشفة ابتُلع');
+    secondary[2].click(); await sleep(10);
+    if (!root.querySelector('.meta-status').textContent.includes('حذف')) fail('خطأ الحذف ابتُلع');
+    checks.push('secondary-actions-and-errors');
+
+    // 12) طي آخر مجموعة يبقى صريحاً ولو صار Set فارغاً، ويُستعاد؛ JSON التالف يعود إلى auto.
+    let active = el; let activeRoot = root;
+    for (let attempts = 0; attempts < activeRoot.querySelectorAll('.grp').length + 1; attempts++) {
+      const expanded = [...activeRoot.querySelectorAll('.grp')]
+        .find((head) => head.querySelector('.caret').textContent === '▾');
+      if (!expanded) break;
+      expanded.click(); await sleep(5);
+    }
+    if (activeRoot.querySelectorAll('.sess').length) fail('طي آخر مجموعة عاد إلى auto');
+    const saved = JSON.parse(localStorage.getItem('satr_sessions_open_groups'));
+    if (!saved.customized || saved.open.length) fail('حالة طي الجميع لم تُحفظ صراحة');
+    active.remove();
+    active = document.createElement('satr-sessions-panel'); document.body.appendChild(active);
+    await active.open(PROVIDERS, CWD); await sleep(20); activeRoot = active.shadowRoot;
+    if (activeRoot.querySelectorAll('.sess').length) fail('حالة الطي لم تُستعد');
+    active.remove(); localStorage.setItem('satr_sessions_open_groups', '{broken');
+    active = document.createElement('satr-sessions-panel'); document.body.appendChild(active);
+    await active.open(PROVIDERS, CWD); await sleep(20); activeRoot = active.shadowRoot;
+    if (!activeRoot.querySelectorAll('.sess').length) fail('JSON التالف لم يعد إلى auto');
+    checks.push('collapse-persists-and-corruption-recovers');
+
+    // 13) غياب API الجديد لا يكسر المصادر الأصلية ولا يخفي سجلاً بلا binding.
+    active.remove(); delete window.satr.listConversations;
+    localStorage.removeItem('satr_sessions_open_groups');
+    active = document.createElement('satr-sessions-panel'); document.body.appendChild(active);
+    await active.open(PROVIDERS, CWD); await sleep(20); activeRoot = active.shadowRoot;
+    const fallback = [...activeRoot.querySelectorAll('.sess .t')].map((node) => node.textContent);
+    if (!fallback.includes('عنوان أصيل مخصّص') || !fallback.includes('ابدأ مشروع بيتا')) fail('fallback الأصلي انكسر');
+    checks.push('native-fallback');
 
     window.__panelResult = { pass: true, checks, violations };
   } catch (error) {

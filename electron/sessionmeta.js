@@ -36,7 +36,7 @@ function safeSessionId(value) {
 function cleanEntry(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const entry = {};
-  if (value.pinned === true) entry.pinned = true;
+  if (typeof value.pinned === 'boolean') entry.pinned = value.pinned;
   const title = cleanTitle(value.title);
   if (title) entry.title = title;
   const kind = cleanKind(value.kind);
@@ -130,10 +130,12 @@ function createStore(options = {}) {
     if (!safeSessionId(sessionId) || !patch || typeof patch !== 'object' || Array.isArray(patch)) {
       return { ok: false, error: 'bad_input' };
     }
-    const allowed = new Set(['pinned', 'title']);
+    const allowed = new Set(['pinned', 'title', 'preservePinnedFalse']);
     const keys = Object.keys(patch);
     if (!keys.length || keys.some((key) => !allowed.has(key))) return { ok: false, error: 'bad_input' };
     if ('pinned' in patch && typeof patch.pinned !== 'boolean') return { ok: false, error: 'bad_input' };
+    if ('preservePinnedFalse' in patch
+      && (patch.preservePinnedFalse !== true || patch.pinned !== false)) return { ok: false, error: 'bad_input' };
     if ('title' in patch && typeof patch.title !== 'string') return { ok: false, error: 'bad_input' };
     const before = entries[sessionId] ? { ...entries[sessionId] } : null;
     const evicted = [];
@@ -142,7 +144,7 @@ function createStore(options = {}) {
       // الإدراج نفسه في `setKind`. التثبيت والعنوان يحصّنان المدخل ولو حمل وسم أداة.
       const toolOnly = Object.keys(entries).filter((id) => {
         const entry = entries[id];
-        return entry.kind && entry.pinned !== true && !entry.title;
+        return entry.kind && !Object.prototype.hasOwnProperty.call(entry, 'pinned') && !entry.title;
       });
       let overflow = Object.keys(entries).length - (MAX_ENTRIES - 1);
       for (let index = 0; index < toolOnly.length && overflow > 0; index++, overflow--) {
@@ -157,6 +159,7 @@ function createStore(options = {}) {
     const next = { ...(before || {}) };
     if ('pinned' in patch) {
       if (patch.pinned) next.pinned = true;
+      else if (patch.preservePinnedFalse === true) next.pinned = false;
       else delete next.pinned;
     }
     if ('title' in patch) {
@@ -177,7 +180,7 @@ function createStore(options = {}) {
 
   /**
    * وسم جلسة أداة وقت إنشائها (‏OBS-068 ب) — أفضل جهد، ولا يمرّ من renderer إطلاقاً:
-   * `set` تبقى قائمة سماحها `pinned/title` وحدهما، فلا تستطيع الواجهة إخفاء جلسة
+   * `set` لا تقبل `kind` من الواجهة، فلا تستطيع الواجهة إخفاء جلسة
    * مستخدم بادّعاء أنها أداة. الوسم يجاور التثبيت/التسمية ولا يمحوهما.
    */
   function setKind(sessionId, kind) {
@@ -195,7 +198,7 @@ function createStore(options = {}) {
       // بترتيب الإدراج، فتبقى قرارات المستخدم الصريحة خارج الإخلاء.
       const toolOnly = Object.keys(entries).filter((id) => {
         const entry = entries[id];
-        return entry.kind && entry.pinned !== true && !entry.title;
+        return entry.kind && !Object.prototype.hasOwnProperty.call(entry, 'pinned') && !entry.title;
       });
       let overflow = toolOnly.length - (MAX_TOOL_ENTRIES - 1);
       for (let index = 0; index < toolOnly.length && overflow > 0; index++, overflow--) {

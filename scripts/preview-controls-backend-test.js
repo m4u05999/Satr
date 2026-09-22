@@ -30,6 +30,7 @@ function harness() {
     onErrorOccurred: listener => { webRequest.failed = listener; },
   };
   ses.clearStorageData = async () => {};
+  ses.setUserAgent = () => {};
   class Debugger extends EventEmitter {
     constructor() { super(); this.attached = false; this.commands = []; this.detaches = 0; this.attaches = 0; this.offline = false; }
     isAttached() { return this.attached; }
@@ -71,6 +72,7 @@ function harness() {
   }
   const app = new EventEmitter();
   app.getLocale = () => 'en-US';
+  app.userAgentFallback = 'Satr/2.18.0 Chrome/130.0.6723.191 Electron/33.4.11';
   const win = new EventEmitter();
   win.isDestroyed = () => false;
   win.getContentBounds = () => ({width:1000,height:800});

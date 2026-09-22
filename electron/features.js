@@ -20,6 +20,8 @@
 // عبر init({ ipcMain }) كي تخضع قنوات satr:ee:* لتحقق المرسِل/الإطار نفسه الذي تخضع له قنوات
 // النواة. غيابه (اختبارات node النقية) = تجاهل آمن للتسجيل.
 let ipcMain = null;
+let savedTasksStorage = null;
+let savedTasksExecution = null;
 const adapters = require('./adapters');
 const openaiCompatible = require('./adapters/openai-compatible');
 const packageJson = require('../package.json');
@@ -60,12 +62,19 @@ function buildSeams() {
     // (أدوات + أذونات عربية + ذاكرة). تبني المزوّدات فوقه بلا سطر مكرّر.
     openaiCompatible,
 
+    // §82: قدرات ضيقة لمخزن المهام ومتحكم تشغيلها. لا تعبر مقابض المحرك أو مسارات موثوقة إلى renderer.
+    savedTasksStorage,
+    savedTasksExecution,
+
     // §4.5: معالجات IPC إضافية — قنوات `satr:ee:` حصراً (لا تصادم مع قنوات النواة)
     registerIpc: (channel, handler) => {
       const ch = String(channel);
       if (!/^satr:ee:[a-zA-Z0-9_-]{1,64}$/.test(ch)) throw new Error('قناة Enterprise يجب أن تبدأ بـ satr:ee:');
       if (typeof handler !== 'function') throw new Error('معالج غير صالح');
-      if (ipcMain) ipcMain.handle(ch, handler); // بلا مضيف محروس (اختبار node): تجاهل آمن
+      if (ipcMain) ipcMain.handle(ch, (...args) => {
+        if (runtimeStatus !== 'ready' || !enterprise) return { ok: false, error: 'feature_unavailable' };
+        return handler(...args);
+      }); // بلا مضيف محروس (اختبار node): تجاهل آمن
     },
 
     // §4.7: الاشتراك في مجرى مراقبة الأحداث (تدقيق/استهلاك) — يعيد دالة إلغاء
@@ -87,6 +96,17 @@ function init(opts) {
   started = true;
   const host = opts && opts.ipcMain;
   ipcMain = host && typeof host.handle === 'function' ? host : null;
+  const storage = opts && opts.savedTasksStorage;
+  const execution = opts && opts.savedTasksExecution;
+  savedTasksStorage = storage && typeof storage.registerFactory === 'function'
+    && typeof storage.getDataRoot === 'function' && typeof storage.resolveTrustedProjectRoot === 'function'
+    && typeof storage.hasSecret === 'function' && typeof storage.hasEntitlement === 'function' ? storage : null;
+  const executionMethods = [
+    'getProjectContext', 'projectInfo', 'storeFor', 'sameWindow', 'reserve', 'bindRun', 'snapshotVerification', 'verificationCatalog',
+    'launch', 'publish', 'resolveControl', 'stop', 'runVerification', 'release', 'registerShutdown',
+  ];
+  savedTasksExecution = execution && executionMethods.every((name) => typeof execution[name] === 'function')
+    ? execution : null;
   try {
     // يُحمَّل فقط إن وُجد المجلد؛ البناء المجتمعي يستثني enterprise/ فيفشل require بهدوء
     enterprise = require('../enterprise');

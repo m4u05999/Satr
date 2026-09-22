@@ -53,6 +53,10 @@ function loadMainHandlers() {
     sdkrewinds,
     sessionmeta: require('../electron/sessionmeta'),
     agent: {},
+    executionHostModule: require('../electron/execution-host'),
+
+    verify: {}, app: { getPath: () => '' }, memory: { hasSecret: () => false },
+    features: { edition: () => 'community' },
     exported: {},
   };
   vm.runInNewContext(`
@@ -766,7 +770,7 @@ async function testAgentControls() {
   assert.equal(missingFiles.error, 'sdk_invalid_response');
 }
 
-function testWiring() {
+async function testWiring() {
   const agentSource = read('electron/agent.js');
   const mainSource = read('electron/main.js');
   const preloadSource = read('electron/preload.js');
@@ -803,7 +807,7 @@ function testWiring() {
   assert.match(mainSource, /sendRequestBusy = false/);
   assert.match(mainSource, /requestEpoch !== sendRequestEpoch/);
   assert.match(mainSource, /ipcMain\.handle\('satr:stop',[\s\S]*?cancelPendingSendRequest\(\)/);
-  assert.match(mainSource, /await stopAll\(\)/);
+  await require('./lib/main-stop-handler-check').checkMainStopHandler(mainSource);
   assert.match(mainSource, /payload\.userMessageId,\s*false/);
   assert.match(mainSource, /countChangedFingerprints/);
   assert.match(mainSource, /restoredCount/);
@@ -835,7 +839,7 @@ async function main() {
   await testMainSanitization();
   testSdkRewindStore();
   await testAgentControls();
-  testWiring();
+  await testWiring();
   console.log('fork-rewind-test: ok — UUID صارم، previewToken، تتبّع UUID، مسارات fail-closed، وقفل ثنائي الاتجاه، وعدد استعادة صادق من بصم القرص');
 }
 

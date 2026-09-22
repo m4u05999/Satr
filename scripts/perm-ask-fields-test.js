@@ -103,6 +103,8 @@ function runAskSite() {
     desktop: { permissionDetail: () => 'تفاصيل سطح المكتب' },
   };
   vm.createContext(sandbox);
+  // helper التسجيل/الإلغاء من الإنتاج نفسه؛ tail أدناه يسجّل pending قبل emit.
+  vm.runInContext(section('  function emitControlRequestClosed(', '  const connectionGate ='), sandbox);
   // غلاف لا يغيّر جسد الإنتاج: يمرّر ما يحسبه `canUseTool` قبل هذه النقطة فقط.
   const wrapped = '({ run(ctx) { const { toolName, input, requester, id, signal, browserClass,'
     + ' defaultToNo, suppressAlwaysAllowRule } = ctx;\n' + body + '\n} })';
@@ -163,6 +165,7 @@ function resolveChecks(askPending) {
     actionBudget: { extend() {}, consume: () => ({ allowed: true }) },
   };
   vm.createContext(sandbox);
+  vm.runInContext(section('  function detachControlAbort(', '  function closePendingControl('), sandbox);
   // الإنتاج يفحص `trustedBrowserOrigins instanceof Set`، و`instanceof` لا يعبر العوالم:
   // ‏Set من عالم المضيف يفشل داخل vm ويُسقط فرع ثقة النطاق صامتاً (أخضر كاذب لو مرّ).
   // لذا يُنشأ داخل عالم الصندوق.
@@ -217,6 +220,58 @@ function sourceContract() {
   const dialog = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'components', 'perm-dialog.js'), 'utf8');
   check('perm-dialog يخفي «الموافقة الدائمة» عند alwaysEligible === false',
     /_always\.hidden = this\._current\.alwaysEligible === false/.test(dialog));
+}
+
+async function controlLifecycleChecks() {
+  const pending = new Map();
+  const events = [];
+  let registeredAtEmit = false;
+  const sandbox = { pending, emit(event) { registeredAtEmit = pending.has(event.id); events.push(event); } };
+  vm.createContext(sandbox);
+  vm.runInContext(section('  function emitControlRequestClosed(', '  const connectionGate ='), sandbox);
+  const waitForSdkControl = vm.runInContext('waitForSdkControl', sandbox);
+  const abort = new AbortController();
+  const result = waitForSdkControl(pending, 'helper-1', {},
+    { type: 'permission_request', id: 'helper-1' }, abort.signal, 'permission',
+    { behavior: 'deny', message: 'أُلغي الطلب' });
+  check('helper يسجّل pending قبل emit', registeredAtEmit && pending.has('helper-1'));
+  abort.abort();
+  const denied = await result;
+  check('signal.abort يحسم ويحذف الطلب', denied.behavior === 'deny' && !pending.has('helper-1'));
+  check('signal.abort يبث إغلاق الطلب المحدد بعد الحسم',
+    events.some((event) => event.type === 'sdk_control_request_closed' && event.id === 'helper-1' && event.kind === 'permission'));
+
+  const already = new AbortController(); already.abort();
+  const before = events.length;
+  const immediate = await waitForSdkControl(pending, 'helper-2', {},
+    { type: 'permission_request', id: 'helper-2' }, already.signal, 'permission', { behavior: 'deny' });
+  check('signal.aborted قبل التسجيل لا يبث طلباً يتيماً', immediate.behavior === 'deny' && events.length === before);
+
+  const closes = [];
+  const gateEvents = [];
+  const gateAbort = new AbortController();
+  const gate = require('../electron/connection-tools').createPermissionGate({
+    emit: (event) => gateEvents.push(event), isActive: () => true, onClose: (id) => closes.push(id),
+  });
+  const gateResult = gate.requestPermission({ action: 'create_issue' }, { signal: gateAbort.signal });
+  const gateId = gateEvents[0].id;
+  gateAbort.abort();
+  check('connectionGate abort يحسم false', await gateResult === false);
+  check('connectionGate يسحب الطلب المعلن بعينه مرة واحدة', closes.length === 1 && closes[0] === gateId);
+
+  const syncCloses = [];
+  const syncAbort = new AbortController();
+  let syncEvent = null;
+  const syncGate = require('../electron/connection-tools').createPermissionGate({
+    emit(event) { syncEvent = event; syncAbort.abort(); },
+    isActive: () => true,
+    onClose: (id) => syncCloses.push(id),
+  });
+  const syncResult = await syncGate.requestPermission(
+    { action: 'create_issue' }, { signal: syncAbort.signal },
+  );
+  check('connectionGate يغلق الطلب إذا تزامن abort داخل emit', syncResult === false
+    && syncEvent && syncCloses.length === 1 && syncCloses[0] === syncEvent.id);
 }
 
 // ----------------------------------------------------------- (٤) المربع حيّاً في Chromium
@@ -297,6 +352,7 @@ async function main() {
   const askPending = askSiteChecks();
   resolveChecks(askPending);
   sourceContract();
+  await controlLifecycleChecks();
 
   await app.whenReady();
   const consoleErrors = [];

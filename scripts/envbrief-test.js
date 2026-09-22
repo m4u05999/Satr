@@ -10,7 +10,7 @@ const tools = require('../electron/tools');
 
 const root = path.resolve(__dirname, '..');
 const agentSource = fs.readFileSync(path.join(root, 'electron', 'agent.js'), 'utf8');
-const sdkActual = Array.from(agentSource.matchAll(/sdk\.tool\(\s*['"]([^'"]+)['"]/g), (match) => match[1]);
+const sdkActual = Array.from(agentSource.matchAll(/(?:sdk\.tool|makePreviewTool)\(\s*['"]([^'"]+)['"]/g), (match) => match[1]);
 const codexActual = codexmcp.buildTools({ preview: {} }).map((tool) => tool.name);
 const kimiActual = codexmcp.buildTools({
   preview: {}, extraTools: kimi._internals.buildSatrMcpTools(root, { enabled: [] }, () => {}),
