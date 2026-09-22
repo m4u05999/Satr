@@ -262,6 +262,8 @@ async function testMainSanitization() {
     { value: 'haiku', displayName: 'Haiku', description: 'x', resolvedModel: 'claude-haiku-4-5-20251001' },
     { value: 'claude-opus-4-8', displayName: 'Opus 4.8', description: 'x', resolvedModel: 'claude-opus-4-8' },
     { value: 'sonnet', displayName: 'Sonnet', description: 'x', resolvedModel: SECRET_SENTINEL },
+    // مقيس حياً 2026-09-22 على CLI 2.1.280: opus[1m] يحلّ إلى claude-opus-5-5[1m] (رقمان بعد العائلة)
+    { value: 'opus-55[1m]', displayName: 'Opus (1M context)', description: 'x', resolvedModel: 'claude-opus-5-5[1m]' },
   ];
   const officialResult = plain(await contract.handleClaudeModelsRequest({
     async claudeModels() { return { ok: true, models: officialRaw }; },
@@ -272,6 +274,7 @@ async function testMainSanitization() {
   assert.equal(labelByValue.get('default'), 'Default (recommended) — Opus 5', 'الافتراضي يذكر نموذجه المحلول');
   assert.equal(labelByValue.get('haiku'), 'Haiku 4.5', 'مقطع تاريخ haiku لم يُسقط');
   assert.equal(labelByValue.get('claude-opus-4-8'), 'Opus 4.8', 'اسم Opus 4.8');
+  assert.equal(labelByValue.get('opus-55[1m]'), 'Opus 5.5 (1M context)', 'اسم Opus 5.5 من معرّف بمقطعين رقميين');
   assert.equal(labelByValue.get('sonnet'), 'Sonnet', 'resolvedModel الفاسد لم يسقط إلى displayName');
   for (const model of officialResult.models) {
     assert.deepEqual(Object.keys(model).sort(), ['description', 'label', 'value'], 'resolvedModel تسرب إلى العقد العام');

@@ -25,6 +25,9 @@ function register(name, adapter, meta) {
 // نماذج Claude (لمحرك cli الاحتياطي — ومحرك sdk الخاص يعرّفها في الواجهة)
 const CLAUDE_MODELS = [
   { value: '', label: 'الافتراضي' },
+  // مثبت حياً 2026-09-22: Claude Code 2.1.280 (الحدّ الأدنى للنموذج) يقبل
+  // `claude --model claude-opus-5-5 -p`، والمستعاران default وopus[1m] يحلّان إليه.
+  { value: 'claude-opus-5-5', label: 'Opus 5.5' },
   // مثبت حياً 2026-09-02: supportedModels() على CLI 2.1.258 يعلن claude-fable-5-1[1m]
   // (بديل claude-fable-5)، وclaude --model claude-fable-5-1 -p قبِله مباشرة.
   { value: 'claude-fable-5-1', label: 'Fable 5.1' },

@@ -404,8 +404,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
 
   // بناء قائمة «المحرك» ديناميكياً من طبقة المزوّد (satr:providers): sdk (خاص) + المحوّلات.
   // §5-د-2: النماذج تتبع المحرك المختار (لكل مزوّد نماذجه). فشل الجلب ⇒ خيارات ثابتة احتياطية.
+  // مثبت حياً 2026-09-22 على Claude Code 2.1.280: `claude --model claude-opus-5-5 -p` يُقبل،
+  // والاسم المستعار opus[1m] يحلّ إليه. الاحتياطية تطابق adapters/index.js (المعرّف الصريح
+  // ثابت حين ينتقل المستعار «opus» إلى نموذج أحدث).
   const CLAUDE_MODELS = [
-    { value: '', label: 'الافتراضي' }, { value: 'claude-fable-5', label: 'Fable 5' },
+    { value: '', label: 'الافتراضي' }, { value: 'claude-opus-5-5', label: 'Opus 5.5' },
+    { value: 'claude-fable-5-1', label: 'Fable 5.1' },
     { value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' },
   ];
   // احتياط حديث فقط؛ القائمة الفعلية وقدرات الجهد تصل من model/list الرسمي.
