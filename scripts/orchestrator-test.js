@@ -88,7 +88,7 @@ async function main() {
       '(() => {' + mainSource.slice(policyStart, policyEnd) + '; return { resolveOpsRoomModel, preflightOpsRoomModels }; })()',
       { SAFE_MODEL: /^[A-Za-z0-9.-]{1,64}$/, process: { env: {} }, codex: { DEFAULT_MODEL: 'gpt-5.6-sol' } },
     );
-    assert.strictEqual(policy.resolveOpsRoomModel('sdk', {}, 'codex-default').model, 'claude-opus-4-8');
+    assert.strictEqual(policy.resolveOpsRoomModel('sdk', {}, 'codex-default').model, 'claude-opus-5-5');
     assert.strictEqual(policy.resolveOpsRoomModel('codex', {}, 'codex-default').model, 'codex-default');
     const overridden = policy.preflightOpsRoomModels(['sdk', 'codex'], {
       SATR_OPSROOM_CLAUDE_MODEL: 'claude-override', SATR_OPSROOM_CODEX_MODEL: 'codex-override',

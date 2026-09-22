@@ -167,7 +167,8 @@ approve | changes_required | reject
 > **ملحق post-M7 — سياسة نماذج غرفة العمليات:** كان اختيار النموذج خارج نطاق المراحل
 > 1–7. بعد إغلاقها تعتمد غرفة العمليات سياسة داخلية موثوقة لكل محرك، منفصلة عن اختيار
 > نموذج الدردشة ولا يرسلها renderer. تحلّ `main.js` نموذج كل runner من افتراضي منقّى
-> خاص بالمحرك (`claude-opus-4-8` لـSDK و`codex.DEFAULT_MODEL` لـCodex)، مع override
+> خاص بالمحرك (`claude-opus-5-5` لـSDK منذ 2026-09-22 — كان `claude-opus-4-8` —
+> و`codex.DEFAULT_MODEL` لـCodex)، مع override
 > تشغيلي اختياري ومنقّى عبر `SATR_OPSROOM_CLAUDE_MODEL` أو
 > `SATR_OPSROOM_CODEX_MODEL`. تمرّر الطبقة العليا النموذج صراحةً إلى النوى؛ لا تقرأ
 > النوى `process.env`. أي override غير صالح يفشل بوضوح قبل إنشاء worktree، ولا يسقط
