@@ -227,23 +227,48 @@ async function main() {
       const latest = h.store.latest(project); assert.equal(latest.ok, true);
       assert.equal(latest.conversation.runs.at(-1).status, 'stopped');
     });
-    await test('فشل كتابة مسودة البث يوقف المحرك ويصل بخطأ ظاهر مرة واحدة', async (project) => {
+    for (const engine of ['sdk', 'codex']) await test('قفل مسودة عابر يتعافى بلا إيقاف أو تكرار طلب: ' + engine, async (project) => {
+      const h = loadRuntime(project); await h.send({ engine, prompt: 'TRANSIENT_STORAGE' });
+      const run = h.nativeRuns.at(-1), id = h.identity().conversation_id;
+      run.emit({ type: 'system', subtype: 'init', session_id: 'transient-session' });
+      const rename = fs.renameSync; let attempts = 0;
+      fs.renameSync = function(from, to) {
+        if (String(to).endsWith('.draft.json') && ++attempts === 1) {
+          throw Object.assign(new Error('PRIVATE_PATH'), { code: 'EBUSY' });
+        }
+        return rename.apply(this, arguments);
+      };
+      try { run.emit({ type: 'stream_text', text: 'SAVED_ON_RETRY', phase: 'commentary' }); }
+      finally { fs.renameSync = rename; }
+      assert.equal(attempts, 2, 'transient rename must retry');
+      assert.equal(run.stopped, false, 'transient storage failure must not stop engine');
+      assert.equal(h.nativeRuns.length, 1, 'storage recovery must not resubmit engine request');
+      assert.equal(h.rendered.filter(({ event }) => event.type === 'spawn_error').length, 0);
+      assert.equal(h.store.load(id, project).conversation.runs.at(-1).draft.commentary, 'SAVED_ON_RETRY');
+      h.finish(run, 'transient-session', 'RECOVERED_DONE');
+      assert.equal(h.store.load(id, project).conversation.runs.at(-1).status, 'completed');
+    });
+    await test('فشل كتابة مسودة مستمر يوقف المحرك ويصل بتشخيص آمن مرة واحدة', async (project) => {
       const h = loadRuntime(project); await h.send({ engine: 'codex', prompt: 'STORAGE_FAILURE' });
       const run = h.nativeRuns.at(-1), id = h.identity().conversation_id;
       run.emit({ type: 'system', subtype: 'init', session_id: 'storage-session' });
       const rename = fs.renameSync; let failures = 0;
       fs.renameSync = function(from, to) {
-        if (!failures && String(to).endsWith('.draft.json')) {
-          failures++; const error = new Error('probe'); error.code = 'EBUSY'; throw error;
+        if (String(to).endsWith('.draft.json')) {
+          failures++; const error = new Error('PRIVATE_PATH ' + project); error.code = 'EBUSY'; throw error;
         }
         return rename.apply(this, arguments);
       };
       try { run.emit({ type: 'stream_text', text: 'RETAIN_PARTIAL', phase: 'commentary' }); }
       finally { fs.renameSync = rename; }
-      assert.equal(failures, 1); assert.equal(run.stopped, true);
+      assert.ok(failures >= 6 && failures <= 12, 'permanent storage retry must be bounded'); assert.equal(run.stopped, true);
       const errors = h.rendered.filter(({ event }) => event.type === 'spawn_error' && event.kind === 'continuity');
       assert.equal(errors.length, 1, 'continuity failure must reach the visible error channel');
       assert.ok(errors[0].event.text.includes('store_unavailable'));
+      assert.ok(errors[0].event.text.includes('EBUSY / rename'), 'original storage diagnostic must reach user');
+      assert.ok(!errors[0].event.text.includes('PRIVATE_PATH'));
+      assert.ok(!errors[0].event.text.includes('لم يبدأ طلب جديد'), 'mid-run error must not claim request never started');
+      assert.equal(h.nativeRuns.length, 1, 'permanent storage failure must not resubmit');
       assert.ok(!errors[0].event.text.includes(project));
       const count = h.rendered.length;
       run.emit({ type: 'proc_done', code: 0 });

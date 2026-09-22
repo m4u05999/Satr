@@ -576,18 +576,28 @@ function broken2() {
         'OBS-191: عند الاتفاق لا نصّ تنبيه');
     }
 
-    // (٢) خطّاف يعلنه المحرّك ولم يره المسح اليدوي (فجوة OBS-156 بعينها).
+    // (٢) لا ننسب الغياب إلا إلى نطاق فحصناه فعلاً.
     {
+      const uncovered = hookguard.reconcileWithEngine(
+        { hooksListing: listing([
+          engineHook({ event: 'PreToolUse' }),
+          engineHook({ event: 'PreToolUse', source: 'localSettings' }),
+          engineHook({ event: 'SessionStart', source: 'userSettings' }),
+          engineHook({ event: 'SessionStart', source: 'plugin' }),
+        ]) }, localSnapshot([], null, null),
+      );
+      ok(uncovered.agreed && hookguard.reconcileNoticeText(uncovered) === null,
+        'uncovered hooks must not produce a false mismatch');
       const report = hookguard.reconcileWithEngine(
-        { hooksListing: listing([engineHook({ event: 'PreToolUse', source: 'localSettings' })]) },
+        { hooksListing: listing([engineHook({ event: 'SessionStart', source: 'localSettings' })]) },
         localSnapshot([], null, null),
       );
       ok(report.agreed === false
-        && report.missingInLocal.join() === 'hook:PreToolUse@local'
+        && report.missingInLocal.join() === 'hook:SessionStart@local'
         && !report.missingInEngine.length,
       'OBS-191: خطّاف في المحرك غائب محلياً ⇒ missingInLocal');
       const notice = hookguard.reconcileNoticeText(report);
-      ok(notice.includes('PreToolUse') && notice.includes('⚠️')
+      ok(notice.includes('SessionStart') && notice.includes('⚠️')
         && !notice.includes('secret') && !notice.includes('boot.js')
         && !notice.includes('D:'),
       'OBS-191: التنبيه عربي ويسمّي الحدث بلا مسار ولا نصّ أمر');
@@ -694,9 +704,14 @@ function broken2() {
         hooksListing: listing([engineHook({ event: 'Stop', source: 'userSettings' })]),
         permissionRules: rules([]),
       });
-      ok(typeof notice === 'string' && notice.includes('Stop')
+      ok(typeof notice === 'string' && !notice.includes('Stop')
         && notice.includes('SessionStart'),
       'OBS-191: reconcileProject يبني التنبيه من مسحه الخاص');
+      writeJson(path.join(dir, '.claude', 'settings.json'),
+        { hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'echo safe' }] }] } });
+      ok(await g.reconcileProject(dir, {
+        hooksListing: listing([engineHook({ event: 'PreToolUse' })]), permissionRules: rules([]),
+      }) === null, 'project PreToolUse file must not cause false security warning');
       ok(!fs.existsSync(store), 'OBS-191: المطابقة لا تكتب المخزن — لا تبدّل مصدر الحقيقة');
       ok(await g.reconcileProject('', { hooksListing: listing([]) }) === null
         && await g.reconcileProject(null, null) === null,

@@ -3069,7 +3069,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
         engine: runEngine, sessionId: activeSessionId, prompt: typeof payload.prompt === 'string' ? payload.prompt : '', images,
       });
     } catch (_) { continuity = { ok: false, error: 'source_unavailable' }; }
-    if (!continuity.ok) return { error: continuity.error, message: conversationBridge.messageFor(continuity.error) };
+    if (!continuity.ok) return { error: continuity.error, message: conversationBridge.messageFor(continuity.error, continuity) };
     if (requestEpoch !== sendRequestEpoch || token !== runSeq) {
       conversations.stop(continuity.runId, 'superseded_before_start');
       return { error: 'stopped', message: 'أوقف المستخدم الطلب قبل بدء تشغيله.' };
@@ -3100,7 +3100,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
     if (stopped.ok && activeConversationRunId === continuity.runId) activeConversationRunId = null;
     // فشل الحفظ يوقف الدور؛ stderr غير معروض فلا يصل سبب الانقطاع للمستخدم.
     emitToWindow({ type: 'spawn_error', kind: 'continuity',
-      text: 'أُوقف الدور لتعذّر حفظ سياق المحادثة. ' + conversationBridge.messageFor(error) }, runEngine);
+      text: 'أُوقف الدور لتعذّر حفظ سياق المحادثة. ' + conversationBridge.messageFor(error.error, error, { duringRun: true }) }, runEngine);
     // قد يصل init قبل أن يُعاد المقبض من start؛ يُراجع الفشل أيضاً بعد إقلاعه.
     if (currentRun) Promise.resolve(currentRun.stop()).catch(() => {});
   };
@@ -3213,7 +3213,7 @@ async function handleSendRequest(event, payload, requestEpoch) {
     if (continuity && !lateSdkBackgroundEvent) {
       if (continuityFailed) return;
       const saved = conversations.acceptEvent(continuity.runId, obj);
-      if (!saved.ok) { failContinuity(saved.error); return; }
+      if (!saved.ok) { failContinuity(saved); return; }
       if (obj.type === 'result' || obj.type === 'proc_done' || obj.type === 'spawn_error') {
         if (activeConversationRunId === continuity.runId) activeConversationRunId = null;
       }

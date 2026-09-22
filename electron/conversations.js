@@ -27,6 +27,22 @@ const STOP_SOURCES = new Set(['unspecified', 'renderer_request', 'new_request', 
 const BLOCKING_ISSUES = new Set(['secret_redacted', 'text_too_large', 'history_incomplete']);
 const REDACTED = '[حُجب النص من سجل الاستمرارية لاحتوائه على سر ظاهر]';
 const ROOT = path.join(os.homedir(), '.satr', 'conversations');
+// إعادة الاستبدال وحده آمنة: الملف المؤقت مكتوب ومزامَن، ولا يُعاد حدث المحرك.
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY']);
+const RENAME_BACKOFF_MS = [10, 20, 40, 80, 160];
+const STORAGE_CODES = new Set([...RENAME_RETRY_CODES, 'ENOSPC', 'EDQUOT', 'EMFILE', 'ENFILE',
+  'EIO', 'ENOENT', 'EEXIST', 'ENOTDIR', 'EISDIR', 'EROFS', 'ENAMETOOLONG']);
+const STORAGE_OPERATIONS = new Set(['open', 'write', 'fsync', 'close', 'rename', 'unlink',
+  'mkdir', 'realpath', 'lstat', 'stat', 'scandir', 'read', 'serialize']);
+
+// لا رسالة استثناء ولا مسار ولا stack؛ حتى القيم القادمة إلى الجسر تُراجع ثانيةً.
+function storageDiagnostic(error) {
+  return {
+    code: STORAGE_CODES.has(error?.code) ? error.code : 'UNKNOWN',
+    operation: STORAGE_OPERATIONS.has(error?.operation) ? error.operation
+      : STORAGE_OPERATIONS.has(error?.syscall) ? error.syscall : 'unknown',
+  };
+}
 
 function failure(error, extra = {}) { return { ok: false, error, ...extra }; }
 // مقيس حياً (Claude Agent SDK، 2026-09-14): استئناف معرّف غير موجود لا يبثّ init، بل result
@@ -123,17 +139,39 @@ function createStore(options = {}) {
     const encoded = JSON.stringify(data);
     if (Buffer.byteLength(encoded, 'utf8') > maxBytes) throw new Error('store_limit');
     const temp = target + '.tmp-' + crypto.randomUUID();
-    let fd;
+    let fd, primaryError;
+    let operation = 'open';
     try {
       fd = fs.openSync(temp, 'wx', 0o600);
+      operation = 'write';
       fs.writeFileSync(fd, encoded, 'utf8');
+      operation = 'fsync';
       fs.fsyncSync(fd);
+      operation = 'close';
       fs.closeSync(fd);
       fd = undefined;
-      fs.renameSync(temp, target);
+      operation = 'rename';
+      for (let attempt = 0; ; attempt++) {
+        try { fs.renameSync(temp, target); break; }
+        catch (error) {
+          if (!RENAME_RETRY_CODES.has(error.code) || attempt >= RENAME_BACKOFF_MS.length) throw error;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RENAME_BACKOFF_MS[attempt]);
+        }
+      }
+    } catch (error) {
+      primaryError = error;
+      error.operation = operation;
+      throw error;
     } finally {
-      if (fd !== undefined) fs.closeSync(fd);
-      try { fs.unlinkSync(temp); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      // فشل التنظيف لا يطمس السبب الأصلي، وتبقى محاولة إزالة المؤقت حتى إن فشل الإغلاق.
+      let cleanupError;
+      if (fd !== undefined) try { fs.closeSync(fd); }
+      catch (error) { error.operation = 'close'; cleanupError = error; }
+      try { fs.unlinkSync(temp); }
+      catch (error) {
+        if (error.code !== 'ENOENT' && !cleanupError) { error.operation = 'unlink'; cleanupError = error; }
+      }
+      if (!primaryError && cleanupError) throw cleanupError;
     }
   }
   function locked(cwd, action) {
@@ -396,7 +434,7 @@ function createStore(options = {}) {
     try { return fn(); } catch (error) {
       const known = new Set(['bad_cwd', 'bad_id', 'bad_messages', 'bad_engine_or_session', 'store_busy', 'store_corrupt', 'store_limit', 'store_unreadable',
         'unsafe_store_path', 'revision_conflict', 'session_already_bound', 'session_mismatch', 'conversation_busy', 'not_found']);
-      return failure(known.has(error.message) ? error.message : 'store_unavailable');
+      return known.has(error.message) ? failure(error.message) : failure('store_unavailable', storageDiagnostic(error));
     }
   }
   function create(input = {}) {
@@ -735,4 +773,4 @@ function createStore(options = {}) {
   return { create, load, latest, forget, list, select, findBySession, prepare, acceptEvent, stop, recordUser, contextForRestart };
 }
 
-module.exports = { SCHEMA_VERSION, SAFE_ID, SAFE_SESSION, DEFAULT_TRANSFER_CHARS, createStore, normalizeCwd, ...createStore() };
+module.exports = { SCHEMA_VERSION, SAFE_ID, SAFE_SESSION, DEFAULT_TRANSFER_CHARS, storageDiagnostic, createStore, normalizeCwd, ...createStore() };

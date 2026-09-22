@@ -42,6 +42,60 @@ function storageText() { return allFiles(storeRoot).filter((name) => name.endsWi
 
 async function main() {
 try {
+  test('استبدال السجل يتعافى من الأقفال العابرة ويحفظ الرسالة مرة واحدة', () => {
+    for (const code of ['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY']) {
+      const run = begin('RENAME_RETRY_' + code);
+      const rename = fs.renameSync; let attempts = 0;
+      fs.renameSync = function(from, to) {
+        if (path.basename(to) === run.id + '.json' && ++attempts === 1) {
+          throw Object.assign(new Error('PRIVATE_DETAIL'), { code });
+        }
+        return rename.apply(this, arguments);
+      };
+      try { assistant(run, 'ONCE_' + code); }
+      finally { fs.renameSync = rename; }
+      assert.strictEqual(attempts, 2, 'transient store replacement must retry');
+      assert.strictEqual(read(run.id).messages.filter(m => m.text === 'ONCE_' + code).length, 1);
+      complete(run);
+    }
+  });
+  test('فشل الاستبدال الدائم محدود ويحفظ الأصل والتشخيص ولو فشل التنظيف', () => {
+    for (const code of ['EBUSY', 'ENOSPC']) {
+      const run = begin('PERMANENT_' + code);
+      const target = allFiles(storeRoot).find(f => path.basename(f) === run.id + '.json');
+      const before = fs.readFileSync(target);
+      const rename = fs.renameSync, unlink = fs.unlinkSync; let attempts = 0, result;
+      fs.renameSync = function(from, to) {
+        if (to === target) { attempts++; throw Object.assign(new Error('PRIVATE_DETAIL'), { code }); }
+        return rename.apply(this, arguments);
+      };
+      fs.unlinkSync = function(file) {
+        if (String(file).startsWith(target + '.tmp-')) throw Object.assign(new Error('PRIVATE_CLEANUP'), { code: 'EACCES' });
+        return unlink.apply(this, arguments);
+      };
+      try { result = store.acceptEvent(run.runId, { type: 'assistant', message: { content: [{ type: 'text', text: 'UNSAVED' }] } }); }
+      finally { fs.renameSync = rename; fs.unlinkSync = unlink; }
+      assert.strictEqual(attempts, code === 'EBUSY' ? 6 : 1, 'retry budget and nonretryable errors must be respected');
+      assert.deepStrictEqual(result, { ok: false, error: 'store_unavailable', code, operation: 'rename' }, 'primary diagnostic must survive cleanup');
+      assert.deepStrictEqual(fs.readFileSync(target), before, 'failed replacement must preserve prior bytes');
+      assert(!JSON.stringify(result).includes('PRIVATE'));
+      // المؤقتات المملوكة لهذا السيناريو فقط، والجذر المؤقت يتحقق منه تنظيف الحارس.
+      for (const file of allFiles(storeRoot)) if (file.startsWith(target + '.tmp-')) fs.unlinkSync(file);
+      complete(run);
+    }
+  });
+  test('التشخيص يحدد كتابة الملف ويحجب حقول الاستثناء الحرة', () => {
+    const run = begin('WRITE_DIAGNOSTIC');
+    const write = fs.writeFileSync; let result;
+    fs.writeFileSync = function() { throw Object.assign(new Error('PRIVATE_DETAIL'), { code: 'ENOSPC' }); };
+    try { result = store.acceptEvent(run.runId, { type: 'stream_text', text: 'PARTIAL' }); }
+    finally { fs.writeFileSync = write; }
+    assert.deepStrictEqual(result, { ok: false, error: 'store_unavailable', code: 'ENOSPC', operation: 'write' });
+    const bridge = require('../electron/conversation-bridge');
+    const safe = bridge.messageFor('store_unavailable', { code: 'PRIVATE_CODE', operation: 'PRIVATE_PATH', message: 'PRIVATE_TEXT' });
+    assert(!safe.includes('PRIVATE'), 'diagnostic formatting must reject free text');
+    complete(run);
+  });
   test('مصدر الإيقاف محفوظ ومحدود ولا يبدل نتيجة نهائية', () => {
     const run = begin('STOP_SOURCE');
     ok(store.stop(run.runId, 'renderer_request'));

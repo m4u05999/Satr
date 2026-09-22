@@ -9,7 +9,7 @@ const sessions = require('./sessions');
 const codexSessions = require('./codexsessions');
 const ENGINES = new Set(['sdk', 'codex']);
 
-function messageFor(error) {
+function messageFor(error, details = {}, { duringRun = false } = {}) {
   const messages = {
     transfer_limit: 'تجاوز سياق المحادثة سعة النقل. عُد إلى المحرك السابق أو افتح محادثة جديدة؛ لم تُرسل الرسالة إلى المحرك المختار.',
     transfer_incomplete: 'لا يتوفر سياق كامل يمكن نقله بأمان لهذه المحادثة. عُد إلى محركها السابق؛ لم تُرسل الرسالة إلى المحرك المختار.',
@@ -20,7 +20,12 @@ function messageFor(error) {
     conversation_busy: 'هذه المحادثة قيد التشغيل في نافذة أخرى. انتظر انتهاء دورها.',
     restart_after_progress: 'تعذر استئناف الجلسة بعد بدء تنفيذها؛ لم يُكرر الطلب.',
   };
-  return messages[error] || 'تعذر حفظ سياق المحادثة (' + error + '). لم يبدأ طلب جديد بلا سجل.';
+  if (messages[error]) return messages[error];
+  const diagnostic = conversations.storageDiagnostic(details);
+  const reason = diagnostic.code !== 'UNKNOWN' || diagnostic.operation !== 'unknown'
+    ? ' التشخيص: ' + diagnostic.code + ' / ' + diagnostic.operation + '.' : '';
+  return 'تعذر حفظ سياق المحادثة (' + error + ').'
+    + (duringRun ? ' لم يُعَد إرسال الطلب تلقائياً.' : ' لم يبدأ طلب جديد بلا سجل.') + reason;
 }
 
 function snapshot(data, engine, excludeRunId) {

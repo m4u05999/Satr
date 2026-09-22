@@ -454,7 +454,8 @@ function addKey(set, prefix, name, scope) {
   if (name && scope) set.add(prefix + ':' + name + '@' + scope);
 }
 
-// خطّافات المحرّك: صفٌّ لكل خطّاف مُدرَج. المعطَّل (`disabled`) لا يعمل فلا يُقارَن.
+// المسح المحلي يغطي SessionStart في ملفّي المشروع فقط؛ الباقي غير مفحوص وليس مفقوداً.
+// المعطَّل (`disabled`) لا يعمل فلا يُقارَن.
 function engineHookKeys(listing) {
   const rows = listing && Array.isArray(listing.hooks) ? listing.hooks : null;
   if (!rows) return null;
@@ -464,6 +465,7 @@ function engineHookKeys(listing) {
     if (!entry || entry.disabled === true) continue;
     const event = engineLabel(entry.event);
     const scope = ENGINE_HOOK_SCOPES[entry.source] || engineLabel(entry.source);
+    if (event !== 'SessionStart' || !['project', 'local'].includes(scope)) continue;
     addKey(keys, 'hook', event, scope);
   }
   return keys;
