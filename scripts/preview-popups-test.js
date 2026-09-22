@@ -23,11 +23,12 @@ fs.mkdirSync(evidence,{recursive:true});
 const home=fs.mkdtempSync(path.join(os.tmpdir(),'satr-popups-'));
 for(const dir of ['profile','AppData/Roaming','AppData/Local','Downloads','codex','claude'])fs.mkdirSync(path.join(home,dir),{recursive:true});
 const env={};
-for(const key of ['SystemRoot','WINDIR','ComSpec','PATH','PATHEXT','TEMP','TMP','NUMBER_OF_PROCESSORS','PROCESSOR_ARCHITECTURE'])if(process.env[key])env[key]=process.env[key];
+// شاشة xvfb واعتماد اتصالها لازمان على لينكس؛ عزل منزل المحرك لا يعني فصل شاشة الاختبار.
+for(const key of ['SystemRoot','WINDIR','ComSpec','PATH','PATHEXT','TEMP','TMP','NUMBER_OF_PROCESSORS','PROCESSOR_ARCHITECTURE','DISPLAY','XAUTHORITY'])if(process.env[key])env[key]=process.env[key];
 const result=path.join(evidence,'live-'+Date.now()+'.json');
 Object.assign(env,{HOME:home,USERPROFILE:home,APPDATA:path.join(home,'AppData/Roaming'),LOCALAPPDATA:path.join(home,'AppData/Local'),
  CODEX_HOME:path.join(home,'codex'),CLAUDE_CONFIG_DIR:path.join(home,'claude'),SATR_POPUP_TEST_HOME:home,SATR_POPUP_TEST_RESULT:result});
-const child=spawnSync(require('electron'),[path.join(__dirname,'preview-popups-live-test.js')],{cwd:root,env,encoding:'utf8',timeout:55000,windowsHide:true});
+const child=spawnSync(require('electron'),[path.join(__dirname,'preview-popups-live-test.js')],{cwd:root,env,encoding:'utf8',timeout:55000,killSignal:'SIGKILL',windowsHide:true});
 process.stdout.write(child.stdout||'');process.stderr.write(child.stderr||'');
 if(!child.error&&child.status!==null){
  const resolved=path.resolve(home);if(path.dirname(resolved)!==path.resolve(os.tmpdir())||!path.basename(resolved).startsWith('satr-popups-'))throw Error('unsafe cleanup path');
