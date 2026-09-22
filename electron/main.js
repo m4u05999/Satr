@@ -201,7 +201,8 @@ async function handleClaudeAccountRequest(agentImpl = agent) {
 // لا تصل قيم البيئة إلى renderer ولا تقرؤها النوى المحايدة عن المحرك.
 function resolveOpsRoomModel(engine, env = process.env, codexDefaultModel = codex.DEFAULT_MODEL) {
   const config = engine === 'sdk'
-    ? { defaultModel: 'claude-opus-4-8', envName: 'SATR_OPSROOM_CLAUDE_MODEL', label: 'Claude' }
+    // قرار مالك 2026-09-22: Opus 5.5 (يلزم Claude Code ≥ 2.1.280؛ الأقدم يردّ claude_code_version_too_old)
+    ? { defaultModel: 'claude-opus-5-5', envName: 'SATR_OPSROOM_CLAUDE_MODEL', label: 'Claude' }
     : engine === 'codex'
       ? { defaultModel: codexDefaultModel, envName: 'SATR_OPSROOM_CODEX_MODEL', label: 'Codex' }
       // Kimi رأي عصف اختياري (OBS-012 بند ب). لا يدخل قوائم `allowedKeys` لأي مستهلك
