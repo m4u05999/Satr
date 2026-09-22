@@ -42,6 +42,21 @@ function storageText() { return allFiles(storeRoot).filter((name) => name.endsWi
 
 async function main() {
 try {
+  test('مصدر الإيقاف محفوظ ومحدود ولا يبدل نتيجة نهائية', () => {
+    const run = begin('STOP_SOURCE');
+    ok(store.stop(run.runId, 'renderer_request'));
+    assert.strictEqual(read(run.id).runs.at(-1).stopSource, 'renderer_request', 'stop source must persist');
+    ok(store.stop(run.runId, 'app_quit'));
+    assert.strictEqual(read(run.id).runs.at(-1).stopSource, 'renderer_request', 'late stop must not overwrite source');
+    const unknown = begin('UNKNOWN_STOP_SOURCE');
+    ok(store.stop(unknown.runId, 'SYNTHETIC_PRIVATE_REASON'));
+    assert.strictEqual(read(unknown.id).runs.at(-1).stopSource, 'unspecified');
+    assert(!storageText().includes('SYNTHETIC_PRIVATE_REASON'));
+    const done = begin('COMPLETED_SOURCE'); complete(done);
+    ok(store.stop(done.runId, 'renderer_request'));
+    assert.strictEqual(read(done.id).runs.at(-1).status, 'completed');
+    assert.strictEqual(read(done.id).runs.at(-1).stopSource, undefined);
+  });
   let original;
   test('يحفظ نص المستخدم الأصلي فور الإرسال مع هوية مستقرة', () => {
     original = begin('  لا تنشر أي تغييرات.\nاحفظ الأرقام كما هي: ٠١٢٣  ');
@@ -411,6 +426,26 @@ try {
     assert.strictEqual(fs.readdirSync(otherProject).length, 0);
   });
 
+
+  test('قارئ Claude يحفظ هوية رسائل المستخدم الصحيحة للعرض فقط', () => {
+    const messageId = '11111111-1111-4111-8111-111111111111';
+    const sessionId = '22222222-2222-4222-8222-222222222222';
+    const entries = [
+      { type: 'user', uuid: messageId, sessionId, message: { content: 'سؤال أصلي' } },
+      { type: 'assistant', uuid: messageId, sessionId, message: { content: 'جواب أصلي' } },
+      { type: 'user', uuid: '../invalid', sessionId: '../invalid', message: { content: 'بلا هوية صالحة' } },
+      { type: 'user', sessionId, message: { content: [{ type: 'tool_result', tool_use_id: 'tool-source', content: 'نتيجة' }] } },
+    ];
+    const result = sessions.buildContinuityMessages(entries.map(entry => JSON.stringify(entry)).join('\n'));
+    assert.strictEqual(result.messages[0].messageId, messageId, 'فقدت هوية رسالة المستخدم اللازمة للتفريع');
+    assert.strictEqual(result.messages[0].sessionId, sessionId, 'فقدت جلسة المصدر اللازمة لاسترجاع الملفات');
+    assert.strictEqual(result.messages[0].text, 'سؤال أصلي');
+    for (const message of result.messages.slice(1)) {
+      assert.strictEqual(message.messageId, undefined);
+      assert.strictEqual(message.sessionId, undefined);
+    }
+    assert.strictEqual(result.coverage.complete, true);
+  });
 
   test('قارئ Claude يفصل نتائج الأدوات عن المستخدم ويحفظ المصدر كاملاً', () => {
     const entries = [

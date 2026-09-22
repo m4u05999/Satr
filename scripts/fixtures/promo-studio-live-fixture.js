@@ -11,27 +11,29 @@ window.__promoStudioReady = (async () => {
     onPromoCapture(callback) { callbacks.push(callback); return () => {}; },
   };
 
-  const pickMime = () => ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm']
-    .find((value) => MediaRecorder.isTypeSupported(value)) || '';
-  async function makeClip(label, fill) {
-    const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 180;
-    const context = canvas.getContext('2d'); const stream = canvas.captureStream(20);
-    const mime = pickMime(); const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {}); const chunks = [];
-    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-    const stopped = new Promise((resolve) => recorder.addEventListener('stop', resolve, { once: true }));
-    context.fillStyle = fill; context.fillRect(0, 0, canvas.width, canvas.height);
-    recorder.start(250);
-    const start = performance.now();
-    while (performance.now() - start < 1600) {
-      context.fillStyle = fill; context.fillRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = 'white'; context.font = 'bold 32px sans-serif'; context.fillText(label, 30, 100);
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+  async function verifyClip(label, source) {
+    if (!source) throw new Error('fixture_video_missing:' + label);
+    const video = document.createElement('video');
+    video.muted = true; video.preload = 'auto';
+    try {
+      const loaded = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('fixture_video_timeout:' + label)), 5000);
+        video.addEventListener('loadeddata', () => { clearTimeout(timer); resolve(); }, { once: true });
+        video.addEventListener('error', () => {
+          clearTimeout(timer);
+          reject(new Error('fixture_video_decode_failed:' + label + ':' + (video.error ? video.error.code : 'unknown')));
+        }, { once: true });
+      });
+      video.src = source; video.load();
+      await loaded;
+      const info = { label, duration: video.duration, width: video.videoWidth, height: video.videoHeight };
+      window.__fixtureClipInfo = [...(window.__fixtureClipInfo || []), info];
+      if (!Number.isFinite(info.duration) || info.duration < 1.5 || !info.width || !info.height) {
+        throw new Error('fixture_video_too_short:' + label + ':' + JSON.stringify(info));
+      }
+    } finally {
+      video.removeAttribute('src'); video.load(); video.remove();
     }
-    recorder.requestData(); await new Promise((resolve) => setTimeout(resolve, 80));
-    recorder.stop(); await stopped; stream.getTracks().forEach((track) => track.stop());
-    const blob = new Blob(chunks, { type: recorder.mimeType || mime || 'video/webm' });
-    window.__clipInfo = [...(window.__clipInfo || []), { label, size: blob.size, type: blob.type, chunks: chunks.length }];
-    return blob;
   }
   function makeWav() {
     const sampleRate = 8000; const samples = 4000; const buffer = new ArrayBuffer(44 + samples * 2); const view = new DataView(buffer);
@@ -46,27 +48,12 @@ window.__promoStudioReady = (async () => {
 
   const paths = { first: 'C:\\Downloads\\first.mp4', second: 'C:\\Downloads\\second.mp4',
     music: 'C:\\Downloads\\music.wav', voice: 'C:\\Downloads\\voice.wav' };
-  const firstClip = await makeClip('ONE', '#284b63');
-  window.__promoStudioStep = 'clip_one';
-  const secondClip = await makeClip('TWO', '#6b3f52');
-  window.__promoStudioStep = 'clip_two';
-  const toBase64 = async (blob) => {
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    let binary = '';
-    for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-    return btoa(binary);
-  };
-  window.__promoStudioClips = {
-    first: await toBase64(firstClip), second: await toBase64(secondClip),
-    firstType: firstClip.type, secondType: secondClip.type,
-  };
-  await new Promise((resolve) => {
-    window.__setLocalClips = (firstUrl, secondUrl) => {
-      urls.set(paths.first, firstUrl); urls.set(paths.second, secondUrl); resolve();
-    };
-  });
-  window.__promoStudioStep = 'local_clips';
-  urls.set(paths.music, new URL(location.href).searchParams.get('music') || makeWav());
+  const query = new URL(location.href).searchParams;
+  const sources = { first: query.get('first'), second: query.get('second') };
+  await Promise.all([verifyClip('ONE', sources.first), verifyClip('TWO', sources.second)]);
+  urls.set(paths.first, sources.first); urls.set(paths.second, sources.second);
+  window.__promoStudioStep = 'fixture_clips';
+  urls.set(paths.music, query.get('music') || makeWav());
   urls.set(paths.voice, urls.get(paths.music));
   await import('../../src/ui/components/promo-studio.js');
   const studio = document.querySelector('satr-promo-studio');

@@ -28,8 +28,23 @@ function snapshot(data, engine, excludeRunId) {
     : data.runs.at(-1)?.engine || data.messages.at(-1)?.engine || Object.keys(data.bindings)[0] || 'sdk';
   return {
     id: data.id, cwd: data.cwd, engine: selected, sessionId: data.bindings[selected]?.valid ? data.bindings[selected].sessionId : null,
-    messages: data.messages.filter((message) => message.runId !== excludeRunId && ['user', 'assistant'].includes(message.role))
-      .map(({ role, text, engine: sourceEngine, images }) => ({ role, text, engine: sourceEngine, ...(images ? { images } : {}) })),
+    messages: [
+      ...data.messages.filter((message) => message.runId !== excludeRunId && !(message.role === 'user' && message.displayText === '' && !message.images?.length))
+        .map(({ role, text, displayText, engine: sourceEngine, images, seq, runId, phase, toolId, isError, steer, messageId, sourceSessionId }) => ({
+          role, text: displayText ?? text, engine: sourceEngine, seq, runId, phase, toolId, isError, steer,
+          status: data.runs.find(run => run.id === runId)?.status || 'imported',
+          ...(selected === 'sdk' && sourceEngine === 'sdk' && messageId ? { messageId, sessionId: sourceSessionId || data.bindings.sdk?.sessionId, cwd: data.cwd } : {}),
+          ...(images ? { images } : {}),
+        })),
+      ...data.runs.filter(run => run.id !== excludeRunId).flatMap(run => (run.displayTools || []).map(tool => ({
+        role: 'tool_use', text: '', engine: run.engine, runId: run.id, status: run.status, ...tool,
+      }))),
+      ...data.runs.filter(run => run.id !== excludeRunId && run.status === 'running').flatMap(run =>
+        Object.entries(run.draft || {}).map(([phase, text], index) => ({
+          role: 'assistant', text, phase, engine: run.engine, runId: run.id,
+          status: 'interrupted', seq: data.revision + 1 + index,
+        }))),
+    ].sort((a, b) => a.seq - b.seq),
     coverage: data.coverage,
   };
 }
@@ -65,24 +80,41 @@ function createBridge({ store = conversations, readers = {
     const prepared = store.prepare({ ...input, conversationId });
     if (prepared.ok) {
       prepared.restored = !input.conversationId && !!source;
-      prepared.snapshot = snapshot(prepared.conversation, input.engine, prepared.runId);
+      const restored = store.load(prepared.id, input.cwd);
+      prepared.snapshot = snapshot(restored.ok && restored.conversation ? restored.conversation : prepared.conversation, input.engine, prepared.runId);
     }
     return prepared;
   }
   function current(cwd) {
     const found = store.latest(cwd);
-    return found.ok ? { ok: true, conversation: found.conversation ? snapshot(found.conversation) : null } : found;
+    return found.ok ? { ok: true, conversation: found.conversation ? snapshot(found.conversation, found.engine) : null } : found;
   }
   function forSession(cwd, engine, sessionId) {
     const found = store.findBySession(cwd, engine, sessionId);
     return found.ok && found.conversation ? snapshot(found.conversation, engine) : null;
+  }
+  async function openSession(cwd, engine, sessionId) {
+    const found = store.findBySession(cwd, engine, sessionId);
+    if (!found.ok) return found;
+    if (found.conversation) return { ok: true, conversation: snapshot(found.conversation, engine) };
+    const original = await readers[engine](sessionId);
+    if (!original || original.error || !Array.isArray(original.messages)) return { ok: false, error: 'source_unavailable' };
+    try {
+      if (conversations.normalizeCwd(original.cwd) !== conversations.normalizeCwd(cwd)) return { ok: false, error: 'project_mismatch' };
+    } catch (_) { return { ok: false, error: 'bad_cwd' }; }
+    const imported = store.create({ cwd, engine, sessionId, messages: original.messages, coverage: original.coverage });
+    return imported.ok ? read(imported.id, cwd, engine) : imported;
+  }
+  function read(id, cwd, engine) {
+    const found = store.load(id, cwd);
+    return found.ok ? { ok: true, conversation: found.conversation ? snapshot(found.conversation, engine) : null } : found;
   }
   function restart(runId) {
     const result = store.contextForRestart(runId);
     if (!result.ok) throw new Error(messageFor(result.error));
     return result.context;
   }
-  return { prepare, current, forSession, restart };
+  return { prepare, current, forSession, read, openSession, restart };
 }
 
 module.exports = { messageFor, snapshot, createBridge, ...createBridge() };

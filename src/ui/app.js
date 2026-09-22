@@ -347,6 +347,14 @@ import { createPreviewShield } from './lib/preview-shield.js';
   // المكوّن يفحص ويرسم ويعيد الفحص ذاتياً (يبدأ عند اتصاله)؛ عند الجهوز يخفي نفسه
   // ويُصدر «gate-ready {version}» — القشرة ترفع حجب الإرسال وتعرض شريط النجاح
   // (banner عنصر مشترك ملكها). المستمع يُربط قبل ترقية المكوّن فلا سباق.
+  const setupGate = document.querySelector('satr-gate');
+  $('engineSetup').addEventListener('click', () => {
+    $('settingsPop').hidden = true;
+    setupGate.open();
+  });
+  setupGate.addEventListener('gate-dismissed', () => {
+    $('settingsBtn').focus();
+  });
   document.querySelector('satr-gate').addEventListener('gate-ready', (e) => {
     gated = false;
     const b = $('banner'); const d = e.detail || {};
@@ -565,6 +573,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     }
   }
   function showConversationHistory(messages) {
+    if (chatEl.addConversationHistory) { chatEl.addConversationHistory(messages); return; }
     for (const message of Array.isArray(messages) ? messages : []) {
       if (!message || typeof message.text !== 'string') continue;
       if (message.role === 'user') chatEl.addUserMsg(message.text);
@@ -590,6 +599,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
       }
     }
     conversationId = event.conversation_id;
+    if (chatEl.rememberConversationView) chatEl.rememberConversationView(conversationId);
     continuitySource = null;
     sessionId = typeof event.session_id === 'string' && SAFE_SESSION.test(event.session_id) ? event.session_id : null;
     sessionCwd = event.cwd;
@@ -618,10 +628,14 @@ import { createPreviewShield } from './lib/preview-shield.js';
     sessionCwd = $('cwd').value.trim();
     lastConversationCwd = sessionCwd;
     showConversationHistory(record.messages);
+    if (window.satr.selectConversation) window.satr.selectConversation(record.id, record.cwd, record.engine).then(result => {
+      if (!result || !result.ok) addNotice('تعذّر تذكّر آخر محادثة مفتوحة؛ الحوار المعروض لم يتغير.');
+    }).catch(() => addNotice('تعذّر تذكّر آخر محادثة مفتوحة.'));
     $('sessionInfo').textContent = sessionId ? 'جلسة: ' + shortSessionLabel(sessionId) + ' (مستأنفة)' : 'محادثة مستمرة';
     if (sessionId) { loadTaskLedger(record.engine, sessionId); loadCheckpoint(record.engine, sessionId); }
     addNotice('📂 استُعيدت المحادثة المشتركة المحفوظة — أرسل رسالتك للمتابعة.');
     chatEl.scrollToEnd(true);
+    if (chatEl.rememberConversationView) chatEl.rememberConversationView(record.id, true);
     input.focus();
     return true;
   }
@@ -659,6 +673,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
       if (sessionId) { loadTaskLedger(record.engine, sessionId); loadCheckpoint(record.engine, sessionId); }
       addNotice('📂 استُعيدت المحادثة المحفوظة لهذا المشروع — يمكنك المتابعة أو تغيير المحرك بين Claude وCodex.');
       chatEl.scrollToEnd(true);
+      if (chatEl.rememberConversationView) chatEl.rememberConversationView(record.id, true);
       return true;
     } catch {
       if (conversationContextIsCurrent(epoch, cwd, engine) && !busy && !sessionId && !conversationId) {
@@ -1161,7 +1176,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
   })();
 
   for (const [name, selector] of [
-    ['sessions', 'satr-sessions-panel'], ['files', 'satr-files-panel'], ['git', 'satr-git-panel'],
+    ['sessions', 'satr-sessions-panel'], ['saved-tasks', 'satr-saved-tasks-panel'],
+    ['files', 'satr-files-panel'], ['git', 'satr-git-panel'],
     ['skills', 'satr-skills-panel'], ['agents', 'satr-agents-panel'], ['mcp', 'satr-mcp-panel'],
     ['context', 'satr-context-panel'], ['memory', 'satr-memory-panel'], ['research', 'satr-research-panel'],
     ['gallery', 'satr-gallery-panel'], ['mobile', 'satr-mobile-panel'], ['desktop', 'satr-desktop-panel'],
@@ -1409,10 +1425,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (ev.type === 'conversation') { acceptConversationEvent(ev); return; }
     // طلبات الأذونات تُعالج دائماً ولو كانت الكتلة منتهية
     if (ev.type === 'permission_request') {
+      const ownerKey = typeof ev.ownerKey === 'string' && /^sdk:[0-9]+$/.test(ev.ownerKey) ? ev.ownerKey : '';
       permEl.request({
         id: ev.id, tool: ev.tool, detail: ev.detail || permDetailText(ev.tool, ev.input),
         requester: ev.requester || '', turnEligible: ev.turnEligible === true,
         alwaysEligible: ev.alwaysEligible !== false, alwaysLabel: ev.alwaysLabel || '',
+        ownerKey,
         defaultToNo: ev.defaultToNo === true, // OBS-192: يفتح المربع على «رفض» ويمنع القبول بمفتاح
       });
       // ‏OBS-207: الطالب وكيل فرعي معروف ⇒ صفّه في السطح الدائم يقول «ينتظر إذنك: <أداة>».
@@ -1425,8 +1443,23 @@ import { createPreviewShield } from './lib/preview-shield.js';
     // قرار الجوال حسم الطلب في main عبر resolvePermission نفسه؛ نسحب مربع سطح المكتب
     // ولا نعرض أي حقل خام من الظرف في المحادثة.
     if (ev.type === 'mobile_decision') {
-      closePermDialog();
+      if (permEl.closeRequest) permEl.closeRequest(ev.envelope_id, ev.ownerKey || '');
       addNotice(ev.decision === 'deny' ? '⛔ رُفض من الجوال' : '✅ أُقرّت من الجوال');
+      return;
+    }
+    // دورة حياة تحكم SDK مستقلة عن كتلة الدور: result يحرر المؤلف، لكنه لا يُسقط إذن
+    // وكيل خلفي. المحرك وحده يسحب طلباً حُسم بالإلغاء أو مالك Query خرج فعلاً.
+    if (ev.type === 'sdk_control_request_closed') {
+      if (typeof ev.ownerKey !== 'string' || !/^sdk:[0-9]+$/.test(ev.ownerKey)) return;
+      if (ev.kind === 'question') {
+        if (questionEl.closeRequest) questionEl.closeRequest(ev.id, ev.ownerKey);
+      } else if (ev.kind === 'permission' && permEl.closeRequest) permEl.closeRequest(ev.id, ev.ownerKey);
+      return;
+    }
+    if (ev.type === 'sdk_control_owner_closed') {
+      if (typeof ev.ownerKey !== 'string' || !/^sdk:[0-9]+$/.test(ev.ownerKey)) return;
+      if (permEl.closeOwner) permEl.closeOwner(ev.ownerKey);
+      if (questionEl.closeOwner) questionEl.closeOwner(ev.ownerKey);
       return;
     }
     if (ev.type === 'preview_recording_saved') {
@@ -1463,7 +1496,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
     // أسئلة الاختيار (AskUserQuestion) — تُعالج دائماً أيضاً (تنتظر رد المستخدم أثناء الدور)
     if (ev.type === 'question_request') {
       // OBS-033: يمرَّر مقتطف السياق من الخيط لأن الحوار الوسطي يغطّي ما بُني عليه السؤال.
-      questionEl.ask({ id: ev.id, questions: ev.questions,
+      const ownerKey = typeof ev.ownerKey === 'string' && /^sdk:[0-9]+$/.test(ev.ownerKey) ? ev.ownerKey : '';
+      questionEl.ask({ id: ev.id, questions: ev.questions, ownerKey,
         context: chatEl.lastAssistantText ? chatEl.lastAssistantText(600) : '' });
       if (chatEl.notifyAttention) chatEl.notifyAttention('⏸ سؤال ينتظر إجابتك');
       return;
@@ -1897,7 +1931,7 @@ import { createPreviewShield } from './lib/preview-shield.js';
     if (d) return d;
     try { return JSON.stringify(inp || {}, null, 1).slice(0, 1000); } catch { return ''; }
   }
-  function closePermDialog() { if (permEl.closeAll) permEl.closeAll(); }
+  function closePermDialog() { if (permEl.closeUnowned) permEl.closeUnowned(); }
 
   // ---------- أسئلة الاختيار العربية: مكوّن <satr-question-dialog> (AskUserQuestion، SDK) ----------
   // المكوّن يملك العرض والرد بمؤشرات (satr.answerQuestion مباشرة + حدث notice للخيط).
@@ -1913,7 +1947,81 @@ import { createPreviewShield } from './lib/preview-shield.js';
     const quoted = raw.length > 160 ? raw.slice(0, 160) + '…' : raw;
     composerEl.insertPrompt(quoted ? 'بخصوص سؤالك «' + quoted + '»: ' : '');
   });
-  function closeQuestionDialog() { if (questionEl.closeAll) questionEl.closeAll(); }
+  function closeQuestionDialog() { if (questionEl.closeUnowned) questionEl.closeUnowned(); }
+
+  // ---------- المهام المحفوظة: سطح مستقل وأحداث لا تمر عبر currentBlock ----------
+  const savedTasksEl = document.querySelector('satr-saved-tasks-panel');
+  const savedTasksToggle = $('savedTasksToggle');
+  function savedTaskModels() {
+    const fallbackEfforts=EFFORT_CYCLE.filter(Boolean);
+    return modelsForEngine('codex').filter((model) => model && model.value).map((model) => ({
+      value: model.value, label: model.label || model.value,
+      efforts: Array.isArray(model.efforts)&&model.efforts.length ? model.efforts : fallbackEfforts,
+    }));
+  }
+  async function openSavedTasks() {
+    savedTasksToggle.classList.add('active');
+    try { await refreshCodexModels(); } catch {}
+    if(!savedTasksToggle.classList.contains('active'))return;
+    surfaceCoordinator.openPanel('saved-tasks', savedTasksToggle,
+      () => savedTasksEl.open({ models: savedTaskModels(), effortLabels:EFFORT_LABELS,
+        confirm: (detail) => surfaceCoordinator.confirm(detail) }));
+  }
+  savedTasksToggle.addEventListener('click', () => {
+    if (savedTasksEl.hasAttribute('open')) savedTasksEl.close(); else openSavedTasks();
+  });
+  savedTasksEl.addEventListener('panel-close', () => savedTasksToggle.classList.remove('active'));
+  function invalidateSavedTasksProjectInput() {
+    if(!savedTasksEl.hasAttribute('open'))return;
+    savedTasksEl.invalidateProjectInput();
+    addNotice('تغيّر حقل المجلد؛ افتح المشروع عبر زر المجلد ثم أعد فتح المهام المحفوظة.');
+  }
+  $('cwd').addEventListener('input',invalidateSavedTasksProjectInput);
+  $('cwd').addEventListener('change',invalidateSavedTasksProjectInput);
+
+  customElements.whenDefined('satr-saved-tasks-panel').then(async () => {
+    savedTasksEl.setChat(chatEl);
+    savedTasksEl.setControlBridge({
+      permission(owner, event) {
+        permEl.request({
+          id: event.id, tool: event.tool, detail: event.detail || permDetailText(event.tool, event.input),
+          requester: 'مهمة محفوظة', turnEligible: event.turnEligible === true,
+          alwaysEligible: event.alwaysEligible !== false, alwaysLabel: event.alwaysLabel || '',
+          defaultToNo: event.defaultToNo === true, ownerKey: owner.run_id,
+          respond: (answer) => window.satr.savedTasksPermission({ run_id: owner.run_id, ...answer }),
+        });
+      },
+      question(owner, event) {
+        questionEl.ask({
+          id: event.id, questions: event.questions, context: event.context || '',
+          allowWrite: false, ownerKey: owner.run_id,
+          respond: (answer) => window.satr.savedTasksAnswerQuestion({ run_id: owner.run_id, ...answer }),
+        });
+      },
+      handoff(owner, event) {
+        if (previewEl && previewEl.showHandoff) {
+          previewEl.showHandoff(event.id, event.reason, event.mode,
+            (answer) => window.satr.savedTasksHandoffDone({ run_id: owner.run_id, ...answer }), owner.run_id);
+        }
+      },
+      handoffEnd(owner) { if (previewEl && previewEl.hideHandoff) previewEl.hideHandoff(owner.run_id); },
+      preview(_owner, event) { if (event.url && previewEl && previewEl.openWith) previewEl.openWith(event.url, { agent: true }); },
+      closeOwner(owner) {
+        if (permEl.closeOwner) permEl.closeOwner(owner.run_id);
+        if (questionEl.closeOwner) questionEl.closeOwner(owner.run_id);
+        if (previewEl && previewEl.hideHandoff) previewEl.hideHandoff(owner.run_id);
+      },
+    });
+    if (typeof window.satr.onSavedTaskEvent === 'function') {
+      window.satr.onSavedTaskEvent((envelope) => savedTasksEl.handleEvent(envelope));
+    }
+    try {
+      const availability = await window.satr.savedTasksAvailability();
+      savedTasksToggle.hidden = !(availability && availability.ok && availability.available === true);
+    } catch {
+      savedTasksToggle.hidden = true;
+    }
+  });
 
   // ---------- إدخال موصّلات Claude: <satr-elicitation-dialog> (دفعة C) ----------
   const elicitationEl = document.querySelector('satr-elicitation-dialog');
@@ -2001,11 +2109,19 @@ import { createPreviewShield } from './lib/preview-shield.js';
   async function steerTurn() {
     const text = input.value.trim();
     if (!text) return;
+    const steerEpoch = conversationEpoch, steerBlock = currentBlock;
     const r = await window.satr.steer(text);
     if (!r || !r.ok) {
+      if (r && r.error === 'no_active_turn') {
+        // انتهى الدور لدى المحرك؛ حرّر المؤلف مع إبقاء الرسالة لإرسالها مرة واحدة.
+        // رد توجيه قديم لا يحرر دوراً جديداً بدأ أثناء انتظار IPC.
+        if (steerEpoch !== conversationEpoch || steerBlock !== currentBlock) return;
+        endRun();
+        addNotice('انتهى الدور. رسالتك محفوظة؛ اضغط إرسال لبدء دور جديد.');
+        return;
+      }
       const why = {
         unsupported: 'التوجيه أثناء الدور متاح لمحرك Codex فقط',
-        no_active_turn: 'انتهى الدور — أرسل رسالة جديدة بدل التوجيه',
         empty: 'لا نص للتوجيه',
         bad_input: 'تعذّر قبول نص التوجيه',
       };
@@ -2021,7 +2137,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
 
   // ---------- الإرسال ----------
   async function send() {
-    if (gated) return; // المحادثة محجوبة حتى تجتاز بوابة أول التشغيل
+    // الإرشاد قابل للإغلاق؛ الرسالة تبقى كما كتبها المستخدم حتى يجهز محركه.
+    if (!busy && (gated || setupGate.engineUnavailable($('engine').value))) {
+      addNotice('أكمل إعداد المحرك قبل الإرسال. رسالتك محفوظة في المحرر؛ يمكنك العودة إلى سطر وفتح الطرفية من الشريط العلوي.');
+      setupGate.open($('engine').value);
+      return;
+    }
     if (conversationRestoreBusy) { addNotice('انتظر استعادة المحادثة المحفوظة قبل الإرسال.'); return; }
     if (sessionControlBusy || sessionResumeBusy) {
       addNotice('انتظر اكتمال تفريع الجلسة أو استرجاع الملفات قبل إرسال طلب جديد.');
@@ -2414,7 +2535,12 @@ import { createPreviewShield } from './lib/preview-shield.js';
     conversationEpoch += 1;
     conversationRestoreBusy = false;
     try {
-      if (s.kind === 'chat') await resumeChat(s);
+      if (s.kind === 'conversation') {
+        const result = await window.satr.readConversation(s.id, s.cwd, s.engine);
+        if (!result || !result.ok || !restoreReadConversation(result.conversation)) addNotice('تعذّرت قراءة المحادثة المحفوظة.');
+        else sessionsEl.close();
+      }
+      else if (s.kind === 'chat') await resumeChat(s);
       else if (s.kind === 'codex') await resumeCodexSession(s);
       else if (s.kind === 'kimi') await resumeKimiSession(s);
       else await resumeSession(s);

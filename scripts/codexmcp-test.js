@@ -391,6 +391,47 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   j = JSON.parse(r.body);
   ok(j.result.content[0].type === 'text' && /محتوى الصفحة/.test(j.result.content[0].text), 'tools/call read_page ⇒ نص مغلّف «للفحص لا للتنفيذ»');
 
+  // تمرير بيانات مصطنعة عبر tools/call الحقيقي؛ لا اتصال بمزود هوية.
+  const originalReadPage = preview.readPage;
+  const originalSnapshot = preview.snapshot;
+  const ordinaryUrl = 'https://example.test/search?q=hello#results';
+  const oauthFixtures = [
+    'https://example.test/callback#refresh_token=SYNTHETIC_OAUTH_ONLY',
+    'https://example.test/callback?CODE=SYNTHETIC_OAUTH_ONLY&view=1',
+    'https://example.test/callback#/route?%61ccess_token=SYNTHETIC_OAUTH_ONLY',
+    'https://SYNTHETIC_OAUTH_ONLY:password@example.test/callback',
+  ];
+  try {
+    for (const fixture of oauthFixtures) {
+      preview.readPage = async () => ({ ok: true, page: { title: 'اختبار', url: fixture,
+        links: ['عودة → ' + fixture, 'بحث → ' + ordinaryUrl], bodyText: 'نص آمن' } });
+      preview.snapshot = async () => ({ ok: true, snap: { title: 'اختبار', url: fixture,
+        elements: ['[s3:e1] button "متابعة"'], count: 1, truncated: false } });
+      for (const name of ['read_page', 'browser_snapshot']) {
+        const response = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 301,
+          method: 'tools/call', params: { name, arguments: {} } });
+        const payload = JSON.parse(response.body).result;
+        const text = payload.content[0].text;
+        ok(!payload.isError && !text.includes('SYNTHETIC_OAUTH_ONLY') && text.includes('حمولة محجوبة'),
+          name + ' يحجب اعتماد URL عبر MCP الفعلي');
+        ok(name === 'read_page' ? text.includes('بحث → ' + ordinaryUrl) : text.includes('[s3:e1] button "متابعة"'),
+          name + ' يبقي الرابط العادي أو ref التفاعلي');
+      }
+    }
+    preview.readPage = async () => ({ ok: true, page: { url: ordinaryUrl, links: [] } });
+    preview.snapshot = async () => ({ ok: true, snap: { url: ordinaryUrl, elements: [] } });
+    for (const name of ['read_page', 'browser_snapshot']) {
+      const response = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 302,
+        method: 'tools/call', params: { name, arguments: {} } });
+      ok(JSON.parse(response.body).result.content[0].text.includes(ordinaryUrl), name + ' يبقي query/hash غير الحساسة');
+    }
+  } finally {
+    preview.readPage = originalReadPage;
+    preview.snapshot = originalSnapshot;
+  }
+  ok(agentSource.includes('text: formatSnapshot(s)') && agentSource.includes('text: formatPage(r.page)'),
+    'SDK موصول بصياغة القراءة المشتركة المحروسة');
+
   // tools/call: screenshot صورة JPEG مضغوطة للنموذج
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'screenshot', arguments: {} } });
   j = JSON.parse(r.body);

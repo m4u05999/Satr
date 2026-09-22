@@ -8,6 +8,7 @@ const CONTRACT_VERSION = 1;
 const MANIFEST_NAME = 'satr-enterprise.json';
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const SAFE_PACKAGE_FILE = /^(?!\.)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
+const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 
 function isInside(parent, candidate) {
   const relative = path.relative(parent, candidate);
@@ -15,7 +16,10 @@ function isInside(parent, candidate) {
 }
 
 function readJson(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) throw new Error('manifest symlink');
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  }
   catch { throw new Error(`تعذر قراءة عقد Enterprise: ${file}`); }
 }
 
@@ -45,6 +49,17 @@ function resolveEnterpriseSource(value, options = {}) {
     throw new Error('قائمة packageFiles في عقد Enterprise غير صالحة');
   }
   const packageFiles = [...new Set(manifest.packageFiles)];
+  const windowsNames = new Set();
+  for (const file of packageFiles) {
+    const key = file.split('/').map((part) => {
+      if (WINDOWS_RESERVED.test(part) || /[. ]$/.test(part)) {
+        throw new Error(`اسم ملف Enterprise غير صالح على Windows: ${file}`);
+      }
+      return part.toLowerCase();
+    }).join('/');
+    if (windowsNames.has(key)) throw new Error(`تصادم أسماء Enterprise على Windows: ${file}`);
+    windowsNames.add(key);
+  }
   if (!packageFiles.includes(manifest.main) || !packageFiles.includes('LICENSE')) {
     throw new Error('يجب أن تضم packageFiles نقطة الدخول والرخصة التجارية');
   }

@@ -222,18 +222,44 @@ async function main() {
     })()`);
     assert.strictEqual(correctedPayload.prompt, 'طلب مصحّح');
     assert.strictEqual(correctedPayload.images.length, 1);
+    const retryEvent = { type: 'api_retry', attempt: 9, max_retries: 10, retry_delay_ms: 37000,
+      engine_error: require('../electron/engineerror').classify('overloaded') };
+    const retryVisible = "Boolean(document.querySelector('.retry-note'))";
+    await emit(win, retryEvent);
     await completeTurn(win, 'daily-session');
+    assert.strictEqual(await evaluate(win, retryVisible), false, 'بقي انتظار المحاولة بعد النجاح');
 
     await setInputAndSend(win, 'طلب ينتهي بخطأ', false);
     await waitFor(win, "window.__SATR_TESTSPRITE_HARNESS__.calls.filter((call) => call.name === 'send').length === 3", 'إرسال طلب result خطأ');
+    await emit(win, retryEvent);
+    assert.match(await evaluate(win, "document.querySelector('.retry-note').textContent"), /9 من 10.*بمهلة 37/);
+    await emit(win, { ...retryEvent, attempt: 10 });
+    assert.strictEqual(await evaluate(win, "document.querySelectorAll('.retry-note').length"), 1, 'تكدّست رسائل الانتظار');
+    assert.notStrictEqual(await evaluate(win, "document.getElementById('send').textContent"), 'إرسال', 'رقم المحاولة وحده لا ينهي الدور');
+    // نشغّل مسارات العرض الفعلية: نص جزئي، نص مكتمل، أداة، ثم نهاية فاشلة.
+    for (const progress of [
+      { type: 'stream_text', text: 'عاد البث', phase: 'commentary' },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'عاد الرد' }] } },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'retry-recovery-tool', name: 'Read', input: {} }] } },
+    ]) {
+      await emit(win, retryEvent);
+      await emit(win, progress);
+      assert.strictEqual(await evaluate(win, retryVisible), false, 'retry notice survived actual progress');
+      assert.strictEqual(await evaluate(win, "[...document.querySelectorAll('.work-title')].some(el => el.textContent.includes('يعيد الاتصال'))"), false, 'بقي عنوان إعادة الاتصال بعد عودة الرد');
+    }
+    await emit(win, retryEvent);
     await emit(win, { type: 'result', session_id: 'daily-session', duration_ms: 8, is_error: true, result: 'فشل الدور' });
+    assert.strictEqual(await evaluate(win, retryVisible), false, 'بقي انتظار المحاولة بعد النتيجة النهائية');
+    assert.strictEqual(await evaluate(win, "document.getElementById('send').textContent"), 'إرسال', 'النتيجة النهائية لم تحرر المؤلف');
     await emit(win, { type: 'proc_done', code: 1 });
     await waitFor(win, "Boolean(document.querySelector('.retry-card button')) && document.body.innerText.includes('فشل الدور')", 'إعادة المحاولة بعد result خطأ');
 
     await setInputAndSend(win, 'طلب يفشل', false);
     await waitFor(win, "window.__SATR_TESTSPRITE_HARNESS__.calls.filter((call) => call.name === 'send').length === 4", 'إرسال الطلب الفاشل');
     assert.strictEqual(await evaluate(win, "Boolean(document.querySelector('.retry-card'))"), false, 'زر result السابق لم يختف عند بدء دور جديد');
+    await emit(win, retryEvent);
     await emit(win, { type: 'spawn_error', text: 'تعذّر الاتصال بالخادم' });
+    assert.strictEqual(await evaluate(win, retryVisible), false, 'بقي انتظار المحاولة بعد خروج المحرك');
     await waitFor(win, "Boolean(document.querySelector('.retry-card button'))", 'ظهور زر إعادة المحاولة');
     await evaluate(win, "document.querySelector('.retry-card button').click()");
     await waitFor(win, "window.__SATR_TESTSPRITE_HARNESS__.calls.filter((call) => call.name === 'send').length === 5", 'إعادة إرسال آخر طلب');
@@ -244,6 +270,7 @@ async function main() {
     assert.strictEqual(retryState.prompt, 'طلب يفشل');
     assert.strictEqual(retryState.retryVisible, false, 'زر الإعادة لم يختف عند بدء الدور الجديد');
 
+    await emit(win, retryEvent);
     const shortcutState = await evaluate(win, `(() => {
       const input = document.getElementById('input');
       input.focus();
@@ -256,6 +283,7 @@ async function main() {
     assert.strictEqual(shortcutState.editPrevented, false, 'ابتُلع اختصار تحرير عادي');
     assert.strictEqual(shortcutState.stopPrevented, true);
     await waitFor(win, "document.body.innerText.includes('⏹ أُوقِف الدور') && Boolean(document.querySelector('.retry-card'))", 'وضوح إيقاف الدور');
+    assert.strictEqual(await evaluate(win, retryVisible), false, 'بقي انتظار المحاولة بعد إيقاف المستخدم');
     assert.strictEqual(await evaluate(win, "window.__SATR_TESTSPRITE_HARNESS__.calls.some((call) => call.name === 'stop')"), true);
 
     await setInputAndSend(win, 'غيّر الملفات', false);

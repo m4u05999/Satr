@@ -21,7 +21,9 @@ const CHECKS = [
   'grouped', 'tools-hidden-by-default', 'tagged-tool-hidden-untagged-visible',
   'pinned-and-current-first', 'current-expanded-others-collapsed', 'collapse-toggles-rows',
   'tools-filter-toggles', 'search-reaches-collapsed', 'chat-grouped-by-provider',
-  'orphan-joins-project', 'row-click-resumes',
+  'orphan-joins-project', 'row-click-resumes', 'windows-path-normalized',
+  'catalog-dedup-meta-errors', 'conversation-resume-and-meta-id', 'catalog-inherited-title-and-pin',
+  'secondary-actions-and-errors', 'collapse-persists-and-corruption-recovers', 'native-fallback',
 ];
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -55,13 +57,15 @@ function assertStaticContract() {
   assert(tagAt > 0, 'اللوحة لا تقرأ وسم الجلسة إطلاقاً — عاد الكشف بالمسار وحده.');
   assert(pathAt > tagAt, 'كشف المسار الاحتياطي غاب أو سبق الوسم — الجلسات القديمة بلا وسم تنكشف به.');
   // والاشتقاق من `meta.kind` لا من `session.kind` المحجوز لعائلة المحرك (chat/codex/kimi).
-  assert(panel.includes("toolTagged: meta.kind === 'tool'"), 'اللوحة لا تشتق الوسم من الميتاداتا.');
+  assert(panel.includes("toolTagged: session.toolTagged === true || meta.kind === 'tool'"),
+    'اللوحة تمحو وسم backend أو لا تدمجه مع الميتاداتا.');
 
   // والوسم لا يمرّ من renderer: قائمة سماح `set` تبقى pinned/title، فلا تُخفي الواجهة
   // جلسة مستخدم بادّعاء أنها أداة. (‏`setKind` مسار العملية الرئيسية وحده.)
   const meta = fs.readFileSync(path.join(__dirname, '..', 'electron', 'sessionmeta.js'), 'utf8');
-  assert(meta.includes("const allowed = new Set(['pinned', 'title']);"),
-    'قائمة سماح `set` تغيّرت — الوسم يجب أن يبقى خارج ما يقبله renderer.');
+  assert(meta.includes("const allowed = new Set(['pinned', 'title', 'preservePinnedFalse']);")
+    && !meta.includes("const allowed = new Set(['pinned', 'title', 'preservePinnedFalse', 'kind'])"),
+    'قائمة سماح `set` يجب أن تقبل علم false الانتقالي وتبقي kind خارج renderer.');
 }
 
 function assertFixtureContract() {

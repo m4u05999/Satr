@@ -257,6 +257,7 @@ function guardSources() {
   check('رمز غير حسابي لا يُوسَم account', () => {
     assert.equal(engineerror.classify('overloaded').account, false);
     assert.equal(engineerror.classify('server_error').account, false);
+    assert.doesNotMatch(engineerror.classify('overloaded').message, /ستُعاد|تلقائياً/, 'تصنيف الخطأ النهائي لا يَعِد بمحاولة تلقائية');
   });
   check('agent.js يلحق engine_error بحدث api_retry', () => {
     assert.match(agent, /const classified = engineerror\.classify\(event\.error\);/);

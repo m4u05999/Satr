@@ -913,6 +913,7 @@ async function start({ prompt, images, sessionId, model, permissionMode, skills,
         });
         emit({
           type: 'permission_request', id: permId, tool: toolName, input: input || {},
+          permissionReasons: browserClass ? browserpolicy.permissionReasons(toolName, policyInput, pageContext, budgetStatus, originTrust, browserControl) : ['tool_policy'],
           detail: [originTrust ? browserorigin.trustPrompt(toolName, trustTarget) + (trustTarget !== target ? '\nوجهة الفعل: ' + target : '') : '',
             policyDetail, 'تفاصيل الفعل:\n' + JSON.stringify(input || {}, null, 2).slice(0, 8000)].filter(Boolean).join('\n\n'),
           turnEligible: false, alwaysEligible: originTrust ? !!origin : (!neverAlways && !forcePrompt),

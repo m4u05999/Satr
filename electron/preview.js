@@ -4,7 +4,7 @@
 //   - webContents منفصلة تماماً عن واجهة «سطر»: sandbox + contextIsolation،
 //     **بلا preload إطلاقاً** (لا window.satr ولا أي جسر — الصفحة معزولة كمتصفح عادي)
 //   - partition دائمة مستقلة ('persist:preview') — كوكيز المعاينة لا تلمس جلسة الواجهة
-//   - http/https حصراً (will-navigate يحجب غيرها)، النوافذ المنبثقة تُحوَّل لنفس العرض
+//   - http/https حصراً؛ النوافذ المنبثقة أبناء حقيقيون معزولون داخل اللوحة
 //   - طلبات أذونات الويب (كاميرا/ميكروفون/إشعارات/موقع…) مرفوضة كلها
 // الواجهة ترسم «إطار» اللوحة (رأس + مساحة فارغة) وتبلّغ مستطيلها عبر satr:previewBounds —
 // العرض الأصلي يطفو فوق تلك المساحة (إحداثيات DIP تطابق CSS px عند zoom=1).
@@ -19,8 +19,15 @@ const browserorigin = require('./browserorigin'); // تصنيف أدوات ال�
 // المرجع/الجيل/البصمة/العقد — نقي. مسار مطلق من __dirname عمداً: preview-controls-backend-test
 // يشغّل هذا الملف في vm بـrequire يحلّ المعرّفات النسبية من scripts/ لا من electron/.
 const { createSurface, fingerprintLabel } = require(path.join(__dirname, 'surface'));
+const { previewUserAgent } = require(path.join(__dirname, 'preview-user-agent'));
+const { createPopupManager, popupHint, callbackHint } = require(path.join(__dirname, 'preview-popups'));
 
 let view = null;      // WebContentsView الحيّة (تُنشأ عند الفتح وتُدمَّر عند الإغلاق)
+let rootWebContents = null;
+let targetRevision = 0;
+const flowWarnings = new WeakMap();
+const flowTimers = new WeakMap();
+let popupNotice = '';
 let hostWin = null;   // النافذة المضيفة
 let sender = null;    // دالة بثّ الأحداث للواجهة (يمرّرها main.js)
 let lastBounds = null; // آخر مستطيل أبلغته الواجهة — يُطبَّق عند إنشاء عرض جديد
@@ -284,11 +291,15 @@ function emit(ev) {
 }
 
 // http/https حصراً — تُستخدم في التحقق وفي حارس التنقل
-function isHttpUrl(u) {
+function isWebNavigationUrl(u) {
   try {
     const p = new URL(String(u));
-    return (p.protocol === 'http:' || p.protocol === 'https:') && String(u).length <= 2048;
+    return p.protocol === 'http:' || p.protocol === 'https:';
   } catch (e) { return false; }
+}
+// حد إدخال الأدوات لا ينطبق على عناوين العودة التي يصنعها الموقع أثناء المصادقة.
+function isHttpUrl(u) {
+  return String(u).length <= 2048 && isWebNavigationUrl(u);
 }
 
 // رفض كل أذونات الويب لجلسة المعاينة (مرة واحدة لكل partition — آمن للتكرار)
@@ -418,12 +429,13 @@ function wireEvents(wc) {
   const emitCurrent = (event) => { if (isCurrent()) emit(event); };
   wc.on('destroyed', () => retireView(wc));
   wc.on('render-process-gone', () => {
-    if (!view || view.webContents !== wc) return;
+    if (!view || rootWebContents !== wc) return;
     retireView(wc);
     try { if (!wc.isDestroyed()) wc.close(); } catch {}
   });
   const nav = () => {
     if (!isCurrent()) return;
+    emitPopupState();
     emit({
       type: 'nav',
       url: wc.getURL(),
@@ -440,14 +452,16 @@ function wireEvents(wc) {
       installCaptureCollector(wc).catch(() => {});
     }
   });
-  wc.on('did-navigate-in-page', nav);
+  wc.on('did-navigate-in-page', () => { nav(); checkFlow(wc); });
   wc.on('did-frame-finish-load', () => {
     if (captureEventSink && currentWC() === wc) installCaptureCollector(wc).catch(() => {});
   });
   // عدّاد عقد اللقطة: الإدخال الملتزم من المستخدم داخل العرض المعزول. المستمع مرة واحدة
   // لكل webContents (‏wiredWebContents يحرس التكرار)، والعدّاد عام لأن المعاينة عرض واحد نشط.
   wc.on('input-event', (_event, inputEvent) => {
-    if (isCurrent() && inputEvent && COMMITTED_INPUT_TYPES.has(inputEvent.type)) surface.noteCommittedInput();
+    if (isCurrent() && inputEvent && COMMITTED_INPUT_TYPES.has(inputEvent.type)) {
+      surface.noteCommittedInput(); popups.touch(wc);
+    }
   });
   wc.on('page-title-updated', (e, title) => emitCurrent({ type: 'title', title: String(title || '').slice(0, 200) }));
   wc.on('did-start-loading', () => emitCurrent({ type: 'loading', loading: true }));
@@ -470,7 +484,7 @@ function wireEvents(wc) {
   // تصفير السجلّ عند تنقّل الإطار الرئيسي لصفحة جديدة (لا للتنقّل داخل الصفحة) — يعكس الحالية
   wc.on('did-start-navigation', (e, url, isInPlace, isMainFrame) => {
     if (!isCurrent()) return;
-    if (isMainFrame) invalidateSnapshotRefs(wc);
+    if (isMainFrame) { targetRevision += 1; invalidateSnapshotRefs(wc); }
     if (isMainFrame && !isInPlace) { resetLogs(); emit({ type: 'console_clear' }); }
   });
   // فشل التحميل الرئيسي فقط (-3 = أُجهض بتنقل جديد — ليس خطأ)
@@ -481,13 +495,14 @@ function wireEvents(wc) {
   // المستخدم من نافذة DevTools مباشرة (نافذة منفصلة mode:'detach' — لا طبقة فوق pvBox).
   wc.on('devtools-opened', () => emitCurrent({ type: 'devtools', open: true }));
   wc.on('devtools-closed', () => emitCurrent({ type: 'devtools', open: false }));
-  // نافذة منبثقة (target=_blank…): لا نوافذ — رابط http/https يُفتح في نفس العرض
-  wc.setWindowOpenHandler(({ url }) => {
-    if (isCurrent() && isHttpUrl(url)) { try { wc.loadURL(url); } catch (e) {} }
-    return { action: 'deny' };
-  });
+  // إنشاء ابن حقيقي يحفظ opener؛ الحجب لا يتنقل بالأب ولا يدمّره.
+  wc.setWindowOpenHandler(details => isCurrent() && !externalWC()
+    ? popups.handler(wc, details) : { action: 'deny' });
+  wc.on('did-stop-loading', () => checkFlow(wc));
+  wc.on('will-redirect', (event, url) => { if (!isWebNavigationUrl(url)) event.preventDefault(); });
+  wc.once('destroyed', () => { clearTimeout(flowTimers.get(wc)); flowWarnings.delete(wc); });
   // حارس التنقل: http/https حصراً (يمنع file:// وjavascript: وغيرهما)
-  wc.on('will-navigate', (e, url) => { if (!isHttpUrl(url)) e.preventDefault(); });
+  wc.on('will-navigate', (e, url) => { if (!isWebNavigationUrl(url)) e.preventDefault(); });
 }
 
 function ensureView(win, send) {
@@ -510,6 +525,9 @@ function ensureView(win, send) {
   wireNetwork();
   wireDownloads();
   wireCertificates();
+  // نضبط الجلسة قبل إنشاء العرض؛ لا نغير هوية التطبيق ولا نمس التخزين.
+  session.fromPartition(PARTITION).setUserAgent(
+    previewUserAgent(app.userAgentFallback, process.env.SATR_PREVIEW_NATIVE_UA === '1'));
   view = new WebContentsView({
     webPreferences: {
       sandbox: true,
@@ -521,6 +539,7 @@ function ensureView(win, send) {
     },
   });
   view.setBackgroundColor('#ffffff'); // المواقع تفترض خلفية فاتحة قبل رسم أنماطها
+  rootWebContents = view.webContents;
   wireEvents(view.webContents);
   win.contentView.addChildView(view);
   if (lastBounds) applyBounds(lastBounds);
@@ -573,9 +592,10 @@ function open(win, send, url) {
     recordOpenRequest(url, external);
     return { ok: true };
   }
-  const v = ensureView(win, send);
-  try { v.webContents.loadURL(String(url)); } catch (e) { return { error: 'load_failed' }; }
-  recordOpenRequest(url, v.webContents);
+  ensureView(win, send);
+  const target = currentWC();
+  try { target.loadURL(String(url)); } catch (e) { return { error: 'load_failed' }; }
+  recordOpenRequest(url, target);
   return { ok: true };
 }
 
@@ -596,6 +616,7 @@ function action(name) {
     if (name === 'back') { if (h ? h.canGoBack() : wc.canGoBack()) (h ? h.goBack() : wc.goBack()); }
     else if (name === 'forward') { if (h ? h.canGoForward() : wc.canGoForward()) (h ? h.goForward() : wc.goForward()); }
     else if (name === 'reload') wc.reload();
+    else if (name === 'popup_close') { popups.close(wc); }
     // DevTools حقيقية للعرض المعزول (البند أ): زرّ toggle. نافذة **منفصلة** (mode:'detach')
     // تتجنّب قيد الطفو فوق pvBox — لا تختبئ خلف العرض الأصلي. تعمل على الصفحة المعروضة
     // نفسها فيفحص المستخدم شبكتها/عناصرها/console بأدوات Chromium الكاملة.
@@ -739,7 +760,12 @@ function nativeBounds(b) {
 }
 
 function applyBounds(b) {
-  if (view && view.webContents && !view.webContents.isDestroyed()) view.setBounds(nativeBounds(effectiveBounds(b)));
+  const top = popups.active(), hidden = {x:0,y:0,width:0,height:0};
+  if (view && view.webContents && !view.webContents.isDestroyed()) view.setBounds(top ? hidden : nativeBounds(effectiveBounds(b)));
+  for (const record of popups.records()) {
+    if (!record.wc.isDestroyed()) record.view.setBounds(record === top
+      ? nativeBounds(popups.bounds(b, viewportOverride)) : hidden);
+  }
 }
 
 function setBounds(b, deviceMode, resetViewport = false) {
@@ -853,21 +879,23 @@ const PICK_SCRIPT = `(function(){
 })()`;
 
 async function startPick() {
-  if (!view || !view.webContents || view.webContents.isDestroyed()) return { error: 'closed' };
+  const wc = currentWC();
+  if (!wc) return { error: 'closed' };
   // التأشير يسلّم الصفحة للمستخدم لينقر عنصراً: refs اللقطة السابقة تسقط معه
   // (العطل الثاني المكتشف — كان وضع التحديد لا يبطلها).
   invalidateSnapshotRefs();
   try {
-    const pick = await runIsolated(view.webContents, PICK_SCRIPT); // OBS-018
+    const pick = await runIsolated(wc, PICK_SCRIPT); // OBS-018
     return { ok: true, pick: pick || null }; // null = أُلغي (Escape/إلغاء)
   } catch (e) { return { error: 'pick_failed' }; }
 }
 
 // إلغاء وضع التحديد من الواجهة (زر «تحديد» ثانيةً أو إغلاق) — يحلّ الـ Promise بـ null
 async function cancelPick() {
-  if (view && view.webContents && !view.webContents.isDestroyed()) {
+  const wc = currentWC();
+  if (wc) {
     // العالم نفسه الذي نُصِّب فيه PICK_SCRIPT — وإلا لم يرَ __satrPick أصلاً (OBS-018)
-    try { await runIsolated(view.webContents, 'window.__satrPick && window.__satrPick.cancel && window.__satrPick.cancel()'); } catch (e) {}
+    try { await runIsolated(wc, 'window.__satrPick && window.__satrPick.cancel && window.__satrPick.cancel()'); } catch (e) {}
   }
   return { ok: true };
 }
@@ -879,7 +907,70 @@ async function cancelPick() {
 // **أمان**: المحتوى المُستخرَج من صفحة غير موثوقة ⇒ نصّ مغلّف يقرؤه النموذج (حقن
 // برومبت محتمل موثّق — قراءة فقط، الوكيل يطلبه عمداً ليفحص).
 function currentWC() {
-  return externalWC() || ((view && view.webContents && !view.webContents.isDestroyed()) ? view.webContents : null);
+  const popup = popups.active();
+  return externalWC() || (popup && !popup.wc.isDestroyed() ? popup.wc : null)
+    || ((view && view.webContents && !view.webContents.isDestroyed()) ? view.webContents : null);
+}
+
+const popups = createPopupManager({
+  WebContentsView, host: () => hostWin, root: () => rootWebContents,
+  allowed: isWebNavigationUrl, wire: wireEvents, changed: popupTargetChanged,
+  warn: text => { popupNotice = text; emitPopupState(); },
+});
+function targetToken() { const wc = currentWC(); return String(wc ? wc.id : '') + ':' + targetRevision; }
+function popupState() {
+  const wc = currentWC(), child = popups.find(wc);
+  let origin = '', secure = false;
+  try { const u = new URL(wc.getURL()); if (isWebNavigationUrl(u.href)) { origin = u.origin; secure = u.protocol === 'https:'; } } catch {}
+  return { type: 'popup', active: !!child, count: popups.count(), origin, secure,
+    warning: popupNotice || (wc && flowWarnings.get(wc)) || '' };
+}
+function annotateBrowserResult(result) {
+  const state = popupState();
+  const lines = [];
+  if (state.active) lines.push('الهدف الحالي نافذة منبثقة (' + state.count + ')، الأصل: ' + (state.origin || 'صفحة فارغة') + '. إغلاقها يعيد الأدوات إلى الصفحة الأم.');
+  if (state.warning) lines.push(state.warning);
+  return lines.length && result && Array.isArray(result.content)
+    ? { ...result, content: [...result.content, {type: 'text', text: lines.join('\n')}] } : result;
+}
+function emitPopupState() { emit(popupState()); }
+function popupTargetChanged() {
+  targetRevision += 1;
+  viewportOverride = null;
+  invalidateSnapshotRefs();
+  clearSecretTransfers();
+  resetLogs();
+  emit({type: 'console_clear'});
+  if (lastBounds) applyBounds(lastBounds);
+  const wc = currentWC();
+  emitPopupState();
+  if (!wc) return;
+  const h = wc.navigationHistory;
+  emit({type:'nav', url:wc.getURL(), canGoBack:h ? h.canGoBack() : wc.canGoBack(),
+    canGoForward:h ? h.canGoForward() : wc.canGoForward()});
+  emit({type:'loading', loading:wc.isLoading ? wc.isLoading() : false});
+  emit({type:'devtools', open:wc.isDevToolsOpened ? wc.isDevToolsOpened() : false});
+  emit({type:'network', preset:networkState(wc).preset});
+}
+function checkFlow(wc) {
+  clearTimeout(flowTimers.get(wc));
+  const url = wc.getURL();
+  flowWarnings.set(wc, popupHint(url)
+    ? 'هذا التدفق قد يحتاج نافذة منبثقة. بقاء صفحة الربط أو إغلاقها وحده لا يثبت اكتمال الربط؛ تحقّق من الحساب في الصفحة الأم.' : '');
+  if (currentWC() === wc) { popupNotice = ''; emitPopupState(); }
+  if (!callbackHint(url)) return;
+  const timer = setTimeout(async () => {
+    if (handoffActive || wc.isDestroyed() || currentWC() !== wc || wc.getURL() !== url) return;
+    try {
+      const blank = await runIsolated(wc, '!!document.body && document.body.innerText.trim() === ""');
+      if (blank && !wc.isDestroyed() && currentWC() === wc && wc.getURL() === url) {
+        flowWarnings.set(wc, 'وصلت صفحة استجابة تسجيل الدخول وبقيت فارغة. قد يحتاج التدفق إلى نافذة أب؛ تحقّق من اكتمال الربط في الصفحة الأم.');
+        emitPopupState();
+      }
+    } catch {}
+  }, 3000);
+  if (timer.unref) timer.unref();
+  flowTimers.set(wc, timer);
 }
 
 function externalWC() {
@@ -891,6 +982,7 @@ function externalWC() {
 }
 
 function setExternalTargetProvider(provider, send) {
+  targetRevision += 1;
   invalidateSnapshotRefs();
   externalTargetProvider = typeof provider === 'function' ? provider : null;
   if (typeof send === 'function') sender = send;
@@ -1076,7 +1168,7 @@ async function browserTarget(name, input) {
   const locator = bare === 'browser_press_key' ? '__active__' : input && input.ref;
   try {
     const target = await runIsolated(wc, '(' + ACTION_TARGET_FN + ')(' + JSON.stringify(bare) + ',' + JSON.stringify(String(locator || '')) + ')'); // OBS-018
-    return isHttpUrl(target) ? target : wc.getURL();
+    return isWebNavigationUrl(target) ? target : wc.getURL();
   } catch { return wc.getURL(); }
 }
 
@@ -1175,9 +1267,11 @@ async function snapshot() {
   const wc = currentWC();
   if (!wc) return { error: 'closed' };
   await waitReady(wc);
+  if (currentWC() !== wc || wc.isDestroyed()) return { error: 'stale_ref' };
   const generation = nextSnapshotGeneration(wc);
   try {
     const data = await runIsolated(wc, '(' + SNAPSHOT_FN + ')(' + generation + ')'); // OBS-018
+    if (currentWC() !== wc || wc.isDestroyed() || surface.generation !== generation) return { error: 'stale_ref' };
     surface.recordSnapshot(wc.id, generation, {
       nextIndex: Math.max(0, Number(data && data.count) || 0),
       textBytes: Buffer.byteLength(((data && data.elements) || []).join('\n'), 'utf8'),
@@ -1658,7 +1752,17 @@ const CLICK_FN = `function(loc, expect){
   try { el.click(); } catch(e){ return {ok:false, reason:'click_error'}; }
   return {ok:true, tag: el.tagName.toLowerCase(), text: (el.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80)};
 }`;
+// أمر التحرير يولّد input بنفسه؛ إضافة حدث مصطنع تعيد تطبيق النص في المحرّرات الغنية.
+// لا نعدّل textContent كخطة بديلة: ذلك قد يغيّر DOM ويترك نموذج المحرّر على القيمة القديمة.
+const REPLACE_RICH_TEXT_SRC = `function replaceRichText(el,text){
+  el.focus();
+  if ((el.textContent || '') === text) return true;
+  var selection = getSelection(), range = document.createRange();
+  range.selectNodeContents(el); selection.removeAllRanges(); selection.addRange(range);
+  return document.execCommand(text ? 'insertText' : 'delete', false, text);
+}`;
 const TYPE_FN = `function(loc, expect, text){
+  ${REPLACE_RICH_TEXT_SRC}
   ${TARGET_GUARD_SRC}
   var g = guard(loc, expect); if (g.err) return g.err;
   var el = g.el;
@@ -1675,15 +1779,7 @@ const TYPE_FN = `function(loc, expect, text){
       el.dispatchEvent(new Event('change', {bubbles:true}));
     } else if (el.isContentEditable) {
       before = el.innerHTML;
-      var selection = getSelection(), range = document.createRange();
-      range.selectNodeContents(el); selection.removeAllRanges(); selection.addRange(range);
-      var beforeInput = new InputEvent('beforeinput', {bubbles:true, cancelable:true, inputType:'insertText', data:text});
-      if (el.dispatchEvent(beforeInput)) {
-        var inserted = false;
-        try { inserted = document.execCommand('insertText', false, text); } catch(e){}
-        if (!inserted) el.textContent = text;
-      }
-      el.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text}));
+      if (!replaceRichText(el, text)) return {ok:false, reason:'type_error'};
     } else { return {ok:false, reason:'not_editable'}; }
   } catch(e){ return {ok:false, reason:'type_error'}; }
   var after = el.isContentEditable ? el.innerHTML : el.value;
@@ -1727,10 +1823,11 @@ async function typeText(locator, text) {
 // معرّف مبهم ثم تُمسح بعد اللصق/نهاية المهمة. لا نتيجة أو حدث يحمل القيمة.
 const FILL_FIELDS_FN = `function(fields){
   ${TARGET_GUARD_SRC}
+  ${REPLACE_RICH_TEXT_SRC}
   function writable(el){return !!el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable);}
-  function set(el,value){el.focus();if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}else{el.textContent=value;el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));}}
+  function set(el,value){el.focus();if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set)desc.set.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}else{return replaceRichText(el,value)&&(el.textContent||'')===value;}return el.value===value;}
   var resolved=[];for(var i=0;i<fields.length;i++){var g=guard(fields[i].ref,fields[i].expect||'');if(g.err){g.err.index=i;return g.err;}if(!writable(g.el))return {ok:false,reason:'not_editable',index:i};resolved.push(g.el);}
-  for(var j=0;j<resolved.length;j++)set(resolved[j],String(fields[j].value));
+  for(var j=0;j<resolved.length;j++){if(!set(resolved[j],String(fields[j].value)))return {ok:false,reason:'type_error',index:j,filled:j};}
   return {ok:true,filled:resolved.length};
 }`;
 const TRANSFER_SAME_FN = `function(fromLoc,fromExpect,toLoc,toExpect){
@@ -2057,7 +2154,7 @@ async function setViewport(width, height) {
   // يصادف أن الصفحة تكون قد استجابت، وكاذباً (مقاس بائت) حين تتأخّر. صار الانتظار
   // **مشروطاً بالتقارب**: نستقصي `innerWidth` حتى يطابق العرض الذي طُبّق فعلاً على
   // العرض الأصلي، بسقف 500ms — فإن لم يتقارب نُبلّغ المقاس كما هو بلا كذب.
-  const target = view && lastBounds ? effectiveBounds(lastBounds) : null;
+  const target = view && lastBounds ? (popups.active() ? popups.bounds(lastBounds, viewportOverride) : effectiveBounds(lastBounds)) : null;
   const wantWidth = target && target.width > 0 ? target.width : null;
   const deadline = Date.now() + 500;
   try {
@@ -2562,7 +2659,12 @@ function emitAgentActivity(tool) {
 // إغلاق اللوحة = تدمير العرض كلياً (يحرّر الذاكرة؛ partition الدائمة تحفظ الكوكيز)
 // نفصل هوية العرض قبل إغلاقه: destroyed وأي حدث متأخر لا يخصّان العرض الذي سيأتي بعده.
 function retireView(wc) {
-  if (!view || view.webContents !== wc) return false;
+  if (!view || rootWebContents !== wc) return false;
+  popups.closeAll();
+  rootWebContents = null;
+  targetRevision += 1;
+  popupNotice = '';
+  emitPopupState();
   const retired = view;
   view = null;
   viewportOverride = null;
@@ -2573,6 +2675,8 @@ function retireView(wc) {
 }
 
 function close() {
+  popups.closeAll();
+  popupNotice = '';
   clearSensitiveState();
   // OBS-021: إغلاق المستخدم للوحة فعل قاطع — يفكّ أيضاً علم التسليم البشري إن كان
   // عالقاً (دورة handoff انقطعت دون حسم: مهلة أداة MCP لدى codex تقطع النداء بينما
@@ -2598,6 +2702,7 @@ module.exports = {
   selectOption, hover, scroll, pressKey, evaluate, setViewport, perf, back, forward,
   fillForm, transferField, requestSecret, resolveSecretRequest, clearSecretTransfers, clearSensitiveState,
   currentUrl, navigationTarget, browserTarget, browserActionContext, browserInputError, leaseError,
+  targetToken, popupState, annotateBrowserResult,
   openRequestVersion: () => openRequestRevision, waitForOpenRequest,
   captureFrame, emitAgentActivity, startHandoff, endHandoff,
   isHandoffActive, close, destroy, isHttpUrl, setExternalTargetProvider, attachExternalWebContents,

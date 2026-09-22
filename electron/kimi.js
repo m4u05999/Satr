@@ -956,6 +956,7 @@ function create(deps) {
         const policyDetail = browserpolicy.permissionDetail(toolName, policyInput, pageContext, budgetStatus);
         emit({
           type: 'permission_request', id, tool: toolName, input: displayInput || {},
+          permissionReasons: browserClass ? browserpolicy.permissionReasons(toolName, policyInput, pageContext, budgetStatus, originTrust, browserControl) : ['tool_policy'],
           detail: [originTrust ? browserorigin.trustPrompt(toolName, trustTarget) : '', policyDetail].filter(Boolean).join('\n\n'),
           turnEligible: false, alwaysEligible: originTrust ? !!origin : (!neverAlways && !forcePrompt),
           alwaysLabel: originTrust ? 'ثق بالنطاق لهذه الجلسة' : '', originTrust,

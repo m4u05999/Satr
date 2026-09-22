@@ -42,6 +42,7 @@
         <!-- رأس اللوحة: اتساق مع بقية اللوحات (كانت الوحيدة بلا عنوان ولا زر إغلاق) -->
         <div class="settings-head">
           <span>الإعدادات</span>
+          <button id="engineSetup" type="button">إعداد المحركات</button>
           <button id="settingsClose" type="button" title="إغلاق الإعدادات" aria-label="إغلاق الإعدادات">✕</button>
         </div>
         <!-- المحرك/النموذج/الصلاحيات انتقلت إلى شريط المؤلّف قرب زر الإرسال (§5-د) -->
@@ -146,6 +147,7 @@
 </header>
 <!-- درج أدوات الشريط العلوي: مخفي افتراضياً، ويُفتح بزر ⋯ -->
 <div id="topTools" hidden>
+  <button id="savedTasksToggle" type="button" title="مهام محفوظة للمشروع" hidden>المهام المحفوظة</button>
   <button id="filesToggle" title="ملفات المشروع (عرض للقراءة)">📄 الملفات</button>
   <button id="gitToggle" title="تغييرات المشروع منذ آخر التزام (git)">± التغييرات</button>
   <button id="galleryToggle" title="صور وفيديوهات ولّدها الوكيل في هذا المشروع">🖼 المعرض</button>
@@ -275,6 +277,9 @@
 <!-- لوحة /جلسات: مكوّن Web Component (تفكيك ت-4) — الاستئناف حدث session-resume للقشرة -->
 <satr-sessions-panel aria-label="الجلسات المحفوظة"></satr-sessions-panel>
 
+<!-- مهام المشروع المحفوظة: تعريف وتشغيل وتاريخ مستقل عن خيط المحادثة العامة -->
+<satr-saved-tasks-panel aria-label="المهام المحفوظة"></satr-saved-tasks-panel>
+
 <!-- لوحة 📄 الملفات + بحث المحتوى: مكوّن Web Component (تفكيك ت-6) — فتح ملف عبر حدث file-open -->
 <satr-files-panel aria-label="ملفات المشروع"></satr-files-panel>
 
@@ -376,6 +381,7 @@
 <script type="module" src="ui/components/verify-config-dialog.js"></script>
 <script type="module" src="ui/components/execution-panel.js"></script>
 <script type="module" src="ui/components/sessions-panel.js"></script>
+<script type="module" src="ui/components/saved-tasks-panel.js"></script>
 <script type="module" src="ui/components/git-panel.js"></script>
 <script type="module" src="ui/components/files-panel.js"></script>
 <script type="module" src="ui/components/gallery-panel.js"></script>

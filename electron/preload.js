@@ -5,6 +5,13 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+function invokeEnterprise(channel, payload) {
+  return ipcRenderer.invoke(channel, payload).catch((error) => {
+    const message = error && typeof error.message === 'string' ? error.message : '';
+    return { ok: false, error: /no handler registered/i.test(message) ? 'feature_unavailable' : 'ipc_failed' };
+  });
+}
+
 contextBridge.exposeInMainWorld('satr', {
   // لا نعبر إلا العلم المعروف؛ زر البوابة يستعمله لتجاوز كاش جاهزية Codex صراحةً.
   preflight: (options) => ipcRenderer.invoke('satr:preflight',
@@ -19,6 +26,7 @@ contextBridge.exposeInMainWorld('satr', {
   activityList: (cwd) => ipcRenderer.invoke('satr:activityList', { cwd }),
   // OBS-142: أثر أحداث الدور — قراءة فقط بلا مدخلات، وبلا نصّ في الردّ.
   eventTrace: () => ipcRenderer.invoke('satr:eventTrace'),
+  permissionMetrics: () => ipcRenderer.invoke('satr:permissionMetrics'),
   activityClear: (cwd, confirmed) => ipcRenderer.invoke('satr:activityClear', { cwd, confirmed }),
   providers: () => ipcRenderer.invoke('satr:providers'),
   testspriteJobStatus: () => ipcRenderer.invoke('satr:testspriteJobStatus'),
@@ -77,6 +85,9 @@ contextBridge.exposeInMainWorld('satr', {
   gitAction: (cwd, op, rel, message) => ipcRenderer.invoke('satr:gitAction', { cwd, op, rel, message }), // أفعال git (stage/unstage/discard/commit)
   exportChat: (engine, sessionId, cwd) => ipcRenderer.invoke('satr:exportChat', { engine, sessionId, cwd }), // تصدير المحادثة (الدفعة 4.8)
   lastChat: (engine) => ipcRenderer.invoke('satr:lastChat', { engine }),     // ذاكرة المحوّلات (1.3)
+  listConversations: () => ipcRenderer.invoke('satr:listConversations'),
+  readConversation: (id, cwd, engine) => ipcRenderer.invoke('satr:readConversation', { id, cwd, engine }),
+  selectConversation: (id, cwd, engine) => ipcRenderer.invoke('satr:selectConversation', { id, cwd, engine }),
   conversationCurrent: (cwd) => ipcRenderer.invoke('satr:conversationCurrent', { cwd }),
   conversationForget: (cwd) => ipcRenderer.invoke('satr:conversationForget', { cwd }),
   forgetChat: (engine) => ipcRenderer.invoke('satr:forgetChat', { engine }),
@@ -152,8 +163,8 @@ contextBridge.exposeInMainWorld('satr', {
   opsPlanLatest: (cwd) => ipcRenderer.invoke('satr:opsPlanLatest', { cwd }),
   opsRoomDecision: (roomId, text, teamId, artifactId, confirmed) => ipcRenderer.invoke('satr:opsRoomDecision', { roomId, text, teamId, artifactId, confirmed }),
   // قنوات Enterprise (الدفعة 3) — تفشل بهدوء في البناء المجتمعي (لا معالج مسجَّل)
-  eeUsage: () => ipcRenderer.invoke('satr:ee:usage'),
-  eeAudit: () => ipcRenderer.invoke('satr:ee:audit'),
+  eeUsage: () => invokeEnterprise('satr:ee:usage'),
+  eeAudit: () => invokeEnterprise('satr:ee:audit'),
   listSkills: (cwd) => ipcRenderer.invoke('satr:listSkills', cwd),
   // أسرار التوصيلات لا تعاد للواجهة؛ الإدخال السري يمر إلى مخزن main المشفر فقط.
   connectionList: (cwd, engine) => ipcRenderer.invoke('satr:connectionList', { cwd, engine }),
@@ -195,6 +206,32 @@ contextBridge.exposeInMainWorld('satr', {
   undoEdit: (id) => ipcRenderer.invoke('satr:undoEdit', id),
   listBgProcs: () => ipcRenderer.invoke('satr:listBgProcs'),
   killBgProc: (id) => ipcRenderer.invoke('satr:killBgProc', id),
+  // المهام المحفوظة: واجهات ضيقة فقط؛ لا جسر invoke عام ولا cwd/project_id من الواجهة.
+  savedTasksAvailability: () => invokeEnterprise('satr:ee:savedTasksAvailability'),
+  savedTasksVerificationCatalog: () => invokeEnterprise('satr:ee:savedTasksVerificationCatalog'),
+  savedTasksList: (page) => invokeEnterprise('satr:ee:savedTasksList', page),
+  savedTasksGet: (payload) => invokeEnterprise('satr:ee:savedTasksGet', payload),
+  savedTasksCreate: (definition) => invokeEnterprise('satr:ee:savedTasksCreate', definition),
+  savedTasksUpdate: (payload) => invokeEnterprise('satr:ee:savedTasksUpdate', payload),
+  savedTasksArchive: (payload) => invokeEnterprise('satr:ee:savedTasksArchive', payload),
+  savedTasksPrepareStart: (payload) => invokeEnterprise('satr:ee:savedTasksPrepareStart', payload),
+  savedTasksConfirmStart: (payload) => invokeEnterprise('satr:ee:savedTasksConfirmStart', payload),
+  savedTasksPermission: (payload) => invokeEnterprise('satr:ee:savedTasksPermission', payload),
+  savedTasksAnswerQuestion: (payload) => invokeEnterprise('satr:ee:savedTasksAnswerQuestion', payload),
+  savedTasksHandoffDone: (payload) => invokeEnterprise('satr:ee:savedTasksHandoffDone', payload),
+  savedTasksStop: (payload) => invokeEnterprise('satr:ee:savedTasksStop', payload),
+  savedTasksRetryFinish: (payload) => invokeEnterprise('satr:ee:savedTasksRetryFinish', payload),
+  savedTaskRunsList: (payload) => invokeEnterprise('satr:ee:savedTaskRunsList', payload),
+  savedTaskRunsGet: (payload) => invokeEnterprise('satr:ee:savedTaskRunsGet', payload),
+  savedTaskRunsInspectRecovery: (payload) => invokeEnterprise('satr:ee:savedTaskRunsInspectRecovery', payload),
+  savedTaskRunsDelete: (payload) => invokeEnterprise('satr:ee:savedTaskRunsDelete', payload),
+  savedTaskRunsReadReport: (payload) => invokeEnterprise('satr:ee:savedTaskRunsReadReport', payload),
+  savedTaskRunsReview: (payload) => invokeEnterprise('satr:ee:savedTaskRunsReview', payload),
+  onSavedTaskEvent: (callback) => {
+    const handler = (_event, envelope) => callback(envelope);
+    ipcRenderer.on('satr:savedTaskEvent', handler);
+    return () => ipcRenderer.removeListener('satr:savedTaskEvent', handler);
+  },
   onEvent: (callback) => {
     const handler = (_e, obj) => callback(obj);
     ipcRenderer.on('satr:event', handler);
@@ -217,6 +254,7 @@ contextBridge.exposeInMainWorld('satr', {
   previewNavigate: (url) => ipcRenderer.invoke('satr:previewNavigate', { url }),
   previewOpenAgent: (url) => ipcRenderer.invoke('satr:previewOpenAgent', { url }),
   previewNavigateAgent: (url) => ipcRenderer.invoke('satr:previewNavigateAgent', { url }),
+  // popup_close يغلق الابن النشط وحده؛ previewClose يغلق اللوحة كلها.
   previewAction: (action) => ipcRenderer.invoke('satr:previewAction', { action }),
   // device اختياري ('mobile'|'tablet' حين تكون محاكاة الأجهزة مفعّلة) — الاستدعاءات
   // بأربعة معاملات تبقى صالحة، ويُستعمل حصراً لتفسير تضييق browser_set_viewport.

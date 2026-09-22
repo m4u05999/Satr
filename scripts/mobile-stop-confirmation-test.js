@@ -38,20 +38,22 @@ function mainRuntime() {
   const frames = [];
   const done = deferred();
   const stop = deferred();
+  const stopCalls = [];
   const timers = new Set();
   const sandbox = {
+    savedTaskHost: { isReserved: () => false },
     mobileRunToken: RUN_A, runSeq: 1, currentRun: { done: done.promise },
     currentCliRun: null, sdkStartingPromise: null, mobileStopRequest: null,
     MOBILE_STOP_CONFIRM_TIMEOUT_MS: 15000,
     mobileStateRaw: { phase: 'working' },
     mobileDebug() {}, cancelPendingSendRequest() {},
-    stopAll: () => stop.promise,
+    stopAll: (...args) => { stopCalls.push(args); return stop.promise; },
     publishMobileState: (frame) => frames.push(plain(frame)),
     setTimeout(callback) { timers.add(callback); return callback; },
     clearTimeout(callback) { timers.delete(callback); },
   };
   const handleStop = sourceFunction(source, 'handleMobileStop', sandbox);
-  return { sandbox, frames, done, stop, timers, handleStop };
+  return { sandbox, frames, done, stop, stopCalls, timers, handleStop };
 }
 
 function phoneRuntime() {
@@ -112,6 +114,8 @@ async function testMobileStopConfirmation() {
     const runtime = mainRuntime();
     const reports = [];
     assert.equal(runtime.handleStop(RUN_A, (status) => reports.push(status)), true);
+    // نتحقق من عقد الاستدعاء الفعلي، لا من تنسيق نصه في المصدر.
+    assert.deepEqual(runtime.stopCalls, [[false, 'mobile_request']], 'mobile stop must preserve background runs and record its source');
     assert.deepEqual(runtime.frames, [], 'OBS-147: desktop published stopped before run.done');
     runtime.stop.resolve();
     await flush();

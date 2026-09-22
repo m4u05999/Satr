@@ -392,17 +392,27 @@ function boundedExecutor(cwd, check, ctx, options) {
 
 async function runChecks(cwd, checks, ctx, options) {
   if (!Array.isArray(checks) || !checks.length) return { ok: false, error: 'empty', passed: false, checks: [] };
+  if (checks.length > MAX_CHECKS || checks.some((check) => !check || typeof check.id !== 'string' || !SAFE_CHECK_ID.test(check.id))
+      || new Set(checks.map((check) => check.id)).size !== checks.length) {
+    return { ok: false, error: 'bad_checks', passed: false, complete: false, checks: [] };
+  }
+  // نثبت المجموعة قبل أول انتظار؛ الإلغاء لا يحوّل نجاح الجزء المنفذ إلى نجاح شامل.
+  const requested = checks.map((check) => Object.freeze({ ...check }));
+  const expectedIds = requested.map((check) => check.id);
   const execute = options && typeof options.execute === 'function' ? options.execute : visibleExecutor;
   const results = [];
-  for (const check of checks.slice(0, MAX_CHECKS)) {
-    if (ctx && ctx.signal && ctx.signal.aborted) break;
+  let aborted = false;
+  for (const check of requested) {
+    if (aborted || (ctx && ctx.signal && ctx.signal.aborted)) { aborted = true; break; }
     const started = Date.now();
     let outcome;
     try { outcome = await execute(cwd, check, ctx); }
     catch (error) { outcome = { ok: false, exitCode: null, output: '', error: String((error && error.message) || error) }; }
     let output = String(outcome.output || outcome.error || '').trim();
-    if (output.length > MAX_OUTPUT) output = output.slice(0, MAX_OUTPUT) + '\n…(قُصّ الخرج)';
-    const passed = !!outcome.ok && outcome.exitCode === 0 && !outcome.timedOut;
+    const truncated = output.length > MAX_OUTPUT;
+    if (truncated) output = output.slice(0, MAX_OUTPUT) + '\n…(قُصّ الخرج)';
+    aborted = aborted || !!outcome.aborted || !!(ctx && ctx.signal && ctx.signal.aborted);
+    const passed = !!outcome.ok && outcome.exitCode === 0 && !outcome.timedOut && !aborted;
     const exitCode = Number.isInteger(outcome.exitCode) ? outcome.exitCode : null;
     const label = exitLabel(exitCode);
     results.push({
@@ -412,17 +422,23 @@ async function runChecks(cwd, checks, ctx, options) {
       passed,
       exit_code: exitCode,
       timed_out: !!outcome.timedOut,
+      aborted: !!outcome.aborted || aborted,
+      truncated,
       duration_ms: Date.now() - started,
       output,
       // البند 23: additive — يظهر فقط لكود معروف فيبقى الصف القديم حرفياً لغيره.
       ...(label ? { exit_label: label } : {}),
     });
   }
-  const passed = results.length > 0 && results.every((result) => result.passed);
+  const complete = results.length === expectedIds.length && !aborted && results.every((result) => !result.timed_out);
+  const passed = complete && results.every((result) => result.passed);
   return {
     ok: true,
     schema_version: 1,
     passed,
+    complete,
+    aborted,
+    expected_ids: expectedIds,
     summary: passed ? 'نجحت كل أوامر التحقق.' : 'فشل أمر تحقق واحد أو أكثر.',
     checks: results,
   };

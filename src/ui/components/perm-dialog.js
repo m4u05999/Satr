@@ -73,6 +73,8 @@ class SatrPermDialog extends HTMLElement {
     this._deny = r.querySelector('.deny');
     this._queue = [];
     this._current = null;
+    this._sending = false;
+    this._requestEpoch = 0;
     this._buttons = [...r.querySelectorAll('button')];
     r.querySelector('.allow').addEventListener('click', (e) => this._approve(e, false, false));
     this._turn.addEventListener('click', (e) => this._approve(e, false, true));
@@ -124,6 +126,7 @@ class SatrPermDialog extends HTMLElement {
   _trapFocus(event) {
     if (event.key !== 'Tab') return;
     const buttons = this._buttons.filter((button) => !button.hidden && !button.disabled);
+    if (!buttons.length) { event.preventDefault(); return; }
     const current = buttons.indexOf(this.shadowRoot.activeElement);
     const next = event.shiftKey
       ? buttons[(current <= 0 ? buttons.length : current) - 1]
@@ -141,19 +144,71 @@ class SatrPermDialog extends HTMLElement {
     }));
   }
 
+  closeRequest(id, ownerKey) {
+    if (id == null || id === '') return false;
+    const matches = (req) => req && req.id === id
+      && (req.ownerKey || '') === (ownerKey || '');
+    const dropped = this._queue.filter(matches);
+    this._queue = this._queue.filter((req) => !matches(req));
+    if (this._current && matches(this._current)) {
+      dropped.unshift(this._current);
+      this._requestEpoch += 1;
+      this._current = null;
+      this._sending = false;
+      for (const button of this._buttons) button.disabled = false;
+      this._setOpen(false);
+      this._showNext();
+    }
+    for (const req of dropped) this._announceAnswered(req.id, false);
+    this._renderPending();
+    return dropped.length > 0;
+  }
+
+  closeOwner(ownerKey) {
+    if (!ownerKey) return;
+    const dropped = this._queue.filter((req) => req.ownerKey === ownerKey);
+    this._queue = this._queue.filter((req) => req.ownerKey !== ownerKey);
+    if (this._current && this._current.ownerKey === ownerKey) {
+      const req = this._current;
+      dropped.unshift(req);
+      this._requestEpoch += 1;
+      this._current = null;
+      this._sending = false;
+      for (const button of this._buttons) button.disabled = false;
+      this._setOpen(false);
+      this._showNext();
+    }
+    for (const req of dropped) this._announceAnswered(req.id, false);
+    this._renderPending();
+  }
+
   // انتهاء/إيقاف الدور: تفريغ الطابور وإخفاء المربع
+  closeUnowned() {
+    this._queue = this._queue.filter((req) => !!req.ownerKey);
+    if (this._current && !this._current.ownerKey) {
+      const req=this._current;this._requestEpoch+=1;this._current=null;this._sending=false;
+      for (const button of this._buttons) button.disabled=false;
+      this._setOpen(false);this._announceAnswered(req.id,false);this._showNext();
+    }
+    this._renderPending();
+  }
   closeAll() {
     // الطلبات المسحوبة تُعلَن أيضاً (الردود المعلّقة تفكّها العملية الرئيسية): بلا هذا
     // يبقى صفّ الوكيل على «ينتظر إذنك» إلى الأبد بعد انتهاء الدور أو قرار الجوال.
     const dropped = this._current ? [this._current, ...this._queue] : [...this._queue];
     this._queue.length = 0;
     this._current = null;
+    this._sending = false;
+    this._requestEpoch += 1;
+    for (const button of this._buttons) button.disabled = false;
     this._setOpen(false);
     for (const req of dropped) this._announceAnswered(req.id, false);
   }
 
   _showNext() {
     if (this._current || !this._queue.length) return;
+    this._sending = false;
+    for (const button of this._buttons) button.disabled = false;
     this._current = this._queue.shift();
     this._tool.textContent = this._current.tool;
     this._detail.textContent = this._current.detail || '';
@@ -176,12 +231,26 @@ class SatrPermDialog extends HTMLElement {
     this._pendingCount.textContent = count ? 'وبعده ' + count + ' طلبات معلّقة' : '';
   }
 
-  _answer(allow, always, turn) {
-    if (!this._current) return;
+  async _answer(allow, always, turn) {
+    if (!this._current || this._sending) return;
     const req = this._current;
+    const epoch = this._requestEpoch;
+    this._sending = true;
+    for (const button of this._buttons) button.disabled = true;
+    const respond = typeof req.respond === 'function'
+      ? req.respond
+      : (value) => window.satr.permission(value.id, value.allow, value.always, value.turn);
+    let result = null;
+    try { result = await respond({ id: req.id, allow, always: !!always, turn: !!turn }); } catch {}
+    if (this._current !== req || epoch !== this._requestEpoch) return;
+    this._sending = false;
+    for (const button of this._buttons) button.disabled = false;
+    if (!result || result.ok !== true) {
+      this.dispatchEvent(new CustomEvent('notice', { detail: 'تعذّر إرسال قرار الإذن — الطلب ما زال معلّقاً.' }));
+      return;
+    }
     this._current = null;
     this._setOpen(false);
-    window.satr.permission(req.id, allow, !!always, !!turn);
     this.dispatchEvent(new CustomEvent('notice', {
       detail: allow
         ? (always ? (req.alwaysLabel ? '✓ وُثق بالنطاق لهذه الجلسة' : '✓ موافقة دائمة على أداة ' + req.tool)

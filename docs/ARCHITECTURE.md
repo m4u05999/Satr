@@ -132,7 +132,8 @@ Enterprise يسجّل معالجات IPC إضافية عبر `ee.registerIpc(cha
   `"!enterprise/**"`). الناتج = النواة وحدها، بلا أثر لكود Enterprise.
 - **بناء Enterprise** (`npm run dist:ee`): يتطلب `SATR_ENTERPRISE_DIR` لمسار checkout خاص
   مطلق خارج Community. يتحقق `scripts/enterprise-source.js` من `contractVersion=1` ثم يضيفه
-  `scripts/ee-builder-config.js` مباشرة إلى `enterprise/` داخل الحزمة بلا نسخ للمصدر العام.
+  scripts/ee-builder-config.js إلى enterprise/ داخل الحزمة عبر نسخة بناء مؤقتة داخل dist/،
+  لا عبر ملفات المصدر المتتبعة. scripts/enterprise-stage.js ينظف نسخته المملوكة بعد التغليف والخروج المعتاد.
   قائمة `packageFiles` في العقد هي allowlist تشغيلية؛ لا تدخل ملفات CI أو الاختبارات أو README.
 - يحقن بناء Enterprise هوية مستقلة في metadata ويخرج إلى `dist/enterprise/`. الهوية لا تعتمد
   على نجاح الترخيص: فشل الوحدة يظهر كتشخيص Enterprise مع قدرات معطلة، لا كـCommunity صامت.

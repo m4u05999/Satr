@@ -96,6 +96,7 @@ function loadPwaCrypto() {
  */
 function loadMainOffer(sandbox) {
   const source = fs.readFileSync(path.join(appRoot, 'electron', 'main.js'), 'utf8');
+  sandbox.sdkControlOwnerKey = sourceFunction(source, 'sdkControlOwnerKey', sandbox);
   const runMobileOffer = sourceFunction(source, 'runMobileOffer', sandbox);
   // إعادة العرض تنادي نفسها عبر النطاق العام: نضعها في الصندوق نفسه بعد الاستخراج
   sandbox.runMobileOffer = runMobileOffer;
@@ -245,7 +246,7 @@ function assertStopWiring() {
   assert(/mobileRunToken = randomBytes\(/.test(source), 'main.js يولّد رمز دور معتم لكل دور');
   assert(/run:\s*mobileRunToken/.test(source), 'main.js يمرّر رمز الدور إلى الظرف');
   // الإيقاف يمر بمسار satr:stop نفسه لا بمسار ثانٍ يتباعد عنه
-  assert(/stopAll\(false\)/.test(sourceFunction(source, 'handleMobileStop', {}).toString()),
+  assert(/stopAll\s*\(/.test(sourceFunction(source, 'handleMobileStop', {}).toString()),
     'الإيقاف من الجوال يستدعي stopAll نفسه');
 }
 

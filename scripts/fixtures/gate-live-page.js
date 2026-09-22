@@ -240,6 +240,41 @@
       checks.push('null-preflight-blocks');
     }
 
+    // الإغلاق لا ينتحل جاهزية، والفحص المتأخر لا يعيد حبس المستخدم.
+    {
+      let readyCount = 0;
+      const onReady = () => { readyCount++; };
+      gate.addEventListener('gate-ready', onReady);
+      gate.shadowRoot.querySelector('.defer').click();
+      if (!gate.hidden || readyCount) throw new Error('defer must hide without readiness');
+      checks.push('defer-without-readiness');
+      await gate.open();
+      if (gate.hidden) throw new Error('setup must reopen');
+      gate.shadowRoot.querySelector('.defer').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+      if (!gate.hidden) throw new Error('Escape must dismiss setup');
+      const preflight = window.satr.preflight;
+      let finish;
+      window.satr.preflight = () => new Promise(resolve => { finish = resolve; });
+      const pending = gate.open();
+      gate.shadowRoot.querySelector('.defer').click();
+      finish(null);
+      await pending;
+      window.satr.preflight = preflight;
+      if (!gate.hidden || readyCount) throw new Error('late scan must not reopen dismissed setup');
+      gate.removeEventListener('gate-ready', onReady);
+      checks.push('dismiss-survives-pending-scan');
+      scenario = snapshot({sdk:'logged_out',codex:'ready','kimi-code':'missing'});
+      await gate.open('sdk');
+      if (gate.hidden || !gate.engineUnavailable('sdk') || gate.engineUnavailable('codex')) throw new Error('selected engine readiness lost');
+      scenario = snapshot({sdk:'ready',codex:'ready','kimi-code':'missing'});
+      gate.shadowRoot.querySelector('.recheck').click();
+      await settle();
+      if (!gate.hidden || gate.engineUnavailable('sdk')) throw new Error('login recheck failed');
+      checks.push('selected-engine-recheck');
+      scenario = null;
+      await gate.open();
+    }
+
     if (preflightCalls < 11) throw new Error('عدد استدعاءات preflight أقل من المتوقع: ' + preflightCalls);
     checks.push('recheck-button-drives-scan');
     checks.push('recheck-forces-scan');

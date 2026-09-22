@@ -386,6 +386,46 @@ async function main() {
     const editor = await preview.evaluate("document.getElementById('editor').innerText");
     assert(editor.ok && editor.value === 'نص غني', 'الكتابة في contenteditable لم تصل للنص');
 
+    // عدّ أحداث المتصفح الفعلية: أمر الاستبدال الواحد لا يولّد إدخالاً ثانياً مصطنعاً.
+    const editorWC = win.contentView.children[0].webContents;
+    await editorWC.executeJavaScript(`(() => {
+      const el = document.getElementById('editor');
+      window.editorEvents = [];
+      el.addEventListener('input', e => window.editorEvents.push({type:e.inputType, trusted:e.isTrusted}));
+    })()`);
+    let previousValue = 'نص غني';
+    for (const value of ['بديل عربي', 'بديل عربي', '', 'نص بعد المسح']) {
+      await editorWC.executeJavaScript('window.editorEvents = []');
+      const result = await preview.typeText('#editor', value);
+      const state = await editorWC.executeJavaScript(`({value:document.getElementById('editor').textContent, events:window.editorEvents})`);
+      assert(result.ok && result.satisfied, 'editable replacement must be satisfied');
+      assert.strictEqual(state.value, value, 'editable replacement must not append');
+      assert(state.events.length === (previousValue === value ? 0 : 1) && state.events.every(e => e.trusted),
+        'editable replacement emitted duplicate or synthetic input: ' + JSON.stringify(state.events));
+      previousValue = value;
+    }
+    // التعبئة الجماعية يجب أن تعبر مسار التحرير نفسه، لا تعديل DOM مع حدث إدراج وهمي.
+    await editorWC.executeJavaScript('window.editorEvents = []');
+    const richFill = await preview.fillForm([{ref:'#editor', value:'تعبئة واحدة'}]);
+    assert(richFill.ok, 'rich fill failed');
+    const richState = await editorWC.executeJavaScript(`({value:document.getElementById('editor').textContent, events:window.editorEvents})`);
+    assert.strictEqual(richState.value, 'تعبئة واحدة');
+    assert(richState.events.length === 1 && richState.events[0].trusted,
+      'rich fill bypassed native editing: ' + JSON.stringify(richState.events));
+
+    // إذا رفض المتصفح التحرير فلا نعلن نجاحاً ولا نفرض DOM يتجاهله نموذج المحرّر.
+    const isolatedEdit = code => editorWC.executeJavaScriptInIsolatedWorld(preview._internals.AGENT_WORLD_ID, [{code}], true);
+    await isolatedEdit('window.savedExecCommand = document.execCommand; document.execCommand = () => false; true');
+    try {
+      assert.strictEqual((await preview.typeText('#editor', 'مرفوض')).error, 'type_error');
+      assert.strictEqual((await preview.fillForm([{ref:'#editor', value:'مرفوض'}])).error, 'type_error');
+      assert.strictEqual(await editorWC.executeJavaScript("document.getElementById('editor').textContent"), 'تعبئة واحدة',
+        'failed native edit must not fall back to DOM replacement');
+    } finally {
+      await isolatedEdit('document.execCommand = window.savedExecCommand; delete window.savedExecCommand');
+    }
+    console.log('RICH_INPUT_PASS replacement/repeat/clear/fill/native-rejection');
+
     const tooLong = await preview.evaluate('x'.repeat(8001));
     assert.strictEqual(tooLong.error, 'bad_expression', 'browser_evaluate لا يفرض سقف التعبير');
     const viewport = await preview.setViewport(420, 500);

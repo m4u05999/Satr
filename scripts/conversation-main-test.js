@@ -49,29 +49,33 @@ function loadRuntime(root, options = {}) {
     runSeq: 0, currentRun: null, currentCliRun: null, lastEngine: '', activeConversationRunId: null,
     sdkSessionControlBusy: false, sdkRunInFlight: false, sdkStartingPromise: null, sdkStoppingPromise: null,
     sendRequestBusy: false, sendRequestEpoch: 0, sdkBackgroundRuns: new Set(), sdkTaskOwners: new Map(),
+    nativeStoppingRuns: new Set(), savedTaskHost: { isReserved: () => false },
     conversations: { ...conversations, ...store }, conversationBridge: { ...bridge, messageFor: bridgeModule.messageFor },
     agent: native('sdk'), codex: native('codex'), kimi: { ENGINE_ID: 'kimi-code' }, adapters: { get: () => null, list: () => [] },
     attachments: require('../electron/attachments'), // وحدة نقية — مرفقات الرسالة (دفعة 2026-09-17)
     ipcMain: { handle(name, callback) { handlers[name] = callback; } },
+    permissionMetrics: require('../electron/permissionmetrics').create(),
     eventTrace: { emitted: noop, dropped(...args) { dropped.push(args); } },
     emitToWindow: (event, engine) => rendered.push({ event: plain(event), engine }),
     preview: { endHandoff: noop, clearSensitiveState: noop }, promocapture: { stopAll: async () => {} },
-    browserBudgetFor: () => ({}), browserBudgets: new Map(), trustedBrowserOrigins: new Set(),
+    browserpolicy: require('../electron/browserpolicy'), trustedBrowserOrigins: new Set(),
     checkpoints: { begin: noop, bindSession: noop, consumeVerification: () => '', finish: () => null },
     sanitizeImages: (images) => images || [], sanitizeSkills: () => [], sanitizeExtraDirs: () => [],
     sanitizeClaudeFallbackModel: () => null, nonSdkPerm: (mode) => mode,
     PERMISSION_MODES: new Set(['default']), EFFORT_LEVELS: new Set(),
     withdrawMobilePermissions: noop, notifyObservers: noop, noteShadowOverride: noop,
-    beginMobileRunState: noop, finishMobileRunState: noop,
+    beginMobileRunState: noop, finishMobileRunState: noop, offerMobilePermission: noop,
   };
   // المسار الحقيقي يشمل stopAll وقفل sendRequest وإسقاط أحداث الأدوار القديمة؛ لا محاكاة لشروطه.
   vm.runInNewContext([
     section('const SAFE_MODEL =', '\n'),
     section('const SAFE_SESSION =', 'const MOBILE_PERMISSION_TTL_MS ='),
     section('function stopAll(', 'function notifyObservers('),
+    section('function trackUnprovenNativeStop(', 'const savedTaskHost ='),
     section('function forgetSdkBackgroundRun(', 'const rewindPreviews ='),
     section('const SDK_STOP_GRACE_MS =', 'async function runSdkSessionControl('),
     section('async function handleSendRequest(', "ipcMain.handle('satr:stop',"),
+    section("ipcMain.handle('satr:stop',", 'const SAFE_SDK_TOOL_USE_ID ='),
   ].join('\n'), sandbox, { filename: 'main-conversation-production-extract.js' });
   async function send(payload) {
     return handlers['satr:send']({}, { engine: 'sdk', cwd: root, prompt: 'طلب', model: 'model-a',
@@ -83,7 +87,7 @@ function loadRuntime(root, options = {}) {
     run.emit({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
     run.emit({ type: 'result', session_id: sessionId });
   }
-  return { send, finish, identity, store, bridge, sandbox, nativeRuns, rendered, dropped };
+  return { send, stop: () => handlers['satr:stop']({}), finish, identity, store, bridge, sandbox, nativeRuns, rendered, dropped };
 }
 
 async function main() {
@@ -115,6 +119,48 @@ async function main() {
       assert.deepEqual(data.conversation.messages.filter((message) => message.role === 'user').map((message) => message.text),
         ['USER_ONE', 'USER_TWO', 'USER_THREE']);
       assert.equal(h.identity().conversation_id, id);
+    });
+    for (const engine of ['sdk', 'codex']) {
+      await test(engine + ': ميزانية جديدة لكل طلب داخل الجلسة نفسها', async (project) => {
+        const h = loadRuntime(project);
+        await h.send({ engine, prompt: 'BUDGET_FIRST', browserControl: true });
+        const first = h.nativeRuns.at(-1), budget = first.input.browserBudget;
+        assert.deepEqual(budget.snapshot(), { used: 0, limit: 40, remaining: 40 });
+        for (let i = 0; i < 40; i++) assert.equal(budget.consume('browser_type').allowed, true);
+        assert.equal(budget.check('browser_type').allowed, false, 'action 41 must require extension');
+        // وصول هوية الجلسة مجدداً لا يجدد حد الطلب الجاري.
+        first.emit({ type: 'system', subtype: 'init', session_id: engine + '-budget' });
+        assert.strictEqual(first.input.browserBudget, budget);
+        assert.equal(budget.check('browser_click').allowed, false);
+        budget.extend();
+        assert.equal(budget.snapshot().remaining, 20);
+        for (let i = 0; i < 20; i++) assert.equal(budget.consume('browser_type').allowed, true);
+        assert.equal(budget.check('browser_type').allowed, false);
+        h.finish(first, engine + '-budget', 'FIRST_DONE');
+        const id = h.identity().conversation_id;
+        await h.send({ engine, conversationId: id, sessionId: engine + '-budget', prompt: 'BUDGET_SECOND', browserControl: true });
+        const second = h.nativeRuns.at(-1), next = second.input.browserBudget;
+        assert.equal(second.input.sessionId, engine + '-budget');
+        assert.notStrictEqual(next, budget, 'new request must not inherit previous browser budget');
+        assert.deepEqual(next.snapshot(), { used: 0, limit: 40, remaining: 40 });
+        next.consume('browser_click');
+        budget.extend(); budget.consume('browser_type');
+        assert.deepEqual(next.snapshot(), { used: 1, limit: 40, remaining: 39 }, 'old request extension must stay isolated');
+        h.finish(second, engine + '-budget', 'SECOND_DONE');
+      });
+    }
+    await test('قياس طلب Codex ينتهي بالإلغاء عند نهاية الدور', async (project) => {
+      const h = loadRuntime(project);
+      await h.send({ engine: 'codex', prompt: 'MEASURE' });
+      const run = h.nativeRuns.at(-1);
+      run.emit({ type: 'permission_request', id: 'measure-codex', tool: 'browser_click',
+        permissionReasons: ['origin_trust'], input: { privateValue: 'SYNTHETIC_PRIVATE_VALUE' } });
+      assert.equal(h.sandbox.permissionMetrics.snapshot().pending.length, 1);
+      run.emit({ type: 'result' });
+      const shot = h.sandbox.permissionMetrics.snapshot();
+      assert.equal(shot.pending.length, 0); assert.equal(shot.counts.cancelled, 1);
+      assert.equal(shot.completed[0].engine, 'codex');
+      assert.ok(!JSON.stringify(shot).includes('SYNTHETIC_PRIVATE_VALUE'));
     });
     await test('تغيير النموذج يستأنف sessionId نفسه بلا نقل مكرر', async (project) => {
       const h = loadRuntime(project); await h.send({ prompt: 'MODEL_FIRST', model: 'model-a' });
@@ -180,6 +226,38 @@ async function main() {
       assert.equal((await pending).error, 'stopped'); assert.equal(h.nativeRuns.length, 0);
       const latest = h.store.latest(project); assert.equal(latest.ok, true);
       assert.equal(latest.conversation.runs.at(-1).status, 'stopped');
+    });
+    await test('فشل كتابة مسودة البث يوقف المحرك ويصل بخطأ ظاهر مرة واحدة', async (project) => {
+      const h = loadRuntime(project); await h.send({ engine: 'codex', prompt: 'STORAGE_FAILURE' });
+      const run = h.nativeRuns.at(-1), id = h.identity().conversation_id;
+      run.emit({ type: 'system', subtype: 'init', session_id: 'storage-session' });
+      const rename = fs.renameSync; let failures = 0;
+      fs.renameSync = function(from, to) {
+        if (!failures && String(to).endsWith('.draft.json')) {
+          failures++; const error = new Error('probe'); error.code = 'EBUSY'; throw error;
+        }
+        return rename.apply(this, arguments);
+      };
+      try { run.emit({ type: 'stream_text', text: 'RETAIN_PARTIAL', phase: 'commentary' }); }
+      finally { fs.renameSync = rename; }
+      assert.equal(failures, 1); assert.equal(run.stopped, true);
+      const errors = h.rendered.filter(({ event }) => event.type === 'spawn_error' && event.kind === 'continuity');
+      assert.equal(errors.length, 1, 'continuity failure must reach the visible error channel');
+      assert.ok(errors[0].event.text.includes('store_unavailable'));
+      assert.ok(!errors[0].event.text.includes(project));
+      const count = h.rendered.length;
+      run.emit({ type: 'proc_done', code: 0 });
+      assert.equal(h.rendered.length, count, 'late completion must not hide storage failure');
+      assert.ok(h.store.load(id, project).conversation.messages.some(m => m.text === 'RETAIN_PARTIAL'));
+    });
+    await test('طلب جديد وطلب واجهة يسجلان مصدرين مستقلين للإيقاف', async (project) => {
+      const h = loadRuntime(project); await h.send({ engine: 'codex', prompt: 'FIRST_RUNNING' });
+      const first = h.identity().conversation_id;
+      await h.send({ engine: 'codex', prompt: 'NEXT_RUNNING' });
+      assert.equal(h.store.load(first, project).conversation.runs.at(-1).stopSource, 'new_request', 'new send must record stop source');
+      const second = h.identity().conversation_id;
+      await h.stop();
+      assert.equal(h.store.load(second, project).conversation.runs.at(-1).stopSource, 'renderer_request');
     });
     console.log('conversation-main: ' + passed + '/' + passed + ' passed');
   } finally {

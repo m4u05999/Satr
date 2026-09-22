@@ -58,6 +58,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     assert(permissions[0] && permissions[0].turn === true, 'لم يُرسل نطاق الدور إلى الجسر.');
     assert(root.querySelector('.pending-count').textContent === 'وبعده 1 طلبات معلّقة', 'لم يتقدم الطابور بطلب واحد.');
 
+    // OBS-213: تحرير دور لا يسحب طلب SDK مملوكاً، وإغلاق المالك يحذف الحالي والمصفوف وحدهما.
+    permission.closeAll();
+    const answered = [];
+    permission.addEventListener('perm-answered', (event) => answered.push(event.detail));
+    permission.request({ id: 'a-current', tool: 'Write', detail: 'a1', ownerKey: 'sdk:1' });
+    permission.request({ id: 'a-queued', tool: 'Edit', detail: 'a2', ownerKey: 'sdk:1' });
+    permission.request({ id: 'b-queued', tool: 'Bash', detail: 'b', ownerKey: 'sdk:2' });
+    permission.closeUnowned();
+    assert(permission.hasAttribute('open') && root.querySelector('.tool-name').textContent === 'Write',
+      'تحرير الدور سحب طلب SDK المملوك.');
+    permission.closeOwner('sdk:1');
+    assert(permission.hasAttribute('open') && root.querySelector('.tool-name').textContent === 'Bash',
+      'إغلاق A لم يُظهر طلب B التالي.');
+    assert(answered.filter((item) => item.id === 'a-current' || item.id === 'a-queued').length === 2,
+      'إغلاق المالك لم يعلن إلغاء كل طلبات A لصفوف الوكلاء.');
+    assert(permission.closeRequest('b-queued', 'sdk:wrong') === false && permission.hasAttribute('open'),
+      'مالك خاطئ أغلق طلب B.');
+
+    // إقرار IPC قديم بعد cancel لا يجوز أن يغلق الطلب التالي.
+    permission.closeAll();
+    let settleOld;
+    permission.request({ id: 'old', tool: 'Edit', detail: 'old', ownerKey: 'sdk:3',
+      respond: () => new Promise((resolve) => { settleOld = resolve; }) });
+    permission.request({ id: 'next', tool: 'Read', detail: 'next', ownerKey: 'sdk:4' });
+    root.querySelector('.allow').click();
+    await frames(1);
+    assert(permission.closeRequest('old', 'sdk:3') === true, 'لم يُسحب الطلب القديم المحدد.');
+    assert(root.querySelector('.tool-name').textContent === 'Read', 'لم يظهر الطلب التالي بعد cancel.');
+    settleOld({ ok: true });
+    await frames(2);
+    assert(permission.hasAttribute('open') && root.querySelector('.tool-name').textContent === 'Read',
+      'إقرار قديم أغلق الطلب التالي.');
+
     window.__backgroundUiResult = { pass: true, violations };
   } catch (error) {
     window.__backgroundUiResult = { pass: false, error: error.message, violations };

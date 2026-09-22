@@ -455,7 +455,7 @@ async function testMainIpc() {
   assert.doesNotMatch(executableIpc, /bgprocs|termjobs|kimi\.keepalive|emitBgProcsMerged|bg_term|bg_procs/);
 }
 
-function testUiAndSeparationContracts() {
+async function testUiAndSeparationContracts() {
   const app = read('src/ui/app.js');
   const chat = read('src/ui/components/chat.js');
   const css = read('src/styles/base.css');
@@ -474,7 +474,7 @@ function testUiAndSeparationContracts() {
   assert.match(main, /const sdkTaskOwners = new Map\(\)/);
   assert.match(main, /lateSdkBackgroundEvent/);
   assert.match(main, /obj\.type === 'sdk_task_started'/);
-  assert.match(main, /await stopAll\(false\)/);
+  await require('./lib/main-stop-handler-check').checkMainStopHandler(main);
   assert.match(chat, /const SDK_BACKGROUND_DELAY_MS = 15000/);
   assert.match(chat, /⏳ انقله للخلفية/);
   assert.match(chat, /يعمل في الخلفية/);
@@ -535,7 +535,7 @@ function testUiAndSeparationContracts() {
   await testAgentController();
   await testMainIpc();
   await require('./mobile-task-owner-test').testMobileTaskOwnership();
-  testUiAndSeparationContracts();
+  await testUiAndSeparationContracts();
   console.log('sdk-background-test: ok — التحكم وIPC والحدث والواجهة والعزل وفصل السجلات');
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : error);

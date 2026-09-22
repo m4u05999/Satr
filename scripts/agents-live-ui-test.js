@@ -96,8 +96,11 @@ function assertSourceContract() {
 
   const perm = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'components', 'perm-dialog.js'), 'utf8');
   assert(perm.includes("new CustomEvent('perm-answered'"), 'مربع الإذن لا يعلن حسم الطلب بمعرّفه.');
-  assert(perm.includes('window.satr.permission(req.id, allow, !!always, !!turn);'),
-    'تغيّر سلوك الرد في مربع الإذن — الإضافة إعلان فقط.');
+  assert(perm.includes("typeof req.respond === 'function'")
+    && perm.includes('(value) => window.satr.permission(value.id, value.allow, value.always, value.turn)'),
+    '\u0645\u0633\u0627\u0631 \u0627\u0644\u0625\u0630\u0646 \u0627\u0644\u0639\u0627\u0645 \u0645\u0641\u0642\u0648\u062f.');
+  assert(shell.includes("respond: (answer) => window.satr.savedTasksPermission({ run_id: owner.run_id, ...answer })"),
+    '\u0645\u0633\u0627\u0631 \u0625\u0630\u0646 \u0627\u0644\u0645\u0647\u0645\u0629 \u063a\u064a\u0631 \u0645\u0645\u0644\u0648\u0643.');
 
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.strictEqual(packageJson.scripts['test:agents-live-ui'], 'electron scripts/agents-live-ui-test.js');

@@ -178,6 +178,48 @@ async function main() {
     assert.deepStrictEqual(executed, ['lint', 'test']);
     assert.strictEqual(result.passed, false);
     assert(verify.formatResult(result).includes('فشل التحقق'));
+    // اكتمال المجموعة جزء من النجاح؛ نتيجة ناجحة قبل الإلغاء ليست اجتيازاً شاملاً.
+    const successful = async () => ({ ok: true, exitCode: 0, output: 'ok' });
+    const complete = await verify.runChecks(project, config.checks, null, { execute: successful });
+    assert.strictEqual(complete.passed, true);
+    assert.strictEqual(complete.complete, true);
+    assert.deepStrictEqual(complete.expected_ids, ['lint', 'test']);
+    const controller = new AbortController();
+    const partial = await verify.runChecks(project, config.checks, { signal: controller.signal }, {
+      execute: async () => { controller.abort(); return successful(); },
+    });
+    assert.strictEqual(partial.checks.length, 1);
+    assert.strictEqual(partial.passed, false, 'partial verification cannot pass');
+    assert.strictEqual(partial.complete, false);
+    assert.strictEqual(partial.aborted, true);
+    const cancelledLast = await verify.runChecks(project, [config.checks[0]], null, {
+      execute: async () => ({ ok: true, exitCode: 0, output: '', aborted: true }),
+    });
+    assert.strictEqual(cancelledLast.passed, false, 'aborted outcome cannot pass');
+    assert.strictEqual(cancelledLast.checks[0].aborted, true);
+    const timedOut = await verify.runChecks(project, [config.checks[0]], null, {
+      execute: async () => ({ ok: true, exitCode: 0, timedOut: true, output: '' }),
+    });
+    assert.strictEqual(timedOut.passed, false);
+    assert.strictEqual(timedOut.complete, false);
+    let invalidExecutions = 0;
+    for (const invalidChecks of [[config.checks[0], config.checks[0]], new Array(verify.MAX_CHECKS + 1).fill(config.checks[0])]) {
+      const invalidResult = await verify.runChecks(project, invalidChecks, null, {
+        execute: async () => { invalidExecutions++; return successful(); },
+      });
+      assert.strictEqual(invalidResult.error, 'bad_checks');
+    }
+    assert.strictEqual(invalidExecutions, 0);
+    const mutableChecks = config.checks.map((check) => ({ ...check }));
+    const snapshotResult = await verify.runChecks(project, mutableChecks, null, {
+      execute: async () => { mutableChecks.pop(); return successful(); },
+    });
+    assert.strictEqual(snapshotResult.passed, true);
+    assert.deepStrictEqual(snapshotResult.checks.map((check) => check.id), ['lint', 'test']);
+    const truncated = await verify.runChecks(project, [config.checks[0]], null, {
+      execute: async () => ({ ok: true, exitCode: 0, output: 'x'.repeat(100000) }),
+    });
+    assert.strictEqual(truncated.checks[0].truncated, true);
 
     await writeJson(project, '.satr/verify.json', {
       version: 1, commands: [{ id: 'bad', command: 'npm test\nRemove-Item x' }],

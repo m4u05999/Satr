@@ -37,6 +37,13 @@ const HEAD_BYTES = 128 * 1024; // رأس الملف يكفي عادةً لالت
 const MAX_SESSIONS = 80;
 const MAX_MESSAGES = 40;
 const WALK_CAP = 4000; // سقف ملفات نمشيها (حماية أداء)
+// thread/list مُرقّم؛ 50 صفحة × 80 = سقف المشي المحلي نفسه. بلوغ السقف مع
+// nextCursor لا يعيد قائمة ناقصة بصمت بل يفشل صراحةً كي لا تبدو الجلسات مفقودة.
+const MAX_LIST_PAGES = Math.ceil(WALK_CAP / MAX_SESSIONS);
+const CODEX_SOURCE_KINDS = [
+  'cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview',
+  'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther', 'unknown',
+];
 
 function safeId(id) {
   return typeof id === 'string' && SAFE_ID.test(id) && id !== '.' && id !== '..';
@@ -58,7 +65,8 @@ async function walkJsonl(root) {
   async function walk(dir, depth) {
     if (files.length >= WALK_CAP || depth > 4) return;
     let entries = [];
-    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    try { entries = await fsp.readdir(dir, { withFileTypes: true }); }
+    catch (error) { if (error && error.code === 'ENOENT') return; throw error; }
     for (const e of entries) {
       if (files.length >= WALK_CAP) return;
       const full = path.join(dir, e.name);
@@ -98,7 +106,8 @@ function userContentText(content) {
   if (!Array.isArray(content)) return '';
   return content
     .map((item) => (item && typeof item.text === 'string' ? item.text.trim() : ''))
-    .filter((text) => text && !text.startsWith('<'))
+    .map(stripInjectedText)
+    .filter(Boolean)
     .join('\n')
     .trim();
 }
@@ -130,13 +139,12 @@ function sessionMessage(e) {
 
 // قائمة جلسات Codex، الأحدث أولاً — رأس كل ملف فقط لالتقاط العنوان والـ cwd
 async function listCodexSessionsLegacy() {
-  let files = [];
-  try { files = await walkJsonl(SESSIONS_ROOT); } catch { return []; }
+  const files = await walkJsonl(SESSIONS_ROOT);
   if (!files.length) return [];
 
   const stats = await Promise.all(files.map(async (file) => {
     try { const s = await fsp.stat(file); return { file, mtime: s.mtimeMs, size: s.size }; }
-    catch { return null; }
+    catch (error) { if (error && error.code === 'ENOENT') return null; throw error; }
   }));
   const recent = stats.filter(Boolean).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_SESSIONS);
 
@@ -148,7 +156,7 @@ async function listCodexSessionsLegacy() {
       const buf = Buffer.alloc(Math.min(HEAD_BYTES, f.size));
       const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
       head = buf.toString('utf8', 0, bytesRead);
-    } catch { continue; }
+    } catch (error) { if (error && error.code === 'ENOENT') continue; throw error; }
     finally { if (fh) await fh.close().catch(() => {}); }
 
     let id = '', cwd = '', title = '';
@@ -205,18 +213,30 @@ function codexBin() {
   try { return require('./codex').resolveCodexBin(); } catch { return null; }
 }
 
-// عنوان خيط Codex من thread/list يشتقّه Codex نفسه من أول إدخال مستخدم — الذي قد
-// يكون كتلتنا المحقونة (‏`<satr_project_memory>` / `<satr_lang>`) فيظهر العنوان خاماً
-// في لوحة الجلسات (بلاغ المالك 2026-09-10). يحذف كتلنا الموسومة ومبتورها (معاينة
-// قد تُقطع قبل وسم الإغلاق)، ويسقط إلى العنوان الافتراضي إن فرغ الناتج.
+// أغلفة سياق يحقنها Codex أو سطر داخل **عنصر النص نفسه** قبل كلام المستخدم.
+// لا نستعمل startsWith لأن ذلك كان يسقط العنصر كله، بما فيه طلب المستخدم اللاحق.
+function stripInjectedText(raw) {
+  let text = typeof raw === 'string' ? raw.trim() : '';
+  if (!text) return '';
+  text = text.replace(
+    /# AGENTS\.md instructions(?: for [^\r\n]*)?\s*\r?\n\s*<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>/gi,
+    '',
+  );
+  text = text.replace(
+    /# AGENTS\.md instructions(?: for [^\r\n]*)?\s*\r?\n\s*<INSTRUCTIONS>[\s\S]*$/gi,
+    '',
+  );
+  const tag = '(?:satr_[a-z0-9_-]+|environment_context|recommended_plugins|skills_instructions|permissions_instructions|apps_instructions|plugins_instructions)';
+  text = text.replace(new RegExp('<(' + tag + ')\\b[^>]*>[\\s\\S]*?<\\/\\1>', 'gi'), '');
+  text = text.replace(new RegExp('<' + tag + '\\b[\\s\\S]*$', 'gi'), '');
+  text = text.replace(/# AGENTS\.md instructions(?: for [^\r\n]*)?[\s\S]*$/gi, '');
+  return text.trim();
+}
+
+// عنوان خيط Codex من thread/list يشتقّه Codex نفسه من أول إدخال مستخدم. ننظف
+// أغلفة AGENTS/environment/سطر مع إبقاء كلام المستخدم إن جاء بعدها في النص نفسه.
 function cleanThreadTitle(raw) {
-  const t = String(raw || '')
-    .replace(/<satr_project_memory>[\s\S]*?<\/satr_project_memory>/g, '')
-    .replace(/<satr_lang>[\s\S]*?<\/satr_lang>/g, '')
-    .replace(/<satr_project_memory[\s\S]*$/g, '')
-    .replace(/<satr_lang[\s\S]*$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const t = stripInjectedText(String(raw || '')).replace(/\s+/g, ' ').trim();
   return t || 'جلسة Codex';
 }
 
@@ -237,8 +257,8 @@ function userDisplayText(content) {
   for (const item of content) {
     if (!item || typeof item !== 'object') continue;
     if (item.type === 'text' || item.type === 'input_text' || item.type === 'inputText') {
-      const t = typeof item.text === 'string' ? item.text.trim() : '';
-      if (!t || t.startsWith('<') || t.startsWith('# AGENTS.md instructions')) continue;
+      const t = stripInjectedText(item.text);
+      if (!t) continue;
       texts.push(t);
     } else if (['image', 'localImage', 'inputImage', 'input_image'].includes(item.type)) {
       texts.push('[صورة]');
@@ -247,26 +267,71 @@ function userDisplayText(content) {
   return texts.join('\n').trim();
 }
 
-async function listCodexSessions() {
-  try {
-    const result = await rpc('thread/list', {
-      limit: MAX_SESSIONS,
-      archived: false,
-      sortKey: 'updated_at',
-      sortDirection: 'desc',
-    });
-    const data = Array.isArray(result && result.data) ? result.data : [];
-    return data.filter((thread) => thread && safeId(thread.id)).map((thread) => ({
-      id: thread.id,
-      cwd: typeof thread.cwd === 'string' ? thread.cwd : '',
-      title: cleanThreadTitle(thread.name || thread.preview).slice(0, 90),
-      mtime: (Number(thread.recencyAt || thread.updatedAt || thread.createdAt) || 0) * 1000,
-      size: 0,
-      status: typeof thread.status === 'string' ? thread.status : null,
-    }));
-  } catch {
-    return listCodexSessionsLegacy();
+function listError(code, cause) {
+  const error = new Error(code);
+  error.code = code;
+  if (cause) error.cause = cause;
+  return error;
+}
+function isSubagentSource(source) {
+  return !!source && typeof source === 'object'
+    && Object.prototype.hasOwnProperty.call(source, 'subAgent');
+}
+function mapCodexThread(thread) {
+  const parentThreadId = typeof thread.parentThreadId === 'string' ? thread.parentThreadId : null;
+  return {
+    id: thread.id,
+    cwd: typeof thread.cwd === 'string' ? thread.cwd : '',
+    title: cleanThreadTitle(thread.name || thread.preview).slice(0, 90),
+    mtime: (Number(thread.recencyAt || thread.updatedAt || thread.createdAt) || 0) * 1000,
+    size: 0,
+    status: typeof thread.status === 'string' ? thread.status : null,
+    source: thread.source == null ? null : thread.source,
+    parentThreadId,
+    toolTagged: isSubagentSource(thread.source),
+  };
+}
+// حقن rpc/legacy للحارس فقط؛ عقد الإنتاج يبقى listCodexSessions() => Array.
+async function listCodexSessionsWith(rpcCall, legacyList) {
+  const threads = [];
+  const seenCursors = new Set();
+  let cursor = null;
+  let page = 0;
+  while (true) {
+    let result;
+    try {
+      result = await rpcCall('thread/list', {
+        limit: MAX_SESSIONS,
+        archived: false,
+        sortKey: 'updated_at',
+        sortDirection: 'desc',
+        sourceKinds: CODEX_SOURCE_KINDS,
+        ...(cursor == null ? {} : { cursor }),
+      });
+    } catch (error) {
+      if (page === 0) {
+        try { return await legacyList(); }
+        catch (legacyError) { throw listError('codex_session_list_unavailable', legacyError); }
+      }
+      throw listError('codex_session_list_page_failed', error);
+    }
+    if (!result || !Array.isArray(result.data)) throw listError('codex_session_list_invalid_response');
+    page += 1;
+    threads.push(...result.data);
+    if (threads.length > WALK_CAP) throw listError('codex_session_list_item_limit');
+    const nextCursor = result.nextCursor;
+    if (nextCursor == null) break;
+    if (typeof nextCursor !== 'string' || !nextCursor || seenCursors.has(nextCursor)) {
+      throw listError('codex_session_list_invalid_cursor');
+    }
+    if (page >= MAX_LIST_PAGES) throw listError('codex_session_list_page_limit');
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
   }
+  return threads.filter((thread) => thread && safeId(thread.id)).map(mapCodexThread);
+}
+async function listCodexSessions() {
+  return listCodexSessionsWith(rpc, listCodexSessionsLegacy);
 }
 
 // سجل النقل الكامل مستقل عن آخر أربعين رسالة المعروضة في لوحة الجلسات.
@@ -333,12 +398,21 @@ function continuityMessages(thread) {
       if (!item || typeof item !== 'object') { issues.add('unsupported_history_item'); continue; }
       if (item.type === 'userMessage') {
         const value = parts(item.content, true);
-        if (value.texts.length || value.images.length) messages.push({
-          role: 'user', text: value.texts.join('\n'), ...(value.images.length ? { images: value.images } : {}),
-        });
+        if (value.texts.length || value.images.length) {
+          const text = value.texts.join('\n');
+          const displayText = userDisplayText(item.content);
+          messages.push({
+            role: 'user', text,
+            ...(displayText !== text ? { displayText } : {}),
+            ...(value.images.length ? { images: value.images } : {}),
+          });
+        }
       } else if (item.type === 'agentMessage') {
         if (typeof item.text !== 'string') issues.add('unsupported_content');
-        else if (item.text) messages.push({ role: 'assistant', text: item.text });
+        else if (item.text) messages.push({
+          role: 'assistant', text: item.text,
+          ...(typeof item.phase === 'string' ? { phase: item.phase } : {}),
+        });
       } else if (item.type === 'commandExecution') {
         if (item.aggregatedOutput != null && typeof item.aggregatedOutput !== 'string') issues.add('unsupported_content');
         toolResult(item, { texts: typeof item.aggregatedOutput === 'string' ? [item.aggregatedOutput] : [], images: [] });
@@ -451,5 +525,7 @@ module.exports = {
   cleanThreadTitle,
   // OBS-153: نصّ عرض المستخدم من thread/read بلا سياق محقون — حارسها الاختبار نفسه.
   userDisplayText,
+  stripInjectedText,
+  listCodexSessionsWith,
   continuityMessages,
 };

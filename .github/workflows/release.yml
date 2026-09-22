@@ -105,7 +105,8 @@ jobs:
             'test:termjobs',
             'test:genmedia',
             'test:codex-contract',
-            'test:term-longline'
+            'test:term-longline',
+            'test:pty-native-lifecycle'
           )
           # ‏OBS-139: هذه الحلقة **لا تمرّ بـ`scripts/full-suite.js`**، فإدراج اسمٍ في
           # `RETRYABLE` هناك لم يكن يصل إليها — و`test:termjobs` (ينهار بـ`0xC0000005`

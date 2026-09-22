@@ -242,6 +242,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     cancel.click();
     await frames(3);
 
+    // OBS-213: result يحرر الدور ولا يسحب سؤال SDK المملوك؛ done يغلق مالكه وحده.
+    const ownedQuestion = (id, ownerKey) => ({ id, ownerKey, questions: [{ question: 'س؟', header: id,
+      multiSelect: false, options: [{ label: 'نعم', description: '' }, { label: 'لا', description: '' }] }] });
+    el.ask(ownedQuestion('qa-current', 'sdk:1'));
+    el.ask(ownedQuestion('qa-queued', 'sdk:1'));
+    el.ask(ownedQuestion('qb-queued', 'sdk:2'));
+    el.closeUnowned();
+    assert(el.hasAttribute('open') && root.querySelector('.q-header').textContent.includes('qa-current'),
+      'تحرير الدور سحب سؤال SDK المملوك.');
+    el.closeOwner('sdk:1');
+    assert(el.hasAttribute('open') && root.querySelector('.q-header').textContent.includes('qb-queued'),
+      'إغلاق مالك A لم يُظهر سؤال B التالي.');
+    assert(el.closeRequest('qb-queued', 'sdk:wrong') === false && el.hasAttribute('open'),
+      'مالك خاطئ أغلق سؤال B.');
+    el.closeAll();
+
+    // رد IPC قديم بعد cancel لا يغلق السؤال التالي.
+    let settleOld;
+    const old = ownedQuestion('q-old', 'sdk:3');
+    old.respond = () => new Promise((resolve) => { settleOld = resolve; });
+    el.ask(old);
+    el.ask(ownedQuestion('q-next', 'sdk:4'));
+    await frames(2);
+    const oldChoice = root.querySelector('.q-item input');
+    oldChoice.checked = true; oldChoice.dispatchEvent(new Event('change', { bubbles: true }));
+    submit.click();
+    await frames(1);
+    assert(el.closeRequest('q-old', 'sdk:3') === true, 'لم يُسحب السؤال القديم المحدد.');
+    assert(root.querySelector('.q-header').textContent.includes('q-next'), 'لم يظهر السؤال التالي بعد cancel.');
+    settleOld({ ok: true });
+    await frames(2);
+    assert(el.hasAttribute('open') && root.querySelector('.q-header').textContent.includes('q-next'),
+      'إقرار سؤال قديم أغلق السؤال التالي.');
+    el.closeAll();
+
     assert(violations.length === 0, 'رُصد securitypolicyviolation.');
     window.__questionLiveProgress = 'complete';
     window.__questionLiveResult = { pass: true };

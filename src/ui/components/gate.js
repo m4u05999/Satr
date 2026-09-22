@@ -37,6 +37,8 @@ const ownSheet = sheet(`
     border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-6) var(--space-6) var(--space-5);
     margin-block: auto;
   }
+  .gate-exit { display: flex; justify-content: flex-end; margin-bottom: var(--space-3); }
+  .gate-exit button { white-space: normal; }
   .gate-logo { font-size: 30px; font-weight: 700; color: var(--gold); display: flex; align-items: baseline; gap: var(--space-1); justify-content: center; margin-bottom: var(--space-4); user-select: none; }
   .gate-logo .cursor { display: inline-block; width: 13px; height: 26px; background: var(--gold); animation: blink 1.1s steps(1) infinite; transform: translateY(3px); }
   @keyframes blink { 50% { opacity: 0; } }
@@ -104,6 +106,7 @@ class SatrGate extends HTMLElement {
     r.adoptedStyleSheets = [controlsSheet, ownSheet];
     r.innerHTML =
       '<div class="gate-card">' +
+        '<div class="gate-exit"><button type="button" class="defer">الدخول إلى سطر والإعداد لاحقاً</button></div>' +
         '<div class="gate-logo">سطر<span class="cursor" aria-hidden="true"></span></div>' +
         '<h1>جارٍ التحقق من المتطلّبات…</h1>' +
         '<p class="gate-sub">لحظة من فضلك</p>' +
@@ -127,6 +130,12 @@ class SatrGate extends HTMLElement {
     this._sub = r.querySelector('.gate-sub');
     this._steps = r.querySelector('.gate-steps');
     this._btn = r.querySelector('.recheck');
+    this._dismissed = false;
+    this._snapshot = null;
+    r.querySelector('.defer').addEventListener('click', () => this.dismiss());
+    r.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); this.dismiss(); }
+    });
     this._keySection = r.querySelector('.gate-key');
     this._keySelect = r.querySelector('#gateKeyProvider');
     this._keyInput = r.querySelector('#gateKeyValue');
@@ -143,6 +152,34 @@ class SatrGate extends HTMLElement {
     }
     this._btn.addEventListener('click', () => this._run(true));
     this._keySave.addEventListener('click', () => this._saveKey());
+  }
+
+  // إخفاء الإرشاد لا يصدر جاهزية ولا يرفع حارس الإرسال.
+  dismiss() {
+    this._dismissed = true;
+    this._keyInput.value = '';
+    this.hidden = true;
+    this.dispatchEvent(new CustomEvent('gate-dismissed'));
+  }
+
+  open(engine = '') {
+    this._requestedEngine = engine;
+    this._dismissed = false;
+    this.hidden = false;
+    this.scrollTop = 0;
+    this.shadowRoot.querySelector('.defer').focus();
+    return this._run(true);
+  }
+
+  engineUnavailable(engine) {
+    const engines = this._snapshot && this._snapshot.engines;
+    const entry = Array.isArray(engines) && engines.find((item) => item.id === engine);
+    if (!['sdk', 'codex', 'kimi-code'].includes(engine)) return false;
+    if (!Array.isArray(engines) && engine === 'sdk' && this._snapshot?.claude) {
+      const claude = this._snapshot.claude;
+      return !claude.ok || (claude.authChecked && claude.loggedIn !== true);
+    }
+    return !entry || entry.state !== 'ready';
   }
 
   connectedCallback() {
@@ -276,8 +313,10 @@ class SatrGate extends HTMLElement {
   // رسم الخطوات حين لا يجهز **أي** محرك. يكفي واحد من الثلاثة ليفتح التطبيق، فالخطوات
   // تُعرض بديلةً لا متتابعة: لكل محرك حالته وأمره الخاص (تثبيت أو تسجيل دخول).
   async _render(r) {
-    this.hidden = false;
-    const engines = (r && Array.isArray(r.engines) && r.engines.length) ? r.engines : null;
+    this.hidden = this._dismissed;
+    const allEngines = (r && Array.isArray(r.engines) && r.engines.length) ? r.engines : null;
+    const selected = allEngines && allEngines.find((engine) => engine.id === this._requestedEngine);
+    const engines = selected ? [selected] : allEngines;
     // محرك مثبّت لكنه غير مسجّل ⇒ رسالة أدقّ من «ثبّت»: المستخدم على بعد خطوة واحدة.
     const anyInstalled = engines ? engines.some((engine) => engine.installed) : !!(r && r.claude && r.claude.ok);
     this._title.textContent = anyInstalled ? 'مطلوب: تسجيل الدخول إلى محرّكك' : 'مطلوب: محرّك ذكاء اصطناعي واحد';
@@ -331,13 +370,14 @@ class SatrGate extends HTMLElement {
     this._btn.disabled = true; this._btn.textContent = 'جارٍ الفحص…';
     let r = null;
     try { r = await window.satr.preflight(force ? { force: true } : undefined); } catch (e) { r = null; }
+    this._snapshot = r;
     this._btn.disabled = false; this._btn.textContent = 'أعد الفحص';
     // `ready` هو عقد الجاهزية الجديد (أي محرك يكفي). غيابه = preflight قديم ⇒ نعود
     // إلى شرط Claude وحده كما كان، فلا تنكسر نسخة قديمة من العملية الرئيسية.
     const open = (r && typeof r.ready === 'boolean')
       ? r.ready
       : !!(r && r.claude && r.claude.ok && (!r.claude.authChecked || r.claude.loggedIn === true));
-    if (open) this._ready(r);
+    if (open && !this.engineUnavailable(this._requestedEngine)) this._ready(r);
     else await this._render(r);
   }
 }

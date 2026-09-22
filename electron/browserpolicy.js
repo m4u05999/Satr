@@ -70,6 +70,46 @@ function hasVisibleSecret(tool, input) {
   return false;
 }
 
+const SENSITIVE_URL_KEYS = new Set([
+  'access_token', 'refresh_token', 'provider_token', 'provider_refresh_token', 'id_token', 'token', 'code', 'state',
+]);
+const REDACTED_URL_MARKER = '?[حمولة محجوبة]';
+const RELATIVE_URL_BASE = 'https://satr.invalid';
+
+function normalizedUrlKey(value) {
+  let key = String(value || '');
+  try { key = decodeURIComponent(key); } catch {}
+  return key.toLowerCase();
+}
+
+function hasSensitiveUrlParams(params) {
+  for (const key of params.keys()) {
+    if (SENSITIVE_URL_KEYS.has(normalizedUrlKey(key))) return true;
+  }
+  return false;
+}
+
+// عنوان يُعرض للنموذج فقط: يحجب كامل query/hash عند وجود اعتماد OAuth، ولا يغيّر
+// العنوان التشغيلي الذي تبني عليه preview.js قرارات origin والتنقّل.
+function safeOutputUrl(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+  const absolute = /^[a-z][a-z0-9+.-]*:/i.test(raw);
+  let url;
+  try { url = new URL(raw, RELATIVE_URL_BASE); } catch { return '[رابط غير صالح محجوب]'; }
+  let sensitive = !!url.username || !!url.password || hasSensitiveUrlParams(url.searchParams);
+  if (!sensitive && url.hash) {
+    const fragment = url.hash.slice(1);
+    const queryAt = fragment.indexOf('?');
+    const params = new URLSearchParams(queryAt >= 0 ? fragment.slice(queryAt + 1) : fragment);
+    sensitive = hasSensitiveUrlParams(new URLSearchParams(fragment)) || hasSensitiveUrlParams(params);
+  }
+  if (!sensitive) return raw;
+  if (!/^https?:$/.test(url.protocol)) return '[رابط حساس محجوب]';
+  const base = absolute ? url.origin + url.pathname : url.pathname;
+  return base + REDACTED_URL_MARKER;
+}
+
 function redactedExcerpt(value) {
   const text = String(value || '').replace(/[\u0000-\u001F\u007F]+/g, ' ').trim();
   if (!text) return '';
@@ -124,6 +164,18 @@ function createActionBudget(limit) {
   };
 }
 
+// أسباب قياس مغلقة؛ لا تُستعمل لاتخاذ قرار الإذن ولا تحتفظ بالمدخلات.
+function permissionReasons(tool, input, pageContext, budgetStatus, originTrust, browserControl) {
+  const reasons = [];
+  if (isSensitiveAction(tool, input, pageContext)) reasons.push('sensitive_action');
+  if (requiresExplicitApproval(tool)) reasons.push('explicit_form_review');
+  if (hasLeakRisk(leakValueForTool(tool, input))) reasons.push('leak_risk');
+  if (budgetStatus && budgetStatus.impacting && !budgetStatus.allowed) reasons.push('action_budget');
+  if (originTrust === true) reasons.push('origin_trust');
+  if (browserControl !== true) reasons.push('browser_control_off');
+  return reasons.length ? reasons : ['tool_policy'];
+}
+
 function permissionDetail(tool, input, pageContext, budgetStatus) {
   const reasons = [];
   if (isSensitiveAction(tool, input, pageContext)) reasons.push('فعل حساس أو غير قابل للعكس — يلزم تأكيد هذه المرة فقط.');
@@ -147,8 +199,10 @@ module.exports = {
   leakValueForTool,
   hasVisibleSecret,
   redactedExcerpt,
+  safeOutputUrl,
   safePermissionInput,
   isImpactingAction,
   createActionBudget,
   permissionDetail,
+  permissionReasons,
 };

@@ -87,12 +87,8 @@ assert(!/message:\s*'لم يُختَر جواب صالح'/.test(agentSource),
   'مسار الإجابة الفارغة ما زال يستعمل الرسالة المحايدة');
 // النطاق مقصور على مسار السؤال: `أُلغي الطلب` تبقى صحيحة في مساري الإذن والموصّل
 // (`pending.delete`) لأن الدور هناك لا يكمل أصلاً — الحارس يضيق كي لا يفرض توجيهاً في غير موضعه.
-const questionAborts = agentSource.match(/pendingQuestions\.delete\(id\)\)\s*resolve\(\{[^}]*\}/g) || [];
-assert(questionAborts.length >= 1, 'لم يُعثر على مسار إجهاض السؤال');
-for (const abort of questionAborts) {
-  assert(abort.includes('QUESTION_UNANSWERED_MESSAGE'),
-    'إجهاض السؤال يردّ برسالة غير موجِّهة: ' + abort);
-}
+assert(/waitForSdkControl\([\s\S]*?pendingQuestions[\s\S]*?'question'[\s\S]*?QUESTION_UNANSWERED_MESSAGE/.test(agentSource),
+  'مسار إجهاض السؤال لا يمرّ بمسجل التحكم ولا يستعمل الرسالة الموجِّهة');
 const denyUses = agentSource.match(/behavior: 'deny', message: QUESTION_UNANSWERED_MESSAGE/g) || [];
 assert(denyUses.length >= 2, 'مسارا الرفض (الإجابة الفارغة وإجهاض الطلب) لا يستعملان الرسالة الموجِّهة معاً');
 

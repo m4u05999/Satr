@@ -21,6 +21,7 @@
 // التراكمي صار داخل المكوّن ويكتب #costInfo (عنصر شريط الحالة في footer المؤلّف —
 // light DOM مشترك يصله getElementById). اسم المحرك المعروض يصل وسيطاً label
 // (engineLabel تبقى في القشرة — تقرأ providersCache ومنتقي المحرك).
+import { renderConversationHistory } from '../lib/conversation-history.js';
 import { buildDiff } from '../lib/diff.js';
 import { diffSheet } from '../lib/diff.css.js';
 import { cardSheet } from '../lib/card.css.js';
@@ -466,6 +467,47 @@ class SatrChat extends HTMLElement {
     jumpDown.hidden = chatPinned || !!$('empty');
   });
   jumpDown.addEventListener('click', () => { scrollDown(true); jumpDown.hidden = true; });
+
+  let conversationViewKey = '';
+  let restoringView = false;
+  function saveConversationView() {
+    if (!conversationViewKey || restoringView) return;
+    try {
+      const all = JSON.parse(localStorage.getItem('satr_conversation_views') || '{}');
+      all[conversationViewKey] = {
+        top: main.scrollTop, pinned: chatPinned, at: Date.now(),
+        expanded: [...thread.querySelectorAll('.msg.assistant .worklog')].map(el => !el.classList.contains('collapsed')),
+      };
+      const keep = Object.entries(all).sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 200);
+      localStorage.setItem('satr_conversation_views', JSON.stringify(Object.fromEntries(keep)));
+    } catch (_) { /* تعذر حفظ موضع العرض لا يمس نص الحوار. */ }
+  }
+  function rememberConversationView(id, restore = false) {
+    if (!/^conv-[a-f0-9-]{36}$/.test(id || '')) return;
+    if (conversationViewKey && conversationViewKey !== id) saveConversationView();
+    conversationViewKey = id;
+    if (!restore) return;
+    let view;
+    try { view = JSON.parse(localStorage.getItem('satr_conversation_views') || '{}')[id]; } catch (_) {}
+    if (!view || !Number.isFinite(view.top)) { scrollDown(true); return; }
+    restoringView = true;
+    const restorePosition = () => {
+      if (conversationViewKey !== id) return;
+      [...thread.querySelectorAll('.msg.assistant .worklog')].forEach((el, index) => {
+        if (typeof view.expanded?.[index] !== 'boolean') return;
+        el.classList.toggle('collapsed', !view.expanded[index]);
+        el.querySelector('.worklog-toggle')?.setAttribute('aria-expanded', String(view.expanded[index]));
+      });
+      chatPinned = view.pinned === true;
+      main.scrollTop = chatPinned ? main.scrollHeight : Math.max(0, view.top);
+      jumpDown.hidden = chatPinned;
+      restoringView = false;
+    };
+    requestAnimationFrame(restorePosition);
+  }
+  window.addEventListener('beforeunload', saveConversationView);
+  main.addEventListener('scroll', saveConversationView);
+
   function hideEmpty() { const e = $('empty'); if (e) e.remove(); }
 
   // دعوة الحالة الفارغة: زر اختيار المجلد يظهر حين لا مجلد (يفوّض زر 📁 القائم
@@ -1274,13 +1316,21 @@ class SatrChat extends HTMLElement {
   function bDiff(ev) { return buildDiff(ev, addNotice); }
 
   // كتلة رد المساعد — تعيدها للقشرة بعقدها الحرفي (مجرى الأحداث يستدعي methods)
-  function newAssistantBlock(label) {
-    hideEmpty();
-    for (const retry of thread.querySelectorAll('.retry-card')) retry.remove();
+  function newAssistantBlock(label, options = {}) {
+    const history = options && options.history === true;
+    const isolated = options && options.isolated === true;
+    const target = isolated && options.mount && typeof options.mount.appendChild === 'function' ? options.mount : thread;
+    const scrollBlock = history ? () => {} : isolated
+      ? () => { target.scrollTop = target.scrollHeight; }
+      : scrollDown;
+    if (!isolated) {
+      hideEmpty();
+      for (const retry of thread.querySelectorAll('.retry-card')) retry.remove();
+    }
     const w = document.createElement('div');
     w.className = 'msg assistant';
     const who = document.createElement('div'); who.className = 'who';
-    who.textContent = label || 'النموذج'; // نص لا HTML (اسم المحرك آمن لكن textContent أنظف)
+    who.textContent = 'الوكيل · ' + (label || 'النموذج'); // نص لا HTML (اسم المحرك آمن لكن textContent أنظف)
     w.appendChild(who);
 
     // مسار العمل الحي: يجمع السرد المرحلي والتنفيذ والتغييرات في سجل واحد خفيف قابل للطي.
@@ -1339,7 +1389,7 @@ class SatrChat extends HTMLElement {
     const md = document.createElement('div'); md.className = 'md'; md.dir = 'rtl'; // إحصائي عند التصيير — انظر commentaryMd
     bubble.appendChild(md); answerWrap.appendChild(answerLabel); answerWrap.appendChild(bubble);
     w.appendChild(worklog); w.appendChild(answerWrap);
-    thread.appendChild(w); scrollDown();
+    target.appendChild(w); scrollBlock();
 
     const textState = {
       commentary: { full: '', partial: '' },
@@ -1393,6 +1443,11 @@ class SatrChat extends HTMLElement {
       if (diffCount) parts.push(diffCount + ' تغيير');
       workMeta.textContent = parts.join(' · ');
     }
+    function clearApiRetry() {
+      const note = w.querySelector('.retry-note');
+      if (note) workTitle.textContent = answerStarted ? 'يصوغ الإجابة' : 'يتابع العمل';
+      if (note) note.remove();
+    }
     function revealActivity(title) {
       hasActivity = true;
       workToggle.disabled = false;
@@ -1422,7 +1477,7 @@ class SatrChat extends HTMLElement {
         md.dir = textDir(text) || 'rtl';
         md.innerHTML = renderMD(text);
       }
-      scrollDown();
+      scrollBlock();
     }
     function flushTextSurfaces() {
       const commentaryText = phaseText('commentary');
@@ -1460,19 +1515,20 @@ class SatrChat extends HTMLElement {
       revealActivity('ينسّق وكيلاً فرعياً');
       agentCards[id] = { el: card, tools: nested, text, progress, buf: '' };
       if (id) toolEls[id] = card; // toolDone يعلّم البطاقة ✓/✗ عبر .state داخلها
-      registerSdkTool(id, card, head.querySelector('.state'), head.querySelector('.adesc'), isSdk);
+      if (!isolated && !history) registerSdkTool(id, card, head.querySelector('.state'), head.querySelector('.adesc'), isSdk);
     }
 
     return {
       el: w, // جذر البطاقة — لإدراج تنبيهات قبل الرد (تنبيه 📎 الحقن مثلاً)
       addText(t, parentId, phase) {
+        if (t && !parentId) clearApiRetry();
         // نص وكيل فرعي (forwardSubagentText) ⇐ سجل بطاقته المتداخل لا النص الرئيسي
         const card = parentId ? agentCards[parentId] : null;
         if (card) {
           card.buf += (card.buf ? '\n\n' : '') + t;
           card.text.innerHTML = renderMD(card.buf);
           card.text.scrollTop = card.text.scrollHeight;
-          scrollDown();
+          scrollBlock();
           return;
         }
         // الرسالة المكتملة تحل محل النص الجزئي المتراكم للمرحلة نفسها فقط.
@@ -1483,6 +1539,7 @@ class SatrChat extends HTMLElement {
         renderPhase(normalized);
       },
       addDelta(t, phase) {
+        if (t) clearApiRetry();
         const normalized = normalizePhase(phase);
         textState[normalized].partial += t;
         const now = Date.now();
@@ -1499,32 +1556,34 @@ class SatrChat extends HTMLElement {
         if (event.backgrounded === true) {
           const toolUseId = String(event.toolUseId || '');
           if (!SAFE_SDK_TOOL_USE_ID.test(toolUseId)) return false;
+          if (isolated) return false;
           const entry = sdkToolsByUseId.get(toolUseId);
           if (!entry || entry.finished) return false;
           // شارة عرض لا قفل: markSdkBackground محجوزة لنقل المستخدم (انظر hasSdkBackgroundTasks).
           // بطاقة قيد النقل أو منقولة فعلاً تبقى على حالها (الشارة فيها تحصيل حاصل).
           if (!markSdkBadgeBackground(toolUseId)) return false;
           revealActivity('وكيل فرعي يعمل في الخلفية');
-          scrollDown();
+          scrollBlock();
           return true;
         }
         if (!event.summary) return false;
         const direct = event.toolUseId ? agentCards[event.toolUseId] : null;
-        const registered = sdkToolsByTaskId.get(event.taskId);
+        const registered = isolated ? null : sdkToolsByTaskId.get(event.taskId);
         const progress = direct && direct.progress
           || registered && registered.el && registered.el.querySelector('.agent-progress-summary');
         if (!progress) return false;
         progress.textContent = event.summary;
         revealActivity('يتابع تقدّم وكيل فرعي');
-        scrollDown();
+        scrollBlock();
         return true;
       },
       addTool(id, name, inp, parentId, isSdk) {
+        if (!parentId) clearApiRetry();
         const card = parentId ? agentCards[parentId] : null;
         // إطلاق وكيل فرعي من الخيط الرئيسي ⇐ بطاقة وكيل (لا رقاقة عادية)
         if (!card && (name === 'Task' || name === 'Agent' || name === 'وكيل فرعي' || name === 'سرب وكلاء')) {
           createAgentCard(id, inp, isSdk);
-          scrollDown();
+          scrollBlock();
           return;
         }
         const el = document.createElement('div');
@@ -1534,7 +1593,7 @@ class SatrChat extends HTMLElement {
         el.querySelector('.detail').textContent = toolDetail(inp);
         if (id) toolEls[id] = el;
         if (/^mcp__satr-desktop__desktop_/.test(String(name || ''))) desktopToolEls.push(el);
-        registerSdkTool(id, el, el.querySelector('.state'), el.querySelector('.detail'), isSdk);
+        if (!isolated && !history) registerSdkTool(id, el, el.querySelector('.state'), el.querySelector('.detail'), isSdk);
         toolCount++;
         toolsLabel.textContent = 'الإجراءات (' + toolCount + ')';
         if (card) {
@@ -1547,12 +1606,12 @@ class SatrChat extends HTMLElement {
           tools.scrollTop = tools.scrollHeight;
         }
         revealActivity('ينفّذ ' + name);
-        scrollDown();
+        scrollBlock();
       },
       toolDone(id, isError) {
         const el = toolEls[id];
         if (!el) return;
-        const sdkEntry = sdkToolsByUseId.get(id);
+        const sdkEntry = isolated ? null : sdkToolsByUseId.get(id);
         if (sdkEntry) {
           if (sdkEntry.finished) return;
           if (sdkEntry.timer) { clearTimeout(sdkEntry.timer); sdkEntry.timer = null; }
@@ -1587,7 +1646,7 @@ class SatrChat extends HTMLElement {
         open.appendChild(image); open.addEventListener('click', () => showImageLightbox(dataUrl, image.alt));
         el.appendChild(name); el.appendChild(open); el.appendChild(state);
         tools.appendChild(el); toolsWrap.hidden = false; toolCount += 1;
-        toolsLabel.textContent = 'الإجراءات (' + toolCount + ')'; revealActivity('يتحقق بصرياً'); scrollDown();
+        toolsLabel.textContent = 'الإجراءات (' + toolCount + ')'; revealActivity('يتحقق بصرياً'); scrollBlock();
       },
       // سطح ويندوز (الحارس ٥): سطر desktop_activity داخل بطاقة أداة desktop_* الجارية (أحدث بطاقة لم
       // تنتهِ)، وإلا صفّاً مستقلاً بنمط addScreenshot — فلا تعتمد رؤية الفعل على فتح لوحة 🪟.
@@ -1616,7 +1675,7 @@ class SatrChat extends HTMLElement {
         line.appendChild(time); line.appendChild(body);
         host.appendChild(line);
         revealActivity('يعمل على سطح ويندوز');
-        scrollDown();
+        scrollBlock();
         return true;
       },
       addDiff(ev) {
@@ -1624,7 +1683,7 @@ class SatrChat extends HTMLElement {
         diffsWrap.hidden = false;
         diffCount++;
         revealActivity('يراجع التغييرات');
-        scrollDown();
+        scrollBlock();
       },
       // بطاقة نتيجة ضغط المحادثة (/ضغط): أرقام الحدود تبقى كما هي لكل المحركات،
       // وملخص PostCompact الخاص بـClaude يُضاف إلى البطاقة نفسها إن وصل.
@@ -1657,9 +1716,10 @@ class SatrChat extends HTMLElement {
           compactSummary.textContent = meta.compact_summary;
         }
         revealActivity('يضغط المحادثة');
-        scrollDown();
+        scrollBlock();
       },
       finish(resultObj) {
+        clearApiRetry();
         flushTextSurfaces();
         if (!resultObj && (worklog.classList.contains('failed') || worklog.classList.contains('stopped'))) { syncFrameChrome(); return; }
         worklog.classList.remove('working', 'answering');
@@ -1695,8 +1755,10 @@ class SatrChat extends HTMLElement {
             mm.className = 'meta'; mm.dir = 'ltr'; mm.textContent = modelsStr;
             w.appendChild(mm);
           }
-          usageSummary = addUsageResult(usageSummary, resultObj, seenUsageResults);
-          renderUsageSummary();
+          if (!isolated) {
+            usageSummary = addUsageResult(usageSummary, resultObj, seenUsageResults);
+            renderUsageSummary();
+          }
         }
       },
       // إعادة محاولة API (انقطاع الشبكة 2026-09-13): Claude Code يعيد المحاولة حتى دقائق؛ بدل
@@ -1721,19 +1783,22 @@ class SatrChat extends HTMLElement {
           note.setAttribute('role', 'status');
           w.appendChild(note);
         }
-        note.textContent = '⏳ ' + reason + ' — إعادة المحاولة ' + (max ? attempt + ' من ' + max : attempt)
-          + ' بعد ' + sec + ' ث. المحادثة محفوظة ولا حاجة لإعادة تشغيل سطر.';
-        scrollDown();
+        // المهلة خبر من المحرك وليست عدّاً تنازلياً أو دليلاً على نجاح الاتصال التالي.
+        note.textContent = reason + ' — أعلن المحرك إعادة المحاولة ' + (max ? attempt + ' من ' + max : attempt)
+          + ' بمهلة ' + sec + ' ث. ننتظر تحديثاً منه؛ يمكنك إيقاف الدور والمحاولة لاحقاً.';
+        scrollBlock();
       },
       error(text) {
+        clearApiRetry();
         worklog.classList.remove('working', 'answering');
         worklog.classList.add('failed');
         workTitle.textContent = 'تعذّر الإكمال';
         const e = document.createElement('div');
         e.className = 'error-box'; e.dir = 'auto'; e.textContent = text;
-        w.appendChild(e); syncFrameChrome(); scrollDown();
+        w.appendChild(e); syncFrameChrome(); scrollBlock();
       },
       stopped() {
+        clearApiRetry();
         flushTextSurfaces();
         worklog.classList.remove('working', 'answering');
         worklog.classList.add('stopped');
@@ -1751,17 +1816,17 @@ class SatrChat extends HTMLElement {
           n.textContent = '⏹ أُوقِف الدور';
           w.appendChild(n);
         }
-        scrollDown();
+        scrollBlock();
       },
       showRetry() {
-        if (w.querySelector('.retry-card')) return;
+        if (isolated || w.querySelector('.retry-card')) return;
         const retry = document.createElement('div'); retry.className = 'retry-card';
         const button = document.createElement('button'); button.type = 'button'; button.textContent = '🔄 أعد المحاولة';
         button.addEventListener('click', () => {
           button.disabled = true;
           component.dispatchEvent(new CustomEvent('retry-request', { bubbles: true }));
         });
-        retry.appendChild(button); w.appendChild(retry); scrollDown();
+        retry.appendChild(button); w.appendChild(retry); scrollBlock();
       },
       done: false,
     };
@@ -1773,7 +1838,7 @@ class SatrChat extends HTMLElement {
     const w = document.createElement('div');
     w.className = 'msg assistant';
     const whoEl = document.createElement('div');
-    whoEl.className = 'who'; whoEl.textContent = label || 'Claude Code';
+    whoEl.className = 'who'; whoEl.textContent = 'الوكيل · ' + (label || 'Claude Code');
     w.appendChild(whoEl);
     const toolNames = Array.isArray(msg.tools) ? msg.tools : [];
     if (toolNames.length) {
@@ -1878,6 +1943,9 @@ class SatrChat extends HTMLElement {
 
   // «جلسة جديدة»: حالة فارغة + تصفير الكلفة التراكمية وشريطها
   function reset() {
+    saveConversationView();
+    conversationViewKey = '';
+    restoringView = false;
     if (!searchBar.hidden) closeThreadSearch();
     taskLedgerEl = null;
     taskLedgerSession = null;
@@ -1890,6 +1958,9 @@ class SatrChat extends HTMLElement {
   }
   // تفريغ الخيط لاستئناف محادثة محوّل (نظير reset دون حالة الفراغ — التاريخ سيُبنى فوراً)
   function clearThread() {
+    saveConversationView();
+    conversationViewKey = '';
+    restoringView = false;
     if (!searchBar.hidden) closeThreadSearch();
     taskLedgerEl = null;
     taskLedgerSession = null;
@@ -1920,6 +1991,7 @@ class SatrChat extends HTMLElement {
     this.showVerification = showVerification;
     this.clearCheckpoint = clearCheckpoint;
     this.newAssistantBlock = newAssistantBlock;
+    this.addConversationHistory = (messages) => renderConversationHistory(this, messages);
     this.markSdkBackground = markSdkBackground;
     this.bindSdkTask = bindSdkTask;
     this.failSdkBackground = failSdkBackground;
@@ -1929,6 +2001,7 @@ class SatrChat extends HTMLElement {
     this.reset = reset;
     this.clearThread = clearThread;
     this.scrollToEnd = scrollDown;
+    this.rememberConversationView = rememberConversationView;
     this.notifyTurnDone = notifyTurnDone;
     this.notifyAttention = notifyAttention;
     this.lastAssistantText = lastAssistantText;

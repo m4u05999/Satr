@@ -247,7 +247,13 @@ function buildContinuityMessages(raw) {
     let images = [];
     const flush = () => {
       if (texts.length || images.length) {
-        messages.push({ role: entry.type, text: texts.join('\n'), ...(images.length ? { images } : {}) });
+        const message = { role: entry.type, text: texts.join('\n'), ...(images.length ? { images } : {}) };
+        // هوية عرض المصدر للتفريع واسترجاع الملفات؛ لا تُضاف لرسائل المساعد أو نتائج الأدوات.
+        if (entry.type === 'user') {
+          if (typeof entry.uuid === 'string' && SAFE_UUID.test(entry.uuid)) message.messageId = entry.uuid;
+          if (typeof entry.sessionId === 'string' && SAFE_UUID.test(entry.sessionId)) message.sessionId = entry.sessionId;
+        }
+        messages.push(message);
         texts = [];
         images = [];
       }

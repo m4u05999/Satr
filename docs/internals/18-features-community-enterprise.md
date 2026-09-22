@@ -11,3 +11,12 @@
 - **بناء Enterprise**: `packageFiles` allowlist من checkout الخاص، metadata صريحة، مخرجات
   `dist/enterprise/`، بلا ناشر أو محدث Community. CI الخاص يفحص الحزمة ويولّد provenance.
 
+
+### إصلاح التغليف التجاري — 2026-09-19
+
+FileSet الخارجي تعارض مع asarUnpack في electron-builder 25.1.8؛ أثبت بناء الإنتاج السقوط،
+ثم اجتاز بعد إضافة staging مؤقت من packageFiles داخل dist فقط. لا تغيير في محمل الوحدة
+أو عزل Electron أو قواعد فك المهارات؛ publish يبقى null. تُرفض روابط المسارات وتصادمات
+Windows، ويعاد فحص العقد قبل النسخ، وتتباعد مجلدات عمليات البناء مع تنظيف مملوك.
+حارس enterprise-test يختبر منطق الإنتاج والفشل والتداخل والتنظيف؛ أدلة الدفعة في
+dist/enterprise-packaging-review. التفاصيل وحدود الإثبات في 82-pro-saved-tasks-v1.md §19.

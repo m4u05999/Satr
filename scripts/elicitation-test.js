@@ -75,6 +75,7 @@ function loadMainHandler() {
     shell: {
       async openExternal(url) { sandbox.opened.push(url); },
     },
+    savedTaskHost: { isReserved: () => false },
     opened: [],
     emitted: [],
     exported: {},

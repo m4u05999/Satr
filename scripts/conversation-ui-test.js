@@ -23,7 +23,7 @@ function deferred() {
 }
 function plain(value) { return JSON.parse(JSON.stringify(value)); }
 function harness() {
-  const elements = new Map(), notices = [], history = [], calls = { send: [], forget: [], stop: 0 };
+  const elements = new Map(), notices = [], history = [], calls = { send: [], steer: [], forget: [], stop: 0 };
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
       value: '', textContent: '', options: [], listeners: {},
@@ -40,6 +40,7 @@ function harness() {
   const api = {
     async send(payload) { calls.send.push(plain(payload)); return { ok: true }; },
     async stop() { calls.stop++; },
+    async steer(text) { calls.steer.push(text); return { ok: true }; },
     async conversationForget(cwd) { calls.forget.push(cwd); return { ok: true }; },
     async conversationCurrent() { return { ok: true, conversation: null }; },
     async lastChat() { return { sid: null }; }, forgetChat() {},
@@ -66,12 +67,15 @@ function harness() {
     // سطح ويندوز (الخطوة ٥): send() وnewSession() المستخرجتان تشيران إلى علم سطح المكتب ولوحته،
     // كما تشيران إلى browserControlOn أعلاه — بلا تعريفهما هنا يسقط الاستخراج بـReferenceError
     desktopControlOn: false, desktopAvailable: false, desktopEl: null,
+    // حدود مكوّن الإعداد، كما في نسخة الإنتاج القابلة للإغلاق.
+    setupGate: { engineUnavailable: () => false, open: noop },
     providersCache: [{ name: 'groq', family: 'openai' }, { name: 'kimi-code', capabilities: { native: true } }],
     chatEl, input: element('input'), sendBtn: element('send'),
     composerEl: { afterSend: noop, clearImages: noop, getImages: () => [] },
     topbarEl: { getExtraDirs: () => [] }, previewEl: { resetTaskTrace: noop },
     addNotice: (text) => notices.push(text), shortSessionLabel: (id) => id,
     hasSdkBackgroundSessionLock: () => false, clearPromptSuggestion: noop,
+    closePermDialog: noop, closeQuestionDialog: noop, closeElicitationDialog: noop,
     resetSessionChanges: noop, loadTaskLedger: noop, loadCheckpoint: noop,
     rebuildModels: noop, rebuildEfforts: noop, syncAwareness: noop,
     applyEngineCommands: noop, checkCodexReady: noop, checkKimiReady: noop,
@@ -92,6 +96,8 @@ function harness() {
     between("  $('cwd').addEventListener('change', () => {", '\n\n  // ---------- تنبيه'),
     between('  function newSession(options)', "  $('newSession').addEventListener"),
     between('  function deadSessionRecovery(', '  function isClaudeAuthError('),
+    between('  function releaseRunControls()', '  // ---------- مربع الأذونات:'),
+    between('  function steerEligible()', '  // ---------- الإرسال ----------'),
     between('  async function send() {', '  // ---------- ضغط المحادثة'),
     between('  async function compactConversation() {', '  // ---------- أوامر Kimi'),
   ].join('\n');
@@ -242,6 +248,37 @@ async function main() {
     const pending = stale.state.restoreCurrentConversation(); stale.state.newSession();
     wait.reject(new Error('PRIVATE_PATH')); await pending;
     assert.equal(stale.notices.length, 0);
+  });
+  await test('انتهاء الدور أثناء التوجيه يحرر الإرسال ويحفظ الرسالة دون إيقاف يدوي', async () => {
+    const h = harness(); h.element('engine').value = 'codex';
+    Object.assign(h.state, { busy: true, runningEngine: 'codex', currentBlock: h.state.chatEl.newAssistantBlock() });
+    h.api.steer = async text => { h.calls.steer.push(text); return { ok: false, error: 'no_active_turn' }; };
+    h.element('input').value = 'رسالة جديدة'; await h.state.send();
+    assert.equal(h.state.busy, false, 'expired steer must release composer');
+    assert.equal(h.element('send').textContent, 'إرسال');
+    assert.equal(h.element('input').value, 'رسالة جديدة');
+    assert.equal(h.calls.stop, 0); assert.equal(h.calls.send.length, 0);
+    await h.state.send();
+    assert.equal(h.calls.send.length, 1); assert.equal(h.calls.steer.length, 1);
+    assert.equal(h.calls.send[0].prompt, 'رسالة جديدة');
+  });
+  await test('رفض توجيه عادي لا ينهي الدور ولا يمحو الرسالة', async () => {
+    const h = harness(); h.element('engine').value = 'codex';
+    Object.assign(h.state, { busy: true, runningEngine: 'codex' });
+    h.api.steer = async () => ({ ok: false, error: 'rejected' });
+    h.element('input').value = 'توجيه محفوظ'; await h.state.send();
+    assert.equal(h.state.busy, true, 'rejected steer must keep active turn'); assert.equal(h.element('input').value, 'توجيه محفوظ');
+    assert.equal(h.calls.stop, 0); assert.equal(h.calls.send.length, 0);
+  });
+  await test('رد توجيه متأخر لا يحرر دوراً لاحقاً', async () => {
+    const h = harness(), wait = deferred(); h.element('engine').value = 'codex';
+    Object.assign(h.state, { busy: true, runningEngine: 'codex', currentBlock: h.state.chatEl.newAssistantBlock() });
+    h.api.steer = () => wait.promise; h.element('input').value = 'رسالة أولى';
+    const pending = h.state.send(); h.state.conversationEpoch++;
+    const next = h.state.currentBlock = h.state.chatEl.newAssistantBlock();
+    h.element('input').value = 'رسالة لاحقة'; wait.resolve({ ok: false, error: 'no_active_turn' }); await pending;
+    assert.equal(h.state.busy, true, 'late steer must not release new turn');
+    assert.equal(next.done, false); assert.equal(h.element('input').value, 'رسالة لاحقة');
   });
   console.log('conversation-ui: ' + passed + '/' + passed + ' passed');
 }

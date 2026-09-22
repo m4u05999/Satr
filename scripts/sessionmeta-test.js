@@ -39,6 +39,17 @@ try {
   assert.strictEqual(reloaded.get('valid-session'), null);
   assert.deepStrictEqual(reloaded.remove('missing-session'), { ok: true, removed: false });
 
+  // إلغاء التثبيت العادي لا يخلّف مدخلاً؛ أما إلغاء تثبيت موروث فيحفظ false صراحة.
+  assert.deepStrictEqual(reloaded.set('ordinary-unpin', { pinned: false }), { ok: true, entry: null });
+  assert.deepStrictEqual(reloaded.set('bad-preserve', { preservePinnedFalse: true }),
+    { ok: false, error: 'bad_input' });
+  assert.deepStrictEqual(reloaded.set('bad-preserve-value', { pinned: false, preservePinnedFalse: false }),
+    { ok: false, error: 'bad_input' });
+  assert.deepStrictEqual(reloaded.set('inherited-unpin', { pinned: false, preservePinnedFalse: true }),
+    { ok: true, entry: { pinned: false } });
+  assert.deepStrictEqual(sessionmeta.createStore({ file }).get('inherited-unpin'), { pinned: false },
+    'إلغاء التثبيت الموروث لم يبقَ بعد إعادة تحميل ملف المخزن الحقيقي');
+
   // ---------- وسم جلسات الأدوات (‏OBS-068 ب) ----------
   const kindFile = path.join(root, 'kind.json');
   const kinds = sessionmeta.createStore({ file: kindFile });
@@ -126,6 +137,9 @@ try {
   assert.strictEqual(protectedStore.set('protected-tool', { pinned: true }).ok, true);
   assert.strictEqual(protectedStore.setKind('protected-titled-tool', 'tool').ok, true);
   assert.strictEqual(protectedStore.set('protected-titled-tool', { title: 'اسم المستخدم' }).ok, true);
+  assert.strictEqual(protectedStore.setKind('protected-unpinned-tool', 'tool').ok, true);
+  assert.strictEqual(protectedStore.set('protected-unpinned-tool',
+    { pinned: false, preservePinnedFalse: true }).ok, true);
   for (let index = 0; index < sessionmeta.MAX_TOOL_ENTRIES - 2; index++) {
     assert.strictEqual(protectedStore.setKind('protected-tool-only-' + index, 'tool').ok, true);
   }
@@ -139,6 +153,8 @@ try {
     'الإخلاء أسقط وسم أداة يحمل تثبيت مستخدم');
   assert.deepStrictEqual(protectedEntries['protected-titled-tool'], { kind: 'tool', title: 'اسم المستخدم' },
     'الإخلاء أسقط وسم أداة يحمل تسمية مستخدم');
+  assert.deepStrictEqual(protectedEntries['protected-unpinned-tool'], { kind: 'tool', pinned: false },
+    'الإخلاء أسقط قرار إلغاء تثبيت موروث');
   assert.strictEqual(protectedEntries['protected-tool-only-0'], undefined,
     'لم يُخلَ أقدم وسم خالص مع وجود وسم مثبت أقدم منه');
 
@@ -208,6 +224,32 @@ try {
     renameSync(from, to) { operations.push(['rename', from, to]); },
     unlinkSync() {},
   };
+  // نفّذ معالج IPC الإنتاجي نفسه بمتعلقات محقونة ومخزن حقيقي، لا stub واجهة.
+  const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  const ipcStart = mainSource.indexOf("ipcMain.handle('satr:sessionMetaSet'");
+  const ipcEnd = mainSource.indexOf("\n});", ipcStart) + 4;
+  assert(ipcStart >= 0 && ipcEnd > ipcStart, 'تعذّر استخراج معالج sessionMetaSet الإنتاجي');
+  const ipcHandlers = {};
+  const ipcFile = path.join(root, 'ipc-real-store.json');
+  const ipcStore = sessionmeta.createStore({ file: ipcFile });
+  Function('ipcMain', 'savedTaskHost', 'SAFE_SESSION', 'sessionmeta',
+    mainSource.slice(ipcStart, ipcEnd))(
+    { handle: (name, handler) => { ipcHandlers[name] = handler; } },
+    { isReserved: () => false }, /^[A-Za-z0-9_-]{1,128}$/, ipcStore);
+  const ipcSet = ipcHandlers['satr:sessionMetaSet'];
+  assert.strictEqual(typeof ipcSet, 'function');
+  assert.deepStrictEqual(ipcSet({}, {
+    sessionId: 'ipc-inherited', pinned: false, preservePinnedFalse: true,
+  }), { ok: true, entry: { pinned: false } });
+  assert.deepStrictEqual(sessionmeta.createStore({ file: ipcFile }).get('ipc-inherited'), { pinned: false },
+    'معالج IPC لم يحفظ false في المخزن الحقيقي بعد reload');
+  assert.deepStrictEqual(ipcSet({}, {
+    sessionId: 'ipc-ordinary', pinned: false,
+  }), { ok: true, entry: null }, 'الإلغاء العادي ضخّم metadata');
+  assert.deepStrictEqual(ipcSet({}, {
+    sessionId: 'ipc-bad', pinned: true, preservePinnedFalse: true,
+  }), { ok: false, error: 'bad_input' });
+
   const atomic = sessionmeta.createStore({ file: path.join(root, 'atomic.json'), fs: memoryFs });
   assert.strictEqual(atomic.set('atomic-session', { pinned: true }).ok, true);
   assert.strictEqual(operations[1][0], 'write');

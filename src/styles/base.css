@@ -382,12 +382,12 @@
        plaintext كان يكسر الأسطر العربية البادئة برموز لاتينية، لقطات مالك) */
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
-  .msg.assistant { position: relative; gap: var(--space-2h); padding-inline-start: var(--space-5); }
+  .msg.assistant { position: relative; align-self: flex-end; width: 90%; gap: var(--space-2h); padding-inline-end: var(--space-4); }
   .msg.assistant::before {
-    content: ''; position: absolute; inset-inline-start: 5px; top: 8px; bottom: 8px;
+    content: ''; position: absolute; inset-inline-end: 0; top: 8px; bottom: 8px;
     width: 1px; background: var(--border-dim);
   }
-  .msg.assistant > .who { color: var(--gold); font-weight: 650; letter-spacing: .01em; }
+  .msg.assistant > .who { align-self: flex-end; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); font-weight: 650; }
 
   .md { unicode-bidi: plaintext; }
   /* الفقرات وعناصر القوائم: اتجاه إحصائي صريح (dir) يحسمه renderMD — بديل «أول حرف
@@ -544,14 +544,14 @@
   .answer-wrap { min-width: 0; animation: answerIn calc(var(--dur) * 1.5) var(--ease); }
   .answer-label {
     display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2);
-    color: var(--gold); font-size: 12px; font-weight: 700;
+    color: var(--text-dim); font-size: 12px; font-weight: 700;
   }
-  .answer-label::after { content: ''; height: 1px; flex: 1; background: var(--gold-border); }
+  .answer-label::after { content: ''; height: 1px; flex: 1; background: var(--border); }
   .answer-wrap .bubble {
     min-width: 0; padding: var(--space-4) 20px;
-    border: 0; border-inline-start: 2px solid var(--gold);
+    border: 0; border-inline-end: 2px solid var(--border);
     border-radius: 3px 14px 14px 3px;
-    background: linear-gradient(135deg, var(--chat-answer-surface), var(--surface));
+    background: var(--surface);
     box-shadow: inset 0 0 0 1px var(--border-dim);
   }
   /* 16px لا 15.5px: كان الجواب أصغر من فقاعة المستخدم (16px) فبدا «أصغر من البطاقة» (بلاغ
@@ -652,7 +652,7 @@
     main { padding: 20px var(--space-3) var(--space-3); }
     .thread { gap: var(--space-5); }
     .msg.user { max-width: 92%; }
-    .msg.assistant { padding-inline-start: var(--space-4); }
+    .msg.assistant { width: calc(100% - var(--space-4)); padding-inline-end: var(--space-2); }
     .answer-wrap .bubble { padding: var(--space-4) var(--space-4); }
     .worklog-body { padding-inline-start: var(--space-3); }
     .work-meta { display: none; }
