@@ -1486,12 +1486,12 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
         await bgprocs.markAfter(input.tool_use_id, input.tool_input.command);
       }
     } catch { /* تتبّع العمليات تحسين، لا يجوز أن يكسر التشغيل */ }
-    return { continue: true };
+    return langanchor.afterTool('PostToolUse', { disabled: Boolean(internalPolicy), override: overrideLang });
   }
 
   async function postToolUseFailure(input) {
     clearFailedEditSnapshot(input);
-    return { continue: true };
+    return langanchor.afterTool('PostToolUseFailure', { disabled: Boolean(internalPolicy), override: overrideLang });
   }
 
   async function postCompact(input) {

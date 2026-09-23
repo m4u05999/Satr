@@ -55,9 +55,10 @@ async function main() {
       'osc-exe-path-shortened',
       'keyboard-rename', 'manual-priority', 'isolated-names', 'stable-switch-restart-exit',
       'password-toggle', 'isolated-input-mask', 'line-mode-unchanged',
+      'copy-input-preserves-command', 'copy-output-preserves-command', 'copy-grid-preserves-command',
       'model-tab-distinct', 'session-only', 'zero-csp-violations',
     ]) assert(result.checks.includes(check), 'غاب فحص تبويبات الطرفية: ' + check);
-    console.log('terminal-tabs: نجح — الأسماء والعزل وإخفاء الإدخال لكل تبويب وline-mode وتبويب النموذج؛ صفر CSP.');
+    console.log('terminal-tabs: نجح — الأسماء والعزل وإخفاء الإدخال والنسخ بلا قطع في الحقل وBiDi وxterm؛ صفر CSP.');
   } finally {
     if (!win.isDestroyed()) win.destroy();
   }

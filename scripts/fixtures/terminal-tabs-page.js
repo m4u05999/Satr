@@ -3,6 +3,15 @@ const checks = [];
 const starts = [];
 const killed = [];
 const inputs = [];
+const copied = [];
+const terminalInstances = [];
+const NativeTerminal = window.Terminal;
+window.Terminal = class extends NativeTerminal {
+  constructor(options) { super(options); terminalInstances.push(this); }
+};
+Object.defineProperty(navigator, 'clipboard', { value: {
+  writeText: async (text) => { copied.push(text); },
+}, configurable: true });
 const shells = [
   'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
   'C:\\Windows\\System32\\cmd.exe',
@@ -84,6 +93,59 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const termInput = document.getElementById('termInput');
     const termInputMask = document.getElementById('termInputMask');
+    const copyKey = (element) => {
+      const event = new KeyboardEvent('keydown', { key: 'c', code: 'KeyC', keyCode: 67,
+        ctrlKey: true, bubbles: true, cancelable: true });
+      element.dispatchEvent(event);
+      return event;
+    };
+    termInput.focus();
+    termInput.value = 'copy-me';
+    termInput.setSelectionRange(0, 7);
+    const inputCopy = copyKey(termInput);
+    assert(!inputCopy.defaultPrevented && inputs.length === 0 && termInput.value === 'copy-me',
+      'COPY_INPUT_INTERRUPTED: Ctrl+C with an input selection must preserve native copy and PTY.');
+    termInput.setSelectionRange(7, 7);
+    copyKey(termInput);
+    assert(inputs.length === 1 && inputs[0].data === '\x03' && termInput.value === '',
+      'Ctrl+C بلا تحديد لم يقطع الأمر ويفرّغ الحقل.');
+    emit(starts[0].id, 'data', 'https://example.invalid/auth?state=fixture&code=fixture');
+    const bidi = document.querySelector('.term-view.active .tv-bidi');
+    await waitFor(() => bidi.textContent.includes('https://example.invalid'), 'رسم رابط النسخ');
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(bidi);
+    selection.removeAllRanges(); selection.addRange(range);
+    const expectedCopy = selection.toString();
+    copyKey(termInput);
+    assert(inputs.length === 1 && copied[0] === expectedCopy,
+      'COPY_OUTPUT_INTERRUPTED: copying selected terminal output must not interrupt PTY.');
+    const writeText = navigator.clipboard.writeText;
+    navigator.clipboard.writeText = async () => { throw new Error('clipboard unavailable'); };
+    copyKey(termInput);
+    await delay(0);
+    assert(inputs.length === 1 && document.getElementById('termNoticeText').textContent.includes('تعذّر نسخ'),
+      'فشل الحافظة قطع الأمر أو لم يعرض سبب التعذّر.');
+    navigator.clipboard.writeText = writeText;
+    selection.removeAllRanges();
+    document.getElementById('termView').click();
+    const gridTerm = terminalInstances[0];
+    gridTerm.select(0, 0, 12);
+    const gridCopy = gridTerm.getSelection();
+    const gridInput = document.querySelector('.term-view.active .xterm-helper-textarea');
+    gridInput.focus(); copyKey(gridInput);
+    assert(gridCopy && inputs.length === 1 && copied[1] === gridCopy,
+      'COPY_GRID_INTERRUPTED: copying xterm selection must not interrupt PTY.');
+    gridTerm.clearSelection();
+    copyKey(gridInput);
+    assert(inputs.length === 2 && inputs[1].data === '\x03', 'Ctrl+C الشبكي بلا تحديد لم يصل إلى PTY.');
+    document.getElementById('termView').click();
+    range.selectNodeContents(document.getElementById('termToggle'));
+    selection.addRange(range);
+    copyKey(termInput);
+    assert(inputs.length === 3 && inputs[2].data === '\x03', 'تحديد خارج الطرفية منع قطع الأمر.');
+    selection.removeAllRanges();
+    checks.push('copy-input-preserves-command', 'copy-output-preserves-command', 'copy-grid-preserves-command');
     assert(termInput.type === 'text' && termInputMask.getAttribute('aria-pressed') === 'false',
       'بدأ حقل الطرفية مخفياً خلاف الافتراضي.');
     termInput.value = 'masked-value';

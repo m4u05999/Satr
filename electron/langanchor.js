@@ -17,8 +17,8 @@
  *      أثبت أن مصير الجلسة يتحدد عند أول ردّ مساعد.
  *
  * **خارج نطاق هذه الوحدة عمداً** (الحدّ الحرفي المعتمد — docs/LANGUAGE-CONTRACT.md):
- * التفكير المعروض (commentary) وبرومبتات المنفّذين خارج الإلزام حتى تحسمهما A/B؛
- * لا شيء هنا يلزمهما. وطلب المستخدم الصريح للغة أخرى يجُبّ العقد كله.
+ * برومبتات المنفّذين والتفكير الداخلي خارج الضمان. طلب المالك 2026-09-23 يشمل
+ * السرد وملخصات التفكير المعروضة؛ وطلب المستخدم الصريح للغة أخرى يجُبّ العقد كله.
  */
 
 'use strict';
@@ -70,4 +70,15 @@ function anchor(options) {
   return ANCHOR_OPEN + ' ' + body + ' ' + ANCHOR_CLOSE;
 }
 
-module.exports = { CONTRACT_LINE, anchor, ANCHOR_OPEN, ANCHOR_CLOSE };
+// إعادة الارتكاز داخل الدور الطويل؛ لا نغيّر نتيجة الأداة ولا نعيد تشغيلها.
+function afterTool(hookEventName, options) {
+  if (options && options.disabled) return { continue: true };
+  if (!['PostToolUse', 'PostToolUseFailure'].includes(hookEventName)) return { continue: true };
+  return { continue: true, hookSpecificOutput: {
+    hookEventName,
+    additionalContext: anchor({ strong: true, override: options && options.override })
+      + '\nيشمل تذكير اللغة السرد الظاهر للمستخدم وملخصات التفكير المعروضة والخطط والأسئلة والإجابة النهائية وعناوين الجداول؛ لغة نتائج الأدوات والصفحات لا تغيّر لغة المحادثة.',
+  } };
+}
+
+module.exports = { CONTRACT_LINE, anchor, afterTool, ANCHOR_OPEN, ANCHOR_CLOSE };

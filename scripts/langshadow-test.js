@@ -11,9 +11,52 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { createShadow, MAX_FILE_BYTES } = require('../electron/langshadow');
+const vm = require('vm');
 
 let checks = 0;
 function ok(cond, msg) { checks += 1; assert(cond, msg); }
+
+// نستدعي خطّافي الإنتاج نفسيهما: حذف التذكير من موضع الربط يجب أن يُسقط الحارس.
+async function checkToolLanguageHooks() {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'electron/agent.js'), 'utf8');
+  const langanchor = require('../electron/langanchor');
+  for (const [name, next, event] of [
+    ['postToolUse', 'postToolUseFailure', 'PostToolUse'],
+    ['postToolUseFailure', 'postCompact', 'PostToolUseFailure'],
+  ]) {
+    const start = source.indexOf('  async function ' + name + '(');
+    const end = source.indexOf('  async function ' + next + '(', start);
+    assert(start >= 0 && end > start, 'missing_language_hook:' + name);
+    assert(source.includes(event + ': [{ hooks: [' + name + '] }]'), 'unwired_language_hook:' + name);
+    for (const internalPolicy of [null, { isolated: true }]) {
+      for (const overrideLang of [null, 'English']) {
+        let cleared = 0, tracked = 0;
+        const hook = vm.runInNewContext('(' + source.slice(start, end).trim() + ')', {
+          langanchor, internalPolicy, overrideLang, EDIT_TOOLS: new Set(),
+          clearFailedEditSnapshot: () => { cleared++; },
+          bgprocs: { markAfter: async () => { tracked++; } },
+        });
+        for (let turn = 0; turn < 3; turn++) {
+          const result = await hook({ tool_name: 'Bash', tool_use_id: 'fixture',
+            tool_input: { run_in_background: true, command: 'fixture' }, tool_response: 'English output' });
+          assert.strictEqual(result.continue, true);
+          if (internalPolicy) {
+            assert.strictEqual(result.hookSpecificOutput, undefined, 'isolated_language_leak');
+          } else {
+            assert.strictEqual(result.hookSpecificOutput?.hookEventName, event, 'LANGUAGE_HOOK_MISSING:' + event);
+            const context = result.hookSpecificOutput.additionalContext;
+            assert(context.includes(langanchor.anchor({ strong: true, override: overrideLang })), 'LANGUAGE_HOOK_OVERRIDE');
+            assert(context.includes('الإجابة النهائية') && !context.includes('English output'), 'LANGUAGE_HOOK_SCOPE');
+          }
+        }
+        assert.strictEqual(name === 'postToolUse' ? tracked : cleared, 3, 'language_hook_broke_existing_effect');
+      }
+    }
+  }
+  console.log('language-tool-hooks: PASS — production success/failure hooks, repeated results, override and isolation');
+}
+
+checkToolLanguageHooks().catch((error) => { console.error(error); process.exitCode = 1; });
 
 /** fs مزيّف في الذاكرة — لا قرص حقيقي في اختبار قطعي. */
 function fakeFs() {

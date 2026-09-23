@@ -1,5 +1,50 @@
 ### تلميع محرك Claude Agent SDK (دفعة E — 2026-07-27)
 
+#### تثبيت اللغة داخل الدور — 2026-09-23
+
+صور المالك أظهرت انتقال السرد والإجابة إلى الإنجليزية داخل دور عربي. المرساة الذيلية
+كانت تُرسل مع طلب المستخدم فقط؛ أُضيف `langanchor.afterTool` عبر `additionalContext`
+في خطّافي `PostToolUse` و`PostToolUseFailure` القائمين. يعيد التذكير بالعربية بعد كل نتيجة،
+أو بلغة التجاوز الصريح للدور، ويستثني `internalPolicy`. لا يغيّر خرج الأدوات ولا الأذونات
+ولا يترجم الرد ولا يعيد طلب النموذج. يزيد نص السياق بمقدار تذكير لكل نتيجة أداة؛ ليس بلا كلفة.
+
+حارس `test:langshadow` يستدعي جسمي خطّافي الإنتاج في سياق مضبوط، ويغطي تكرار النتائج
+والتجاوز والعزل وبقاء تتبّع الخلفية وتنظيف لقطة التعديل الفاشل. نجحت 43 حالة الحارس القائمة
+والحالات المضافة، و411 حالة `test:langoverride`. العقد يدعمه ملف `sdk.d.ts` المثبت.
+هذا يثبت تسليم التذكير من الخطّاف، وليس التزام Opus الحي في كل مرة؛ ولغة التفكير
+الداخلي ليست ضماناً يملكه التطبيق.
+
+التحقق الحي 2026-09-23: شُغّل `node dist/language-hooks-live.cjs` عبر SDK المثبت،
+بأداة MCP تقرأ أربعة أقسام إنجليزية مصطنعة بالتتابع وتستدعي `langanchor.afterTool`
+نفسها. اسم النموذج الفعلي `claude-opus-5-5`؛ أربع قراءات وأربعة `PostToolUse`،
+وخمس رسائل نصية. السرد الأربعة حصته العربية 100% وفق المقياس v5؛ الختام 92.59%
+وفيه عبارة مقتبسة إنجليزية وأسماء منتجات. المراجعة النصية: الشرح وعناوين الجدول بالعربية.
+وصل `result:success` وخروج 0 بكلفة معلنة $1.0001476. المحاولة الأولى توقفت
+بـ `error_max_budget_usd` بعد قراءتين؛ إعداد الحد $0.75 والكلفة المبلغة $0.9077742،
+فالحد لا يمنع تجاوز آخر طلب. مجموع التجربتين $1.9079218.
+
+الأدلة المحلية: `dist/language-hooks-live-result.json` و
+`dist/language-hooks-live-budget-result.json`. هذا فحص SDK بالمساعد اللغوي الإنتاجي،
+وليس اختبار الواجهة كاملة أو جلسة طويلة أو مقارنة A/B؛ لا يثبت السببية أو اختفاء
+الانزلاق نهائياً. لم يتناول مسار الفشل الحي أو لغة التفكير الداخلي. أضاف النموذج
+في ختامه ملاحظة جانبية عن حاجة موصلين للتفويض، خارج المهمة؛ بيئة الحساب ليست
+معزولة بالكامل رغم إيقاف أدوات الملفات و`settingSources:[]`، فلا يوصف الفحص بأنه
+عزل كامل للإعدادات الخارجية.
+
+عضّة الحارس: الأمر المنفّذ `node dist/language-hook-bites.cjs` يستبدل في `electron/agent.js`
+كل استدعاء `return langanchor.afterTool(...)` على حدة بـ `return { continue: true };`
+مع تعليق طفرة يحمل اسم الحدث، عبر `fs.writeFileSync(file, source.replace(before, after))`.
+في كلتا الحالتين: الأصل 1 ← 0، والمتحور 0 ← 1؛ رمز خروج الحارس 1، والرسالتان الحرفيتان:
+
+```text
+AssertionError [ERR_ASSERTION]: LANGUAGE_HOOK_MISSING:PostToolUse
+AssertionError [ERR_ASSERTION]: LANGUAGE_HOOK_MISSING:PostToolUseFailure
+```
+
+الاستعادة في `finally` بالأمر `fs.writeFileSync(file, original)`؛ تحقق التطابق البايتي
+(`restored:true`) في الحالتين. الأدلة المحلية: `dist/language-hook-bite-PostToolUse.json`
+و`dist/language-hook-bite-PostToolUseFailure.json`.
+
 - **مصدر الحقيقة والمسبار الحي**: استُخدمت الحقول العامة المستقرة فقط من
   `@anthropic-ai/claude-agent-sdk/sdk.d.ts` في الإصدار `0.3.176`: الخياران
   `promptSuggestions` و`agentProgressSummaries`، و`PermissionResult.decisionClassification`،

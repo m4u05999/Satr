@@ -672,9 +672,30 @@ class SatrTerminalPanel extends HTMLElement {
     scheduleBidiSync();
   }
 
+  // النسخ يسبق معالجي الحقل وxterm: وجود تحديد لا يجوز أن يرسل إشارة قطع إلى PTY.
+  // نحصر تحديد الخرج في التبويب الظاهر كي لا يمنع تحديدٌ في المحادثة إيقاف أمر جارٍ.
+  termPanel.addEventListener('keydown', (e) => {
+    if (!active || !e.ctrlKey || e.shiftKey || e.altKey || e.metaKey || e.key.toLowerCase() !== 'c') return;
+    if (e.target !== termInputEl && !active.view.contains(e.target)) return;
+    if (e.target === termInputEl && termInputEl.selectionStart !== termInputEl.selectionEnd) {
+      e.stopPropagation(); // النسخ الأصلي للحقل؛ نحترم منع نسخ حقل password أيضاً
+      return;
+    }
+    const selection = window.getSelection();
+    const text = active.mode
+      ? (selection && active.bidi.contains(selection.anchorNode) && active.bidi.contains(selection.focusNode)
+        ? selection.toString() : '')
+      : (active.grid.contains(e.target) ? active.term.getSelection() : '');
+    if (!text) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // فشل الحافظة يبقي الأمر حيّاً؛ لا نسقط إلى Ctrl+C الخام بعد محاولة النسخ.
+    navigator.clipboard.writeText(text).catch(() => showTermNotice('تعذّر نسخ النص المحدد؛ أعد محاولة النسخ.'));
+  }, true);
+
   termInputEl.addEventListener('keydown', (e) => {
     if (!active || !active.id) return;
-    // Ctrl+C يقطع دائماً (والحقل غير فارغ: يفرّغه أيضاً) — Ctrl+Z وCtrl+D تمريران خامان
+    // بلا تحديد: Ctrl+C يقطع ويفرّغ الحقل — Ctrl+Z وCtrl+D تمريران خامان
     if (e.ctrlKey && !e.shiftKey && !e.altKey) {
       const k = e.key.toLowerCase();
       if (k === 'c') { e.preventDefault(); termInputEl.value = ''; syncInputDir(); ptySend('\x03'); return; }
