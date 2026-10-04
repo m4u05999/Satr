@@ -92,3 +92,4 @@
 | 82 | [`82-pro-saved-tasks-v1.md`](82-pro-saved-tasks-v1.md) | مهام برو المحفوظة والقبول المحلي؛ اختبار Claude الحقيقي في المصدر وقبول محاكاة الحزمة؛ الاستئناف §32 (آخر طقم 147/148) | 115.2 ك.ب |
 | 83 | [`83-pro-accounts-sandbox.md`](83-pro-accounts-sandbox.md) | أساس حساب برو وStripe: عقود الهوية والمعاملات؛ موصل وتوقيع محليان 30/30، دون ربط حي | 31.8 ك.ب |
 | 84 | [`84-permission-metrics.md`](84-permission-metrics.md) | قياس أسباب بطاقات الإذن ومدد انتظارها دون تغيير سياسة السماح | 7.7 ك.ب |
+| 85 | [`85-license-field-guard.md`](85-license-field-guard.md) | حارس حقل الرخصة — `package.json` يطابق اختصار `LICENSE` ومعه شارة README وقسمها (بند الرادار ب-٧ — 2026-10-05) | 2.3 ك.ب |

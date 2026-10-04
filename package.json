@@ -5,7 +5,7 @@
   "description": "سطر — تطبيق سطح مكتب عربي لأدوات الذكاء الاصطناعي في سطر الأوامر (Claude Code وغيرها) بدعم RTL كامل",
   "main": "electron/main.js",
   "author": "Moxa",
-  "license": "MIT",
+  "license": "FSL-1.1-MIT",
   "scripts": {
     "accept:driver": "node scripts/accept-driver.js",
     "eval:agent": "node scripts/agent-eval.js",
@@ -206,6 +206,7 @@
     "test:full:external": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-full-suite.ps1",
     "version": "node scripts/sync-readme-version.js && git add README.md",
     "test:readme-version": "node scripts/readme-version-test.js",
+    "test:license-field": "node scripts/license-field-test.js",
     "prestart": "node scripts/update-csp.js",
     "start": "electron .",
     "predist": "node scripts/update-csp.js",
