@@ -293,11 +293,32 @@ function createLoopExecutor(context) {
     return basePrompt() + '\n\n' + fixBlock(iteration, injection, kind);
   }
 
-  function accountUsage(event) {
+  /**
+   * عقد SDK لحقل total_cost_usd: «مجموع جارٍ — اقرأ آخر نتيجة ولا تجمع عبر النتائج»، ومنذ
+   * Claude Code 2.1.277 يستمر المجموع عبر استئناف الجلسة (مقيس حياً على 2.1.288 في
+   * 2026-10-05: ثلاثة نداءات `-p --resume` على جلسة واحدة أعادت 0.0223 ⇐ 0.0255 ⇐ 0.0344
+   * بينما `usage` بقي لكل دور). والحلقة تستأنف الجلسة نفسها كل دورة، فجمع القيمة كان
+   * يضاعف الكلفة تربيعياً — رادار سطر، البند أ-١ (العدد ٠١٧). لذلك يُحفظ آخر مجموع لكل
+   * جلسة ويُضاف الفرق فقط؛ والجلسة الجديدة بعد سقوط السياق مفتاح مستقل فتُجمع فوق
+   * سابقتها لا بدلها، وmax يحمي من نتيجة انهيار مصفّرة («may carry zeroed values»).
+   * وبلا معرّف جلسة لا استئناف أصلاً فكل نتيجة كلفة دورها وتُجمع كما كانت. أما الرموز
+   * فمن `usage` وهو لكل دور، فميزانية الإيقاف لم تكن متأثرة بالعطل.
+   */
+  function accountUsage(event, sessionKey) {
     const usage = event.usage && typeof event.usage === 'object' ? event.usage : {};
     const input = Math.max(0, Number(usage.input_tokens) || 0);
     const output = Math.max(0, Number(usage.output_tokens) || 0);
-    run.cost.usd += Math.max(0, Number(event.total_cost_usd) || 0);
+    const total = Math.max(0, Number(event.total_cost_usd) || 0);
+    const key = cleanText(sessionKey, 128);
+    if (!key) {
+      run.cost.usd += total;
+    } else {
+      const totals = run._costBySession || (run._costBySession = new Map());
+      const previous = totals.get(key) || 0;
+      const latest = Math.max(previous, total);
+      totals.set(key, latest);
+      run.cost.usd += latest - previous;
+    }
     run.cost.input_tokens += input;
     run.cost.output_tokens += output;
     if (usage.estimate === true) run.cost.estimate = true;
@@ -513,7 +534,7 @@ function createLoopExecutor(context) {
         }
 
         if (event.type === 'result') {
-          accountUsage(event);
+          accountUsage(event, turn.sessionId);
           const text = cleanText(turn.texts.join('\n\n') || event.result, MAX_SUMMARY_CHARS);
           if (text) run.summary = text;
           publish();
@@ -874,6 +895,7 @@ function createLoopExecutor(context) {
       _finishing: false,
       _finishPromise: null,
       _artifact: null,
+      _costBySession: new Map(), // آخر مجموع جارٍ لكل جلسة — accountUsage (بند الرادار أ-١)
     };
     publish();
     run._drive = drive().catch(async (error) => {
