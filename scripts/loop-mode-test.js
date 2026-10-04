@@ -349,6 +349,38 @@ function sameFailureTwiceRunner(stats) {
   };
 }
 
+/**
+ * عامل يحاكي عقد Claude Code ≥ 2.1.277 حرفياً (بند الرادار أ-١، مقيس حياً على 2.1.288):
+ * total_cost_usd مجموعٌ جارٍ للجلسة يستمر عبر الاستئناف، وusage لكل دور. الجلسة تُشتق من
+ * input.sessionId: null ⇒ جلسة جديدة تبدأ من صفر، وإلا استئناف يراكم على مجموعها.
+ */
+function cumulativeCostRunner(stats, turnCosts) {
+  const sessionTotals = new Map();
+  let sessions = 0;
+  return {
+    engine: 'sdk',
+    model: 'test-model',
+    start(input, cwd, emit) {
+      stats.calls.push({ input, cwd });
+      const index = stats.calls.length - 1;
+      const sessionId = input.sessionId || ('cost-session-' + (++sessions));
+      const runningTotal = (sessionTotals.get(sessionId) || 0) + (turnCosts[index] || 0);
+      sessionTotals.set(sessionId, runningTotal);
+      let stopped = false;
+      const timer = setTimeout(() => {
+        if (stopped) return;
+        emit({ type: 'assistant', session_id: sessionId, message: { content: [{ type: 'text', phase: 'final_answer', text: 'لا يزال فاشلاً' }] } });
+        emit({ type: 'result', session_id: sessionId, total_cost_usd: runningTotal, usage: { input_tokens: 100, output_tokens: 50 } });
+        emit({ type: 'proc_done', code: 0 });
+      }, 50);
+      return {
+        resolvePermission(id, allow) { stats.permissions.push({ id, allow }); },
+        stop() { stopped = true; clearTimeout(timer); return Promise.resolve(); },
+      };
+    },
+  };
+}
+
 async function main() {
   const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'satr-loop-test-'));
   const manager = worktrees.createManager({ root: path.join(temp, 'worktrees') });
@@ -1079,6 +1111,39 @@ async function main() {
     assert.strictEqual(handoffS2.ok, true, 'stopping during review still hands off the artifact');
     events.length = 0;
 
+    // 24) كلفة الجلسة المستأنَفة (بند الرادار أ-١): total_cost_usd مجموعٌ جارٍ يستمر عبر
+    // الاستئناف، فالحلقة تجمع الفرق لا القيمة؛ وكل جلسة جديدة بعد تكرار الفشل تُجمع فوق سابقتها.
+    const projectC1 = await makeRepo(temp, 'c1', [{ id: 'fail', label: 'فشل', command: 'node fail.js', timeout_seconds: 10 }]);
+    const statsC1 = { calls: [], permissions: [] };
+    const turnCosts = [0.010, 0.015, 0.004, 0.005];
+    const loopsC1 = looprunner.create({
+      runner: cumulativeCostRunner(statsC1, turnCosts),
+      recordNote,
+      worktrees: manager,
+      integration,
+      verify,
+    });
+    const roomC1 = opsroom.createRoom({ root: opsroomRoot });
+    const startedC1 = await loopsC1.start({
+      task: 'أصلح', ownership: ['**'], roomId: roomC1.room.room_id,
+      maxIterations: 4, budgetTokens: 400000, timeoutMs: 300000,
+    }, projectC1, emit);
+    assert.strictEqual(startedC1.ok, true);
+    await waitFor(() => events.some((e) => e.type === 'loop_update' && e.state === 'failed_after_n'), 15000, 'cost loop exhausts');
+    assert.strictEqual(statsC1.calls.length, 4, 'أربع دورات');
+    // الاستئناف فعلاً: الدورة 2 تستأنف جلسة الدورة 1، ثم كل تكرار للفشل نفسه يبدأ جلسة جديدة.
+    assert.strictEqual(statsC1.calls[0].input.sessionId, null, 'iteration 1 starts fresh');
+    assert.strictEqual(statsC1.calls[1].input.sessionId, 'cost-session-1', 'iteration 2 resumes session 1');
+    assert.strictEqual(statsC1.calls[2].input.sessionId, null, 'iteration 3 starts a new session after the same failure twice');
+    assert.strictEqual(statsC1.calls[3].input.sessionId, null, 'iteration 4 starts a new session again');
+    const costEvent = events.filter((e) => e.type === 'loop_update').pop();
+    const expectedUsd = turnCosts.reduce((sum, value) => sum + value, 0);
+    assert.ok(Math.abs(costEvent.cost.usd - expectedUsd) < 1e-9,
+      'loop cost must equal the sum of turn costs (' + expectedUsd + '), got ' + costEvent.cost.usd
+      + ' — summing running totals across a resumed session double-counts');
+    assert.strictEqual(costEvent.budget.used_tokens, 600, 'budget counts per-turn usage tokens only');
+    events.length = 0;
+
     console.log('✓ loopfailure adversarial hardening');
     console.log('✓ loop_update not in engine event types');
     console.log('✓ happy path passes on iteration 1');
@@ -1101,6 +1166,7 @@ async function main() {
     console.log('✓ user-stopped loop hands its partial artifact to the review path with honest states');
     console.log('✓ stopped without a patch, failed, and timed_out all stay fail-closed');
     console.log('✓ stopping during the review stage hands off without a verdict');
+    console.log('✓ resumed-session running totals are not summed twice (radar أ-١)');
   } finally {
     await manager.removeAll().catch(() => {});
     await fsp.rm(temp, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
