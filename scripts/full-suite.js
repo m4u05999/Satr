@@ -132,6 +132,7 @@ const SUITE = [
   'test:model-routing',
   'test:full-timeout',
   'test:readme-version',
+  'test:license-field',
   'test:opsroom-all-live',
   'test:terminal-tabs',
   'test:bidi-parity',
