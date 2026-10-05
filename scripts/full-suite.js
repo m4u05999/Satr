@@ -35,6 +35,7 @@ const SUITE = [
   'test:observations',
   'test:suite-coverage',
   'test:radar-graveyard',
+  'test:audit-gate',
   'test:sdk-version-parity',
   'test:hookguard',
   'test:effortcap',
