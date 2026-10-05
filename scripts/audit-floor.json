@@ -1,0 +1,28 @@
+{
+  "_comment": "عتبة بوابة التدقيق (scripts/audit-gate-test.js — بند الرادار ب-٣). الطبقتان الشاحنتان (تشغيلي وpeer) بأسماء مسموحة وشدّتها القصوى تحت سقف صلب للطبقة؛ وdev بالعدّ لكل شدّة. تُخفَض عند كل تحسّن يعلنه الحارس، ولا تُرفَع ولا يُضاف اسم إلا بقرار مالك موثّق في docs/OBSERVATIONS.md.",
+  "measured_at": "2026-10-05",
+  "command": "npm audit --json --package-lock-only",
+  "ceiling": {
+    "runtime": "moderate",
+    "peer": "moderate"
+  },
+  "allow": {
+    "runtime": {
+      "ip-address": "moderate"
+    },
+    "peer": {
+      "hono": "moderate",
+      "@hono/node-server": "moderate",
+      "fast-uri": "moderate"
+    }
+  },
+  "max": {
+    "dev": {
+      "critical": 1,
+      "high": 16,
+      "moderate": 0,
+      "low": 0,
+      "info": 0
+    }
+  }
+}
