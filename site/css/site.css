@@ -428,12 +428,12 @@ section {
   height: auto;
 }
 
-/* ---------- المشهد 3 حيّاً (js/flip-demo.js) ----------
+/* ---------- المشاهد الحيّة (js/flip-demo.js · js/ops-demo.js) ----------
    الصورة هي البديل: تبقى ظاهرة بلا JS أو مع reduced-motion. حين يعمل المشهد
    تُخفى بصرياً فقط (يبقى alt لقارئ الشاشة)، والمشهد aria-hidden. */
-.flip-frame { position: relative; }
+.live-frame { position: relative; }
 
-.flip-frame.is-live .flip-shot {
+.live-frame.is-live .live-shot {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -699,6 +699,194 @@ section {
   .fd-compose { width: calc(100% - 32px); }
   .fd-code { font-size: 11px; }
   .fd-input { min-height: calc(4.8em + 24px); }
+}
+
+/* ---------- غرفة العمليات حيّة (js/ops-demo.js) ----------
+   كل عنصر محجوز في مكانه من البداية؛ الحركة تبديل نصّ ولون وشفافية فقط. */
+.ops-demo {
+  display: grid;
+  gap: 12px;
+  padding: 18px 18px 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ops-demo[hidden] { display: none; }
+.ops-demo p { margin: 0; }
+
+.od-title {
+  color: var(--gold);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+/* مؤشر المراحل: خمس خانات متساوية، العلامة قبل الاسم بحسب الحالة */
+.od-stages {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.od-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+  transition: color .3s, border-color .3s, background-color .3s;
+}
+
+.od-stage::before { content: '○'; font-size: 10px; }
+
+.od-stage.is-active {
+  border-color: var(--gold-border);
+  background: var(--gold-soft);
+  color: var(--gold);
+}
+
+.od-stage.is-active::before { content: '●'; }
+
+.od-stage.is-done {
+  border-color: rgba(113, 208, 131, .35);
+  color: var(--green);
+}
+
+.od-stage.is-done::before { content: '✓'; }
+
+.od-station {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--surface-3);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.od-station b { color: var(--text); font-weight: 500; }
+
+.od-worker {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  transition: border-color .4s;
+}
+
+.od-worker.is-done { border-color: rgba(113, 208, 131, .35); }
+
+.od-w-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.od-w-head b { font-size: 15px; font-weight: 700; }
+
+.od-w-state {
+  color: var(--text-dim);
+  font-size: 12px;
+  transition: color .3s;
+}
+
+.od-worker.is-done .od-w-state { color: var(--green); }
+.od-worker.is-done .od-w-state::before { content: '✓ '; }
+
+/* العنوان العربي والمسار عنصران مستقلان، لكلٍّ اتجاهه — لا فقرة مختلطة */
+.od-w-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.od-w-line code {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  unicode-bidi: isolate;
+}
+
+/* العدّاد والمدة بعرض ثابت للأرقام كي لا يرتجّ السطر وهي تتغيّر */
+.od-w-meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.od-w-meta bdi {
+  display: inline-block;
+  min-width: 4ch;
+  color: var(--text);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.od-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+/* يمتلئ من اليمين: بداية السطر العربي */
+.od-bar i {
+  display: block;
+  height: 100%;
+  background: var(--gold);
+  transform-origin: 100% 50%;
+}
+
+.od-worker.is-done .od-bar i { background: var(--green); }
+
+/* سطر «التالي»: النصّان في الخلية نفسها، يتبادلان بالشفافية دون أن يتغيّر الارتفاع */
+.od-next {
+  display: grid;
+  margin-inline: -18px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--gold-border);
+  background: rgba(217, 164, 65, .08);
+  font-size: 12px;
+}
+
+.od-next > p { grid-area: 1 / 1; align-self: center; }
+.od-next b { color: var(--gold); font-weight: 700; }
+
+.od-next-gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.od-approve {
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: var(--gold);
+  color: #1a1408;
+  font-weight: 700;
+}
+
+@media (max-width: 48rem) {
+  .ops-demo { padding: 14px 14px 0; }
+  .od-next { margin-inline: -14px; padding-inline: 14px; }
+  .od-stages { gap: 4px; }
+  .od-stage { font-size: 11px; gap: 3px; }
 }
 
 .frame-placeholder {

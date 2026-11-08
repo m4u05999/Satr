@@ -73,9 +73,9 @@
     <h2 class="section-title" data-reveal>‏«سطر» يقلب الصورة<span class="gold">.</span></h2>
     <p class="section-lead" data-reveal>المحرّك نفسه، القوة نفسها — لكن المحادثة تصلك في واجهة عربية تعرض لغتك كما كُتبت: متصلة، سليمة الاتجاه، مريحة للعين.</p>
     <div class="flip-stage" data-reveal>
-      <div class="app-frame flip-frame" id="flipFrame">
+      <div class="app-frame live-frame" id="flipFrame">
         <!-- الصورة هي المرجع والبديل: تبقى لمسار reduced-motion ولقارئ الشاشة، ويحلّ المشهد محلها بصرياً حين تعمل الحركة -->
-        <img class="flip-shot" src="assets/app-chat.png" alt="واجهة «سطر»: السؤال نفسه الذي كسرته الطرفية يُجاب هنا بعربية سليمة مع بطاقة فرق للتعديل" loading="lazy">
+        <img class="live-shot" src="assets/app-chat.png" alt="واجهة «سطر»: السؤال نفسه الذي كسرته الطرفية يُجاب هنا بعربية سليمة مع بطاقة فرق للتعديل" loading="lazy">
         <!-- المشهد الحي: إعادة رسم لصورة app-chat.png نفسها، تُشغَّل مرة عند الوصول (js/flip-demo.js) -->
         <div class="flip-demo" id="flipDemo" aria-hidden="true" hidden>
           <div class="fd-head">
@@ -149,7 +149,37 @@
           <h3>غرفة عمليات لفرق من الوكلاء</h3>
           <p>عوامل متوازية في نسخ معزولة، مراجعة متقاطعة بين محرّكين مختلفين، وبوابة دمج لا تُفتح إلا بموافقتك — هندسة برمجيات جماعية بالعربية.</p>
         </div>
-        <div class="app-frame"><img src="assets/app-ops.png" alt="غرفة العمليات في «سطر»: عاملان متوازيان بملكيات ملفات منفصلة وميزانية كتابة ومؤشر مراحل" loading="lazy"></div>
+        <div class="app-frame live-frame" id="opsFrame">
+          <!-- الصورة هي المرجع والبديل؛ js/ops-demo.js يرسم فوقها اللوحة نفسها حيّة -->
+          <img class="live-shot" src="assets/app-ops.png" alt="غرفة العمليات في «سطر»: عاملان متوازيان بملكيات ملفات منفصلة وميزانية كتابة ومؤشر مراحل" loading="lazy">
+          <div class="ops-demo" id="opsDemo" dir="rtl" aria-hidden="true" hidden>
+            <p class="od-title" dir="rtl">غرفة العمليات</p>
+            <ol class="od-stages">
+              <li class="od-stage is-done">إعداد</li>
+              <li class="od-stage is-active">تنفيذ</li>
+              <li class="od-stage">مراجعة</li>
+              <li class="od-stage">تحقق</li>
+              <li class="od-stage">دمج</li>
+            </ol>
+            <p class="od-station" dir="rtl">المحطة: <b class="od-station-text">تنفيذ — يعمل</b></p>
+            <div class="od-worker">
+              <p class="od-w-head" dir="rtl"><b>عامل 1</b><span class="od-w-state">ينفّذ…</span></p>
+              <div class="od-w-line"><span dir="rtl">الملف:</span><code class="od-file" dir="ltr">src/pages/orders/tracking.jsx</code></div>
+              <div class="od-w-line"><span dir="rtl">يملك:</span><code dir="ltr">src/pages/orders/</code></div>
+              <p class="od-w-meta" dir="rtl"><span>كتابة <bdi class="od-count" dir="ltr">0/30</bdi></span><span class="od-bar"><i></i></span><span>المدة <bdi class="od-time" dir="ltr">0:00</bdi></span></p>
+            </div>
+            <div class="od-worker">
+              <p class="od-w-head" dir="rtl"><b>عامل 2</b><span class="od-w-state">ينفّذ…</span></p>
+              <div class="od-w-line"><span dir="rtl">الملف:</span><code class="od-file" dir="ltr">tests/orders/status.test.js</code></div>
+              <div class="od-w-line"><span dir="rtl">يملك:</span><code dir="ltr">tests/orders/</code></div>
+              <p class="od-w-meta" dir="rtl"><span>كتابة <bdi class="od-count" dir="ltr">0/30</bdi></span><span class="od-bar"><i></i></span><span>المدة <bdi class="od-time" dir="ltr">0:00</bdi></span></p>
+            </div>
+            <div class="od-next">
+              <p class="od-next-run" dir="rtl"><b>التالي:</b> العوامل تنفّذ داخل النسخ المعزولة؛ راقب النشاط أو أوقف المرحلة.</p>
+              <p class="od-next-gate" dir="rtl"><span><b>التالي:</b> بوابة الدمج لا تُفتح إلا بموافقتك.</span><span class="od-approve">موافقة على الدمج</span></p>
+            </div>
+          </div>
+        </div>
       </article>
     </div>
   </div>
@@ -449,5 +479,6 @@
 <script src="vendor/lenis.min.js"></script>
 <script src="js/main.js"></script>
 <script src="js/flip-demo.js"></script>
+<script src="js/ops-demo.js"></script>
 </body>
 </html>
