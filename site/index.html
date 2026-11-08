@@ -73,8 +73,42 @@
     <h2 class="section-title" data-reveal>‏«سطر» يقلب الصورة<span class="gold">.</span></h2>
     <p class="section-lead" data-reveal>المحرّك نفسه، القوة نفسها — لكن المحادثة تصلك في واجهة عربية تعرض لغتك كما كُتبت: متصلة، سليمة الاتجاه، مريحة للعين.</p>
     <div class="flip-stage" data-reveal>
-      <div class="app-frame">
-        <img src="assets/app-chat.png" alt="واجهة «سطر»: السؤال نفسه الذي كسرته الطرفية يُجاب هنا بعربية سليمة مع بطاقة فرق للتعديل" loading="lazy">
+      <div class="app-frame flip-frame" id="flipFrame">
+        <!-- الصورة هي المرجع والبديل: تبقى لمسار reduced-motion ولقارئ الشاشة، ويحلّ المشهد محلها بصرياً حين تعمل الحركة -->
+        <img class="flip-shot" src="assets/app-chat.png" alt="واجهة «سطر»: السؤال نفسه الذي كسرته الطرفية يُجاب هنا بعربية سليمة مع بطاقة فرق للتعديل" loading="lazy">
+        <!-- المشهد الحي: إعادة رسم لصورة app-chat.png نفسها، تُشغَّل مرة عند الوصول (js/flip-demo.js) -->
+        <div class="flip-demo" id="flipDemo" aria-hidden="true" hidden>
+          <div class="fd-head">
+            <span class="fd-mark">سطر</span>
+            <span class="fd-path" dir="ltr">D:\projects\matjar-app</span>
+            <span class="fd-tools"><span></span><span></span><span></span><span></span><span></span></span>
+          </div>
+          <div class="fd-thread">
+            <div class="fd-item fd-q-wrap"><p class="fd-q" dir="rtl">لماذا يفشل تسجيل الدخول عند تحديث الصفحة؟ افحص <bdi dir="ltr" class="fd-ref">@src/auth/session.js</bdi></p></div>
+            <div class="fd-item fd-perm-wrap">
+              <div class="fd-perm">
+                <p class="fd-perm-title" dir="rtl">طلب إذن لاستخدام أداة</p>
+                <p class="fd-perm-line" dir="rtl">يطلب النموذج استخدام الأداة <code dir="ltr">Edit</code></p>
+                <p class="fd-perm-detail" dir="ltr">src/auth/session.js</p>
+                <p class="fd-perm-actions"><span class="fd-btn fd-ok">موافقة</span><span class="fd-btn fd-no">رفض</span></p>
+              </div>
+            </div>
+            <div class="fd-item fd-diff-wrap">
+              <div class="fd-diff">
+                <p class="fd-diff-head"><span class="fd-diff-file" dir="ltr">src/auth/session.js</span><span class="fd-diff-kind">تعديل</span><span class="fd-diff-count" dir="ltr"><b class="add">+9</b> <b class="del">−2</b></span></p>
+                <pre class="fd-code" dir="ltr"><span class="del">- let accessToken = null;</span>
+<span class="add">+ export async function restoreSession() {</span>
+<span class="add">+   const token = await refreshToken();</span>
+<span class="add">+   if (!token) return null;</span></pre>
+              </div>
+            </div>
+            <div class="fd-item fd-a-wrap"><p class="fd-a" dir="rtl">وجدت السبب: رمز الوصول يُخزَّن في الذاكرة فقط. أضفت <code dir="ltr">restoreSession()</code> لتستعيده من كوكي <code dir="ltr">HttpOnly</code> عند الإقلاع، والاختبارات تمر <code dir="ltr">14/14</code></p></div>
+          </div>
+          <div class="fd-compose">
+            <p class="fd-input" dir="rtl"><span class="fd-typed"></span><bdi dir="ltr" class="fd-typed-ref"></bdi><span class="fd-caret"></span></p>
+            <span class="fd-send">إرسال</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -414,5 +448,6 @@
 <script src="vendor/ScrollTrigger.min.js"></script>
 <script src="vendor/lenis.min.js"></script>
 <script src="js/main.js"></script>
+<script src="js/flip-demo.js"></script>
 </body>
 </html>
