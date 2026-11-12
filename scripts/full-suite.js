@@ -107,6 +107,8 @@ const SUITE = [
   'test:promo-arabic-bite',
   'test:promo-mux',
   'test:promo-source',
+  'test:promo-asset-read',
+  'test:promo-frame-source-live',
   'test:claude-auth',
   'test:probe-version',
   'test:readiness',

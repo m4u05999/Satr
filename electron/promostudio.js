@@ -11,6 +11,8 @@ const MIN_DURATION_MS = 250;
 const MAX_DURATION_MS = 120000;
 // سقف مجموع مدد المشاهد؛ يطابق MAX_TOTAL_MS في src/ui/lib/promo/promo-timeline.js (يحرسه test:promo-timeline).
 const MAX_TOTAL_MS = 180000;
+// أقصى طول لقراءة واحدة من أصل عبر IPC (التصدير يقرأ على دفعات).
+const MAX_ASSET_READ_BYTES = 8 * 1024 * 1024;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.webm', '.mp4']);
@@ -341,6 +343,37 @@ function create(initialDeps) {
     return asset ? { ok: true, url: pathToFileURL(asset).href } : { ok: false, error: 'bad_asset' };
   }
 
+  // قراءة مقطع بايتات من أصل فيديو للتصدير (فهرس العينات ثم بياناتها). الحصر نفسه الذي في
+  // assetUrl: الأصل في الـstoryboard الحالي وداخل Downloads. الطول محدود لكل نداء.
+  function assetRead(candidate, offset, length) {
+    if (!allowedPath(candidate)) return { ok: false, error: 'not_in_storyboard' };
+    const asset = localAsset(deps.downloadsPath, candidate, VIDEO_EXTENSIONS, deps.exists, deps.realpath);
+    if (!asset) return { ok: false, error: 'bad_asset' };
+    if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(length) || length < 0 || length > MAX_ASSET_READ_BYTES) {
+      return { ok: false, error: 'bad_range' };
+    }
+    const fileSystem = deps.fs || fs;
+    let fd = null;
+    try {
+      fd = fileSystem.openSync(asset, 'r');
+      const size = fileSystem.fstatSync(fd).size;
+      if (offset > size) return { ok: false, error: 'bad_range' };
+      const wanted = Math.min(length, size - offset);
+      const buffer = Buffer.allocUnsafe(wanted);
+      let read = 0;
+      while (read < wanted) {
+        const count = fileSystem.readSync(fd, buffer, read, wanted - read, offset + read);
+        if (!count) break;
+        read += count;
+      }
+      return { ok: true, size, bytes: read === wanted ? buffer : buffer.subarray(0, read) };
+    } catch {
+      return { ok: false, error: 'read_failed' };
+    } finally {
+      if (fd != null) { try { fileSystem.closeSync(fd); } catch {} }
+    }
+  }
+
   function clear() {
     storyboard = null;
     return { ok: true };
@@ -360,7 +393,7 @@ function create(initialDeps) {
     return doLoadProject(filePath, deps.downloadsPath, { exists: deps.exists, realpath: deps.realpath, readFileSync: deps.readFileSync });
   }
 
-  return { configure, propose, state, assetUrl, clear, listDownloads, saveProject, loadProject };
+  return { configure, propose, state, assetUrl, assetRead, clear, listDownloads, saveProject, loadProject };
 }
 
 const singleton = create();
@@ -378,6 +411,8 @@ module.exports = {
   propose: (...args) => singleton.propose(...args),
   state: (...args) => singleton.state(...args),
   assetUrl: (...args) => singleton.assetUrl(...args),
+  assetRead: (...args) => singleton.assetRead(...args),
+  MAX_ASSET_READ_BYTES,
   clear: (...args) => singleton.clear(...args),
   listDownloadsBound: (...args) => singleton.listDownloads(...args),
   saveProjectBound: (...args) => singleton.saveProject(...args),

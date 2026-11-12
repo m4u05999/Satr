@@ -3773,6 +3773,13 @@ ipcMain.handle('satr:promoAssetUrl', (event, payload) => {
   return promostudio.assetUrl(candidate);
 });
 
+// قراءة بايتات أصل فيديو من الـstoryboard الحالي للتصدير إطاراً بإطار. الحصر في promostudio.assetRead.
+ipcMain.handle('satr:promoAssetRead', (event, payload) => {
+  const candidate = payload && typeof payload.path === 'string' ? payload.path : '';
+  if (!candidate || candidate.length > 4096 || !path.isAbsolute(candidate)) return { ok: false, error: 'bad_path' };
+  return promostudio.assetRead(candidate, payload.offset, payload.length);
+});
+
 // أحداث مقطع مسجَّل للكاميرا الذكية. المسار يُطابَق بسجل المقاطع داخل promocapture،
 // وملف الأحداث نفسه لا يأتي من المصيّر أبداً.
 ipcMain.handle('satr:promoSegmentEvents', (event, payload) => {
