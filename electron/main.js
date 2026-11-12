@@ -3773,6 +3773,14 @@ ipcMain.handle('satr:promoAssetUrl', (event, payload) => {
   return promostudio.assetUrl(candidate);
 });
 
+// أحداث مقطع مسجَّل للكاميرا الذكية. المسار يُطابَق بسجل المقاطع داخل promocapture،
+// وملف الأحداث نفسه لا يأتي من المصيّر أبداً.
+ipcMain.handle('satr:promoSegmentEvents', (event, payload) => {
+  const candidate = payload && typeof payload.path === 'string' ? payload.path : '';
+  if (!candidate || candidate.length > 4096 || !path.isAbsolute(candidate)) return { ok: false, error: 'bad_path' };
+  return promocapture.segmentEvents(candidate);
+});
+
 // ── سطح الاستوديو (الدفعة 1): الاستيراد البشري والمشروع الدائم ──
 // الحصر الأمني كله داخل `promostudio.js`: مجلد التنزيلات يأتي من `configure` في main
 // ولا يمرّره renderer إطلاقاً، والمسارات تمر بـ`localAsset` + `realpath` + قائمة

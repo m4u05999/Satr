@@ -3,14 +3,54 @@
 // المستدعي يجهّز مصدر الرسم الصحيح لزمن tMs ويمرّره في frames.
 
 import { sceneAt, fadeOpacity } from './promo-timeline.js';
+import { cameraAt, cameraTransform, pointerAt } from './promo-camera.js';
 
-function drawFitted(context, source, sourceWidth, sourceHeight, width, height, cover) {
-  if (!sourceWidth || !sourceHeight) return;
+// مستطيل المصدر على اللوحة قبل الكاميرا.
+export function fittedRect(sourceWidth, sourceHeight, width, height, cover) {
+  if (!sourceWidth || !sourceHeight) return null;
   const scale = cover ? Math.max(width / sourceWidth, height / sourceHeight)
     : Math.min(width / sourceWidth, height / sourceHeight);
   const drawWidth = sourceWidth * scale;
   const drawHeight = sourceHeight * scale;
-  context.drawImage(source, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+  return { x: (width - drawWidth) / 2, y: (height - drawHeight) / 2, width: drawWidth, height: drawHeight };
+}
+
+// المؤشر الاصطناعي وموجة النقرة، بإحداثيات اللوحة بعد الكاميرا. الحجم ثابت على اللوحة
+// كي يبقى مقروءاً مهما كان الزوم.
+// الألوان من سمة الاستوديو نفسها (نص العنوان وخلفيته) لا قيم صلبة.
+function drawPointer(context, x, y, ripple, height, colors) {
+  const size = Math.max(18, height * 0.03);
+  context.save();
+  if (ripple) {
+    context.beginPath();
+    context.arc(ripple.x, ripple.y, size * (0.5 + 1.6 * ripple.progress), 0, Math.PI * 2);
+    context.lineWidth = Math.max(2, size * 0.14);
+    context.globalAlpha = 0.9 * (1 - ripple.progress);
+    context.strokeStyle = colors.captionText;
+    context.stroke();
+    context.globalAlpha = 1;
+  }
+  context.translate(x, y);
+  context.beginPath();
+  context.moveTo(0, 0);
+  context.lineTo(0, size);
+  context.lineTo(size * 0.27, size * 0.76);
+  context.lineTo(size * 0.45, size * 1.14);
+  context.lineTo(size * 0.6, size * 1.07);
+  context.lineTo(size * 0.42, size * 0.7);
+  context.lineTo(size * 0.72, size * 0.7);
+  context.closePath();
+  context.shadowColor = colors.background;
+  context.shadowBlur = size * 0.25;
+  context.shadowOffsetY = size * 0.08;
+  context.fillStyle = colors.captionText;
+  context.fill();
+  context.shadowColor = 'transparent';
+  context.lineWidth = Math.max(1.5, size * 0.07);
+  context.lineJoin = 'round';
+  context.strokeStyle = colors.background;
+  context.stroke();
+  context.restore();
 }
 
 function wrapCaption(context, caption, maxWidth) {
@@ -57,7 +97,8 @@ export function drawCaption(context, caption, width, height, colors, position = 
   return lines.length;
 }
 
-// runtime: { width, height, colors, timeline }
+// runtime: { width, height, colors, timeline, pointers? }
+// pointers: Map من فهرس المشهد إلى مسار المؤشر (pointerTrack) — اختياري.
 // frames: Map من فهرس المشهد إلى { source, width, height }؛ غياب المدخل ⇒ خلفية فقط.
 // تعيد { index, localMs, drawn, captionLines } أو null إن لم يكن عند tMs مشهد.
 export function renderFrame(context, runtime, tMs, frames) {
@@ -70,9 +111,34 @@ export function renderFrame(context, runtime, tMs, frames) {
   const scene = entry.scene;
   const frame = frames && typeof frames.get === 'function' ? frames.get(entry.index) : null;
   let drawn = false;
-  if (frame && frame.source) {
-    drawFitted(context, frame.source, frame.width, frame.height, width, height, scene.fit !== 'contain');
+  let view = null;
+  const fitted = frame && frame.source ? fittedRect(frame.width, frame.height, width, height, scene.fit !== 'contain') : null;
+  if (fitted) {
+    // مشهد بلا كاميرا (v1) يمر بالمسار القديم حرفياً: لا تحويل ولا حفظ حالة.
+    view = cameraTransform(cameraAt(scene.camera, localMs), fitted, width, height);
+    if (view.scale === 1) {
+      context.drawImage(frame.source, fitted.x, fitted.y, fitted.width, fitted.height);
+    } else {
+      context.save();
+      context.setTransform(view.scale, 0, 0, view.scale, view.tx, view.ty);
+      context.imageSmoothingQuality = 'high';
+      context.drawImage(frame.source, fitted.x, fitted.y, fitted.width, fitted.height);
+      context.restore();
+    }
     drawn = true;
+    // مسار المؤشر مشتق من سجل الأحداث وقت التشغيل (runtime.pointers) ولا يُحفظ في المشروع.
+    const track = scene.camera && scene.camera.mode !== 'off' && scene.camera.cursor !== false
+      && runtime.pointers && typeof runtime.pointers.get === 'function' ? runtime.pointers.get(entry.index) : null;
+    const pointer = track ? pointerAt(track, localMs) : null;
+    if (pointer) {
+      const toCanvas = (point) => ({
+        x: (fitted.x + point.x * fitted.width) * view.scale + view.tx,
+        y: (fitted.y + point.y * fitted.height) * view.scale + view.ty,
+      });
+      const at = toCanvas(pointer);
+      const ripple = pointer.ripple ? { ...toCanvas(pointer.ripple), progress: pointer.ripple.progress } : null;
+      drawPointer(context, at.x, at.y, ripple, height, colors);
+    }
   }
   const opacity = fadeOpacity(scene.transition, localMs, entry.durationMs);
   if (opacity > 0) {

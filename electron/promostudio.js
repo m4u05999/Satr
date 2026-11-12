@@ -22,7 +22,14 @@ const DEFAULT_CLIP_VOLUME = 1;
 const DEFAULT_MUSIC_VOLUME = 0.34;
 const DEFAULT_VOICE_VOLUME = 1;
 
-const PROJECT_SCHEMA_VERSION = 1;
+// الإصدار 2 (الدفعة 2 من مخرج الإعلانات): حقل camera لكل مشهد. الحقول الاختيارية اللاحقة
+// ذات القيمة الافتراضية تُضاف إلى 2 بلا رفع الرقم. الإصدار 1 يُقرأ ويُرحَّل عند التحميل.
+const PROJECT_SCHEMA_VERSION = 2;
+const READABLE_SCHEMA_VERSIONS = new Set([1, 2]);
+const CAMERA_MODES = new Set(['auto', 'manual', 'off']);
+const CAMERA_EASES = new Set(['inOut', 'linear', 'hold']);
+const MAX_CAMERA_KEYFRAMES = 200;
+const MAX_CAMERA_ZOOM = 4;
 const MAX_PROJECT_BYTES = 2 * 1024 * 1024; // 2 م.ب لملف المشروع
 const PROJECT_EXTENSION = '.satr-promo.json';
 const SAFE_PROJECT_NAME = /^[A-Za-z0-9_\u0600-\u06FF\- ]{1,120}$/;
@@ -59,6 +66,33 @@ function cleanFloat(value, min, max, defaultValue) {
 
 function cleanEnum(value, allowed, defaultValue) {
   return allowed.has(value) ? value : defaultValue;
+}
+
+// كاميرا المشهد. الغياب = { mode: 'off' } (ترحيل v1). القيم خارج النطاق تُرفض ولا تُصحَّح:
+// نقطة بزوم 99 أو NaN دليل على مدخل معطوب أو خبيث، وتصحيحها بصمت يخفيه.
+function sanitizeCamera(raw, durationMs) {
+  if (raw == null) return { ok: true, camera: { mode: 'off', cursor: true, keyframes: [] } };
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { ok: false };
+  const mode = cleanEnum(raw.mode, CAMERA_MODES, 'off');
+  const list = raw.keyframes == null ? [] : raw.keyframes;
+  if (!Array.isArray(list) || list.length > MAX_CAMERA_KEYFRAMES) return { ok: false };
+  const inRange = (value, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+  const keyframes = [];
+  let previous = -1;
+  for (const item of list) {
+    if (!item || typeof item !== 'object') return { ok: false };
+    if (!Number.isInteger(item.t_ms) || item.t_ms < 0 || item.t_ms > durationMs || item.t_ms <= previous) return { ok: false };
+    if (!inRange(item.x, 0, 1) || !inRange(item.y, 0, 1) || !inRange(item.zoom, 1, MAX_CAMERA_ZOOM)) return { ok: false };
+    previous = item.t_ms;
+    keyframes.push({
+      t_ms: item.t_ms,
+      x: Math.round(item.x * 10000) / 10000,
+      y: Math.round(item.y * 10000) / 10000,
+      zoom: Math.round(item.zoom * 1000) / 1000,
+      ease: cleanEnum(item.ease, CAMERA_EASES, 'inOut'),
+    });
+  }
+  return { ok: true, camera: { mode, cursor: raw.cursor !== false, keyframes } };
 }
 
 function sanitizeStoryboard(input, options) {
@@ -107,6 +141,8 @@ function sanitizeStoryboard(input, options) {
     const clipVolume = cleanFloat(raw.clip_volume, 0, 1, DEFAULT_CLIP_VOLUME);
     const musicVolume = cleanFloat(raw.music_volume, 0, 1, DEFAULT_MUSIC_VOLUME);
     const voiceVolume = cleanFloat(raw.voice_volume, 0, 1, DEFAULT_VOICE_VOLUME);
+    const camera = sanitizeCamera(raw.camera, durationMs);
+    if (!camera.ok) return { ok: false, error: 'bad_camera', index };
     const scene = {
       id,
       caption,
@@ -119,6 +155,7 @@ function sanitizeStoryboard(input, options) {
       clip_volume: clipVolume,
       music_volume: musicVolume,
       voice_volume: voiceVolume,
+      camera: camera.camera,
     };
     if (asset) {
       scene.asset = asset;
@@ -243,7 +280,7 @@ function doLoadProject(filePath, downloadsPath, options) {
   try { parsed = JSON.parse(raw); } catch (error) {
     return { ok: false, error: 'bad_schema' };
   }
-  if (!parsed || typeof parsed !== 'object' || parsed.version !== PROJECT_SCHEMA_VERSION || !Array.isArray(parsed.scenes)) {
+  if (!parsed || typeof parsed !== 'object' || !READABLE_SCHEMA_VERSIONS.has(parsed.version) || !Array.isArray(parsed.scenes)) {
     return { ok: false, error: 'bad_schema' };
   }
   const result = sanitizeStoryboard(
@@ -319,7 +356,8 @@ module.exports = {
   VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, AUDIO_EXTENSIONS, TRANSITIONS,
   FITS, CAPTION_POSITIONS, CAPTION_STYLES,
   DEFAULT_CLIP_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME,
-  PROJECT_SCHEMA_VERSION, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
+  PROJECT_SCHEMA_VERSION, READABLE_SCHEMA_VERSIONS, CAMERA_MODES, CAMERA_EASES, MAX_CAMERA_KEYFRAMES, MAX_CAMERA_ZOOM,
+  sanitizeCamera, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
   localAsset, sanitizeStoryboard, isProjectPathSafe, inferAssetType,
   listDownloads: doListDownloads, saveProject: doSaveProject, loadProject: doLoadProject, create,
   configure: (...args) => singleton.configure(...args),

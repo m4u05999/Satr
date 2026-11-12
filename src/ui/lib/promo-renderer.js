@@ -92,7 +92,7 @@ export async function renderStoryboard(options) {
   let containedScenes = 0;
   // المسار القديم يسير بالساعة الحقيقية، لكن الرسم نفسه يمر بـrenderFrame الحتمية.
   const timeline = buildTimeline({ scenes });
-  const runtime = { width: canvas.width, height: canvas.height, colors, timeline };
+  const runtime = { width: canvas.width, height: canvas.height, colors, timeline, pointers: settings.pointers || null };
   const totalMs = timeline.totalMs;
   let completedMs = 0;
   try {

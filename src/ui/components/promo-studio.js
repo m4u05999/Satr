@@ -3,6 +3,8 @@ import { sheet } from '../lib/sheet.js';
 import { renderStoryboard } from '../lib/promo-renderer.js';
 import { buildTimeline, MAX_TOTAL_MS } from '../lib/promo/promo-timeline.js';
 import { renderFrame } from '../lib/promo/promo-frame.js';
+import { pointerTrack, idleGaps } from '../lib/promo/promo-camera.js';
+import { CAMERA_CSS, buildCameraRow, cleanCamera, suggestCamera, addKeyframe, editKeyframe, shiftKeyframes } from '../lib/promo/studio-camera.js';
 
 // ألوان الرسم على canvas — **من tokens الثيمة أولاً**، لأن المعاينة يجب أن تطابق
 // التصيير النهائي الذي يقرأ الـtokens نفسها. والاحتياطات الصلبة هنا ضرورة تقنية لا
@@ -93,7 +95,7 @@ const studioSheet = sheet(`
     .preview { min-height: 280px; }
     .import-panel { inset: var(--space-2); }
   }
-`);
+` + CAMERA_CSS);
 
 const MARKUP = `
   <div class="backdrop"></div>
@@ -148,6 +150,7 @@ function cloneStoryboard(value) {
     voice: typeof scene.voice === 'string' ? scene.voice : '',
     voice_missing: scene.voice_missing === true,
     trim_start_ms: Number.isInteger(scene.trim_start_ms) ? Math.max(0, Math.min(120000, scene.trim_start_ms)) : 0,
+    camera: cleanCamera(scene.camera, Number.isInteger(scene.duration_ms) ? Math.max(250, Math.min(120000, scene.duration_ms)) : 3000),
     fit: scene.fit === 'contain' ? 'contain' : 'cover',
     caption_position: ['top', 'center', 'bottom'].includes(scene.caption_position) ? scene.caption_position : 'bottom',
     caption_style: scene.caption_style === 'minimal' ? 'minimal' : 'box',
@@ -281,6 +284,7 @@ class SatrPromoStudio extends HTMLElement {
     root.getElementById('timeline').addEventListener('input', (event) => this.handleEdit(event));
     root.getElementById('timeline').addEventListener('change', (event) => this.handleEdit(event));
     root.getElementById('timeline').addEventListener('click', (event) => this.handleAction(event));
+    root.getElementById('timeline').addEventListener('pointerdown', (event) => this.startKeyDrag(event));
     root.getElementById('scrubRange').addEventListener('input', (event) => this.handleScrub(event));
     root.getElementById('import').addEventListener('click', () => this.openImport());
     root.getElementById('importClose').addEventListener('click', () => this.closeImport());
@@ -312,21 +316,26 @@ class SatrPromoStudio extends HTMLElement {
 
   async open(storyboard) {
     let next = storyboard;
+    let fresh = false;
     if (!next && typeof window.satr.promoStudioState === 'function') {
       const state = await window.satr.promoStudioState();
       next = state && state.storyboard;
       if (!next && state && Array.isArray(state.segments) && state.segments.length) {
+        fresh = true;
         next = { aspect: state.segments[0].aspect || '16:9', scenes: state.segments.map((segment, index) => ({
           id: 'scene_' + String(index + 1), asset: segment.path, asset_type: 'video', caption: '',
           duration_ms: segment.duration_ms || 3000, transition: index ? 'fade' : 'cut', music: '',
         })) };
       }
     }
+    // storyboard مبني للتو من مقاطع مسجَّلة يأخذ كاميرا تلقائية؛ المقترح أو المحمَّل يبقى كما جاء.
     if (next) this.storyboard = cloneStoryboard(next);
+    this.selectedKey = null;
     this.approved = false;
     this.previewTime = 0;
     this.previewCache.clear();
     this.projectPath = '';
+    this.primeEvents(fresh);
     this.setAttribute('open', '');
     this.renderTimeline();
     this.dispatchEvent(new CustomEvent('promo-studio-visible', { bubbles: true, detail: true }));
@@ -338,6 +347,192 @@ class SatrPromoStudio extends HTMLElement {
     if (this.rerecording) window.satr.promoCaptureStop().catch(() => {});
     this.removeAttribute('open');
     this.dispatchEvent(new CustomEvent('promo-studio-visible', { bubbles: true, detail: false }));
+  }
+
+  // ── الكاميرا الذكية (الدفعة 2 من مخرج الإعلانات) ──
+
+  // أحداث مقطع من الذاكرة المؤقتة: مصفوفة، أو null إن لم تُحمَّل أو لم يوجد سجل.
+  eventsFor(scene) {
+    if (!this.eventCache) this.eventCache = new Map();
+    const cached = this.eventCache.get(scene.asset);
+    return Array.isArray(cached) ? cached : null;
+  }
+
+  // يحمّل سجلات أحداث كل المقاطع مرة، ثم يعيد رسم الخط الزمني. autoPlan: خطّط للمشاهد الجديدة.
+  async primeEvents(autoPlan) {
+    if (!this.eventCache) this.eventCache = new Map();
+    if (typeof window.satr.promoSegmentEvents !== 'function') return;
+    const token = this.eventToken = (this.eventToken || 0) + 1;
+    let loaded = false;
+    for (const asset of [...new Set(this.storyboard.scenes.filter((scene) => !scene.asset_missing).map((scene) => scene.asset))]) {
+      if (this.eventCache.has(asset)) continue;
+      let result = null;
+      try { result = await window.satr.promoSegmentEvents(asset); } catch {}
+      if (token !== this.eventToken) return;
+      this.eventCache.set(asset, result && result.ok && Array.isArray(result.events) ? result.events : false);
+      loaded = true;
+    }
+    if (autoPlan) {
+      for (const scene of this.storyboard.scenes) {
+        const events = this.eventsFor(scene);
+        if (events && events.length && scene.camera.mode === 'off' && !scene.camera.keyframes.length) {
+          const planned = suggestCamera(events, scene);
+          if (planned.keyframes.length > 1) { scene.camera = planned; loaded = true; }
+        }
+      }
+    }
+    if (loaded) this.renderTimeline();
+  }
+
+  // مسارات المؤشر لكل مشهد كاميرته مفعّلة؛ تُشتق من الأحداث ولا تُحفظ في المشروع.
+  pointerTracks() {
+    const tracks = new Map();
+    this.storyboard.scenes.forEach((scene, index) => {
+      if (!scene.camera || scene.camera.mode === 'off' || scene.camera.cursor === false) return;
+      const events = this.eventsFor(scene);
+      if (events) tracks.set(index, pointerTrack(events, { durationMs: scene.duration_ms, sourceStartMs: scene.trim_start_ms }));
+    });
+    return tracks;
+  }
+
+  // بعد تغيير المدة أو بداية القص: التلقائية تُعاد من الأحداث، واليدوية تُزاح وتُقصّ.
+  refreshCamera(scene, shiftMs) {
+    if (!scene.camera) return;
+    const events = this.eventsFor(scene);
+    if (scene.camera.mode === 'auto' && events) scene.camera = suggestCamera(events, scene);
+    else shiftKeyframes(scene.camera, shiftMs, scene.duration_ms);
+    this.selectedKey = null;
+  }
+
+  handleCameraEdit(scene, index, field, event) {
+    const camera = scene.camera;
+    if (field === 'camera_mode') {
+      const mode = String(event.target.value);
+      const events = this.eventsFor(scene);
+      if (mode === 'auto') {
+        if (!events || !events.length) {
+          this.shadowRoot.getElementById('status').textContent = 'لا سجل أحداث لهذا المقطع؛ الكاميرا التلقائية تحتاج مقطعاً سُجّل من سطر.';
+          event.target.value = camera.mode;
+          return;
+        }
+        scene.camera = suggestCamera(events, scene);
+      } else camera.mode = mode === 'manual' ? 'manual' : 'off';
+      this.selectedKey = null;
+      this.changed();
+      return;
+    }
+    if (field === 'camera_cursor') { camera.cursor = !!event.target.checked; this.approved = false; this.syncApproval(); this.drawPreview(); return; }
+    const selected = this.selectedKey && this.selectedKey.scene === index ? this.selectedKey.key : -1;
+    if (selected < 0) return;
+    if (!editKeyframe(camera, selected, field.slice(4), Number(event.target.value), scene.duration_ms)) return;
+    // لا إعادة بناء للبطاقة أثناء الكتابة كي لا يضيع التركيز؛ نحرّك النقطة ونحدّث المعاينة فقط.
+    const card = event.target.closest('.scene');
+    const dot = card && card.querySelector('.cam-key[data-key="' + selected + '"]');
+    if (dot) dot.style.left = (camera.keyframes[selected].t_ms / scene.duration_ms * 100).toFixed(3) + '%';
+    const modeSelect = card && card.querySelector('[data-field="camera_mode"]');
+    if (modeSelect) modeSelect.value = camera.mode;
+    this.approved = false;
+    this.syncApproval();
+    this.drawPreview();
+  }
+
+  // تعيد true إن تغيّر المشروع ولزم changed().
+  handleCameraAction(action, index, button) {
+    const scene = this.storyboard.scenes[index];
+    const status = this.shadowRoot.getElementById('status');
+    if (action === 'key-select') {
+      this.selectedKey = { scene: index, key: Number(button.dataset.key) };
+      const start = this.storyboard.scenes.slice(0, index).reduce((sum, item) => sum + item.duration_ms, 0);
+      const key = scene.camera.keyframes[this.selectedKey.key];
+      if (key) this.previewTime = start + key.t_ms;
+      this.renderTimeline();
+      return false;
+    }
+    if (action === 'camera-suggest') {
+      const events = this.eventsFor(scene);
+      if (!events || !events.length) { status.textContent = 'لا سجل أحداث لهذا المقطع.'; return false; }
+      scene.camera = suggestCamera(events, scene);
+      this.selectedKey = null;
+      status.textContent = scene.camera.keyframes.length > 1
+        ? 'اقتُرحت كاميرا من ' + scene.camera.keyframes.length + ' نقطة. اسحب النقاط أو احذفها.'
+        : 'لا أحداث نقر أو كتابة داخل هذا المشهد؛ الكاميرا ثابتة.';
+      return true;
+    }
+    if (action === 'key-add') {
+      const placement = this.sceneAtTime(this.previewTime);
+      const local = placement && placement.index === index ? placement.localTime : 0;
+      const added = addKeyframe(scene.camera, local, scene.duration_ms);
+      if (added < 0) { status.textContent = 'توجد نقطة عند هذا الزمن، أو بلغ المشهد حد النقاط.'; return false; }
+      this.selectedKey = { scene: index, key: added };
+      return true;
+    }
+    if (action === 'key-remove') {
+      if (!this.selectedKey || this.selectedKey.scene !== index) return false;
+      scene.camera.keyframes.splice(this.selectedKey.key, 1);
+      scene.camera.mode = 'manual';
+      this.selectedKey = null;
+      return true;
+    }
+    if (action === 'cut-gap') {
+      const events = this.eventsFor(scene);
+      const gap = events && idleGaps(events, { durationMs: scene.duration_ms, sourceStartMs: scene.trim_start_ms })[Number(button.dataset.gap)];
+      if (!gap) return false;
+      const tail = scene.duration_ms - gap.end_ms;
+      if (gap.start_ms < 250) {
+        // الخمول في أول المشهد: نقدّم بداية القص فقط.
+        scene.trim_start_ms = Math.min(120000, scene.trim_start_ms + gap.end_ms);
+        scene.duration_ms = Math.max(250, tail);
+        this.refreshCamera(scene, gap.end_ms);
+      } else if (tail < 250) {
+        scene.duration_ms = gap.start_ms;
+        this.refreshCamera(scene, 0);
+      } else {
+        if (this.storyboard.scenes.length >= 40) { status.textContent = 'بلغ المشروع حد 40 مشهداً؛ لا يمكن التقسيم.'; return false; }
+        const rest = JSON.parse(JSON.stringify(scene));
+        rest.id = String(scene.id || 'scene').slice(0, 60) + '_cut_' + Date.now().toString(36);
+        rest.trim_start_ms = Math.min(120000, scene.trim_start_ms + gap.end_ms);
+        rest.duration_ms = tail;
+        rest.transition = 'cut';
+        scene.duration_ms = gap.start_ms;
+        this.storyboard.scenes.splice(index + 1, 0, rest);
+        this.refreshCamera(scene, 0);
+        this.refreshCamera(rest, gap.end_ms);
+      }
+      this.selectedKey = null;
+      status.textContent = 'قُصّت فترة الخمول. راجع المعاينة.';
+      return true;
+    }
+    return false;
+  }
+
+  // سحب نقطة كاميرا أفقياً على شريطها يغيّر زمنها.
+  startKeyDrag(event) {
+    const dot = event.target && event.target.closest && event.target.closest('.cam-key');
+    const card = dot && dot.closest('.scene');
+    if (!dot || !card || this.rendering) return;
+    const index = Number(card.dataset.index), keyIndex = Number(dot.dataset.key);
+    const scene = this.storyboard.scenes[index];
+    const strip = dot.parentElement;
+    if (!scene || !scene.camera.keyframes[keyIndex]) return;
+    let moved = false;
+    const move = (moveEvent) => {
+      const box = strip.getBoundingClientRect();
+      if (!box.width) return;
+      const t = (moveEvent.clientX - box.left) / box.width * scene.duration_ms;
+      if (!editKeyframe(scene.camera, keyIndex, 't_ms', t, scene.duration_ms)) return;
+      moved = true;
+      dot.style.left = (scene.camera.keyframes[keyIndex].t_ms / scene.duration_ms * 100).toFixed(3) + '%';
+    };
+    const end = () => {
+      strip.removeEventListener('pointermove', move);
+      strip.removeEventListener('pointerup', end);
+      strip.removeEventListener('pointercancel', end);
+      if (moved) { this.selectedKey = { scene: index, key: keyIndex }; this.changed(); }
+    };
+    try { strip.setPointerCapture(event.pointerId); } catch {}
+    strip.addEventListener('pointermove', move);
+    strip.addEventListener('pointerup', end);
+    strip.addEventListener('pointercancel', end);
   }
 
   totalDuration() {
@@ -429,7 +624,7 @@ class SatrPromoStudio extends HTMLElement {
       }
       // الإطار جاهز عند الزمن المطلوب؛ الرسم نفسه في renderFrame المشتركة مع التصدير.
       const timeline = buildTimeline(this.storyboard);
-      renderFrame(context, { width: canvas.width, height: canvas.height, colors, timeline },
+      renderFrame(context, { width: canvas.width, height: canvas.height, colors, timeline, pointers: this.pointerTracks() },
         placement.start + Math.min(localTime, scene.duration_ms - 0.001),
         new Map([[placement.index, { source: visual.element, width: visual.width, height: visual.height }]]));
     } catch (error) {
@@ -615,8 +810,18 @@ class SatrPromoStudio extends HTMLElement {
         actions.appendChild(button);
       }
       primary.appendChild(actions);
-      main.append(asset, caption, primary, visual, volumes); card.append(number, main); timeline.appendChild(card);
-      card.querySelectorAll('button, input, select').forEach((control) => { control.disabled = this.rendering; });
+      main.append(asset, caption, primary, visual, volumes);
+      if (!scene.asset_missing) {
+        const events = this.eventsFor(scene);
+        main.appendChild(buildCameraRow(scene, {
+          selected: this.selectedKey && this.selectedKey.scene === index ? this.selectedKey.key : -1,
+          hasEvents: !!(events && events.length),
+          gaps: events ? idleGaps(events, { durationMs: scene.duration_ms, sourceStartMs: scene.trim_start_ms }) : [],
+        }));
+      }
+      card.append(number, main); timeline.appendChild(card);
+      // عناصر عطّلها صف الكاميرا عمداً (data-locked) تبقى معطّلة.
+      if (this.rendering) card.querySelectorAll('button, input, select').forEach((control) => { control.disabled = true; });
     });
     root.getElementById('empty').hidden = this.storyboard.scenes.length > 0;
     root.getElementById('aspect').textContent = this.storyboard.aspect;
@@ -665,8 +870,15 @@ class SatrPromoStudio extends HTMLElement {
     const index = card ? Number(card.dataset.index) : -1;
     const scene = this.storyboard.scenes[index];
     if (!scene || !field || this.rendering) return;
-    if (field === 'duration_ms') scene.duration_ms = Math.max(250, Math.min(120000, Math.round(Number(event.target.value) || 250)));
-    else if (field === 'trim_start_ms') scene.trim_start_ms = Math.max(0, Math.min(120000, Math.round(Number(event.target.value) || 0)));
+    if (field.startsWith('camera_') || field.startsWith('key_')) { this.handleCameraEdit(scene, index, field, event); return; }
+    if (field === 'duration_ms') {
+      scene.duration_ms = Math.max(250, Math.min(120000, Math.round(Number(event.target.value) || 250)));
+      this.refreshCamera(scene, 0);
+    } else if (field === 'trim_start_ms') {
+      const before = scene.trim_start_ms;
+      scene.trim_start_ms = Math.max(0, Math.min(120000, Math.round(Number(event.target.value) || 0)));
+      this.refreshCamera(scene, scene.trim_start_ms - before);
+    }
     else if (field === 'clip_volume' || field === 'music_volume' || field === 'voice_volume') {
       scene[field] = Math.max(0, Math.min(1, Number(event.target.value) || 0));
       card.querySelectorAll(`[data-field="${field}"]`).forEach((control) => {
@@ -693,7 +905,10 @@ class SatrPromoStudio extends HTMLElement {
       const base = String(copy.id || 'scene').slice(0, 60);
       copy.id = base + '_copy_' + Date.now().toString(36);
       this.storyboard.scenes.splice(index + 1, 0, copy);
-    } else if (action === 'remove') this.storyboard.scenes.splice(index, 1);
+    } else if (action === 'remove') { this.storyboard.scenes.splice(index, 1); this.selectedKey = null; }
+    else if (action === 'camera-suggest' || action === 'key-add' || action === 'key-select' || action === 'key-remove' || action === 'cut-gap') {
+      if (!this.handleCameraAction(action, index, button)) return;
+    }
     else if (action === 'rerecord') {
       if (this.rerecording && this.rerecordIndex === index) {
         window.satr.promoCaptureStop().catch(() => {});
@@ -739,6 +954,7 @@ class SatrPromoStudio extends HTMLElement {
       const styles = getComputedStyle(this);
       const result = await renderStoryboard({
         canvas: root.getElementById('canvas'), scenes: await this.resolvedScenes(), signal: this.abortController.signal,
+        pointers: this.pointerTracks(),
         colors: { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text') },
         onProgress: (value) => { progress.style.width = Math.min(100, value.elapsed_ms / value.total_ms * 100).toFixed(2) + '%'; },
       });
@@ -760,7 +976,7 @@ class SatrPromoStudio extends HTMLElement {
     } finally {
       this.rendering = false;
       this.abortController = null;
-      root.getElementById('timeline').querySelectorAll('button, input, select').forEach((control) => { control.disabled = false; });
+      root.getElementById('timeline').querySelectorAll('button, input, select').forEach((control) => { control.disabled = control.dataset.locked === '1'; });
       this.syncApproval();
     }
   }
