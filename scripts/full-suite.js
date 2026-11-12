@@ -99,6 +99,8 @@ const SUITE = [
   'test:promocapture-live',
   'test:promo-studio',
   'test:promostudio-batch1',
+  'test:promo-timeline',
+  'test:promo-golden-live',
   'test:claude-auth',
   'test:probe-version',
   'test:readiness',

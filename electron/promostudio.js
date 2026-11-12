@@ -9,6 +9,8 @@ const MAX_SCENES = 40;
 const MAX_CAPTION = 500;
 const MIN_DURATION_MS = 250;
 const MAX_DURATION_MS = 120000;
+// سقف مجموع مدد المشاهد؛ يطابق MAX_TOTAL_MS في src/ui/lib/promo/promo-timeline.js (يحرسه test:promo-timeline).
+const MAX_TOTAL_MS = 180000;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.webm', '.mp4']);
@@ -132,6 +134,9 @@ function sanitizeStoryboard(input, options) {
     scene.voice_missing = raw.voice && !voice ? true : undefined;
     scenes.push(scene);
   }
+  const totalMs = scenes.reduce((sum, scene) => sum + scene.duration_ms, 0);
+  // التحميل يتسامح كي يفتح مشروع قديم طويل، والواجهة تمنع اعتماده حتى يُقصَّر.
+  if (totalMs > MAX_TOTAL_MS && !allowMissing) return { ok: false, error: 'bad_total_duration', total_ms: totalMs };
   let aspect = promocapture.sanitizeAspect(input && input.aspect);
   if (!aspect && typeof settings.aspectForPath === 'function' && scenes[0] && !scenes[0].asset_missing) {
     aspect = promocapture.sanitizeAspect(settings.aspectForPath(scenes[0].asset));
@@ -310,7 +315,7 @@ function create(initialDeps) {
 const singleton = create();
 
 module.exports = {
-  MAX_SCENES, MAX_CAPTION, MIN_DURATION_MS, MAX_DURATION_MS,
+  MAX_SCENES, MAX_CAPTION, MIN_DURATION_MS, MAX_DURATION_MS, MAX_TOTAL_MS,
   VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, AUDIO_EXTENSIONS, TRANSITIONS,
   FITS, CAPTION_POSITIONS, CAPTION_STYLES,
   DEFAULT_CLIP_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME,

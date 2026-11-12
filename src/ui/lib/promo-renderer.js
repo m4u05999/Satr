@@ -1,4 +1,9 @@
 import { pickRecMime } from './media-recorder.js';
+import { buildTimeline } from './promo/promo-timeline.js';
+import { renderFrame, drawCaption } from './promo/promo-frame.js';
+
+// drawCaption يبقى مُصدَّراً من هنا لمن يستورده من المسار القديم.
+export { drawCaption };
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const level = (value, fallback) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
@@ -50,72 +55,6 @@ async function loadAudio(src) {
   return audio;
 }
 
-function drawCover(context, element, sourceWidth, sourceHeight, width, height, alpha = 1) {
-  if (!sourceWidth || !sourceHeight) return;
-  const scale = Math.max(width / sourceWidth, height / sourceHeight);
-  const drawWidth = sourceWidth * scale;
-  const drawHeight = sourceHeight * scale;
-  context.save();
-  context.globalAlpha = alpha;
-  context.drawImage(element, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-  context.restore();
-}
-
-function drawContain(context, element, sourceWidth, sourceHeight, width, height, alpha = 1) {
-  if (!sourceWidth || !sourceHeight) return;
-  const scale = Math.min(width / sourceWidth, height / sourceHeight);
-  const drawWidth = sourceWidth * scale;
-  const drawHeight = sourceHeight * scale;
-  context.save();
-  context.globalAlpha = alpha;
-  context.drawImage(element, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-  context.restore();
-}
-
-function wrapCaption(context, caption, maxWidth) {
-  const words = String(caption || '').split(/\s+/).filter(Boolean);
-  const lines = [];
-  let line = '';
-  for (const word of words) {
-    const candidate = line ? line + ' ' + word : word;
-    if (line && context.measureText(candidate).width > maxWidth) { lines.push(line); line = word; }
-    else line = candidate;
-  }
-  if (line) lines.push(line);
-  return lines.slice(0, 3);
-}
-
-export function drawCaption(context, caption, width, height, colors, position = 'bottom', style = 'box') {
-  if (!caption) return 0;
-  const fontSize = Math.max(30, Math.round(height * 0.052));
-  const lineHeight = Math.round(fontSize * 1.45);
-  const padding = Math.round(fontSize * 0.72);
-  context.save();
-  context.direction = 'rtl';
-  context.textAlign = 'right';
-  context.textBaseline = 'middle';
-  context.font = `700 ${fontSize}px "IBM Plex Sans Arabic", sans-serif`;
-  const lines = wrapCaption(context, caption, width * 0.78);
-  if (!lines.length) { context.restore(); return 0; }
-  const boxHeight = lines.length * lineHeight + padding * 2;
-  const boxWidth = Math.min(width * 0.88, Math.max(...lines.map((line) => context.measureText(line).width)) + padding * 2);
-  const x = width - Math.round(width * 0.06);
-  const y = position === 'top' ? Math.round(height * 0.07)
-    : position === 'center' ? Math.round((height - boxHeight) / 2)
-      : height - Math.round(height * 0.07) - boxHeight;
-  if (style !== 'minimal') {
-    context.fillStyle = colors.captionBackground;
-    context.fillRect(x - boxWidth, y, boxWidth, boxHeight);
-  } else {
-    context.shadowColor = colors.captionBackground;
-    context.shadowBlur = Math.max(4, Math.round(fontSize * 0.18));
-  }
-  context.fillStyle = colors.captionText;
-  lines.forEach((line, index) => context.fillText(line, x - padding, y + padding + lineHeight * (index + 0.5)));
-  context.restore();
-  return lines.length;
-}
-
 function mediaStop(recorder) {
   return new Promise((resolve) => {
     recorder.addEventListener('stop', resolve, { once: true });
@@ -151,7 +90,10 @@ export async function renderStoryboard(options) {
   let audioSources = 0;
   let trimmedScenes = 0;
   let containedScenes = 0;
-  const totalMs = scenes.reduce((sum, scene) => sum + scene.duration_ms, 0);
+  // المسار القديم يسير بالساعة الحقيقية، لكن الرسم نفسه يمر بـrenderFrame الحتمية.
+  const timeline = buildTimeline({ scenes });
+  const runtime = { width: canvas.width, height: canvas.height, colors, timeline };
+  const totalMs = timeline.totalMs;
   let completedMs = 0;
   try {
     for (let index = 0; index < scenes.length; index += 1) {
@@ -196,26 +138,15 @@ export async function renderStoryboard(options) {
         }
         if (Number(scene.trim_start_ms) > 0) trimmedScenes += 1;
         if (scene.fit === 'contain') containedScenes += 1;
+        const frames = new Map([[index, { source: visual.element, width: visual.width, height: visual.height }]]);
         const startedAt = performance.now();
         while (true) {
           if (settings.signal && settings.signal.aborted) throw new Error('render_cancelled');
           const elapsed = performance.now() - startedAt;
           if (elapsed >= scene.duration_ms) break;
-          context.fillStyle = colors.background;
-          context.fillRect(0, 0, canvas.width, canvas.height);
-          const draw = scene.fit === 'contain' ? drawContain : drawCover;
-          draw(context, visual.element, visual.width, visual.height, canvas.width, canvas.height);
-          if (scene.transition === 'fade') {
-            const edge = Math.min(500, scene.duration_ms / 3);
-            const opacity = elapsed < edge ? 1 - elapsed / edge
-              : elapsed > scene.duration_ms - edge ? 1 - (scene.duration_ms - elapsed) / edge : 0;
-            if (opacity > 0) {
-              context.save(); context.globalAlpha = opacity; context.fillStyle = colors.background;
-              context.fillRect(0, 0, canvas.width, canvas.height); context.restore();
-            }
-          }
-          if (drawCaption(context, scene.caption, canvas.width, canvas.height, colors,
-            scene.caption_position, scene.caption_style)) captionsRendered += 1;
+          // الحد الأعلى يمنع انزلاق آخر إطار إلى المشهد التالي عند حافة المدة.
+          const drawnFrame = renderFrame(context, runtime, completedMs + Math.min(elapsed, scene.duration_ms - 0.001), frames);
+          if (drawnFrame && drawnFrame.captionLines) captionsRendered += 1;
           if (typeof settings.onProgress === 'function') {
             settings.onProgress({ index, elapsed_ms: Math.min(totalMs, completedMs + elapsed), total_ms: totalMs });
           }

@@ -62,3 +62,32 @@
   `dist/promo-probe/result-*.json`. الوسم المقترح `generation`. مسجَّلة `OBS-223`.
 - **`source_enumerated: false` في التشغيلات كلها:** `desktopCapturer.getSources` لم يُعِد نافذة
   الالتقاط فاستُعمل معرّفها الذاتي. لم يؤثر على التسجيل.
+
+### الدفعة 1 — `renderFrame` الحتمية والخط الزمني (2026-11-13)
+
+**الفرع:** `feat/promo-director-b1` فوق `feat/promo-director-b0`.
+
+**ما تغيّر:**
+
+- `src/ui/lib/promo/promo-timeline.js` (نقية): `buildTimeline`، `sceneAt`، `frameCount`، `frameTimeMs`،
+  `fadeOpacity`، والثابت `MAX_TOTAL_MS = 180000`.
+- `src/ui/lib/promo/promo-frame.js`: `renderFrame(context, runtime, tMs, frames)` و`drawCaption`.
+  `frames` خريطة من **فهرس المشهد** إلى `{ source, width, height }`. لا ساعة ولا قراءة لزمن عنصر فيديو.
+- `promo-renderer.js` (المسار القديم) و`promo-studio.js` (المعاينة) يرسمان عبر `renderFrame`؛ حُذفت
+  نسختا `drawCover/drawContain` المكررتان من الملفين. المسار القديم ما زال يسير بالساعة الحقيقية؛
+  الذي صار حتمياً هو الرسم لا التوقيت.
+- `electron/promostudio.js`: `sanitizeStoryboard` يرفض مجموعاً فوق 180 ثانية بـ`bad_total_duration`.
+  التحميل (`allowMissingAssets`) يتسامح كي يفتح مشروع v1 طويل، والواجهة تعطّل الاعتماد وتشرح السبب.
+
+**الحارس المرجعي — انحراف مقصود عن الخطة:** الخطة طلبت «بصمات محفوظة». البصمات تتغير بتغير
+الخط والكرت ونظام التشغيل، فتُسقط CI بلا عطل. البديل في `scripts/fixtures/promo-golden-fixture.js`:
+نسخة حرفية من كود الرسم عند `690eb6b` تُرسم على الجهاز نفسه وتُقارن بكسلاً ببكسل بـ`renderFrame`،
+مع رسم كل زمن مرتين بينهما زمن آخر لإثبات انعدام الحالة. 24 حالة (3 مقاسات × 8 أزمنة) بفارق صفر.
+كل دفعة لاحقة تضيف حقولاً اختيارية يجب أن تُبقي هذا الحارس أخضر: مشهد v1 بلا حقول جديدة = مظهر v1.
+
+**الاختبارات:** `test:promo-timeline` (56 فحصاً، node) و`test:promo-golden-live` (electron)، كلاهما في
+الطقم. والقائمة: `test:promo-studio`، `test:promostudio-batch1`، `test:promo-preview`،
+`test:promo-audio-live`، `test:promocapture` ناجحة بلا تعديل توقعاتها.
+
+**حدّ مُصرَّح به:** الحارس المرجعي يستعمل صوراً لا فيديو، فلا يثبت أن إطار الفيديو الصحيح يصل
+`renderFrame` عند الزمن الصحيح؛ ذلك على `frame-source.js` في الدفعة 5.

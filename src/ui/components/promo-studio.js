@@ -1,6 +1,8 @@
 // <satr-promo-studio> — خط زمني بشري ومُصيّر فوري صفري الاعتماديات لإعلانات المنتج.
 import { sheet } from '../lib/sheet.js';
-import { renderStoryboard, drawCaption } from '../lib/promo-renderer.js';
+import { renderStoryboard } from '../lib/promo-renderer.js';
+import { buildTimeline, MAX_TOTAL_MS } from '../lib/promo/promo-timeline.js';
+import { renderFrame } from '../lib/promo/promo-frame.js';
 
 // ألوان الرسم على canvas — **من tokens الثيمة أولاً**، لأن المعاينة يجب أن تطابق
 // التصيير النهائي الذي يقرأ الـtokens نفسها. والاحتياطات الصلبة هنا ضرورة تقنية لا
@@ -173,28 +175,6 @@ function formatDuration(totalMs) {
 
 function formatSeconds(totalMs) {
   return (totalMs / 1000).toFixed(1) + ' ث';
-}
-
-function drawCover(context, element, sourceWidth, sourceHeight, width, height, alpha = 1) {
-  if (!sourceWidth || !sourceHeight) return;
-  const scale = Math.max(width / sourceWidth, height / sourceHeight);
-  const drawWidth = sourceWidth * scale;
-  const drawHeight = sourceHeight * scale;
-  context.save();
-  context.globalAlpha = alpha;
-  context.drawImage(element, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-  context.restore();
-}
-
-function drawContain(context, element, sourceWidth, sourceHeight, width, height, alpha = 1) {
-  if (!sourceWidth || !sourceHeight) return;
-  const scale = Math.min(width / sourceWidth, height / sourceHeight);
-  const drawWidth = sourceWidth * scale;
-  const drawHeight = sourceHeight * scale;
-  context.save();
-  context.globalAlpha = alpha;
-  context.drawImage(element, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-  context.restore();
 }
 
 function loadPreviewVisual(url, assetType) {
@@ -447,18 +427,11 @@ class SatrPromoStudio extends HTMLElement {
           });
         }
       }
-      const draw = scene.fit === 'contain' ? drawContain : drawCover;
-      draw(context, visual.element, visual.width, visual.height, canvas.width, canvas.height);
-      if (scene.transition === 'fade') {
-        const edge = Math.min(500, scene.duration_ms / 3);
-        const opacity = localTime < edge ? 1 - localTime / edge
-          : localTime > scene.duration_ms - edge ? 1 - (scene.duration_ms - localTime) / edge : 0;
-        if (opacity > 0) {
-          context.save(); context.globalAlpha = opacity; context.fillStyle = colors.background;
-          context.fillRect(0, 0, canvas.width, canvas.height); context.restore();
-        }
-      }
-      drawCaption(context, scene.caption, canvas.width, canvas.height, colors, scene.caption_position, scene.caption_style);
+      // الإطار جاهز عند الزمن المطلوب؛ الرسم نفسه في renderFrame المشتركة مع التصدير.
+      const timeline = buildTimeline(this.storyboard);
+      renderFrame(context, { width: canvas.width, height: canvas.height, colors, timeline },
+        placement.start + Math.min(localTime, scene.duration_ms - 0.001),
+        new Map([[placement.index, { source: visual.element, width: visual.width, height: visual.height }]]));
     } catch (error) {
       context.fillStyle = colors.error;
       context.fillRect(0, 0, canvas.width, canvas.height);
@@ -660,7 +633,10 @@ class SatrPromoStudio extends HTMLElement {
   updateStatus() {
     if (this.rendering) return;
     const total = this.storyboard.scenes.reduce((sum, scene) => sum + scene.duration_ms, 0);
-    this.shadowRoot.getElementById('status').textContent = this.storyboard.scenes.length
+    // سقف الإعلان يُفرض في main أيضاً؛ هنا نشرحه قبل أن يصطدم به المستخدم عند الحفظ.
+    this.shadowRoot.getElementById('status').textContent = total > MAX_TOTAL_MS
+      ? 'المدة الإجمالية ' + formatDuration(total) + ' تتجاوز الحد (' + formatDuration(MAX_TOTAL_MS) + '). قصّر المشاهد أو احذف بعضها.'
+      : this.storyboard.scenes.length
       ? 'المدة الإجمالية: ' + formatDuration(total) + ' · عدّل الخط الزمني ثم اعتمده.'
       : 'أضف مشهداً أو اطلب من الوكيل اقتراح storyboard.';
   }
@@ -676,7 +652,7 @@ class SatrPromoStudio extends HTMLElement {
 
   syncApproval() {
     const approve = this.shadowRoot.getElementById('approve');
-    const hasMissing = this.hasMissingAssets();
+    const hasMissing = this.hasMissingAssets() || buildTimeline(this.storyboard).overLimit;
     approve.classList.toggle('approved', this.approved);
     approve.textContent = this.approved ? 'معتمد ✓' : 'اعتماد الخط الزمني';
     approve.disabled = this.rendering || !this.storyboard.scenes.length || hasMissing;
