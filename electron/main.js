@@ -56,6 +56,7 @@ const kimi = require('./kimi'); // محرك Kimi Code الأصيل عبر ACP �
 const previewrecording = require('./previewrecording'); // تنزيل تسجيل المعاينة إلى Downloads + إشعار المسار
 const promocapture = require('./promocapture'); // نافذة التقاط المنتج المرئية + تسجيل 30fps في renderer
 const promostudio = require('./promostudio'); // storyboard محلي منقّى + حل أصول Downloads للاستوديو
+const promoexport = require('./promoexport');
 const testsprite = require('./testsprite'); // تكامل TestSprite MCP — مفتاح مشفّر، لا يظهر كمحرّك
 const testspritejobs = require('./testspritejobs'); // جولة TestSprite معمّرة ومستقلة عن token الدور
 const claudeauth = require('./claudeauth');
@@ -424,6 +425,9 @@ function createWindow() {
       if (webContents) preview.attachExternalWebContents(webContents);
     },
   });
+  // كاتب التصدير النهائي: الجذر من main وحده، وبقايا تصدير انقطع تُحذف عند الإقلاع.
+  promoexport.configure({ downloadsPath: app.getPath('downloads') });
+  promoexport.cleanupOrphans();
   promostudio.configure({
     downloadsPath: app.getPath('downloads'),
     exists: fs.existsSync,
@@ -3772,6 +3776,20 @@ ipcMain.handle('satr:promoAssetUrl', (event, payload) => {
   if (!candidate || candidate.length > 4096 || !path.isAbsolute(candidate)) return { ok: false, error: 'bad_path' };
   return promostudio.assetUrl(candidate);
 });
+
+// ── تصدير الإعلان إطاراً بإطار (الدفعة 6): المصيّر يرمّز ويُغلِّف، وmain وحده يكتب. ──
+// لا مسار يعبر من المصيّر: begin يختار الاسم داخل Downloads ويعيد مقبضاً، والباقي بالمقبض.
+// هذه القنوات لا تُسجَّل في أي قائمة أدوات وكيل (يحرسه test:promo-agent-isolation في الدفعة 8).
+ipcMain.handle('satr:promoExportBegin', () => promoexport.begin());
+ipcMain.handle('satr:promoExportChunk', (event, payload) => {
+  const input = payload && typeof payload === 'object' ? payload : {};
+  return promoexport.chunk(input.handle, input.seq, input.bytes);
+});
+ipcMain.handle('satr:promoExportFinish', (event, payload) => {
+  const input = payload && typeof payload === 'object' ? payload : {};
+  return promoexport.finish(input.handle, input.header);
+});
+ipcMain.handle('satr:promoExportAbort', (event, payload) => promoexport.abort(payload && payload.handle));
 
 // قراءة بايتات أصل فيديو من الـstoryboard الحالي للتصدير إطاراً بإطار. الحصر في promostudio.assetRead.
 ipcMain.handle('satr:promoAssetRead', (event, payload) => {

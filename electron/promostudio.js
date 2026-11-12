@@ -347,7 +347,8 @@ function create(initialDeps) {
   // assetUrl: الأصل في الـstoryboard الحالي وداخل Downloads. الطول محدود لكل نداء.
   function assetRead(candidate, offset, length) {
     if (!allowedPath(candidate)) return { ok: false, error: 'not_in_storyboard' };
-    const asset = localAsset(deps.downloadsPath, candidate, VIDEO_EXTENSIONS, deps.exists, deps.realpath);
+    // الفيديو لإطاراته وصوته، والصوت (موسيقى/تعليق) للمزج. الصور لا تُقرأ بايتاتها.
+    const asset = localAsset(deps.downloadsPath, candidate, new Set([...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS]), deps.exists, deps.realpath);
     if (!asset) return { ok: false, error: 'bad_asset' };
     if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(length) || length < 0 || length > MAX_ASSET_READ_BYTES) {
       return { ok: false, error: 'bad_range' };

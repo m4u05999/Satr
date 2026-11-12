@@ -109,6 +109,8 @@ const SUITE = [
   'test:promo-source',
   'test:promo-asset-read',
   'test:promo-frame-source-live',
+  'test:promo-export-ipc',
+  'test:promo-export-live',
   'test:claude-auth',
   'test:probe-version',
   'test:readiness',

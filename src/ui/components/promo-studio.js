@@ -6,6 +6,8 @@ import { renderFrame } from '../lib/promo/promo-frame.js';
 import { pointerTrack, idleGaps } from '../lib/promo/promo-camera.js';
 import { TEXT_ANIMATIONS } from '../lib/promo/promo-text.js';
 import { safeArea } from '../lib/promo/promo-subtitles.js';
+import { EXPORT_PRESETS, probeExportSupport } from '../lib/promo-export/encode.js';
+import { exportStoryboard } from '../lib/promo-export/export.js';
 import { CAMERA_CSS, buildCameraRow, cleanCamera, suggestCamera, addKeyframe, editKeyframe, shiftKeyframes } from '../lib/promo/studio-camera.js';
 
 // ألوان الرسم على canvas — **من tokens الثيمة أولاً**، لأن المعاينة يجب أن تطابق
@@ -120,7 +122,9 @@ const MARKUP = `
       <button id="projectSave" type="button">حفظ المشروع</button>
       <button id="projectOpen" type="button">فتح مشروع</button>
       <button id="approve" type="button">اعتماد الخط الزمني</button>
+      <select id="quality" aria-label="جودة التصدير"></select>
       <button id="render" type="button" disabled>صيّر MP4</button>
+      <button id="cancel" type="button" hidden>إلغاء التصيير</button>
     </footer>
   </section>
   <div class="import-dialog" id="importDialog" hidden>
@@ -295,6 +299,11 @@ class SatrPromoStudio extends HTMLElement {
     root.getElementById('timeline').addEventListener('change', (event) => this.handleEdit(event));
     root.getElementById('timeline').addEventListener('click', (event) => this.handleAction(event));
     root.getElementById('timeline').addEventListener('pointerdown', (event) => this.startKeyDrag(event));
+    root.getElementById('cancel').addEventListener('click', () => { if (this.abortController) this.abortController.abort(); });
+    const quality = root.getElementById('quality');
+    for (const [value, preset] of Object.entries(EXPORT_PRESETS)) {
+      const option = document.createElement('option'); option.value = value; option.textContent = preset.label; quality.appendChild(option);
+    }
     root.getElementById('aspectSelect').addEventListener('change', (event) => {
       if (this.rendering || !Object.hasOwn(ASPECT_SIZE, event.target.value)) return;
       this.storyboard.aspect = event.target.value;
@@ -362,6 +371,56 @@ class SatrPromoStudio extends HTMLElement {
     if (this.rerecording) window.satr.promoCaptureStop().catch(() => {});
     this.removeAttribute('open');
     this.dispatchEvent(new CustomEvent('promo-studio-visible', { bubbles: true, detail: false }));
+  }
+
+  // ── محرك التصدير (الدفعة 6): ما يدعمه هذا الجهاز لمقاس المشروع ──
+  async refreshExportSupport() {
+    const aspect = this.storyboard.aspect;
+    if (!this.exportSupport) this.exportSupport = new Map();
+    if (!this.exportSupport.has(aspect)) {
+      let support = { video: {}, audio: false, engine: false };
+      try { support = await probeExportSupport(aspect); } catch {}
+      // بلا قنوات الكتابة في preload لا محرك جديد مهما دعم المتصفح.
+      if (typeof window.satr.promoExportBegin !== 'function' || typeof window.satr.promoAssetRead !== 'function') support.engine = false;
+      this.exportSupport.set(aspect, support);
+    }
+    if (aspect !== this.storyboard.aspect) return;
+    const support = this.exportSupport.get(aspect);
+    const quality = this.shadowRoot.getElementById('quality');
+    for (const option of quality.options) {
+      // الخيار غير المدعوم مقفل؛ لا يُخفى كي يعرف المستخدم أنه موجود ولماذا لا يعمل.
+      option.disabled = !support.engine || !support.video[option.value];
+      option.title = option.disabled ? 'غير مدعوم على هذا الجهاز' : '';
+    }
+    if (quality.selectedOptions[0] && quality.selectedOptions[0].disabled) quality.value = '1080p30';
+    quality.disabled = this.rendering || !support.engine;
+    quality.title = support.engine ? 'جودة التصدير' : 'المحرك الجديد غير متاح على هذا الجهاز؛ سيُستعمل التصيير الفوري';
+  }
+
+  // التصدير إطاراً بإطار عبر WebCodecs. يعيد النتيجة، أو يرمي إن تعذّر (فيُجرَّب المسار القديم).
+  async renderWithEngine(colors, progress, status) {
+    let lastHandle = '';
+    const writer = {
+      begin: async () => { const result = await window.satr.promoExportBegin(); if (result && result.ok) lastHandle = result.handle; return result; },
+      chunk: (handle, seq, bytes) => window.satr.promoExportChunk(handle, seq, bytes),
+      finish: (handle, header) => window.satr.promoExportFinish(handle, header),
+      abort: (handle) => window.satr.promoExportAbort(handle),
+    };
+    try {
+      return await exportStoryboard({
+        scenes: await this.resolvedScenes(), aspect: this.storyboard.aspect, preset: this.shadowRoot.getElementById('quality').value,
+        colors, pointers: this.pointerTracks(), signal: this.abortController.signal, writer,
+        readAsset: (assetPath, offset, length) => window.satr.promoAssetRead(assetPath, offset, length),
+        onProgress: (value) => {
+          progress.style.width = Math.min(100, value.frame / value.frames * 100).toFixed(2) + '%';
+          status.textContent = value.stage === 'audio' ? 'جارٍ مزج الصوت…'
+            : value.stage === 'finalize' ? 'جارٍ إنهاء الملف…' : 'جارٍ التصدير: إطار ' + value.frame + ' من ' + value.frames;
+        },
+      });
+    } catch (error) {
+      if (lastHandle) { try { await window.satr.promoExportAbort(lastHandle); } catch {} }
+      throw error;
+    }
   }
 
   // خطوط المساحة الآمنة للمنصة: في المعاينة فقط، ولا تدخل التصدير.
@@ -873,6 +932,7 @@ class SatrPromoStudio extends HTMLElement {
     root.getElementById('aspect').textContent = this.storyboard.aspect;
     root.getElementById('aspectSelect').value = this.storyboard.aspect;
     root.getElementById('aspectSelect').disabled = this.rendering;
+    this.refreshExportSupport();
     const size = ASPECT_SIZE[this.storyboard.aspect];
     const canvas = root.getElementById('canvas'); canvas.width = size.width; canvas.height = size.height;
     this.previewCache.clear();
@@ -992,6 +1052,23 @@ class SatrPromoStudio extends HTMLElement {
     return scenes;
   }
 
+  // المسار القديم: تسجيل اللوحة بزمن حقيقي عبر MediaRecorder. يبقى احتياطياً (قيد الخطة 7).
+  async renderLegacy(styles, progress) {
+    const root = this.shadowRoot;
+    const result = await renderStoryboard({
+      canvas: root.getElementById('canvas'), scenes: await this.resolvedScenes(), signal: this.abortController.signal,
+      pointers: this.pointerTracks(), aspect: this.storyboard.aspect,
+      colors: { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold') },
+      onProgress: (value) => { progress.style.width = Math.min(100, value.elapsed_ms / value.total_ms * 100).toFixed(2) + '%'; },
+    });
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const filename = 'satr-promo-final-' + timestamp + '.' + result.format.ext;
+    const url = URL.createObjectURL(result.blob);
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename;
+    document.body.appendChild(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+    return { ...result, filename };
+  }
+
   async render() {
     if (!this.approved || this.rendering) throw new Error('approval_required');
     if (this.hasMissingAssets()) throw new Error('missing_assets');
@@ -1001,28 +1078,39 @@ class SatrPromoStudio extends HTMLElement {
     const root = this.shadowRoot;
     const status = root.getElementById('status');
     const progress = root.getElementById('progress');
-    status.textContent = 'جارٍ التصيير الفوري… إبقاء الاستوديو مفتوحاً مطلوب.';
+    status.textContent = 'جارٍ التحضير للتصدير…';
+    root.getElementById('cancel').hidden = false;
     try {
       const styles = getComputedStyle(this);
       // العناوين تُقاس بالخط نفسه في DOM واللوحة؛ خط لم يُحمَّل بعد يُسقط حارس التطابق.
       try {
         await Promise.all([700, 500].map((weight) => document.fonts.load(weight + ' 48px "IBM Plex Sans Arabic"', 'ع A ٢')));
       } catch (error) {}
-      const result = await renderStoryboard({
-        canvas: root.getElementById('canvas'), scenes: await this.resolvedScenes(), signal: this.abortController.signal,
-        pointers: this.pointerTracks(), aspect: this.storyboard.aspect,
-        colors: { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold') },
-        onProgress: (value) => { progress.style.width = Math.min(100, value.elapsed_ms / value.total_ms * 100).toFixed(2) + '%'; },
-      });
-      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-      const filename = 'satr-promo-final-' + timestamp + '.' + result.format.ext;
-      const url = URL.createObjectURL(result.blob);
-      const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename;
-      document.body.appendChild(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
-      status.textContent = 'اكتمل التصيير إلى Downloads: ' + filename;
+      const colors = { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold') };
+      // الفحص غير متزامن ويبدأ عند فتح الاستوديو؛ ننتظره هنا كي لا يسبقه ضغط «صيّر».
+      await this.refreshExportSupport();
+      const support = this.exportSupport && this.exportSupport.get(this.storyboard.aspect);
+      let result = null, filename = '', engineNote = '';
+      if (support && support.engine && !this.forceLegacyExport) {
+        try {
+          result = await this.renderWithEngine(colors, progress, status);
+          filename = result.filename;
+        } catch (error) {
+          if (error && error.message === 'render_cancelled') throw error;
+          // المحرك الجديد تعذّر بعد إعادة المحاولة برمجياً: المسار القديم يبقى صمام الأمان.
+          engineNote = ' (استُعمل التصيير الفوري: ' + String(error && error.message || error).slice(0, 60) + ')';
+          progress.style.width = '0';
+        }
+      } else if (!this.forceLegacyExport) engineNote = ' (هذا الجهاز لا يدعم التصدير السريع؛ استُعمل التصيير الفوري)';
+      if (!result) {
+        status.textContent = 'جارٍ التصيير الفوري… إبقاء الاستوديو مفتوحاً مطلوب.';
+        result = await this.renderLegacy(styles, progress);
+        filename = result.filename;
+      }
+      status.textContent = 'اكتمل التصيير إلى Downloads: ' + filename + engineNote;
       progress.style.width = '100%';
       this.dispatchEvent(new CustomEvent('promo-rendered', { bubbles: true,
-        detail: { ...result, blob: undefined, bytes: result.blob.size, filename } }));
+        detail: { ...result, blob: undefined, bytes: result.blob ? result.blob.size : result.bytes, filename } }));
       return result;
     } catch (error) {
       if (error && error.message === 'render_cancelled') status.textContent = 'أُلغي التصيير.';
@@ -1030,6 +1118,7 @@ class SatrPromoStudio extends HTMLElement {
       else status.textContent = 'تعذّر التصيير. افحص المقاطع والصوت المحلي.';
       throw error;
     } finally {
+      root.getElementById('cancel').hidden = true;
       this.rendering = false;
       this.abortController = null;
       root.getElementById('timeline').querySelectorAll('button, input, select').forEach((control) => { control.disabled = control.dataset.locked === '1'; });

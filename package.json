@@ -251,6 +251,8 @@
     "test:promo-source": "node scripts/promo-source-test.js",
     "test:promo-asset-read": "node scripts/promo-asset-read-test.js",
     "test:promo-frame-source-live": "electron scripts/promo-frame-source-live-test.js",
+    "test:promo-export-ipc": "node scripts/promo-export-ipc-test.js",
+    "test:promo-export-live": "electron scripts/promo-export-live-test.js",
     "probe:promo": "electron scripts/promo-probe-live.js",
     "test:preview-shield": "electron scripts/preview-shield-test.js",
     "test:topbar-surfaces": "electron scripts/topbar-surfaces-test.js",
