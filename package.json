@@ -241,6 +241,7 @@
     "test:promostudio-batch1": "node scripts/promostudio-batch1-test.js",
     "test:promo-preview": "electron scripts/promo-studio-preview-test.js",
     "test:promo-audio-live": "electron scripts/promo-audio-live-test.js",
+    "probe:promo": "electron scripts/promo-probe-live.js",
     "test:preview-shield": "electron scripts/preview-shield-test.js",
     "test:topbar-surfaces": "electron scripts/topbar-surfaces-test.js",
     "test:preview-controls-ui": "electron scripts/preview-controls-ui-test.js",
