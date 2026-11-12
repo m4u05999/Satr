@@ -4,6 +4,8 @@ import { renderStoryboard } from '../lib/promo-renderer.js';
 import { buildTimeline, MAX_TOTAL_MS } from '../lib/promo/promo-timeline.js';
 import { renderFrame } from '../lib/promo/promo-frame.js';
 import { pointerTrack, idleGaps } from '../lib/promo/promo-camera.js';
+import { TEXT_ANIMATIONS } from '../lib/promo/promo-text.js';
+import { safeArea } from '../lib/promo/promo-subtitles.js';
 import { CAMERA_CSS, buildCameraRow, cleanCamera, suggestCamera, addKeyframe, editKeyframe, shiftKeyframes } from '../lib/promo/studio-camera.js';
 
 // ألوان الرسم على canvas — **من tokens الثيمة أولاً**، لأن المعاينة يجب أن تطابق
@@ -20,6 +22,7 @@ function canvasColors(styles) {
     background: pick('--bg-deep', CANVAS_FALLBACK.background),
     captionBackground: pick('--scrim', CANVAS_FALLBACK.scrim),
     captionText: pick('--text', CANVAS_FALLBACK.text),
+    accent: pick('--gold', CANVAS_FALLBACK.text),
     muted: pick('--text-faint', CANVAS_FALLBACK.muted),
     error: pick('--surface-2', CANVAS_FALLBACK.error),
   };
@@ -54,6 +57,7 @@ const studioSheet = sheet(`
   .row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .row label { display: flex; align-items: center; gap: var(--space-1); color: var(--text-dim); font-size: 11.5px; }
   .caption { width: 100%; min-width: 0; unicode-bidi: plaintext; }
+  .highlight { width: 110px; unicode-bidi: plaintext; }
   .duration { width: 92px; direction: ltr; text-align: left; font-family: var(--mono); }
   .trim { width: 92px; direction: ltr; text-align: left; font-family: var(--mono); }
   .fit, .position, .style { min-width: 92px; }
@@ -100,7 +104,7 @@ const studioSheet = sheet(`
 const MARKUP = `
   <div class="backdrop"></div>
   <section class="studio" role="document">
-    <header><h2>🎬 استوديو البرومو</h2><span id="aspect" dir="ltr">16:9</span><button id="close" type="button" title="إغلاق" aria-label="إغلاق استوديو البرومو">✕</button></header>
+    <header><h2>🎬 استوديو البرومو</h2><span id="aspect" dir="ltr">16:9</span><select id="aspectSelect" aria-label="قالب المقاس"><option value="16:9">يوتيوب / X عرضي</option><option value="9:16">سناب / تيك توك / ريلز</option><option value="1:1">إنستقرام مربع</option></select><button id="close" type="button" title="إغلاق" aria-label="إغلاق استوديو البرومو">✕</button></header>
     <div class="body">
       <div class="timeline" id="timeline"></div>
       <div class="preview">
@@ -150,6 +154,12 @@ function cloneStoryboard(value) {
     voice: typeof scene.voice === 'string' ? scene.voice : '',
     voice_missing: scene.voice_missing === true,
     trim_start_ms: Number.isInteger(scene.trim_start_ms) ? Math.max(0, Math.min(120000, scene.trim_start_ms)) : 0,
+    text_style: {
+      animation: TEXT_ANIMATIONS.includes(scene.text_style && scene.text_style.animation) ? scene.text_style.animation : 'none',
+      highlight: scene.text_style && typeof scene.text_style.highlight === 'string' ? scene.text_style.highlight.trim().split(/\s+/)[0].slice(0, 60) : '',
+    },
+    voiceover_ar: typeof scene.voiceover_ar === 'string' ? scene.voiceover_ar.slice(0, 2000) : '',
+    subtitles: scene.subtitles === true,
     camera: cleanCamera(scene.camera, Number.isInteger(scene.duration_ms) ? Math.max(250, Math.min(120000, scene.duration_ms)) : 3000),
     fit: scene.fit === 'contain' ? 'contain' : 'cover',
     caption_position: ['top', 'center', 'bottom'].includes(scene.caption_position) ? scene.caption_position : 'bottom',
@@ -285,6 +295,11 @@ class SatrPromoStudio extends HTMLElement {
     root.getElementById('timeline').addEventListener('change', (event) => this.handleEdit(event));
     root.getElementById('timeline').addEventListener('click', (event) => this.handleAction(event));
     root.getElementById('timeline').addEventListener('pointerdown', (event) => this.startKeyDrag(event));
+    root.getElementById('aspectSelect').addEventListener('change', (event) => {
+      if (this.rendering || !Object.hasOwn(ASPECT_SIZE, event.target.value)) return;
+      this.storyboard.aspect = event.target.value;
+      this.changed();
+    });
     root.getElementById('scrubRange').addEventListener('input', (event) => this.handleScrub(event));
     root.getElementById('import').addEventListener('click', () => this.openImport());
     root.getElementById('importClose').addEventListener('click', () => this.closeImport());
@@ -347,6 +362,20 @@ class SatrPromoStudio extends HTMLElement {
     if (this.rerecording) window.satr.promoCaptureStop().catch(() => {});
     this.removeAttribute('open');
     this.dispatchEvent(new CustomEvent('promo-studio-visible', { bubbles: true, detail: false }));
+  }
+
+  // خطوط المساحة الآمنة للمنصة: في المعاينة فقط، ولا تدخل التصدير.
+  drawSafeArea(context, canvas, colors) {
+    if (this.rendering) return;
+    const safe = safeArea(this.storyboard.aspect);
+    context.save();
+    context.strokeStyle = colors.muted;
+    context.lineWidth = Math.max(2, Math.round(canvas.height / 540));
+    context.setLineDash([canvas.width / 60, canvas.width / 90]);
+    for (const y of [canvas.height * safe.top, canvas.height * (1 - safe.bottom)]) {
+      context.beginPath(); context.moveTo(0, Math.round(y)); context.lineTo(canvas.width, Math.round(y)); context.stroke();
+    }
+    context.restore();
   }
 
   // ── الكاميرا الذكية (الدفعة 2 من مخرج الإعلانات) ──
@@ -624,9 +653,10 @@ class SatrPromoStudio extends HTMLElement {
       }
       // الإطار جاهز عند الزمن المطلوب؛ الرسم نفسه في renderFrame المشتركة مع التصدير.
       const timeline = buildTimeline(this.storyboard);
-      renderFrame(context, { width: canvas.width, height: canvas.height, colors, timeline, pointers: this.pointerTracks() },
+      renderFrame(context, { width: canvas.width, height: canvas.height, colors, timeline, pointers: this.pointerTracks(), aspect: this.storyboard.aspect },
         placement.start + Math.min(localTime, scene.duration_ms - 0.001),
         new Map([[placement.index, { source: visual.element, width: visual.width, height: visual.height }]]));
+      this.drawSafeArea(context, canvas, colors);
     } catch (error) {
       context.fillStyle = colors.error;
       context.fillRect(0, 0, canvas.width, canvas.height);
@@ -793,6 +823,22 @@ class SatrPromoStudio extends HTMLElement {
         { value: 'box', label: 'صندوق' }, { value: 'minimal', label: 'بسيط' },
       ]));
 
+      const titles = document.createElement('div'); titles.className = 'row';
+      appendLabel(titles, 'حركة العنوان', makeSelect(scene.text_style.animation, 'text_animation', [
+        { value: 'none', label: 'ثابت' }, { value: 'words', label: 'كلمة بكلمة' },
+        { value: 'slide', label: 'انزلاق' }, { value: 'zoom', label: 'تكبير خفيف' },
+      ]));
+      const highlight = document.createElement('input');
+      highlight.className = 'highlight'; highlight.dataset.field = 'text_highlight'; highlight.value = scene.text_style.highlight;
+      highlight.maxLength = 60; highlight.placeholder = 'كلمة';
+      appendLabel(titles, 'إبراز كلمة', highlight);
+      const subtitles = document.createElement('input');
+      subtitles.type = 'checkbox'; subtitles.dataset.field = 'subtitles'; subtitles.checked = scene.subtitles;
+      appendLabel(titles, 'ترجمة على الشاشة', subtitles);
+      const voiceover = document.createElement('input');
+      voiceover.className = 'caption'; voiceover.dataset.field = 'voiceover_ar'; voiceover.value = scene.voiceover_ar;
+      voiceover.maxLength = 2000; voiceover.placeholder = 'نص التعليق الصوتي لهذا المشهد (يُعرض ترجمةً على الشاشة)…';
+
       const volumes = document.createElement('div'); volumes.className = 'row';
       volumes.append(
         makeVolume(scene.clip_volume, 'clip_volume', 'صوت المقطع'),
@@ -810,7 +856,7 @@ class SatrPromoStudio extends HTMLElement {
         actions.appendChild(button);
       }
       primary.appendChild(actions);
-      main.append(asset, caption, primary, visual, volumes);
+      main.append(asset, caption, primary, visual, titles, voiceover, volumes);
       if (!scene.asset_missing) {
         const events = this.eventsFor(scene);
         main.appendChild(buildCameraRow(scene, {
@@ -825,6 +871,8 @@ class SatrPromoStudio extends HTMLElement {
     });
     root.getElementById('empty').hidden = this.storyboard.scenes.length > 0;
     root.getElementById('aspect').textContent = this.storyboard.aspect;
+    root.getElementById('aspectSelect').value = this.storyboard.aspect;
+    root.getElementById('aspectSelect').disabled = this.rendering;
     const size = ASPECT_SIZE[this.storyboard.aspect];
     const canvas = root.getElementById('canvas'); canvas.width = size.width; canvas.height = size.height;
     this.previewCache.clear();
@@ -885,6 +933,10 @@ class SatrPromoStudio extends HTMLElement {
         if (control !== event.target) control.value = String(scene[field]);
       });
     } else if (field === 'caption') scene.caption = String(event.target.value || '').slice(0, 500);
+    else if (field === 'text_animation') scene.text_style.animation = TEXT_ANIMATIONS.includes(event.target.value) ? event.target.value : 'none';
+    else if (field === 'text_highlight') scene.text_style.highlight = String(event.target.value || '').trim().split(/\s+/)[0].slice(0, 60);
+    else if (field === 'voiceover_ar') scene.voiceover_ar = String(event.target.value || '').slice(0, 2000);
+    else if (field === 'subtitles') scene.subtitles = !!event.target.checked;
     else if (field === 'music' || field === 'voice') scene[field] = String(event.target.value || '').slice(0, 4096);
     else scene[field] = String(event.target.value || '');
     this.approved = false;
@@ -952,10 +1004,14 @@ class SatrPromoStudio extends HTMLElement {
     status.textContent = 'جارٍ التصيير الفوري… إبقاء الاستوديو مفتوحاً مطلوب.';
     try {
       const styles = getComputedStyle(this);
+      // العناوين تُقاس بالخط نفسه في DOM واللوحة؛ خط لم يُحمَّل بعد يُسقط حارس التطابق.
+      try {
+        await Promise.all([700, 500].map((weight) => document.fonts.load(weight + ' 48px "IBM Plex Sans Arabic"', 'ع A ٢')));
+      } catch (error) {}
       const result = await renderStoryboard({
         canvas: root.getElementById('canvas'), scenes: await this.resolvedScenes(), signal: this.abortController.signal,
-        pointers: this.pointerTracks(),
-        colors: { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text') },
+        pointers: this.pointerTracks(), aspect: this.storyboard.aspect,
+        colors: { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold') },
         onProgress: (value) => { progress.style.width = Math.min(100, value.elapsed_ms / value.total_ms * 100).toFixed(2) + '%'; },
       });
       const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');

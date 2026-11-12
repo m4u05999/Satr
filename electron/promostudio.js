@@ -30,6 +30,10 @@ const CAMERA_MODES = new Set(['auto', 'manual', 'off']);
 const CAMERA_EASES = new Set(['inOut', 'linear', 'hold']);
 const MAX_CAMERA_KEYFRAMES = 200;
 const MAX_CAMERA_ZOOM = 4;
+// حقول v2 الاختيارية للعناوين (الدفعة 3): تُضاف بلا رفع رقم المخطط.
+const TEXT_ANIMATIONS = new Set(['none', 'words', 'slide', 'zoom']);
+const MAX_HIGHLIGHT = 60;
+const MAX_VOICEOVER = 2000;
 const MAX_PROJECT_BYTES = 2 * 1024 * 1024; // 2 م.ب لملف المشروع
 const PROJECT_EXTENSION = '.satr-promo.json';
 const SAFE_PROJECT_NAME = /^[A-Za-z0-9_\u0600-\u06FF\- ]{1,120}$/;
@@ -143,6 +147,13 @@ function sanitizeStoryboard(input, options) {
     const voiceVolume = cleanFloat(raw.voice_volume, 0, 1, DEFAULT_VOICE_VOLUME);
     const camera = sanitizeCamera(raw.camera, durationMs);
     if (!camera.ok) return { ok: false, error: 'bad_camera', index };
+    const rawStyle = raw.text_style && typeof raw.text_style === 'object' && !Array.isArray(raw.text_style) ? raw.text_style : {};
+    const textStyle = {
+      animation: cleanEnum(rawStyle.animation, TEXT_ANIMATIONS, 'none'),
+      // كلمة واحدة بلا مسافات؛ تُطابَق نصاً بكلمات العنوان عند الرسم.
+      highlight: typeof rawStyle.highlight === 'string' ? rawStyle.highlight.trim().split(/\s+/)[0].slice(0, MAX_HIGHLIGHT) : '',
+    };
+    const voiceover = typeof raw.voiceover_ar === 'string' ? raw.voiceover_ar.replace(/\s+/g, ' ').trim().slice(0, MAX_VOICEOVER) : '';
     const scene = {
       id,
       caption,
@@ -156,6 +167,9 @@ function sanitizeStoryboard(input, options) {
       music_volume: musicVolume,
       voice_volume: voiceVolume,
       camera: camera.camera,
+      text_style: textStyle,
+      voiceover_ar: voiceover,
+      subtitles: raw.subtitles === true && !!voiceover,
     };
     if (asset) {
       scene.asset = asset;
@@ -357,7 +371,7 @@ module.exports = {
   FITS, CAPTION_POSITIONS, CAPTION_STYLES,
   DEFAULT_CLIP_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME,
   PROJECT_SCHEMA_VERSION, READABLE_SCHEMA_VERSIONS, CAMERA_MODES, CAMERA_EASES, MAX_CAMERA_KEYFRAMES, MAX_CAMERA_ZOOM,
-  sanitizeCamera, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
+  sanitizeCamera, TEXT_ANIMATIONS, MAX_HIGHLIGHT, MAX_VOICEOVER, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
   localAsset, sanitizeStoryboard, isProjectPathSafe, inferAssetType,
   listDownloads: doListDownloads, saveProject: doSaveProject, loadProject: doLoadProject, create,
   configure: (...args) => singleton.configure(...args),

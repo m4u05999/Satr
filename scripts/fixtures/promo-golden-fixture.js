@@ -113,7 +113,7 @@ async function run() {
   const images = [await makeImage(1600, 900, 200), await makeImage(800, 1200, 20), await makeImage(1600, 900, 120)];
   const timeline = buildTimeline({ scenes: GOLDEN_SCENES });
   const frames = new Map(images.map((image, index) => [index, image]));
-  const report = { ok: true, cases: 0, font_loaded: document.fonts.check('700 56px "IBM Plex Sans Arabic"'), failures: [] };
+  const report = { ok: true, cases: 0, font_loaded: [...document.fonts].some((face) => face.status === 'loaded' && face.family.includes('IBM Plex Sans Arabic')), failures: [] };
   for (const [width, height] of [[1920, 1080], [1080, 1920], [1080, 1080]]) {
     const runtime = { width, height, colors: GOLDEN_COLORS, timeline };
     for (const time of GOLDEN_TIMES) {

@@ -92,7 +92,8 @@ export async function renderStoryboard(options) {
   let containedScenes = 0;
   // المسار القديم يسير بالساعة الحقيقية، لكن الرسم نفسه يمر بـrenderFrame الحتمية.
   const timeline = buildTimeline({ scenes });
-  const runtime = { width: canvas.width, height: canvas.height, colors, timeline, pointers: settings.pointers || null };
+  const runtime = { width: canvas.width, height: canvas.height, colors, timeline, pointers: settings.pointers || null,
+    aspect: settings.aspect || '16:9', voiceDurations: new Map() };
   const totalMs = timeline.totalMs;
   let completedMs = 0;
   try {
@@ -107,6 +108,8 @@ export async function renderStoryboard(options) {
         visual = await loadVisual(scene);
         music = await loadAudio(scene.musicSrc);
         voice = await loadAudio(scene.voiceSrc);
+        // مدة التعليق تحدد توقيت الترجمة على الشاشة.
+        if (voice && Number.isFinite(voice.duration)) runtime.voiceDurations.set(index, voice.duration * 1000);
         if (visual.kind === 'video') {
           const source = audioContext.createMediaElementSource(visual.element);
           const gain = audioContext.createGain();

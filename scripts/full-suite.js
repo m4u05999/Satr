@@ -103,6 +103,8 @@ const SUITE = [
   'test:promo-golden-live',
   'test:promo-camera',
   'test:promo-camera-live',
+  'test:promo-subtitles',
+  'test:promo-arabic-bite',
   'test:claude-auth',
   'test:probe-version',
   'test:readiness',

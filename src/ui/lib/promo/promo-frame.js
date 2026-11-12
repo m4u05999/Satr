@@ -4,6 +4,7 @@
 
 import { sceneAt, fadeOpacity } from './promo-timeline.js';
 import { cameraAt, cameraTransform, pointerAt } from './promo-camera.js';
+import { usesTitleEngine, drawTitle, drawSubtitle, sceneCue } from './promo-text.js';
 
 // مستطيل المصدر على اللوحة قبل الكاميرا.
 export function fittedRect(sourceWidth, sourceHeight, width, height, cover) {
@@ -97,7 +98,8 @@ export function drawCaption(context, caption, width, height, colors, position = 
   return lines.length;
 }
 
-// runtime: { width, height, colors, timeline, pointers? }
+// runtime: { width, height, colors, timeline, pointers?, aspect?, voiceDurations? }
+// colors.accent لون إبراز الكلمة (اختياري). voiceDurations: Map فهرس المشهد ⇒ مدة التعليق بالميلي ثانية.
 // pointers: Map من فهرس المشهد إلى مسار المؤشر (pointerTrack) — اختياري.
 // frames: Map من فهرس المشهد إلى { source, width, height }؛ غياب المدخل ⇒ خلفية فقط.
 // تعيد { index, localMs, drawn, captionLines } أو null إن لم يكن عند tMs مشهد.
@@ -148,6 +150,19 @@ export function renderFrame(context, runtime, tMs, frames) {
     context.fillRect(0, 0, width, height);
     context.restore();
   }
-  const captionLines = drawCaption(context, scene.caption, width, height, colors, scene.caption_position, scene.caption_style);
+  // مشهد v1 (بلا text_style ولا ترجمة) يبقى على drawCaption القديمة حرفياً.
+  let captionLines;
+  if (usesTitleEngine(scene)) {
+    const aspect = runtime.aspect || '16:9';
+    const voiceMs = runtime.voiceDurations && typeof runtime.voiceDurations.get === 'function' ? runtime.voiceDurations.get(entry.index) : 0;
+    const reserve = drawSubtitle(context, sceneCue(scene, localMs, voiceMs), { width, height, colors, aspect });
+    const title = drawTitle(context, scene.caption, {
+      width, height, colors, aspect, localMs, position: scene.caption_position, boxStyle: scene.caption_style,
+      style: scene.text_style, reserveBottom: scene.caption_position === 'bottom' || !scene.caption_position ? reserve : 0,
+    });
+    captionLines = title ? title.layout.lines.length : 0;
+  } else {
+    captionLines = drawCaption(context, scene.caption, width, height, colors, scene.caption_position, scene.caption_style);
+  }
   return { index: entry.index, localMs, drawn, captionLines };
 }
