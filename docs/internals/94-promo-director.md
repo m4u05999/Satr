@@ -59,7 +59,6 @@
 - **نافذة الالتقاط 16:9 تُقصّ إلى مساحة العمل.** على شاشة 1080p يخرج المقطع 1920×1040 (نسبة 1.846)
   لا 1920×1080، وعند مقياس 150٪ يرى التطبيق مساحة 1280×694 فقط. الدليل: `electron/promocapture.js`
   دالة `ensureCaptureWindow` (‏`useContentSize` + `resizable: false`) وحقل `capture_page` في
-  `dist/promo-probe/result-*.json`. الوسم المقترح `generation`. لم تُسجَّل في `OBSERVATIONS.md` بعد
-  لتفادي تعارض الترقيم مع فرع `imp/integration` غير المدفوع.
+  `dist/promo-probe/result-*.json`. الوسم المقترح `generation`. مسجَّلة `OBS-223`.
 - **`source_enumerated: false` في التشغيلات كلها:** `desktopCapturer.getSources` لم يُعِد نافذة
   الالتقاط فاستُعمل معرّفها الذاتي. لم يؤثر على التسجيل.
