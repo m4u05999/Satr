@@ -247,6 +247,8 @@
     "test:promo-camera-live": "electron scripts/promo-camera-live-test.js",
     "test:promo-subtitles": "node scripts/promo-subtitles-test.js",
     "test:promo-arabic-bite": "electron scripts/promo-arabic-bite-test.js",
+    "test:promo-mux": "node scripts/promo-mux-test.js",
+    "test:promo-source": "node scripts/promo-source-test.js",
     "probe:promo": "electron scripts/promo-probe-live.js",
     "test:preview-shield": "electron scripts/preview-shield-test.js",
     "test:topbar-surfaces": "electron scripts/topbar-surfaces-test.js",

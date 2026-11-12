@@ -105,6 +105,8 @@ const SUITE = [
   'test:promo-camera-live',
   'test:promo-subtitles',
   'test:promo-arabic-bite',
+  'test:promo-mux',
+  'test:promo-source',
   'test:claude-auth',
   'test:probe-version',
   'test:readiness',
