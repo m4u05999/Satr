@@ -1,6 +1,6 @@
 // اختبار حي لمحرك التصدير: يصدّر storyboard عبر IPC حقيقي ثم يحلّل الملف الناتج.
 
-import { exportStoryboard } from '../../src/ui/lib/promo-export/export.js';
+import { exportStoryboard, exportGif, renderThumbnail } from '../../src/ui/lib/promo-export/export.js';
 import { probeExportSupport } from '../../src/ui/lib/promo-export/encode.js';
 import { parseMp4 } from '../../src/ui/lib/promo-export/source-mp4.js';
 import { createDecoderSource } from '../../src/ui/lib/promo-export/frame-source.js';
@@ -10,7 +10,7 @@ import { renderFrame } from '../../src/ui/lib/promo/promo-frame.js';
 const COLORS = { background: '#0b0f14', captionBackground: 'rgba(0,0,0,0.62)', captionText: '#f4f6f8', accent: '#d9a441' };
 
 const writer = {
-  begin: () => window.satr.promoExportBegin(),
+  begin: (kind) => window.satr.promoExportBegin(kind),
   chunk: (handle, seq, bytes) => window.satr.promoExportChunk(handle, seq, bytes),
   finish: (handle, header) => window.satr.promoExportFinish(handle, header),
   abort: (handle) => window.satr.promoExportAbort(handle),
@@ -154,10 +154,73 @@ window.__promoStudioExport = async (forceLegacy) => {
   let result, error = '';
   try { result = await studio.render(); } catch (failure) { error = String(failure && failure.message || failure); }
   clearInterval(timer);
+  const statusAfterRender = root.getElementById('status').textContent;
+  // أزرار GIF والصورة المصغرة في المكوّن نفسه (مع المحرك الجديد فقط).
+  const extras = {};
+  if (!forceLegacy) {
+    try { const gif = await studio.renderGif(); extras.gif = { engine: gif.engine, frames: gif.frames, width: gif.width, filename: gif.filename }; } catch (failure) { extras.gifError = String(failure && failure.message || failure); }
+    extras.gifStatus = root.getElementById('status').textContent;
+    studio.previewTime = 500;
+    try { const thumb = await studio.saveThumbnail(); extras.thumb = { filename: thumb.filename, bytes: thumb.bytes }; } catch (failure) { extras.thumbError = String(failure && failure.message || failure); }
+    extras.thumbStatus = root.getElementById('status').textContent;
+    studio.approved = false; studio.syncApproval();
+    extras.gifDisabledWithoutApproval = root.getElementById('gif').disabled;
+    extras.thumbEnabledWithoutApproval = !root.getElementById('thumb').disabled;
+  }
   return {
     error, engine: result && result.engine || (result && result.blob ? 'legacy' : ''), filename: result && result.filename, frames: result && result.frames,
-    status: root.getElementById('status').textContent, options, qualityDisabled: quality.disabled,
+    status: statusAfterRender, options, qualityDisabled: quality.disabled,
     cancelShownWhileRendering: cancelDuring.includes(false), cancelHiddenAfter: root.getElementById('cancel').hidden,
-    renderDisabledAfter: root.getElementById('render').disabled, scenes: studio.getStoryboard().scenes.length,
+    renderDisabledAfter: root.getElementById('render').disabled, scenes: studio.getStoryboard().scenes.length, extras,
   };
+};
+
+// GIF عبر IPC حقيقي، ثم فكّه بمفكِّك المتصفح نفسه (ImageDecoder) للتحقق من عدد الإطارات والأبعاد.
+window.__promoExportGif = async (scenes, cancelAtFrame) => {
+  await fonts();
+  const controller = new AbortController();
+  let cancelAt = cancelAtFrame || 0;
+  try {
+    const result = await exportGif({ scenes, aspect: '16:9', colors: COLORS, pointers: null, readAsset, writer, signal: controller.signal,
+      onProgress: (value) => { if (cancelAt && value.frame >= cancelAt) { cancelAt = 0; controller.abort(); } } });
+    return { ok: true, result };
+  } catch (error) {
+    return { ok: false, error: String(error && error.message || error) };
+  }
+};
+
+window.__promoGifInspect = async (outputPath) => {
+  const head = await readAsset(outputPath, 0, 0);
+  const bytes = new Uint8Array(head.size);
+  for (let offset = 0; offset < head.size; offset += 4 * 1024 * 1024) {
+    const part = await readAsset(outputPath, offset, Math.min(4 * 1024 * 1024, head.size - offset));
+    bytes.set(part.bytes instanceof Uint8Array ? part.bytes : new Uint8Array(part.bytes), offset);
+  }
+  const report = { size: head.size, signature: String.fromCharCode(...bytes.subarray(0, 6)), trailer: bytes[bytes.length - 1], width: bytes[6] | (bytes[7] << 8), height: bytes[8] | (bytes[9] << 8) };
+  if (typeof ImageDecoder === 'function') {
+    const decoder = new ImageDecoder({ data: bytes, type: 'image/gif' });
+    await decoder.tracks.ready;
+    await decoder.completed;
+    const track = decoder.tracks.selectedTrack;
+    report.frameCount = track.frameCount;
+    report.repetitions = track.repetitionCount === Infinity ? 'infinite' : track.repetitionCount;
+    const first = await decoder.decode({ frameIndex: 0 });
+    const last = await decoder.decode({ frameIndex: track.frameCount - 1 });
+    report.frameWidth = first.image.displayWidth; report.frameHeight = first.image.displayHeight;
+    report.firstDurationUs = first.image.duration; report.lastTimestampUs = last.image.timestamp;
+    first.image.close(); last.image.close(); decoder.close();
+  }
+  return report;
+};
+
+window.__promoThumbnail = async (scenes, tMs) => {
+  await fonts();
+  try {
+    const bytes = await renderThumbnail({ scenes, aspect: '16:9', colors: COLORS, pointers: null, readAsset }, tMs);
+    const saved = await window.satr.promoThumbnailSave(bytes);
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    return { ok: !!(saved && saved.ok), saved, width: bitmap.width, height: bitmap.height, bytes: bytes.length, signature: [...bytes.subarray(0, 4)] };
+  } catch (error) {
+    return { ok: false, error: String(error && error.message || error) };
+  }
 };

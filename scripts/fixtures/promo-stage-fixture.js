@@ -194,6 +194,7 @@ async function ui() {
   const failures = [];
   const expect = (label, condition, detail) => { if (!condition) failures.push(label + ': ' + JSON.stringify(detail === undefined ? null : detail)); };
   const asset = 'C:\\Downloads\\satr-promo-segment-stage.mp4', picture = 'C:\\Downloads\\bg.png';
+  const brandCalls = [];
   const viewport = { width: 1000, height: 500 };
   const events = [
     { t_ms: 1000, kind: 'pointer', source: 'human', action: 'mousedown', rect: { x: 100, y: 100, width: 200, height: 40 }, pointer: { x: 150, y: 120, button: 0 }, viewport, timing_quality: 'verified' },
@@ -205,6 +206,8 @@ async function ui() {
     promoSegmentEvents: async () => ({ ok: true, events }),
     promoListDownloads: async () => ({ ok: true, files: [] }),
     promoCaptureStart: async () => ({ ok: true }), promoCaptureStop: async () => ({ ok: true }),
+    promoBrandSave: async (cwd, brand) => { brandCalls.push(['save', cwd, JSON.parse(JSON.stringify(brand))]); return { ok: true, brand }; },
+    promoBrandLoad: async (cwd) => { brandCalls.push(['load', cwd]); return { ok: true, exists: true, brand: { name: 'من الملف', primary: '#010203', secondary: '#040506', accent: '#070809', closing: 'عبارة الملف', logo: '' } }; },
     onPromoCapture() { return () => {}; },
   };
   await import('../../src/ui/components/promo-studio.js');
@@ -263,6 +266,46 @@ async function ui() {
   // ما يُحفظ يقبله main: نفس القيود
   const saved = studio.getStoryboard();
   expect('المشروع قابل للتسلسل وفيه حقول المسرح', JSON.parse(JSON.stringify(saved)).scenes[0].stage.frame === 'browser' && Array.isArray(saved.scenes[0].redactions));
+
+  // ── القوالب والهوية (الدفعة 9) ──
+  const project = () => root.querySelector('.project');
+  const status = () => root.getElementById('status').textContent;
+  expect('بطاقة القالب والهوية أعلى الخط الزمني', !!project() && project().querySelector('[data-field="template"]').options.length >= 4);
+  const keptCamera = JSON.stringify(scene().camera), keptRedactions = JSON.stringify(scene().redactions), keptCaption = scene().caption;
+  const templateSelect = project().querySelector('[data-field="template"]');
+  templateSelect.value = 'new-feature'; templateSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  project().querySelector('[data-action="template-apply"]').click();
+  await settle();
+  expect('القالب يغيّر المقاس والمسرح والانتقال', studio.getStoryboard().aspect === '16:9' && scene(0).stage.frame === 'browser' && scene(0).stage.background.type === 'linear'
+    && scene(0).transition_in === 'none' && scene(1).transition_in === 'slide' && scene(0).text_style.animation === 'slide', [scene(0).stage, scene(1).transition_in]);
+  expect('القالب لا يمس الكاميرا ولا التغبيش ولا النص ولا نطاق العرض', JSON.stringify(scene().camera) === keptCamera && JSON.stringify(scene().redactions) === keptRedactions
+    && scene().caption === keptCaption && scene().stage.label === 'satr.app', scene().stage.label);
+  expect('القالب يلغي الاعتماد ويشرح', studio.approved === false && status().includes('ميزة جديدة'), status());
+  expect('القالب المختار يبقى محدداً بعد إعادة الرسم', project().querySelector('[data-field="template"]').value === 'new-feature');
+  const setProject = (field, value, type = 'input') => { const control = project().querySelector('[data-field="' + field + '"]'); control.value = value; control.dispatchEvent(new Event(type, { bubbles: true })); };
+  setProject('brand_name', 'سطر');
+  setProject('brand_primary', '#112233');
+  setProject('brand_closing', 'حمّل التطبيق الآن');
+  expect('حقول الهوية مسودة لا تغيّر المشاهد قبل التطبيق', scene(0).stage.background.color !== '#112233' && !studio.getStoryboard().brand);
+  project().querySelector('[data-action="brand-apply"]').click();
+  await settle();
+  const brand = studio.getStoryboard().brand;
+  expect('تطبيق الهوية يلوّن الخلفيات ويحفظها في المشروع', scene(0).stage.background.color === '#112233' && scene(1).stage.background.color === '#112233' && brand && brand.primary === '#112233' && brand.name === 'سطر', brand);
+  expect('لون لم يُختر يأخذ القيمة الظاهرة في الحقل', /^#[0-9a-f]{6}$/.test(brand.secondary) && scene(0).stage.background.color2 === brand.secondary, brand);
+  expect('عبارة ختام بلا شعار: لا بطاقة، والرسالة تشرح', studio.getStoryboard().scenes.length === 2 && status().includes('شعار'), status());
+  expect('حقول الهوية تعرض المحفوظ بعد إعادة الرسم', project().querySelector('[data-field="brand_name"]').value === 'سطر' && project().querySelector('[data-field="brand_primary"]').value === '#112233');
+  project().querySelector('[data-action="brand-save"]').click();
+  await settle();
+  expect('الحفظ بلا مجلد مشروع يشرح ولا يستدعي main', brandCalls.length === 0 && status().includes('مجلد المشروع'), status());
+  studio.getProjectRoot = () => 'C:\\Projects\\demo';
+  project().querySelector('[data-action="brand-save"]').click();
+  await settle();
+  expect('الحفظ يرسل مجلد المشروع والهوية', brandCalls.length === 1 && brandCalls[0][0] === 'save' && brandCalls[0][1] === 'C:\\Projects\\demo' && brandCalls[0][2].primary === '#112233', brandCalls);
+  project().querySelector('[data-action="brand-load"]').click();
+  await settle();
+  expect('التحميل يملأ الحقول ولا يلوّن المشاهد حتى التطبيق', brandCalls.length === 2 && project().querySelector('[data-field="brand_name"]').value === 'من الملف'
+    && studio.getStoryboard().brand.accent === '#070809' && scene(0).stage.background.color === '#112233', [brandCalls.length, studio.getStoryboard().brand]);
+  expect('أزرار GIF والصورة المصغرة معطّلة بلا قنوات التصدير', root.getElementById('gif').disabled && root.getElementById('thumb').disabled);
 
   // مشروع مُمرَّر لا يُغبَّش تلقائياً (قرار المستخدم محفوظ)
   await studio.open({ aspect: '16:9', scenes: [{ id: 'x', asset, asset_type: 'video', caption: '', duration_ms: 5000 }] });

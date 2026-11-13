@@ -32,6 +32,9 @@ const CAMERA_MODES = new Set(['auto', 'manual', 'off']);
 const CAMERA_EASES = new Set(['inOut', 'linear', 'hold']);
 const MAX_CAMERA_KEYFRAMES = 200;
 const MAX_CAMERA_ZOOM = 4;
+// هوية المشروع (الدفعة 9): ملف <المشروع>/.satr/brand.json. نص وألوان ومسار شعار داخل Downloads.
+const BRAND_FILE = path.join('.satr', 'brand.json');
+const MAX_BRAND_BYTES = 64 * 1024;
 // خطة الإعلان (الدفعة 8): نموذج منظم يملؤه الوكيل ويعدّله المستخدم ويعتمده قبل التسجيل.
 const AD_PLAN_MIN_S = 10;
 const AD_PLAN_MAX_S = 90;
@@ -137,6 +140,26 @@ function sanitizeRedactions(raw, durationMs) {
       start_ms: item.start_ms, end_ms: item.end_ms, auto: item.auto === true });
   }
   return { ok: true, redactions };
+}
+
+// هوية: كل لون #rrggbb أو فارغ، والشعار صورة داخل Downloads أو فارغ. resolveLogo يعيد المسار المعتمد أو ''.
+function sanitizeBrand(raw, resolveLogo) {
+  const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const color = (value) => (SAFE_COLOR.test(value || '') ? value.toLowerCase() : '');
+  const line = (value, max) => (typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
+  return {
+    name: line(input.name, 60),
+    primary: color(input.primary),
+    secondary: color(input.secondary),
+    accent: color(input.accent),
+    closing: line(input.closing, 120),
+    logo: typeof input.logo === 'string' && typeof resolveLogo === 'function' ? (resolveLogo(input.logo) || '') : '',
+  };
+}
+
+function brandPath(projectRoot) {
+  return typeof projectRoot === 'string' && path.isAbsolute(projectRoot) ? path.join(path.resolve(projectRoot), BRAND_FILE) : '';
 }
 
 // نص حر من الوكيل يُعرض في بطاقة: سطر واحد بلا محارف تحكم ولا اتجاه، محدود الطول.
@@ -306,6 +329,10 @@ function sanitizeStoryboard(input, options) {
     aspect = promocapture.sanitizeAspect(settings.aspectForPath(scenes[0].asset));
   }
   const result = { ok: true, storyboard: { aspect: aspect || '16:9', scenes } };
+  // هوية المشروع المطبَّقة على هذا الإعلان (اختيارية).
+  if (input && input.brand != null) {
+    result.storyboard.brand = sanitizeBrand(input.brand, (candidate) => localAsset(downloadsPath, candidate, IMAGE_EXTENSIONS, exists, settings.realpath) || '');
+  }
   if (allowMissing && missing.length) result.missing = missing;
   return result;
 }
@@ -378,6 +405,7 @@ function doSaveProject(downloadsPath, storyboard, filePath, options) {
     created_at: new Date().toISOString(),
     aspect: sanitized.storyboard.aspect,
     scenes: sanitized.storyboard.scenes,
+    ...(sanitized.storyboard.brand ? { brand: sanitized.storyboard.brand } : {}),
   };
   const json = JSON.stringify(payload);
   if (Buffer.byteLength(json, 'utf8') > MAX_PROJECT_BYTES) return { ok: false, error: 'too_large' };
@@ -411,7 +439,7 @@ function doLoadProject(filePath, downloadsPath, options) {
     return { ok: false, error: 'bad_schema' };
   }
   const result = sanitizeStoryboard(
-    { aspect: parsed.aspect, scenes: parsed.scenes },
+    { aspect: parsed.aspect, scenes: parsed.scenes, brand: parsed.brand },
     { downloadsPath, exists, realpath, allowMissingAssets: true },
   );
   if (!result.ok) return { ok: false, error: result.error, index: result.index };
@@ -489,7 +517,8 @@ function create(initialDeps) {
   function allowedPath(candidate) {
     if (typeof candidate !== 'string') return false;
     return !!(storyboard && storyboard.scenes.some((scene) => scene.asset === candidate || scene.music === candidate || scene.voice === candidate
-      || (scene.stage && scene.stage.background.image === candidate)))
+      || (scene.stage && scene.stage.background.image === candidate))
+      || !!(storyboard && storyboard.brand && storyboard.brand.logo && storyboard.brand.logo === candidate))
       || typeof deps.isAdditionalAllowed === 'function' && deps.isAdditionalAllowed(candidate);
   }
 
@@ -532,6 +561,39 @@ function create(initialDeps) {
     }
   }
 
+  // هوية المشروع على القرص. projectRoot يأتي من main بعد validProjectDirectory.
+  function loadBrand(projectRoot) {
+    const file = brandPath(projectRoot);
+    if (!file) return { ok: false, error: 'bad_project' };
+    const fileSystem = deps.fs || fs;
+    let raw;
+    try {
+      if (fileSystem.statSync(file).size > MAX_BRAND_BYTES) return { ok: false, error: 'too_large' };
+      raw = fileSystem.readFileSync(file, 'utf8');
+    } catch { return { ok: true, exists: false, brand: sanitizeBrand(null) }; }
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { return { ok: false, error: 'bad_schema' }; }
+    const resolveLogo = (candidate) => localAsset(deps.downloadsPath, candidate, IMAGE_EXTENSIONS, deps.exists, deps.realpath) || '';
+    return { ok: true, exists: true, brand: sanitizeBrand(parsed, resolveLogo) };
+  }
+
+  function saveBrand(projectRoot, input) {
+    const file = brandPath(projectRoot);
+    if (!file) return { ok: false, error: 'bad_project' };
+    const fileSystem = deps.fs || fs;
+    const resolveLogo = (candidate) => localAsset(deps.downloadsPath, candidate, IMAGE_EXTENSIONS, deps.exists, deps.realpath) || '';
+    const brand = sanitizeBrand(input, resolveLogo);
+    const json = JSON.stringify({ version: 1, ...brand }, null, 2) + '\n';
+    if (Buffer.byteLength(json, 'utf8') > MAX_BRAND_BYTES) return { ok: false, error: 'too_large' };
+    try {
+      fileSystem.mkdirSync(path.dirname(file), { recursive: true });
+      fileSystem.writeFileSync(file + '.tmp', json, 'utf8');
+      fileSystem.renameSync(file + '.tmp', file);
+    } catch { return { ok: false, error: 'write_failed' }; }
+    return { ok: true, brand };
+  }
+
+  // مسار الشعار يصير أصلاً مسموحاً بعرضه حين يكون في هوية الـstoryboard الحالي فقط.
   function clear() {
     storyboard = null;
     return { ok: true };
@@ -551,7 +613,7 @@ function create(initialDeps) {
     return doLoadProject(filePath, deps.downloadsPath, { exists: deps.exists, realpath: deps.realpath, readFileSync: deps.readFileSync });
   }
 
-  return { configure, propose, planAd, approveAdPlan, dismissAdPlan, adPlanState, state, assetUrl, assetRead, clear, listDownloads, saveProject, loadProject };
+  return { configure, propose, planAd, approveAdPlan, dismissAdPlan, adPlanState, loadBrand, saveBrand, state, assetUrl, assetRead, clear, listDownloads, saveProject, loadProject };
 }
 
 const singleton = create();
@@ -567,6 +629,9 @@ module.exports = {
   listDownloads: doListDownloads, saveProject: doSaveProject, loadProject: doLoadProject, create,
   configure: (...args) => singleton.configure(...args),
   propose: (...args) => singleton.propose(...args),
+  loadBrand: (...args) => singleton.loadBrand(...args),
+  saveBrand: (...args) => singleton.saveBrand(...args),
+  sanitizeBrand, BRAND_FILE, MAX_BRAND_BYTES,
   planAd: (...args) => singleton.planAd(...args),
   approveAdPlan: (...args) => singleton.approveAdPlan(...args),
   dismissAdPlan: (...args) => singleton.dismissAdPlan(...args),

@@ -146,7 +146,43 @@ try {
   eq(handlers.length, 4, 'أربع قنوات تصدير في main');
   const block = main.slice(main.indexOf("ipcMain.handle('satr:promoExportBegin'"), main.indexOf("ipcMain.handle('satr:promoExportAbort'") + 140);
   ok(!/\.path\b|filename|filePath/.test(block), 'معالجات التصدير لا تقرأ مساراً ولا اسماً من المصيّر');
-  ok(/promoExportBegin: \(\) => ipcRenderer\.invoke\('satr:promoExportBegin'\)/.test(preload), 'begin في preload بلا وسائط');
+  // الدفعة 9 أضافت نوع الناتج: قيمة من قائمة مغلقة، لا مسار ولا اسم.
+  ok(preload.includes("promoExportBegin: (kind) => ipcRenderer.invoke('satr:promoExportBegin', { kind: kind === 'gif' ? 'gif' : 'mp4' })"), 'begin في preload يمرّر نوعاً من قائمة مغلقة فقط');
+  ok(main.includes("promoexport.begin(payload && payload.kind === 'gif' ? 'gif' : 'mp4')"), 'وmain يعيد حسم النوع ولا يثق بالمصيّر');
+
+  // ── GIF: تيار واحد بتوقيع وذيل ──
+  const gifWriter = promoexport.create({ downloadsPath: downloads, now: () => new Date(2026, 10, 13, 10, 0, 0) });
+  eq(gifWriter.begin('exe').error, 'bad_kind', 'نوع مجهول مرفوض');
+  eq(gifWriter.begin('../x').error, 'bad_kind', 'نوع فيه مسار مرفوض');
+  const gif = gifWriter.begin('gif');
+  eq(gif.filename, 'satr-promo-final-2026-11-13-10-00-00.gif', 'اسم GIF يختاره main');
+  eq(gifWriter.chunk(gif.handle, 0, Buffer.from('NOTGIF....')).error, 'bad_chunk', 'أول قطعة بلا توقيع GIF89a مرفوضة');
+  const gif2 = gifWriter.begin('gif');
+  gifWriter.chunk(gif2.handle, 0, Buffer.from('GIF89a' + 'x'.repeat(20), 'latin1'));
+  eq(gifWriter.finish(gif2.handle).error, 'bad_trailer', 'GIF بلا ذيل مرفوض');
+  eq(fs.readdirSync(downloads).filter((name) => name.endsWith('.gif') || name.endsWith('.gif.part')), [], 'ولا يترك ملفاً');
+  const gif3 = gifWriter.begin('gif');
+  gifWriter.chunk(gif3.handle, 0, Buffer.from('GIF89a' + 'x'.repeat(20), 'latin1'));
+  gifWriter.chunk(gif3.handle, 1, Buffer.from([1, 2, 0x3b]));
+  eq(gifWriter.finish(gif3.handle, Buffer.alloc(40)).error, 'bad_header', 'GIF لا يقبل رأساً منفصلاً');
+  const gif4 = gifWriter.begin('gif');
+  gifWriter.chunk(gif4.handle, 0, Buffer.from('GIF89a' + 'x'.repeat(20), 'latin1'));
+  gifWriter.chunk(gif4.handle, 1, Buffer.from([1, 2, 0x3b]));
+  const gifDone = gifWriter.finish(gif4.handle);
+  eq([gifDone.ok, gifDone.bytes, fs.readFileSync(gifDone.path).length], [true, 29, 29], 'GIF صالح يُحفظ كما كُتب');
+  ok(!fs.existsSync(gifDone.path + '.part'), 'ولا .part بعده');
+
+  // ── الصورة المصغرة ──
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]), Buffer.from('IHDR'), Buffer.alloc(60)]);
+  const thumb = gifWriter.saveThumbnail(png);
+  eq([thumb.ok, thumb.filename, fs.readFileSync(thumb.path).length], [true, 'satr-promo-thumb-2026-11-13-10-00-00.png', png.length], 'صورة مصغرة باسم يختاره main');
+  eq(gifWriter.saveThumbnail(png).filename, 'satr-promo-thumb-2026-11-13-10-00-00-2.png', 'الاسم المأخوذ يأخذ لاحقة ولا يُستبدل الملف');
+  for (const [label, bytes] of [['ليست PNG', Buffer.from('<html>' + 'x'.repeat(100))], ['قصيرة', png.subarray(0, 20)], ['بلا IHDR', Buffer.concat([png.subarray(0, 12), Buffer.from('XXXX'), Buffer.alloc(60)])],
+    ['نص', 'png'], ['كائن بمسار', { path: 'C:\\x.png' }], ['فوق الحد', Buffer.concat([png, Buffer.alloc(promoexport.MAX_THUMB_BYTES)])]]) {
+    eq(gifWriter.saveThumbnail(bytes).error, 'bad_image', 'صورة مصغرة مرفوضة: ' + label);
+  }
+  eq(promoexport.create({}).saveThumbnail(png).error, 'unavailable', 'بلا Downloads');
+  ok(/promoThumbnailSave: \(bytes\) =>/.test(preload) && !/satr:promoThumbnailSave[^\n]*path/.test(main), 'الصورة المصغرة بايتات فقط، لا مسار');
   for (const name of ['promoExportChunk', 'promoExportFinish', 'promoExportAbort']) {
     const line = preload.split('\n').find((item) => item.includes(name + ':'));
     ok(line && /\(handle/.test(line) && !/path/i.test(line), name + ' بالمقبض لا بمسار');

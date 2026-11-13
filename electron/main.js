@@ -3785,7 +3785,18 @@ ipcMain.handle('satr:promoAdPlanDismiss', () => promostudio.dismissAdPlan());
 // ── تصدير الإعلان إطاراً بإطار (الدفعة 6): المصيّر يرمّز ويُغلِّف، وmain وحده يكتب. ──
 // لا مسار يعبر من المصيّر: begin يختار الاسم داخل Downloads ويعيد مقبضاً، والباقي بالمقبض.
 // هذه القنوات لا تُسجَّل في أي قائمة أدوات وكيل (يحرسه test:promo-agent-isolation في الدفعة 8).
-ipcMain.handle('satr:promoExportBegin', () => promoexport.begin());
+ipcMain.handle('satr:promoExportBegin', (event, payload) => promoexport.begin(payload && payload.kind === 'gif' ? 'gif' : 'mp4'));
+// صورة مصغرة PNG من إطار في المعاينة؛ الاسم يختاره main.
+ipcMain.handle('satr:promoThumbnailSave', (event, payload) => promoexport.saveThumbnail(payload && payload.bytes));
+// هوية المشروع: القراءة والكتابة في <المشروع>/.satr/brand.json. cwd يمر بـvalidProjectDirectory.
+ipcMain.handle('satr:promoBrandLoad', (event, payload) => {
+  const projectRoot = validProjectDirectory(payload && payload.cwd);
+  return projectRoot ? promostudio.loadBrand(projectRoot) : { ok: false, error: 'bad_project' };
+});
+ipcMain.handle('satr:promoBrandSave', (event, payload) => {
+  const projectRoot = validProjectDirectory(payload && payload.cwd);
+  return projectRoot ? promostudio.saveBrand(projectRoot, payload.brand) : { ok: false, error: 'bad_project' };
+});
 ipcMain.handle('satr:promoExportChunk', (event, payload) => {
   const input = payload && typeof payload === 'object' ? payload : {};
   return promoexport.chunk(input.handle, input.seq, input.bytes);

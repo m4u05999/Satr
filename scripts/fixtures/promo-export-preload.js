@@ -5,7 +5,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('satr', {
-  promoExportBegin: () => ipcRenderer.invoke('satr:promoExportBegin'),
+  promoExportBegin: (kind) => ipcRenderer.invoke('satr:promoExportBegin', { kind: kind === 'gif' ? 'gif' : 'mp4' }),
+  promoThumbnailSave: (bytes) => ipcRenderer.invoke('satr:promoThumbnailSave', { bytes }),
   promoExportChunk: (handle, seq, bytes) => ipcRenderer.invoke('satr:promoExportChunk', { handle, seq, bytes }),
   promoExportFinish: (handle, header) => ipcRenderer.invoke('satr:promoExportFinish', { handle, header }),
   promoExportAbort: (handle) => ipcRenderer.invoke('satr:promoExportAbort', { handle }),

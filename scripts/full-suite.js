@@ -116,6 +116,8 @@ const SUITE = [
   'test:promo-plan',
   'test:promo-agent-isolation',
   'test:promo-plan-live',
+  'test:promo-gif',
+  'test:promo-brand',
   'test:claude-auth',
   'test:probe-version',
   'test:readiness',

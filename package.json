@@ -258,6 +258,8 @@
     "test:promo-plan": "node scripts/promo-plan-test.js",
     "test:promo-agent-isolation": "node scripts/promo-agent-isolation-test.js",
     "test:promo-plan-live": "electron scripts/promo-plan-live-test.js",
+    "test:promo-gif": "node scripts/promo-gif-test.js",
+    "test:promo-brand": "node scripts/promo-brand-test.js",
     "probe:promo": "electron scripts/promo-probe-live.js",
     "test:preview-shield": "electron scripts/preview-shield-test.js",
     "test:topbar-surfaces": "electron scripts/topbar-surfaces-test.js",

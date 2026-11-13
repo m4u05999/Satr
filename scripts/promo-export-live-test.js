@@ -57,7 +57,8 @@ async function main() {
   await app.whenReady();
   const studio = promostudio.create({ downloadsPath: downloads, exists: fs.existsSync, realpath: fs.realpathSync });
   const writer = promoexport.create({ downloadsPath: downloads });
-  ipcMain.handle('satr:promoExportBegin', () => writer.begin());
+  ipcMain.handle('satr:promoExportBegin', (event, payload) => writer.begin(payload && payload.kind === 'gif' ? 'gif' : 'mp4'));
+  ipcMain.handle('satr:promoThumbnailSave', (event, payload) => writer.saveThumbnail(payload && payload.bytes));
   ipcMain.handle('satr:promoExportChunk', (event, payload) => writer.chunk(payload.handle, payload.seq, payload.bytes));
   ipcMain.handle('satr:promoExportFinish', (event, payload) => writer.finish(payload.handle, payload.header));
   ipcMain.handle('satr:promoExportAbort', (event, payload) => writer.abort(payload && payload.handle));
@@ -116,7 +117,8 @@ async function main() {
   const proposed = studio.propose(board);
   if (!proposed.ok) throw new Error('propose: ' + proposed.error);
   const scenes = proposed.storyboard.scenes.map((scene) => ({ ...scene, src: pathToFileURL(scene.asset).href }));
-  const listing = () => fs.readdirSync(downloads).filter((name) => name.startsWith('satr-promo-final')).sort();
+  const listing = () => fs.readdirSync(downloads).filter((name) => name.startsWith('satr-promo-final') || name.startsWith('satr-promo-thumb')).sort();
+  let gifLine = '';
   const failures = [];
   const expect = (label, condition, detail) => { if (!condition) failures.push(label + ': ' + JSON.stringify(detail === undefined ? null : detail)); };
 
@@ -185,7 +187,13 @@ async function main() {
   const viaStudio = await run('window.__promoStudioExport(false)');
   expect('الاستوديو يصدّر بالمحرك الجديد', viaStudio.engine === 'webcodecs' && viaStudio.frames === 60 && !viaStudio.error, viaStudio);
   expect('رسالة الاكتمال بلا ملاحظة تراجع', viaStudio.status === 'اكتمل التصيير إلى Downloads: ' + viaStudio.filename, viaStudio.status);
-  expect('الملف في Downloads باسم main', listing().length === 1 && listing()[0] === viaStudio.filename, listing());
+  expect('ملف MP4 في Downloads باسم main', listing().includes(viaStudio.filename), listing());
+  const extras = viaStudio.extras || {};
+  expect('الاستوديو يصدّر GIF بعد الاعتماد', !!extras.gif && extras.gif.engine === 'gif' && extras.gif.frames === 30 && extras.gif.width === 1280 && listing().includes(extras.gif.filename), extras);
+  expect('رسالة GIF تذكر الملف وحجمه', /^اكتمل GIF إلى Downloads: satr-promo-final-[\d-]+\.gif \(/.test(extras.gifStatus || ''), extras.gifStatus);
+  expect('الاستوديو يحفظ صورة مصغرة', !!extras.thumb && /^satr-promo-thumb-[\d-]+\.png$/.test(extras.thumb.filename) && listing().includes(extras.thumb.filename) && extras.thumb.bytes > 2000, extras);
+  expect('GIF يلزمه اعتماد الخط الزمني، والصورة المصغرة لا', extras.gifDisabledWithoutApproval === true && extras.thumbEnabledWithoutApproval === true, extras);
+  expect('لا بقايا .part بعد الثلاثة', listing().every((name) => !/part|tmp/.test(name)) && listing().length === 3, listing());
   expect('زر الإلغاء يظهر أثناء التصدير ويختفي بعده', viaStudio.cancelShownWhileRendering && viaStudio.cancelHiddenAfter, viaStudio);
   expect('1080p30 متاح، وما لا يدعمه الجهاز مقفل لا مخفي', viaStudio.options.length === 3 && viaStudio.options[0][0] === '1080p30' && viaStudio.options[0][1] === false
     && viaStudio.options.every(([name, disabled]) => disabled === !support.video[name]), viaStudio.options);
@@ -194,7 +202,45 @@ async function main() {
   expect('المسار القديم ما زال يعمل حين يُجبَر', viaLegacy.engine === 'legacy' && !viaLegacy.error && /^اكتمل التصيير/.test(viaLegacy.status), viaLegacy);
   expect('المسار القديم لا يمر بكاتب main', listing().length === 0 && writer.state().active === false, listing());
 
-  // ── (6) قياس 60 ثانية (اختياري) ──
+  // ── (6) GIF والصورة المصغرة عبر IPC حقيقي ──
+  for (const name of listing()) fs.unlinkSync(path.join(downloads, name));
+  const gifBoard = studio.propose({ aspect: '16:9', scenes: board.scenes.map((scene, index) => ({ ...scene, duration_ms: index === 0 ? 1000 : 500, trim_start_ms: 500, music: '', voice: '', camera: undefined })) });
+  if (!gifBoard.ok) throw new Error('gif propose: ' + gifBoard.error);
+  const withSrc = (list) => list.map((scene) => ({ ...scene, src: pathToFileURL(scene.asset).href }));
+  const gif = await run('window.__promoExportGif(' + JSON.stringify(withSrc(gifBoard.storyboard.scenes)) + ')');
+  expect('تصدير GIF ينجح', gif.ok && gif.result.engine === 'gif' && gif.result.frames === 30 && gif.result.fps === 15 && gif.result.width === 1280 && gif.result.height === 720, gif.ok ? gif.result : gif.error);
+  if (gif.ok) {
+    analysisPath = gif.result.path;
+    const inspected = await run('window.__promoGifInspect(' + JSON.stringify(gif.result.path) + ')');
+    analysisPath = '';
+    expect('GIF: التوقيع والذيل والأبعاد', inspected.signature === 'GIF89a' && inspected.trailer === 0x3b && inspected.width === 1280 && inspected.height === 720, inspected);
+    if (inspected.frameCount != null) {
+      expect('GIF: مفكِّك المتصفح يقرأ 30 إطاراً بتكرار لانهائي', inspected.frameCount === 30 && inspected.frameWidth === 1280 && inspected.repetitions === 'infinite', inspected);
+      expect('GIF: التوقيت 15 إطاراً/ث', inspected.firstDurationUs >= 60000 && inspected.firstDurationUs <= 70000 && Math.abs(inspected.lastTimestampUs - 29 * 1e6 / 15) < 30000, inspected);
+    }
+    gifLine = ' · GIF ' + (gif.result.bytes / 1048576).toFixed(1) + ' م.ب في ' + (gif.result.elapsed_ms / 1000).toFixed(1) + ' ث';
+    try {
+      const ff = spawnSync('ffprobe', ['-v', 'error', '-count_frames', '-show_entries', 'stream=codec_name,nb_read_frames,width,height', '-of', 'json', gif.result.path], { encoding: 'utf8', timeout: 30000 });
+      if (ff.status === 0 && ff.stdout) {
+        const stream = JSON.parse(ff.stdout).streams[0];
+        expect('ffprobe يقرأ GIF', stream.codec_name === 'gif' && Number(stream.nb_read_frames) === 30 && stream.width === 1280, stream);
+        gifLine += ' (ffprobe: gif/' + stream.nb_read_frames + ')';
+      } else if (ff.status != null && ff.status !== 0) expect('ffprobe يقبل GIF', false, String(ff.stderr).slice(0, 200));
+    } catch {}
+  }
+  const sixteen = studio.propose({ aspect: '16:9', scenes: Array.from({ length: 4 }, () => ({ asset: image, duration_ms: 4001 })) });
+  const rejected = await run('window.__promoExportGif(' + JSON.stringify(withSrc(sixteen.storyboard.scenes)) + ')');
+  expect('GIF فوق 15 ثانية مرفوض قبل الكتابة', !rejected.ok && rejected.error === 'gif_too_long' && writer.state().active === false, rejected);
+  studio.propose(board);
+  const filesBefore = listing().length;
+  const gifCancelled = await run('window.__promoExportGif(' + JSON.stringify(scenes) + ', 20)');
+  expect('إلغاء GIF بلا بقايا', !gifCancelled.ok && gifCancelled.error === 'render_cancelled' && listing().length === filesBefore && writer.state().active === false, [gifCancelled, listing()]);
+  const thumb = await run('window.__promoThumbnail(' + JSON.stringify(scenes) + ', 5000)');
+  expect('الصورة المصغرة PNG بمقاس التصدير', thumb.ok && thumb.width === 1920 && thumb.height === 1080 && JSON.stringify(thumb.signature) === '[137,80,78,71]'
+    && /^satr-promo-thumb-[\d-]+\.png$/.test(thumb.saved.filename) && fs.existsSync(path.join(downloads, thumb.saved.filename)), thumb);
+  for (const name of listing()) fs.unlinkSync(path.join(downloads, name));
+
+  // ── (7) قياس 60 ثانية (اختياري) ──
   let long = '';
   if (LONG) {
     const sixty = studio.propose({ aspect: '16:9', scenes: Array.from({ length: 12 }, (_, i) => ({ ...board.scenes[i % 3], duration_ms: 5000, trim_start_ms: 300 })) });
@@ -210,7 +256,7 @@ async function main() {
   }
   finish(0, 'promo-export-live: ok — 300 إطار بالضبط، انحراف الصوت ' + Math.abs(report.audio_duration_ms - report.video_duration_ms).toFixed(1)
     + 'ms، مطابقة المعاينة ≥ ' + (worst * 100).toFixed(2) + '٪، تصدير 10 ثوانٍ في ' + (result.elapsed_ms / 1000).toFixed(1) + ' ثانية ('
-    + result.encoder.codec + '/' + result.encoder.acceleration + ')، الإلغاء بلا بقايا، ' + retry + long + '. ' + probe);
+    + result.encoder.codec + '/' + result.encoder.acceleration + ')، الإلغاء بلا بقايا، ' + retry + gifLine + long + '. ' + probe);
 }
 
 main().catch((error) => finish(1, 'promo-export-live: ' + (error && error.stack || error)));

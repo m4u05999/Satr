@@ -1197,6 +1197,8 @@ import { createPreviewShield } from './lib/preview-shield.js';
   promoStudioEl.addEventListener('promo-studio-visible', (event) => {
     surfaceCoordinator.setDialog('promo-studio', !!event.detail);
   });
+  // هوية المشروع تُقرأ وتُكتب في مجلد المشروع الحالي؛ main يتحقق منه.
+  promoStudioEl.getProjectRoot = () => $('cwd').value.trim();
   // بطاقة سيناريو الإعلان: الاعتماد يجهّز رسالة للوكيل في المؤلّف، والإرسال بيد المستخدم.
   const promoPlanEl = document.querySelector('satr-promo-plan');
   if (promoPlanEl) {

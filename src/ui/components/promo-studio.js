@@ -9,7 +9,9 @@ import { safeArea } from '../lib/promo/promo-subtitles.js';
 import { EXPORT_PRESETS, probeExportSupport } from '../lib/promo-export/encode.js';
 import { buildStageRows, cleanStage, cleanRedactions, suggestRedactions, TRANSITION_IN_VALUES, MAX_REDACTIONS } from '../lib/promo/studio-stage.js';
 import { buildTimeline as timelineOf } from '../lib/promo/promo-timeline.js';
-import { exportStoryboard } from '../lib/promo-export/export.js';
+import { exportStoryboard, exportGif, renderThumbnail } from '../lib/promo-export/export.js';
+import { GIF_MAX_MS } from '../lib/promo-export/gif.js';
+import { TEMPLATES, templateById, applyTemplate, applyBrand } from '../lib/promo/promo-templates.js';
 import { CAMERA_CSS, buildCameraRow, cleanCamera, suggestCamera, addKeyframe, editKeyframe, shiftKeyframes } from '../lib/promo/studio-camera.js';
 
 // ألوان الرسم على canvas — **من tokens الثيمة أولاً**، لأن المعاينة يجب أن تطابق
@@ -69,6 +71,9 @@ const studioSheet = sheet(`
   .row label { display: flex; align-items: center; gap: var(--space-1); color: var(--text-dim); font-size: 11.5px; }
   .caption { width: 100%; min-width: 0; unicode-bidi: plaintext; }
   .highlight { width: 110px; unicode-bidi: plaintext; }
+  .project { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--gold-border); border-radius: var(--radius-lg); background: var(--surface); }
+  .project h3 { margin: var(--space-0); font-size: 13px; color: var(--gold-strong); }
+  .project .closing { flex: 1; min-width: 160px; unicode-bidi: plaintext; }
   .duration { width: 92px; direction: ltr; text-align: left; font-family: var(--mono); }
   .trim { width: 92px; direction: ltr; text-align: left; font-family: var(--mono); }
   .fit, .position, .style { min-width: 92px; }
@@ -133,6 +138,8 @@ const MARKUP = `
       <button id="approve" type="button">اعتماد الخط الزمني</button>
       <select id="quality" aria-label="جودة التصدير"></select>
       <button id="render" type="button" disabled>صيّر MP4</button>
+      <button id="gif" type="button" disabled title="GIF بلا صوت: 15 ثانية و720p على الأكثر">GIF</button>
+      <button id="thumb" type="button" disabled title="احفظ إطار المعاينة الحالي صورة PNG في Downloads">صورة مصغرة</button>
       <button id="cancel" type="button" hidden>إلغاء التصيير</button>
     </footer>
   </section>
@@ -187,7 +194,18 @@ function cloneStoryboard(value) {
     voice_volume: typeof scene.voice_volume === 'number' && Number.isFinite(scene.voice_volume) && !Number.isNaN(scene.voice_volume)
       ? Math.max(0, Math.min(1, scene.voice_volume)) : 1,
   })).filter((scene) => scene.asset) : [];
-  return { aspect, scenes };
+  const board = { aspect, scenes };
+  const brand = cleanBrand(raw.brand);
+  if (brand) board.brand = brand;
+  return board;
+}
+
+// هوية المشروع جهة الواجهة؛ التنقية الملزمة في electron/promostudio.js.
+function cleanBrand(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const color = (value) => (/^#[0-9a-fA-F]{6}$/.test(value || '') ? value.toLowerCase() : '');
+  const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : '');
+  return { name: text(raw.name, 60), primary: color(raw.primary), secondary: color(raw.secondary), accent: color(raw.accent), closing: text(raw.closing, 120), logo: text(raw.logo, 4096) };
 }
 
 function basename(value) {
@@ -312,6 +330,8 @@ class SatrPromoStudio extends HTMLElement {
     root.getElementById('timeline').addEventListener('click', (event) => this.handleAction(event));
     root.getElementById('timeline').addEventListener('pointerdown', (event) => this.startKeyDrag(event));
     root.getElementById('cancel').addEventListener('click', () => { if (this.abortController) this.abortController.abort(); });
+    root.getElementById('gif').addEventListener('click', () => { this.lastRenderPromise = this.renderGif(); this.lastRenderPromise.catch(() => {}); });
+    root.getElementById('thumb').addEventListener('click', () => { this.saveThumbnail().catch(() => {}); });
     const quality = root.getElementById('quality');
     for (const [value, preset] of Object.entries(EXPORT_PRESETS)) {
       const option = document.createElement('option'); option.value = value; option.textContent = preset.label; quality.appendChild(option);
@@ -368,6 +388,7 @@ class SatrPromoStudio extends HTMLElement {
     // storyboard مبني للتو من مقاطع مسجَّلة يأخذ كاميرا تلقائية؛ المقترح أو المحمَّل يبقى كما جاء.
     if (next) this.storyboard = cloneStoryboard(next);
     this.selectedKey = null;
+    this.brandDraftValue = null;
     this.approved = false;
     this.previewTime = 0;
     this.previewCache.clear();
@@ -384,6 +405,198 @@ class SatrPromoStudio extends HTMLElement {
     if (this.rerecording) window.satr.promoCaptureStop().catch(() => {});
     this.removeAttribute('open');
     this.dispatchEvent(new CustomEvent('promo-studio-visible', { bubbles: true, detail: false }));
+  }
+
+  // ── الهوية والقوالب وGIF والصورة المصغرة (الدفعة 9) ──
+
+  // لون إبراز الكلمة من هوية المشروع إن وُجد، وإلا من سمة الاستوديو.
+  withBrand(colors) {
+    const accent = this.storyboard.brand && this.storyboard.brand.accent;
+    return accent ? { ...colors, accent } : colors;
+  }
+
+  projectRoot() {
+    return typeof this.getProjectRoot === 'function' ? String(this.getProjectRoot() || '').trim() : '';
+  }
+
+  buildProjectCard() {
+    const brand = this.storyboard.brand || { name: '', primary: '', secondary: '', accent: '', closing: '', logo: '' };
+    const card = document.createElement('article'); card.className = 'project';
+    const title = document.createElement('h3'); title.textContent = 'القالب والهوية';
+    const templateRow = document.createElement('div'); templateRow.className = 'row';
+    const template = makeSelect(this.selectedTemplate || TEMPLATES[0].id, 'template', TEMPLATES.map((item) => ({ value: item.id, label: item.label })));
+    template.title = (templateById(template.value) || TEMPLATES[0]).hint;
+    const applyButton = document.createElement('button'); applyButton.type = 'button'; applyButton.dataset.action = 'template-apply'; applyButton.textContent = 'طبّق القالب';
+    applyButton.title = 'يغيّر المقاس والمسرح وحركة العناوين والانتقالات لكل المشاهد. لا يمس المقاطع ولا النصوص ولا الكاميرا ولا التغبيش.';
+    appendLabel(templateRow, 'القالب', template);
+    templateRow.appendChild(applyButton);
+    const brandRow = document.createElement('div'); brandRow.className = 'row';
+    const color = (field, value, fallback) => { const input = document.createElement('input'); input.type = 'color'; input.dataset.field = field; input.value = value || fallback; return input; };
+    const name = document.createElement('input'); name.className = 'highlight'; name.dataset.field = 'brand_name'; name.value = brand.name; name.maxLength = 60; name.placeholder = 'اسم العلامة';
+    appendLabel(brandRow, 'الهوية', name);
+    appendLabel(brandRow, 'أساسي', color('brand_primary', brand.primary, this.themeHex('--bg-deep')));
+    appendLabel(brandRow, 'ثانوي', color('brand_secondary', brand.secondary, this.themeHex('--gold')));
+    appendLabel(brandRow, 'إبراز', color('brand_accent', brand.accent, this.themeHex('--gold')));
+    const logos = [{ value: '', label: 'بلا شعار' }].concat(this.imageOptions().concat(brand.logo && !this.imageOptions().includes(brand.logo) ? [brand.logo] : []).map((value) => ({ value, label: basename(value) })));
+    appendLabel(brandRow, 'الشعار', makeSelect(brand.logo, 'brand_logo', logos), 'music-label');
+    const closingRow = document.createElement('div'); closingRow.className = 'row';
+    const closing = document.createElement('input'); closing.className = 'closing'; closing.dataset.field = 'brand_closing'; closing.value = brand.closing; closing.maxLength = 120;
+    closing.placeholder = 'عبارة الختام (تظهر مع الشعار في آخر الإعلان)…';
+    closingRow.appendChild(closing);
+    for (const [action, label, hint] of [['brand-apply', 'طبّق الهوية', 'يلوّن خلفيات المسرح ويضيف بطاقة ختام إن وُجد شعار وعبارة'],
+      ['brand-load', 'حمّل هوية المشروع', 'يقرأ ‎.satr/brand.json من مجلد المشروع الحالي'], ['brand-save', 'احفظها للمشروع', 'يكتب ‎.satr/brand.json في مجلد المشروع الحالي']]) {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.action = action; button.textContent = label; button.title = hint;
+      closingRow.appendChild(button);
+    }
+    card.append(title, templateRow, brandRow, closingRow);
+    if (this.rendering) card.querySelectorAll('button, input, select').forEach((control) => { control.disabled = true; });
+    return card;
+  }
+
+  // حقول الهوية تُحفظ في مسودة على المكوّن؛ لا تغيّر المشاهد حتى «طبّق الهوية».
+  brandDraft() {
+    if (!this.brandDraftValue) this.brandDraftValue = { ...(this.storyboard.brand || { name: '', primary: '', secondary: '', accent: '', closing: '', logo: '' }) };
+    return this.brandDraftValue;
+  }
+
+  handleProjectEdit(event) {
+    const field = event.target && event.target.dataset ? event.target.dataset.field : '';
+    if (!field || this.rendering) return;
+    const value = String(event.target.value || '');
+    if (field === 'template') { this.selectedTemplate = value; const found = templateById(value); if (found) event.target.title = found.hint; return; }
+    const draft = this.brandDraft();
+    if (field === 'brand_name') draft.name = value.slice(0, 60);
+    else if (field === 'brand_closing') draft.closing = value.slice(0, 120);
+    else if (field === 'brand_logo') draft.logo = value;
+    else if (field === 'brand_primary' || field === 'brand_secondary' || field === 'brand_accent') draft[field.slice(6)] = /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : '';
+  }
+
+  handleProjectAction(event) {
+    const button = event.target && event.target.closest('button[data-action]');
+    if (!button || this.rendering) return;
+    const status = this.shadowRoot.getElementById('status');
+    const action = button.dataset.action;
+    if (action === 'template-apply') {
+      const template = templateById(this.selectedTemplate || TEMPLATES[0].id);
+      if (!template || !this.storyboard.scenes.length) return;
+      applyTemplate(this.storyboard, template, { primary: this.themeHex('--bg-deep'), secondary: this.themeHex('--gold') });
+      this.changed();
+      status.textContent = 'طُبّق قالب «' + template.label + '» على ' + this.storyboard.scenes.length + ' مشهداً. راجع المعاينة ثم اعتمد.';
+    } else if (action === 'brand-apply') {
+      const draft = this.brandDraft();
+      // لون لم يختره المستخدم يأخذ قيمة الحقل الظاهرة (لون السمة)، فما يراه هو ما يُطبَّق.
+      const card = button.closest('.project');
+      for (const key of ['primary', 'secondary', 'accent']) {
+        const input = card.querySelector('[data-field="brand_' + key + '"]');
+        if (!draft[key] && input) draft[key] = String(input.value || '').toLowerCase();
+      }
+      const result = applyBrand(this.storyboard, draft);
+      this.brandDraftValue = null;
+      this.changed();
+      status.textContent = result.closing === 'added' ? 'طُبّقت الهوية وأضيفت بطاقة الختام.' : result.closing === 'updated' ? 'طُبّقت الهوية وحُدّثت بطاقة الختام.'
+        : draft.closing && !draft.logo ? 'طُبّقت الهوية. بطاقة الختام تحتاج شعاراً من صور المشروع.' : 'طُبّقت الهوية على خلفيات المشاهد.';
+    } else if (action === 'brand-load' || action === 'brand-save') {
+      this.syncBrandFile(action === 'brand-save').catch(() => {});
+    }
+  }
+
+  async syncBrandFile(save) {
+    const status = this.shadowRoot.getElementById('status');
+    const cwd = this.projectRoot();
+    const api = save ? window.satr.promoBrandSave : window.satr.promoBrandLoad;
+    if (!cwd || typeof api !== 'function') { status.textContent = 'اختر مجلد المشروع أولاً؛ الهوية تُحفظ في ‎.satr/brand.json داخله.'; return null; }
+    try {
+      const result = save ? await window.satr.promoBrandSave(cwd, this.brandDraft()) : await window.satr.promoBrandLoad(cwd);
+      if (!result || !result.ok) throw new Error(result && result.error ? result.error : 'brand_failed');
+      if (save) status.textContent = 'حُفظت هوية المشروع في ‎.satr/brand.json.';
+      else if (!result.exists) status.textContent = 'لا ملف هوية في هذا المشروع بعد. املأ الحقول ثم «احفظها للمشروع».';
+      else {
+        this.brandDraftValue = cleanBrand(result.brand);
+        this.storyboard.brand = cleanBrand(result.brand);
+        this.renderTimeline();
+        status.textContent = 'حُمّلت هوية المشروع. اضغط «طبّق الهوية» لتلوين المشاهد.';
+      }
+      return result;
+    } catch (error) {
+      status.textContent = (save ? 'تعذّر حفظ الهوية: ' : 'تعذّر تحميل الهوية: ') + (error && error.message ? error.message : error);
+      return null;
+    }
+  }
+
+  // خيارات التصدير المشتركة بين GIF والصورة المصغرة.
+  async exportOptions() {
+    const styles = getComputedStyle(this);
+    try { await Promise.all([700, 500].map((weight) => document.fonts.load(weight + ' 48px "IBM Plex Sans Arabic"', 'ع A ٢'))); } catch (error) {}
+    return {
+      scenes: await this.resolvedScenes(), aspect: this.storyboard.aspect, pointers: this.pointerTracks(),
+      colors: this.withBrand({ background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold'), chrome: canvasColors(styles).chrome }),
+      readAsset: (assetPath, offset, length) => window.satr.promoAssetRead(assetPath, offset, length),
+    };
+  }
+
+  // GIF بلا صوت. يبدأ بنقرة المستخدم وبعد اعتماد الخط الزمني، كالتصيير.
+  async renderGif() {
+    if (!this.approved || this.rendering) throw new Error('approval_required');
+    if (this.hasMissingAssets()) throw new Error('missing_assets');
+    this.rendering = true;
+    this.abortController = new AbortController();
+    this.renderTimeline();
+    const root = this.shadowRoot;
+    const status = root.getElementById('status'), progress = root.getElementById('progress');
+    root.getElementById('cancel').hidden = false;
+    status.textContent = 'جارٍ تحضير GIF…';
+    let lastHandle = '';
+    try {
+      const result = await exportGif({
+        ...(await this.exportOptions()), signal: this.abortController.signal,
+        writer: {
+          begin: async (kind) => { const begun = await window.satr.promoExportBegin(kind); if (begun && begun.ok) lastHandle = begun.handle; return begun; },
+          chunk: (handle, seq, bytes) => window.satr.promoExportChunk(handle, seq, bytes),
+          finish: (handle) => window.satr.promoExportFinish(handle),
+          abort: (handle) => window.satr.promoExportAbort(handle),
+        },
+        onProgress: (value) => {
+          progress.style.width = Math.min(100, value.frame / value.frames * 100).toFixed(2) + '%';
+          status.textContent = value.stage === 'finalize' ? 'جارٍ إنهاء الملف…' : 'جارٍ تصدير GIF: إطار ' + value.frame + ' من ' + value.frames;
+        },
+      });
+      status.textContent = 'اكتمل GIF إلى Downloads: ' + result.filename + ' (' + (result.bytes / 1048576).toFixed(1) + ' م.ب)';
+      progress.style.width = '100%';
+      this.dispatchEvent(new CustomEvent('promo-rendered', { bubbles: true, detail: { ...result } }));
+      return result;
+    } catch (error) {
+      if (lastHandle) { try { await window.satr.promoExportAbort(lastHandle); } catch (ignored) {} }
+      status.textContent = error && error.message === 'render_cancelled' ? 'أُلغي تصدير GIF.'
+        : error && error.message === 'gif_too_long' ? 'GIF محدود بـ15 ثانية.' : 'تعذّر تصدير GIF: ' + String(error && error.message || error).slice(0, 80);
+      throw error;
+    } finally {
+      root.getElementById('cancel').hidden = true;
+      this.rendering = false;
+      this.abortController = null;
+      root.getElementById('timeline').querySelectorAll('button, input, select').forEach((control) => { control.disabled = control.dataset.locked === '1'; });
+      this.syncApproval();
+    }
+  }
+
+  // صورة مصغرة PNG من إطار المعاينة الحالي بمقاس التصدير الكامل، بلا خطوط المساحة الآمنة.
+  async saveThumbnail() {
+    const status = this.shadowRoot.getElementById('status');
+    if (this.rendering || !this.storyboard.scenes.length || this.hasMissingAssets()) return null;
+    const button = this.shadowRoot.getElementById('thumb');
+    button.disabled = true;
+    try {
+      const bytes = await renderThumbnail(await this.exportOptions(), this.previewTime);
+      const result = await window.satr.promoThumbnailSave(bytes);
+      if (!result || !result.ok) throw new Error(result && result.error ? result.error : 'thumbnail_failed');
+      status.textContent = 'حُفظت الصورة المصغرة في Downloads: ' + result.filename;
+      this.dispatchEvent(new CustomEvent('promo-thumbnail-saved', { bubbles: true, detail: { filename: result.filename, bytes: result.bytes } }));
+      return result;
+    } catch (error) {
+      status.textContent = 'تعذّر حفظ الصورة المصغرة: ' + String(error && error.message || error).slice(0, 80);
+      throw error;
+    } finally {
+      this.syncApproval();
+    }
   }
 
   // ── الإخراج البصري (الدفعة 7) ──
@@ -533,7 +746,7 @@ class SatrPromoStudio extends HTMLElement {
   async renderWithEngine(colors, progress, status) {
     let lastHandle = '';
     const writer = {
-      begin: async () => { const result = await window.satr.promoExportBegin(); if (result && result.ok) lastHandle = result.handle; return result; },
+      begin: async (kind) => { const result = await window.satr.promoExportBegin(kind); if (result && result.ok) lastHandle = result.handle; return result; },
       chunk: (handle, seq, bytes) => window.satr.promoExportChunk(handle, seq, bytes),
       finish: (handle, header) => window.satr.promoExportFinish(handle, header),
       abort: (handle) => window.satr.promoExportAbort(handle),
@@ -831,7 +1044,7 @@ class SatrPromoStudio extends HTMLElement {
     const context = canvas.getContext('2d', { alpha: false });
     const placement = this.sceneAtTime(this.previewTime);
     const styles = getComputedStyle(this);
-    const colors = canvasColors(styles);
+    const colors = this.withBrand(canvasColors(styles));
     if (!placement) {
       context.fillStyle = colors.background;
       context.fillRect(0, 0, canvas.width, canvas.height);
@@ -1009,6 +1222,7 @@ class SatrPromoStudio extends HTMLElement {
     const audioOptions = this.audioOptions();
     const audioSelectOptions = [{ value: '', label: 'بدون' }]
       .concat(audioOptions.map((value) => ({ value, label: basename(value) })));
+    timeline.appendChild(this.buildProjectCard());
     this.storyboard.scenes.forEach((scene, index) => {
       const card = document.createElement('article');
       card.className = 'scene' + (scene.asset_missing ? ' missing-asset' : ''); card.dataset.index = String(index);
@@ -1140,9 +1354,17 @@ class SatrPromoStudio extends HTMLElement {
     approve.textContent = this.approved ? 'معتمد ✓' : 'اعتماد الخط الزمني';
     approve.disabled = this.rendering || !this.storyboard.scenes.length || hasMissing;
     this.shadowRoot.getElementById('render').disabled = !this.approved || this.rendering || !this.storyboard.scenes.length || hasMissing;
+    // GIF والصورة المصغرة يمران بكاتب main، فيلزمهما المحرك الجديد. GIF بعد الاعتماد كالتصيير.
+    const engine = typeof window.satr.promoExportBegin === 'function' && typeof window.satr.promoAssetRead === 'function';
+    const gif = this.shadowRoot.getElementById('gif'), thumb = this.shadowRoot.getElementById('thumb');
+    const tooLong = this.totalDuration() > GIF_MAX_MS;
+    gif.disabled = !engine || !this.approved || this.rendering || !this.storyboard.scenes.length || hasMissing || tooLong;
+    gif.title = tooLong ? 'GIF محدود بـ15 ثانية؛ هذا الإعلان أطول' : 'GIF بلا صوت: 15 ثانية و720p على الأكثر';
+    thumb.disabled = !engine || this.rendering || !this.storyboard.scenes.length || hasMissing || typeof window.satr.promoThumbnailSave !== 'function';
   }
 
   handleEdit(event) {
+    if (event.target && event.target.closest && event.target.closest('.project')) { this.handleProjectEdit(event); return; }
     const field = event.target && event.target.dataset && event.target.dataset.field;
     const card = event.target && event.target.closest('.scene');
     const index = card ? Number(card.dataset.index) : -1;
@@ -1176,6 +1398,7 @@ class SatrPromoStudio extends HTMLElement {
   }
 
   handleAction(event) {
+    if (event.target && event.target.closest && event.target.closest('.project')) { this.handleProjectAction(event); return; }
     const button = event.target && event.target.closest('button[data-action]');
     const card = button && button.closest('.scene');
     const index = card ? Number(card.dataset.index) : -1;
@@ -1233,7 +1456,7 @@ class SatrPromoStudio extends HTMLElement {
     const result = await renderStoryboard({
       canvas: root.getElementById('canvas'), scenes: await this.resolvedScenes(), signal: this.abortController.signal,
       pointers: this.pointerTracks(), aspect: this.storyboard.aspect, images: await this.stageImages(),
-      colors: { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold'), chrome: canvasColors(styles).chrome },
+      colors: this.withBrand({ background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold'), chrome: canvasColors(styles).chrome }),
       onProgress: (value) => { progress.style.width = Math.min(100, value.elapsed_ms / value.total_ms * 100).toFixed(2) + '%'; },
     });
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
@@ -1261,7 +1484,7 @@ class SatrPromoStudio extends HTMLElement {
       try {
         await Promise.all([700, 500].map((weight) => document.fonts.load(weight + ' 48px "IBM Plex Sans Arabic"', 'ع A ٢')));
       } catch (error) {}
-      const colors = { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold'), chrome: canvasColors(styles).chrome };
+      const colors = this.withBrand({ background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold'), chrome: canvasColors(styles).chrome });
       // الفحص غير متزامن ويبدأ عند فتح الاستوديو؛ ننتظره هنا كي لا يسبقه ضغط «صيّر».
       await this.refreshExportSupport();
       const support = this.exportSupport && this.exportSupport.get(this.storyboard.aspect);
