@@ -822,19 +822,60 @@ function buildTools(deps) {
     },
     {
       name: 'promo_propose_storyboard', access: 'read',
-      description: 'اقترح خطاً زمنياً من مقاطع/أصول محلية داخل Downloads ليراجعه المستخدم في استوديو البرومو. لا يبدأ التصيير ولا يرفع ملفاً.',
+      description: 'اقترح خطاً زمنياً من مقاطع/أصول محلية داخل Downloads ليراجعه المستخدم في استوديو البرومو. يقبل الكاميرا (auto افتراضياً) والمسرح وانتقال الدخول وحركة العنوان ونص التعليق. مجموع المدد ≤ 180 ثانية. لا يبدأ التصيير ولا يرفع ملفاً؛ المستخدم وحده يصدّر.',
       inputSchema: { type: 'object', properties: {
+        aspect: { type: 'string', enum: ['16:9', '9:16', '1:1'] },
         scenes: { type: 'array', minItems: 1, maxItems: 40, items: { type: 'object', properties: {
           segment_path: { type: 'string' }, asset: { type: 'string' }, caption: { type: 'string', maxLength: 500 },
           duration_ms: { type: 'integer', minimum: 250, maximum: 120000 },
-          transition: { type: 'string', enum: ['cut', 'fade'] }, music: { type: 'string' }, voice: { type: 'string' },
+          trim_start_ms: { type: 'integer', minimum: 0, maximum: 120000 },
+          transition: { type: 'string', enum: ['cut', 'fade'] },
+          transition_in: { type: 'string', enum: ['none', 'crossfade', 'slide', 'zoom', 'blur'] },
+          fit: { type: 'string', enum: ['cover', 'contain'] },
+          caption_position: { type: 'string', enum: ['top', 'center', 'bottom'] },
+          caption_style: { type: 'string', enum: ['box', 'minimal'] },
+          music: { type: 'string' }, voice: { type: 'string' },
+          voiceover_ar: { type: 'string', maxLength: 2000 }, subtitles: { type: 'boolean' },
+          text_style: { type: 'object', properties: { animation: { type: 'string', enum: ['none', 'words', 'slide', 'zoom'] }, highlight: { type: 'string', maxLength: 60 } } },
+          camera: { description: "'auto' (افتراضي) أو 'off' أو كائن { mode, cursor, keyframes }" },
+          stage: { type: 'object', properties: {
+            frame: { type: 'string', enum: ['none', 'browser', 'laptop', 'phone', 'tablet'] },
+            background: { type: 'object' }, shadow: { type: 'number' }, scale: { type: 'number' },
+            tilt: { type: 'object' }, motion: { type: 'string', enum: ['none', 'orbit'] }, label: { type: 'string', maxLength: 60 },
+          } },
         } } },
       }, required: ['scenes'] },
       handler: async (args) => {
-        const result = studio.propose({ scenes: args && args.scenes });
-        return result.ok ? textResult(JSON.stringify({ ok: true, scenes: result.storyboard.scenes.length }))
-          : textResult('رُفض storyboard: ' + (result.error || 'bad_storyboard'), true);
+        const result = studio.propose({ aspect: args && args.aspect, scenes: promostudio.proposalScenes(args && args.scenes) });
+        return result.ok ? textResult(JSON.stringify({ ok: true, scenes: result.storyboard.scenes.length, aspect: result.storyboard.aspect, note: 'فُتح الاستوديو للمراجعة. التصدير بيد المستخدم.' }))
+          : textResult('رُفض storyboard: ' + (result.error || 'bad_storyboard') + (Number.isInteger(result.index) ? ' (المشهد ' + (result.index + 1) + ')' : ''), true);
       },
+    },
+    {
+      name: 'promo_plan_ad', access: 'read',
+      description: 'اعرض على المستخدم سيناريو إعلان مكتوباً (بطاقة قابلة للتعديل) قبل أي تسجيل. قراءة فقط: لا يسجّل ولا يصيّر. بعد استدعائها توقّف وانتظر أن يعتمد المستخدم البطاقة، ثم اقرأ النسخة المعتمدة بـ promo_get_ad_plan.',
+      inputSchema: { type: 'object', properties: {
+        goal: { type: 'string', maxLength: 300 }, audience: { type: 'string', maxLength: 200 },
+        duration_s: { type: 'integer', minimum: 10, maximum: 90 }, aspect: { type: 'string', enum: ['16:9', '9:16', '1:1'] },
+        tone: { type: 'string', maxLength: 80 },
+        scenes: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'object', properties: {
+          purpose: { type: 'string', maxLength: 200 },
+          steps_to_perform: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 200 } },
+          caption_ar: { type: 'string', maxLength: 500 }, voiceover_ar: { type: 'string', maxLength: 2000 },
+          duration_s: { type: 'integer', minimum: 1, maximum: 60 },
+        }, required: ['purpose'] } },
+      }, required: ['goal', 'scenes'] },
+      handler: async (args) => {
+        const result = studio.planAd(args);
+        return result.ok ? textResult(JSON.stringify({ ok: true, approved: false, scenes: result.plan.scenes.length, total_s: result.plan.total_s, next: 'انتظر اعتماد المستخدم للبطاقة ثم استدعِ promo_get_ad_plan. لا تبدأ التسجيل قبل الاعتماد.' }))
+          : textResult('رُفضت خطة الإعلان: ' + (result.error || 'bad_plan'), true);
+      },
+    },
+    {
+      name: 'promo_get_ad_plan', access: 'read',
+      description: 'اقرأ خطة الإعلان الحالية وحالة اعتمادها. النسخة المعادة هي ما عدّله المستخدم واعتمده. قراءة فقط.',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => textResult(JSON.stringify(studio.adPlanState(), null, 2)),
     },
     {
       name: 'run_in_background', access: 'exec',

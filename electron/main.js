@@ -3777,6 +3777,11 @@ ipcMain.handle('satr:promoAssetUrl', (event, payload) => {
   return promostudio.assetUrl(candidate);
 });
 
+// ── خطة الإعلان (الدفعة 8): الاعتماد والرفض من الواجهة فقط. أدوات الوكيل تقترح وتقرأ ولا تعتمد. ──
+ipcMain.handle('satr:promoAdPlanState', () => promostudio.adPlanState());
+ipcMain.handle('satr:promoAdPlanApprove', (event, payload) => promostudio.approveAdPlan(payload && payload.plan));
+ipcMain.handle('satr:promoAdPlanDismiss', () => promostudio.dismissAdPlan());
+
 // ── تصدير الإعلان إطاراً بإطار (الدفعة 6): المصيّر يرمّز ويُغلِّف، وmain وحده يكتب. ──
 // لا مسار يعبر من المصيّر: begin يختار الاسم داخل Downloads ويعيد مقبضاً، والباقي بالمقبض.
 // هذه القنوات لا تُسجَّل في أي قائمة أدوات وكيل (يحرسه test:promo-agent-isolation في الدفعة 8).

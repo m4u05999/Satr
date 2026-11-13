@@ -74,6 +74,8 @@ const BACKGROUND_READ_TOOLS = new Set([
 const PROMO_READ_TOOLS = new Set([
   'mcp__satr-terminal__promo_list_segments',
   'mcp__satr-terminal__promo_propose_storyboard',
+  'mcp__satr-terminal__promo_plan_ad',
+  'mcp__satr-terminal__promo_get_ad_plan',
 ]);
 const VERIFY_EXEC_TOOL = 'mcp__satr-verify__verify_project';
 const STOP_BACKGROUND_TOOL = 'mcp__satr-terminal__stop_background_task';
@@ -1930,26 +1932,80 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       {},
       async () => ({ content: [{ type: 'text', text: JSON.stringify(promocapture.listSegments(), null, 2) }] })
     );
+    // مخطط مشهد v2 لاقتراح الوكيل. كل الحقول تُنقّى من جديد في promostudio.sanitizeStoryboard؛
+    // هذا المخطط يوثّق للنموذج ما يُقبل، لا يحرس.
+    const promoSceneSchema = z.object({
+      segment_path: z.string().optional(),
+      asset: z.string().optional(),
+      caption: z.string().max(500).optional(),
+      duration_ms: z.number().int().min(250).max(120000).optional(),
+      trim_start_ms: z.number().int().min(0).max(120000).optional(),
+      transition: z.enum(['cut', 'fade']).optional(),
+      transition_in: z.enum(['none', 'crossfade', 'slide', 'zoom', 'blur']).optional(),
+      fit: z.enum(['cover', 'contain']).optional(),
+      caption_position: z.enum(['top', 'center', 'bottom']).optional(),
+      caption_style: z.enum(['box', 'minimal']).optional(),
+      music: z.string().optional(),
+      voice: z.string().optional(),
+      voiceover_ar: z.string().max(2000).optional(),
+      subtitles: z.boolean().optional(),
+      text_style: z.object({ animation: z.enum(['none', 'words', 'slide', 'zoom']).optional(), highlight: z.string().max(60).optional() }).optional(),
+      camera: z.union([z.enum(['auto', 'off']), z.object({
+        mode: z.enum(['auto', 'manual', 'off']),
+        cursor: z.boolean().optional(),
+        keyframes: z.array(z.object({ t_ms: z.number().int().min(0), x: z.number().min(0).max(1), y: z.number().min(0).max(1), zoom: z.number().min(1).max(4), ease: z.enum(['inOut', 'linear', 'hold']).optional() })).max(200).optional(),
+      })]).optional(),
+      stage: z.object({
+        frame: z.enum(['none', 'browser', 'laptop', 'phone', 'tablet']).optional(),
+        background: z.object({ type: z.enum(['none', 'color', 'linear', 'radial', 'image']).optional(), color: z.string().optional(), color2: z.string().optional(), angle: z.number().optional(), image: z.string().optional(), blur: z.number().optional() }).optional(),
+        shadow: z.number().min(0).max(1).optional(), scale: z.number().min(0.78).max(0.88).optional(),
+        tilt: z.object({ x: z.number().min(-25).max(25).optional(), y: z.number().min(-25).max(25).optional() }).optional(),
+        motion: z.enum(['none', 'orbit']).optional(), label: z.string().max(60).optional(),
+      }).optional(),
+    });
     const promoProposeStoryboardTool = sdk.tool(
       'promo_propose_storyboard',
-      'اقترح خطاً زمنياً من مقاطع/أصول محلية داخل Downloads ليراجعه المستخدم في استوديو البرومو. لا يبدأ التصيير ولا يرفع ملفاً.',
+      'اقترح خطاً زمنياً من مقاطع/أصول محلية داخل Downloads ليراجعه المستخدم في استوديو البرومو. يقبل الكاميرا (auto افتراضياً: تُحسب من سجل أحداث التسجيل) والمسرح (إطار جهاز وخلفية وإمالة) وانتقال الدخول وحركة العنوان ونص التعليق. مجموع المدد ≤ 180 ثانية. لا يبدأ التصيير ولا يرفع ملفاً؛ المستخدم وحده يصدّر.',
       {
-        scenes: z.array(z.object({
-          segment_path: z.string().optional(),
-          asset: z.string().optional(),
-          caption: z.string().max(500).optional(),
-          duration_ms: z.number().int().min(250).max(120000).optional(),
-          transition: z.enum(['cut', 'fade']).optional(),
-          music: z.string().optional(),
-          voice: z.string().optional(),
-        })).min(1).max(40),
+        aspect: z.enum(['16:9', '9:16', '1:1']).optional(),
+        scenes: z.array(promoSceneSchema).min(1).max(40),
       },
       async (args) => {
-        const result = promostudio.propose({ scenes: args && args.scenes });
+        const result = promostudio.propose({ aspect: args && args.aspect, scenes: promostudio.proposalScenes(args && args.scenes) });
         return result.ok
-          ? { content: [{ type: 'text', text: JSON.stringify({ ok: true, scenes: result.storyboard.scenes.length }) }] }
-          : { content: [{ type: 'text', text: 'رُفض storyboard: ' + (result.error || 'bad_storyboard') }], isError: true };
+          ? { content: [{ type: 'text', text: JSON.stringify({ ok: true, scenes: result.storyboard.scenes.length, aspect: result.storyboard.aspect, note: 'فُتح الاستوديو للمراجعة. التصدير بيد المستخدم.' }) }] }
+          : { content: [{ type: 'text', text: 'رُفض storyboard: ' + (result.error || 'bad_storyboard') + (Number.isInteger(result.index) ? ' (المشهد ' + (result.index + 1) + ')' : '') }], isError: true };
       }
+    );
+    const promoPlanAdTool = sdk.tool(
+      'promo_plan_ad',
+      'اعرض على المستخدم سيناريو إعلان مكتوباً (بطاقة قابلة للتعديل) قبل أي تسجيل. قراءة فقط: لا يسجّل ولا يصيّر. بعد استدعائها توقّف وانتظر أن يعتمد المستخدم البطاقة، ثم اقرأ النسخة المعتمدة بـ promo_get_ad_plan.',
+      {
+        goal: z.string().max(300),
+        audience: z.string().max(200).optional(),
+        duration_s: z.number().int().min(10).max(90).optional(),
+        aspect: z.enum(['16:9', '9:16', '1:1']).optional(),
+        tone: z.string().max(80).optional(),
+        scenes: z.array(z.object({
+          purpose: z.string().max(200),
+          steps_to_perform: z.array(z.string().max(200)).max(8).optional(),
+          caption_ar: z.string().max(500).optional(),
+          voiceover_ar: z.string().max(2000).optional(),
+          duration_s: z.number().int().min(1).max(60).optional(),
+        })).min(1).max(12),
+      },
+      async (args) => {
+        const result = promostudio.planAd(args);
+        return result.ok
+          ? { content: [{ type: 'text', text: JSON.stringify({ ok: true, approved: false, scenes: result.plan.scenes.length, total_s: result.plan.total_s, next: 'انتظر اعتماد المستخدم للبطاقة ثم استدعِ promo_get_ad_plan. لا تبدأ التسجيل قبل الاعتماد.' }) }] }
+          : { content: [{ type: 'text', text: 'رُفضت خطة الإعلان: ' + (result.error || 'bad_plan') }], isError: true };
+      }
+    );
+    const promoGetAdPlanTool = sdk.tool(
+      'promo_get_ad_plan',
+      'اقرأ خطة الإعلان الحالية وحالة اعتمادها. النسخة المعادة هي ما عدّله المستخدم واعتمده، فاعتمد عليها لا على مسودتك. قراءة فقط.',
+      {},
+      async () => ({ content: [{ type: 'text', text: JSON.stringify(promostudio.adPlanState(), null, 2) }] })
     );
     const loadSkillTool = sdk.tool(
       'load_skill',
@@ -2583,7 +2639,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       }
     );
     options.mcpServers = Object.assign({}, options.mcpServers, {
-      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundWaitTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, previewTool, closePreviewTool, readPageTool, readArticleTool, readabilityTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
+      'satr-terminal': sdk.createSdkMcpServer({ name: 'satr-terminal', version: '1.0.0', tools: [termTool, backgroundTool, backgroundOutputTool, backgroundWaitTool, backgroundListTool, backgroundStopTool, generateMediaTool, promoRecordStartTool, promoRecordStopTool, promoListSegmentsTool, promoProposeStoryboardTool, promoPlanAdTool, promoGetAdPlanTool, previewTool, closePreviewTool, readPageTool, readArticleTool, readabilityTool, snapshotTool, consoleTool, networkTool, screenshotTool, shotElementTool, clickTool, typeTool, selectTool, pressTool, scrollTool, hoverTool, navTool, waitTool, evaluateTool, viewportTool, perfTool, backTool, forwardTool, fillFormTool, transferFieldTool, requestSecretTool, handoffTool, handoffStepTool] }),
       'satr-skills': sdk.createSdkMcpServer({ name: 'satr-skills', version: '1.0.0', tools: [loadSkillTool, readSkillResourceTool] }),
     });
   }

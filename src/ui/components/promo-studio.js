@@ -331,7 +331,7 @@ class SatrPromoStudio extends HTMLElement {
     document.addEventListener('promo-studio-open', (event) => this.open(event.detail && event.detail.storyboard));
     if (typeof window.satr.onPromoCapture === 'function') window.satr.onPromoCapture((event) => {
       if (!event) return;
-      if (event.type === 'storyboard_proposed') this.open(event.storyboard);
+      if (event.type === 'storyboard_proposed') this.open(event.storyboard, { proposed: true });
       if (event.type === 'capture_active' && this.rerecordIndex >= 0) { this.rerecording = true; this.renderTimeline(); }
       if (event.type === 'segment_saved' && this.rerecordIndex >= 0 && event.segment) {
         const scene = this.storyboard.scenes[this.rerecordIndex];
@@ -350,7 +350,8 @@ class SatrPromoStudio extends HTMLElement {
     this.renderTimeline();
   }
 
-  async open(storyboard) {
+  // options.proposed: الـstoryboard جاء من اقتراح الوكيل لتوّه (لا من ملف ولا من نداء مباشر).
+  async open(storyboard, options) {
     let next = storyboard;
     let fresh = false;
     if (!next && typeof window.satr.promoStudioState === 'function') {
@@ -371,7 +372,7 @@ class SatrPromoStudio extends HTMLElement {
     this.previewTime = 0;
     this.previewCache.clear();
     this.projectPath = '';
-    this.primeEvents(fresh);
+    this.primeEvents(fresh, !!(options && options.proposed));
     this.setAttribute('open', '');
     this.renderTimeline();
     this.dispatchEvent(new CustomEvent('promo-studio-visible', { bubbles: true, detail: true }));
@@ -578,7 +579,8 @@ class SatrPromoStudio extends HTMLElement {
   }
 
   // يحمّل سجلات أحداث كل المقاطع مرة، ثم يعيد رسم الخط الزمني. autoPlan: خطّط للمشاهد الجديدة.
-  async primeEvents(autoPlan) {
+  // proposed: اقتراح وكيل — تُملأ الكاميرا التي طلبها تلقائية، وتُغبَّش الحقول الحساسة افتراضياً.
+  async primeEvents(autoPlan, proposed) {
     if (!this.eventCache) this.eventCache = new Map();
     if (typeof window.satr.promoSegmentEvents !== 'function') return;
     const token = this.eventToken = (this.eventToken || 0) + 1;
@@ -590,6 +592,22 @@ class SatrPromoStudio extends HTMLElement {
       if (token !== this.eventToken) return;
       this.eventCache.set(asset, result && result.ok && Array.isArray(result.events) ? result.events : false);
       loaded = true;
+    }
+    if (proposed) {
+      for (const scene of this.storyboard.scenes) {
+        const events = this.eventsFor(scene);
+        if (!events) continue;
+        // الوكيل طلب كاميرا تلقائية بلا نقاط: نقاطها تُحسب هنا من سجل أحداث المقطع.
+        if (scene.camera.mode === 'auto' && !scene.camera.keyframes.length && events.length) {
+          scene.camera = suggestCamera(events, scene);
+          loaded = true;
+        }
+        // الوكيل لا يقرر ما يُكشف من بيانات المستخدم: الحقول الحساسة تُغبَّش، والمستخدم يزيل ما يشاء.
+        if (!scene.redactions.length) {
+          const regions = suggestRedactions(events, scene);
+          if (regions.length) { scene.redactions = regions; loaded = true; }
+        }
+      }
     }
     if (autoPlan) {
       for (const scene of this.storyboard.scenes) {

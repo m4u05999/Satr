@@ -32,6 +32,12 @@ const CAMERA_MODES = new Set(['auto', 'manual', 'off']);
 const CAMERA_EASES = new Set(['inOut', 'linear', 'hold']);
 const MAX_CAMERA_KEYFRAMES = 200;
 const MAX_CAMERA_ZOOM = 4;
+// خطة الإعلان (الدفعة 8): نموذج منظم يملؤه الوكيل ويعدّله المستخدم ويعتمده قبل التسجيل.
+const AD_PLAN_MIN_S = 10;
+const AD_PLAN_MAX_S = 90;
+const AD_PLAN_MAX_SCENES = 12;
+const AD_PLAN_MAX_STEPS = 8;
+const AD_PLAN_ASPECTS = new Set(['16:9', '9:16', '1:1']);
 // حقول v2 الاختيارية للإخراج البصري (الدفعة 7).
 const STAGE_FRAMES = new Set(['none', 'browser', 'laptop', 'phone', 'tablet']);
 const STAGE_BACKGROUNDS = new Set(['none', 'color', 'linear', 'radial', 'image']);
@@ -131,6 +137,46 @@ function sanitizeRedactions(raw, durationMs) {
       start_ms: item.start_ms, end_ms: item.end_ms, auto: item.auto === true });
   }
   return { ok: true, redactions };
+}
+
+// نص حر من الوكيل يُعرض في بطاقة: سطر واحد بلا محارف تحكم ولا اتجاه، محدود الطول.
+function cleanLine(value, max) {
+  return typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '';
+}
+
+// خطة إعلان: نص وأعداد فقط، لا مسارات ولا أوامر. تعيد { ok, plan } أو { ok:false, error }.
+function sanitizeAdPlan(input) {
+  const raw = input && typeof input === 'object' && !Array.isArray(input) ? input : null;
+  if (!raw) return { ok: false, error: 'bad_plan' };
+  const list = Array.isArray(raw.scenes) ? raw.scenes : [];
+  if (!list.length || list.length > AD_PLAN_MAX_SCENES) return { ok: false, error: 'bad_plan_scenes' };
+  const scenes = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return { ok: false, error: 'bad_plan_scenes' };
+    const steps = (Array.isArray(item.steps_to_perform) ? item.steps_to_perform : []).slice(0, AD_PLAN_MAX_STEPS)
+      .map((step) => cleanLine(step, 200)).filter(Boolean);
+    scenes.push({
+      purpose: cleanLine(item.purpose, 200),
+      steps_to_perform: steps,
+      caption_ar: cleanLine(item.caption_ar, MAX_CAPTION),
+      voiceover_ar: cleanLine(item.voiceover_ar, MAX_VOICEOVER),
+      duration_s: cleanInt(item.duration_s, 1, 60, 5),
+    });
+  }
+  const total = scenes.reduce((sum, scene) => sum + scene.duration_s, 0);
+  if (total * 1000 > MAX_TOTAL_MS) return { ok: false, error: 'bad_total_duration', total_s: total };
+  const goal = cleanLine(raw.goal, 300);
+  if (!goal) return { ok: false, error: 'bad_plan_goal' };
+  return { ok: true, plan: {
+    goal,
+    audience: cleanLine(raw.audience, 200),
+    duration_s: cleanInt(raw.duration_s, AD_PLAN_MIN_S, AD_PLAN_MAX_S, 30),
+    aspect: cleanEnum(raw.aspect, AD_PLAN_ASPECTS, '16:9'),
+    tone: cleanLine(raw.tone, 80),
+    scenes,
+    total_s: total,
+  } };
 }
 
 // كاميرا المشهد. الغياب = { mode: 'off' } (ترحيل v1). القيم خارج النطاق تُرفض ولا تُصحَّح:
@@ -372,6 +418,19 @@ function doLoadProject(filePath, downloadsPath, options) {
   return { ok: true, storyboard: result.storyboard, missing: result.missing || [] };
 }
 
+// مشاهد اقتراح الوكيل: الكاميرا تلقائية ما لم يطلب غير ذلك. نقاطها تُحسب في الواجهة من سجل
+// أحداث المقطع (planCamera وحدة واجهة)، فتمر هنا { mode: 'auto', keyframes: [] }.
+function proposalScenes(scenes) {
+  if (!Array.isArray(scenes)) return scenes;
+  return scenes.map((scene) => {
+    if (!scene || typeof scene !== 'object') return scene;
+    const camera = scene.camera;
+    if (camera === undefined || camera === null || camera === 'auto') return { ...scene, camera: { mode: 'auto', keyframes: [] } };
+    if (camera === 'off') return { ...scene, camera: { mode: 'off', keyframes: [] } };
+    return scene;
+  });
+}
+
 function create(initialDeps) {
   let deps = { ...(initialDeps || {}) };
   let storyboard = null;
@@ -379,6 +438,38 @@ function create(initialDeps) {
   function configure(nextDeps) {
     deps = { ...deps, ...(nextDeps || {}) };
     return { ok: true };
+  }
+
+  // خطة الإعلان: الوكيل يقترح (planAd)، والمستخدم يعدّل ويعتمد من الواجهة (approveAdPlan).
+  // لا شيء هنا يسجّل أو يصيّر؛ الخطة نص يُعرض ويُقرأ فقط.
+  let adPlan = null; // { plan, approved, approved_at }
+
+  function planAd(input) {
+    const result = sanitizeAdPlan(input);
+    if (!result.ok) return result;
+    adPlan = { plan: result.plan, approved: false, approved_at: null };
+    if (typeof deps.emit === 'function') {
+      try { deps.emit({ type: 'ad_plan_proposed', plan: JSON.parse(JSON.stringify(result.plan)) }); } catch {}
+    }
+    return { ok: true, plan: result.plan, approved: false };
+  }
+
+  // من الواجهة فقط (IPC): النسخة التي عدّلها المستخدم تُنقّى من جديد ثم تُعتمد.
+  function approveAdPlan(input) {
+    const result = sanitizeAdPlan(input);
+    if (!result.ok) return result;
+    adPlan = { plan: result.plan, approved: true, approved_at: Date.now() };
+    return { ok: true, plan: result.plan, approved: true };
+  }
+
+  function dismissAdPlan() {
+    adPlan = null;
+    return { ok: true };
+  }
+
+  function adPlanState() {
+    return adPlan ? { ok: true, exists: true, approved: adPlan.approved, plan: JSON.parse(JSON.stringify(adPlan.plan)) }
+      : { ok: true, exists: false, approved: false, plan: null };
   }
 
   function propose(input) {
@@ -460,7 +551,7 @@ function create(initialDeps) {
     return doLoadProject(filePath, deps.downloadsPath, { exists: deps.exists, realpath: deps.realpath, readFileSync: deps.readFileSync });
   }
 
-  return { configure, propose, state, assetUrl, assetRead, clear, listDownloads, saveProject, loadProject };
+  return { configure, propose, planAd, approveAdPlan, dismissAdPlan, adPlanState, state, assetUrl, assetRead, clear, listDownloads, saveProject, loadProject };
 }
 
 const singleton = create();
@@ -476,6 +567,11 @@ module.exports = {
   listDownloads: doListDownloads, saveProject: doSaveProject, loadProject: doLoadProject, create,
   configure: (...args) => singleton.configure(...args),
   propose: (...args) => singleton.propose(...args),
+  planAd: (...args) => singleton.planAd(...args),
+  approveAdPlan: (...args) => singleton.approveAdPlan(...args),
+  dismissAdPlan: (...args) => singleton.dismissAdPlan(...args),
+  adPlanState: (...args) => singleton.adPlanState(...args),
+  sanitizeAdPlan, proposalScenes, AD_PLAN_MIN_S, AD_PLAN_MAX_S, AD_PLAN_MAX_SCENES,
   state: (...args) => singleton.state(...args),
   assetUrl: (...args) => singleton.assetUrl(...args),
   assetRead: (...args) => singleton.assetRead(...args),
