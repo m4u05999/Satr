@@ -45,6 +45,8 @@ async function main() {
   const result = await win.webContents.executeJavaScript(
     'window.__promoFrameSource(' + JSON.stringify(real) + ').catch(function(e){return {ok:false,failures:[String(e&&e.stack||e)],report:{}};})', true);
   if (!win.isDestroyed()) win.destroy();
+  if (result.skipped) { finish(0, 'promo-frame-source-live: skipped — ' + result.skipped); return; }
+  const aac = !!(result.report.codecs && result.report.codecs.aac_encode);
   let probe = 'ffprobe: غير متاح';
   if (result.sample) {
     try {
@@ -56,7 +58,7 @@ async function main() {
         const streams = JSON.parse(run.stdout).streams || [];
         probe = 'ffprobe: ' + streams.map((s) => s.codec_type + '=' + s.codec_name + '/' + s.nb_frames).join(' ');
         const video = streams.find((s) => s.codec_type === 'video'), audio = streams.find((s) => s.codec_type === 'audio');
-        if (!video || video.codec_name !== 'h264' || Number(video.nb_frames) !== 60 || !audio || audio.codec_name !== 'aac') {
+        if (!video || video.codec_name !== 'h264' || Number(video.nb_frames) !== 60 || (aac && (!audio || audio.codec_name !== 'aac'))) {
           result.ok = false;
           result.failures.push('ffprobe لا يطابق: ' + probe);
         }
@@ -72,7 +74,8 @@ async function main() {
   }
   const real2 = result.report.real;
   finish(0, 'promo-frame-source-live: ok — 60 إطاراً اصطناعياً تُعاد بأرقامها، الملف المُغلَّف يُشغَّل حتى النهاية، المقطع الحقيقي ('
-    + real2.frames + ' إطاراً) يطابق <video>، تتابع ' + real2.sequential_fps + ' إطار/ث، وبديل القفز يعمل. ' + probe);
+    + real2.frames + ' إطاراً) يطابق <video>، تتابع ' + real2.sequential_fps + ' إطار/ث، وبديل القفز يعمل. '
+    + (aac ? '' : 'مسار AAC متخطّى: لا مرمّز AAC في WebCodecs هنا. ') + probe);
 }
 
 main().catch((error) => finish(1, 'promo-frame-source-live: ' + (error && error.stack || error)));
