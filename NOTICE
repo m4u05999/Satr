@@ -75,3 +75,19 @@ IBM Plex Sans Arabic — SIL Open Font License 1.1
   Copyright (c) 2017 IBM Corp. — https://github.com/IBM/plex
   Released under the SIL Open Font License, Version 1.1. النصّ الكامل:
   https://scripts.sil.org/OFL
+
+--------------------------------------------------------------------------------
+Cairo — SIL Open Font License 1.1
+  src/vendor/fonts/cairo-*.woff2 · src/vendor/fonts-promo.css · src/vendor/fonts/OFL-Cairo.txt
+
+  Copyright 2009 The Cairo Project Authors — https://github.com/Gue3bara/Cairo
+  Released under the SIL Open Font License, Version 1.1. النصّ الكامل:
+  src/vendor/fonts/OFL-Cairo.txt
+
+--------------------------------------------------------------------------------
+Noto Naskh Arabic — SIL Open Font License 1.1
+  src/vendor/fonts/noto-naskh-arabic-*.woff2 · src/vendor/fonts-promo.css · src/vendor/fonts/OFL-NotoNaskhArabic.txt
+
+  Copyright 2022 The Noto Project Authors — https://github.com/notofonts/arabic
+  Released under the SIL Open Font License, Version 1.1. النصّ الكامل:
+  src/vendor/fonts/OFL-NotoNaskhArabic.txt

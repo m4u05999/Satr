@@ -163,9 +163,10 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
    'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
    'run_in_background', 'get_background_output', 'list_background_tasks', 'stop_background_task',
    'generate_media',
-   'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard']
+   'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard',
+   'promo_plan_ad', 'promo_get_ad_plan']
     .forEach((n) => ok(names.includes(n), 'tools/list يشمل ' + n));
-  ok(names.length === 40, 'عدد أدوات Codex MCP أصبح 40 (28 متصفح + 5 خلفية + generate_media + 4 برومو + أداتا توصيلات المشروع)');
+  ok(names.length === 42, 'عدد أدوات Codex MCP أصبح 42 (28 متصفح + 5 خلفية + generate_media + 6 برومو + أداتا توصيلات المشروع)');
   ok(names.includes('wait_for_background_task'), 'أداة الانتظار الحاجب غائبة عن tools/list');
   ok(j.result.tools.every((t) => t.inputSchema && t.inputSchema.type === 'object'), 'كل أداة لها inputSchema من نوع object');
   const builtTools = codexmcp.buildTools({ preview, cwd: process.cwd(), genmedia, promoCapture, promoStudio });
@@ -385,6 +386,7 @@ function ok(cond, name) { assert.ok(cond, name); passed++; console.log('✓ ' + 
   ok(built('promo_record_stop').access === 'exec' && built('promo_record_stop').neverAlways, 'إيقاف تسجيل البرومو فعل صريح بلا «دائماً»');
   ok(built('promo_list_segments').access === 'read', 'سرد مقاطع البرومو قراءة حرّة');
   ok(built('promo_propose_storyboard').access === 'read', 'اقتراح storyboard عرض محلي بلا تنفيذ');
+  ok(built('promo_plan_ad').access === 'read' && built('promo_get_ad_plan').access === 'read', 'خطة الإعلان اقتراح وقراءة بلا تنفيذ');
 
   // tools/call: read_page نص مغلّف
   r = await post(srv.url, srv.token, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'read_page', arguments: {} } });

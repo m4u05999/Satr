@@ -187,6 +187,73 @@ function cleanPointer(value, viewport) {
   return { x: Math.max(0, Math.min(viewport.width, x)), y: Math.max(0, Math.min(viewport.height, y)), button };
 }
 
+// قراءة سجل أحداث مقطع للاستوديو (الكاميرا الذكية). الملف كتبناه نحن، لكنه على القرص
+// فيُعامَل كمدخل غير موثوق: حجم محدود، وكل حقل يُعاد تنقيته، ولا يُعاد ما لا يلزم.
+const EVENT_KINDS = new Set(['action', 'pointer', 'navigation']);
+const EVENT_ACTIONS = new Set(['click', 'type', 'select', 'hover', 'scroll', 'mousedown', 'mousemove']);
+const EVENT_SOURCES = new Set(['agent', 'human', 'system']);
+
+function isEventFileFor(eventsFile, segmentId, downloadsPath) {
+  if (typeof eventsFile !== 'string' || !path.isAbsolute(eventsFile) || !SAFE_PROMO_SESSION.test(segmentId || '')) return false;
+  const resolved = path.resolve(eventsFile);
+  if (path.basename(resolved) !== segmentId + '.events.jsonl') return false;
+  const dir = path.dirname(resolved);
+  const downloadsRoot = eventRootFor(downloadsPath);
+  // جذران مقبولان فقط: أحداث Downloads، أو <مشروع>/.satr/promo/events.
+  return (downloadsRoot && dir === downloadsRoot) || dir.endsWith(path.join(path.sep + '.satr', 'promo', 'events'));
+}
+
+function readSegmentEvents(eventsFile, fileSystem = fs) {
+  let raw;
+  try {
+    const stat = fileSystem.statSync(eventsFile);
+    if (!stat.isFile() || stat.size > EVENT_LOG_MAX_BYTES + 4096) return { ok: false, error: 'bad_events_file' };
+    raw = fileSystem.readFileSync(eventsFile, 'utf8');
+  } catch { return { ok: false, error: 'events_missing' }; }
+  const events = [];
+  let clock = null;
+  for (const line of raw.split('\n')) {
+    if (!line.trim() || events.length >= EVENT_LOG_MAX_RECORDS) continue;
+    let item;
+    try { item = JSON.parse(line); } catch { continue; }
+    if (!item || typeof item !== 'object') continue;
+    const t = finiteInteger(item.t_capture_ms);
+    if (t == null || t < 0 || t > 24 * 60 * 60 * 1000) continue;
+    if (item.kind === 'clock') {
+      clock = {
+        capture_duration_ms: finiteInteger(item.capture_duration_ms),
+        media_duration_ms: finiteInteger(item.media_duration_ms),
+        start_media_ms: Number.isFinite(item.start_media_ms) && item.start_media_ms >= 0 && item.start_media_ms < 600000
+          ? Math.round(item.start_media_ms) : null,
+      };
+      continue;
+    }
+    if (!EVENT_KINDS.has(item.kind)) continue;
+    const viewport = cleanViewport(item.viewport);
+    events.push({
+      t_capture_ms: t,
+      kind: item.kind,
+      source: EVENT_SOURCES.has(item.source) ? item.source : 'system',
+      action: EVENT_ACTIONS.has(item.action) ? item.action : null,
+      target_ref: SAFE_TARGET_REF.test(item.target_ref || '') ? item.target_ref : null,
+      rect: cleanRect(item.rect, viewport),
+      pointer: cleanPointer(item.pointer, viewport),
+      viewport: viewport ? { width: viewport.width, height: viewport.height } : null,
+      timing_quality: item.timing_quality === 'verified' ? 'verified' : 'unverified',
+      ...(item.sensitive === true ? { sensitive: true } : {}),
+    });
+  }
+  // زمن الوسائط = زمن الالتقاط + موضع منارة البدء في الفيديو. بلا منارة تبقى الإزاحة صفراً
+  // والجودة «غير موثّقة»، فتستعمل الكاميرا الزوم الأخف.
+  const offset = clock && clock.start_media_ms != null ? clock.start_media_ms : 0;
+  for (const event of events) event.t_ms = event.t_capture_ms + offset;
+  return {
+    ok: true, events, offset_ms: offset, offset_known: !!(clock && clock.start_media_ms != null),
+    media_duration_ms: clock ? clock.media_duration_ms : null,
+    timing_quality: events.length && events.every((event) => event.timing_quality === 'verified') ? 'verified' : 'unverified',
+  };
+}
+
 function createEventSink(options) {
   const input = options && typeof options === 'object' ? options : {};
   const fileSystem = input.fs || fs;
@@ -235,6 +302,11 @@ function createEventSink(options) {
       viewport,
       capture_duration_ms: Number.isInteger(event.capture_duration_ms) ? Math.max(0, event.capture_duration_ms) : null,
       media_duration_ms: Number.isInteger(event.media_duration_ms) ? Math.max(0, event.media_duration_ms) : null,
+      // علم فقط: الحدث وقع على حقل كلمة مرور أو بطاقة أو رمز تحقق. لا قيمة ولا نص يُسجَّل.
+      ...(event.sensitive === true ? { sensitive: true } : {}),
+      // سجل الساعة وحده: زمن منارة البدء داخل الفيديو، وبه يُحوَّل t_capture_ms إلى زمن وسائط.
+      ...(kind === 'clock' && Number.isFinite(event.start_media_ms) && event.start_media_ms >= 0
+        ? { start_media_ms: Math.round(event.start_media_ms) } : {}),
       timing_quality: quality === 'verified' ? 'verified' : 'unverified',
     };
   }
@@ -326,6 +398,7 @@ function createEventSink(options) {
       kind: 'clock', source: 'system', action: null, document_id: 'd1', monotonic_ms: at,
       capture_duration_ms: startBeacon ? elapsed(at) : null,
       media_duration_ms: Number.isInteger(mediaDurationMs) ? Math.max(0, mediaDurationMs) : null,
+      start_media_ms: startBeacon && startBeacon.media_ms != null ? startBeacon.media_ms : undefined,
     });
     for (const item of records) item.timing_quality = timingQuality;
     byteCount = records.reduce((sum, item) => sum + Buffer.byteLength(JSON.stringify(item) + '\n', 'utf8'), 0);
@@ -858,6 +931,17 @@ function create(initialDeps) {
     };
   }
 
+  // أحداث مقطع مسجَّل في السجل فقط: المصيّر يرسل مسار الأصل، ومسار ملف الأحداث يأتي من السجل.
+  function segmentEvents(assetPath) {
+    if (typeof assetPath !== 'string' || !path.isAbsolute(assetPath)) return { ok: false, error: 'bad_path' };
+    const wanted = path.resolve(assetPath);
+    const same = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+    const item = segments.find((segment) => segment && typeof segment.path === 'string' && same(path.resolve(segment.path), wanted));
+    if (!item) return { ok: false, error: 'not_a_segment' };
+    if (!isEventFileFor(item.events_file, item.segment_id, deps.downloadsPath)) return { ok: false, error: 'events_missing' };
+    return readSegmentEvents(item.events_file, deps.fs || fs);
+  }
+
   async function stopAll(options) {
     // تسجيل المختبر يخص التجربة التي قد تضم عدة أدوار، ويقف عند طلبه أو إغلاق التطبيق.
     if (active && active.target_kind === 'app-window' && options && options.scope === 'run') return { ok: true };
@@ -884,7 +968,7 @@ function create(initialDeps) {
   }
 
   return {
-    configure, start, startAppWindow, stop, stopAll, rendererReady, rendererCommit, rendererAbort, downloadResult,
+    configure, start, startAppWindow, stop, stopAll, segmentEvents, rendererReady, rendererCommit, rendererAbort, downloadResult,
     rendererBeacon, armMicrophone, captureEvent, listSegments, currentWebContents,
   };
 }
@@ -898,7 +982,8 @@ module.exports = {
   BEACON_MAX_DRIFT_MS,
   sanitizeAspect, mediaSourceWindowKey, segmentFilename, isInsideDownloads, uniqueSegmentPath,
   registryFileFor, eventRootFor, projectEventRoot, trimRegistry, atomicWriteRegistry, loadRegistry,
-  createEventSink, permissionDetailsAreAudioOnly, create,
+  createEventSink, readSegmentEvents, isEventFileFor, permissionDetailsAreAudioOnly, create,
+  segmentEvents: (...args) => singleton.segmentEvents(...args),
   configure: (...args) => singleton.configure(...args),
   start: (...args) => singleton.start(...args),
   startAppWindow: (...args) => singleton.startAppWindow(...args),

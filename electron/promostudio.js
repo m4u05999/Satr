@@ -9,6 +9,10 @@ const MAX_SCENES = 40;
 const MAX_CAPTION = 500;
 const MIN_DURATION_MS = 250;
 const MAX_DURATION_MS = 120000;
+// سقف مجموع مدد المشاهد؛ يطابق MAX_TOTAL_MS في src/ui/lib/promo/promo-timeline.js (يحرسه test:promo-timeline).
+const MAX_TOTAL_MS = 180000;
+// أقصى طول لقراءة واحدة من أصل عبر IPC (التصدير يقرأ على دفعات).
+const MAX_ASSET_READ_BYTES = 8 * 1024 * 1024;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.webm', '.mp4']);
@@ -20,7 +24,37 @@ const DEFAULT_CLIP_VOLUME = 1;
 const DEFAULT_MUSIC_VOLUME = 0.34;
 const DEFAULT_VOICE_VOLUME = 1;
 
-const PROJECT_SCHEMA_VERSION = 1;
+// الإصدار 2 (الدفعة 2 من مخرج الإعلانات): حقل camera لكل مشهد. الحقول الاختيارية اللاحقة
+// ذات القيمة الافتراضية تُضاف إلى 2 بلا رفع الرقم. الإصدار 1 يُقرأ ويُرحَّل عند التحميل.
+const PROJECT_SCHEMA_VERSION = 2;
+const READABLE_SCHEMA_VERSIONS = new Set([1, 2]);
+const CAMERA_MODES = new Set(['auto', 'manual', 'off']);
+const CAMERA_EASES = new Set(['inOut', 'linear', 'hold']);
+const MAX_CAMERA_KEYFRAMES = 200;
+const MAX_CAMERA_ZOOM = 4;
+// هوية المشروع (الدفعة 9): ملف <المشروع>/.satr/brand.json. نص وألوان ومسار شعار داخل Downloads.
+const BRAND_FILE = path.join('.satr', 'brand.json');
+const MAX_BRAND_BYTES = 64 * 1024;
+// خطة الإعلان (الدفعة 8): نموذج منظم يملؤه الوكيل ويعدّله المستخدم ويعتمده قبل التسجيل.
+const AD_PLAN_MIN_S = 10;
+const AD_PLAN_MAX_S = 90;
+const AD_PLAN_MAX_SCENES = 12;
+const AD_PLAN_MAX_STEPS = 8;
+const AD_PLAN_ASPECTS = new Set(['16:9', '9:16', '1:1']);
+// حقول v2 الاختيارية للإخراج البصري (الدفعة 7).
+const STAGE_FRAMES = new Set(['none', 'browser', 'laptop', 'phone', 'tablet']);
+const STAGE_BACKGROUNDS = new Set(['none', 'color', 'linear', 'radial', 'image']);
+const STAGE_MOTIONS = new Set(['none', 'orbit']);
+const TRANSITIONS_IN = new Set(['none', 'crossfade', 'slide', 'zoom', 'blur']);
+const SAFE_COLOR = /^#[0-9a-fA-F]{6}$/;
+const MAX_REDACTIONS = 20;
+const MAX_STAGE_LABEL = 60;
+// حقول v2 الاختيارية للعناوين (الدفعة 3): تُضاف بلا رفع رقم المخطط.
+const TEXT_ANIMATIONS = new Set(['none', 'words', 'slide', 'zoom']);
+// خطوط العناوين المضمّنة؛ plex الافتراضي ومظهر v1.
+const TEXT_FONTS = new Set(['plex', 'cairo', 'naskh']);
+const MAX_HIGHLIGHT = 60;
+const MAX_VOICEOVER = 2000;
 const MAX_PROJECT_BYTES = 2 * 1024 * 1024; // 2 م.ب لملف المشروع
 const PROJECT_EXTENSION = '.satr-promo.json';
 const SAFE_PROJECT_NAME = /^[A-Za-z0-9_\u0600-\u06FF\- ]{1,120}$/;
@@ -57,6 +91,145 @@ function cleanFloat(value, min, max, defaultValue) {
 
 function cleanEnum(value, allowed, defaultValue) {
   return allowed.has(value) ? value : defaultValue;
+}
+
+// المسرح قيم تجميلية: الخارج عن النطاق يعود إلى الافتراضي. صورة الخلفية أصل داخل Downloads
+// كأي أصل؛ إن لم تصح سقطت الخلفية إلى «بدون» ولا يُحفظ مسارها.
+function sanitizeStage(raw, resolveImage) {
+  const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const background = input.background && typeof input.background === 'object' && !Array.isArray(input.background) ? input.background : {};
+  let type = cleanEnum(background.type, STAGE_BACKGROUNDS, 'none');
+  let image = '';
+  if (type === 'image') {
+    image = typeof background.image === 'string' ? resolveImage(background.image) : '';
+    if (!image) type = 'none';
+  }
+  const tilt = input.tilt && typeof input.tilt === 'object' && !Array.isArray(input.tilt) ? input.tilt : {};
+  return {
+    frame: cleanEnum(input.frame, STAGE_FRAMES, 'none'),
+    background: {
+      type,
+      color: SAFE_COLOR.test(background.color || '') ? background.color.toLowerCase() : '',
+      color2: SAFE_COLOR.test(background.color2 || '') ? background.color2.toLowerCase() : '',
+      angle: cleanFloat(background.angle, 0, 360, 135),
+      image,
+      blur: cleanFloat(background.blur, 0, 40, 0),
+    },
+    shadow: cleanFloat(input.shadow, 0, 1, 0.6),
+    scale: cleanFloat(input.scale, 0.78, 0.88, 0.84),
+    radius: input.radius === 0 ? 0 : 1,
+    tilt: { x: cleanFloat(tilt.x, -25, 25, 0), y: cleanFloat(tilt.y, -25, 25, 0) },
+    motion: cleanEnum(input.motion, STAGE_MOTIONS, 'none'),
+    // نص يُرسم داخل حقل الرابط في إطار المتصفح: بلا محارف تحكم ولا اتجاه.
+    label: typeof input.label === 'string' ? input.label.replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, MAX_STAGE_LABEL) : '',
+  };
+}
+
+// مناطق التغبيش تحجب بيانات حساسة. منطقة معطوبة لا تُسقط بصمت (فيظهر ما أُريد حجبه) بل
+// يُرفض المشروع كله بـbad_redaction.
+function sanitizeRedactions(raw, durationMs) {
+  if (raw == null) return { ok: true, redactions: [] };
+  if (!Array.isArray(raw) || raw.length > MAX_REDACTIONS) return { ok: false };
+  const unit = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+  const redactions = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') return { ok: false };
+    if (!unit(item.x) || !unit(item.y) || !unit(item.width) || !unit(item.height) || item.width <= 0 || item.height <= 0) return { ok: false };
+    if (item.x + item.width > 1.0001 || item.y + item.height > 1.0001) return { ok: false };
+    if (!Number.isInteger(item.start_ms) || !Number.isInteger(item.end_ms) || item.start_ms < 0 || item.end_ms > durationMs || item.end_ms <= item.start_ms) return { ok: false };
+    const round = (value) => Math.round(value * 10000) / 10000;
+    redactions.push({ x: round(item.x), y: round(item.y), width: round(Math.min(item.width, 1 - item.x)), height: round(Math.min(item.height, 1 - item.y)),
+      start_ms: item.start_ms, end_ms: item.end_ms, auto: item.auto === true });
+  }
+  return { ok: true, redactions };
+}
+
+// هوية: كل لون #rrggbb أو فارغ، والشعار صورة داخل Downloads أو فارغ. resolveLogo يعيد المسار المعتمد أو ''.
+function sanitizeBrand(raw, resolveLogo) {
+  const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const color = (value) => (SAFE_COLOR.test(value || '') ? value.toLowerCase() : '');
+  const line = (value, max) => (typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
+  return {
+    name: line(input.name, 60),
+    primary: color(input.primary),
+    secondary: color(input.secondary),
+    accent: color(input.accent),
+    closing: line(input.closing, 120),
+    font: cleanEnum(input.font, TEXT_FONTS, 'plex'),
+    logo: typeof input.logo === 'string' && typeof resolveLogo === 'function' ? (resolveLogo(input.logo) || '') : '',
+  };
+}
+
+function brandPath(projectRoot) {
+  return typeof projectRoot === 'string' && path.isAbsolute(projectRoot) ? path.join(path.resolve(projectRoot), BRAND_FILE) : '';
+}
+
+// نص حر من الوكيل يُعرض في بطاقة: سطر واحد بلا محارف تحكم ولا اتجاه، محدود الطول.
+function cleanLine(value, max) {
+  return typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '';
+}
+
+// خطة إعلان: نص وأعداد فقط، لا مسارات ولا أوامر. تعيد { ok, plan } أو { ok:false, error }.
+function sanitizeAdPlan(input) {
+  const raw = input && typeof input === 'object' && !Array.isArray(input) ? input : null;
+  if (!raw) return { ok: false, error: 'bad_plan' };
+  const list = Array.isArray(raw.scenes) ? raw.scenes : [];
+  if (!list.length || list.length > AD_PLAN_MAX_SCENES) return { ok: false, error: 'bad_plan_scenes' };
+  const scenes = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return { ok: false, error: 'bad_plan_scenes' };
+    const steps = (Array.isArray(item.steps_to_perform) ? item.steps_to_perform : []).slice(0, AD_PLAN_MAX_STEPS)
+      .map((step) => cleanLine(step, 200)).filter(Boolean);
+    scenes.push({
+      purpose: cleanLine(item.purpose, 200),
+      steps_to_perform: steps,
+      caption_ar: cleanLine(item.caption_ar, MAX_CAPTION),
+      voiceover_ar: cleanLine(item.voiceover_ar, MAX_VOICEOVER),
+      duration_s: cleanInt(item.duration_s, 1, 60, 5),
+    });
+  }
+  const total = scenes.reduce((sum, scene) => sum + scene.duration_s, 0);
+  if (total * 1000 > MAX_TOTAL_MS) return { ok: false, error: 'bad_total_duration', total_s: total };
+  const goal = cleanLine(raw.goal, 300);
+  if (!goal) return { ok: false, error: 'bad_plan_goal' };
+  return { ok: true, plan: {
+    goal,
+    audience: cleanLine(raw.audience, 200),
+    duration_s: cleanInt(raw.duration_s, AD_PLAN_MIN_S, AD_PLAN_MAX_S, 30),
+    aspect: cleanEnum(raw.aspect, AD_PLAN_ASPECTS, '16:9'),
+    tone: cleanLine(raw.tone, 80),
+    scenes,
+    total_s: total,
+  } };
+}
+
+// كاميرا المشهد. الغياب = { mode: 'off' } (ترحيل v1). القيم خارج النطاق تُرفض ولا تُصحَّح:
+// نقطة بزوم 99 أو NaN دليل على مدخل معطوب أو خبيث، وتصحيحها بصمت يخفيه.
+function sanitizeCamera(raw, durationMs) {
+  if (raw == null) return { ok: true, camera: { mode: 'off', cursor: true, keyframes: [] } };
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { ok: false };
+  const mode = cleanEnum(raw.mode, CAMERA_MODES, 'off');
+  const list = raw.keyframes == null ? [] : raw.keyframes;
+  if (!Array.isArray(list) || list.length > MAX_CAMERA_KEYFRAMES) return { ok: false };
+  const inRange = (value, min, max) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+  const keyframes = [];
+  let previous = -1;
+  for (const item of list) {
+    if (!item || typeof item !== 'object') return { ok: false };
+    if (!Number.isInteger(item.t_ms) || item.t_ms < 0 || item.t_ms > durationMs || item.t_ms <= previous) return { ok: false };
+    if (!inRange(item.x, 0, 1) || !inRange(item.y, 0, 1) || !inRange(item.zoom, 1, MAX_CAMERA_ZOOM)) return { ok: false };
+    previous = item.t_ms;
+    keyframes.push({
+      t_ms: item.t_ms,
+      x: Math.round(item.x * 10000) / 10000,
+      y: Math.round(item.y * 10000) / 10000,
+      zoom: Math.round(item.zoom * 1000) / 1000,
+      ease: cleanEnum(item.ease, CAMERA_EASES, 'inOut'),
+    });
+  }
+  return { ok: true, camera: { mode, cursor: raw.cursor !== false, keyframes } };
 }
 
 function sanitizeStoryboard(input, options) {
@@ -105,6 +278,19 @@ function sanitizeStoryboard(input, options) {
     const clipVolume = cleanFloat(raw.clip_volume, 0, 1, DEFAULT_CLIP_VOLUME);
     const musicVolume = cleanFloat(raw.music_volume, 0, 1, DEFAULT_MUSIC_VOLUME);
     const voiceVolume = cleanFloat(raw.voice_volume, 0, 1, DEFAULT_VOICE_VOLUME);
+    const camera = sanitizeCamera(raw.camera, durationMs);
+    if (!camera.ok) return { ok: false, error: 'bad_camera', index };
+    const redactions = sanitizeRedactions(raw.redactions, durationMs);
+    if (!redactions.ok) return { ok: false, error: 'bad_redaction', index };
+    const stage = sanitizeStage(raw.stage, (candidate) => localAsset(downloadsPath, candidate, IMAGE_EXTENSIONS, exists, settings.realpath) || '');
+    const rawStyle = raw.text_style && typeof raw.text_style === 'object' && !Array.isArray(raw.text_style) ? raw.text_style : {};
+    const textStyle = {
+      animation: cleanEnum(rawStyle.animation, TEXT_ANIMATIONS, 'none'),
+      font: cleanEnum(rawStyle.font, TEXT_FONTS, 'plex'),
+      // كلمة واحدة بلا مسافات؛ تُطابَق نصاً بكلمات العنوان عند الرسم.
+      highlight: typeof rawStyle.highlight === 'string' ? rawStyle.highlight.trim().split(/\s+/)[0].slice(0, MAX_HIGHLIGHT) : '',
+    };
+    const voiceover = typeof raw.voiceover_ar === 'string' ? raw.voiceover_ar.replace(/\s+/g, ' ').trim().slice(0, MAX_VOICEOVER) : '';
     const scene = {
       id,
       caption,
@@ -117,6 +303,13 @@ function sanitizeStoryboard(input, options) {
       clip_volume: clipVolume,
       music_volume: musicVolume,
       voice_volume: voiceVolume,
+      camera: camera.camera,
+      stage,
+      transition_in: index === 0 ? 'none' : cleanEnum(raw.transition_in, TRANSITIONS_IN, 'none'),
+      redactions: redactions.redactions,
+      text_style: textStyle,
+      voiceover_ar: voiceover,
+      subtitles: raw.subtitles === true && !!voiceover,
     };
     if (asset) {
       scene.asset = asset;
@@ -132,11 +325,18 @@ function sanitizeStoryboard(input, options) {
     scene.voice_missing = raw.voice && !voice ? true : undefined;
     scenes.push(scene);
   }
+  const totalMs = scenes.reduce((sum, scene) => sum + scene.duration_ms, 0);
+  // التحميل يتسامح كي يفتح مشروع قديم طويل، والواجهة تمنع اعتماده حتى يُقصَّر.
+  if (totalMs > MAX_TOTAL_MS && !allowMissing) return { ok: false, error: 'bad_total_duration', total_ms: totalMs };
   let aspect = promocapture.sanitizeAspect(input && input.aspect);
   if (!aspect && typeof settings.aspectForPath === 'function' && scenes[0] && !scenes[0].asset_missing) {
     aspect = promocapture.sanitizeAspect(settings.aspectForPath(scenes[0].asset));
   }
   const result = { ok: true, storyboard: { aspect: aspect || '16:9', scenes } };
+  // هوية المشروع المطبَّقة على هذا الإعلان (اختيارية).
+  if (input && input.brand != null) {
+    result.storyboard.brand = sanitizeBrand(input.brand, (candidate) => localAsset(downloadsPath, candidate, IMAGE_EXTENSIONS, exists, settings.realpath) || '');
+  }
   if (allowMissing && missing.length) result.missing = missing;
   return result;
 }
@@ -209,6 +409,7 @@ function doSaveProject(downloadsPath, storyboard, filePath, options) {
     created_at: new Date().toISOString(),
     aspect: sanitized.storyboard.aspect,
     scenes: sanitized.storyboard.scenes,
+    ...(sanitized.storyboard.brand ? { brand: sanitized.storyboard.brand } : {}),
   };
   const json = JSON.stringify(payload);
   if (Buffer.byteLength(json, 'utf8') > MAX_PROJECT_BYTES) return { ok: false, error: 'too_large' };
@@ -238,15 +439,28 @@ function doLoadProject(filePath, downloadsPath, options) {
   try { parsed = JSON.parse(raw); } catch (error) {
     return { ok: false, error: 'bad_schema' };
   }
-  if (!parsed || typeof parsed !== 'object' || parsed.version !== PROJECT_SCHEMA_VERSION || !Array.isArray(parsed.scenes)) {
+  if (!parsed || typeof parsed !== 'object' || !READABLE_SCHEMA_VERSIONS.has(parsed.version) || !Array.isArray(parsed.scenes)) {
     return { ok: false, error: 'bad_schema' };
   }
   const result = sanitizeStoryboard(
-    { aspect: parsed.aspect, scenes: parsed.scenes },
+    { aspect: parsed.aspect, scenes: parsed.scenes, brand: parsed.brand },
     { downloadsPath, exists, realpath, allowMissingAssets: true },
   );
   if (!result.ok) return { ok: false, error: result.error, index: result.index };
   return { ok: true, storyboard: result.storyboard, missing: result.missing || [] };
+}
+
+// مشاهد اقتراح الوكيل: الكاميرا تلقائية ما لم يطلب غير ذلك. نقاطها تُحسب في الواجهة من سجل
+// أحداث المقطع (planCamera وحدة واجهة)، فتمر هنا { mode: 'auto', keyframes: [] }.
+function proposalScenes(scenes) {
+  if (!Array.isArray(scenes)) return scenes;
+  return scenes.map((scene) => {
+    if (!scene || typeof scene !== 'object') return scene;
+    const camera = scene.camera;
+    if (camera === undefined || camera === null || camera === 'auto') return { ...scene, camera: { mode: 'auto', keyframes: [] } };
+    if (camera === 'off') return { ...scene, camera: { mode: 'off', keyframes: [] } };
+    return scene;
+  });
 }
 
 function create(initialDeps) {
@@ -256,6 +470,38 @@ function create(initialDeps) {
   function configure(nextDeps) {
     deps = { ...deps, ...(nextDeps || {}) };
     return { ok: true };
+  }
+
+  // خطة الإعلان: الوكيل يقترح (planAd)، والمستخدم يعدّل ويعتمد من الواجهة (approveAdPlan).
+  // لا شيء هنا يسجّل أو يصيّر؛ الخطة نص يُعرض ويُقرأ فقط.
+  let adPlan = null; // { plan, approved, approved_at }
+
+  function planAd(input) {
+    const result = sanitizeAdPlan(input);
+    if (!result.ok) return result;
+    adPlan = { plan: result.plan, approved: false, approved_at: null };
+    if (typeof deps.emit === 'function') {
+      try { deps.emit({ type: 'ad_plan_proposed', plan: JSON.parse(JSON.stringify(result.plan)) }); } catch {}
+    }
+    return { ok: true, plan: result.plan, approved: false };
+  }
+
+  // من الواجهة فقط (IPC): النسخة التي عدّلها المستخدم تُنقّى من جديد ثم تُعتمد.
+  function approveAdPlan(input) {
+    const result = sanitizeAdPlan(input);
+    if (!result.ok) return result;
+    adPlan = { plan: result.plan, approved: true, approved_at: Date.now() };
+    return { ok: true, plan: result.plan, approved: true };
+  }
+
+  function dismissAdPlan() {
+    adPlan = null;
+    return { ok: true };
+  }
+
+  function adPlanState() {
+    return adPlan ? { ok: true, exists: true, approved: adPlan.approved, plan: JSON.parse(JSON.stringify(adPlan.plan)) }
+      : { ok: true, exists: false, approved: false, plan: null };
   }
 
   function propose(input) {
@@ -274,7 +520,9 @@ function create(initialDeps) {
 
   function allowedPath(candidate) {
     if (typeof candidate !== 'string') return false;
-    return !!(storyboard && storyboard.scenes.some((scene) => scene.asset === candidate || scene.music === candidate || scene.voice === candidate))
+    return !!(storyboard && storyboard.scenes.some((scene) => scene.asset === candidate || scene.music === candidate || scene.voice === candidate
+      || (scene.stage && scene.stage.background.image === candidate))
+      || !!(storyboard && storyboard.brand && storyboard.brand.logo && storyboard.brand.logo === candidate))
       || typeof deps.isAdditionalAllowed === 'function' && deps.isAdditionalAllowed(candidate);
   }
 
@@ -285,6 +533,71 @@ function create(initialDeps) {
     return asset ? { ok: true, url: pathToFileURL(asset).href } : { ok: false, error: 'bad_asset' };
   }
 
+  // قراءة مقطع بايتات من أصل فيديو للتصدير (فهرس العينات ثم بياناتها). الحصر نفسه الذي في
+  // assetUrl: الأصل في الـstoryboard الحالي وداخل Downloads. الطول محدود لكل نداء.
+  function assetRead(candidate, offset, length) {
+    if (!allowedPath(candidate)) return { ok: false, error: 'not_in_storyboard' };
+    // الفيديو لإطاراته وصوته، والصوت (موسيقى/تعليق) للمزج. الصور لا تُقرأ بايتاتها.
+    const asset = localAsset(deps.downloadsPath, candidate, new Set([...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS]), deps.exists, deps.realpath);
+    if (!asset) return { ok: false, error: 'bad_asset' };
+    if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(length) || length < 0 || length > MAX_ASSET_READ_BYTES) {
+      return { ok: false, error: 'bad_range' };
+    }
+    const fileSystem = deps.fs || fs;
+    let fd = null;
+    try {
+      fd = fileSystem.openSync(asset, 'r');
+      const size = fileSystem.fstatSync(fd).size;
+      if (offset > size) return { ok: false, error: 'bad_range' };
+      const wanted = Math.min(length, size - offset);
+      const buffer = Buffer.allocUnsafe(wanted);
+      let read = 0;
+      while (read < wanted) {
+        const count = fileSystem.readSync(fd, buffer, read, wanted - read, offset + read);
+        if (!count) break;
+        read += count;
+      }
+      return { ok: true, size, bytes: read === wanted ? buffer : buffer.subarray(0, read) };
+    } catch {
+      return { ok: false, error: 'read_failed' };
+    } finally {
+      if (fd != null) { try { fileSystem.closeSync(fd); } catch {} }
+    }
+  }
+
+  // هوية المشروع على القرص. projectRoot يأتي من main بعد validProjectDirectory.
+  function loadBrand(projectRoot) {
+    const file = brandPath(projectRoot);
+    if (!file) return { ok: false, error: 'bad_project' };
+    const fileSystem = deps.fs || fs;
+    let raw;
+    try {
+      if (fileSystem.statSync(file).size > MAX_BRAND_BYTES) return { ok: false, error: 'too_large' };
+      raw = fileSystem.readFileSync(file, 'utf8');
+    } catch { return { ok: true, exists: false, brand: sanitizeBrand(null) }; }
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { return { ok: false, error: 'bad_schema' }; }
+    const resolveLogo = (candidate) => localAsset(deps.downloadsPath, candidate, IMAGE_EXTENSIONS, deps.exists, deps.realpath) || '';
+    return { ok: true, exists: true, brand: sanitizeBrand(parsed, resolveLogo) };
+  }
+
+  function saveBrand(projectRoot, input) {
+    const file = brandPath(projectRoot);
+    if (!file) return { ok: false, error: 'bad_project' };
+    const fileSystem = deps.fs || fs;
+    const resolveLogo = (candidate) => localAsset(deps.downloadsPath, candidate, IMAGE_EXTENSIONS, deps.exists, deps.realpath) || '';
+    const brand = sanitizeBrand(input, resolveLogo);
+    const json = JSON.stringify({ version: 1, ...brand }, null, 2) + '\n';
+    if (Buffer.byteLength(json, 'utf8') > MAX_BRAND_BYTES) return { ok: false, error: 'too_large' };
+    try {
+      fileSystem.mkdirSync(path.dirname(file), { recursive: true });
+      fileSystem.writeFileSync(file + '.tmp', json, 'utf8');
+      fileSystem.renameSync(file + '.tmp', file);
+    } catch { return { ok: false, error: 'write_failed' }; }
+    return { ok: true, brand };
+  }
+
+  // مسار الشعار يصير أصلاً مسموحاً بعرضه حين يكون في هوية الـstoryboard الحالي فقط.
   function clear() {
     storyboard = null;
     return { ok: true };
@@ -304,23 +617,34 @@ function create(initialDeps) {
     return doLoadProject(filePath, deps.downloadsPath, { exists: deps.exists, realpath: deps.realpath, readFileSync: deps.readFileSync });
   }
 
-  return { configure, propose, state, assetUrl, clear, listDownloads, saveProject, loadProject };
+  return { configure, propose, planAd, approveAdPlan, dismissAdPlan, adPlanState, loadBrand, saveBrand, state, assetUrl, assetRead, clear, listDownloads, saveProject, loadProject };
 }
 
 const singleton = create();
 
 module.exports = {
-  MAX_SCENES, MAX_CAPTION, MIN_DURATION_MS, MAX_DURATION_MS,
+  MAX_SCENES, MAX_CAPTION, MIN_DURATION_MS, MAX_DURATION_MS, MAX_TOTAL_MS,
   VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, AUDIO_EXTENSIONS, TRANSITIONS,
   FITS, CAPTION_POSITIONS, CAPTION_STYLES,
   DEFAULT_CLIP_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME,
-  PROJECT_SCHEMA_VERSION, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
+  PROJECT_SCHEMA_VERSION, READABLE_SCHEMA_VERSIONS, CAMERA_MODES, CAMERA_EASES, MAX_CAMERA_KEYFRAMES, MAX_CAMERA_ZOOM,
+  TEXT_FONTS, sanitizeCamera, sanitizeStage, sanitizeRedactions, STAGE_FRAMES, STAGE_BACKGROUNDS, STAGE_MOTIONS, TRANSITIONS_IN, MAX_REDACTIONS, TEXT_ANIMATIONS, MAX_HIGHLIGHT, MAX_VOICEOVER, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
   localAsset, sanitizeStoryboard, isProjectPathSafe, inferAssetType,
   listDownloads: doListDownloads, saveProject: doSaveProject, loadProject: doLoadProject, create,
   configure: (...args) => singleton.configure(...args),
   propose: (...args) => singleton.propose(...args),
+  loadBrand: (...args) => singleton.loadBrand(...args),
+  saveBrand: (...args) => singleton.saveBrand(...args),
+  sanitizeBrand, BRAND_FILE, MAX_BRAND_BYTES,
+  planAd: (...args) => singleton.planAd(...args),
+  approveAdPlan: (...args) => singleton.approveAdPlan(...args),
+  dismissAdPlan: (...args) => singleton.dismissAdPlan(...args),
+  adPlanState: (...args) => singleton.adPlanState(...args),
+  sanitizeAdPlan, proposalScenes, AD_PLAN_MIN_S, AD_PLAN_MAX_S, AD_PLAN_MAX_SCENES,
   state: (...args) => singleton.state(...args),
   assetUrl: (...args) => singleton.assetUrl(...args),
+  assetRead: (...args) => singleton.assetRead(...args),
+  MAX_ASSET_READ_BYTES,
   clear: (...args) => singleton.clear(...args),
   listDownloadsBound: (...args) => singleton.listDownloads(...args),
   saveProjectBound: (...args) => singleton.saveProject(...args),

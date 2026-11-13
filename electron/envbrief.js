@@ -14,7 +14,7 @@ const SDK_TOOL_NAMES = Object.freeze([
   'browser_fill_form', 'browser_transfer_field', 'browser_request_secret', 'browser_handoff_step',
   'browser_evaluate', 'browser_set_viewport', 'browser_perf', 'browser_back', 'browser_forward',
   'generate_media', 'list_project_connections', 'use_project_connection',
-  'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard',
+  'promo_record_start', 'promo_record_stop', 'promo_list_segments', 'promo_propose_storyboard', 'promo_plan_ad', 'promo_get_ad_plan',
   'load_skill', 'read_skill_resource', 'verification_config', 'verify_project', 'propose_memory',
 ]);
 const KIMI_EXTRA_TOOL_NAMES = Object.freeze([
@@ -92,6 +92,7 @@ function browserPolicy(hasBrowser) {
     '- تحقق من التجاوب فعلياً عبر browser_set_viewport، ثم أرفق دليلاً من screenshot أو القيم الفعلية؛ واستعمل browser_perf لتشخيص البطء.',
     '- عند تسجيل الدخول أو كلمة مرور أو 2FA استخدم browser_handoff ولا تطلب السر في المحادثة.',
     '- لتسجيل عرض تسويقي استعمل promo_record_start بعد إذن المستخدم الصريح، قد المنتج بأدوات browser_*، ثم promo_record_stop؛ الالتقاط محصور بنافذة المنتج والملفات تبقى في Downloads بلا رفع.',
+    '- لإعلان كامل: اكتب السيناريو أولاً بـ promo_plan_ad وانتظر اعتماد المستخدم للبطاقة، ثم اقرأ النسخة المعتمدة بـ promo_get_ad_plan قبل أي تسجيل. حمّل مهارة satr-promo-director إن كانت مفعّلة.',
     '- بعد التسجيل اقترح storyboard عبر promo_propose_storyboard بمقاطع وأصوات محلية داخل Downloads فقط؛ المستخدم يعدّل ويعتمد الخط الزمني قبل التصيير الفوري في الواجهة.',
     '- إن كانت أداة Higgsfield generate_audio متاحة فاستعملها للموسيقى أو التعليق، نزّل الناتج إلى Downloads أولاً، ثم مرّر المسار المحلي في music أو voice؛ لا تمرّر URL بعيداً للاستوديو.',
   ].join('\n');

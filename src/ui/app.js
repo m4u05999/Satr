@@ -1197,6 +1197,22 @@ import { createPreviewShield } from './lib/preview-shield.js';
   promoStudioEl.addEventListener('promo-studio-visible', (event) => {
     surfaceCoordinator.setDialog('promo-studio', !!event.detail);
   });
+  // هوية المشروع تُقرأ وتُكتب في مجلد المشروع الحالي؛ main يتحقق منه.
+  promoStudioEl.getProjectRoot = () => $('cwd').value.trim();
+  // بطاقة سيناريو الإعلان: الاعتماد يجهّز رسالة للوكيل في المؤلّف، والإرسال بيد المستخدم.
+  const promoPlanEl = document.querySelector('satr-promo-plan');
+  if (promoPlanEl) {
+    surfaceCoordinator.register('promo-plan', promoPlanEl, 'dialog');
+    promoPlanEl.addEventListener('promo-plan-visible', (event) => {
+      surfaceCoordinator.setDialog('promo-plan', !!event.detail);
+    });
+    promoPlanEl.addEventListener('promo-plan-approved', () => {
+      if (composerEl && typeof composerEl.insertPrompt === 'function') composerEl.insertPrompt('اعتمدتُ سيناريو الإعلان. اقرأ النسخة المعتمدة ثم ابدأ التسجيل.');
+    });
+    promoPlanEl.addEventListener('promo-plan-dismissed', () => {
+      if (composerEl && typeof composerEl.insertPrompt === 'function') composerEl.insertPrompt('رفضتُ سيناريو الإعلان. ');
+    });
+  }
 
   // تحت العتبة الواسعة يبقى سطح جانبي واحد فقط؛ 120rem تبقي للدردشة عرضاً عملياً.
   const MULTI_SURFACE_MEDIA = '(min-width: 120rem)';

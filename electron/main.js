@@ -56,6 +56,7 @@ const kimi = require('./kimi'); // محرك Kimi Code الأصيل عبر ACP �
 const previewrecording = require('./previewrecording'); // تنزيل تسجيل المعاينة إلى Downloads + إشعار المسار
 const promocapture = require('./promocapture'); // نافذة التقاط المنتج المرئية + تسجيل 30fps في renderer
 const promostudio = require('./promostudio'); // storyboard محلي منقّى + حل أصول Downloads للاستوديو
+const promoexport = require('./promoexport');
 const testsprite = require('./testsprite'); // تكامل TestSprite MCP — مفتاح مشفّر، لا يظهر كمحرّك
 const testspritejobs = require('./testspritejobs'); // جولة TestSprite معمّرة ومستقلة عن token الدور
 const claudeauth = require('./claudeauth');
@@ -424,6 +425,9 @@ function createWindow() {
       if (webContents) preview.attachExternalWebContents(webContents);
     },
   });
+  // كاتب التصدير النهائي: الجذر من main وحده، وبقايا تصدير انقطع تُحذف عند الإقلاع.
+  promoexport.configure({ downloadsPath: app.getPath('downloads') });
+  promoexport.cleanupOrphans();
   promostudio.configure({
     downloadsPath: app.getPath('downloads'),
     exists: fs.existsSync,
@@ -3771,6 +3775,51 @@ ipcMain.handle('satr:promoAssetUrl', (event, payload) => {
   const candidate = payload && typeof payload.path === 'string' ? payload.path : '';
   if (!candidate || candidate.length > 4096 || !path.isAbsolute(candidate)) return { ok: false, error: 'bad_path' };
   return promostudio.assetUrl(candidate);
+});
+
+// ── خطة الإعلان (الدفعة 8): الاعتماد والرفض من الواجهة فقط. أدوات الوكيل تقترح وتقرأ ولا تعتمد. ──
+ipcMain.handle('satr:promoAdPlanState', () => promostudio.adPlanState());
+ipcMain.handle('satr:promoAdPlanApprove', (event, payload) => promostudio.approveAdPlan(payload && payload.plan));
+ipcMain.handle('satr:promoAdPlanDismiss', () => promostudio.dismissAdPlan());
+
+// ── تصدير الإعلان إطاراً بإطار (الدفعة 6): المصيّر يرمّز ويُغلِّف، وmain وحده يكتب. ──
+// لا مسار يعبر من المصيّر: begin يختار الاسم داخل Downloads ويعيد مقبضاً، والباقي بالمقبض.
+// هذه القنوات لا تُسجَّل في أي قائمة أدوات وكيل (يحرسه test:promo-agent-isolation في الدفعة 8).
+ipcMain.handle('satr:promoExportBegin', (event, payload) => promoexport.begin(payload && payload.kind === 'gif' ? 'gif' : 'mp4'));
+// صورة مصغرة PNG من إطار في المعاينة؛ الاسم يختاره main.
+ipcMain.handle('satr:promoThumbnailSave', (event, payload) => promoexport.saveThumbnail(payload && payload.bytes));
+// هوية المشروع: القراءة والكتابة في <المشروع>/.satr/brand.json. cwd يمر بـvalidProjectDirectory.
+ipcMain.handle('satr:promoBrandLoad', (event, payload) => {
+  const projectRoot = validProjectDirectory(payload && payload.cwd);
+  return projectRoot ? promostudio.loadBrand(projectRoot) : { ok: false, error: 'bad_project' };
+});
+ipcMain.handle('satr:promoBrandSave', (event, payload) => {
+  const projectRoot = validProjectDirectory(payload && payload.cwd);
+  return projectRoot ? promostudio.saveBrand(projectRoot, payload.brand) : { ok: false, error: 'bad_project' };
+});
+ipcMain.handle('satr:promoExportChunk', (event, payload) => {
+  const input = payload && typeof payload === 'object' ? payload : {};
+  return promoexport.chunk(input.handle, input.seq, input.bytes);
+});
+ipcMain.handle('satr:promoExportFinish', (event, payload) => {
+  const input = payload && typeof payload === 'object' ? payload : {};
+  return promoexport.finish(input.handle, input.header);
+});
+ipcMain.handle('satr:promoExportAbort', (event, payload) => promoexport.abort(payload && payload.handle));
+
+// قراءة بايتات أصل فيديو من الـstoryboard الحالي للتصدير إطاراً بإطار. الحصر في promostudio.assetRead.
+ipcMain.handle('satr:promoAssetRead', (event, payload) => {
+  const candidate = payload && typeof payload.path === 'string' ? payload.path : '';
+  if (!candidate || candidate.length > 4096 || !path.isAbsolute(candidate)) return { ok: false, error: 'bad_path' };
+  return promostudio.assetRead(candidate, payload.offset, payload.length);
+});
+
+// أحداث مقطع مسجَّل للكاميرا الذكية. المسار يُطابَق بسجل المقاطع داخل promocapture،
+// وملف الأحداث نفسه لا يأتي من المصيّر أبداً.
+ipcMain.handle('satr:promoSegmentEvents', (event, payload) => {
+  const candidate = payload && typeof payload.path === 'string' ? payload.path : '';
+  if (!candidate || candidate.length > 4096 || !path.isAbsolute(candidate)) return { ok: false, error: 'bad_path' };
+  return promocapture.segmentEvents(candidate);
 });
 
 // ── سطح الاستوديو (الدفعة 1): الاستيراد البشري والمشروع الدائم ──
