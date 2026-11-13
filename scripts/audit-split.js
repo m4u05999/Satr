@@ -72,6 +72,46 @@ function classify(entry, lockPackages) {
   return known.every((n) => lockPackages[n].dev === true) ? 'dev' : 'runtime';
 }
 
+/**
+ * التصنيف الثلاثي بالمسار (بند الرادار ب-٣): **dev** إذا كانت كل عقده `dev: true`؛ وإلا
+ * **peer** إن كانت كل العقد الشاحنة `peer: true` (تصل المستخدم عبر تبعية تشغيلية تعلنها
+ * قريناً — تُشحن لكنها تُعدّ طبقةً خاصة كما يقسّمها الرادار)؛ وإلا **تشغيلي**. والمجهول
+ * (عقدة لا يعرفها القفل) تشغيلي — الخطأ نحو التشدّد. بالمسار لا بالاسم لأن الحزمة نفسها
+ * قد تكون dev في مسار وتشغيلية سليمة في آخر (builder-util-runtime — OBS-197).
+ */
+function classifyTier(entry, lockPackages) {
+  const nodes = entry.nodes || [];
+  const known = nodes.filter((n) => lockPackages[n]);
+  if (!nodes.length || !known.length) return 'runtime';
+  const flags = known.map((n) => lockPackages[n]);
+  if (flags.every((f) => f.dev === true)) return 'dev';
+  const shipping = flags.filter((f) => f.dev !== true);
+  return shipping.every((f) => f.peer === true) ? 'peer' : 'runtime';
+}
+
+/** صفوف التدقيق مصنّفةً بالطبقة الثلاثية مع عدٍّ لكل طبقة وشدّة — يستهلكها حارس البوابة. */
+function splitReport(report, lockPackages) {
+  const lock = lockPackages || loadLock();
+  const vulns = (report && report.vulnerabilities) || {};
+  const rows = Object.keys(vulns).map((name) => {
+    const entry = vulns[name] || {};
+    return {
+      name,
+      version: versionOf(entry, lock),
+      severity: entry.severity || 'info',
+      tier: classifyTier(entry, lock),
+      nodes: Array.isArray(entry.nodes) ? entry.nodes.slice() : [],
+      roots: rootsOf(name, vulns, new Set()),
+    };
+  }).sort((a, b) => {
+    const d = SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);
+    return d !== 0 ? d : a.name.localeCompare(b.name);
+  });
+  const tally = { runtime: {}, peer: {}, dev: {} };
+  for (const row of rows) tally[row.tier][row.severity] = (tally[row.tier][row.severity] || 0) + 1;
+  return { rows, tally, lockKnown: Object.keys(lock).length > 0 };
+}
+
 function versionOf(entry, lockPackages) {
   for (const node of entry.nodes || []) {
     const pkg = lockPackages[node];
@@ -139,4 +179,7 @@ function main() {
   }
 }
 
-main();
+// يُستدعى مباشرةً كأداة تقرير، ويُستورد من scripts/audit-gate-test.js كمصنّف (بند الرادار ب-٣).
+if (require.main === module) main();
+
+module.exports = { classify, classifyTier, splitReport, rootsOf, versionOf, loadLock, SEVERITY_ORDER, SEVERITY_AR };

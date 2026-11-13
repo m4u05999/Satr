@@ -207,6 +207,7 @@
     "version": "node scripts/sync-readme-version.js && git add README.md",
     "test:readme-version": "node scripts/readme-version-test.js",
     "test:license-field": "node scripts/license-field-test.js",
+    "test:audit-gate": "node scripts/audit-gate-test.js",
     "prestart": "node scripts/update-csp.js",
     "start": "electron .",
     "predist": "node scripts/update-csp.js",
