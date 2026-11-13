@@ -64,7 +64,8 @@ const CAPTURE_HUMAN_INSTALL = `(function(){
   function viewport(){return {width:Math.max(1,Math.round(innerWidth||1)),height:Math.max(1,Math.round(innerHeight||1)),dpr:Number(devicePixelRatio)||1};}
   function refOf(target){try{var el=target&&target.closest?target.closest('[data-satr-ref]'):null,ref=el&&el.getAttribute('data-satr-ref');return /^s[1-9][0-9]*:e[1-9][0-9]*$/.test(ref||'')?ref:null;}catch(e){return null;}}
   function rectOf(target,offset,vp){try{if(!target||!target.getBoundingClientRect)return null;var r=target.getBoundingClientRect(),o=offset();return {x:clamp(o.x+r.left,0,vp.width),y:clamp(o.y+r.top,0,vp.height),width:clamp(r.width,0,vp.width),height:clamp(r.height,0,vp.height)};}catch(e){return null;}}
-  function push(type,event,doc,offset){if(state.queue.length>=1500)return;var vp=viewport(),o=offset();state.queue.push({kind:'pointer',source:'human',action:type,target_ref:refOf(event.target),document_id:state.docs.get(doc)||'d1',rect:rectOf(event.target,offset,vp),pointer:{x:clamp(o.x+event.clientX,0,vp.width),y:clamp(o.y+event.clientY,0,vp.height),button:clamp(event.button,0,5)},viewport:vp,epoch_ms:Date.now()});}
+  function sens(el){try{return !!(el&&el.matches&&el.matches('input[type=password],input[autocomplete*=password],input[autocomplete^=cc-],input[autocomplete=one-time-code]'));}catch(e){return false;}}
+  function push(type,event,doc,offset){if(state.queue.length>=1500)return;var vp=viewport(),o=offset();state.queue.push({sensitive:sens(event.target),kind:'pointer',source:'human',action:type,target_ref:refOf(event.target),document_id:state.docs.get(doc)||'d1',rect:rectOf(event.target,offset,vp),pointer:{x:clamp(o.x+event.clientX,0,vp.width),y:clamp(o.y+event.clientY,0,vp.height),button:clamp(event.button,0,5)},viewport:vp,epoch_ms:Date.now()});}
   function scan(doc,offset){try{var frames=doc.querySelectorAll('iframe');for(var i=0;i<frames.length;i++)attachFrame(frames[i],offset);}catch(e){}}
   function attachFrame(frame,parentOffset){try{var ownOffset=function(){var p=parentOffset(),r=frame.getBoundingClientRect();return {x:p.x+r.left+(frame.clientLeft||0),y:p.y+r.top+(frame.clientTop||0)};};attach(frame.contentDocument,ownOffset);frame.addEventListener('load',function(){try{attach(frame.contentDocument,ownOffset);}catch(e){}},true);}catch(e){}}
   function attach(doc,offset){if(!doc||state.seen.has(doc))return;state.seen.add(doc);state.docs.set(doc,'d'+(++state.nextDoc));doc.addEventListener('mousedown',function(e){push('mousedown',e,doc,offset);},true);doc.addEventListener('mousemove',function(e){push('mousemove',e,doc,offset);},true);scan(doc,offset);try{new MutationObserver(function(){scan(doc,offset);}).observe(doc.documentElement,{subtree:true,childList:true});}catch(e){}}
@@ -1628,7 +1629,8 @@ const CAPTURE_META_FN = `function(loc){
   var el=null;try{el=resolve(loc);}catch(e){}
   var vp={width:Math.max(1,Math.round(innerWidth||1)),height:Math.max(1,Math.round(innerHeight||1)),dpr:Number(devicePixelRatio)||1};
   var rect=null;if(el&&el.getBoundingClientRect){var r=el.getBoundingClientRect(),x=Math.max(0,Math.min(vp.width,Math.round(r.left))),y=Math.max(0,Math.min(vp.height,Math.round(r.top)));rect={x:x,y:y,width:Math.max(0,Math.min(vp.width-x,Math.round(r.width))),height:Math.max(0,Math.min(vp.height-y,Math.round(r.height)))};}
-  return {ok:!!el,rect:rect,viewport:vp};
+  var sensitive=false;try{sensitive=!!(el&&el.matches&&el.matches('input[type=password],input[autocomplete*=password],input[autocomplete^=cc-],input[autocomplete=one-time-code]'));}catch(e){}
+  return {ok:!!el,rect:rect,viewport:vp,sensitive:sensitive};
 }`;
 
 async function recordAgentCapture(wc, action, locator) {
@@ -1639,6 +1641,7 @@ async function recordAgentCapture(wc, action, locator) {
     kind: 'action', source: 'agent', action,
     target_ref: SNAPSHOT_REF_RE.test(String(locator || '')) ? String(locator) : null,
     document_id: captureDocumentId('d1'), rect: meta && meta.rect, pointer: null,
+    sensitive: !!(meta && meta.sensitive),
     viewport: meta && meta.viewport, monotonic_ms: performance.now(),
   });
 }

@@ -7,6 +7,8 @@ import { pointerTrack, idleGaps } from '../lib/promo/promo-camera.js';
 import { TEXT_ANIMATIONS } from '../lib/promo/promo-text.js';
 import { safeArea } from '../lib/promo/promo-subtitles.js';
 import { EXPORT_PRESETS, probeExportSupport } from '../lib/promo-export/encode.js';
+import { buildStageRows, cleanStage, cleanRedactions, suggestRedactions, TRANSITION_IN_VALUES, MAX_REDACTIONS } from '../lib/promo/studio-stage.js';
+import { buildTimeline as timelineOf } from '../lib/promo/promo-timeline.js';
 import { exportStoryboard } from '../lib/promo-export/export.js';
 import { CAMERA_CSS, buildCameraRow, cleanCamera, suggestCamera, addKeyframe, editKeyframe, shiftKeyframes } from '../lib/promo/studio-camera.js';
 
@@ -25,6 +27,13 @@ function canvasColors(styles) {
     captionBackground: pick('--scrim', CANVAS_FALLBACK.scrim),
     captionText: pick('--text', CANVAS_FALLBACK.text),
     accent: pick('--gold', CANVAS_FALLBACK.text),
+    // ألوان إطارات الأجهزة من رموز التصميم نفسها.
+    chrome: {
+      body: pick('--surface-2', CANVAS_FALLBACK.error), bar: pick('--surface', CANVAS_FALLBACK.error),
+      pill: pick('--bg', CANVAS_FALLBACK.background), text: pick('--text-dim', CANVAS_FALLBACK.text),
+      dots: [pick('--red', CANVAS_FALLBACK.text), pick('--gold', CANVAS_FALLBACK.text), pick('--green', CANVAS_FALLBACK.text)],
+      shadow: pick('--scrim', CANVAS_FALLBACK.scrim),
+    },
     muted: pick('--text-faint', CANVAS_FALLBACK.muted),
     error: pick('--surface-2', CANVAS_FALLBACK.error),
   };
@@ -158,6 +167,9 @@ function cloneStoryboard(value) {
     voice: typeof scene.voice === 'string' ? scene.voice : '',
     voice_missing: scene.voice_missing === true,
     trim_start_ms: Number.isInteger(scene.trim_start_ms) ? Math.max(0, Math.min(120000, scene.trim_start_ms)) : 0,
+    stage: cleanStage(scene.stage),
+    transition_in: index > 0 && TRANSITION_IN_VALUES.includes(scene.transition_in) ? scene.transition_in : 'none',
+    redactions: cleanRedactions(scene.redactions, Number.isInteger(scene.duration_ms) ? Math.max(250, Math.min(120000, scene.duration_ms)) : 3000),
     text_style: {
       animation: TEXT_ANIMATIONS.includes(scene.text_style && scene.text_style.animation) ? scene.text_style.animation : 'none',
       highlight: scene.text_style && typeof scene.text_style.highlight === 'string' ? scene.text_style.highlight.trim().split(/\s+/)[0].slice(0, 60) : '',
@@ -373,6 +385,125 @@ class SatrPromoStudio extends HTMLElement {
     this.dispatchEvent(new CustomEvent('promo-studio-visible', { bubbles: true, detail: false }));
   }
 
+  // ── الإخراج البصري (الدفعة 7) ──
+
+  // صور المشروع الصالحة خلفيةً: أصول المشاهد التي هي صور.
+  imageOptions() {
+    return [...new Set(this.storyboard.scenes.filter((scene) => scene.asset_type === 'image' && !scene.asset_missing).map((scene) => scene.asset))];
+  }
+
+  // رمز لون من السمة بصيغة #rrggbb لحقل input[type=color].
+  themeHex(name) {
+    const value = getComputedStyle(this).getPropertyValue(name).trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(value)) return value.toLowerCase();
+    if (/^#[0-9a-fA-F]{3}$/.test(value)) return '#' + value.slice(1).split('').map((c) => c + c).join('').toLowerCase();
+    return '#' + '0'.repeat(6);
+  }
+
+  // صور خلفيات المسرح المحمَّلة: Map مسار ⇒ { source, width, height }.
+  async stageImages() {
+    if (!this.stageImageCache) this.stageImageCache = new Map();
+    for (const scene of this.storyboard.scenes) {
+      const background = scene.stage.background;
+      if (background.type !== 'image' || !background.image || this.stageImageCache.has(background.image)) continue;
+      try {
+        const resolved = await window.satr.promoAssetUrl(background.image);
+        if (!resolved || !resolved.ok) throw new Error('bad_asset');
+        const image = new Image();
+        image.src = resolved.url;
+        await image.decode();
+        this.stageImageCache.set(background.image, { source: image, width: image.naturalWidth, height: image.naturalHeight });
+      } catch { this.stageImageCache.set(background.image, null); }
+    }
+    return this.stageImageCache;
+  }
+
+  // لقطة آخر إطار من مشهد سابق لمعاينة انتقال الدخول. تُحسب عند الطلب وتُخزَّن بمفتاح المشهد.
+  async sceneSnapshot(index, canvas, colors, images) {
+    const scene = this.storyboard.scenes[index];
+    if (!scene || scene.asset_missing) return null;
+    if (!this.snapshotCache) this.snapshotCache = new Map();
+    const key = canvas.width + 'x' + canvas.height + JSON.stringify(scene);
+    if (this.snapshotCache.has(key)) return this.snapshotCache.get(key);
+    try {
+      const resolved = await window.satr.promoAssetUrl(scene.asset);
+      if (!resolved || !resolved.ok) return null;
+      const visual = await loadPreviewVisual(resolved.url, scene.asset_type);
+      if (visual.kind === 'video' && Number.isFinite(visual.element.duration)) {
+        visual.element.currentTime = Math.min(Math.max(0, (scene.trim_start_ms + scene.duration_ms) / 1000 - 0.04), Math.max(0, visual.element.duration - 0.05));
+        await new Promise((resolve) => { visual.element.addEventListener('seeked', resolve, { once: true }); setTimeout(resolve, 400); });
+      }
+      const copy = document.createElement('canvas'); copy.width = canvas.width; copy.height = canvas.height;
+      const single = timelineOf({ scenes: [scene] });
+      renderFrame(copy.getContext('2d', { alpha: false }), { width: copy.width, height: copy.height, colors, timeline: single, aspect: this.storyboard.aspect, images },
+        scene.duration_ms - 1, new Map([[0, { source: visual.element, width: visual.width, height: visual.height }]]));
+      if (this.snapshotCache.size > 12) this.snapshotCache.clear();
+      this.snapshotCache.set(key, copy);
+      return copy;
+    } catch { return null; }
+  }
+
+  handleStageEdit(scene, index, field, event) {
+    const stage = scene.stage;
+    const value = event.target.value;
+    const numeric = Number(value);
+    let rebuild = false;
+    if (field === 'stage_frame') { stage.frame = value; rebuild = true; }
+    else if (field === 'stage_background') { stage.background.type = value; rebuild = true; }
+    else if (field === 'stage_color') stage.background.color = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '';
+    else if (field === 'stage_color2') stage.background.color2 = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '';
+    else if (field === 'stage_image') stage.background.image = String(value || '');
+    else if (field === 'stage_blur') stage.background.blur = Math.max(0, Math.min(40, numeric || 0));
+    else if (field === 'stage_scale') stage.scale = Math.max(0.78, Math.min(0.88, (numeric || 84) / 100));
+    else if (field === 'stage_tilt_x') stage.tilt.x = Math.max(-25, Math.min(25, numeric || 0));
+    else if (field === 'stage_tilt_y') stage.tilt.y = Math.max(-25, Math.min(25, numeric || 0));
+    else if (field === 'stage_motion') stage.motion = value === 'orbit' ? 'orbit' : 'none';
+    else if (field === 'stage_shadow') stage.shadow = Math.max(0, Math.min(1, numeric || 0));
+    else if (field === 'stage_label') stage.label = String(value || '').slice(0, 60);
+    else if (field === 'transition_in') scene.transition_in = index > 0 && TRANSITION_IN_VALUES.includes(value) ? value : 'none';
+    else if (field.startsWith('redact_')) {
+      const row = event.target.closest('[data-redaction]');
+      const region = row && scene.redactions[Number(row.dataset.redaction)];
+      if (!region || !Number.isFinite(numeric)) return;
+      const key = field.slice(7);
+      const unit = Math.max(0, Math.min(1, numeric / 100));
+      if (key === 'x') region.x = Math.min(unit, 1 - region.width);
+      else if (key === 'y') region.y = Math.min(unit, 1 - region.height);
+      else if (key === 'width') region.width = Math.max(0.005, Math.min(unit, 1 - region.x));
+      else if (key === 'height') region.height = Math.max(0.005, Math.min(unit, 1 - region.y));
+      region.auto = false;
+    }
+    this.approved = false;
+    // تغيير نوع الإطار أو الخلفية يبدّل الحقول الظاهرة فيلزم إعادة بناء البطاقة.
+    if (rebuild && event.type === 'change') this.renderTimeline();
+    else { this.syncApproval(); this.drawPreview(); }
+  }
+
+  // تعيد true إن تغيّر المشروع ولزم changed().
+  handleRedactAction(action, index, button) {
+    const scene = this.storyboard.scenes[index];
+    const status = this.shadowRoot.getElementById('status');
+    if (action === 'redact-suggest') {
+      const regions = suggestRedactions(this.eventsFor(scene), scene);
+      if (!regions.length) { status.textContent = 'لا حقول حساسة في سجل هذا المقطع.'; return false; }
+      scene.redactions = scene.redactions.filter((item) => !item.auto).concat(regions).slice(0, MAX_REDACTIONS);
+      status.textContent = 'غُبّشت ' + regions.length + ' منطقة حساسة. راجع المعاينة: ما لم يُكتشف (بريد أو مفاتيح معروضة نصاً) يُغبَّش يدوياً.';
+      return true;
+    }
+    if (action === 'redact-add') {
+      if (scene.redactions.length >= MAX_REDACTIONS) { status.textContent = 'بلغ المشهد حد مناطق التغبيش.'; return false; }
+      scene.redactions.push({ x: 0.35, y: 0.42, width: 0.3, height: 0.08, start_ms: 0, end_ms: scene.duration_ms, auto: false });
+      return true;
+    }
+    if (action === 'redact-remove') {
+      const at = Number(button.dataset.redaction);
+      if (!scene.redactions[at]) return false;
+      scene.redactions.splice(at, 1);
+      return true;
+    }
+    return false;
+  }
+
   // ── محرك التصدير (الدفعة 6): ما يدعمه هذا الجهاز لمقاس المشروع ──
   async refreshExportSupport() {
     const aspect = this.storyboard.aspect;
@@ -467,6 +598,11 @@ class SatrPromoStudio extends HTMLElement {
           const planned = suggestCamera(events, scene);
           if (planned.keyframes.length > 1) { scene.camera = planned; loaded = true; }
         }
+        // الحقول الحساسة تُغبَّش افتراضياً في المقاطع الجديدة؛ المستخدم يزيل ما لا يريده.
+        if (events && !scene.redactions.length) {
+          const regions = suggestRedactions(events, scene);
+          if (regions.length) { scene.redactions = regions; loaded = true; }
+        }
       }
     }
     if (loaded) this.renderTimeline();
@@ -485,6 +621,8 @@ class SatrPromoStudio extends HTMLElement {
 
   // بعد تغيير المدة أو بداية القص: التلقائية تُعاد من الأحداث، واليدوية تُزاح وتُقصّ.
   refreshCamera(scene, shiftMs) {
+    // مناطق التغبيش تتبع المشهد: تُزاح مع بداية القص وتُقصّ عند المدة الجديدة.
+    scene.redactions = cleanRedactions(scene.redactions.map((item) => ({ ...item, start_ms: item.start_ms - shiftMs, end_ms: item.auto ? scene.duration_ms : item.end_ms - shiftMs })), scene.duration_ms);
     if (!scene.camera) return;
     const events = this.eventsFor(scene);
     if (scene.camera.mode === 'auto' && events) scene.camera = suggestCamera(events, scene);
@@ -712,7 +850,13 @@ class SatrPromoStudio extends HTMLElement {
       }
       // الإطار جاهز عند الزمن المطلوب؛ الرسم نفسه في renderFrame المشتركة مع التصدير.
       const timeline = buildTimeline(this.storyboard);
-      renderFrame(context, { width: canvas.width, height: canvas.height, colors, timeline, pointers: this.pointerTracks(), aspect: this.storyboard.aspect },
+      const images = await this.stageImages();
+      const snapshots = new Map();
+      if (placement.index > 0 && scene.transition_in !== 'none' && localTime < 600) {
+        const snapshot = await this.sceneSnapshot(placement.index - 1, canvas, colors, images);
+        if (snapshot) snapshots.set(placement.index, snapshot);
+      }
+      renderFrame(context, { width: canvas.width, height: canvas.height, colors, timeline, pointers: this.pointerTracks(), aspect: this.storyboard.aspect, images, snapshots },
         placement.start + Math.min(localTime, scene.duration_ms - 0.001),
         new Map([[placement.index, { source: visual.element, width: visual.width, height: visual.height }]]));
       this.drawSafeArea(context, canvas, colors);
@@ -924,6 +1068,14 @@ class SatrPromoStudio extends HTMLElement {
           gaps: events ? idleGaps(events, { durationMs: scene.duration_ms, sourceStartMs: scene.trim_start_ms }) : [],
         }));
       }
+      if (!scene.asset_missing) {
+        const events = this.eventsFor(scene);
+        main.appendChild(buildStageRows(scene, {
+          imageOptions: this.imageOptions(), isFirst: index === 0,
+          fallbackColor: this.themeHex('--bg-deep'), fallbackColor2: this.themeHex('--gold'),
+          canSuggestRedactions: !!(events && events.some((event) => event.sensitive === true)),
+        }));
+      }
       card.append(number, main); timeline.appendChild(card);
       // عناصر عطّلها صف الكاميرا عمداً (data-locked) تبقى معطّلة.
       if (this.rendering) card.querySelectorAll('button, input, select').forEach((control) => { control.disabled = true; });
@@ -979,6 +1131,7 @@ class SatrPromoStudio extends HTMLElement {
     const scene = this.storyboard.scenes[index];
     if (!scene || !field || this.rendering) return;
     if (field.startsWith('camera_') || field.startsWith('key_')) { this.handleCameraEdit(scene, index, field, event); return; }
+    if (field.startsWith('stage_') || field.startsWith('redact_') || field === 'transition_in') { this.handleStageEdit(scene, index, field, event); return; }
     if (field === 'duration_ms') {
       scene.duration_ms = Math.max(250, Math.min(120000, Math.round(Number(event.target.value) || 250)));
       this.refreshCamera(scene, 0);
@@ -1018,6 +1171,9 @@ class SatrPromoStudio extends HTMLElement {
       copy.id = base + '_copy_' + Date.now().toString(36);
       this.storyboard.scenes.splice(index + 1, 0, copy);
     } else if (action === 'remove') { this.storyboard.scenes.splice(index, 1); this.selectedKey = null; }
+    else if (action === 'redact-suggest' || action === 'redact-add' || action === 'redact-remove') {
+      if (!this.handleRedactAction(action, index, button)) return;
+    }
     else if (action === 'camera-suggest' || action === 'key-add' || action === 'key-select' || action === 'key-remove' || action === 'cut-gap') {
       if (!this.handleCameraAction(action, index, button)) return;
     }
@@ -1048,6 +1204,7 @@ class SatrPromoStudio extends HTMLElement {
     const scenes = [];
     for (const scene of this.storyboard.scenes) scenes.push({
       ...scene, src: await resolve(scene.asset), musicSrc: await resolve(scene.music), voiceSrc: await resolve(scene.voice),
+      stageImageSrc: scene.stage.background.type === 'image' && scene.stage.background.image ? await resolve(scene.stage.background.image).catch(() => '') : '',
     });
     return scenes;
   }
@@ -1057,8 +1214,8 @@ class SatrPromoStudio extends HTMLElement {
     const root = this.shadowRoot;
     const result = await renderStoryboard({
       canvas: root.getElementById('canvas'), scenes: await this.resolvedScenes(), signal: this.abortController.signal,
-      pointers: this.pointerTracks(), aspect: this.storyboard.aspect,
-      colors: { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold') },
+      pointers: this.pointerTracks(), aspect: this.storyboard.aspect, images: await this.stageImages(),
+      colors: { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold'), chrome: canvasColors(styles).chrome },
       onProgress: (value) => { progress.style.width = Math.min(100, value.elapsed_ms / value.total_ms * 100).toFixed(2) + '%'; },
     });
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
@@ -1086,7 +1243,7 @@ class SatrPromoStudio extends HTMLElement {
       try {
         await Promise.all([700, 500].map((weight) => document.fonts.load(weight + ' 48px "IBM Plex Sans Arabic"', 'ع A ٢')));
       } catch (error) {}
-      const colors = { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold') };
+      const colors = { background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold'), chrome: canvasColors(styles).chrome };
       // الفحص غير متزامن ويبدأ عند فتح الاستوديو؛ ننتظره هنا كي لا يسبقه ضغط «صيّر».
       await this.refreshExportSupport();
       const support = this.exportSupport && this.exportSupport.get(this.storyboard.aspect);

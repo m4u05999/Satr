@@ -32,6 +32,14 @@ const CAMERA_MODES = new Set(['auto', 'manual', 'off']);
 const CAMERA_EASES = new Set(['inOut', 'linear', 'hold']);
 const MAX_CAMERA_KEYFRAMES = 200;
 const MAX_CAMERA_ZOOM = 4;
+// حقول v2 الاختيارية للإخراج البصري (الدفعة 7).
+const STAGE_FRAMES = new Set(['none', 'browser', 'laptop', 'phone', 'tablet']);
+const STAGE_BACKGROUNDS = new Set(['none', 'color', 'linear', 'radial', 'image']);
+const STAGE_MOTIONS = new Set(['none', 'orbit']);
+const TRANSITIONS_IN = new Set(['none', 'crossfade', 'slide', 'zoom', 'blur']);
+const SAFE_COLOR = /^#[0-9a-fA-F]{6}$/;
+const MAX_REDACTIONS = 20;
+const MAX_STAGE_LABEL = 60;
 // حقول v2 الاختيارية للعناوين (الدفعة 3): تُضاف بلا رفع رقم المخطط.
 const TEXT_ANIMATIONS = new Set(['none', 'words', 'slide', 'zoom']);
 const MAX_HIGHLIGHT = 60;
@@ -72,6 +80,57 @@ function cleanFloat(value, min, max, defaultValue) {
 
 function cleanEnum(value, allowed, defaultValue) {
   return allowed.has(value) ? value : defaultValue;
+}
+
+// المسرح قيم تجميلية: الخارج عن النطاق يعود إلى الافتراضي. صورة الخلفية أصل داخل Downloads
+// كأي أصل؛ إن لم تصح سقطت الخلفية إلى «بدون» ولا يُحفظ مسارها.
+function sanitizeStage(raw, resolveImage) {
+  const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const background = input.background && typeof input.background === 'object' && !Array.isArray(input.background) ? input.background : {};
+  let type = cleanEnum(background.type, STAGE_BACKGROUNDS, 'none');
+  let image = '';
+  if (type === 'image') {
+    image = typeof background.image === 'string' ? resolveImage(background.image) : '';
+    if (!image) type = 'none';
+  }
+  const tilt = input.tilt && typeof input.tilt === 'object' && !Array.isArray(input.tilt) ? input.tilt : {};
+  return {
+    frame: cleanEnum(input.frame, STAGE_FRAMES, 'none'),
+    background: {
+      type,
+      color: SAFE_COLOR.test(background.color || '') ? background.color.toLowerCase() : '',
+      color2: SAFE_COLOR.test(background.color2 || '') ? background.color2.toLowerCase() : '',
+      angle: cleanFloat(background.angle, 0, 360, 135),
+      image,
+      blur: cleanFloat(background.blur, 0, 40, 0),
+    },
+    shadow: cleanFloat(input.shadow, 0, 1, 0.6),
+    scale: cleanFloat(input.scale, 0.78, 0.88, 0.84),
+    radius: input.radius === 0 ? 0 : 1,
+    tilt: { x: cleanFloat(tilt.x, -25, 25, 0), y: cleanFloat(tilt.y, -25, 25, 0) },
+    motion: cleanEnum(input.motion, STAGE_MOTIONS, 'none'),
+    // نص يُرسم داخل حقل الرابط في إطار المتصفح: بلا محارف تحكم ولا اتجاه.
+    label: typeof input.label === 'string' ? input.label.replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, MAX_STAGE_LABEL) : '',
+  };
+}
+
+// مناطق التغبيش تحجب بيانات حساسة. منطقة معطوبة لا تُسقط بصمت (فيظهر ما أُريد حجبه) بل
+// يُرفض المشروع كله بـbad_redaction.
+function sanitizeRedactions(raw, durationMs) {
+  if (raw == null) return { ok: true, redactions: [] };
+  if (!Array.isArray(raw) || raw.length > MAX_REDACTIONS) return { ok: false };
+  const unit = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+  const redactions = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') return { ok: false };
+    if (!unit(item.x) || !unit(item.y) || !unit(item.width) || !unit(item.height) || item.width <= 0 || item.height <= 0) return { ok: false };
+    if (item.x + item.width > 1.0001 || item.y + item.height > 1.0001) return { ok: false };
+    if (!Number.isInteger(item.start_ms) || !Number.isInteger(item.end_ms) || item.start_ms < 0 || item.end_ms > durationMs || item.end_ms <= item.start_ms) return { ok: false };
+    const round = (value) => Math.round(value * 10000) / 10000;
+    redactions.push({ x: round(item.x), y: round(item.y), width: round(Math.min(item.width, 1 - item.x)), height: round(Math.min(item.height, 1 - item.y)),
+      start_ms: item.start_ms, end_ms: item.end_ms, auto: item.auto === true });
+  }
+  return { ok: true, redactions };
 }
 
 // كاميرا المشهد. الغياب = { mode: 'off' } (ترحيل v1). القيم خارج النطاق تُرفض ولا تُصحَّح:
@@ -149,6 +208,9 @@ function sanitizeStoryboard(input, options) {
     const voiceVolume = cleanFloat(raw.voice_volume, 0, 1, DEFAULT_VOICE_VOLUME);
     const camera = sanitizeCamera(raw.camera, durationMs);
     if (!camera.ok) return { ok: false, error: 'bad_camera', index };
+    const redactions = sanitizeRedactions(raw.redactions, durationMs);
+    if (!redactions.ok) return { ok: false, error: 'bad_redaction', index };
+    const stage = sanitizeStage(raw.stage, (candidate) => localAsset(downloadsPath, candidate, IMAGE_EXTENSIONS, exists, settings.realpath) || '');
     const rawStyle = raw.text_style && typeof raw.text_style === 'object' && !Array.isArray(raw.text_style) ? raw.text_style : {};
     const textStyle = {
       animation: cleanEnum(rawStyle.animation, TEXT_ANIMATIONS, 'none'),
@@ -169,6 +231,9 @@ function sanitizeStoryboard(input, options) {
       music_volume: musicVolume,
       voice_volume: voiceVolume,
       camera: camera.camera,
+      stage,
+      transition_in: index === 0 ? 'none' : cleanEnum(raw.transition_in, TRANSITIONS_IN, 'none'),
+      redactions: redactions.redactions,
       text_style: textStyle,
       voiceover_ar: voiceover,
       subtitles: raw.subtitles === true && !!voiceover,
@@ -332,7 +397,8 @@ function create(initialDeps) {
 
   function allowedPath(candidate) {
     if (typeof candidate !== 'string') return false;
-    return !!(storyboard && storyboard.scenes.some((scene) => scene.asset === candidate || scene.music === candidate || scene.voice === candidate))
+    return !!(storyboard && storyboard.scenes.some((scene) => scene.asset === candidate || scene.music === candidate || scene.voice === candidate
+      || (scene.stage && scene.stage.background.image === candidate)))
       || typeof deps.isAdditionalAllowed === 'function' && deps.isAdditionalAllowed(candidate);
   }
 
@@ -405,7 +471,7 @@ module.exports = {
   FITS, CAPTION_POSITIONS, CAPTION_STYLES,
   DEFAULT_CLIP_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME,
   PROJECT_SCHEMA_VERSION, READABLE_SCHEMA_VERSIONS, CAMERA_MODES, CAMERA_EASES, MAX_CAMERA_KEYFRAMES, MAX_CAMERA_ZOOM,
-  sanitizeCamera, TEXT_ANIMATIONS, MAX_HIGHLIGHT, MAX_VOICEOVER, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
+  sanitizeCamera, sanitizeStage, sanitizeRedactions, STAGE_FRAMES, STAGE_BACKGROUNDS, STAGE_MOTIONS, TRANSITIONS_IN, MAX_REDACTIONS, TEXT_ANIMATIONS, MAX_HIGHLIGHT, MAX_VOICEOVER, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
   localAsset, sanitizeStoryboard, isProjectPathSafe, inferAssetType,
   listDownloads: doListDownloads, saveProject: doSaveProject, loadProject: doLoadProject, create,
   configure: (...args) => singleton.configure(...args),

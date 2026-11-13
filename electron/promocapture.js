@@ -240,6 +240,7 @@ function readSegmentEvents(eventsFile, fileSystem = fs) {
       pointer: cleanPointer(item.pointer, viewport),
       viewport: viewport ? { width: viewport.width, height: viewport.height } : null,
       timing_quality: item.timing_quality === 'verified' ? 'verified' : 'unverified',
+      ...(item.sensitive === true ? { sensitive: true } : {}),
     });
   }
   // زمن الوسائط = زمن الالتقاط + موضع منارة البدء في الفيديو. بلا منارة تبقى الإزاحة صفراً
@@ -301,6 +302,8 @@ function createEventSink(options) {
       viewport,
       capture_duration_ms: Number.isInteger(event.capture_duration_ms) ? Math.max(0, event.capture_duration_ms) : null,
       media_duration_ms: Number.isInteger(event.media_duration_ms) ? Math.max(0, event.media_duration_ms) : null,
+      // علم فقط: الحدث وقع على حقل كلمة مرور أو بطاقة أو رمز تحقق. لا قيمة ولا نص يُسجَّل.
+      ...(event.sensitive === true ? { sensitive: true } : {}),
       // سجل الساعة وحده: زمن منارة البدء داخل الفيديو، وبه يُحوَّل t_capture_ms إلى زمن وسائط.
       ...(kind === 'clock' && Number.isFinite(event.start_media_ms) && event.start_media_ms >= 0
         ? { start_media_ms: Math.round(event.start_media_ms) } : {}),

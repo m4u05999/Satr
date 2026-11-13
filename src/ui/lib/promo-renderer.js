@@ -93,7 +93,7 @@ export async function renderStoryboard(options) {
   // المسار القديم يسير بالساعة الحقيقية، لكن الرسم نفسه يمر بـrenderFrame الحتمية.
   const timeline = buildTimeline({ scenes });
   const runtime = { width: canvas.width, height: canvas.height, colors, timeline, pointers: settings.pointers || null,
-    aspect: settings.aspect || '16:9', voiceDurations: new Map() };
+    aspect: settings.aspect || '16:9', voiceDurations: new Map(), images: settings.images || null, snapshots: new Map() };
   const totalMs = timeline.totalMs;
   let completedMs = 0;
   try {
@@ -156,6 +156,12 @@ export async function renderStoryboard(options) {
           await new Promise((resolve) => requestAnimationFrame(resolve));
         }
         completedMs += scene.duration_ms;
+        // لقطة آخر إطار لانتقال دخول المشهد التالي.
+        if (index + 1 < scenes.length && scenes[index + 1].transition_in && scenes[index + 1].transition_in !== 'none') {
+          const copy = document.createElement('canvas'); copy.width = canvas.width; copy.height = canvas.height;
+          copy.getContext('2d').drawImage(canvas, 0, 0);
+          runtime.snapshots.set(index + 1, copy);
+        }
       } finally {
         if (visual) visual.cleanup();
         if (music) { music.pause(); music.removeAttribute('src'); music.load(); }

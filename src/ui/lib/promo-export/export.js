@@ -95,7 +95,16 @@ async function runExport(options, acceleration) {
   const canvas = document.createElement('canvas');
   canvas.width = width; canvas.height = height;
   const context = canvas.getContext('2d', { alpha: false });
-  const runtime = { width, height, colors: options.colors, timeline, pointers: options.pointers || null, aspect, voiceDurations };
+  // صور خلفيات المسرح تُحمَّل مرة؛ ولقطات آخر إطار من كل مشهد لانتقال دخول ما بعده.
+  const images = new Map();
+  for (const scene of scenes) {
+    const background = scene.stage && scene.stage.background;
+    if (background && background.type === 'image' && background.image && scene.stageImageSrc && !images.has(background.image)) {
+      try { const image = await loadImage(scene.stageImageSrc); images.set(background.image, { source: image, width: image.naturalWidth, height: image.naturalHeight }); } catch {}
+    }
+  }
+  const snapshots = new Map();
+  const runtime = { width, height, colors: options.colors, timeline, pointers: options.pointers || null, aspect, voiceDurations, images, snapshots };
 
   const begun = await writer.begin();
   if (!begun || !begun.ok) throw new Error('export_begin_failed:' + (begun && begun.error || 'unknown'));
@@ -202,6 +211,14 @@ async function runExport(options, acceleration) {
       const baseUs = source.startUs || 0;
       const frame = await source.frameAt(baseUs + placement.sourceMs * 1000);
       renderFrame(context, runtime, tMs, new Map([[entry.index, frame]]));
+      // آخر إطار من هذا المشهد ⇒ لقطة لانتقال دخول المشهد التالي (إن طلبه).
+      const upcoming = i + 1 < frames ? sceneAt(timeline, frameTimeMs(i + 1, fps)).entry : null;
+      if (upcoming && upcoming.index !== entry.index && upcoming.scene.transition_in && upcoming.scene.transition_in !== 'none') {
+        const copy = document.createElement('canvas'); copy.width = width; copy.height = height;
+        copy.getContext('2d').drawImage(canvas, 0, 0);
+        snapshots.clear();
+        snapshots.set(upcoming.index, copy);
+      }
       const videoFrame = new VideoFrame(canvas, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
       // الضغط الخلفي: لا إطار جديد والمرمّز متخم، ولا والكتابة متأخرة.
       while (encoder.encodeQueueSize > 4 && !failure) {

@@ -253,6 +253,8 @@
     "test:promo-frame-source-live": "electron scripts/promo-frame-source-live-test.js",
     "test:promo-export-ipc": "node scripts/promo-export-ipc-test.js",
     "test:promo-export-live": "electron scripts/promo-export-live-test.js",
+    "test:promo-stage": "node scripts/promo-stage-test.js",
+    "test:promo-stage-live": "electron scripts/promo-stage-live-test.js",
     "probe:promo": "electron scripts/promo-probe-live.js",
     "test:preview-shield": "electron scripts/preview-shield-test.js",
     "test:topbar-surfaces": "electron scripts/topbar-surfaces-test.js",

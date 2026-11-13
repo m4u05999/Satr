@@ -5,6 +5,120 @@
 import { sceneAt, fadeOpacity } from './promo-timeline.js';
 import { cameraAt, cameraTransform, pointerAt } from './promo-camera.js';
 import { usesTitleEngine, drawTitle, drawSubtitle, sceneCue } from './promo-text.js';
+import { usesStage, stageLayout, drawBackground, drawDevice, tiltAt } from './promo-stage.js';
+import { tiltCanvas } from './promo-gl.js';
+
+export const TRANSITIONS_IN = Object.freeze(['none', 'crossfade', 'slide', 'zoom', 'blur']);
+export const TRANSITION_IN_MS = 500;
+
+// لوحات جانبية مشتركة يُعاد استعمالها بين الإطارات (لا حالة تنتقل: تُمسح قبل كل استعمال).
+const scratch = new Map();
+function scratchCanvas(name, width, height) {
+  let canvas = scratch.get(name);
+  if (!canvas) { canvas = document.createElement('canvas'); scratch.set(name, canvas); }
+  if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+  return canvas;
+}
+
+// تغبيش مناطق حساسة: region بإحداثيات اللوحة الحالية. المنطقة تُنسخ ثم تُعاد مغبَّشة ومقصوصة.
+function blurRegion(context, region) {
+  const x = Math.floor(region.x), y = Math.floor(region.y);
+  const width = Math.ceil(region.width), height = Math.ceil(region.height);
+  if (width < 2 || height < 2) return;
+  const radius = Math.max(6, Math.min(40, Math.round(height * 0.3)));
+  const pad = radius * 2;
+  const copy = scratchCanvas('redact', width + pad * 2, height + pad * 2);
+  const copyContext = copy.getContext('2d');
+  copyContext.clearRect(0, 0, copy.width, copy.height);
+  copyContext.drawImage(context.canvas, x - pad, y - pad, copy.width, copy.height, 0, 0, copy.width, copy.height);
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.beginPath(); context.rect(x, y, width, height); context.clip();
+  context.filter = 'blur(' + radius + 'px)';
+  // مرّتان تُعتمان ما تسرّبه حواف التغبيش فلا يُقرأ النص من هالته.
+  context.drawImage(copy, x - pad, y - pad);
+  context.drawImage(copy, x - pad, y - pad);
+  context.restore();
+}
+
+// يرسم محتوى المشهد (المصدر + الكاميرا + التغبيش + المؤشر) داخل rect من السياق المعطى، مقصوصاً به.
+// يُستعمل لمسار المسرح؛ المسار القديم (بلا مسرح) يبقى في renderFrame حرفياً.
+function drawStagedContent(context, rect, scene, frame, localMs, runtime, sceneIndex, colors, height) {
+  const fitted = fittedRect(frame.width, frame.height, rect.width, rect.height, true);
+  if (!fitted) return;
+  const view = cameraTransform(cameraAt(scene.camera, localMs), fitted, rect.width, rect.height);
+  context.save();
+  context.beginPath(); context.rect(rect.x, rect.y, rect.width, rect.height); context.clip();
+  context.translate(rect.x, rect.y);
+  context.save();
+  context.transform(view.scale, 0, 0, view.scale, view.tx, view.ty);
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(frame.source, fitted.x, fitted.y, fitted.width, fitted.height);
+  context.restore();
+  const toLocal = (point) => ({
+    x: (fitted.x + point.x * fitted.width) * view.scale + view.tx,
+    y: (fitted.y + point.y * fitted.height) * view.scale + view.ty,
+  });
+  for (const region of activeRedactions(scene, localMs)) {
+    const a = toLocal({ x: region.x, y: region.y }), b = toLocal({ x: region.x + region.width, y: region.y + region.height });
+    const left = Math.max(0, a.x), top = Math.max(0, a.y), right = Math.min(rect.width, b.x), bottom = Math.min(rect.height, b.y);
+    if (right > left && bottom > top) blurRegion(context, { x: rect.x + left, y: rect.y + top, width: right - left, height: bottom - top });
+  }
+  const track = scene.camera && scene.camera.mode !== 'off' && scene.camera.cursor !== false
+    && runtime.pointers && typeof runtime.pointers.get === 'function' ? runtime.pointers.get(sceneIndex) : null;
+  const pointer = track ? pointerAt(track, localMs) : null;
+  if (pointer) {
+    const at = toLocal(pointer);
+    const ripple = pointer.ripple ? { ...toLocal(pointer.ripple), progress: pointer.ripple.progress } : null;
+    drawPointer(context, at.x, at.y, ripple, height, colors);
+  }
+  context.restore();
+}
+
+export function activeRedactions(scene, localMs) {
+  const list = Array.isArray(scene.redactions) ? scene.redactions : [];
+  return list.filter((item) => item && localMs >= item.start_ms && localMs <= item.end_ms);
+}
+
+// تقدّم انتقال الدخول (0..1)، أو null إن لم يكن جارياً.
+export function transitionInProgress(scene, localMs, durationMs) {
+  if (!scene.transition_in || scene.transition_in === 'none') return null;
+  const span = Math.min(TRANSITION_IN_MS, durationMs / 3);
+  return localMs < span ? localMs / span : null;
+}
+
+// انتقال الدخول: a = لقطة آخر إطار من المشهد السابق، b = الإطار الحالي المرسوم على اللوحة.
+function applyTransitionIn(context, snapshot, type, progress, width, height) {
+  const p = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+  if (type === 'crossfade') {
+    context.save(); context.globalAlpha = 1 - p; context.drawImage(snapshot, 0, 0, width, height); context.restore();
+    return;
+  }
+  const current = scratchCanvas('transition', width, height);
+  const currentContext = current.getContext('2d');
+  currentContext.clearRect(0, 0, width, height);
+  currentContext.drawImage(context.canvas, 0, 0);
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  if (type === 'slide') {
+    // السابق يخرج يساراً والجديد يدخل من اليمين (اتجاه القراءة العربي).
+    context.drawImage(snapshot, -Math.round(p * width), 0, width, height);
+    context.drawImage(current, Math.round((1 - p) * width), 0);
+  } else if (type === 'zoom') {
+    context.drawImage(current, 0, 0);
+    const scale = 1 + 0.35 * p;
+    context.globalAlpha = 1 - p;
+    context.drawImage(snapshot, (width - width * scale) / 2, (height - height * scale) / 2, width * scale, height * scale);
+  } else if (type === 'blur') {
+    const radius = height * 0.03;
+    context.filter = 'blur(' + ((1 - p) * radius).toFixed(2) + 'px)';
+    context.drawImage(current, 0, 0);
+    context.filter = 'blur(' + (p * radius).toFixed(2) + 'px)';
+    context.globalAlpha = 1 - p;
+    context.drawImage(snapshot, 0, 0, width, height);
+  }
+  context.restore();
+}
 
 // مستطيل المصدر على اللوحة قبل الكاميرا.
 export function fittedRect(sourceWidth, sourceHeight, width, height, cover) {
@@ -98,7 +212,9 @@ export function drawCaption(context, caption, width, height, colors, position = 
   return lines.length;
 }
 
-// runtime: { width, height, colors, timeline, pointers?, aspect?, voiceDurations? }
+// runtime: { width, height, colors, timeline, pointers?, aspect?, voiceDurations?, images?, snapshots? }
+// images: Map مسار صورة الخلفية ⇒ { source, width, height }. snapshots: Map فهرس المشهد ⇒ لوحة آخر
+// إطار من المشهد السابق (لانتقال الدخول).
 // colors.accent لون إبراز الكلمة (اختياري). voiceDurations: Map فهرس المشهد ⇒ مدة التعليق بالميلي ثانية.
 // pointers: Map من فهرس المشهد إلى مسار المؤشر (pointerTrack) — اختياري.
 // frames: Map من فهرس المشهد إلى { source, width, height }؛ غياب المدخل ⇒ خلفية فقط.
@@ -114,7 +230,31 @@ export function renderFrame(context, runtime, tMs, frames) {
   const frame = frames && typeof frames.get === 'function' ? frames.get(entry.index) : null;
   let drawn = false;
   let view = null;
-  const fitted = frame && frame.source ? fittedRect(frame.width, frame.height, width, height, scene.fit !== 'contain') : null;
+  const staged = usesStage(scene) && frame && frame.source;
+  if (staged) {
+    const stage = scene.stage;
+    drawBackground(context, stage, width, height, colors, runtime.images);
+    const layout = stageLayout(stage, frame.width, frame.height, width, height);
+    const device = scratchCanvas('device', layout.device.width, layout.device.height);
+    drawDevice(device.getContext('2d'), stage, layout, colors, (deviceContext, rect) => {
+      drawStagedContent(deviceContext, rect, scene, frame, localMs, runtime, entry.index, colors, height);
+    });
+    const tilt = tiltAt(stage, localMs, entry.durationMs);
+    const tilted = tilt.x || tilt.y ? tiltCanvas(device, tilt.x, tilt.y) : null;
+    const strength = Math.max(0, Math.min(1, Number(stage.shadow) || 0));
+    context.save();
+    if (strength > 0) {
+      // الظل يتبع شكل الجهاز نفسه (شفافية الصورة)، مائلاً كان أو مستوياً.
+      context.shadowColor = (colors.chrome && colors.chrome.shadow) || colors.captionBackground;
+      context.shadowBlur = height * 0.05 * strength;
+      context.shadowOffsetY = height * 0.022 * strength;
+    }
+    if (tilted) context.drawImage(tilted.canvas, layout.device.x - tilted.marginX, layout.device.y - tilted.marginY);
+    else context.drawImage(device, layout.device.x, layout.device.y);
+    context.restore();
+    drawn = true;
+  }
+  const fitted = !staged && frame && frame.source ? fittedRect(frame.width, frame.height, width, height, scene.fit !== 'contain') : null;
   if (fitted) {
     // مشهد بلا كاميرا (v1) يمر بالمسار القديم حرفياً: لا تحويل ولا حفظ حالة.
     view = cameraTransform(cameraAt(scene.camera, localMs), fitted, width, height);
@@ -128,6 +268,12 @@ export function renderFrame(context, runtime, tMs, frames) {
       context.restore();
     }
     drawn = true;
+    for (const region of activeRedactions(scene, localMs)) {
+      const ax = (fitted.x + region.x * fitted.width) * view.scale + view.tx, ay = (fitted.y + region.y * fitted.height) * view.scale + view.ty;
+      const bx = (fitted.x + (region.x + region.width) * fitted.width) * view.scale + view.tx, by = (fitted.y + (region.y + region.height) * fitted.height) * view.scale + view.ty;
+      const left = Math.max(0, ax), top = Math.max(0, ay), right = Math.min(width, bx), bottom = Math.min(height, by);
+      if (right > left && bottom > top) blurRegion(context, { x: left, y: top, width: right - left, height: bottom - top });
+    }
     // مسار المؤشر مشتق من سجل الأحداث وقت التشغيل (runtime.pointers) ولا يُحفظ في المشروع.
     const track = scene.camera && scene.camera.mode !== 'off' && scene.camera.cursor !== false
       && runtime.pointers && typeof runtime.pointers.get === 'function' ? runtime.pointers.get(entry.index) : null;
@@ -164,5 +310,9 @@ export function renderFrame(context, runtime, tMs, frames) {
   } else {
     captionLines = drawCaption(context, scene.caption, width, height, colors, scene.caption_position, scene.caption_style);
   }
-  return { index: entry.index, localMs, drawn, captionLines };
+  // انتقال الدخول يطبَّق على الإطار كله (بعناوينه) مقابل لقطة آخر إطار من المشهد السابق.
+  const progress = transitionInProgress(scene, localMs, entry.durationMs);
+  const snapshot = progress != null && runtime.snapshots && typeof runtime.snapshots.get === 'function' ? runtime.snapshots.get(entry.index) : null;
+  if (snapshot) applyTransitionIn(context, snapshot, scene.transition_in, progress, width, height);
+  return { index: entry.index, localMs, drawn, captionLines, staged: !!staged };
 }
