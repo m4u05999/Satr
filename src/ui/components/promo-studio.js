@@ -4,7 +4,7 @@ import { renderStoryboard } from '../lib/promo-renderer.js';
 import { buildTimeline, MAX_TOTAL_MS } from '../lib/promo/promo-timeline.js';
 import { renderFrame } from '../lib/promo/promo-frame.js';
 import { pointerTrack, idleGaps } from '../lib/promo/promo-camera.js';
-import { TEXT_ANIMATIONS } from '../lib/promo/promo-text.js';
+import { TEXT_ANIMATIONS, TEXT_FONTS, loadTextFonts } from '../lib/promo/promo-text.js';
 import { safeArea } from '../lib/promo/promo-subtitles.js';
 import { EXPORT_PRESETS, probeExportSupport } from '../lib/promo-export/encode.js';
 import { buildStageRows, cleanStage, cleanRedactions, suggestRedactions, TRANSITION_IN_VALUES, MAX_REDACTIONS } from '../lib/promo/studio-stage.js';
@@ -152,6 +152,8 @@ const MARKUP = `
     </div>
   </div>`;
 
+const FONT_OPTIONS = [{ value: 'plex', label: 'بلكس (افتراضي)' }, { value: 'cairo', label: 'القاهرة (عرض)' }, { value: 'naskh', label: 'نسخ (نوتو)' }];
+
 const ASPECT_SIZE = {
   '16:9': { width: 1920, height: 1080 },
   '9:16': { width: 1080, height: 1920 },
@@ -179,6 +181,7 @@ function cloneStoryboard(value) {
     redactions: cleanRedactions(scene.redactions, Number.isInteger(scene.duration_ms) ? Math.max(250, Math.min(120000, scene.duration_ms)) : 3000),
     text_style: {
       animation: TEXT_ANIMATIONS.includes(scene.text_style && scene.text_style.animation) ? scene.text_style.animation : 'none',
+      font: scene.text_style && Object.hasOwn(TEXT_FONTS, scene.text_style.font) ? scene.text_style.font : 'plex',
       highlight: scene.text_style && typeof scene.text_style.highlight === 'string' ? scene.text_style.highlight.trim().split(/\s+/)[0].slice(0, 60) : '',
     },
     voiceover_ar: typeof scene.voiceover_ar === 'string' ? scene.voiceover_ar.slice(0, 2000) : '',
@@ -205,7 +208,8 @@ function cleanBrand(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const color = (value) => (/^#[0-9a-fA-F]{6}$/.test(value || '') ? value.toLowerCase() : '');
   const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : '');
-  return { name: text(raw.name, 60), primary: color(raw.primary), secondary: color(raw.secondary), accent: color(raw.accent), closing: text(raw.closing, 120), logo: text(raw.logo, 4096) };
+  return { name: text(raw.name, 60), primary: color(raw.primary), secondary: color(raw.secondary), accent: color(raw.accent), closing: text(raw.closing, 120),
+    font: Object.hasOwn(TEXT_FONTS, raw.font) ? raw.font : 'plex', logo: text(raw.logo, 4096) };
 }
 
 function basename(value) {
@@ -420,7 +424,7 @@ class SatrPromoStudio extends HTMLElement {
   }
 
   buildProjectCard() {
-    const brand = this.storyboard.brand || { name: '', primary: '', secondary: '', accent: '', closing: '', logo: '' };
+    const brand = this.storyboard.brand || { name: '', primary: '', secondary: '', accent: '', closing: '', font: 'plex', logo: '' };
     const card = document.createElement('article'); card.className = 'project';
     const title = document.createElement('h3'); title.textContent = 'القالب والهوية';
     const templateRow = document.createElement('div'); templateRow.className = 'row';
@@ -438,6 +442,7 @@ class SatrPromoStudio extends HTMLElement {
     appendLabel(brandRow, 'ثانوي', color('brand_secondary', brand.secondary, this.themeHex('--gold')));
     appendLabel(brandRow, 'إبراز', color('brand_accent', brand.accent, this.themeHex('--gold')));
     const logos = [{ value: '', label: 'بلا شعار' }].concat(this.imageOptions().concat(brand.logo && !this.imageOptions().includes(brand.logo) ? [brand.logo] : []).map((value) => ({ value, label: basename(value) })));
+    appendLabel(brandRow, 'الخط', makeSelect(brand.font || 'plex', 'brand_font', FONT_OPTIONS));
     appendLabel(brandRow, 'الشعار', makeSelect(brand.logo, 'brand_logo', logos), 'music-label');
     const closingRow = document.createElement('div'); closingRow.className = 'row';
     const closing = document.createElement('input'); closing.className = 'closing'; closing.dataset.field = 'brand_closing'; closing.value = brand.closing; closing.maxLength = 120;
@@ -455,7 +460,7 @@ class SatrPromoStudio extends HTMLElement {
 
   // حقول الهوية تُحفظ في مسودة على المكوّن؛ لا تغيّر المشاهد حتى «طبّق الهوية».
   brandDraft() {
-    if (!this.brandDraftValue) this.brandDraftValue = { ...(this.storyboard.brand || { name: '', primary: '', secondary: '', accent: '', closing: '', logo: '' }) };
+    if (!this.brandDraftValue) this.brandDraftValue = { ...(this.storyboard.brand || { name: '', primary: '', secondary: '', accent: '', closing: '', font: 'plex', logo: '' }) };
     return this.brandDraftValue;
   }
 
@@ -468,6 +473,7 @@ class SatrPromoStudio extends HTMLElement {
     if (field === 'brand_name') draft.name = value.slice(0, 60);
     else if (field === 'brand_closing') draft.closing = value.slice(0, 120);
     else if (field === 'brand_logo') draft.logo = value;
+    else if (field === 'brand_font') draft.font = Object.hasOwn(TEXT_FONTS, value) ? value : 'plex';
     else if (field === 'brand_primary' || field === 'brand_secondary' || field === 'brand_accent') draft[field.slice(6)] = /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : '';
   }
 
@@ -526,7 +532,7 @@ class SatrPromoStudio extends HTMLElement {
   // خيارات التصدير المشتركة بين GIF والصورة المصغرة.
   async exportOptions() {
     const styles = getComputedStyle(this);
-    try { await Promise.all([700, 500].map((weight) => document.fonts.load(weight + ' 48px "IBM Plex Sans Arabic"', 'ع A ٢'))); } catch (error) {}
+    await loadTextFonts();
     return {
       scenes: await this.resolvedScenes(), aspect: this.storyboard.aspect, pointers: this.pointerTracks(),
       colors: this.withBrand({ background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold'), chrome: canvasColors(styles).chrome }),
@@ -1039,6 +1045,8 @@ class SatrPromoStudio extends HTMLElement {
   }
 
   async _drawPreviewFrame() {
+    // القياس في DOM واللوحة يلزمه الخط محمَّلاً؛ بعد أول مرة النداء فوري.
+    if (!this.fontsReady) { await loadTextFonts(); this.fontsReady = true; }
     const root = this.shadowRoot;
     const canvas = root.getElementById('canvas');
     const context = canvas.getContext('2d', { alpha: false });
@@ -1263,6 +1271,7 @@ class SatrPromoStudio extends HTMLElement {
         { value: 'none', label: 'ثابت' }, { value: 'words', label: 'كلمة بكلمة' },
         { value: 'slide', label: 'انزلاق' }, { value: 'zoom', label: 'تكبير خفيف' },
       ]));
+      appendLabel(titles, 'الخط', makeSelect(scene.text_style.font, 'text_font', FONT_OPTIONS));
       const highlight = document.createElement('input');
       highlight.className = 'highlight'; highlight.dataset.field = 'text_highlight'; highlight.value = scene.text_style.highlight;
       highlight.maxLength = 60; highlight.placeholder = 'كلمة';
@@ -1387,6 +1396,7 @@ class SatrPromoStudio extends HTMLElement {
       });
     } else if (field === 'caption') scene.caption = String(event.target.value || '').slice(0, 500);
     else if (field === 'text_animation') scene.text_style.animation = TEXT_ANIMATIONS.includes(event.target.value) ? event.target.value : 'none';
+    else if (field === 'text_font') scene.text_style.font = Object.hasOwn(TEXT_FONTS, event.target.value) ? event.target.value : 'plex';
     else if (field === 'text_highlight') scene.text_style.highlight = String(event.target.value || '').trim().split(/\s+/)[0].slice(0, 60);
     else if (field === 'voiceover_ar') scene.voiceover_ar = String(event.target.value || '').slice(0, 2000);
     else if (field === 'subtitles') scene.subtitles = !!event.target.checked;
@@ -1481,9 +1491,7 @@ class SatrPromoStudio extends HTMLElement {
     try {
       const styles = getComputedStyle(this);
       // العناوين تُقاس بالخط نفسه في DOM واللوحة؛ خط لم يُحمَّل بعد يُسقط حارس التطابق.
-      try {
-        await Promise.all([700, 500].map((weight) => document.fonts.load(weight + ' 48px "IBM Plex Sans Arabic"', 'ع A ٢')));
-      } catch (error) {}
+      await loadTextFonts();
       const colors = this.withBrand({ background: styles.getPropertyValue('--bg-deep'), captionBackground: styles.getPropertyValue('--scrim'), captionText: styles.getPropertyValue('--text'), accent: styles.getPropertyValue('--gold'), chrome: canvasColors(styles).chrome });
       // الفحص غير متزامن ويبدأ عند فتح الاستوديو؛ ننتظره هنا كي لا يسبقه ضغط «صيّر».
       await this.refreshExportSupport();

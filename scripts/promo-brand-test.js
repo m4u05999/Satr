@@ -24,9 +24,10 @@ const eq = (actual, expected, message) => { assert.deepStrictEqual(actual, expec
     const resolve = (candidate) => studio.localAsset(downloads, candidate, studio.IMAGE_EXTENSIONS) || '';
 
     // ── تنقية الهوية ──
-    eq(studio.sanitizeBrand(null), { name: '', primary: '', secondary: '', accent: '', closing: '', logo: '' }, 'الفارغ');
+    eq(studio.sanitizeBrand(null), { name: '', primary: '', secondary: '', accent: '', closing: '', font: 'plex', logo: '' }, 'الفارغ');
+    eq([studio.sanitizeBrand({ font: 'cairo' }).font, studio.sanitizeBrand({ font: 'Arial' }).font, studio.sanitizeBrand({ font: 5 }).font], ['cairo', 'plex', 'plex'], 'خط الهوية من قائمة مغلقة');
     eq(studio.sanitizeBrand({ name: '  سطر\n برو ', primary: '#AABBCC', secondary: 'red', accent: '#12345', closing: 'حمّل التطبيق‮ الآن', logo, extra: 1 }, resolve),
-      { name: 'سطر برو', primary: '#aabbcc', secondary: '', accent: '', closing: 'حمّل التطبيق الآن', logo }, 'قيم صالحة ومعطوبة');
+      { name: 'سطر برو', primary: '#aabbcc', secondary: '', accent: '', closing: 'حمّل التطبيق الآن', font: 'plex', logo }, 'قيم صالحة ومعطوبة');
     eq(studio.sanitizeBrand({ logo: secret }, resolve).logo, '', 'شعار خارج Downloads');
     eq(studio.sanitizeBrand({ logo: clip }, resolve).logo, '', 'شعار ليس صورة');
     eq(studio.sanitizeBrand({ logo }, null).logo, '', 'بلا محلّل مسارات لا شعار');
@@ -36,14 +37,14 @@ const eq = (actual, expected, message) => { assert.deepStrictEqual(actual, expec
     // ── الحفظ والتحميل في مجلد المشروع ──
     const controller = studio.create({ downloadsPath: downloads });
     eq(controller.loadBrand(project), { ok: true, exists: false, brand: studio.sanitizeBrand(null) }, 'لا ملف بعد');
-    const saved = controller.saveBrand(project, { name: 'سطر', primary: '#101826', secondary: '#d9a441', accent: '#d9a441', closing: 'جرّبه الآن', logo });
+    const saved = controller.saveBrand(project, { name: 'سطر', primary: '#101826', secondary: '#d9a441', accent: '#d9a441', closing: 'جرّبه الآن', font: 'naskh', logo });
     eq(saved.ok, true, 'الحفظ');
     const file = path.join(project, '.satr', 'brand.json');
     ok(fs.existsSync(file) && !fs.existsSync(file + '.tmp'), 'الملف في ‎.satr/brand.json بلا بقايا');
-    eq(JSON.parse(fs.readFileSync(file, 'utf8')), { version: 1, name: 'سطر', primary: '#101826', secondary: '#d9a441', accent: '#d9a441', closing: 'جرّبه الآن', logo }, 'المحتوى');
-    eq(controller.loadBrand(project), { ok: true, exists: true, brand: { name: 'سطر', primary: '#101826', secondary: '#d9a441', accent: '#d9a441', closing: 'جرّبه الآن', logo } }, 'التحميل');
+    eq(JSON.parse(fs.readFileSync(file, 'utf8')), { version: 1, name: 'سطر', primary: '#101826', secondary: '#d9a441', accent: '#d9a441', closing: 'جرّبه الآن', font: 'naskh', logo }, 'المحتوى');
+    eq(controller.loadBrand(project), { ok: true, exists: true, brand: { name: 'سطر', primary: '#101826', secondary: '#d9a441', accent: '#d9a441', closing: 'جرّبه الآن', font: 'naskh', logo } }, 'التحميل');
     fs.writeFileSync(file, JSON.stringify({ name: 'خبيث', primary: 'javascript:1', logo: secret, closing: 7 }));
-    eq(controller.loadBrand(project).brand, { name: 'خبيث', primary: '', secondary: '', accent: '', closing: '', logo: '' }, 'ملف معدَّل باليد يُنقّى عند التحميل');
+    eq(controller.loadBrand(project).brand, { name: 'خبيث', primary: '', secondary: '', accent: '', closing: '', font: 'plex', logo: '' }, 'ملف معدَّل باليد يُنقّى عند التحميل');
     fs.writeFileSync(file, '{not json');
     eq(controller.loadBrand(project).error, 'bad_schema', 'JSON معطوب');
     fs.writeFileSync(file, 'x'.repeat(studio.MAX_BRAND_BYTES + 10));
@@ -65,7 +66,7 @@ const eq = (actual, expected, message) => { assert.deepStrictEqual(actual, expec
     const sanitize = (value) => studio.sanitizeStoryboard(value, { downloadsPath: downloads });
     eq('brand' in sanitize(board()).storyboard, false, 'بلا هوية لا حقل brand');
     const withBrand = sanitize({ ...board(), brand: { name: 'سطر', primary: '#101826', accent: '#D9A441', logo, closing: 'جرّبه' } }).storyboard;
-    eq(withBrand.brand, { name: 'سطر', primary: '#101826', secondary: '', accent: '#d9a441', closing: 'جرّبه', logo }, 'الهوية تُنقّى داخل الـstoryboard');
+    eq(withBrand.brand, { name: 'سطر', primary: '#101826', secondary: '', accent: '#d9a441', closing: 'جرّبه', font: 'plex', logo }, 'الهوية تُنقّى داخل الـstoryboard');
     const projectFile = path.join(downloads, 'p.satr-promo.json');
     eq(studio.saveProject(downloads, { ...board(), brand: withBrand.brand }, projectFile).ok, true, 'حفظ مشروع بهوية');
     eq(studio.loadProject(projectFile, downloads).storyboard.brand, withBrand.brand, 'الهوية تعود مع المشروع');
@@ -100,6 +101,7 @@ const eq = (actual, expected, message) => { assert.deepStrictEqual(actual, expec
       checks += 1;
       eq(applied.scenes[0].stage.label, 'satr.app', template.id + ': نص الرابط الذي كتبه المستخدم يبقى');
       eq(applied.scenes[0].text_style.highlight, 'Pro', template.id + ': كلمة الإبراز تبقى');
+      eq(applied.scenes[0].text_style.font, template.text.font || 'plex', template.id + ': خط القالب');
       eq([applied.scenes[0].subtitles, applied.scenes[1].subtitles], [!!template.subtitles, false], template.id + ': الترجمة حيث يوجد نص تعليق فقط');
     }
     eq(applyTemplate(null, TEMPLATES[0]), null, 'مدخل فارغ');
@@ -109,13 +111,16 @@ const eq = (actual, expected, message) => { assert.deepStrictEqual(actual, expec
     // ── تطبيق الهوية ──
     const staged = applyTemplate(clientBoard(), TEMPLATES[0], { primary: '#101826', secondary: '#d9a441' });
     const count = staged.scenes.length;
-    const first = applyBrand(staged, { name: 'سطر', primary: '#112233', secondary: '#445566', accent: '#778899', closing: 'حمّل التطبيق الآن', logo });
+    const first = applyBrand(staged, { name: 'سطر', primary: '#112233', secondary: '#445566', accent: '#778899', closing: 'حمّل التطبيق الآن', font: 'naskh', logo });
     eq(first.closing, 'added', 'بطاقة الختام أضيفت');
     eq(staged.scenes.length, count + 1, 'مشهد واحد زاد');
     const card = staged.scenes[staged.scenes.length - 1];
     eq([card.id, card.asset, card.asset_type, card.caption, card.fit], [BRAND_CLOSING_ID, logo, 'image', 'حمّل التطبيق الآن', 'contain'], 'بطاقة الختام: الشعار والعبارة');
     eq(staged.scenes.slice(0, count).map((scene) => [scene.stage.background.color, scene.stage.background.color2]), Array.from({ length: count }, () => ['#112233', '#445566']), 'خلفيات المشاهد بألوان الهوية');
     eq(staged.brand.accent, '#778899', 'لون الإبراز في هوية الـstoryboard');
+    eq(staged.scenes.map((scene) => scene.text_style.font), Array.from({ length: count + 1 }, () => 'naskh'), 'خط الهوية يسري على كل العناوين وبطاقة الختام');
+    const rebranded = applyTemplate(JSON.parse(JSON.stringify(staged)), TEMPLATES[0], { primary: '#101826', secondary: '#d9a441' });
+    eq(rebranded.scenes[0].text_style.font, 'naskh', 'خط الهوية يسبق خط القالب');
     const cleanedBrand = sanitize(staged);
     eq(cleanedBrand.ok, true, 'التنقية تقبل الـstoryboard بعد الهوية');
     eq(JSON.parse(JSON.stringify(cleanedBrand.storyboard)), JSON.parse(JSON.stringify(staged)), 'ولا تغيّر فيه شيئاً');

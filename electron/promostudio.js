@@ -51,6 +51,8 @@ const MAX_REDACTIONS = 20;
 const MAX_STAGE_LABEL = 60;
 // حقول v2 الاختيارية للعناوين (الدفعة 3): تُضاف بلا رفع رقم المخطط.
 const TEXT_ANIMATIONS = new Set(['none', 'words', 'slide', 'zoom']);
+// خطوط العناوين المضمّنة؛ plex الافتراضي ومظهر v1.
+const TEXT_FONTS = new Set(['plex', 'cairo', 'naskh']);
 const MAX_HIGHLIGHT = 60;
 const MAX_VOICEOVER = 2000;
 const MAX_PROJECT_BYTES = 2 * 1024 * 1024; // 2 م.ب لملف المشروع
@@ -154,6 +156,7 @@ function sanitizeBrand(raw, resolveLogo) {
     secondary: color(input.secondary),
     accent: color(input.accent),
     closing: line(input.closing, 120),
+    font: cleanEnum(input.font, TEXT_FONTS, 'plex'),
     logo: typeof input.logo === 'string' && typeof resolveLogo === 'function' ? (resolveLogo(input.logo) || '') : '',
   };
 }
@@ -283,6 +286,7 @@ function sanitizeStoryboard(input, options) {
     const rawStyle = raw.text_style && typeof raw.text_style === 'object' && !Array.isArray(raw.text_style) ? raw.text_style : {};
     const textStyle = {
       animation: cleanEnum(rawStyle.animation, TEXT_ANIMATIONS, 'none'),
+      font: cleanEnum(rawStyle.font, TEXT_FONTS, 'plex'),
       // كلمة واحدة بلا مسافات؛ تُطابَق نصاً بكلمات العنوان عند الرسم.
       highlight: typeof rawStyle.highlight === 'string' ? rawStyle.highlight.trim().split(/\s+/)[0].slice(0, MAX_HIGHLIGHT) : '',
     };
@@ -624,7 +628,7 @@ module.exports = {
   FITS, CAPTION_POSITIONS, CAPTION_STYLES,
   DEFAULT_CLIP_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME,
   PROJECT_SCHEMA_VERSION, READABLE_SCHEMA_VERSIONS, CAMERA_MODES, CAMERA_EASES, MAX_CAMERA_KEYFRAMES, MAX_CAMERA_ZOOM,
-  sanitizeCamera, sanitizeStage, sanitizeRedactions, STAGE_FRAMES, STAGE_BACKGROUNDS, STAGE_MOTIONS, TRANSITIONS_IN, MAX_REDACTIONS, TEXT_ANIMATIONS, MAX_HIGHLIGHT, MAX_VOICEOVER, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
+  TEXT_FONTS, sanitizeCamera, sanitizeStage, sanitizeRedactions, STAGE_FRAMES, STAGE_BACKGROUNDS, STAGE_MOTIONS, TRANSITIONS_IN, MAX_REDACTIONS, TEXT_ANIMATIONS, MAX_HIGHLIGHT, MAX_VOICEOVER, MAX_PROJECT_BYTES, PROJECT_EXTENSION, SAFE_PROJECT_NAME,
   localAsset, sanitizeStoryboard, isProjectPathSafe, inferAssetType,
   listDownloads: doListDownloads, saveProject: doSaveProject, loadProject: doLoadProject, create,
   configure: (...args) => singleton.configure(...args),

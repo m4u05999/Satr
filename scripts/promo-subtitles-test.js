@@ -62,13 +62,15 @@ const eq = (actual, expected, message) => { assert.deepStrictEqual(actual, expec
     fs.writeFileSync(clip, 'x');
     const clean = (extra) => studio.sanitizeStoryboard({ scenes: [{ asset: clip, duration_ms: 3000, ...extra }] }, { downloadsPath: downloads }).storyboard.scenes[0];
     const base = clean({});
-    eq([base.text_style, base.voiceover_ar, base.subtitles], [{ animation: 'none', highlight: '' }, '', false], 'الافتراضي = مظهر v1');
-    eq(clean({ text_style: { animation: 'words', highlight: '  Pro  ' } }).text_style, { animation: 'words', highlight: 'Pro' }, 'قيم صالحة');
-    eq(clean({ text_style: { animation: 'explode', highlight: 7 } }).text_style, { animation: 'none', highlight: '' }, 'حركة مجهولة وإبراز غير نصي');
+    eq([base.text_style, base.voiceover_ar, base.subtitles], [{ animation: 'none', font: 'plex', highlight: '' }, '', false], 'الافتراضي = مظهر v1');
+    eq(clean({ text_style: { animation: 'words', highlight: '  Pro  ', font: 'cairo' } }).text_style, { animation: 'words', font: 'cairo', highlight: 'Pro' }, 'قيم صالحة');
+    eq(clean({ text_style: { font: 'naskh' } }).text_style.font, 'naskh', 'الخط النسخي');
+    for (const bad of ['Comic Sans', 'url(x)', 7, null, ['cairo']]) eq(clean({ text_style: { font: bad } }).text_style.font, 'plex', 'خط خارج القائمة يعود للافتراضي: ' + JSON.stringify(bad));
+    eq(clean({ text_style: { animation: 'explode', highlight: 7 } }).text_style, { animation: 'none', font: 'plex', highlight: '' }, 'حركة مجهولة وإبراز غير نصي');
     eq(clean({ text_style: { highlight: 'كلمتان هنا' } }).text_style.highlight, 'كلمتان', 'الإبراز كلمة واحدة');
     eq(clean({ text_style: { highlight: 'ط'.repeat(500) } }).text_style.highlight.length, 60, 'الإبراز محدود الطول');
-    eq(clean({ text_style: 'words' }).text_style, { animation: 'none', highlight: '' }, 'text_style ليس كائناً');
-    eq(clean({ text_style: ['words'] }).text_style, { animation: 'none', highlight: '' }, 'text_style مصفوفة');
+    eq(clean({ text_style: 'words' }).text_style, { animation: 'none', font: 'plex', highlight: '' }, 'text_style ليس كائناً');
+    eq(clean({ text_style: ['words'] }).text_style, { animation: 'none', font: 'plex', highlight: '' }, 'text_style مصفوفة');
     eq(clean({ voiceover_ar: '  أهلاً\n\n بكم  ' }).voiceover_ar, 'أهلاً بكم', 'تطبيع المسافات');
     eq(clean({ voiceover_ar: 'ن'.repeat(5000) }).voiceover_ar.length, 2000, 'نص التعليق محدود');
     eq(clean({ voiceover_ar: { text: 'x' } }).voiceover_ar, '', 'نص التعليق غير نصي');
@@ -77,10 +79,10 @@ const eq = (actual, expected, message) => { assert.deepStrictEqual(actual, expec
     eq(clean({ subtitles: 'yes', voiceover_ar: 'نص' }).subtitles, false, 'قيمة غير منطقية');
     // جولة حفظ/تحميل
     const file = path.join(downloads, 'p.satr-promo.json');
-    const board = { aspect: '9:16', scenes: [{ asset: clip, duration_ms: 3000, caption: 'Satr Pro متاح الآن', text_style: { animation: 'slide', highlight: 'Pro' }, voiceover_ar: 'أهلاً بكم', subtitles: true }] };
+    const board = { aspect: '9:16', scenes: [{ asset: clip, duration_ms: 3000, caption: 'Satr Pro متاح الآن', text_style: { animation: 'slide', highlight: 'Pro', font: 'naskh' }, voiceover_ar: 'أهلاً بكم', subtitles: true }] };
     eq(studio.saveProject(downloads, board, file).ok, true, 'حفظ');
     const loaded = studio.loadProject(file, downloads).storyboard;
-    eq([loaded.aspect, loaded.scenes[0].text_style, loaded.scenes[0].voiceover_ar, loaded.scenes[0].subtitles], ['9:16', { animation: 'slide', highlight: 'Pro' }, 'أهلاً بكم', true], 'الحقول تعود كما حُفظت');
+    eq([loaded.aspect, loaded.scenes[0].text_style, loaded.scenes[0].voiceover_ar, loaded.scenes[0].subtitles], ['9:16', { animation: 'slide', font: 'naskh', highlight: 'Pro' }, 'أهلاً بكم', true], 'الحقول تعود كما حُفظت');
   } finally {
     fs.rmSync(downloads, { recursive: true, force: true });
   }

@@ -45,7 +45,7 @@ const SPEC_METADATA_KEY = /^[A-Za-z0-9_.-]{1,40}$/;
 const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
 
 const BUILTIN_SKILLS = new Set(['satr-guide', 'satr-diverge', 'satr-generate', 'satr-accept',
-  'satr-design-ar', 'satr-youtube']);
+  'satr-design-ar', 'satr-youtube', 'satr-promo-director']);
 
 function unquoteScalar(value) {
   if (value.length >= 2

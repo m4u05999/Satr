@@ -836,7 +836,7 @@ function buildTools(deps) {
           caption_style: { type: 'string', enum: ['box', 'minimal'] },
           music: { type: 'string' }, voice: { type: 'string' },
           voiceover_ar: { type: 'string', maxLength: 2000 }, subtitles: { type: 'boolean' },
-          text_style: { type: 'object', properties: { animation: { type: 'string', enum: ['none', 'words', 'slide', 'zoom'] }, highlight: { type: 'string', maxLength: 60 } } },
+          text_style: { type: 'object', properties: { animation: { type: 'string', enum: ['none', 'words', 'slide', 'zoom'] }, highlight: { type: 'string', maxLength: 60 }, font: { type: 'string', enum: ['plex', 'cairo', 'naskh'] } } },
           camera: { description: "'auto' (افتراضي) أو 'off' أو كائن { mode, cursor, keyframes }" },
           stage: { type: 'object', properties: {
             frame: { type: 'string', enum: ['none', 'browser', 'laptop', 'phone', 'tablet'] },

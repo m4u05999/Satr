@@ -13,6 +13,22 @@ import { safeArea, subtitleCues, cueAt } from './promo-subtitles.js';
 
 export const TEXT_ANIMATIONS = Object.freeze(['none', 'words', 'slide', 'zoom']);
 export const FONT_FAMILY = '"IBM Plex Sans Arabic", sans-serif';
+// خطوط العناوين المضمّنة (src/vendor/fonts.css وfonts-promo.css). plex الافتراضي ومظهر v1.
+export const TEXT_FONTS = Object.freeze({
+  plex: FONT_FAMILY,
+  cairo: '"Cairo", "IBM Plex Sans Arabic", sans-serif',
+  naskh: '"Noto Naskh Arabic", "IBM Plex Sans Arabic", serif',
+});
+export const TEXT_FONT_NAMES = Object.freeze({ plex: 'IBM Plex Sans Arabic', cairo: 'Cairo', naskh: 'Noto Naskh Arabic' });
+export function fontFamily(name) {
+  return Object.prototype.hasOwnProperty.call(TEXT_FONTS, name) ? TEXT_FONTS[name] : FONT_FAMILY;
+}
+// يحمّل أوجه الخطوط الثلاثة بوزنَي العناوين والترجمة قبل القياس والتصدير.
+export async function loadTextFonts() {
+  const jobs = [];
+  for (const name of Object.values(TEXT_FONT_NAMES)) for (const weight of [700, 500]) jobs.push(document.fonts.load(weight + ' 48px "' + name + '"', 'ع A ٢'));
+  try { await Promise.all(jobs); } catch (error) {}
+}
 const WORD_STAGGER_MS = 110;
 const WORD_FADE_MS = 320;
 const BLOCK_IN_MS = 450;
@@ -42,14 +58,15 @@ export function layoutText(text, options) {
   const weight = options.weight || 700;
   const maxWidth = Math.max(1, Math.round(options.maxWidth));
   const maxLines = options.maxLines || 3;
-  const key = [clean, fontSize, weight, maxWidth, maxLines].join('\u0001');
+  const family = fontFamily(options.font);
+  const key = [clean, fontSize, weight, maxWidth, maxLines, family].join('\u0001');
   if (layoutCache.has(key)) return layoutCache.get(key);
   const dir = textDir(clean) || 'rtl';
   const lineHeight = Math.round(fontSize * 1.45);
   const element = host();
   element.dir = dir;
   element.style.width = maxWidth + 'px';
-  element.style.font = weight + ' ' + fontSize + 'px ' + FONT_FAMILY;
+  element.style.font = weight + ' ' + fontSize + 'px ' + family;
   element.style.lineHeight = lineHeight + 'px';
   element.style.textAlign = dir === 'rtl' ? 'right' : 'left';
   element.textContent = clean;
@@ -84,7 +101,7 @@ export function layoutText(text, options) {
   const kept = lines.filter(Boolean).slice(0, maxLines);
   // حارس التطابق: عرض السطر في DOM مقابل measureText على لوحة بالخط نفسه.
   const probe = (layoutText.probe = layoutText.probe || document.createElement('canvas').getContext('2d'));
-  probe.font = weight + ' ' + fontSize + 'px ' + FONT_FAMILY;
+  probe.font = weight + ' ' + fontSize + 'px ' + family;
   probe.direction = dir;
   let mismatch = 0, width = 0;
   for (const line of kept) {
@@ -99,7 +116,7 @@ export function layoutText(text, options) {
     line.left -= blockLeft;
     for (const word of line.words) word.left -= blockLeft;
   }
-  const layout = { dir, fontSize, weight, lineHeight, width, height: kept.length * lineHeight, mismatch, lines: kept, wordCount: kept.reduce((sum, line) => sum + line.words.length, 0) };
+  const layout = { dir, fontSize, weight, family, lineHeight, width, height: kept.length * lineHeight, mismatch, lines: kept, wordCount: kept.reduce((sum, line) => sum + line.words.length, 0) };
   if (layoutCache.size > 300) layoutCache.clear();
   layoutCache.set(key, layout);
   return layout;
@@ -116,7 +133,7 @@ function lineBitmap(layout, lineIndex, color) {
   canvas.width = Math.ceil(line.width) + pad * 2;
   canvas.height = layout.lineHeight + pad * 2;
   const context = canvas.getContext('2d');
-  context.font = layout.weight + ' ' + layout.fontSize + 'px ' + FONT_FAMILY;
+  context.font = layout.weight + ' ' + layout.fontSize + 'px ' + layout.family;
   context.direction = layout.dir;
   context.textAlign = 'left';
   context.textBaseline = 'middle';
@@ -167,7 +184,7 @@ export function drawTitle(context, text, input) {
   const { width, height, colors, position, boxStyle, style, localMs, aspect, reserveBottom = 0, scale = 1 } = input;
   if (!text) return null;
   const fontSize = Math.max(30, Math.round(height * 0.052 * scale));
-  const layout = layoutText(text, { fontSize, maxWidth: width * 0.78 });
+  const layout = layoutText(text, { fontSize, maxWidth: width * 0.78, font: style && style.font });
   if (!layout.lines.length) return null;
   const box = blockOrigin(layout, width, height, position, safeArea(aspect), reserveBottom);
   const animation = TEXT_ANIMATIONS.includes(style && style.animation) ? style.animation : 'none';
@@ -222,10 +239,10 @@ export function drawTitle(context, text, input) {
 
 // الترجمة على الشاشة: مقطع واحد ثابت عند أسفل المساحة الآمنة. يعيد ارتفاع ما حجزه.
 export function drawSubtitle(context, cue, input) {
-  const { width, height, colors, aspect } = input;
+  const { width, height, colors, aspect, font } = input;
   if (!cue) return 0;
   const fontSize = Math.max(24, Math.round(height * 0.036));
-  const layout = layoutText(cue.text, { fontSize, maxWidth: width * 0.84, weight: 500, maxLines: 2 });
+  const layout = layoutText(cue.text, { fontSize, maxWidth: width * 0.84, weight: 500, maxLines: 2, font });
   if (!layout.lines.length) return 0;
   const padding = Math.round(fontSize * 0.5);
   const boxWidth = layout.width + padding * 2, boxHeight = layout.height + padding * 2;
@@ -260,7 +277,7 @@ export function sceneCue(scene, localMs, voiceDurationMs) {
 // هل يطلب المشهد مسار العناوين الجديد؟ مشهد v1 (بلا text_style ولا ترجمة) يبقى على الرسم القديم.
 export function usesTitleEngine(scene) {
   const style = scene.text_style;
-  return !!((style && (style.animation && style.animation !== 'none' || style.highlight)) || (scene.subtitles && scene.voiceover_ar));
+  return !!((style && (style.animation && style.animation !== 'none' || style.highlight || (style.font && style.font !== 'plex'))) || (scene.subtitles && scene.voiceover_ar));
 }
 
 export function clearTextCaches() {

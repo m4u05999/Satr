@@ -301,7 +301,7 @@ export function renderFrame(context, runtime, tMs, frames) {
   if (usesTitleEngine(scene)) {
     const aspect = runtime.aspect || '16:9';
     const voiceMs = runtime.voiceDurations && typeof runtime.voiceDurations.get === 'function' ? runtime.voiceDurations.get(entry.index) : 0;
-    const reserve = drawSubtitle(context, sceneCue(scene, localMs, voiceMs), { width, height, colors, aspect });
+    const reserve = drawSubtitle(context, sceneCue(scene, localMs, voiceMs), { width, height, colors, aspect, font: scene.text_style && scene.text_style.font });
     const title = drawTitle(context, scene.caption, {
       width, height, colors, aspect, localMs, position: scene.caption_position, boxStyle: scene.caption_style,
       style: scene.text_style, reserveBottom: scene.caption_position === 'bottom' || !scene.caption_position ? reserve : 0,

@@ -135,5 +135,10 @@ ok(/promo-plan-approved[\s\S]{0,220}insertPrompt\(/.test(app) && !/promo-plan-ap
 const skill = read('.agents/skills/satr-promo-director/SKILL.md');
 ok(skill.includes('لا تصيّر ولا تنشر') && skill.includes('promo_get_ad_plan') && skill.includes('لا تبدأ تسجيلاً قبل اعتماد الخطة'), 'مهارة المخرج تنص على العزل والترتيب');
 for (const tool of EXPECTED) ok(skill.includes(tool), 'المهارة تذكر ' + tool);
+// قرار مالك 2026-11-13: المهارة تُشحن في المثبّت. files وasarUnpack متطابقان لأن حصر الموارد يعتمد realpath.
+const pkg = JSON.parse(read('package.json'));
+const entry = '.agents/skills/satr-promo-director/**/*';
+ok(pkg.build.files.includes(entry) && pkg.build.asarUnpack.includes(entry), 'المهارة في build.files وasarUnpack معاً');
+ok(require('../electron/skills').BUILTIN_SKILLS ? require('../electron/skills').BUILTIN_SKILLS.has('satr-promo-director') : /'satr-promo-director'\]\);/.test(read('electron/skills.js')), 'والمهارة في قائمة المهارات المضمّنة');
 
 console.log('promo-agent-isolation-test: ok — ' + checks + ' فحصاً (قنوات التصدير والاعتماد خارج أدوات الوكيل، كتالوج البرومو مغلق، سطح ويندوز والمتصفح لا يبلغان نافذة سطر، التصدير والاعتماد بنقرة مستخدم).');

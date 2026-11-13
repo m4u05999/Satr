@@ -1,6 +1,6 @@
 // اختبار العضّة العربي: يرسم العناوين في ثلاث لحظات ويتحقق من الترتيب البصري والمساحة الآمنة.
 
-import { layoutText, drawTitle, drawSubtitle, FONT_FAMILY, clearTextCaches } from '../../src/ui/lib/promo/promo-text.js';
+import { layoutText, drawTitle, drawSubtitle, FONT_FAMILY, clearTextCaches, loadTextFonts, TEXT_FONT_NAMES } from '../../src/ui/lib/promo/promo-text.js';
 import { safeArea, subtitleCues, cueAt } from '../../src/ui/lib/promo/promo-subtitles.js';
 
 export const TITLES = [
@@ -50,8 +50,7 @@ function render(text, width, height, aspect, localMs, style, position = 'bottom'
 }
 
 async function run() {
-  await document.fonts.load('700 100px "IBM Plex Sans Arabic"', 'متاح Satr ٢٥');
-  await document.fonts.load('500 60px "IBM Plex Sans Arabic"', 'متاح Satr ٢٥');
+  await loadTextFonts();
   clearTextCaches();
   const failures = [];
   const expect = (label, condition, detail) => { if (!condition) failures.push(label + ': ' + JSON.stringify(detail === undefined ? null : detail)); };
@@ -140,6 +139,30 @@ async function run() {
   expect('الإبراز يلوّن الكلمة المطلوبة فقط', goldInk.count > 100 && goldInk.left >= proLeft - 30 && goldInk.right <= proLeft + pro.width + 30, { goldInk, proLeft, width: pro.width });
   expect('بلا إبراز لا لون هوية', bbox(render(TITLES[0], W, H, aspect, 60000, { animation: 'none' }).canvas, gold).count === 0);
   images.push({ name: '08-highlight.png', data: highlighted.canvas.toDataURL('image/png') });
+
+  // ── الخطان الإضافيان (الدفعة 10): محمَّلان فعلاً، وحارس التطابق سليم، والعرض يختلف عن الافتراضي ──
+  const loaded = [...document.fonts].filter((face) => face.status === 'loaded').map((face) => face.family.replace(/["']/g, ''));
+  for (const [id, family] of Object.entries(TEXT_FONT_NAMES)) expect('الخط محمَّل فعلاً: ' + family, loaded.includes(family), loaded);
+  const plexWidths = [1, 2, 6].map((index) => render(TITLES[index], W, H, aspect, 60000, { animation: 'none', highlight: 'x' }).result.layout.width);
+  for (const font of ['cairo', 'naskh']) {
+    [1, 2, 6].forEach((index, order) => {
+      const item = render(TITLES[index], W, H, aspect, 60000, { animation: 'words', font });
+      const layout = item.result.layout, box = item.result.box;
+      const label = font + ' — العنوان ' + (index + 1);
+      expect(label + ': حارس التطابق ≤ 1 بكسل', layout.mismatch <= 1, layout.mismatch);
+      expect(label + ': الاتجاه rtl وكل الكلمات مرسومة', layout.dir === 'rtl' && item.result.visibleWords === TITLES[index].split(' ').length, [layout.dir, item.result.visibleWords]);
+      expect(label + ': داخل المساحة الآمنة', box.boxY >= Math.round(H * safe.top) && box.boxY + box.boxHeight <= H - Math.round(H * safe.bottom) && box.boxX >= 0 && box.boxX + box.boxWidth <= W, box);
+      const ink = bbox(item.canvas, bright);
+      expect(label + ': الحبر داخل الكتلة', ink.count > 200 && ink.left >= box.boxX && ink.right <= box.boxX + box.boxWidth && ink.top >= box.boxY && ink.bottom <= box.boxY + box.boxHeight, { ink, box });
+      expect(label + ': العرض يختلف عن الخط الافتراضي (الخط مطبَّق لا بديله)', Math.abs(layout.width - plexWidths[order]) > 2, [layout.width, plexWidths[order]]);
+      images.push({ name: '1' + (font === 'cairo' ? '0' : '1') + '-' + font + '-' + (index + 1) + '.png', data: item.canvas.toDataURL('image/png') });
+    });
+    const order = render(TITLES[1], W, H, aspect, 60000, { animation: 'words', font }).result.layout;
+    if (order.lines.length === 1) expect(font + ': الترتيب البصري للنص المختلط', JSON.stringify(order.lines[0].words.slice().sort((a, b) => b.left - a.left).map((word) => word.index)) === JSON.stringify(VISUAL_RTL[1]), order.lines[0].words);
+  }
+  const subtitleFont = (font) => { const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H; const context = canvas.getContext('2d', { alpha: false }); context.fillStyle = COLORS.background; context.fillRect(0, 0, W, H);
+    drawSubtitle(context, { text: 'أهلاً بكم في سطر، البيت العربي' }, { width: W, height: H, colors: COLORS, aspect, font }); return canvas.toDataURL(); };
+  expect('الترجمة تتبع خط المشهد', subtitleFont('naskh') !== subtitleFont('plex') && subtitleFont(undefined) === subtitleFont('plex'));
 
   // الانزلاق والتكبير: يبدآن شفافين وينتهيان مطابقين للثابت
   for (const animation of ['slide', 'zoom']) {

@@ -3,6 +3,7 @@
 // الكاميرا ولا مناطق التغبيش.
 
 const frozen = (value) => Object.freeze(value);
+const FONT_IDS = ['plex', 'cairo', 'naskh'];
 
 // ألوان القوالب الافتراضية تأتي من هوية المشروع إن وُجدت، وإلا من سمة الاستوديو (fallback).
 export const TEMPLATES = frozen([
@@ -10,7 +11,7 @@ export const TEMPLATES = frozen([
     id: 'app-launch', label: 'إطلاق تطبيق', aspect: '9:16',
     hint: 'جوال مائل على تدرج، عناوين كلمة بكلمة، تلاشٍ متقاطع.',
     stage: frozen({ frame: 'phone', background: 'linear', angle: 160, shadow: 0.8, scale: 0.82, firstTilt: frozen({ x: 4, y: -14 }), tilt: frozen({ x: 0, y: 0 }), motion: 'none' }),
-    text: frozen({ animation: 'words', position: 'bottom', style: 'box' }), transition_in: 'crossfade', subtitles: false,
+    text: frozen({ animation: 'words', position: 'bottom', style: 'box', font: 'cairo' }), transition_in: 'crossfade', subtitles: false,
   }),
   frozen({
     id: 'new-feature', label: 'ميزة جديدة', aspect: '16:9',
@@ -22,7 +23,7 @@ export const TEMPLATES = frozen([
     id: 'store-offer', label: 'عرض متجر', aspect: '1:1',
     hint: 'جوال على تدرج شعاعي، عناوين بتكبير خفيف في الأعلى، تكبير عابر.',
     stage: frozen({ frame: 'phone', background: 'radial', angle: 0, shadow: 0.9, scale: 0.8, firstTilt: frozen({ x: 0, y: 0 }), tilt: frozen({ x: 0, y: 0 }), motion: 'none' }),
-    text: frozen({ animation: 'zoom', position: 'top', style: 'box' }), transition_in: 'zoom', subtitles: false,
+    text: frozen({ animation: 'zoom', position: 'top', style: 'box', font: 'cairo' }), transition_in: 'zoom', subtitles: false,
   }),
   frozen({
     id: 'how-to', label: 'شرح خطوات', aspect: '16:9',
@@ -65,7 +66,12 @@ export function applyTemplate(storyboard, template, colors) {
       // نص حقل الرابط كتبه المستخدم؛ يبقى.
       label: typeof previous.label === 'string' ? previous.label : '',
     };
-    scene.text_style = { animation: template.text.animation, highlight: scene.text_style && typeof scene.text_style.highlight === 'string' ? scene.text_style.highlight : '' };
+    scene.text_style = {
+      animation: template.text.animation,
+      // خط الهوية إن وُجد، وإلا خط القالب، وإلا ما اختاره المستخدم للمشهد.
+      font: FONT_IDS.includes(brand.font) && brand.font !== 'plex' ? brand.font : template.text.font || (scene.text_style && FONT_IDS.includes(scene.text_style.font) ? scene.text_style.font : 'plex'),
+      highlight: scene.text_style && typeof scene.text_style.highlight === 'string' ? scene.text_style.highlight : '',
+    };
     scene.caption_position = template.text.position;
     scene.caption_style = template.text.style;
     scene.transition_in = index === 0 ? 'none' : template.transition_in;
@@ -85,10 +91,12 @@ export function applyBrand(storyboard, brandInput) {
   if (!storyboard || !Array.isArray(storyboard.scenes)) return result;
   storyboard.brand = {
     name: typeof brand.name === 'string' ? brand.name : '', primary: pick(brand.primary), secondary: pick(brand.secondary), accent: pick(brand.accent),
-    closing: typeof brand.closing === 'string' ? brand.closing : '', logo: typeof brand.logo === 'string' ? brand.logo : '',
+    closing: typeof brand.closing === 'string' ? brand.closing : '', font: FONT_IDS.includes(brand.font) ? brand.font : 'plex', logo: typeof brand.logo === 'string' ? brand.logo : '',
   };
-  const { primary, secondary, closing, logo } = storyboard.brand;
+  const { primary, secondary, closing, logo, font } = storyboard.brand;
   for (const scene of storyboard.scenes) {
+    // خط الهوية يسري على عناوين كل المشاهد.
+    if (scene && scene.id !== BRAND_CLOSING_ID) scene.text_style = { animation: 'none', highlight: '', ...(scene.text_style || {}), font };
     const background = scene && scene.stage && scene.stage.background;
     if (!background || scene.id === BRAND_CLOSING_ID) continue;
     if (['color', 'linear', 'radial'].includes(background.type)) {
@@ -103,7 +111,7 @@ export function applyBrand(storyboard, brandInput) {
       transition: 'cut', transition_in: storyboard.scenes.length > (at >= 0 ? 1 : 0) ? 'crossfade' : 'none', music: '', voice: '', trim_start_ms: 0, fit: 'contain',
       caption_position: 'bottom', caption_style: 'minimal', clip_volume: 1, music_volume: 0.34, voice_volume: 1,
       camera: { mode: 'off', cursor: true, keyframes: [] }, redactions: [], voiceover_ar: '', subtitles: false,
-      text_style: { animation: 'words', highlight: '' },
+      text_style: { animation: 'words', font, highlight: '' },
       stage: { frame: 'none', background: { type: primary || secondary ? 'radial' : 'none', color: primary, color2: secondary, angle: 0, image: '', blur: 0 },
         shadow: 0, scale: 0.78, radius: 1, tilt: { x: 0, y: 0 }, motion: 'none', label: '' },
     };

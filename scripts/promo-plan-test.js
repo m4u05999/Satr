@@ -74,7 +74,7 @@ try {
   ]) });
   eq(result.ok, true, 'اقتراح v2 مقبول');
   const [first, second] = result.storyboard.scenes;
-  eq([result.storyboard.aspect, first.camera.mode, first.camera.keyframes, first.text_style, first.stage.frame, first.stage.tilt], ['9:16', 'auto', [], { animation: 'words', highlight: 'Pro' }, 'phone', { x: 4, y: -14 }], 'المشهد الأول');
+  eq([result.storyboard.aspect, first.camera.mode, first.camera.keyframes, first.text_style, first.stage.frame, first.stage.tilt], ['9:16', 'auto', [], { animation: 'words', font: 'plex', highlight: 'Pro' }, 'phone', { x: 4, y: -14 }], 'المشهد الأول');
   eq([second.camera.mode, second.transition_in, second.voice, second.voiceover_ar, second.subtitles, second.redactions], ['off', 'crossfade', voice, 'بضغطة واحدة تحجز موعدك.', true, []], 'المشهد الثاني');
   eq(board.propose({ scenes: studio.proposalScenes([{ segment_path: clip, duration_ms: 3000, camera: { mode: 'manual', keyframes: [{ t_ms: 0, x: 0.5, y: 0.5, zoom: 99 }] } }]) }).error, 'bad_camera', 'كاميرا خبيثة من الوكيل مرفوضة');
   eq(board.propose({ scenes: studio.proposalScenes(Array.from({ length: 4 }, () => ({ segment_path: clip, duration_ms: 60000 }))) }).error, 'bad_total_duration', 'اقتراح فوق 180 ثانية مرفوض');

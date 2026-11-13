@@ -1949,7 +1949,7 @@ async function start({ prompt, images, sessionId, model, fallbackModel, permissi
       voice: z.string().optional(),
       voiceover_ar: z.string().max(2000).optional(),
       subtitles: z.boolean().optional(),
-      text_style: z.object({ animation: z.enum(['none', 'words', 'slide', 'zoom']).optional(), highlight: z.string().max(60).optional() }).optional(),
+      text_style: z.object({ animation: z.enum(['none', 'words', 'slide', 'zoom']).optional(), highlight: z.string().max(60).optional(), font: z.enum(['plex', 'cairo', 'naskh']).optional() }).optional(),
       camera: z.union([z.enum(['auto', 'off']), z.object({
         mode: z.enum(['auto', 'manual', 'off']),
         cursor: z.boolean().optional(),
